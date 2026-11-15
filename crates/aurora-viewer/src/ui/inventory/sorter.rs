@@ -37,6 +37,8 @@ enum Confirm {
     PreTrash(Vec<Uuid>),
     /// Clean up's entries, straight to the Trash.
     Trash(Vec<Uuid>),
+    /// Imported settings replacing the user's rules and store hints.
+    Replace,
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
@@ -84,6 +86,21 @@ pub(super) struct State {
     trash: Option<TrashJob>,
     /// A Clean up button pressed this frame.
     cleanup_action: Option<CleanupAction>,
+    /// The Share window and what is ticked in it.
+    share: Option<sorter::share::Share>,
+    /// The Import window.
+    import: Option<ImportWindow>,
+}
+
+/// The Import window: the pasted text, what it holds and what is ticked.
+#[derive(Default)]
+struct ImportWindow {
+    text: String,
+    /// The text `found` was read from.
+    read: String,
+    found: sorter::share::Imported,
+    pick: sorter::share::Pick,
+    done: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -461,7 +478,252 @@ pub(super) fn show(
         state.confirm = None;
     }
     picker(ctx, p, inv, st, prefs);
+    share_window(ctx, p, st, &prefs.sorter);
+    import_window(ctx, p, st, &mut prefs.sorter);
     confirm(ctx, p, inv, st, prefs, worn, actions);
+}
+
+/// A rule as one line: its words and where it sends them.
+fn rule_line(rule: &Rule) -> String {
+    let to = if rule.pre_trash {
+        sorter::pre_trash_name()
+    } else if rule.target.is_some() {
+        aurora_i18n::tr!("inventory-share-my-folder").to_owned()
+    } else {
+        rule.folder.trim().to_owned()
+    };
+    format!("{}  →  {to}", rule.words.trim())
+}
+
+/// Share…: what will be shared, ticked, then copied as text.
+fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &sorter::Preferences) {
+    use crate::ui::widgets::{ActionKind, action_button, checkbox};
+    let Some(share) = st.sorter.share.as_mut() else { return };
+    let mut open = true;
+    let mut copy = false;
+    let window_id = format!("inventory_sorter_share_{}", st.ui_id);
+    let mut window = crate::ui::widgets::Floater::new(
+        &window_id,
+        aurora_i18n::tr!("inventory-share-title"),
+        ctx.content_rect().center() - Vec2::new(200.0, 240.0),
+        Vec2::new(400.0, 480.0),
+    )
+    .steady_size();
+    window.min_size = Vec2::new(320.0, 300.0);
+    window.show(ctx, p, &mut open, |ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-share-hint")).small().color(p.muted));
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("inventory_sorter_share_list")
+            .max_height((ui.available_height() - 44.0).max(60.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if !prefs.rules.is_empty() {
+                    let shareable: Vec<usize> = (0..prefs.rules.len())
+                        .filter(|i| sorter::share::shareable(&prefs.rules[*i]))
+                        .collect();
+                    let mut all = !shareable.is_empty() && shareable.iter().all(|i| share.rules[*i]);
+                    let before = all;
+                    checkbox(ui, p, &mut all, RichText::new(aurora_i18n::tr!("inventory-sorter-rules")).strong());
+                    if all != before {
+                        for i in &shareable {
+                            share.rules[*i] = all;
+                        }
+                    }
+                    for (index, rule) in prefs.rules.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            if sorter::share::shareable(rule) {
+                                checkbox(ui, p, &mut share.rules[index], rule_line(rule));
+                            } else {
+                                let mut never = false;
+                                ui.add_enabled_ui(false, |ui| checkbox(ui, p, &mut never, rule_line(rule)));
+                                ui.label(RichText::new(aurora_i18n::tr!("inventory-share-private")).small().color(p.muted));
+                            }
+                        });
+                    }
+                    ui.add_space(6.0);
+                }
+                if !prefs.store_hints.is_empty() {
+                    let mut all = share.hints.iter().all(|t| *t);
+                    let before = all;
+                    checkbox(ui, p, &mut all, RichText::new(aurora_i18n::tr!("inventory-sorter-hints")).strong());
+                    if all != before {
+                        share.hints.iter_mut().for_each(|t| *t = all);
+                    }
+                    for (index, hint) in prefs.store_hints.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            checkbox(
+                                ui,
+                                p,
+                                &mut share.hints[index],
+                                format!("{}  →  {}", hint.store.trim(), hint.category.folder()),
+                            );
+                        });
+                    }
+                    ui.add_space(6.0);
+                }
+                ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-options")).strong());
+                if !prefs.base.trim().is_empty() {
+                    checkbox(
+                        ui,
+                        p,
+                        &mut share.base,
+                        aurora_i18n::tr!("inventory-share-base", name = prefs.base.trim()),
+                    );
+                }
+                checkbox(ui, p, &mut share.stores, aurora_i18n::tr!("inventory-sorter-by-store"));
+                checkbox(ui, p, &mut share.folders, aurora_i18n::tr!("inventory-sorter-folders"));
+                checkbox(ui, p, &mut share.kinds, aurora_i18n::tr!("inventory-sorter-kinds"));
+                if !prefs.excluded.is_empty() {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let mut never = false;
+                        let label = format!("{} ({})", aurora_i18n::tr!("inventory-sorter-excluded"), prefs.excluded.len());
+                        ui.add_enabled_ui(false, |ui| checkbox(ui, p, &mut never, label));
+                        ui.label(RichText::new(aurora_i18n::tr!("inventory-share-private")).small().color(p.muted));
+                    });
+                }
+            });
+        crate::ui::widgets::divider(ui, p);
+        ui.horizontal(|ui| {
+            copy = action_button(
+                ui,
+                p,
+                "copy-filled",
+                aurora_i18n::tr!("inventory-share-copy"),
+                ActionKind::Primary,
+                Vec2::new(0.0, 28.0),
+            )
+            .clicked();
+            if !st.sorter.status.is_empty() {
+                ui.label(RichText::new(&st.sorter.status).small().color(p.muted));
+            }
+        });
+    });
+    if copy && let Some(share) = st.sorter.share.as_ref() {
+        ctx.copy_text(sorter::share::export(prefs, share));
+        st.sorter.status = aurora_i18n::tr!("inventory-share-copied").to_owned();
+    }
+    if !open {
+        st.sorter.share = None;
+    }
+}
+
+/// Import…: paste a shared text, tick what to take, then add or replace.
+fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut sorter::Preferences) {
+    use crate::ui::widgets::{ActionKind, action_button, checkbox};
+    let replace_open = st.sorter.confirm == Some(Confirm::Replace);
+    let Some(import) = st.sorter.import.as_mut() else { return };
+    if import.text != import.read {
+        import.found = sorter::share::import(&import.text);
+        import.pick = sorter::share::Pick::new(&import.found, prefs);
+        import.read.clone_from(&import.text);
+        import.done.clear();
+    }
+    let mut open = true;
+    let (mut add, mut replace) = (false, false);
+    let window_id = format!("inventory_sorter_import_{}", st.ui_id);
+    let mut window = crate::ui::widgets::Floater::new(
+        &window_id,
+        aurora_i18n::tr!("inventory-import-title"),
+        ctx.content_rect().center() - Vec2::new(210.0, 260.0),
+        Vec2::new(420.0, 520.0),
+    )
+    .steady_size();
+    window.min_size = Vec2::new(320.0, 340.0);
+    window.show(ctx, p, &mut open, |ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-import-hint")).small().color(p.muted));
+        ui.add(
+            egui::TextEdit::multiline(&mut import.text)
+                .char_limit(sorter::share::MAX_TEXT)
+                .hint_text(sorter::share::HEADER)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(4.0);
+        let (dup_rules, dup_hints) = import.found.duplicates(prefs);
+        egui::ScrollArea::vertical()
+            .id_salt("inventory_sorter_import_list")
+            .max_height((ui.available_height() - 64.0).max(60.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let found = &import.found;
+                if !import.text.trim().is_empty() && found.is_empty() {
+                    ui.label(RichText::new(aurora_i18n::tr!("inventory-import-nothing")).color(p.muted));
+                }
+                for (index, rule) in found.rules.iter().enumerate() {
+                    row(ui, p, &mut import.pick.rules[index], rule_line(rule), dup_rules[index]);
+                }
+                for (index, hint) in found.hints.iter().enumerate() {
+                    let label = format!("{}  →  {}", hint.store.trim(), hint.category.folder());
+                    row(ui, p, &mut import.pick.hints[index], label, dup_hints[index]);
+                }
+                if found.base.is_some() || found.stores.is_some() || found.folders.is_some() || found.kinds.is_some() {
+                    checkbox(ui, p, &mut import.pick.options, aurora_i18n::tr!("inventory-import-options"));
+                }
+                if found.skipped > 0 {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("inventory-import-skipped", count = found.skipped))
+                            .small()
+                            .color(p.warn),
+                    );
+                }
+            });
+        crate::ui::widgets::divider(ui, p);
+        let any = import.pick.rules.iter().chain(&import.pick.hints).any(|t| *t) || import.pick.options && !import.found.is_empty();
+        ui.horizontal(|ui| {
+            let size = Vec2::new(0.0, 28.0);
+            add = ui
+                .add_enabled_ui(any && !replace_open, |ui| {
+                    action_button(ui, p, "plus", aurora_i18n::tr!("inventory-import-add"), ActionKind::Primary, size)
+                })
+                .inner
+                .clicked();
+            replace = ui
+                .add_enabled_ui(any && !replace_open, |ui| {
+                    action_button(
+                        ui,
+                        p,
+                        "replace",
+                        aurora_i18n::tr!("inventory-import-replace"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                })
+                .inner
+                .clicked();
+        });
+        if !import.done.is_empty() {
+            ui.label(RichText::new(&import.done).small().color(p.muted));
+        }
+    });
+    if add {
+        import.found.apply(prefs, &import.pick, false);
+        import.done = aurora_i18n::tr!("inventory-import-done").to_owned();
+        import.read.clear();
+    }
+    if replace {
+        st.sorter.confirm = Some(Confirm::Replace);
+    }
+    if !open {
+        st.sorter.import = None;
+    }
+}
+
+/// An imported item and its box; one the user already has is shown
+/// unticked and greyed, "already in yours".
+fn row(ui: &mut egui::Ui, p: &Palette, ticked: &mut bool, label: String, mine: bool) {
+    ui.horizontal(|ui| {
+        if mine {
+            let mut never = false;
+            ui.add_enabled_ui(false, |ui| crate::ui::widgets::checkbox(ui, p, &mut never, label));
+            ui.label(RichText::new(aurora_i18n::tr!("inventory-import-already")).small().color(p.muted));
+        } else {
+            crate::ui::widgets::checkbox(ui, p, ticked, label);
+        }
+    });
 }
 
 /// Clean up's Trash: one delete request of at most [`TRASH_BATCH`] entries
@@ -547,7 +809,7 @@ fn confirm(
     p: &Palette,
     inv: &Inventory,
     st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
+    prefs: &mut InventoryPreferences,
     worn: &HashSet<Uuid>,
     actions: &mut Vec<InvAction>,
 ) {
@@ -620,6 +882,38 @@ fn confirm(
                     }
                 });
             }
+            Confirm::Replace => {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-import-replace-title"))
+                        .size(15.0)
+                        .strong()
+                        .color(p.ink),
+                );
+                ui.add_space(8.0);
+                ui.label(aurora_i18n::tr!(
+                    "inventory-import-replace-text",
+                    rules = prefs.sorter.rules.len(),
+                    hints = prefs.sorter.store_hints.len()
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if action_button(
+                        ui,
+                        p,
+                        "replace",
+                        aurora_i18n::tr!("inventory-import-replace"),
+                        ActionKind::Danger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        answer = Some(true);
+                    }
+                    if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            }
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             answer = Some(false);
@@ -632,6 +926,13 @@ fn confirm(
     }
     match asked {
         Confirm::Whole => start(&mut st.sorter, prefs),
+        Confirm::Replace => {
+            if let Some(import) = st.sorter.import.as_mut() {
+                import.found.apply(&mut prefs.sorter, &import.pick, true);
+                import.done = aurora_i18n::tr!("inventory-import-done").to_owned();
+                import.read.clear();
+            }
+        }
         Confirm::Trash(ids) => {
             st.sorter.status.clear();
             st.sorter.trash = Some(TrashJob {
@@ -824,6 +1125,38 @@ fn short_date(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0).map_or_else(String::new, |t| t.date_naive().format("%Y-%m-%d").to_string())
 }
 
+/// The item kinds as two columns of boxes, with All and None: Clean up's
+/// filter and the sort's.
+fn kinds_grid(ui: &mut egui::Ui, p: &Palette, id: &str, kinds: &mut Vec<Kind>) {
+    use crate::ui::widgets::{checkbox, flat_button};
+    ui.horizontal(|ui| {
+        if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-all")).clicked() {
+            *kinds = Kind::ALL.to_vec();
+        }
+        if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-none")).clicked() {
+            kinds.clear();
+        }
+    });
+    egui::Grid::new(id).num_columns(2).spacing([18.0, 2.0]).show(ui, |ui| {
+        for (index, kind) in Kind::ALL.iter().enumerate() {
+            let was = kinds.contains(kind);
+            let mut on = was;
+            checkbox(ui, p, &mut on, kind.label());
+            if on != was {
+                if on {
+                    kinds.push(*kind);
+                    kinds.sort();
+                } else {
+                    kinds.retain(|k| k != kind);
+                }
+            }
+            if index % 2 == 1 {
+                ui.end_row();
+            }
+        }
+    });
+}
+
 /// Rows drawn per group: the rest is counted, so a large cleanup stays
 /// smooth (the groups open one at a time).
 const CLEANUP_ROWS: usize = 300;
@@ -840,7 +1173,7 @@ fn cleanup_tab(
     busy: bool,
     free: bool,
 ) {
-    use crate::ui::widgets::{ActionKind, action_button, checkbox, collapsing, flat_button, section_header, segmented, switch_labeled};
+    use crate::ui::widgets::{ActionKind, action_button, checkbox, collapsing, section_header, segmented, switch_labeled};
     let base = options.base_name();
     let cleanup = &mut options.cleanup;
     ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-intro")).small().color(p.muted));
@@ -891,35 +1224,7 @@ fn cleanup_tab(
         }
         ui.add_space(8.0);
         section_header(ui, p, "category-filled", aurora_i18n::tr!("inventory-cleanup-types"));
-        ui.horizontal(|ui| {
-            if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-all")).clicked() {
-                cleanup.kinds = Kind::ALL.to_vec();
-            }
-            if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-none")).clicked() {
-                cleanup.kinds.clear();
-            }
-        });
-        egui::Grid::new("inventory_cleanup_kinds")
-            .num_columns(2)
-            .spacing([18.0, 2.0])
-            .show(ui, |ui| {
-                for (index, kind) in Kind::ALL.iter().enumerate() {
-                    let was = cleanup.kinds.contains(kind);
-                    let mut on = was;
-                    checkbox(ui, p, &mut on, kind.label());
-                    if on != was {
-                        if on {
-                            cleanup.kinds.push(*kind);
-                            cleanup.kinds.sort();
-                        } else {
-                            cleanup.kinds.retain(|k| k != kind);
-                        }
-                    }
-                    if index % 2 == 1 {
-                        ui.end_row();
-                    }
-                }
-            });
+        kinds_grid(ui, p, "inventory_cleanup_kinds", &mut cleanup.kinds);
         ui.add_space(8.0);
         section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-cleanup-where"));
         let mut place = usize::from(!cleanup.whole && has_folder);
@@ -939,6 +1244,12 @@ fn cleanup_tab(
             p,
             &mut cleanup.include_sorted,
             aurora_i18n::tr!("inventory-cleanup-include-sorted", folder = base.as_str()),
+        );
+        switch_labeled(
+            ui,
+            p,
+            &mut cleanup.empty_folders,
+            aurora_i18n::tr!("inventory-cleanup-empty-folders"),
         );
         ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-never")).small().color(p.muted));
     });
@@ -993,9 +1304,13 @@ fn cleanup_tab(
     ui.add_space(6.0);
     // folders first (they go whole), then each kind in the filter's order
     let mut groups: Vec<(String, Vec<&sorter::CleanupRow>)> = Vec::new();
-    let folders: Vec<_> = plan.rows.iter().filter(|r| r.folder).collect();
+    let folders: Vec<_> = plan.rows.iter().filter(|r| r.folder && r.items > 0).collect();
     if !folders.is_empty() {
         groups.push((aurora_i18n::tr!("inventory-cleanup-folders").to_owned(), folders));
+    }
+    let empty: Vec<_> = plan.rows.iter().filter(|r| r.folder && r.items == 0).collect();
+    if !empty.is_empty() {
+        groups.push((aurora_i18n::tr!("inventory-cleanup-empty-group").to_owned(), empty));
     }
     for kind in Kind::ALL {
         let rows: Vec<_> = plan.rows.iter().filter(|r| r.kind == Some(kind)).collect();
@@ -1052,6 +1367,16 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
             .color(p.muted),
     );
     ui.add_space(10.0);
+    crate::ui::widgets::section_header(ui, p, "category-filled", aurora_i18n::tr!("inventory-sorter-kinds"));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("inventory-sorter-kinds-hint"))
+            .small()
+            .color(p.muted),
+    );
+    kinds_grid(ui, p, "inventory_sorter_kinds", &mut options.kinds);
+    ui.add_space(10.0);
+    store_hints(ui, p, options);
+    ui.add_space(10.0);
     crate::ui::widgets::section_header(ui, p, "folder-off", aurora_i18n::tr!("inventory-sorter-excluded"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-sorter-excluded-hint"))
@@ -1090,6 +1415,85 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     .clicked()
     {
         state.picker = Some(Picker::new(Pick::Exclude));
+    }
+    ui.add_space(10.0);
+    crate::ui::widgets::section_header(ui, p, "share", aurora_i18n::tr!("inventory-share-section"));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("inventory-share-section-hint"))
+            .small()
+            .color(p.muted),
+    );
+    ui.horizontal(|ui| {
+        use crate::ui::widgets::{ActionKind, action_button};
+        let size = Vec2::new(0.0, 26.0);
+        if action_button(ui, p, "share", aurora_i18n::tr!("inventory-share-open"), ActionKind::Flat, size).clicked() {
+            state.status.clear();
+            state.share = Some(sorter::share::Share::all(options));
+        }
+        if action_button(
+            ui,
+            p,
+            "file-import",
+            aurora_i18n::tr!("inventory-import-open"),
+            ActionKind::Flat,
+            size,
+        )
+        .clicked()
+        {
+            state.import = Some(ImportWindow::default());
+        }
+    });
+}
+
+/// Store hints: a store whose names say nothing of what it sells, and the
+/// category its items go to.
+fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences) {
+    use sorter::{Category, StoreHint};
+    crate::ui::widgets::section_header(ui, p, "building-store", aurora_i18n::tr!("inventory-sorter-hints"));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("inventory-sorter-hints-hint"))
+            .small()
+            .color(p.muted),
+    );
+    let mut remove = None;
+    for (index, hint) in options.store_hints.iter_mut().enumerate() {
+        ui.push_id(("inventory_sorter_hint", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut hint.store)
+                        .char_limit(64)
+                        .hint_text(aurora_i18n::tr!("inventory-sorter-hint-store"))
+                        .desired_width(150.0),
+                );
+                ui.label(RichText::new("→").color(p.muted));
+                egui::ComboBox::from_id_salt("category")
+                    .selected_text(hint.category.folder())
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for category in Category::ALL {
+                            ui.selectable_value(&mut hint.category, category, category.folder());
+                        }
+                    });
+                if crate::ui::widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("inventory-sorter-hint-remove"), true) {
+                    remove = Some(index);
+                }
+            });
+        });
+    }
+    if let Some(index) = remove {
+        options.store_hints.remove(index);
+    }
+    if crate::ui::widgets::action_button(
+        ui,
+        p,
+        "plus",
+        aurora_i18n::tr!("inventory-sorter-hint-add"),
+        crate::ui::widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    )
+    .clicked()
+    {
+        options.store_hints.push(StoreHint::default());
     }
 }
 

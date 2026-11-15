@@ -2572,7 +2572,7 @@ or the root Pre-Trash folder, plans the moves of one folder's direct contents,
 chosen entries or the whole inventory's system folders with the drag rules
 (`relocatable`, nothing worn, no link, never the Trash, Marketplace Listings or
 an excluded folder) and builds bounded mutations that create the missing folders and move
-the entries in one request. Its Clean up (`plan_cleanup`) lists what was acquired before a date, of the chosen kinds, at any depth (a delivery folder whole or not at all). `sorter_demo.rs` seeds its demo inventory.
+the entries in one request. Its Clean up (`plan_cleanup`) lists what was acquired before a date, of the chosen kinds, at any depth (a delivery folder whole or not at all). `sorter_share.rs` writes and reads the settings as shareable text (never a folder id). `sorter_demo.rs` seeds its demo inventory.
 `ui/inventory/sorter.rs` is its window (source, rule cards, folder picker,
 options, preview by destination, the Clean up tab, progress, the whole-inventory,
 Pre-Trash and Clean up Trash confirmations; Pre-Trash goes to the Trash through the ordinary delete request); it sends one batch at a time through the ordinary pending inventory

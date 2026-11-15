@@ -14561,6 +14561,40 @@ inventory-cleanup-trash-done = { $count ->
     [one] 1 entry moved to the Trash
    *[other] { $count } entries moved to the Trash
     }
+inventory-sorter-kinds = Types to sort
+inventory-sorter-kinds-hint = Unticked types stay where they are. A right-click on an item sorts it whatever its type.
+inventory-sorter-hints = Store hints
+inventory-sorter-hints-hint = For stores whose names don't say what they sell: their items go to the category you choose.
+inventory-sorter-hint-store = Store name
+inventory-sorter-hint-remove = Remove this hint
+inventory-sorter-hint-add = Add a store hint
+inventory-cleanup-empty-folders = Include empty folders
+inventory-cleanup-empty-group = Empty folders
+inventory-share-section = Share my settings
+inventory-share-section-hint = Hand your rules, store hints and options to someone else as text, for a notecard or a chat.
+inventory-share-open = Share…
+inventory-import-open = Import…
+inventory-share-title = Share Auto-sort settings
+inventory-share-hint = Untick what you want to keep to yourself. Rules to your own folders and excluded folders are never shared.
+inventory-share-private = Only in your inventory
+inventory-share-my-folder = my folder
+inventory-share-base = Sort folder name: { $name }
+inventory-share-copy = Copy to clipboard
+inventory-share-copied = Copied. Paste it in a notecard or a chat.
+inventory-import-title = Import Auto-sort settings
+inventory-import-hint = Paste the shared text here (Ctrl+V), then tick what you want.
+inventory-import-nothing = No Auto-sort settings found in this text.
+inventory-import-options = Options (sort folder name, folder per store, types to sort)
+inventory-import-skipped = { $count ->
+    [one] 1 line could not be read and was skipped
+   *[other] { $count } lines could not be read and were skipped
+    }
+inventory-import-already = already in yours
+inventory-import-add = Add to mine
+inventory-import-replace = Replace mine
+inventory-import-done = Imported.
+inventory-import-replace-title = Replace your rules and store hints?
+inventory-import-replace-text = Your { $rules } rules and { $hints } store hints are replaced by the ticked ones. Your excluded folders stay.
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
 parcel-visibility-always = Everywhere

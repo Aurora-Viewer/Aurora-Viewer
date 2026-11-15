@@ -135,6 +135,11 @@ pub struct Preferences {
     pub excluded: Vec<Uuid>,
     /// The Clean up tab's choices.
     pub cleanup: Cleanup,
+    /// The item kinds a sort moves; the others stay where they are (a
+    /// right-click on chosen entries sorts them whatever their kind).
+    pub kinds: Vec<Kind>,
+    /// Store → category, for the stores whose names say nothing.
+    pub store_hints: Vec<StoreHint>,
 }
 
 impl Default for Preferences {
@@ -146,6 +151,8 @@ impl Default for Preferences {
             stores: false,
             excluded: Vec::new(),
             cleanup: Cleanup::default(),
+            kinds: Kind::ALL.to_vec(),
+            store_hints: Vec::new(),
         }
     }
 }
@@ -217,7 +224,8 @@ const BODIES: &[BodyWords] = &[
     BodyWords {
         body: "Reborn",
         strong: &["reborn", "ebody reborn", "rebornf"],
-        weak: &["waifu", "juicy"],
+        // Waifus is a Reborn body mod: its clothes are Reborn's
+        weak: &["waifu", "waifus", "juicy"],
         hides: &["eBODY"],
     },
     BodyWords {
@@ -228,7 +236,8 @@ const BODIES: &[BodyWords] = &[
     },
     BodyWords {
         body: "Legacy Male",
-        strong: &["legacy m", "legacy male", "legacy men", "legacy mens", "legacy boy"],
+        // `LegacyM+AT`: the Legacy Male body, AT its Athletic shape
+        strong: &["legacy m", "legacym", "legacy male", "legacy men", "legacy mens", "legacy boy"],
         weak: &[],
         hides: &["Legacy"],
     },
@@ -291,7 +300,7 @@ const BODIES: &[BodyWords] = &[
 /// The category folders, in the order they are tried: the first match wins,
 /// so a "Lingerie Set" is lingerie and a "Garter" lingerie before an
 /// accessory. Sets come last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Category {
     Tattoos,
     Skins,
@@ -333,7 +342,21 @@ pub enum Category {
 }
 
 const CATEGORY_WORDS: &[(Category, &[&str])] = &[
-    (Category::Tattoos, &["tattoo", "tattoos", "tatoo", "tatoos", "tattoo layer"]),
+    (
+        Category::Tattoos,
+        &[
+            "tattoo",
+            "tattoos",
+            "tatoo",
+            "tatoos",
+            "tattoo layer",
+            "bandage",
+            "bandages",
+            "scar",
+            "scars",
+            "bruises",
+        ],
+    ),
     (Category::Skins, &["skin", "skins"]),
     (
         Category::Makeup,
@@ -568,6 +591,8 @@ const CATEGORY_WORDS: &[(Category, &[&str])] = &[
         Category::Animations,
         &["pose", "poses", "animation", "animations", "ao", "dance", "posestand"],
     ),
+    // a gesture pack rezzed or worn as an object (`[GESTURES] … PACK`)
+    (Category::Gestures, &["gesture", "gestures"]),
     (Category::Huds, &["hud", "huds"]),
     (
         Category::Furniture,
@@ -692,9 +717,35 @@ pub struct Classified {
     pub unpacker: bool,
     /// A Squish or Squeeze version (`Reborn bra black sq`).
     pub squish: bool,
+    /// Made for Reborn's Waifus mod (`Reborn Waifus - Bra`).
+    pub waifus: bool,
 }
 
 const SQUISH_WORDS: &[&str] = &["sq", "squish", "squishy", "squished", "squeeze", "squeez", "squeezed", "squeezy"];
+
+const WAIFU_WORDS: &[&str] = &["waifu", "waifus"];
+
+/// Skin tones creators name their body skins with (`(Porcelain)`).
+const TONE_WORDS: &[&str] = &[
+    "porcelain",
+    "pale",
+    "fair",
+    "light",
+    "tan",
+    "tanned",
+    "honey",
+    "caramel",
+    "cocoa",
+    "ebony",
+    "olive",
+    "mocha",
+    "bronze",
+    "ivory",
+    "sand",
+    "almond",
+    "espresso",
+    "chocolate",
+];
 
 const UNPACKER_WORDS: &[&str] = &[
     "unpack",
@@ -703,6 +754,8 @@ const UNPACKER_WORDS: &[&str] = &[
     "packed",
     "unboxer",
     "unbox",
+    "boxed",
+    "box",
     "wear to unpack",
     "rez to unpack",
 ];
@@ -756,12 +809,81 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
                 .map(|(c, _)| *c)
         })
         .or_else(|| Category::of_asset(asset_type, flags));
+    let body = body(&words);
+    // A body skin says which body and how it looks, not what it is:
+    // `The "Ipanema Body" for eBody Reborn (Porcelain)`.
+    let category = category.or_else(|| {
+        let skin = has(&words, "body for") || TONE_WORDS.iter().any(|k| has(&words, k));
+        (body.is_some() && skin).then_some(Category::Skins)
+    });
     Classified {
-        body: body(&words),
+        body,
         category,
         unpacker: UNPACKER_WORDS.iter().any(|k| has(&words, k)),
         squish: SQUISH_WORDS.iter().any(|k| has(&words, k)),
+        waifus: WAIFU_WORDS.iter().any(|k| has(&words, k)),
     }
+}
+
+/// A user's hint for a store whose names say nothing of what it sells:
+/// its items without a category of their own go to `category`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StoreHint {
+    pub store: String,
+    pub category: Category,
+}
+
+impl Default for StoreHint {
+    fn default() -> Self {
+        Self {
+            store: String::new(),
+            category: Category::Furniture,
+        }
+    }
+}
+
+impl Category {
+    /// Every category, in folder order, for the store hints' list.
+    pub const ALL: [Category; 37] = [
+        Category::Tattoos,
+        Category::Skins,
+        Category::Makeup,
+        Category::Hair,
+        Category::Eyes,
+        Category::Nails,
+        Category::Shoes,
+        Category::Stockings,
+        Category::Lingerie,
+        Category::Swimwear,
+        Category::Bodysuits,
+        Category::Dresses,
+        Category::Skirts,
+        Category::Pants,
+        Category::Shorts,
+        Category::Jackets,
+        Category::Tops,
+        Category::Sleepwear,
+        Category::Gloves,
+        Category::Jewelry,
+        Category::Accessories,
+        Category::BodyAddons,
+        Category::Heads,
+        Category::Shapes,
+        Category::Animations,
+        Category::Huds,
+        Category::Furniture,
+        Category::Decor,
+        Category::Vehicles,
+        Category::Pets,
+        Category::Outfits,
+        Category::Landmarks,
+        Category::Notecards,
+        Category::Scripts,
+        Category::Sounds,
+        Category::Textures,
+        Category::Gestures,
+    ];
 }
 
 /// The first usable user rule that takes `name`, whole words, any case.
@@ -804,6 +926,20 @@ pub fn destination(name: &str, asset_type: i32, flags: u32, rules: &[Rule]) -> O
 /// and always a Squish folder below them for a Squish or Squeeze version.
 /// `created` is an item's acquired date, for the dated rules.
 pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rules: &[Rule], stores: bool) -> Option<Dest> {
+    target_with(name, asset_type, flags, created, rules, stores, &[])
+}
+
+/// [`target`] with the user's store hints: a store's items whose names give
+/// no category take the hint's.
+pub fn target_with(
+    name: &str,
+    asset_type: i32,
+    flags: u32,
+    created: Option<i64>,
+    rules: &[Rule],
+    stores: bool,
+    hints: &[StoreHint],
+) -> Option<Dest> {
     if let Some(rule) = rule_for(rules, name, created) {
         return Some(match rule.target {
             _ if rule.pre_trash => Dest::PreTrash,
@@ -811,23 +947,44 @@ pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rul
             None => Dest::Path(split_path(&rule.folder)),
         });
     }
-    let found = classify(name, asset_type, flags);
+    let mut found = classify(name, asset_type, flags);
+    let shop = (stores || !hints.is_empty()).then(|| store(name)).flatten();
+    if found.category.is_none()
+        && let Some(shop) = &shop
+        && let Some(hint) = hints.iter().find(|h| h.store.trim().eq_ignore_ascii_case(shop.trim()))
+    {
+        found.category = Some(hint.category);
+    }
     let mut path = Vec::new();
     path.extend(found.body.map(Body::folder));
     path.extend(found.category.map(|c| c.folder().to_owned()));
     // By store (`stores`): below the category, or in Stores when the name
     // says nothing else.
-    if stores && let Some(store) = store(name) {
+    if stores && let Some(shop) = shop {
         if path.is_empty() {
             path.push(aurora_i18n::tr!("inventory-sorter-stores").to_owned());
         }
-        path.push(store);
+        path.push(shop);
     }
-    if found.squish && !path.is_empty() {
-        path.push(squish_folder());
+    // Waifus and Squish versions of clothes get their folder below the
+    // category; the Waifus mod itself is a body add-on and gets none.
+    let mod_itself = found.category == Some(Category::BodyAddons);
+    if !path.is_empty() && !mod_itself && (found.squish || found.waifus) {
+        path.push(variant_folder(found.waifus, found.squish));
     }
     (!path.is_empty()).then_some(Dest::Path(path))
 }
+
+/// `Waifus`, `Squish` or `Waifus Squish`: creators' words, like the bodies.
+fn variant_folder(waifus: bool, squish: bool) -> String {
+    match (waifus, squish) {
+        (true, true) => format!("{WAIFUS} {}", squish_folder()),
+        (true, false) => WAIFUS.to_owned(),
+        _ => squish_folder(),
+    }
+}
+
+const WAIFUS: &str = "Waifus";
 
 /// The store a creator's name starts with: `[North Oak] + Table`,
 /// `*Opal&Ash* Dress`, `.VX. Apron`, `Kitoomi - Hex Dress`,
@@ -852,7 +1009,8 @@ pub fn store(name: &str) -> Option<String> {
         ('#', '#'),
         ('|', '|'),
     ];
-    const SEPARATORS: &[&str] = &[" - ", " // ", " | ", " :: ", " + ", " ~ "];
+    // `uh-oh: Thigh Socks`, `VELOUR: The Body`: a store and a colon
+    const SEPARATORS: &[&str] = &[" - ", " // ", " | ", " :: ", " + ", " ~ ", ": "];
     let text = name.trim();
     let first = text.chars().next()?;
     let tag = ENCLOSED
@@ -867,18 +1025,36 @@ pub fn store(name: &str) -> Option<String> {
                 .iter()
                 .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
                 .min_by_key(|tag| tag.len())
-        })?;
+        })
+        .or_else(|| underscore_store(text))?;
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
     let tag_words = words(tag);
     let found = classify(tag, -1, 0);
+    // a body mod maker's tag (`MAZE.mods`) names its trade, not a product
+    let maker = tag_words.last().is_some_and(|w| w == "mods" || w == "mod");
     let reads = (2..=32).contains(&tag.chars().count())
         && (1..=4).contains(&tag_words.len())
         && tag.chars().any(char::is_alphabetic)
         && found.body.is_none()
-        && found.category.is_none()
+        && (found.category.is_none() || maker)
         && !found.unpacker
-        && !found.squish;
+        && !found.squish
+        && !found.waifus;
     reads.then(|| tag.to_owned())
+}
+
+/// `OnlyShop_Sign_F`: a name with no space, its parts joined by `_`, starts
+/// with its store when that first part is written like a brand (inner
+/// capitals, `OnlyShop`, or all capitals, `XYZ`), not like a word (`Akira`).
+fn underscore_store(text: &str) -> Option<&str> {
+    if text.contains(' ') {
+        return None;
+    }
+    let (first, rest) = text.split_once('_')?;
+    let letters: Vec<char> = first.chars().filter(|c| c.is_alphabetic()).collect();
+    let inner_capital = letters.iter().skip(1).any(|c| c.is_uppercase()) && letters.iter().any(|c| c.is_lowercase());
+    let all_capitals = letters.len() >= 2 && letters.iter().all(|c| c.is_uppercase());
+    (!rest.is_empty() && (inner_capital || all_capitals)).then_some(first)
 }
 
 fn squish_folder() -> String {
@@ -1004,7 +1180,7 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
         entries.extend(contents(inv, source, prefs, folders));
     }
     let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
-    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn);
+    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
     plan.unfetched = scan.unfetched;
     plan
 }
@@ -1026,7 +1202,9 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     names.insert(Body::Several.folder().to_lowercase());
     names.insert(prefs.base_name().to_lowercase());
     names.insert(pre_trash_name().to_lowercase());
-    names.insert(squish_folder().to_lowercase());
+    for (waifus, squish) in [(true, false), (false, true), (true, true)] {
+        names.insert(variant_folder(waifus, squish).to_lowercase());
+    }
     names.insert(aurora_i18n::tr!("inventory-sorter-stores").to_lowercase());
     for (category, _) in CATEGORY_WORDS {
         names.insert(category.folder().to_lowercase());
@@ -1045,7 +1223,7 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
 pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let entries = contents(inv, source, prefs, prefs.folders);
     let scan = pre_trash_scan(inv, prefs, source, protected, worn);
-    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn);
+    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
     plan.unfetched = scan.unfetched;
     plan
 }
@@ -1291,6 +1469,8 @@ pub struct Cleanup {
     pub whole: bool,
     /// Read the sort folder's tree too.
     pub include_sorted: bool,
+    /// Take the user's empty folders too (nothing in them at any depth).
+    pub empty_folders: bool,
 }
 
 impl Default for Cleanup {
@@ -1302,6 +1482,7 @@ impl Default for Cleanup {
             kinds: Kind::ALL.to_vec(),
             whole: true,
             include_sorted: true,
+            empty_folders: false,
         }
     }
 }
@@ -1398,7 +1579,7 @@ pub fn plan_cleanup(
     let mut plan = CleanupPlan::default();
     let Some(cutoff) = cleanup.cutoff(now) else { return plan };
     plan.cutoff = cutoff;
-    if cleanup.kinds.is_empty() {
+    if cleanup.kinds.is_empty() && !cleanup.empty_folders {
         return plan;
     }
     let source = if cleanup.whole { inv.root } else { source };
@@ -1451,6 +1632,25 @@ pub fn plan_cleanup(
             let name = f.info.name.trim();
             let system = f.info.type_default != -1;
             let made = reserved.contains(&name.to_lowercase());
+            // an empty folder (nothing at any depth), the user's or one
+            // Auto-sort made, never the sort folder itself
+            if cleanup.empty_folders
+                && !system
+                && Some(*sub) != base
+                && movable(inv, *sub, protected, &holds_worn)
+                && empty_tree(inv, *sub, &mut plan.unfetched)
+            {
+                plan.rows.push(CleanupRow {
+                    id: *sub,
+                    folder: true,
+                    from: id,
+                    name: f.info.name.clone(),
+                    kind: None,
+                    created: 0,
+                    items: 0,
+                });
+                continue;
+            }
             if !system
                 && !made
                 && movable(inv, *sub, protected, &holds_worn)
@@ -1480,6 +1680,32 @@ pub fn plan_cleanup(
     plan.rows
         .sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.name.cmp(&b.name)));
     plan
+}
+
+/// `folder` holds no item at any depth (only empty folders, or nothing). A
+/// folder not loaded yet answers no (and is listed in `unfetched`).
+fn empty_tree(inv: &Inventory, folder: Uuid, unfetched: &mut Vec<Uuid>) -> bool {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if f.state != FetchState::Fetched {
+            unfetched.push(id);
+            return false;
+        }
+        if !f.items.is_empty()
+            || f.children
+                .iter()
+                .any(|c| inv.folders.get(c).is_some_and(|c| c.info.type_default != -1))
+        {
+            return false;
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    true
 }
 
 /// How many items `folder` holds at any depth, and the newest acquired date.
@@ -1525,7 +1751,13 @@ fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -
 /// The moves of chosen entries, wherever they are: the selection a
 /// right-click sorts at once. A folder goes as a whole, by its own name.
 pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
-    plan_with(inv, entries.to_vec(), Vec::new(), prefs, protected, worn)
+    plan_with(inv, entries.to_vec(), Vec::new(), prefs, protected, worn, false)
+}
+
+/// The sort's type filter takes `asset_type` (a folder, or an item of no
+/// known kind, always).
+fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
+    asset_type == -1 || Kind::of(asset_type).is_none_or(|k| prefs.kinds.contains(&k))
 }
 
 /// The moves of `entries`, and of `pre_trashed` (what [`pre_trash_scan`]
@@ -1537,6 +1769,7 @@ fn plan_with(
     prefs: &Preferences,
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
+    filtered: bool,
 ) -> Plan {
     let mut plan = Plan::default();
     let forced: HashSet<Uuid> = pre_trashed.iter().copied().collect();
@@ -1555,6 +1788,10 @@ fn plan_with(
             _ => continue,
         };
         let Some(from) = actions::parent(inv, id) else { continue };
+        if filtered && !kind_wanted(prefs, asset_type) {
+            // a kind left out of the sort stays where it is, unlisted
+            continue;
+        }
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) {
             let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
             candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted));
@@ -1572,7 +1809,7 @@ fn plan_with(
             let to = if forced.contains(&id) {
                 Some(Dest::PreTrash)
             } else {
-                target(&name, asset_type, flags, created, rules, prefs.stores)
+                target_with(&name, asset_type, flags, created, rules, prefs.stores, &prefs.store_hints)
             };
             let unpacker = classify(&name, asset_type, flags).unpacker;
             (id, folder, from, name, to, unpacker)
@@ -1735,6 +1972,9 @@ pub fn step(inv: &mut Inventory, base_name: &str, queue: &mut VecDeque<Move>, pr
 
 #[path = "sorter_demo.rs"]
 pub mod demo;
+
+#[path = "sorter_share.rs"]
+pub mod share;
 
 #[cfg(test)]
 #[path = "sorter_tests.rs"]

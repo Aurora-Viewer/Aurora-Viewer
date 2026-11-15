@@ -14566,6 +14566,40 @@ inventory-cleanup-trash-done = { $count ->
     [one] 1 élément mis à la corbeille
    *[other] { $count } éléments mis à la corbeille
     }
+inventory-sorter-kinds = Types à trier
+inventory-sorter-kinds-hint = Les types décochés restent où ils sont. Un clic droit sur un objet le trie quel que soit son type.
+inventory-sorter-hints = Indices de boutique
+inventory-sorter-hints-hint = Pour les boutiques dont les noms ne disent pas ce qu'elles vendent : leurs objets vont dans la catégorie choisie.
+inventory-sorter-hint-store = Nom de la boutique
+inventory-sorter-hint-remove = Retirer cet indice
+inventory-sorter-hint-add = Ajouter un indice de boutique
+inventory-cleanup-empty-folders = Inclure les dossiers vides
+inventory-cleanup-empty-group = Dossiers vides
+inventory-share-section = Partager mes réglages
+inventory-share-section-hint = Donnez vos règles, indices de boutique et options à quelqu'un sous forme de texte, pour une note ou un chat.
+inventory-share-open = Partager…
+inventory-import-open = Importer…
+inventory-share-title = Partager les réglages du tri automatique
+inventory-share-hint = Décochez ce que vous voulez garder pour vous. Les règles vers vos propres dossiers et les dossiers exclus ne sont jamais partagés.
+inventory-share-private = Seulement dans votre inventaire
+inventory-share-my-folder = mon dossier
+inventory-share-base = Nom du dossier de tri : { $name }
+inventory-share-copy = Copier dans le presse-papiers
+inventory-share-copied = Copié. Collez-le dans une note ou un chat.
+inventory-import-title = Importer des réglages du tri automatique
+inventory-import-hint = Collez ici le texte partagé (Ctrl+V), puis cochez ce que vous voulez.
+inventory-import-nothing = Aucun réglage de tri automatique trouvé dans ce texte.
+inventory-import-options = Options (nom du dossier de tri, dossier par boutique, types à trier)
+inventory-import-skipped = { $count ->
+    [one] 1 ligne illisible a été ignorée
+   *[other] { $count } lignes illisibles ont été ignorées
+    }
+inventory-import-already = déjà dans les vôtres
+inventory-import-add = Ajouter aux miens
+inventory-import-replace = Remplacer les miens
+inventory-import-done = Importé.
+inventory-import-replace-title = Remplacer vos règles et indices de boutique ?
+inventory-import-replace-text = Vos { $rules } règles et { $hints } indices de boutique sont remplacés par ceux cochés. Vos dossiers exclus restent.
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.
 parcel-visibility-always = Partout

@@ -892,3 +892,315 @@ fn clean_up_lists_unloaded_folders_and_waits_for_them() {
     assert!(plan.unfetched.contains(&id(30)));
     assert!(!cleaned(&plan).contains(&id(300)) && !cleaned(&plan).contains(&id(30)));
 }
+
+/// The path `name` (an object) goes to with a folder per store, as text.
+fn sorted_as(name: &str, kind: i32, hints: &[StoreHint]) -> String {
+    match target_with(name, kind, 0, None, &[], true, hints) {
+        Some(Dest::Path(path)) => path.join("/"),
+        other => format!("{other:?}"),
+    }
+}
+
+fn cat(c: Category) -> &'static str {
+    c.folder()
+}
+
+/// Names from a real inventory, as creators write them (shared by the
+/// human), and where they go with a folder per store.
+#[test]
+fn real_creator_names_find_their_folders() {
+    use Category::*;
+    let stores = aurora_i18n::tr!("inventory-sorter-stores");
+    let none = "None".to_owned();
+    let cases: Vec<(&str, i32, String)> = vec![
+        // folders: deliveries and boxes
+        ("Tredente // Bento Money Envelope (Packed)", -1, format!("{stores}/Tredente")),
+        ("TROLLINGAVATAR", -1, none.clone()),
+        ("TsVe 1.2.5 Box", -1, none.clone()),
+        (
+            "uh-oh: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+            -1,
+            format!("{}/uh-oh", cat(Stockings)),
+        ),
+        ("UnityCore Combat System V39.812", -1, none.clone()),
+        ("{UE} What a S****y Attack Hud [boxed]", -1, format!("{}/UE", cat(Huds))),
+        ("~JJ~ The Chameleon Halo Set", -1, format!("{}/JJ", cat(Outfits))),
+        // objects
+        (
+            "[BS][GESTURES][1] AUSSIE MEAT PIE PACK (ADD+CLICK)",
+            6,
+            format!("{}/BS", cat(Gestures)),
+        ),
+        ("Kitoomi - Ryu Jeans - FATPACK", 6, format!("{}/Kitoomi", cat(Pants))),
+        ("LeLUTKA Otto Head 4.0", 6, cat(Heads).to_owned()),
+        ("OnlyPixel_Terminal_Office_High1", 6, format!("{stores}/OnlyPixel")),
+        ("OnlyPx_Sign_F", 6, format!("{stores}/OnlyPx")),
+        ("Object", 6, none.clone()),
+        ("[Grazed] Rebellion Jacket // Fatpack", 6, format!("{}/Grazed", cat(Jackets))),
+        ("Obsidian Homes ~ Eclipse (ADD)", 6, format!("{stores}/Obsidian Homes")),
+        ("OnlyPixel Deposit HUD", 6, cat(Huds).to_owned()),
+        ("P_Scaner_Salty", 6, none.clone()),
+        ("Sera - Feelin Undone - Bom Bandages Fatpack", 6, format!("{}/Sera", cat(Tattoos))),
+        // a product's HUD goes with the product
+        ("[Grazed] Trauma Tee // Fatpack Hud", 6, format!("{}/Grazed", cat(Tops))),
+        // LegacyM: Legacy's male body; AT, its Athletic shape
+        (
+            "[Grazed] Trauma Tee // Fatpack // LegacyM+AT",
+            6,
+            format!("Legacy Male/{}/Grazed", cat(Tops)),
+        ),
+        ("MadPea Willy Wrappers - Glove", 6, format!("{}/MadPea Willy Wrappers", cat(Gloves))),
+        ("Emy's Birthday Invitation", 6, none.clone()),
+        ("Mouth Spitter (Light Pink)", 6, none.clone()),
+        // Waifus, Reborn's body mod: the mod itself is an add-on, its clothes
+        // get a Waifus folder (with Squish when both)
+        ("Waifu REBORN - Waifus - Addon v2.0", 6, format!("Reborn/{}", cat(BodyAddons))),
+        (
+            "Reborn Feat. Axolotl - Waifu Bikini - Top Slim",
+            6,
+            format!("Reborn/{}/Waifus", cat(Swimwear)),
+        ),
+        (
+            "Muse - Lovesick Darling - Reborn Waifus - Bra",
+            6,
+            format!("Reborn/{}/Muse/Waifus", cat(Lingerie)),
+        ),
+        (
+            "Rokins - Rihanna Top - Black - [Waifus size Squish]",
+            6,
+            format!("Reborn/{}/Rokins/Waifus Squish", cat(Tops)),
+        ),
+        // a body skin, named by its body and tone; a body mod maker
+        (
+            "VELOUR: The \"Ipanema Body\" for eBody Reborn (Porcelain)",
+            6,
+            format!("Reborn/{}/VELOUR", cat(Skins)),
+        ),
+        (
+            "MAZE.mods - Soft Thighs V4.2 - eBody Reborn",
+            6,
+            format!("Reborn/{}/MAZE.mods", cat(BodyAddons)),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (name, kind, expected) in &cases {
+        let got = sorted_as(name, *kind, &[]);
+        if &got != expected {
+            wrong.push(format!("{name:?}: got {got:?}, expected {expected:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn store_hints_give_a_category_to_names_that_say_nothing() {
+    let hints = [StoreHint {
+        store: "obsidian homes".into(),
+        category: Category::Furniture,
+    }];
+    assert_eq!(
+        sorted_as("Obsidian Homes ~ Eclipse (ADD)", 6, &hints),
+        format!("{}/Obsidian Homes", Category::Furniture.folder())
+    );
+    // a name's own category wins over the hint
+    let hints = [StoreHint {
+        store: "Kitoomi".into(),
+        category: Category::Furniture,
+    }];
+    assert_eq!(
+        sorted_as("Kitoomi - Ryu Jeans - FATPACK", 6, &hints),
+        format!("{}/Kitoomi", Category::Pants.folder())
+    );
+    // without a folder per store, the hint still files it
+    assert_eq!(
+        target_with(
+            "Obsidian Homes ~ Eclipse (ADD)",
+            6,
+            0,
+            None,
+            &[],
+            false,
+            &[StoreHint {
+                store: "Obsidian Homes".into(),
+                category: Category::Furniture,
+            }]
+        ),
+        Some(Dest::Path(vec![Category::Furniture.folder().to_owned()]))
+    );
+}
+
+#[test]
+fn the_sorts_type_filter_keeps_unticked_kinds_in_place() {
+    let mut inv = fixture(&["Velvet skirt Reborn"]);
+    add_typed(&mut inv, 120, OBJECTS, "Store landmark", NEW, 3);
+    add_typed(&mut inv, 121, OBJECTS, "Read me notecard", NEW, 7);
+    let all = plan(&inv, id(OBJECTS), &Preferences::default(), &HashSet::new(), &HashSet::new());
+    assert_eq!(all.moves.len(), 3);
+    let objects_only = Preferences {
+        kinds: vec![Kind::Objects],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &objects_only, &HashSet::new(), &HashSet::new());
+    assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(100)]);
+    assert!(plan.unknown.is_empty(), "left out, not unknown");
+    // a right-click on chosen entries sorts them whatever the filter
+    let picked = plan_entries(&inv, &[id(120)], &objects_only, &HashSet::new(), &HashSet::new());
+    assert_eq!(picked.moves.len(), 1);
+}
+
+#[test]
+fn clean_up_takes_empty_folders_when_asked() {
+    let mut inv = sorted_fixture();
+    add_folder(&mut inv, 70, 1, "Empty boxes");
+    add_folder(&mut inv, 71, 70, "Nothing here");
+    add_folder(&mut inv, 72, 30, "Also empty");
+    // an empty folder Auto-sort made is taken too, never the sort folder
+    add_folder(&mut inv, 23, 21, "Dresses");
+    let asked = Cleanup {
+        empty_folders: true,
+        ..before_2020()
+    };
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &asked,
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    // the outer empty folder whole (its empty child inside it)
+    assert!(rows.contains(&id(70)) && !rows.contains(&id(71)));
+    assert!(rows.contains(&id(72)) && rows.contains(&id(23)));
+    assert!(!rows.contains(&id(20)) && !rows.contains(&id(11)));
+    // off by default
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &before_2020(),
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    assert!(!rows.contains(&id(70)) && !rows.contains(&id(72)));
+    // with no kind ticked, only the empty folders
+    let only_empty = Cleanup {
+        kinds: Vec::new(),
+        ..asked
+    };
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &only_empty,
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    assert!(rows.contains(&id(70)) && !rows.contains(&id(300)));
+}
+
+#[test]
+fn shared_settings_round_trip_without_my_folders() {
+    use super::share::{Pick, Share, export, import};
+    let prefs = Preferences {
+        base: "Tidy".into(),
+        stores: true,
+        kinds: vec![Kind::Objects, Kind::Clothing],
+        rules: vec![
+            Rule {
+                words: "denim jeans".into(),
+                mode: Match::Any,
+                folder: "Clothes/Denim".into(),
+                ..Default::default()
+            },
+            Rule {
+                words: "old freebie".into(),
+                pre_trash: true,
+                skip_sorted: true,
+                ..Default::default()
+            },
+            Rule {
+                words: "secret stash".into(),
+                target: Some(id(30)),
+                ..Default::default()
+            },
+        ],
+        store_hints: vec![StoreHint {
+            store: "Birch Hollow".into(),
+            category: Category::Furniture,
+        }],
+        excluded: vec![id(30)],
+        ..Default::default()
+    };
+    let text = export(&prefs, &Share::all(&prefs));
+    assert!(text.starts_with(super::share::HEADER));
+    assert!(!text.contains(&id(30).to_string()), "no folder id leaves");
+    assert!(text.contains("# not shared"));
+    let found = import(&text);
+    assert!(found.recognised);
+    assert_eq!(found.skipped, 0);
+    assert_eq!(found.rules.len(), 2);
+    assert!(found.rules[1].pre_trash && found.rules[1].skip_sorted);
+    assert_eq!(found.hints, prefs.store_hints);
+    assert_eq!(found.base.as_deref(), Some("Tidy"));
+    assert_eq!(found.kinds.as_deref(), Some(&[Kind::Objects, Kind::Clothing][..]));
+    // into someone else's settings: everything new, nothing private
+    let mut theirs = Preferences::default();
+    let pick = Pick::new(&found, &theirs);
+    found.apply(&mut theirs, &pick, false);
+    assert_eq!(theirs.rules.len(), 2);
+    assert!(theirs.excluded.is_empty() && theirs.rules.iter().all(|r| r.target.is_none()));
+    assert!(theirs.stores && theirs.base == "Tidy");
+    // a second import finds them all already there
+    let pick = Pick::new(&found, &theirs);
+    assert!(pick.rules.iter().all(|t| !t) && pick.hints.iter().all(|t| !t));
+}
+
+#[test]
+fn shared_settings_skip_broken_lines_and_respect_the_ticks() {
+    use super::share::{Pick, Share, export, import};
+    let text = "# Aurora Auto-sort v1\nrule: any | chair sofa | Home\nrule: sometimes | x | y\nrule: all |  | Home\nstore: Nope = not-a-category\nstore: Birch Hollow = furniture\noption: kinds = objects, flying-cars\nhello there\n";
+    let found = import(text);
+    assert_eq!(found.rules.len(), 1);
+    assert_eq!(found.hints.len(), 1);
+    assert_eq!(found.skipped, 5);
+    assert!(found.kinds.is_none());
+    // only the ticked items go in
+    let mut mine = Preferences::default();
+    let pick = Pick {
+        rules: vec![false],
+        hints: vec![true],
+        options: false,
+    };
+    found.apply(&mut mine, &pick, false);
+    assert!(mine.rules.is_empty() && mine.store_hints.len() == 1);
+    // Replace clears my rules and hints first; Add keeps them
+    let mut mine = Preferences {
+        rules: vec![Rule {
+            words: "lamp".into(),
+            folder: "Lights".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let all = Pick::new(&found, &mine);
+    let mut added = mine.clone();
+    found.apply(&mut added, &all, false);
+    assert_eq!(added.rules.len(), 2);
+    found.apply(&mut mine, &all, true);
+    assert_eq!(mine.rules.len(), 1);
+    assert_eq!(mine.rules[0].words, "chair sofa");
+    // unticked rules stay out of the shared text
+    let share = Share {
+        rules: vec![false, true],
+        ..Share::all(&added)
+    };
+    let text = export(&added, &share);
+    assert!(!text.contains("lamp") && text.contains("chair sofa"));
+    // an oversized paste is cut, not refused
+    let huge = "rule: any | chair | Home\n".repeat(10_000);
+    let found = import(&huge);
+    assert!(found.rules.len() <= super::share::MAX_RULES);
+}
