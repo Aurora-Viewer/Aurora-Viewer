@@ -278,6 +278,10 @@ pub mod slideshow;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
