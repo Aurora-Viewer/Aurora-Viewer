@@ -158,6 +158,15 @@ step, so the scene rebuilds the skeleton and the morphs as for any new
 appearance. `demo_shape_morph.rs` (`AURORA_DEMO_SHAPE_MORPH`) changes the
 Wolf's and the crowd's shapes.
 
+`world/objects.rs` keeps a scripted object's accumulated angular rotation
+separate from the simulator's base angle. Repeated full and terse reports
+with that same angle preserve its spin, including a nonphysical speed change,
+as `LLViewerObject::processUpdateMessage` / `applyAngularVelocity` do.
+New base angles, stopping and physical speed changes reset it; changing the
+parent with the same base angle retains the turn, as in the Legacy Viewer.
+Motion corrections fade towards the base angle with that retained turn
+applied, rather than fading the turn away.
+
 `world/appearance_xml.rs` snapshots only the agent’s current visual parameters
 and joint palette for Legacy Viewer-compatible `linden_genepool` XML export.
 The Appearance gear menu shares the scoped file-job lifecycle in
