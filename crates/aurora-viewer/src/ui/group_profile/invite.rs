@@ -108,6 +108,13 @@ impl InviteUi {
         self.reload.take()
     }
 
+    /// LLFloaterGroupInvite::showForGroup from outside the group's profile
+    /// (the Contacts window's Invite): the window alone, the group's data
+    /// asked again so that its roles are known.
+    pub fn show_for_group(&mut self, group: Uuid) {
+        self.invite_into(group, Vec::new());
+    }
+
     /// callback_invite_to_group: the invitation of the chosen group, its
     /// data asked again.
     fn invite_into(&mut self, group: Uuid, invitees: Vec<Uuid>) {

@@ -76,6 +76,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
@@ -100,6 +106,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colon-emote"),
                     tr!("ui-options-colon-emote-hint"),
                     &field!(colon_emote),
+                );
+                // AutoCloseOOC (off)
+                cx.toggle(
+                    tr!("ui-options-auto-close-ooc"),
+                    tr!("ui-options-auto-close-ooc-hint"),
+                    &field!(auto_close_ooc),
                 );
                 cx.toggle(
                     tr!("ui-options-mention-autocomplete"),
@@ -129,7 +141,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
-                // depends on it; ChatBubbleOpacity is in its Colors), #673
+                // depends on it; ChatBubbleOpacity is in Appearance › Skin,
+                // as it is in its Colors), #673
                 cx.toggle(
                     tr!("ui-options-chat-bubbles"),
                     tr!("ui-options-chat-bubbles-hint"),
@@ -146,13 +159,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         tr!("ui-options-typing-bubbles"),
                         tr!("ui-options-typing-bubbles-hint"),
                         &field!(typing_bubbles),
-                    );
-                    cx.slider(
-                        tr!("ui-options-chat-bubble-opacity"),
-                        "",
-                        &field!(chat_bubble_opacity),
-                        0.0..=1.0,
-                        "",
                     );
                 });
             });
@@ -1042,6 +1048,7 @@ fn history(cx: &mut Cx) {
                         {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                         }
+                        // the Legacy Viewer's files too, in its layout
                         if action_button_if(
                             ui,
                             &p,
@@ -1049,7 +1056,7 @@ fn history(cx: &mut Cx) {
                             tr!("ui-options-chat-logs-erase"),
                             ActionKind::FlatDanger,
                             size,
-                            idle,
+                            idle && !st.chat_log_shared,
                         )
                         .clicked()
                         {
@@ -1063,7 +1070,7 @@ fn history(cx: &mut Cx) {
                         tr!("ui-options-chat-logs-import"),
                         crate::ui::widgets::ActionKind::Flat,
                         Vec2::new(0.0, 24.0),
-                        st.chat_log_importing.is_none(),
+                        st.chat_log_importing.is_none() && !st.chat_log_shared,
                     )
                     .clicked()
                     {
@@ -1087,6 +1094,13 @@ fn history(cx: &mut Cx) {
                 });
                 false
             },
+        );
+        // an Aurora addition: the folder of the Legacy Viewer's own layout,
+        // shared with it (`world::chat_log`, `shared`)
+        cx.toggle(
+            tr!("ui-options-chat-logs-legacy-layout"),
+            tr!("ui-options-chat-logs-legacy-layout-help"),
+            &field!(log_legacy_layout),
         );
     });
 }

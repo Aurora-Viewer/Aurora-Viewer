@@ -30,8 +30,10 @@
 pub mod cef_cache;
 pub mod entry;
 pub mod filter;
+pub mod first_click;
 mod interact;
 pub mod keys;
+pub mod nearby;
 pub mod openid;
 pub mod pack;
 pub mod pick;
@@ -354,10 +356,16 @@ pub struct MediaSettings {
     /// PermAllowScriptedMedia: let scripts start the parcel media.
     pub allow_scripted: bool,
     /// MediaFirstClickInteract: the first click already goes to the page
-    /// when the face allows it (first_click_interact).
+    /// when the face allows it (first_click_interact), for the kinds of
+    /// object of `first_click` (off: MEDIA_FIRST_CLICK_NONE).
     pub first_click_interact: bool,
+    pub first_click: first_click::FirstClick,
     /// MediaAutoPlayHuds: media on HUDs plays by itself.
     pub autoplay_huds: bool,
+    /// BrowserJavascriptEnabled: JavaScript in every built-in browser
+    /// (media, web browser, profiles, search), sent to each new page's
+    /// plugin as LLViewerMediaImpl::newSourceFromMediaType does.
+    pub javascript: bool,
     /// MediaEnableFilter: media and music ask before a site not in the
     /// account's list (on by default, as there).
     pub filter: bool,
@@ -386,7 +394,9 @@ impl Default for MediaSettings {
             max_instances: 8,
             allow_scripted: false,
             first_click_interact: true,
+            first_click: first_click::FirstClick::default(),
             autoplay_huds: true,
+            javascript: true,
             filter: true,
             filter_trust_own_worn: true,
             filter_explained: false,
@@ -544,8 +554,8 @@ pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
-/// language and the viewer's user agent.
-pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
+/// language, the viewer's user agent and JavaScript.
+pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &MediaSettings) -> BrowserSettings {
     BrowserSettings {
         // the system's own separator, as the plugin appends `cef_cache`
         // (LLPluginClassMedia::init gets getCacheDir + getDirDelimiter): a
@@ -556,7 +566,7 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserS
         language: language.to_string(),
         user_agent: user_agent(),
         cookies_enabled: true,
-        javascript_enabled: true,
+        javascript_enabled: media.javascript,
         zoom_factor: 1.0,
     }
 }
@@ -615,7 +625,13 @@ mod cache_tests {
     #[test]
     fn the_plugin_cache_lands_inside_cef() {
         let dir = std::env::temp_dir().join("aurora-cef-path");
-        let s = browser_settings(&dir, "en");
+        let s = browser_settings(&dir, "en", &MediaSettings::default());
+        assert!(s.javascript_enabled, "BrowserJavascriptEnabled is on by default");
+        let off = MediaSettings {
+            javascript: false,
+            ..MediaSettings::default()
+        };
+        assert!(!browser_settings(&dir, "en", &off).javascript_enabled);
         // what MediaPluginCEF builds from it
         assert_eq!(Path::new(&format!("{}cef_cache", s.cache_path)), dir.join("cef").join("cef_cache"));
     }
@@ -721,12 +737,6 @@ impl MediaManager {
     pub fn focused_mut(&mut self) -> Option<&mut MediaImpl> {
         let k = self.focus?;
         self.find_mut(&k)
-    }
-
-    /// The system id of the focused face's plugin process, which tells one
-    /// page's clipboard from another's.
-    pub fn focused_pid(&self) -> Option<u32> {
-        self.focused()?.plugin.as_ref()?.pid()
     }
 
     /// Parcel media started (button state).

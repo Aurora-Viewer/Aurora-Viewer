@@ -837,6 +837,88 @@ fn an_appearance_xml_export_needs_modify_rights_on_the_wearable() {
 }
 
 #[test]
+fn an_asset_export_needs_the_items_creator_or_its_export_bit_on_opensim() {
+    let (agent, other, library) = (id(9931), id(9932), id(9933));
+    let item = |owner, creator, group_owned, owner_mask, everyone_mask| InvItem {
+        owner,
+        creator,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let sl = ExportGrid::SecondLife;
+    let denied = ExportGrid::OpenSim { export_supported: false };
+    let allowed = ExportGrid::OpenSim { export_supported: true };
+    // (what, item, Second Life and OpenSim without export, OpenSim with export)
+    let cases = [
+        (
+            "its own upload, full permissions",
+            item(agent, agent, false, FULL | EXPORT, 0),
+            true,
+            true,
+        ),
+        ("its own upload, no Export bit", item(agent, agent, false, FULL, 0), true, false),
+        (
+            "its own upload, no copy",
+            item(agent, agent, false, MODIFY | TRANSFER, 0),
+            true,
+            false,
+        ),
+        (
+            "its own upload, no transfer",
+            item(agent, agent, false, COPY | MODIFY, 0),
+            true,
+            false,
+        ),
+        (
+            "its own upload, no modify",
+            item(agent, agent, false, COPY | TRANSFER, 0),
+            true,
+            false,
+        ),
+        ("bought, full permissions", item(agent, other, false, FULL, 0), false, false),
+        ("bought, Export allowed", item(agent, other, false, FULL | EXPORT, 0), false, true),
+        (
+            "group owned, its own upload",
+            item(agent, agent, true, FULL | EXPORT, 0),
+            true,
+            false,
+        ),
+        (
+            "group owned, Export to everyone",
+            item(agent, other, true, FULL | EXPORT, EXPORT),
+            false,
+            true,
+        ),
+        ("someone else's", item(other, other, false, FULL | EXPORT, 0), false, false),
+        (
+            "a Library item",
+            item(library, library, false, FULL | EXPORT, COPY | TRANSFER),
+            false,
+            false,
+        ),
+    ];
+    for (what, item, creator_rule, export_rule) in cases {
+        assert_eq!(asset_export_allowed(&item, agent, sl), creator_rule, "Second Life: {what}");
+        assert_eq!(
+            asset_export_allowed(&item, agent, denied),
+            creator_rule,
+            "OpenSim without export: {what}"
+        );
+        assert_eq!(
+            asset_export_allowed(&item, agent, allowed),
+            export_rule,
+            "OpenSim with export: {what}"
+        );
+    }
+    assert!(
+        !asset_export_allowed(&item(agent, Uuid::nil(), false, FULL, 0), Uuid::nil(), sl),
+        "no agent"
+    );
+}
+
+#[test]
 fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     let (agent, friend) = (id(9921), id(9922));
     let item = |owner_id, group_owned| aurora_net::build::TaskItem {
@@ -849,6 +931,57 @@ fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
     assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
     assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn an_object_rezzes_from_contents_when_the_agent_may_copy_it_and_its_owner_transfer_it() {
+    let (agent, other, library, group) = (id(9931), id(9932), id(9933), id(9934));
+    let item = |owner_id, group_owned, owner_mask, group_mask, everyone_mask| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        group_id: group,
+        owner_mask,
+        group_mask,
+        everyone_mask,
+        asset_type: 6,
+        inv_type: 6,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own object, full permissions", item(agent, false, FULL, 0, 0), group, true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0, 0), group, false),
+        ("no transfer, even its own", item(agent, false, COPY | MODIFY, 0, 0), group, false),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0, 0), group, true),
+        ("group owned, active group may copy", item(group, true, FULL, COPY, 0), group, true),
+        (
+            "group owned, another active group",
+            item(group, true, FULL, COPY, 0),
+            Uuid::nil(),
+            false,
+        ),
+        (
+            "group owned, owner may not transfer",
+            item(group, true, COPY | MODIFY, COPY, COPY),
+            group,
+            false,
+        ),
+        (
+            "someone else's, everyone may copy",
+            item(other, false, FULL, 0, COPY),
+            Uuid::nil(),
+            true,
+        ),
+        (
+            "someone else's, no copy for everyone",
+            item(other, false, FULL, 0, 0),
+            Uuid::nil(),
+            false,
+        ),
+        ("a Library item", item(library, false, FULL, 0, COPY | TRANSFER), Uuid::nil(), true),
+    ];
+    for (what, item, active, allowed) in cases {
+        assert_eq!(task_rez_allowed(&item, agent, active), allowed, "{what}");
+    }
 }
 
 #[test]

@@ -157,6 +157,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
+            NetCommand::ModerateText { session, agent, allow } => self.moderate_text(*session, *agent, *allow),
             NetCommand::Call {
                 method,
                 session,
@@ -257,6 +258,29 @@ impl Session<'_> {
                 result,
                 not_found,
             });
+        });
+    }
+
+    /// POST a moderator's "mute update" to ChatSessionRequest
+    /// (LLIMSpeakerMgr::allowTextChat, moderationActionCoro): only a
+    /// failure answers; the change itself comes back as an agent update.
+    fn moderate_text(&mut self, session: uuid::Uuid, agent: uuid::Uuid, allow: bool) {
+        let Some(url) = self.main_cap("ChatSessionRequest") else {
+            log::warn!("ChatSessionRequest: no capability (mute update)");
+            emit(self.sh, NetEvent::SessionModerationFailed { session, forbidden: false });
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let body = crate::social::mute_update_body(session, agent, allow);
+            if let Err(e) = crate::caps::post_llsd(&http, &url, &body).await {
+                log::warn!("ChatSessionRequest mute update for {session}: {e}");
+                let _ = events.send(NetEvent::SessionModerationFailed {
+                    session,
+                    forbidden: matches!(e, crate::caps::CapsError::Status(403)),
+                });
+            }
         });
     }
 
@@ -577,6 +601,22 @@ impl Session<'_> {
             emit(self.sh, NetEvent::MuteList(MuteListSource::ServerEmpty));
         } else if field_str(method) == EMPTY_MUTE_LIST {
             log::warn!("emptymutelist for another agent ({agent})");
+        }
+    }
+
+    /// "URLFloater" (LLUrlFloaterDispatchHandler): only for our agent, as
+    /// process_generic_message drops the messages of another one.
+    pub(super) fn on_url_floater_generic(&self, agent: uuid::Uuid, method: &[u8], parameter: &[u8]) {
+        if field_str(method) != crate::url_floater::METHOD {
+            return;
+        }
+        if agent != self.agent_id() {
+            log::warn!("URLFloater for another agent ({agent})");
+            return;
+        }
+        if let Some(url) = crate::url_floater::url(parameter) {
+            log::info!("URLFloater: {url}");
+            emit(self.sh, NetEvent::UrlFloater { url });
         }
     }
 }

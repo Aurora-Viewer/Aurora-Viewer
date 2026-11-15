@@ -7,6 +7,8 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// Aurora's own marked in its gradient, outside Preferences too.
+pub(crate) use pages::aurora::aurora_word;
 mod saved_graphics;
 mod scale;
 
@@ -303,6 +305,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
+        "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
         _ => None,
     };
     let audio = match what {
@@ -506,6 +509,9 @@ pub struct OptionsUi {
     pub chat_log_status: String,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
+    /// The transcripts are in the Legacy layout, shared with the Legacy
+    /// Viewer: no import nor erasing (set by the app).
+    pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// "Reset …?" confirmation open, then the reset it said yes to, done by
@@ -753,7 +759,8 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
         Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
-        Failure::Unsupported => aurora_i18n::tr!("media-plugins-error-unsupported"),
+        // the media pack goes to the data folder: never a drive root's
+        Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
 }
 
@@ -945,6 +952,45 @@ fn maturity_choice(ui: &mut egui::Ui, p: &Palette, access: aurora_net::search::A
         super::widgets::maturity_badges_up_to(ui, p, access.preferred, 16.0);
     });
     (picked != access.preferred).then_some(picked)
+}
+
+/// The order of the transparent surfaces (`Settings::blend_order`): its
+/// three methods in a list and, beside it while the exact order is chosen,
+/// that order's precision side by side, as the graphics levels. The
+/// precision comes back as it was left when the exact order is chosen again.
+fn blend_order_choice(ui: &mut egui::Ui, p: &Palette, order: &mut u8) -> bool {
+    use crate::graphics_presets::BlendMethod;
+    use aurora_i18n::tr;
+    let before = *order;
+    let kept = egui::Id::unique("preferences blend order precision");
+    let mut method = BlendMethod::of(*order);
+    if method == BlendMethod::Exact {
+        ui.data_mut(|d| d.insert_temp(kept, *order));
+    }
+    let methods = [
+        (BlendMethod::Standard, tr!("ui-options-blend-order-standard")),
+        (BlendMethod::Exact, tr!("ui-options-blend-order-exact")),
+        (BlendMethod::Stochastic, tr!("ui-options-blend-order-stochastic")),
+    ];
+    if combo(ui, &mut method, &methods) {
+        let precision = ui.data(|d| d.get_temp::<u8>(kept)).unwrap_or(0);
+        *order = method.order(precision);
+    }
+    if method == BlendMethod::Exact {
+        segmented(ui, p, order, &blend_precisions().map(|(v, label)| (v, label, true)));
+    }
+    *order != before
+}
+
+/// The precisions of the exact order, lightest first.
+fn blend_precisions() -> [(u8, &'static str); 4] {
+    use aurora_i18n::tr;
+    [
+        (1, tr!("ui-options-blend-order-fast")),
+        (2, tr!("ui-options-blend-order-balanced")),
+        (3, tr!("ui-options-blend-order-high")),
+        (4, tr!("ui-options-blend-order-full")),
+    ]
 }
 
 /// The five graphics levels, side by side; none is lit once a setting of

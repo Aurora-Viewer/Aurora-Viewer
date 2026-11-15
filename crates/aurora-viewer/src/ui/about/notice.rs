@@ -150,4 +150,40 @@ mod tests {
             Block::Row { work, licence } => !work.is_empty() && !licence.is_empty() && !licence.contains("]("),
         }));
     }
+
+    /// A ported file renamed or moved must keep its authors' credit: every
+    /// path of the "Authors of the ported code" table still exists. A path
+    /// starting with a crate (`aurora-viewer/src/…`) sets the folder of the
+    /// short ones after it, up to the next `;`.
+    #[test]
+    fn the_ported_code_credits_name_files_that_exist() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let table = NOTICE
+            .split("## Authors of the ported code")
+            .nth(1)
+            .and_then(|s| s.split("\n## ").next())
+            .expect("NOTICE.md credits the authors of the ported code");
+        let mut checked = 0;
+        let mut missing = Vec::new();
+        for row in table.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| Original")) {
+            let ported = row.split('|').nth(2).unwrap_or_default();
+            for group in ported.split(';') {
+                let mut base = String::new();
+                for path in group.split('`').skip(1).step_by(2) {
+                    let full = if path.starts_with("aurora-") {
+                        base = path.split_once("/src/").map(|(c, _)| format!("{c}/src/")).unwrap_or_default();
+                        path.to_owned()
+                    } else {
+                        format!("{base}{path}")
+                    };
+                    checked += 1;
+                    if !crates.join(&full).exists() {
+                        missing.push(full);
+                    }
+                }
+            }
+        }
+        assert!(checked > 50, "the table's paths were not read");
+        assert!(missing.is_empty(), "NOTICE.md credits files that no longer exist: {missing:?}");
+    }
 }

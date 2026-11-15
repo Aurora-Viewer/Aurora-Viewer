@@ -48,3 +48,6 @@ Thumbs.db
 
 # Per-task scratch files (agents)
 /.scratch/
+
+# Python's bytecode caches (scripts/*.py)
+__pycache__/

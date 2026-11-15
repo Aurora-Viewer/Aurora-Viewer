@@ -501,7 +501,7 @@ impl MediaManager {
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
     /// unloaded, a refused one is no longer wanted. Media on items we wear
-    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// (whoever made them) is not asked about (`filter_trust_own_worn`). A
     /// script, a file of this computer or a browser page never loads, with
     /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
@@ -648,7 +648,7 @@ impl MediaManager {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
         let paths = self.paths.clone();
-        let browser = browser_settings(f.cache_dir, f.language);
+        let browser = browser_settings(f.cache_dir, f.language, f.settings);
         for m in &mut self.impls {
             if m.priority == Priority::Unloaded {
                 if m.plugin.take().is_some() {

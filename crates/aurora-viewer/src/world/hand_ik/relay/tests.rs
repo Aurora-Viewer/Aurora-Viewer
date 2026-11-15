@@ -51,6 +51,7 @@ fn envelope(world: &World, message: &str) -> ChatMessage {
         owner_id: world.agent_id,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::OwnerSay,
+        region: None,
         position: Vec3::ZERO,
         message: format!(
             "<auroraIKRelay>{SESSION}|{}|{RIDER}|{message}</auroraIKRelay>",
