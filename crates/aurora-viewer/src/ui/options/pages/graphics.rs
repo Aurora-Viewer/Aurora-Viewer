@@ -156,6 +156,18 @@ fn weather(cx: &mut Cx) {
                 tr!("ui-weather-deep-snow-tip"),
                 &field!(weather.snow_deep),
             );
+            // right under it, greyed while it is off: a cog behind a cog
+            // is not how the other options read
+            let no_deep = !cx.s.weather.snow_deep;
+            cx.greyed(no_deep);
+            cx.slider_whole(
+                tr!("ui-weather-deep-snow-reach"),
+                tr!("ui-weather-deep-snow-reach-tip"),
+                &field!(weather.snow_deep_reach),
+                crate::weather::DEEP_SNOW_REACH,
+                " m",
+            );
+            cx.greyed(false);
         });
         cx.toggle(
             tr!("ui-weather-avatar-snow"),
