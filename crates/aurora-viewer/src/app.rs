@@ -7549,6 +7549,14 @@ impl App {
         if let Some(input) = input {
             let b = crate::keybinds::Binding::captured(input, mods);
             if crate::keybinds::is_chat(action) && !crate::keybinds::chat_accepts(&b) {
+                // say why the old key stays, instead of a capture that
+                // seems to have missed the press
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("keybinds-chat-typing").to_owned(),
+                    aurora_i18n::tr!("keybinds-chat-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
                 return;
             }
             self.settings.keybinds.set(action, slot, Some(b));

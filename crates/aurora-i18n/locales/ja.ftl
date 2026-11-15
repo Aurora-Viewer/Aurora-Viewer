@@ -8472,6 +8472,7 @@ ui-options-listen = 聞く
 ui-audio-listen-to-parcel-music = 区画の音楽を聞く
 keybinds-type-in-chat = チャットに入力
 keybinds-chat-typing = チャット（入力中）
+keybinds-chat-refused = { $keys }はチャットのキーに設定できません。Enter、Ctrl＋W、Ctrl＋Fはチャット欄での役割が決まっており、チャット欄はマウスボタンやこの種類のキーを受け取りません。以前のキーをそのまま使います。
 keybinds-chat-new-line = 改行
 keybinds-chat-shout = 近くのチャットでシャウト
 keybinds-chat-whisper = 近くのチャットでささやく

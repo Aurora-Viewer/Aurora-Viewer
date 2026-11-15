@@ -8521,6 +8521,7 @@ ui-options-listen = Listen
 ui-audio-listen-to-parcel-music = Listen to parcel music
 keybinds-type-in-chat = Type in chat
 keybinds-chat-typing = Chat (while typing)
+keybinds-chat-refused = { $keys } cannot be a chat key: Enter, Ctrl+W and Ctrl+F keep their use in the chat field, and the field never receives mouse buttons or this kind of key. The previous key is kept.
 keybinds-chat-new-line = New line
 keybinds-chat-shout = Shout in nearby chat
 keybinds-chat-whisper = Whisper in nearby chat

@@ -8526,6 +8526,7 @@ ui-options-listen = Écouter
 ui-audio-listen-to-parcel-music = Écouter la musique de la parcelle
 keybinds-type-in-chat = Écrire dans le chat
 keybinds-chat-typing = Chat (pendant la saisie)
+keybinds-chat-refused = { $keys } ne peut pas être une touche du chat : Entrée, Ctrl+W et Ctrl+F gardent leur rôle dans le champ du chat, et le champ ne reçoit ni les boutons de la souris ni ce type de touche. La touche précédente est conservée.
 keybinds-chat-new-line = Nouvelle ligne
 keybinds-chat-shout = Crier dans le chat local
 keybinds-chat-whisper = Chuchoter dans le chat local
