@@ -305,7 +305,8 @@ fn every_badge(state: &mut State) {
 
 /// `legacy`: Firestorm's table for this run, whatever the preference says.
 pub fn legacy() -> bool {
-    mode() == Some(Mode::Legacy)
+    // AURORA_DEMO_RADAR_MARKS=legacy shows its marks in the same table
+    mode() == Some(Mode::Legacy) || crate::ui::avatar_marks::demo_legacy()
 }
 
 /// The first friend of the demo buddy list (a display name "Nova ♪").

@@ -1231,3 +1231,79 @@ fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_disti
     assert_eq!(task_script_mask(&script, agent, false), FULL);
     assert_eq!(task_notecard_mask(&note, agent, false, false), FULL);
 }
+
+#[test]
+fn an_experience_logo_is_a_full_permission_texture_or_none() {
+    let (agent, other, group, library, asset) = (id(9981), id(9982), id(9983), id(9984), id(9985));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert!(experience_logo_allowed(&inv, Uuid::nil()), "no logo");
+    assert!(!experience_logo_allowed(&inv, asset), "not in the inventory");
+    let mut logo = |item: InvItem| {
+        inv.items.clear();
+        inv.items.insert(item.id, item);
+        experience_logo_allowed(&inv, asset)
+    };
+    // the owner's, full permissions
+    let mine = InvItem {
+        id: id(9986),
+        owner: agent,
+        asset_id: asset,
+        asset_type: 0,
+        inv_type: 0,
+        owner_mask: FULL,
+        ..Default::default()
+    };
+    assert!(logo(mine.clone()));
+    // no copy, no modify, no transfer
+    for missing in [COPY, MODIFY, TRANSFER] {
+        assert!(!logo(InvItem {
+            owner_mask: FULL & !missing,
+            ..mine.clone()
+        }));
+    }
+    // group-owned: what it allows everyone (LLViewerInventoryItem::getPermissionMask)
+    let shared = InvItem {
+        owner: group,
+        group_id: group,
+        group_owned: true,
+        group_mask: FULL,
+        everyone_mask: 0,
+        ..mine.clone()
+    };
+    assert!(!logo(shared.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..shared
+    }));
+    // someone else's: their everyone mask
+    let theirs = InvItem {
+        owner: other,
+        everyone_mask: COPY | TRANSFER,
+        ..mine.clone()
+    };
+    assert!(!logo(theirs.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..theirs
+    }));
+    // a Library texture: what the Library allows everyone
+    let lib = InvItem {
+        owner: library,
+        everyone_mask: COPY,
+        ..mine.clone()
+    };
+    assert!(!logo(lib.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..lib
+    }));
+    // only a texture
+    assert!(!logo(InvItem {
+        asset_type: 7,
+        inv_type: 7,
+        ..mine
+    }));
+}

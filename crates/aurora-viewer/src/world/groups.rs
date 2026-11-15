@@ -264,6 +264,8 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -888,6 +890,8 @@ impl World {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
+            // FSOpenIMContainerOnOfflineMessage (`Social::offline_ims`)
+            self.social.offline_ims |= inv.offline;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
         }

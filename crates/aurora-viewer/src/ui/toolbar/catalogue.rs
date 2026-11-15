@@ -82,8 +82,10 @@ pub const COMMANDS: &[Command] = commands![
     "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Aurora's own: the Director, a camera track to film with
+    "director", "movie", "toolbar-command-director", true;
     // Firestorm's, not in Aurora yet
-    "avatar", "user-circle", "toolbar-command-avatar", false;
+    "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
