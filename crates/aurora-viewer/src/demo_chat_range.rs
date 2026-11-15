@@ -29,7 +29,8 @@ fn parse(v: &str) -> Option<Option<ChatStyle>> {
     }
 }
 
-const NEAR_RESIDENT: Uuid = Uuid::from_u128(0xC4A7_4A9E_0000_0000_0000_0000_0000_0001);
+/// The demo's Nova, whose name stays hers (the name cache knows her).
+const NEAR_RESIDENT: Uuid = crate::demo::DEMO_NOVA;
 const FAR_RESIDENT: Uuid = Uuid::from_u128(0xC4A7_4A9E_0000_0000_0000_0000_0000_0002);
 const FAR_OBJECT: Uuid = Uuid::from_u128(0xC4A7_4A9E_0000_0000_0000_0000_0000_0003);
 const NEAR_OBJECT: Uuid = Uuid::from_u128(0xC4A7_4A9E_0000_0000_0000_0000_0000_0004);
