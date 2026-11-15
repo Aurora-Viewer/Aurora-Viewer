@@ -9152,6 +9152,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);
     }
+    if let Some(banner) = experience::banner_pixels(id) {
+        return Some(banner);
+    }
     if let Some(snapshot) = pick_snapshot(id) {
         return Some(snapshot);
     }

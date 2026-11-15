@@ -197,6 +197,11 @@ impl Drag {
         aspect_rect(self.start, rect, self.edge, ratio, chrome, self.minimum, self.bounds)
     }
 
+    /// `rect` no wider than `max`: the dragged side stops, the other stays.
+    pub(super) fn cap_width(self, rect: Rect, max: f32) -> Rect {
+        cap_width(rect, self.edge, max)
+    }
+
     pub(super) fn prepare(ctx: &Context, window: Id, minimum: Vec2) -> Option<Self> {
         let mut drag = ctx.data_mut(|data| data.get_temp::<Self>(window.with("floater_resize")));
         if drag.is_some() && ctx.input(|input| !input.pointer.primary_down() && !input.pointer.primary_released()) {
@@ -264,6 +269,20 @@ impl Drag {
 /// they were; a side grows the other dimension away from the window's top
 /// or left. The size stays between `minimum` and the room `bounds` leaves
 /// on the sides that move, both taken on the ratio.
+/// [`Drag::cap_width`]: the dragged side brought back to `max` from the
+/// other one.
+fn cap_width(mut rect: Rect, edge: Edge, max: f32) -> Rect {
+    if rect.width() <= max {
+        return rect;
+    }
+    if edge.left() {
+        rect.min.x = rect.max.x - max;
+    } else {
+        rect.max.x = rect.min.x + max;
+    }
+    rect
+}
+
 fn aspect_rect(start: Rect, rect: Rect, edge: Edge, ratio: f32, chrome: Vec2, minimum: Vec2, bounds: Rect) -> Rect {
     let ratio = ratio.clamp(0.2, 5.0);
     let body = (rect.size() - chrome).max(Vec2::splat(1.0));
@@ -801,6 +820,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_capped_width_stops_the_dragged_side_only() {
+        let rect = Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(700.0, 300.0));
+        assert_eq!(
+            cap_width(rect, Edge::Right, 400.0),
+            Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(500.0, 300.0))
+        );
+        assert_eq!(
+            cap_width(rect, Edge::LeftTop, 400.0),
+            Rect::from_min_max(egui::pos2(300.0, 0.0), egui::pos2(700.0, 300.0))
+        );
+        assert_eq!(cap_width(rect, Edge::Bottom, 600.0), rect);
     }
 
     #[test]

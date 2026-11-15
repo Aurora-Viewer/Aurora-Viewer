@@ -10,6 +10,11 @@
 //! LLPanelExperiencePicker (llpanelexperiencepicker.cpp) and the Events tab
 //! LLPanelExperienceLog (llpanelexperiencelog.cpp). The acquire button and
 //! the search's next / previous page are not ported yet.
+//!
+//! Where the Legacy Viewer lists names, a row here is a card: the name, the
+//! rating badge and the scope, and the experience's banner (`logo` of its
+//! profile) fading in on the right; a right click copies its SLURL, like the
+//! Legacy Viewer's links. A banner is fetched only once its card shows.
 
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
@@ -17,7 +22,8 @@ use crate::world::World;
 use crate::world::experience_log;
 use crate::world::experiences::Experiences;
 use aurora_net::experience::ExperienceListKind;
-use egui::{RichText, Vec2};
+use egui::{Color32, Rect, RichText, Vec2};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const WINDOW: &str = "experiences";
@@ -50,6 +56,8 @@ pub struct ExperiencesUi {
     page: usize,
     /// The selected event: its index in the log.
     selected: Option<usize>,
+    /// Banners to decode for the cards on screen.
+    pub wanted_images: HashSet<Uuid>,
 }
 
 impl Default for ExperiencesUi {
@@ -62,12 +70,20 @@ impl Default for ExperiencesUi {
             max_rating: 42,
             page: 0,
             selected: None,
+            wanted_images: HashSet::new(),
         }
     }
 }
 
 impl ExperiencesUi {
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        open: &mut bool,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+    ) {
         if !*open {
             self.shown = false;
             return;
@@ -103,7 +119,7 @@ impl ExperiencesUi {
             widgets::tabs(ui, p, &mut self.tab, &labels);
             ui.add_space(8.0);
             match self.tab {
-                SEARCH_TAB => return self.search(ui, p, world),
+                SEARCH_TAB => return self.search(ui, p, world, images),
                 LOG_TAB => return self.log(ui, p, world),
                 _ => {}
             }
@@ -118,7 +134,7 @@ impl ExperiencesUi {
                     Some(Some(ids)) if ids.is_empty() => empty(ui, p, "flask-filled", aurora_i18n::tr!("ui-experiences-none")),
                     Some(Some(ids)) => {
                         for id in sorted(&ids, &world.experiences) {
-                            if row(ui, p, world, id) {
+                            if row(ui, p, world, images, &mut self.wanted_images, id) {
                                 open_profile = Some(id);
                             }
                         }
@@ -134,7 +150,7 @@ impl ExperiencesUi {
 impl ExperiencesUi {
     /// LLPanelExperiencePicker: a name, Go, the highest rating, and the
     /// experiences found (rows of the same kind as the lists').
-    fn search(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World) {
+    fn search(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
         let mut go = false;
         ui.horizontal(|ui| {
             let field = widgets::search_field(ui, p, &mut self.query, aurora_i18n::tr!("ui-experiences-search-hint"), 260.0);
@@ -182,7 +198,10 @@ impl ExperiencesUi {
                         );
                     }
                     for e in list {
-                        if found_row(ui, p, &e) {
+                        // the banner of an experience whose profile is known
+                        // (the search does not give it)
+                        let logo = world.experiences.details.get(&e.id).map_or(Uuid::nil(), |d| d.logo);
+                        if found_row(ui, p, &e, images, &mut self.wanted_images, logo) {
                             open_profile = Some(e.id);
                         }
                     }
@@ -343,8 +362,23 @@ fn filter_found(mut list: Vec<aurora_net::land::FoundExperience>, max_rating: u8
 
 /// One experience found: name and rating; the card opens the profile. True
 /// when it was clicked.
-fn found_row(ui: &mut egui::Ui, p: &Palette, e: &aurora_net::land::FoundExperience) -> bool {
-    card(ui, p, ("xp_found", e.id), e.name.trim(), e.maturity, None)
+fn found_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    e: &aurora_net::land::FoundExperience,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+    logo: Uuid,
+) -> bool {
+    let card = Card {
+        id: e.id,
+        salt: "xp_found",
+        name: e.name.trim(),
+        maturity: e.maturity,
+        scope: None,
+        logo,
+    };
+    card.show(ui, p, images, wanted)
 }
 
 fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
@@ -369,55 +403,154 @@ fn sorted(ids: &[Uuid], xp: &Experiences) -> Vec<Uuid> {
 
 /// One experience: its name, rating and scope; the card opens the profile.
 /// True when it was clicked.
-fn row(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) -> bool {
+fn row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &mut World,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
+    id: Uuid,
+) -> bool {
     world.experiences.want(id);
     let name = label(&world.experiences, id);
-    match world.experiences.details.get(&id).filter(|d| !d.invalid()) {
-        Some(d) => {
-            let scope = if d.grid_wide() {
-                aurora_i18n::tr!("ui-group-experiences-grid")
-            } else {
-                aurora_i18n::tr!("ui-group-experiences-land")
-            };
-            card(ui, p, ("xp_row", id), &name, d.maturity, Some(scope))
+    let details = world.experiences.details.get(&id).filter(|d| !d.invalid());
+    let scope = details.map(|d| {
+        if d.grid_wide() {
+            aurora_i18n::tr!("ui-group-experiences-grid")
+        } else {
+            aurora_i18n::tr!("ui-group-experiences-land")
         }
-        None => card(ui, p, ("xp_row", id), &name, 0, None),
-    }
+    });
+    let card = Card {
+        id,
+        salt: "xp_row",
+        name: &name,
+        maturity: details.map_or(0, |d| d.maturity),
+        scope,
+        logo: details.map_or(Uuid::nil(), |d| d.logo),
+    };
+    card.show(ui, p, images, wanted)
 }
 
-/// A clickable card: an icon tile, the name, the rating badge (when known)
-/// and the scope, and a chevron. True when clicked.
-fn card(ui: &mut egui::Ui, p: &Palette, id: (&str, Uuid), name: &str, maturity: u8, scope: Option<&str>) -> bool {
-    let frame = egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
+/// A clickable experience card.
+struct Card<'a> {
+    id: Uuid,
+    /// What tells its clicks from those of the same experience elsewhere.
+    salt: &'static str,
+    name: &'a str,
+    /// SIM_ACCESS_*, 0 while unknown (no badge).
+    maturity: u8,
+    scope: Option<&'a str>,
+    /// The experience's banner, nil when it has none.
+    logo: Uuid,
+}
+
+/// The share of a card the banner takes on the right, at most this wide,
+/// and the share of the banner the card's colour fades over.
+const CARD_BANNER_SHARE: f32 = 0.55;
+const CARD_BANNER_MAX: f32 = 260.0;
+const CARD_BANNER_FADE: f32 = 0.65;
+
+impl Card<'_> {
+    /// The name, the rating badge (when known) and the scope, the banner
+    /// on the right when the experience has one, and a chevron. True when
+    /// clicked; a right click offers "Copy SLurl".
+    fn show(&self, ui: &mut egui::Ui, p: &Palette, images: &HashMap<Uuid, egui::TextureHandle>, wanted: &mut HashSet<Uuid>) -> bool {
+        // painted once the card's size is known, under its text
+        let backdrop = ui.painter().add(egui::Shape::Noop);
+        let frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                tile(ui, p, "flask-filled");
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(name).size(13.0).strong().color(p.ink));
+                    ui.label(RichText::new(self.name).size(13.0).strong().color(p.ink));
                     ui.horizontal(|ui| {
-                        if maturity != 0 {
-                            widgets::maturity_badge_of(ui, p, maturity, 14.0);
+                        if self.maturity != 0 {
+                            widgets::maturity_badge_of(ui, p, self.maturity, 14.0);
                         }
-                        if let Some(scope) = scope {
+                        if let Some(scope) = self.scope {
                             ui.label(RichText::new(scope).size(11.5).color(p.muted));
                         }
                     });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
-                    paint_icon(ui, "chevron-right", rect, p.muted);
+                    let tint = if self.logo.is_nil() { p.muted } else { p.ink };
+                    paint_icon(ui, "chevron-right", rect, tint);
                 });
             });
         });
-    let rect = frame.response.rect;
-    let click = ui.interact(rect, ui.make_persistent_id(id), egui::Sense::click());
-    hover_tint(ui, p, rect, false);
-    ui.add_space(4.0);
-    click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+        let rect = frame.response.rect;
+        let banner = if self.logo.is_nil() {
+            None
+        } else {
+            if ui.is_rect_visible(rect) {
+                wanted.insert(self.logo);
+            }
+            images.get(&self.logo)
+        };
+        ui.painter().set(backdrop, card_backdrop(ui, p, rect, banner));
+        let click = ui.interact(rect, ui.make_persistent_id((self.salt, self.id)), egui::Sense::click());
+        super::experience_profile::name_menu(&click, p, self.id);
+        hover_tint(ui, p, rect, false);
+        ui.add_space(4.0);
+        click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+    }
+}
+
+/// A card's face: the row colour, and the banner over its right part, cut
+/// to the card's height around its middle, the row colour fading over its
+/// left part.
+fn card_backdrop(ui: &egui::Ui, p: &Palette, rect: Rect, banner: Option<&egui::TextureHandle>) -> egui::Shape {
+    let radius = ui.visuals().window_corner_radius;
+    let mut shapes = vec![egui::Shape::rect_filled(rect, radius, p.bar)];
+    if let Some(t) = banner {
+        let area = banner_area(rect);
+        let corners = egui::CornerRadius { nw: 0, sw: 0, ..radius };
+        let image = egui::epaint::RectShape::filled(area, corners, widgets::PICTURE_TINT).with_texture(t.id(), banner_uv(area.size()));
+        shapes.push(image.into());
+        let fade = Rect::from_min_max(area.min, egui::pos2(area.left() + area.width() * CARD_BANNER_FADE, area.bottom()));
+        shapes.push(horizontal_fade(fade, p.bar, Color32::TRANSPARENT));
+    }
+    egui::Shape::Vec(shapes)
+}
+
+/// The part of a card the banner covers: its right side.
+fn banner_area(card: Rect) -> Rect {
+    let width = (card.width() * CARD_BANNER_SHARE).min(CARD_BANNER_MAX);
+    Rect::from_min_max(egui::pos2(card.right() - width, card.top()), card.right_bottom())
+}
+
+/// The part of the banner (in the Legacy Viewer's shape,
+/// `experience_profile::BANNER_ASPECT`) that fills `area` without
+/// stretching: its whole width and a band around its middle, or its whole
+/// height and a band around its centre for an area taller than the banner.
+fn banner_uv(area: Vec2) -> Rect {
+    let aspect = super::experience_profile::BANNER_ASPECT;
+    let wanted = area.x / area.y.max(1.0);
+    if wanted >= aspect {
+        let h = aspect / wanted;
+        Rect::from_min_max(egui::pos2(0.0, 0.5 - h / 2.0), egui::pos2(1.0, 0.5 + h / 2.0))
+    } else {
+        let w = wanted / aspect;
+        Rect::from_min_max(egui::pos2(0.5 - w / 2.0, 0.0), egui::pos2(0.5 + w / 2.0, 1.0))
+    }
+}
+
+/// `rect` going from `left` to `right`, left to right.
+fn horizontal_fade(rect: Rect, left: Color32, right: Color32) -> egui::Shape {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+    let mut m = Mesh::default();
+    for (pos, color) in [
+        (rect.left_top(), left),
+        (rect.right_top(), right),
+        (rect.right_bottom(), right),
+        (rect.left_bottom(), left),
+    ] {
+        m.vertices.push(Vertex { pos, uv: WHITE_UV, color });
+    }
+    m.add_triangle(0, 1, 2);
+    m.add_triangle(0, 2, 3);
+    egui::Shape::mesh(m)
 }
 
 /// A rounded square holding an icon, the leading mark of a row.
@@ -523,8 +656,28 @@ mod tests {
                 };
                 (ui, world())
             },
-            |(ui, world), ctx, p| ui.show(ctx, p, world, &mut true),
+            |(ui, world), ctx, p| ui.show(ctx, p, world, &mut true, &HashMap::new()),
         );
+    }
+
+    #[test]
+    fn the_banner_fills_its_area_without_stretching() {
+        let aspect = crate::ui::experience_profile::BANNER_ASPECT;
+        // a wide card: the whole width, a band around the middle
+        let uv = banner_uv(Vec2::new(260.0, 52.0));
+        assert_eq!((uv.left(), uv.right()), (0.0, 1.0));
+        assert!((uv.center().y - 0.5).abs() < 1e-6);
+        assert!((aspect / uv.height() - 260.0 / 52.0).abs() < 1e-3);
+        // an area taller than the banner: the whole height
+        let uv = banner_uv(Vec2::new(50.0, 100.0));
+        assert_eq!((uv.top(), uv.bottom()), (0.0, 1.0));
+        assert!((uv.center().x - 0.5).abs() < 1e-6);
+        // the right side of the card, capped
+        let card = Rect::from_min_size(egui::pos2(10.0, 0.0), Vec2::new(800.0, 56.0));
+        let area = banner_area(card);
+        assert_eq!((area.right(), area.width(), area.height()), (810.0, CARD_BANNER_MAX, 56.0));
+        let small = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(200.0, 56.0));
+        assert_eq!(banner_area(small).width(), 200.0 * CARD_BANNER_SHARE);
     }
 
     #[test]

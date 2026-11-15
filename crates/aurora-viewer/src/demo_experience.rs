@@ -1,4 +1,4 @@
-//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes: experiences
+//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes|list: experiences
 //! asking for permissions without a grid. In SL, llRequestExperiencePermissions
 //! can follow any event of the script: a click (touch_start), walking into
 //! an object or a phantom volume (collision_start, volume_detect), arriving
@@ -17,7 +17,12 @@
 //!   greeter object the viewer has never seen;
 //! - `edit`: the club's experience is the agent's own: its profile opens on
 //!   the Edit tab (IsExperienceAdmin), and Save is answered as
-//!   UpdateExperience would.
+//!   UpdateExperience would;
+//! - `list`: Me › Experiences opens on its Allowed tab, which holds the club
+//!   and the plaza and four more experiences, most with a banner.
+//!
+//! The club's experience has a banner, a group and a Marketplace link (its
+//! profile's extended metadata), the plaza's has none of them.
 
 use super::{HANDLE, floor_at, height, prim, shape, te};
 use aurora_llsd::{Llsd, llsd_map};
@@ -33,6 +38,22 @@ use uuid::Uuid;
 /// The club's experience (door and pad), and the parcel's (greeter).
 pub const EXPERIENCE: Uuid = Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0001);
 pub const GREETER_EXPERIENCE: Uuid = Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0006);
+/// The other experiences of the `list` mode: allowed, never asking.
+const GALLERY: [Uuid; 4] = [
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0010),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0011),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0012),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0013),
+];
+/// The banners' textures: the club's, then the gallery's.
+const BANNERS: [Uuid; 4] = [
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0b00),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0b01),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0b02),
+    Uuid::from_u128(0xde7e_e8e0_0000_4000_8000_0000_0000_0b03),
+];
+/// When the `list` mode opens Me › Experiences.
+const LIST_FRAME: u64 = 360;
 const ARRIVE_FRAME: u64 = 300;
 const AUTO_FRAME: u64 = 420;
 /// PERMISSION_TELEPORT, PERMISSION_TRIGGER_ANIMATION, PERMISSION_CHANGE_ENVIRONMENT.
@@ -101,6 +122,7 @@ enum Mode {
     Arrive,
     Edit,
     Scenes,
+    List,
 }
 
 pub struct ExperienceDemo {
@@ -126,6 +148,8 @@ pub enum Reply {
     SayLogged(String, Box<NetEvent>),
     /// Nothing visible (logged).
     Nothing,
+    /// Open Me › Experiences.
+    OpenList,
 }
 
 impl ExperienceDemo {
@@ -139,6 +163,7 @@ impl ExperienceDemo {
             "arrive" => Mode::Arrive,
             "edit" => Mode::Edit,
             "scenes" => Mode::Scenes,
+            "list" => Mode::List,
             _ => Mode::Click,
         };
         let mut permissions = HashMap::new();
@@ -147,6 +172,11 @@ impl ExperienceDemo {
         }
         if mode == Mode::Scenes {
             permissions.insert(GREETER_EXPERIENCE, ExperiencePermission::Allowed);
+        }
+        if mode == Mode::List {
+            for id in [EXPERIENCE, GREETER_EXPERIENCE].into_iter().chain(GALLERY) {
+                permissions.insert(id, ExperiencePermission::Allowed);
+            }
         }
         Some(Self::new(mode, permissions))
     }
@@ -194,7 +224,7 @@ impl ExperienceDemo {
                 Mode::Walk => {
                     world.apply(pad());
                 }
-                Mode::Arrive | Mode::Scenes => {}
+                Mode::Arrive | Mode::Scenes | Mode::List => {}
                 _ => {
                     world.apply(door(world.agent.position));
                 }
@@ -217,6 +247,7 @@ impl ExperienceDemo {
                 log::info!("demo experience: the club's profile opens on its Edit tab");
                 None
             }
+            Mode::List if frame == LIST_FRAME => Some(Reply::OpenList),
             Mode::Scenes => match frame {
                 620 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, false)])),
                 900 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, true)])),
@@ -272,15 +303,13 @@ impl ExperienceDemo {
                 self.permissions.insert(source.experience, ExperiencePermission::Allowed);
                 Some(self.act(source))
             }
-            NetCommand::ExperienceInfo(ids) if ids.iter().any(|id| *id == EXPERIENCE || *id == GREETER_EXPERIENCE) => Some(Reply::Events(
-                vec![NetEvent::ExperienceInfo(ids.iter().map(|id| self.details(*id)).collect())],
-            )),
-            NetCommand::ExperienceAdmin(experience) if *experience == EXPERIENCE || *experience == GREETER_EXPERIENCE => {
-                Some(Reply::Events(vec![NetEvent::ExperienceAdmin {
-                    experience: *experience,
-                    admin: self.mode == Mode::Edit && *experience == EXPERIENCE,
-                }]))
-            }
+            NetCommand::ExperienceInfo(ids) if ids.iter().any(|id| known(*id)) => Some(Reply::Events(vec![NetEvent::ExperienceInfo(
+                ids.iter().map(|id| self.details(*id)).collect(),
+            )])),
+            NetCommand::ExperienceAdmin(experience) if known(*experience) => Some(Reply::Events(vec![NetEvent::ExperienceAdmin {
+                experience: *experience,
+                admin: self.mode == Mode::Edit && *experience == EXPERIENCE,
+            }])),
             NetCommand::UpdateExperience { experience, body } if *experience == EXPERIENCE && self.mode == Mode::Edit => {
                 // the server answers the saved row, its owner included
                 let mut row = body.clone();
@@ -297,7 +326,7 @@ impl ExperienceDemo {
                 }]))
             }
             NetCommand::MyExperiences => Some(Reply::Events(self.lists())),
-            NetCommand::ExperiencePermission { experience, change } if *experience == EXPERIENCE || *experience == GREETER_EXPERIENCE => {
+            NetCommand::ExperiencePermission { experience, change } if known(*experience) => {
                 let permission = match change {
                     ExperiencePermissionChange::Query => self.permission(*experience),
                     ExperiencePermissionChange::Allow => ExperiencePermission::Allowed,
@@ -323,6 +352,7 @@ impl ExperienceDemo {
         let with = |wanted: ExperiencePermission| {
             [EXPERIENCE, GREETER_EXPERIENCE]
                 .into_iter()
+                .chain(GALLERY)
                 .filter(|id| self.permission(*id) == wanted)
                 .collect::<Vec<_>>()
         };
@@ -405,18 +435,78 @@ fn question(source: Source) -> NetEvent {
     }
 }
 
+/// An experience of the demo.
+fn known(id: Uuid) -> bool {
+    id == EXPERIENCE || id == GREETER_EXPERIENCE || GALLERY.contains(&id)
+}
+
 fn details(id: Uuid) -> ExperienceDetails {
-    let (name, description, slurl) = if id == EXPERIENCE {
+    // (name, description, slurl, maturity, grid-wide, banner, group, marketplace)
+    let (name, description, slurl, maturity, grid, banner, group, marketplace) = if id == EXPERIENCE {
         (
             aurora_i18n::tr!("demo-experience-name"),
             aurora_i18n::tr!("demo-experience-description"),
             "secondlife:///app/region/Aurora%20Demo/150/140/60",
+            13,
+            false,
+            Some(BANNERS[0]),
+            super::DEMO_GROUP1,
+            "https://marketplace.example/stores/aurora-club",
         )
     } else if id == GREETER_EXPERIENCE {
         (
             aurora_i18n::tr!("demo-experience-greeter-name"),
             aurora_i18n::tr!("demo-experience-greeter-description"),
             "secondlife:///app/region/Aurora%20Demo/128/128/30",
+            13,
+            false,
+            None,
+            Uuid::nil(),
+            "",
+        )
+    } else if id == GALLERY[0] {
+        (
+            aurora_i18n::tr!("demo-experience-racing-name"),
+            aurora_i18n::tr!("demo-experience-racing-description"),
+            "secondlife:///app/region/Aurora%20Demo/40/220/90",
+            21,
+            true,
+            Some(BANNERS[1]),
+            Uuid::nil(),
+            "",
+        )
+    } else if id == GALLERY[1] {
+        (
+            aurora_i18n::tr!("demo-experience-dunes-name"),
+            aurora_i18n::tr!("demo-experience-dunes-description"),
+            "secondlife:///app/region/Aurora%20Demo/200/60/24",
+            42,
+            false,
+            Some(BANNERS[2]),
+            Uuid::nil(),
+            "",
+        )
+    } else if id == GALLERY[2] {
+        (
+            aurora_i18n::tr!("demo-experience-ferry-name"),
+            aurora_i18n::tr!("demo-experience-ferry-description"),
+            "",
+            13,
+            true,
+            None,
+            Uuid::nil(),
+            "",
+        )
+    } else if id == GALLERY[3] {
+        (
+            aurora_i18n::tr!("demo-experience-caves-name"),
+            aurora_i18n::tr!("demo-experience-caves-description"),
+            "secondlife:///app/region/Aurora%20Demo/90/30/12",
+            13,
+            false,
+            Some(BANNERS[3]),
+            Uuid::nil(),
+            "",
         )
     } else {
         return ExperienceDetails::unknown(id);
@@ -425,13 +515,78 @@ fn details(id: Uuid) -> ExperienceDetails {
         id,
         name: name.into(),
         description: description.into(),
-        properties: 0,
-        maturity: 13,
-        owner: Uuid::from_u128(0x2222),
-        group: Uuid::nil(),
+        properties: if grid { aurora_net::experience::PROPERTY_GRID } else { 0 },
+        maturity,
+        owner: super::DEMO_FRIEND,
+        group,
         slurl: slurl.into(),
+        logo: banner.unwrap_or_default(),
+        marketplace: marketplace.into(),
         ..Default::default()
     }
+}
+
+/// The pixels of a demo banner: a sky in two colours, a sun and two rows
+/// of hills, 512 × 256 like a banner uploaded to the grid (the profile
+/// shows it in the Legacy Viewer's shape whatever its pixels).
+pub fn banner_pixels(texture: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    // (sky top, sky bottom, sun, far hills, near hills)
+    const SCENES: [[[f32; 3]; 5]; 4] = [
+        [
+            [76.0, 29.0, 149.0],
+            [244.0, 114.0, 182.0],
+            [253.0, 224.0, 71.0],
+            [91.0, 33.0, 182.0],
+            [30.0, 27.0, 75.0],
+        ],
+        [
+            [14.0, 116.0, 144.0],
+            [125.0, 211.0, 252.0],
+            [255.0, 255.0, 255.0],
+            [13.0, 148.0, 136.0],
+            [17.0, 94.0, 89.0],
+        ],
+        [
+            [67.0, 20.0, 7.0],
+            [251.0, 146.0, 60.0],
+            [254.0, 240.0, 138.0],
+            [180.0, 83.0, 9.0],
+            [69.0, 26.0, 3.0],
+        ],
+        [
+            [23.0, 37.0, 84.0],
+            [99.0, 102.0, 241.0],
+            [165.0, 243.0, 252.0],
+            [55.0, 48.0, 163.0],
+            [15.0, 23.0, 42.0],
+        ],
+    ];
+    let scene = SCENES[BANNERS.iter().position(|b| b == texture)?];
+    const W: u32 = 512;
+    const H: u32 = 256;
+    let mix = |a: [f32; 3], b: [f32; 3], t: f32| [0, 1, 2].map(|i| (a[i] + (b[i] - a[i]) * t.clamp(0.0, 1.0)) as u8);
+    let mut px = Vec::with_capacity((W * H * 4) as usize);
+    for y in 0..H {
+        for x in 0..W {
+            let (fx, fy) = (x as f32 / W as f32, y as f32 / H as f32);
+            let far = 0.62 + 0.08 * (fx * 9.0).sin() + 0.04 * (fx * 23.0).sin();
+            let near = 0.78 + 0.07 * (fx * 5.0 + 1.3).sin() + 0.03 * (fx * 17.0).cos();
+            // round where the banner is shown (the Legacy Viewer's shape,
+            // as a creator draws it), not in the texture's 2:1 pixels
+            let sun = ((fx - 0.72) * crate::ui::experience_profile::BANNER_ASPECT).hypot(fy - 0.42) < 0.13;
+            let c = if fy > near {
+                scene[4].map(|v| v as u8)
+            } else if fy > far {
+                scene[3].map(|v| v as u8)
+            } else if sun {
+                scene[2].map(|v| v as u8)
+            } else {
+                mix(scene[0], scene[1], fy / far)
+            };
+            px.extend_from_slice(&[c[0], c[1], c[2], 255]);
+        }
+    }
+    Some((px, W, H))
 }
 
 /// llSetEnvironment of a land experience: a violet sunset over the sky and a
