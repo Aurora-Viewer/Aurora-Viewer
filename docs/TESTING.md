@@ -271,13 +271,14 @@ Both creation announcements and discovery replies must omit private destinations
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
 `AURORA_DEMO_PORTALS=rift|rift-reverse|rift-profile|rift-static` creates a portal
-at frame 660, after the loading fade, and frames it without the creation window.
-Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 675, 690, 700,
-705, 715, 725 and 780. Keep the initial cloud/stretch timing; the sideways
-opening must take about 0.32 seconds (0.56–0.88 seconds after spawning), with
-the cloud settled by 1.04 seconds. A dark cloud must swell before a crooked
-vertical fissure stretches and splits sideways into the vortex. Its rim must
-look diffuse and translucent, with soft wisps instead of a solid rounded tube.
+at frame 660, after the loading fade. All four views use the same portal seed.
+The camera frames its ground-aligned opening at frame 600.
+Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 673, 688, 697, 704,
+712, 728 and 780. A narrow plume of dark vapor grows upward. A fine crooked
+seam lights up from its center to its tips. Its two lips pull apart from about
+0.50 to 0.83 seconds after spawning. The traveling highlights then fade into
+separate wisps. Check that the background shows through the early vapor and
+that the interior currents shift in depth when viewed obliquely.
 Clouds and currents remain irregular after opening. `rift-reverse` observes the other
 side; `rift-profile` shows cloud depth and rim deformation at a grazing angle.
 Emissive curls must project in front of and behind the opening from this view,

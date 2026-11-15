@@ -19,7 +19,7 @@ struct Case {
 fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let cut = &object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()];
-    let opening = &object[object.find("fn portal_hash(").unwrap()..object.find("// Deform only the shared decorative geometry").unwrap()];
+    let opening = &object[object.find("fn portal_noise(").unwrap()..object.find("// Deform only the shared decorative geometry").unwrap()];
     // Exercise the actual GTAO entry points too: a colour-only cut leaves
     // invisible limbs in occlusion if a new depth/normal pass omits it.
     let mut normal_passes = String::new();
@@ -186,8 +186,9 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         (0, 0.0, false),
         (160, 0.0, false),
         (560, 0.5, false),
+        (645, 0.8, false),
         (720, 0.0, true),
-        (720, 0.8, false),
+        (720, 0.8, true),
         (900, 0.8, true),
         (1040, 0.2, true),
         (1800, 0.8, true),

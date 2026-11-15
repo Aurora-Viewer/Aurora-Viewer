@@ -34,9 +34,13 @@ fn portal_mesh() -> (Vec<Vertex>, Vec<u16>) {
         Vertex::new([WIDTH * scale, 0.0, HEIGHT * scale], [0.0, -1.0, 0.0], [1.0, 0.0]),
         Vertex::new([-WIDTH * scale, 0.0, HEIGHT * scale], [0.0, -1.0, 0.0], [0.0, 0.0]),
     ];
-    let mut indices = vec![0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0];
-    const AROUND: usize = 96;
-    const TUBE: usize = 12;
+    // Portal records are double-sided. A second coincident quad would
+    // blend the thin opening twice, including its glow, from either side.
+    let mut indices = vec![0, 1, 2, 0, 2, 3];
+    // The shader supplies the fine filaments. The cloud only needs a
+    // convex proxy enclosing the analytic density field, including at its poles.
+    const AROUND: usize = 64;
+    const TUBE: usize = 8;
     for i in 0..=AROUND {
         let u = i as f32 / AROUND as f32;
         let angle = u * std::f32::consts::TAU;
@@ -58,7 +62,7 @@ fn portal_mesh() -> (Vec<Vertex>, Vec<u16>) {
         }
     }
     let first = vertices.len();
-    const LATITUDE: usize = 24;
+    const LATITUDE: usize = 12;
     for i in 0..=AROUND {
         let u = i as f32 / AROUND as f32;
         let (sin, cos) = (u * std::f32::consts::TAU).sin_cos();
@@ -508,7 +512,13 @@ mod tests {
         assert_eq!(HEIGHT, aurora_render::PORTAL_HALF_HEIGHT);
         assert!(vertices.iter().any(|v| v.pos[1] > 0.07));
         assert!(vertices.iter().any(|v| v.pos[1] < -0.07));
-        for triangle in indices[12..12 + 96 * 12 * 6].as_chunks::<3>().0 {
+        let triangles = indices.as_chunks::<3>().0;
+        assert_eq!(triangles.iter().filter(|tri| vertices[tri[0] as usize].uv[0] <= 1.0).count(), 2);
+        let rim_triangles = triangles
+            .iter()
+            .filter(|tri| (2.0..=3.0).contains(&vertices[tri[0] as usize].uv[0]));
+        assert!(rim_triangles.clone().next().is_some());
+        for triangle in rim_triangles {
             let v = [triangle[0], triangle[1], triangle[2]].map(|i| vertices[i as usize]);
             let [a, b, c] = v.map(|v| Vec3::from(v.pos));
             let normal = Vec3::new(v[0].normal[0] as f32, v[0].normal[1] as f32, v[0].normal[2] as f32);

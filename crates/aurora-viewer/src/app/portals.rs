@@ -259,25 +259,57 @@ impl App {
             && !self.portal_ui.demo_seeded
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
         {
-            // Spawn after the loading fade so the cloud, fissure and opening
-            // can be captured with the same clock as a real new portal.
-            if mode.starts_with("rift") && self.frame_count < 660 {
+            // Frame the rift before it opens so the first wisp can be
+            // compared from a stationary camera.
+            let rift = mode.starts_with("rift");
+            if rift && self.frame_count < 660 && self.frame_count != 600 {
                 return;
             }
-            self.portal_ui.demo_seeded = true;
-            self.portal_ui.open = true;
-            self.portal_ui.destination = "Demo destination/128/128/25".into();
             let position = self.world.agent.position;
             let ahead = Vec3::new(self.world.agent.yaw.cos(), self.world.agent.yaw.sin(), 0.0);
-            let center = if mode.contains("-near-") {
+            let mut center = if mode.contains("-near-") {
                 position + ahead * 0.3
             } else if mode == "near" {
                 position
             } else {
                 position + ahead * 4.0
             };
+            if rift {
+                // Match placement from the portal window, including on a slope.
+                if let Some(floor) = self.scene.preview_floor(&self.world, center, position.z + 1.0) {
+                    center.z = floor + crate::world::portals::HEIGHT;
+                }
+                if self.frame_count == 600 {
+                    self.panels.chat = false;
+                    self.panels.people = false;
+                    self.panels.inventory = false;
+                    self.settings.reduce_motion = mode == "rift-static";
+                    let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
+                    let (side, facing) = match mode.as_str() {
+                        "rift-profile" => (4.5, 0.6),
+                        "rift-reverse" => (3.0, -4.0),
+                        _ => (3.0, 4.0),
+                    };
+                    self.camera.set_view(
+                        center + tangent * side + ahead * facing + Vec3::Z * 1.2,
+                        center,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                    return;
+                }
+            }
+            self.portal_ui.demo_seeded = true;
+            self.portal_ui.open = !rift;
+            self.portal_ui.destination = "Demo destination/128/128/25".into();
             let portal = Portal {
-                id: uuid::Uuid::new_v4(),
+                // The rift ID seeds the currents. Use the same pattern when
+                // comparing the front, reverse, grazing and still views.
+                id: if rift {
+                    uuid::Uuid::from_u128(0xA772)
+                } else {
+                    uuid::Uuid::new_v4()
+                },
                 region: self.world.main_region.unwrap_or(256),
                 center: center.to_array(),
                 yaw: self.world.agent.yaw,
@@ -372,31 +404,6 @@ impl App {
                 }
             } else if let Err(refusal) = state.create(portal, build, position, now, unix) {
                 self.portal_ui.notice = Some(refusal.message().into());
-            }
-            if mode.starts_with("rift") {
-                self.portal_ui.open = false;
-                self.panels.chat = false;
-                self.panels.people = false;
-                self.panels.inventory = false;
-                self.settings.reduce_motion = mode == "rift-static";
-                let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
-                let profile = mode == "rift-profile";
-                self.camera.set_view(
-                    center
-                        + tangent * if profile { 4.5 } else { 3.0 }
-                        + ahead
-                            * if mode == "rift-reverse" {
-                                -4.0
-                            } else if profile {
-                                0.6
-                            } else {
-                                4.0
-                            }
-                        + Vec3::Z * 1.2,
-                    center,
-                    &mut self.world.agent,
-                    &self.settings.camera,
-                );
             }
             self.world.portals = state;
         }

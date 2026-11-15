@@ -19,6 +19,7 @@ struct Layer {
     z: f32,
     rank: u32,
     glow: f32,
+    portal: bool,
 }
 
 const BACKGROUND: [f32; 3] = [0.2, 0.4, 0.6];
@@ -422,8 +423,8 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) @interpolate(flat)
     @location(1) world_pos:vec3<f32>,@location(2) uv:vec2<f32>,@location(3) normal:vec3<f32>}};
 struct Material {{color:vec4<f32>}};
 struct Shaded {{color:vec4<f32>}};
-struct Surface {{alpha:f32,color:vec3<f32>}};
-fn portal_surface(r:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->Surface {{return Surface(1.0,vec3<f32>(1.0));}}
+struct Surface {{alpha:f32,color:vec3<f32>,glow:f32}};
+fn portal_surface(r:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->Surface {{return Surface(0.2,vec3<f32>(1.0,0.1,0.1),0.6);}}
 fn apply_fog(c:vec3<f32>,p:vec3<f32>)->vec3<f32> {{return c;}}
 fn eval_material(v:VsOut,front:bool)->Material {{portal_clip(records[v.record],v.world_pos); return Material(records[v.record].base_color);}}
 fn legacy_may_glare(r:DrawRecord,m:Material,p:vec3<f32>,at:vec2<f32>)->bool {{return false;}}
@@ -700,6 +701,9 @@ impl Bench {
             .map(|l| {
                 let mut rec = [0; 28];
                 rec[0] = flags::ALPHA_BLEND | flags::DOUBLE_SIDED;
+                if l.portal {
+                    rec[0] |= flags::PORTAL_EFFECT;
+                }
                 if let Some(clip) = clip {
                     rec[0] |= flags::PORTAL_CLIP;
                     rec[24..28].copy_from_slice(&clip.data.map(f32::to_bits));
@@ -922,6 +926,7 @@ fn layer(rgb: [f32; 3], alpha: f32, z: f32) -> Layer {
         z,
         rank: 0,
         glow: 0.0,
+        portal: false,
     }
 }
 
@@ -1496,6 +1501,17 @@ fn the_glow_of_a_layer_is_dimmed_by_those_before_it_on_gpu() {
             assert!(near(&got[..3], &sorted(&two), EXACT));
         }
         assert!((filed_in_order(&order)[3] - want).abs() < 1.0e-4);
+    }
+    // The portal fixture supplies the same colour, coverage and glow as two[1].
+    let portal = Layer {
+        portal: true,
+        ..layer([0.0; 3], 0.0, two[1].z)
+    };
+    let rgb = sorted(&two);
+    let expected = [rgb[0], rgb[1], rgb[2], want];
+    for way in EVERY_WAY {
+        let got = bench.pixel(&[two[0], portal], 0.0, way, "a portal behind a layer");
+        assert!(near(&got, &expected, EXACT), "{way:?}: {got:?}, expected {expected:?}");
     }
     // the shells of a lamp, each glowing and each dimming those behind it:
     // one glow and three quarters, not three, in whatever order they come
