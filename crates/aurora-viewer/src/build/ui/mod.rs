@@ -14,6 +14,7 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+pub(crate) mod export;
 mod features;
 mod floaters;
 pub(crate) mod general;
@@ -200,6 +201,8 @@ pub struct FloaterState {
     pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
+    /// (object, item) of the contents to open in its window: a notecard,
+    /// or the preview of a texture, a sound or an animation.
     pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,

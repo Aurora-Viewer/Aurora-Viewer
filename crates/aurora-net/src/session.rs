@@ -1908,6 +1908,8 @@ impl Session<'_> {
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
             NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
+            NetCommand::ExperienceAdmin(experience) => self.experience_admin(experience),
+            NetCommand::UpdateExperience { experience, body } => self.update_experience(experience, body),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
                 let mut g = ObjectGrab::default();
@@ -3087,6 +3089,12 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::ForceAgentUpdate => {
+                self.agent_update.force();
+                if self.agent_moved && self.logout_started.is_none() {
+                    self.maybe_send_agent_update(Instant::now());
+                }
+            }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command
@@ -3386,9 +3394,35 @@ impl Session<'_> {
                         Ok(contents) => {
                             let _ = events.send(NetEvent::InventoryContents(contents));
                         }
+                        // One refused folder fails the whole batch: read each
+                        // one alone, so that only the folder the server
+                        // refuses by itself is over the limit
+                        // (BGFolderHttpHandler::processFailure splits a 403).
+                        Err(error) if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 => {
+                            for id in chunk {
+                                match crate::inventory::ais::fetch_folders(&http, &cap, owner, std::slice::from_ref(id)).await {
+                                    Ok(contents) => {
+                                        let _ = events.send(NetEvent::InventoryContents(contents));
+                                    }
+                                    Err(error) => {
+                                        log::warn!("inventory fetch of {id} failed: {error}");
+                                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                                            folders: vec![*id],
+                                            too_big: error.kind == crate::inventory::ais::FetchFailure::TooBig,
+                                            status: error.status,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             log::warn!("inventory fetch failed: {error}");
-                            let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                            let too_big = error.kind == crate::inventory::ais::FetchFailure::TooBig;
+                            let _ = events.send(NetEvent::InventoryFetchFailed {
+                                folders: chunk.to_vec(),
+                                too_big,
+                                status: error.status,
+                            });
                         }
                     }
                 }
@@ -3405,22 +3439,46 @@ impl Session<'_> {
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get(cap_name).cloned());
         let Some(url) = url else {
-            emit(self.sh, NetEvent::InventoryFetchFailed { folders });
+            emit(
+                self.sh,
+                NetEvent::InventoryFetchFailed {
+                    folders,
+                    too_big: false,
+                    status: None,
+                },
+            );
             return;
         };
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            for chunk in folders.chunks(16) {
-                let body = crate::inventory::fetch_request_body(chunk, owner);
+            // BGFolderHttpHandler::processFailure: a batch refused with 403 is
+            // too large and split; only a folder refused alone is over the
+            // limit (InventoryLimitReachedAIS).
+            let mut batches: Vec<Vec<uuid::Uuid>> = folders.chunks(16).rev().map(<[uuid::Uuid]>::to_vec).collect();
+            while let Some(chunk) = batches.pop() {
+                let body = crate::inventory::fetch_request_body(&chunk, owner);
                 match caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory).await {
                     Ok(v) => {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
                     }
+                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 => {
+                        let (first, second) = chunk.split_at(chunk.len() / 2);
+                        batches.push(second.to_vec());
+                        batches.push(first.to_vec());
+                    }
                     Err(e) => {
                         log::warn!("inventory fetch failed: {e}");
-                        let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                        let status = match &e {
+                            caps::CapsError::Status(status) => Some(*status),
+                            _ => None,
+                        };
+                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                            too_big: status == Some(403),
+                            folders: chunk,
+                            status,
+                        });
                     }
                 }
             }
@@ -3448,6 +3506,7 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
+            let count = if children.is_empty() { 1 } else { children.len() };
             let result = if let Some(cap) = ais {
                 crate::inventory::ais::fetch_tree(&http, &cap, owner, parent, &children, depth).await
             } else if let Some(url) = legacy {
@@ -3456,17 +3515,17 @@ impl Session<'_> {
                 caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory)
                     .await
                     .map(|v| crate::inventory::parse_fetch_response(&v))
-                    .map_err(|_| "inventory read failed")
+                    .map_err(crate::inventory::ais::FetchError::from)
             } else {
-                Err("no inventory capability")
+                Err(crate::inventory::ais::FetchError::new(
+                    crate::inventory::ais::FetchFailure::Fatal,
+                    None,
+                ))
             };
             if let Err(error) = result {
-                log::debug!("background inventory fetch of {parent} failed: {error}");
+                log::warn!("background inventory fetch of {parent} failed ({count} folders, depth {depth}): {error}");
             }
-            let _ = events.send(NetEvent::InventoryTreeFetched {
-                request,
-                result: result.map_err(str::to_owned),
-            });
+            let _ = events.send(NetEvent::InventoryTreeFetched { request, result });
         });
     }
 
@@ -3605,6 +3664,33 @@ impl Session<'_> {
                 change,
                 result,
             });
+        });
+    }
+
+    /// LLFloaterExperienceProfile::experienceIsAdmin: an administrator may
+    /// edit only where the region has UpdateExperience.
+    fn experience_admin(&self, experience: Uuid) {
+        let update = self.main_cap("UpdateExperience").is_some();
+        let cap = self.main_cap("IsExperienceAdmin");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let admin = update && crate::experience::is_admin(&http, cap.as_deref(), experience).await;
+            let _ = events.send(NetEvent::ExperienceAdmin { experience, admin });
+        });
+    }
+
+    /// LLExperienceCache::updateExperience, on a task.
+    fn update_experience(&self, experience: Uuid, body: aurora_llsd::Llsd) {
+        let cap = self.main_cap("UpdateExperience");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = crate::experience::update(&http, cap.as_deref(), experience, &body).await;
+            if let Err(e) = &result {
+                log::warn!("experience {experience} update: {e}");
+            }
+            let _ = events.send(NetEvent::ExperienceUpdated { experience, result });
         });
     }
 
@@ -3901,6 +3987,13 @@ impl Session<'_> {
                         NetEvent::RegionLinkLimit {
                             handle: sim.handle,
                             max_children,
+                        },
+                    );
+                    emit(
+                        self.sh,
+                        NetEvent::OpenRegionSettings {
+                            handle: sim.handle,
+                            settings: Box::new(crate::open_region::OpenRegionSettings::from_llsd(b)),
                         },
                     );
                 }

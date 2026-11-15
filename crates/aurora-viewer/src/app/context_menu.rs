@@ -440,6 +440,7 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
                     && let Some(object) = self.world.objects.get(linkset_root(&self.world, index))

@@ -17,7 +17,9 @@
 //! `:land-sales` on those pages): two parcels, our 512 m² given out of the
 //! 1 024 we may give, and eight weeks of accounts; `:experiences` the
 //! Experiences tab: the group owns the sandbox's doors, whose profile reads
-//! and changes our permission.
+//! and changes our permission. `:classic` anywhere after the scenario shows
+//! the classic window (Preferences › Aurora › Profiles), the section of the
+//! chosen tab open.
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
@@ -58,6 +60,11 @@ pub fn admin_tab() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| matches!(v.split(':').nth(1), Some("admin" | "identity")))
 }
 
+/// `<scenario>[:…]:classic`: the classic look of the group profile.
+pub fn profile_classic() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "classic"))
+}
+
 pub fn identity_section() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("identity"))
 }
@@ -95,6 +102,7 @@ fn group_experience() -> ExperienceDetails {
         owner: DEMO_LOUP,
         group: DEMO_GROUP1,
         slurl: "secondlife://Aurora%20D%C3%A9mo/64/200/24".into(),
+        ..Default::default()
     }
 }
 
