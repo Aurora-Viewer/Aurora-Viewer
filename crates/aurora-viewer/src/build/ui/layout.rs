@@ -761,8 +761,23 @@ pub(super) fn control(
     };
     ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_min_width(width);
+        let experimental = item == Item::StretchLinksets;
+        if experimental {
+            ui.spacing_mut().item_spacing.x = 6.0;
+        }
         let text = RichText::new(title(item)).size(common::BODY);
-        let response = widgets::checkbox(ui, p, &mut value, text);
+        let response = ui
+            .scope(|ui| {
+                if experimental {
+                    ui.set_max_width((ui.available_width() - 19.0).max(1.0));
+                }
+                widgets::checkbox(ui, p, &mut value, text)
+            })
+            .inner;
+        if experimental {
+            let (mark, _) = ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+            widgets::experimental_mark(ui, p, mark, ui.scope_id().with("stretch-linksets-experimental"));
+        }
         if response.changed() {
             match item {
                 Item::Face => tool.set_edit_mode(world, s, if value { EditMode::Face } else { EditMode::Move }),
