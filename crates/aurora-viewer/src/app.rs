@@ -10209,6 +10209,10 @@ impl App {
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::alpha_sort::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::alpha_sort::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -10518,6 +10522,9 @@ impl App {
         self.update_native_movelock();
         self.update_movement();
         self.update_weather_now();
+        if self.demo {
+            crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+        }
         self.update_audio();
         self.update_wind_sound(dt);
         self.update_thunder();
@@ -12144,13 +12151,17 @@ impl App {
             snow_fallen: self.scene.snow_trails.fallen,
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
-                // AURORA_SNOW_LYING=<0..1>: snow already lying that deep
-                // (demo captures of deep snow, which takes minutes to gather)
-                snow_lying: {
+                // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
+                // (demo captures of deep snow, which takes minutes to gather);
+                // else a region's snow so far. Neither with "Snow settles"
+                // off: the region's floor laid it again every frame (#3642)
+                snow_lying: if self.weather_now.snow_settles {
                     static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
                     LYING
                         .get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse().ok()))
                         .unwrap_or(self.snow_lying.0)
+                } else {
+                    0.0
                 },
                 trail_centre: self.trail_centre().truncate().to_array(),
                 clean: weather_clean,
@@ -15699,6 +15710,7 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::AuroraWeather => self.env_ui.weather_open = true,
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
                 kind => self.open_env_editor_snapshot(kind),
