@@ -19,6 +19,7 @@
 //! the text and the number of rules are capped.
 
 use super::{Category, Kind, Match, Preferences, Rule, StoreHint};
+use uuid::Uuid;
 
 pub const HEADER: &str = "# Aurora Auto-sort v1";
 /// The longest text read, in bytes.
@@ -183,8 +184,20 @@ pub fn export(prefs: &Preferences, share: &Share) -> String {
     }
     for (index, hint) in prefs.store_hints.iter().enumerate() {
         let store = clean(&hint.store).replace('=', " ");
-        if !store.is_empty() && share.hints.get(index).copied().unwrap_or(false) {
-            out.push(format!("store: {store} = {}", hint.category.key()));
+        if !share.hints.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        match hint.creator {
+            // a creator's id is public (an item's Properties show it): it may
+            // travel with the store it stands for
+            Some(creator) => out.push(format!(
+                "creator: {creator} = {} | {} | {}",
+                store.replace('|', " "),
+                hint.category.key(),
+                clean(&hint.creator_name).replace('|', " ")
+            )),
+            None if !store.is_empty() => out.push(format!("store: {store} = {}", hint.category.key())),
+            None => {}
         }
     }
     if share.base && !prefs.base.trim().is_empty() {
@@ -242,12 +255,7 @@ impl Imported {
         let hints = self
             .hints
             .iter()
-            .map(|h| {
-                prefs
-                    .store_hints
-                    .iter()
-                    .any(|mine| mine.store.trim().eq_ignore_ascii_case(h.store.trim()))
-            })
+            .map(|h| prefs.store_hints.iter().any(|mine| same_hint(mine, h)))
             .collect();
         (rules, hints)
     }
@@ -269,49 +277,119 @@ impl Imported {
         }
         for (index, hint) in self.hints.iter().enumerate() {
             let ticked = pick.hints.get(index).copied().unwrap_or(false);
-            let known = prefs
-                .store_hints
-                .iter()
-                .any(|h| h.store.trim().eq_ignore_ascii_case(hint.store.trim()));
+            let known = prefs.store_hints.iter().any(|h| same_hint(h, hint));
             if ticked && !known && prefs.store_hints.len() < MAX_RULES {
                 prefs.store_hints.push(hint.clone());
             }
         }
-        if !pick.options {
-            return;
-        }
-        if let Some(base) = &self.base {
+        if pick.base
+            && let Some(base) = &self.base
+        {
             prefs.base.clone_from(base);
         }
-        if let Some(stores) = self.stores {
+        if pick.stores
+            && let Some(stores) = self.stores
+        {
             prefs.stores = stores;
         }
-        if let Some(folders) = self.folders {
+        if pick.folders
+            && let Some(folders) = self.folders
+        {
             prefs.folders = folders;
         }
-        if let Some(kinds) = &self.kinds {
+        if pick.kinds
+            && let Some(kinds) = &self.kinds
+        {
             prefs.kinds.clone_from(kinds);
         }
     }
+
+    /// The options this text would change, as (which, now, then): the
+    /// Import window lists each one old → new, highlighted, apart from the
+    /// rules. An option the text sets to what the user already has is not
+    /// a change.
+    pub fn changes(&self, prefs: &Preferences) -> Vec<(OptionKind, String, String)> {
+        let kinds = |k: &[Kind]| k.iter().map(|k| k.key()).collect::<Vec<_>>().join(", ");
+        let mut out = Vec::new();
+        if let Some(base) = &self.base
+            && base.trim() != prefs.base.trim()
+        {
+            out.push((OptionKind::Base, prefs.base.trim().to_owned(), base.trim().to_owned()));
+        }
+        if let Some(stores) = self.stores
+            && stores != prefs.stores
+        {
+            out.push((OptionKind::Stores, on_off(prefs.stores).into(), on_off(stores).into()));
+        }
+        if let Some(folders) = self.folders
+            && folders != prefs.folders
+        {
+            out.push((OptionKind::Folders, on_off(prefs.folders).into(), on_off(folders).into()));
+        }
+        if let Some(new) = &self.kinds
+            && *new != prefs.kinds
+        {
+            out.push((OptionKind::Kinds, kinds(&prefs.kinds), kinds(new)));
+        }
+        out
+    }
+
+    /// How many of the user's defaults the text changes: each option that
+    /// differs, and each Pre-Trash rule (it sends things towards the Trash).
+    pub fn defaults_changed(&self, prefs: &Preferences) -> usize {
+        self.changes(prefs).len() + self.rules.iter().filter(|r| r.pre_trash).count()
+    }
 }
 
-/// What the user ticked in the Import window.
+/// An option a shared text may set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionKind {
+    Base,
+    Stores,
+    Folders,
+    Kinds,
+}
+
+/// What the user ticked in the Import window: each rule, each hint and each
+/// option apart.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Pick {
     pub rules: Vec<bool>,
     pub hints: Vec<bool>,
-    pub options: bool,
+    pub base: bool,
+    pub stores: bool,
+    pub folders: bool,
+    pub kinds: bool,
 }
 
 impl Pick {
-    /// Everything ticked but what the user already has.
+    /// What a file can safely bring is ticked, except what the user already
+    /// has. Left for the user to tick: every Pre-Trash rule (it sends things
+    /// towards the Trash) and a new sort folder name (it renames where
+    /// everything goes).
     pub fn new(found: &Imported, prefs: &Preferences) -> Self {
         let (rules, hints) = found.duplicates(prefs);
         Self {
-            rules: rules.into_iter().map(|dup| !dup).collect(),
+            rules: rules
+                .into_iter()
+                .zip(&found.rules)
+                .map(|(dup, rule)| !dup && !rule.pre_trash)
+                .collect(),
             hints: hints.into_iter().map(|dup| !dup).collect(),
-            options: true,
+            base: false,
+            stores: true,
+            folders: true,
+            kinds: true,
         }
+    }
+}
+
+/// The same hint: the same creator, or for store-name hints the same store.
+fn same_hint(a: &StoreHint, b: &StoreHint) -> bool {
+    match (a.creator, b.creator) {
+        (Some(x), Some(y)) => x == y,
+        (None, None) => a.store.trim().eq_ignore_ascii_case(b.store.trim()),
+        _ => false,
     }
 }
 
@@ -369,7 +447,25 @@ fn read_hint(value: &str) -> Option<StoreHint> {
     let (store, category) = value.rsplit_once('=')?;
     let store: String = store.trim().chars().take(64).collect();
     let category = Category::from_key(category.trim().to_lowercase().as_str())?;
-    (!store.is_empty()).then_some(StoreHint { store, category })
+    (!store.is_empty()).then_some(StoreHint {
+        store,
+        category,
+        ..Default::default()
+    })
+}
+
+/// `creator: <id> = <store> | <category> | <name>`.
+fn read_creator(value: &str) -> Option<StoreHint> {
+    let (creator, rest) = value.split_once('=')?;
+    let creator = Uuid::parse_str(creator.trim()).ok().filter(|c| !c.is_nil())?;
+    let parts: Vec<&str> = rest.split('|').map(str::trim).collect();
+    let category = Category::from_key(parts.get(1)?.to_lowercase().as_str())?;
+    Some(StoreHint {
+        store: parts.first()?.chars().take(64).collect(),
+        category,
+        creator: Some(creator),
+        creator_name: parts.get(2).map(|n| n.chars().take(64).collect()).unwrap_or_default(),
+    })
 }
 
 /// Read a pasted text. Never fails: what cannot be read is counted in
@@ -401,6 +497,7 @@ pub fn import(text: &str) -> Imported {
         let read = match key.trim().to_lowercase().as_str() {
             "rule" if found.rules.len() < MAX_RULES => read_rule(value).map(|r| found.rules.push(r)),
             "store" if found.hints.len() < MAX_RULES => read_hint(value).map(|h| found.hints.push(h)),
+            "creator" if found.hints.len() < MAX_RULES => read_creator(value).map(|h| found.hints.push(h)),
             "option" => value.split_once('=').and_then(|(name, value)| {
                 let value = value.trim();
                 match name.trim().to_lowercase().as_str() {

@@ -23,6 +23,7 @@ pub(super) enum Command {
     BulkPermissions(Vec<Uuid>),
     AutoSort(Uuid),
     SortEntries(Vec<Uuid>),
+    CreatorHint(Uuid),
     Rename(Uuid),
     Image(Uuid),
     Protect(Vec<Uuid>),
@@ -765,6 +766,19 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             ready && !trash && sort_enabled,
             sort_command,
         );
+        // Auto-sort's creator hint: everything this entry's creator made
+        // goes to one store folder, whatever its name says. Only the
+        // creator's id (public, as in Properties) is kept.
+        if single {
+            c.add(
+                "auto-sort-creator",
+                TEXT,
+                "user-filled",
+                aurora_i18n::tr!("inventory-sorter-menu-creator"),
+                ready && !trash && crate::world::inventory::sorter::creator_of(inv, id).is_some(),
+                Command::CreatorHint(id),
+            );
+        }
         c.add(
             "rename",
             TEXT,
@@ -1283,6 +1297,13 @@ pub(super) fn execute(
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
         Command::AutoSort(id) => st.open_sorter(id),
         Command::SortEntries(ids) => st.sort_entries(ids),
+        Command::CreatorHint(id) => {
+            let creator = crate::world::inventory::sorter::creator_of(inv, id);
+            let name = creator.and_then(|c| facts.names.get(&c)).map(String::as_str).unwrap_or("");
+            if let Some(hint) = crate::world::inventory::sorter::creator_hint(inv, id, name) {
+                st.add_creator_hint(&mut prefs.sorter, hint);
+            }
+        }
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(ids) => {

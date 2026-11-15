@@ -14425,6 +14425,10 @@ inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : l
 inventory-sorter-rule-words = Quand le nom contient
 inventory-sorter-rule-folder = Chemin du dossier, par exemple Maison/Chaises
 inventory-sorter-menu-entries = Tri automatique
+inventory-sorter-menu-creator = Tri automatique par ce créateur
+inventory-sorter-by-creator = Par { $name }
+inventory-sorter-creator-unknown = un créateur inconnu
+inventory-sorter-hint-store-optional = Dossier de la boutique (facultatif)
 inventory-sorter-open = Tri automatique : ranger les éléments en vrac par corps et par genre
 inventory-sorter-source = Dossier à trier
 inventory-sorter-selection = { $count ->
@@ -14589,7 +14593,13 @@ inventory-share-copied = Copié. Collez-le dans une note ou un chat.
 inventory-import-title = Importer des réglages du tri automatique
 inventory-import-hint = Collez ici le texte partagé (Ctrl+V), puis cochez ce que vous voulez.
 inventory-import-nothing = Aucun réglage de tri automatique trouvé dans ce texte.
-inventory-import-options = Options (nom du dossier de tri, dossier par boutique, types à trier)
+inventory-import-changes = { $count ->
+    [one] Ce fichier change 1 de vos réglages par défaut
+   *[other] Ce fichier change { $count } de vos réglages par défaut
+    }
+inventory-import-pre-trash = envoie vers la Pré-corbeille
+inventory-import-folders = Trier aussi les dossiers
+inventory-import-none = aucun
 inventory-import-skipped = { $count ->
     [one] 1 ligne illisible a été ignorée
    *[other] { $count } lignes illisibles ont été ignorées

@@ -415,6 +415,24 @@ impl InventoryUi {
         self.sorter.tab = PREVIEW;
     }
 
+    /// "Sort by this creator": the hint is added (or the existing one for
+    /// that creator kept, its name refreshed) and Options opens on it, for
+    /// the user to name the store and choose the category.
+    pub(crate) fn add_creator_hint(&mut self, prefs: &mut sorter::Preferences, hint: sorter::StoreHint) {
+        match prefs.store_hints.iter_mut().find(|h| h.creator == hint.creator) {
+            Some(mine) => {
+                if !hint.creator_name.is_empty() {
+                    mine.creator_name = hint.creator_name;
+                }
+            }
+            None => prefs.store_hints.push(hint),
+        }
+        self.sorter.open = true;
+        if !self.sorter.busy() {
+            self.sorter.tab = OPTIONS;
+        }
+    }
+
     /// An entry's right-click: the selected entries' preview, sorted once
     /// the user presses Sort (nothing moves before a preview is seen).
     pub(crate) fn sort_entries(&mut self, ids: Vec<Uuid>) {
@@ -984,6 +1002,27 @@ fn rule_line(rule: &Rule) -> String {
     format!("{}  →  {to}", rule.words.trim())
 }
 
+/// A store hint in one line: `Store  →  Category`, or for a creator hint
+/// `by Creator  →  Store  →  Category`.
+fn hint_line(hint: &sorter::StoreHint) -> String {
+    let to = match hint.store.trim() {
+        "" => hint.category.folder().to_owned(),
+        store => format!("{store}  →  {}", hint.category.folder()),
+    };
+    match hint.creator {
+        Some(_) => {
+            let name = hint.creator_name.trim();
+            let name = if name.is_empty() {
+                aurora_i18n::tr!("inventory-sorter-creator-unknown").to_owned()
+            } else {
+                name.to_owned()
+            };
+            format!("{}  →  {to}", aurora_i18n::tr!("inventory-sorter-by-creator", name = name))
+        }
+        None => to,
+    }
+}
+
 /// Share…: what will be shared, ticked, then copied as text.
 fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &sorter::Preferences) {
     use crate::ui::widgets::{ActionKind, action_button, checkbox};
@@ -1043,12 +1082,7 @@ fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &
                     for (index, hint) in prefs.store_hints.iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.add_space(16.0);
-                            checkbox(
-                                ui,
-                                p,
-                                &mut share.hints[index],
-                                format!("{}  →  {}", hint.store.trim(), hint.category.folder()),
-                            );
+                            checkbox(ui, p, &mut share.hints[index], hint_line(hint));
                         });
                     }
                     ui.add_space(6.0);
@@ -1102,7 +1136,8 @@ fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &
 
 /// Import…: paste a shared text, tick what to take, then add or replace.
 fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut sorter::Preferences) {
-    use crate::ui::widgets::{ActionKind, action_button, checkbox};
+    use crate::ui::widgets::{ActionKind, action_button};
+    use sorter::share::OptionKind;
     let replace_open = st.sorter.confirm == Some(Confirm::Replace);
     let Some(import) = st.sorter.import.as_mut() else { return };
     if import.text != import.read {
@@ -1148,15 +1183,49 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
                 if !import.text.trim().is_empty() && found.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("inventory-import-nothing")).color(p.muted));
                 }
+                let changed = found.defaults_changed(prefs);
+                if changed > 0 {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("inventory-import-changes", count = changed))
+                            .strong()
+                            .color(p.warn),
+                    );
+                    ui.add_space(2.0);
+                }
                 for (index, rule) in found.rules.iter().enumerate() {
-                    row(ui, p, &mut import.pick.rules[index], rule_line(rule), dup_rules[index]);
+                    let label = if rule.pre_trash {
+                        // towards the Trash: red, and never ticked for the user
+                        RichText::new(format!(
+                            "{}  ·  {}",
+                            rule_line(rule),
+                            aurora_i18n::tr!("inventory-import-pre-trash")
+                        ))
+                        .color(p.danger)
+                    } else {
+                        RichText::new(rule_line(rule))
+                    };
+                    row(ui, p, &mut import.pick.rules[index], label, dup_rules[index]);
                 }
                 for (index, hint) in found.hints.iter().enumerate() {
-                    let label = format!("{}  →  {}", hint.store.trim(), hint.category.folder());
-                    row(ui, p, &mut import.pick.hints[index], label, dup_hints[index]);
+                    row(
+                        ui,
+                        p,
+                        &mut import.pick.hints[index],
+                        RichText::new(hint_line(hint)),
+                        dup_hints[index],
+                    );
                 }
-                if found.base.is_some() || found.stores.is_some() || found.folders.is_some() || found.kinds.is_some() {
-                    checkbox(ui, p, &mut import.pick.options, aurora_i18n::tr!("inventory-import-options"));
+                for (which, now, then) in found.changes(prefs) {
+                    let (ticked, name) = match which {
+                        OptionKind::Base => (&mut import.pick.base, aurora_i18n::tr!("inventory-sorter-base")),
+                        OptionKind::Stores => (&mut import.pick.stores, aurora_i18n::tr!("inventory-sorter-by-store")),
+                        OptionKind::Folders => (&mut import.pick.folders, aurora_i18n::tr!("inventory-import-folders")),
+                        OptionKind::Kinds => (&mut import.pick.kinds, aurora_i18n::tr!("inventory-sorter-kinds")),
+                    };
+                    let none = aurora_i18n::tr!("inventory-import-none").to_string();
+                    let shown = |s: &str| if s.is_empty() { none.clone() } else { s.to_owned() };
+                    let label = RichText::new(format!("{name}:  {}  →  {}", shown(&now), shown(&then))).color(p.warn);
+                    row(ui, p, ticked, label, false);
                 }
                 if found.skipped > 0 {
                     ui.label(
@@ -1167,7 +1236,14 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
                 }
             });
         crate::ui::widgets::divider(ui, p);
-        let any = import.pick.rules.iter().chain(&import.pick.hints).any(|t| *t) || import.pick.options && !import.found.is_empty();
+        let pick = &import.pick;
+        let option_ticked = import.found.changes(prefs).iter().any(|(which, _, _)| match which {
+            OptionKind::Base => pick.base,
+            OptionKind::Stores => pick.stores,
+            OptionKind::Folders => pick.folders,
+            OptionKind::Kinds => pick.kinds,
+        });
+        let any = pick.rules.iter().chain(&pick.hints).any(|t| *t) || option_ticked;
         ui.horizontal(|ui| {
             let size = Vec2::new(0.0, 28.0);
             add = ui
@@ -1209,7 +1285,7 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
 
 /// An imported item and its box; one the user already has is shown
 /// unticked and greyed, "already in yours".
-fn row(ui: &mut egui::Ui, p: &Palette, ticked: &mut bool, label: String, mine: bool) {
+fn row(ui: &mut egui::Ui, p: &Palette, ticked: &mut bool, label: RichText, mine: bool) {
     ui.horizontal(|ui| {
         if mine {
             let mut never = false;
@@ -2227,11 +2303,30 @@ fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences
     let mut remove = None;
     for (index, hint) in options.store_hints.iter_mut().enumerate() {
         ui.push_id(("inventory_sorter_hint", index), |ui| {
+            // a creator hint: everything that creator made, whatever its
+            // name says; the store folder is then optional
+            let by_creator = hint.creator.is_some();
+            if by_creator {
+                let name = match hint.creator_name.trim() {
+                    "" => aurora_i18n::tr!("inventory-sorter-creator-unknown").to_string(),
+                    name => name.to_owned(),
+                };
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-sorter-by-creator", name = name))
+                        .small()
+                        .strong(),
+                );
+            }
             ui.horizontal(|ui| {
+                let hint_text = if by_creator {
+                    aurora_i18n::tr!("inventory-sorter-hint-store-optional")
+                } else {
+                    aurora_i18n::tr!("inventory-sorter-hint-store")
+                };
                 ui.add(
                     egui::TextEdit::singleline(&mut hint.store)
                         .char_limit(64)
-                        .hint_text(aurora_i18n::tr!("inventory-sorter-hint-store"))
+                        .hint_text(hint_text)
                         .desired_width(150.0),
                 );
                 ui.label(RichText::new("→").color(p.muted));

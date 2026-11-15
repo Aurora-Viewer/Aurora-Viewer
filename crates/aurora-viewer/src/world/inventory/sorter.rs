@@ -895,6 +895,13 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
 pub struct StoreHint {
     pub store: String,
     pub category: Category,
+    /// A creator hint: the items this resident made belong to `store`
+    /// (their folder per store) and to `category` when their name gives
+    /// none; it beats the store read from the name. A creator's id is
+    /// public (Properties shows it), never an asset id.
+    pub creator: Option<Uuid>,
+    /// The creator's name as it was shown when the hint was made.
+    pub creator_name: String,
 }
 
 impl Default for StoreHint {
@@ -902,6 +909,8 @@ impl Default for StoreHint {
         Self {
             store: String::new(),
             category: Category::Furniture,
+            creator: None,
+            creator_name: String::new(),
         }
     }
 }
@@ -1004,6 +1013,22 @@ pub fn target_with(
     stores: bool,
     hints: &[StoreHint],
 ) -> Option<Dest> {
+    target_by(name, asset_type, flags, created, rules, stores, hints, None)
+}
+
+/// [`target_with`] knowing who made the entry: a creator hint gives its
+/// store and, when the name gives no category, its category.
+#[allow(clippy::too_many_arguments)]
+pub fn target_by(
+    name: &str,
+    asset_type: i32,
+    flags: u32,
+    created: Option<i64>,
+    rules: &[Rule],
+    stores: bool,
+    hints: &[StoreHint],
+    creator: Option<Uuid>,
+) -> Option<Dest> {
     if let Some(rule) = rule_for(rules, name, created) {
         return Some(match rule.target {
             _ if rule.pre_trash => Dest::PreTrash,
@@ -1012,10 +1037,21 @@ pub fn target_with(
         });
     }
     let mut found = classify(name, asset_type, flags);
-    let shop = (stores || !hints.is_empty()).then(|| store(name)).flatten();
+    let by_creator = creator.and_then(|c| hints.iter().find(|h| h.creator == Some(c)));
+    let mut shop = (stores || !hints.is_empty()).then(|| store(name)).flatten();
+    if let Some(hint) = by_creator {
+        if !hint.store.trim().is_empty() {
+            shop = Some(hint.store.trim().to_owned());
+        }
+        if found.category.is_none() {
+            found.category = Some(hint.category);
+        }
+    }
     if found.category.is_none()
         && let Some(shop) = &shop
-        && let Some(hint) = hints.iter().find(|h| h.store.trim().eq_ignore_ascii_case(shop.trim()))
+        && let Some(hint) = hints
+            .iter()
+            .find(|h| h.creator.is_none() && h.store.trim().eq_ignore_ascii_case(shop.trim()))
     {
         found.category = Some(hint.category);
     }
@@ -1555,6 +1591,44 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, wo
     }
     plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
     plan
+}
+
+/// Who made an entry: an item's creator (Properties' Creator), or for a
+/// folder (a fatpack) the creator of most of its items.
+pub fn creator_of(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    if let Some(it) = inv.items.get(&id) {
+        return (!it.creator.is_nil()).then_some(it.creator);
+    }
+    let folder = inv.folders.get(&id)?;
+    let mut counts: HashMap<Uuid, usize> = HashMap::new();
+    for it in folder.items.iter().filter_map(|i| inv.items.get(i)) {
+        if !it.creator.is_nil() {
+            *counts.entry(it.creator).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(creator, count)| (*count, std::cmp::Reverse(*creator)))
+        .map(|(creator, _)| creator)
+}
+
+/// The creator hint the right-click "Sort by this creator" adds for `id`:
+/// its creator (a folder's majority creator), the store its name gives and
+/// the category its name gives (Furniture when it says nothing; the user
+/// picks another in Options). None when nobody is known to have made it.
+pub fn creator_hint(inv: &Inventory, id: Uuid, creator_name: &str) -> Option<StoreHint> {
+    let creator = creator_of(inv, id)?;
+    let (name, asset_type, flags) = match (inv.folders.get(&id), inv.items.get(&id)) {
+        (Some(f), _) => (f.info.name.as_str(), -1, 0),
+        (None, Some(it)) => (it.name.as_str(), it.asset_type, it.flags),
+        _ => return None,
+    };
+    Some(StoreHint {
+        store: store(name).unwrap_or_default(),
+        category: classify(name, asset_type, flags).category.unwrap_or(StoreHint::default().category),
+        creator: Some(creator),
+        creator_name: creator_name.chars().take(64).collect(),
+    })
 }
 
 /// Why an entry the preview lists stays where it is.
@@ -2216,6 +2290,8 @@ fn plan_with(
     // in the sort folder's tree, the "Everywhere except Sorted" rules are
     // left out
     let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !(r.pre_trash && r.skip_sorted)).cloned().collect();
+    // only read who made an entry when a creator hint can use it
+    let by_creator = prefs.store_hints.iter().any(|h| h.creator.is_some());
     let mut candidates = Vec::new();
     for id in entries.iter().copied() {
         let (name, asset_type, flags, created, is_folder) = match (inv.folders.get(&id), inv.items.get(&id)) {
@@ -2230,7 +2306,8 @@ fn plan_with(
         }
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) {
             let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
-            candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted));
+            let creator = if by_creator { creator_of(inv, id) } else { None };
+            candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted, creator));
         } else {
             plan.kept += 1;
             plan.kept_list.push((name, kept_reason(inv, id, prefs, protected, &holds_worn)));
@@ -2241,12 +2318,12 @@ fn plan_with(
     use rayon::prelude::*;
     let read: Vec<_> = candidates
         .into_par_iter()
-        .map(|(id, folder, from, name, asset_type, flags, created, sorted)| {
+        .map(|(id, folder, from, name, asset_type, flags, created, sorted, creator)| {
             let rules = if sorted { &sorted_rules } else { &prefs.rules };
             let to = if forced.contains(&id) {
                 Some(Dest::PreTrash)
             } else {
-                target_with(&name, asset_type, flags, created, rules, prefs.stores, &prefs.store_hints)
+                target_by(&name, asset_type, flags, created, rules, prefs.stores, &prefs.store_hints, creator)
             };
             let unpacker = classify(&name, asset_type, flags).unpacker;
             (id, folder, from, name, to, unpacker)

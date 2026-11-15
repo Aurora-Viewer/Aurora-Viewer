@@ -1003,6 +1003,7 @@ fn store_hints_give_a_category_to_names_that_say_nothing() {
     let hints = [StoreHint {
         store: "obsidian homes".into(),
         category: Category::Furniture,
+        ..Default::default()
     }];
     assert_eq!(
         sorted_as("Obsidian Homes ~ Eclipse (ADD)", 6, &hints),
@@ -1012,6 +1013,7 @@ fn store_hints_give_a_category_to_names_that_say_nothing() {
     let hints = [StoreHint {
         store: "Kitoomi".into(),
         category: Category::Furniture,
+        ..Default::default()
     }];
     assert_eq!(
         sorted_as("Kitoomi - Ryu Jeans - FATPACK", 6, &hints),
@@ -1029,6 +1031,7 @@ fn store_hints_give_a_category_to_names_that_say_nothing() {
             &[StoreHint {
                 store: "Obsidian Homes".into(),
                 category: Category::Furniture,
+                ..Default::default()
             }]
         ),
         Some(Dest::Path(vec![Category::Furniture.folder().to_owned()]))
@@ -1136,6 +1139,7 @@ fn shared_settings_round_trip_without_my_folders() {
         store_hints: vec![StoreHint {
             store: "Birch Hollow".into(),
             category: Category::Furniture,
+            ..Default::default()
         }],
         excluded: vec![id(30)],
         ..Default::default()
@@ -1154,7 +1158,12 @@ fn shared_settings_round_trip_without_my_folders() {
     assert_eq!(found.kinds.as_deref(), Some(&[Kind::Objects, Kind::Clothing][..]));
     // into someone else's settings: everything new, nothing private
     let mut theirs = Preferences::default();
-    let pick = Pick::new(&found, &theirs);
+    let mut pick = Pick::new(&found, &theirs);
+    // a Pre-Trash rule and a new sort folder name wait for the user's tick
+    assert_eq!(pick.rules, vec![true, false]);
+    assert!(!pick.base && pick.stores && pick.kinds);
+    pick.rules[1] = true;
+    pick.base = true;
     found.apply(&mut theirs, &pick, false);
     assert_eq!(theirs.rules.len(), 2);
     assert!(theirs.excluded.is_empty() && theirs.rules.iter().all(|r| r.target.is_none()));
@@ -1178,7 +1187,7 @@ fn shared_settings_skip_broken_lines_and_respect_the_ticks() {
     let pick = Pick {
         rules: vec![false],
         hints: vec![true],
-        options: false,
+        ..Default::default()
     };
     found.apply(&mut mine, &pick, false);
     assert!(mine.rules.is_empty() && mine.store_hints.len() == 1);
@@ -1301,7 +1310,10 @@ fn aimed_at(guarded: &[Uuid]) -> Preferences {
     imported.apply(
         &mut prefs,
         &super::share::Pick {
-            options: true,
+            stores: true,
+            folders: true,
+            kinds: true,
+            base: true,
             ..Default::default()
         },
         false,
@@ -1641,4 +1653,161 @@ fn a_large_inventory_plans_in_linear_time() {
     let elapsed = started.elapsed();
     assert!(!whole.moves.is_empty() && !cleanup.rows.is_empty());
     assert!(elapsed < std::time::Duration::from_secs(8), "{elapsed:?}");
+}
+
+#[test]
+fn a_creator_hint_beats_the_store_read_from_the_name() {
+    let maker = id(8701);
+    let hints = [
+        StoreHint {
+            store: "Birch Hollow".into(),
+            category: Category::Furniture,
+            ..Default::default()
+        },
+        StoreHint {
+            store: "Mossworks".into(),
+            category: Category::Decor,
+            creator: Some(maker),
+            creator_name: "Made Up Maker".into(),
+        },
+    ];
+    let by = |name: &str, creator: Option<Uuid>| match target_by(name, 6, 0, None, &[], true, &hints, creator) {
+        Some(Dest::Path(path)) => path.join("/"),
+        other => format!("{other:?}"),
+    };
+    // the creator's store wins over the tag in the name
+    assert_eq!(
+        by("[Birch Hollow] Lantern", Some(maker)),
+        format!("{}/Mossworks", cat(Category::Decor))
+    );
+    // a name with its own category keeps it, under the creator's store
+    assert_eq!(by("Velvet Sofa", Some(maker)), format!("{}/Mossworks", cat(Category::Furniture)));
+    // someone else's item keeps the name's store
+    assert_eq!(
+        by("[Birch Hollow] Lantern", Some(id(8702))),
+        format!("{}/Birch Hollow", cat(Category::Furniture))
+    );
+    // a creator hint without a store name only gives the category
+    let bare = [StoreHint {
+        category: Category::Decor,
+        creator: Some(maker),
+        ..Default::default()
+    }];
+    assert_eq!(
+        match target_by("Thing 01", 6, 0, None, &[], true, &bare, Some(maker)) {
+            Some(Dest::Path(path)) => path.join("/"),
+            other => format!("{other:?}"),
+        },
+        cat(Category::Decor)
+    );
+}
+
+#[test]
+fn a_folder_takes_the_creator_of_most_of_its_items() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 40, OBJECTS, "Lantern Set FATPACK");
+    for (n, maker) in [8701u128, 8701, 8702].into_iter().enumerate() {
+        add_item(&mut inv, 400 + n as u128, 40, "Lantern", 0);
+        inv.items.get_mut(&id(400 + n as u128)).expect("item").creator = id(maker);
+    }
+    assert_eq!(creator_of(&inv, id(40)), Some(id(8701)));
+    assert_eq!(creator_of(&inv, id(402)), Some(id(8702)));
+    // nobody known: no hint
+    add_folder(&mut inv, 41, OBJECTS, "Empty box");
+    assert_eq!(creator_of(&inv, id(41)), None);
+    assert!(creator_hint(&inv, id(41), "x").is_none());
+    let hint = creator_hint(&inv, id(40), "Made Up Maker").expect("hint");
+    assert_eq!(hint.creator, Some(id(8701)));
+    assert_eq!(hint.creator_name, "Made Up Maker");
+    // the plan sorts the folder whole under the creator's store
+    let prefs = Preferences {
+        stores: true,
+        folders: true,
+        store_hints: vec![StoreHint {
+            store: "Mossworks".into(),
+            category: Category::Decor,
+            creator: Some(id(8701)),
+            creator_name: String::new(),
+        }],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    let moved = plan.moves.iter().find(|m| m.id == id(40)).expect("the fatpack moves");
+    assert!(path_of(&moved.to).ends_with("Mossworks"), "{:?}", moved.to);
+}
+
+#[test]
+fn creator_hints_travel_in_shared_settings() {
+    use super::share::{Share, export, import};
+    let prefs = Preferences {
+        store_hints: vec![StoreHint {
+            store: "Mossworks".into(),
+            category: Category::Decor,
+            creator: Some(id(8701)),
+            creator_name: "Made Up Maker".into(),
+        }],
+        ..Default::default()
+    };
+    let text = export(&prefs, &Share::all(&prefs));
+    assert!(text.contains(&format!("creator: {}", id(8701))));
+    let found = import(&text);
+    assert_eq!(found.hints, prefs.store_hints);
+    // a creator hint and a store hint of the same name are different hints
+    let mine = Preferences {
+        store_hints: vec![StoreHint {
+            store: "Mossworks".into(),
+            category: Category::Decor,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(found.duplicates(&mine).1, vec![false]);
+    assert_eq!(found.duplicates(&prefs).1, vec![true]);
+    // broken creator lines are skipped
+    let bad = import("creator: not-an-id = A | decor\ncreator: 00000000-0000-0000-0000-000000000000 = A | decor\n");
+    assert!(bad.hints.is_empty() && bad.skipped == 2);
+}
+
+#[test]
+fn import_lists_every_changed_default_and_ticks_none_of_the_risky_ones() {
+    use super::share::{OptionKind, Pick, import};
+    let mine = Preferences {
+        base: "Sorted".into(),
+        stores: true,
+        ..Default::default()
+    };
+    let text = format!(
+        "{}\noption: base = Tidy\noption: stores = on\noption: folders = {}\nrule: any | old | Pre-Trash\nrule: any | chair | Home\n",
+        super::share::HEADER,
+        if mine.folders { "off" } else { "on" },
+    );
+    let found = import(&text);
+    let changes = found.changes(&mine);
+    // the same value is no change
+    assert!(!changes.iter().any(|(k, _, _)| *k == OptionKind::Stores));
+    let base = changes.iter().find(|(k, _, _)| *k == OptionKind::Base).expect("base change");
+    assert_eq!((base.1.as_str(), base.2.as_str()), ("Sorted", "Tidy"));
+    assert!(changes.iter().any(|(k, _, _)| *k == OptionKind::Folders));
+    // base + folders + one Pre-Trash rule
+    assert_eq!(found.defaults_changed(&mine), 3);
+    let pick = Pick::new(&found, &mine);
+    assert!(!pick.base, "a sort folder rename is never pre-ticked");
+    assert_eq!(pick.rules, vec![false, true], "a Pre-Trash rule is never pre-ticked");
+    // applying the default pick keeps the sort folder and takes no Pre-Trash rule
+    let mut after = mine.clone();
+    found.apply(&mut after, &pick, false);
+    assert_eq!(after.base, "Sorted");
+    assert!(after.rules.iter().all(|r| !r.pre_trash) && after.rules.len() == 1);
+    assert_eq!(after.folders, !mine.folders);
+    // unticked options stay
+    let mut kept = mine.clone();
+    found.apply(
+        &mut kept,
+        &Pick {
+            rules: vec![false, false],
+            ..Default::default()
+        },
+        false,
+    );
+    assert_eq!(kept, mine);
 }

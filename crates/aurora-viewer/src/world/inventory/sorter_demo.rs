@@ -377,10 +377,19 @@ pub fn seed_settings(prefs: &mut super::Preferences) {
         StoreHint {
             store: "Birch Hollow".into(),
             category: Category::Furniture,
+            ..Default::default()
         },
         StoreHint {
             store: "Neverlace".into(),
             category: Category::Decor,
+            ..Default::default()
+        },
+        // one of the demo's made-up creators (item(): 8700 + n)
+        StoreHint {
+            store: "Lantern Lane".into(),
+            category: Category::Decor,
+            creator: Some(Uuid::from_u128(8703)),
+            creator_name: "Demo Maker".into(),
         },
     ];
     prefs.excluded = vec![PLACES];

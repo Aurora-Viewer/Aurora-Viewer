@@ -14420,6 +14420,10 @@ inventory-sorter-rules-hint = Your rules come first, from the top: the first one
 inventory-sorter-rule-words = When the name has
 inventory-sorter-rule-folder = Folder path, such as Home/Chairs
 inventory-sorter-menu-entries = Auto-sort
+inventory-sorter-menu-creator = Auto-sort by this creator
+inventory-sorter-by-creator = By { $name }
+inventory-sorter-creator-unknown = an unknown creator
+inventory-sorter-hint-store-optional = Store folder (optional)
 inventory-sorter-open = Auto-sort: file loose items into folders by body and kind
 inventory-sorter-source = Folder to sort
 inventory-sorter-selection = { $count ->
@@ -14584,7 +14588,13 @@ inventory-share-copied = Copied. Paste it in a notecard or a chat.
 inventory-import-title = Import Auto-sort settings
 inventory-import-hint = Paste the shared text here (Ctrl+V), then tick what you want.
 inventory-import-nothing = No Auto-sort settings found in this text.
-inventory-import-options = Options (sort folder name, folder per store, types to sort)
+inventory-import-changes = { $count ->
+    [one] This file changes 1 of your defaults
+   *[other] This file changes { $count } of your defaults
+    }
+inventory-import-pre-trash = sends to Pre-Trash
+inventory-import-folders = Sort folders too
+inventory-import-none = none
 inventory-import-skipped = { $count ->
     [one] 1 line could not be read and was skipped
    *[other] { $count } lines could not be read and were skipped
