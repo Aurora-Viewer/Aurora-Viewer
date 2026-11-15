@@ -6053,7 +6053,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
-| `AURORA_DEMO_WEARABLE_FAVORITES=list\|tab\|tooltip\|drag\|drop\|empty\|new` | Favorite wearables window with pictures, tabs, a long name and a row dragged |
+| `AURORA_DEMO_WEARABLE_FAVORITES=list\|tab\|menu\|hover\|tooltip\|drag\|drop\|empty\|new` | Favorite wearables window with pictures, the folder menu, a long name and a row dragged |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -10293,18 +10293,25 @@ descriptions, chat, notice bodies and local filenames continue to accept Unicode
 The same rules apply in both interface styles. The agent uses demo mode only;
 the human verifies actual saved inventory names on the grid.
 
-**`AURORA_DEMO_WEARABLE_FAVORITES=list|tab|tooltip|drag|drop|empty|new`** — opens
+**`AURORA_DEMO_WEARABLE_FAVORITES=list|tab|menu|hover|tooltip|drag|drop|empty|new`** — opens
 Me › Favorite wearables over the Appearance demo's wardrobe. The favorites
 live in `#Aurora/Wearable Favorites`: nine wearables, five with a picture
 (round, wide and tall, cropped to the square), the others with their type
-icon, a long gown name cut to one line, two tabs (Date night, Work). Worn
-items end with a violet check. Double-click wears or takes off, as the
-outfit lists; right-click gives the wearable menu, Add to folder and Remove
+icon, a long gown name cut to one line, seven folders (Spring is empty).
+A row's second line is the attachment point alone (none for clothing and
+body parts). Worn items have a violet ring and check badge on their
+picture. Double-click, or the button at the end of the hovered row, wears
+or takes off, as the outfit lists, and a line at the bottom says so for a
+few seconds; right-click gives the wearable menu, Add to folder and Remove
 from favorites; drag a wearable from the inventory onto the list to add it
 (the list lights up while it would take it).
 
 - `list`: All, sorted by type (body parts, clothing, objects);
-- `tab`: the Date night tab (three items; the All pill still counts nine);
+- `tab`: the Date night folder (three items; the title still counts nine);
+- `menu`: opens the folder menu at frame 540: All favorites and the seven
+  folders listed downwards with their counts, a search field, then New
+  folder (Rename and Delete appear while a folder is shown);
+- `hover`: rests the pointer on the second row's Wear button at frame 520;
 - `tooltip`: searches "gown" and rests the pointer on its row at frame 520:
   the tooltip shows the larger picture, the full name, "Object", and the
   permissions;

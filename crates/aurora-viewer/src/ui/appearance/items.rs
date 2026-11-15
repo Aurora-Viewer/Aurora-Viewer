@@ -78,24 +78,30 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
 pub(crate) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
-    if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
-        return;
+    if double_clicked(response)
+        && let Some(action) = wear_toggle(world, it, worn)
+    {
+        actions.push(action);
+    }
+}
+
+/// What a double-click on `it` does (`double_click`), when RLVa allows it:
+/// None for what cannot be worn, a worn body part, or a lock.
+pub(crate) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Action> {
+    if !matches!(it.asset_type, 5 | 6 | 13) {
+        return None;
     }
     let locks = world.rlva_wear_locks();
     if worn {
-        if it.asset_type != 13 && locks.can_remove(it.id) {
-            actions.push(Action::Remove(it.id));
-        }
+        (it.asset_type != 13 && locks.can_remove(it.id)).then_some(Action::Remove(it.id))
     } else {
         let replace = it.asset_type == 13;
         let allowed = locks.wear(&world.inventory, it.id, 0);
-        if if replace { allowed.replace } else { allowed.add } {
-            actions.push(Action::WearItem {
-                item: it.id,
-                replace,
-                point: 0,
-            });
-        }
+        (if replace { allowed.replace } else { allowed.add }).then_some(Action::WearItem {
+            item: it.id,
+            replace,
+            point: 0,
+        })
     }
 }
 

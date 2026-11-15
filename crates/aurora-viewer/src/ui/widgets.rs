@@ -2660,6 +2660,76 @@ pub fn action_menu_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &st
     resp
 }
 
+/// [`action_menu_button`] of a given width that names the current choice of
+/// a list (the folder a window shows): its `icon` in `tint`, the label from
+/// the left (cut when long), a muted `note` after it (a count), the chevron
+/// at the right end. The menu it opens is the caller's ([`super::menu::dropdown`]).
+#[allow(clippy::too_many_arguments)]
+pub fn select_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    note: &str,
+    open: bool,
+    size: Vec2,
+) -> egui::Response {
+    const ICON: f32 = 15.0;
+    const GAP: f32 = 7.0;
+    const CHEVRON: f32 = 13.0;
+    const PAD: f32 = 10.0;
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hot = resp.hovered() || resp.has_focus();
+    let fill = if open {
+        p.violet.gamma_multiply(0.28)
+    } else if hot {
+        p.raised.lerp_to_gamma(p.ink, 0.16)
+    } else {
+        p.raised
+    };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(rect, radius, fill);
+    if open {
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, p.violet_light.gamma_multiply(0.5)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let y = rect.center().y;
+    if let Some(texture) = super::icons::global(icon) {
+        let r = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON / 2.0, y), Vec2::splat(ICON));
+        ui.painter().image(texture.id(), r, uv, tint);
+    }
+    let chevron = rect.right() - PAD - CHEVRON;
+    if let Some(texture) = super::icons::global("chevron-down") {
+        let r = egui::Rect::from_center_size(egui::pos2(chevron + CHEVRON / 2.0, y), Vec2::splat(CHEVRON));
+        ui.painter().image(texture.id(), r, uv, p.muted);
+    }
+    let note = (!note.is_empty()).then(|| {
+        ui.painter()
+            .layout_no_wrap(note.to_owned(), egui::FontId::proportional(12.0), p.muted)
+    });
+    let note_w = note.as_ref().map_or(0.0, |g| g.size().x + 6.0);
+    let left = rect.left() + PAD + ICON + GAP;
+    let room = (chevron - GAP - note_w - left).max(0.0);
+    let font = egui::FontId::new(12.5, super::fonts::semibold(ui.ctx()));
+    let label_w = elided_galley(ui, RichText::new(label).font(font.clone()), room).size().x;
+    let cut = paint_elided(ui, label, egui::pos2(left, y), room, font, p.ink);
+    if let Some(note) = note {
+        let pos = row_text_origin(ui.painter(), &note, left + label_w + 6.0, y);
+        ui.painter().galley(pos, note, p.muted);
+    }
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    if cut { resp.on_hover_text(label) } else { resp }
+}
+
 /// A thin countdown bar (3 px): the track of `progress`, filled with
 /// `color` from the left, gliding to its value like `progress`.
 pub fn countdown_bar(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, color: Color32) {

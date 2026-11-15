@@ -6,7 +6,14 @@
 //! Drawn as picture rows instead of the Legacy name list (human decision,
 //! 2026-11-11): the item's own inventory picture, or its type icon, then its
 //! name and "type · point" on one line each, a full tooltip for long names.
-//! The subfolders are tabs instead of a combo box with three buttons.
+//! The subfolders are picked from one folder menu, as the Legacy combo box
+//! does, and the menu also holds New folder, Rename and Delete instead of
+//! three buttons. It lists the folders downwards and never scrolls
+//! sideways, at any window width (human decision, 2026-11-15).
+//! A row's second line is the attachment point alone (human decision,
+//! 2026-11-15); the type is in its tooltip and the search. Worn shows on
+//! the picture, and a button on the hovered row wears or takes off, as a
+//! double-click does.
 //! Rows can be dragged into a custom order (`widgets::reorder`; human
 //! request, 2026-11-15), which the Legacy window does not have.
 
@@ -26,14 +33,17 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub const WINDOW: &str = "wearable_favorites";
-const PICTURE: f32 = 36.0;
-const ROW: f32 = 46.0;
+const PICTURE: f32 = 40.0;
+const ROW: f32 = 54.0;
+/// How long the line saying what a row's button or double-click asked
+/// for stays at the bottom of the window (seconds).
+const STATUS_SECONDS: f64 = 2.6;
 const TIP_PICTURE: f32 = 168.0;
 const TIP_WIDTH: f32 = 240.0;
 
 #[derive(Default)]
 pub(crate) struct State {
-    /// The tab shown: a subfolder, or None for every favorite.
+    /// The folder shown: a subfolder, or None for every favorite.
     shown: Option<Uuid>,
     filter: String,
     selection: Selection,
@@ -49,6 +59,8 @@ pub(crate) struct State {
     /// Where a row was let go: no tooltip until the pointer leaves that
     /// spot, so that a drop does not end on a tooltip over the list.
     quiet_at: Option<egui::Pos2>,
+    /// "Wearing Boots": what was asked last, and when (`input.time`).
+    status: Option<(String, f64)>,
 }
 
 impl State {
@@ -138,12 +150,22 @@ pub fn show(
         };
         header(ui, p, world, st, root, &order, sort, &mut actions);
         ui.add_space(4.0);
-        tab_row(ui, p, st, &tabs, all);
+        folder_row(ui, p, inv, st, &tabs, all);
         ui.add_space(6.0);
         if !st.favorites.message.is_empty() {
             ui.label(egui::RichText::new(&st.favorites.message).color(p.danger).size(11.5));
         }
-        list_area(ui, p, world, st, images, root, &list, &order, total, &filter, sort, &mut actions);
+        let now = ui.input(|i| i.time);
+        let status = st.favorites.status.clone().filter(|(_, at)| now - at < STATUS_SECONDS);
+        let room = ui.available_size() - Vec2::new(0.0, if status.is_some() { STATUS_HEIGHT + 4.0 } else { 0.0 });
+        ui.allocate_ui(room, |ui| {
+            list_area(ui, p, world, st, images, root, &list, &order, total, &filter, sort, &mut actions);
+        });
+        if let Some((text, at)) = status {
+            status_line(ui, p, &text);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64((STATUS_SECONDS - (now - at)).max(0.0)));
+        }
     });
     dialog(ctx, p, world, st, root, &mut actions);
     actions
@@ -197,50 +219,98 @@ fn header(
     });
 }
 
-/// All, the subfolders by name, and New folder; a subfolder's tab renames
-/// or deletes it from its menu (rename_folder_btn / delete_folder_btn).
-fn tab_row(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, tabs: &[(Uuid, String)], all: usize) {
-    egui::ScrollArea::horizontal()
-        .id_salt("wearable_favorites_tabs")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                if widgets::pill_tab(
-                    ui,
-                    p,
-                    "heart-filled",
-                    aurora_i18n::tr!("common-all"),
-                    (all > 0).then(|| all.to_string()),
-                    false,
-                    st.favorites.shown.is_none(),
-                    true,
-                )
-                .clicked()
-                {
-                    st.favorites.shown = None;
-                }
-                for (id, name) in tabs {
-                    let response = widgets::pill_tab(ui, p, "", name, None, false, st.favorites.shown == Some(*id), true);
-                    if response.clicked() {
-                        st.favorites.shown = Some(*id);
+/// All favorites or one subfolder, picked from one menu that lists them
+/// downwards (the Legacy folder combo box), with New folder, Rename and
+/// Delete (new_folder_btn, rename_folder_btn, delete_folder_btn) at its
+/// end and on a right click. However many folders and whatever the width,
+/// nothing scrolls sideways; the menu's search field finds a folder by
+/// name. New folder also has its own button, as in the Legacy window.
+fn folder_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &crate::world::inventory::Inventory,
+    st: &mut AppearanceUi,
+    tabs: &[(Uuid, String)],
+    all: usize,
+) {
+    let shown = st.favorites.shown.and_then(|id| tabs.iter().find(|(tab, _)| *tab == id)).cloned();
+    let all_label = aurora_i18n::tr!("ui-wearable-favorites-all");
+    let (icon, tint, label, count) = match &shown {
+        Some((id, name)) => ("folder-filled", p.violet_light, name.as_str(), model::entries(inv, *id).len()),
+        None => ("heart-filled", p.violet_light, all_label, all),
+    };
+    let open_id = ui.make_persistent_id("wearable_favorites_folder_menu");
+    let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let width = (ui.available_width() - 30.0).max(80.0);
+        let button = widgets::select_button(ui, p, icon, tint, label, &count.to_string(), open, Vec2::new(width, 28.0))
+            .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-folders"));
+        if demo_mode().is_some() {
+            ui.ctx().data_mut(|d| d.insert_temp(demo_picker_id(), button.rect));
+        }
+        let open = menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            menu::searchable(ui, p, |ui| {
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    let current = shown.is_none();
+                    if menu::current_row(ui, p, "heart-filled", all_label, &all.to_string(), current).clicked() {
+                        st.favorites.shown = None;
                     }
-                    menu::context_menu(&response, p, |ui| {
-                        if menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename")) {
-                            st.favorites.dialog = Some(Dialog::Rename(*id, name.clone()));
-                            st.favorites.focus = true;
+                    for (id, name) in tabs {
+                        let count = model::entries(inv, *id).len().to_string();
+                        let current = shown.as_ref().is_some_and(|(tab, _)| tab == id);
+                        if menu::current_row(ui, p, "folder-filled", name, &count, current).clicked() {
+                            st.favorites.shown = Some(*id);
                         }
-                        if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("common-delete")) {
-                            st.favorites.dialog = Some(Dialog::Delete(*id));
-                        }
-                    });
-                }
-                if widgets::icon_button(ui, p, "folder-plus", aurora_i18n::tr!("common-new-folder"), true) {
-                    st.favorites.dialog = Some(Dialog::New(String::new()));
-                    st.favorites.focus = true;
-                }
+                    }
+                });
+                menu::separator(ui, p);
+                folder_commands(ui, p, st, shown.as_ref());
             });
         });
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+        menu::context_menu_of_button(&button, p, |ui| folder_commands(ui, p, st, shown.as_ref()));
+        if widgets::icon_button(ui, p, "folder-plus", aurora_i18n::tr!("common-new-folder"), true) {
+            st.favorites.dialog = Some(Dialog::New(String::new()));
+            st.favorites.focus = true;
+        }
+    });
+}
+
+/// New folder, and Rename and Delete of the folder `shown`.
+fn folder_commands(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, shown: Option<&(Uuid, String)>) {
+    if menu::item(ui, p, "folder-plus", aurora_i18n::tr!("common-new-folder")) {
+        st.favorites.dialog = Some(Dialog::New(String::new()));
+        st.favorites.focus = true;
+    }
+    if let Some((id, name)) = shown {
+        if menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("ui-wearable-favorites-rename-folder")) {
+            st.favorites.dialog = Some(Dialog::Rename(*id, name.clone()));
+            st.favorites.focus = true;
+        }
+        if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("ui-wearable-favorites-delete-folder")) {
+            st.favorites.dialog = Some(Dialog::Delete(*id));
+        }
+    }
+}
+
+const STATUS_HEIGHT: f32 = 26.0;
+
+/// What the last Wear or Take off asked for, at the bottom of the window,
+/// under the list and never over a row.
+fn status_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_HEIGHT), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.22));
+    widgets::paint_elided(
+        ui,
+        text,
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        rect.width() - 20.0,
+        FontId::proportional(12.0),
+        p.ink,
+    );
 }
 
 /// The rows, the empty states, and the drop of wearables from the
@@ -334,10 +404,14 @@ fn list_area(
                 }
                 let texture = picture.and_then(|image| images.get(&image));
                 let is_worn = worn.contains(&it.id);
-                let detail = detail(world, it, points.get(&it.id).copied());
+                let worn_point = points.get(&it.id).copied();
+                let detail = detail(world, it, worn_point);
+                let point = point(world, it, worn_point);
                 let at = layout.rect(i, response.rect);
                 if layout.lifted == Some(i) {
-                    reorder::lifted_card(ui, p, id, at, |card| paint_row(card, p, at, it, texture, is_worn, &detail, None));
+                    reorder::lifted_card(ui, p, id, at, |card| {
+                        paint_row(card, p, at, it, texture, is_worn, point.as_deref(), None);
+                    });
                     continue;
                 }
                 let selected = st.favorites.selection.contains(it.id);
@@ -348,13 +422,27 @@ fn list_area(
                 } else {
                     None
                 };
-                paint_row(ui, p, at, it, texture, is_worn, &detail, face);
+                paint_row(ui, p, at, it, texture, is_worn, point.as_deref(), face);
                 if response.clicked() || response.secondary_clicked() {
                     let modifiers = ui.input(|i| i.modifiers);
                     st.favorites.selection.click(it.id, order, modifiers, response.secondary_clicked());
                 }
                 // onDoubleClick: wear or take off, as the outfit lists do
+                let asked = actions.len();
                 items::double_click(response, world, it, is_worn, actions);
+                // the same from a button on the hovered row, for those who
+                // would not guess the double-click (Aurora's own)
+                if !layout.busy()
+                    && ui.rect_contains_pointer(at)
+                    && let Some(action) = items::wear_toggle(world, it, is_worn)
+                    && wear_button(ui, p, at, it, is_worn)
+                {
+                    actions.push(action);
+                }
+                if actions.len() > asked {
+                    let now = ui.input(|i| i.time);
+                    st.favorites.status = Some((asked_status(it, is_worn), now));
+                }
                 let response = if quiet {
                     response.clone()
                 } else {
@@ -410,24 +498,28 @@ fn empty(ui: &mut egui::Ui, p: &Palette, inv: &crate::world::inventory::Inventor
             ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).color(p.muted));
             return;
         }
-        if let Some(t) = icons::global("hanger-2-filled") {
+        // a subfolder says how to fill it, All how to start
+        let folder = model::root(inv).is_some_and(|root| root != target);
+        let (icon, title, hint) = if folder {
+            (
+                "folder-filled",
+                aurora_i18n::tr!("ui-wearable-favorites-empty-folder"),
+                aurora_i18n::tr!("ui-wearable-favorites-empty-folder-hint"),
+            )
+        } else {
+            (
+                "hanger-2-filled",
+                aurora_i18n::tr!("ui-wearable-favorites-empty"),
+                aurora_i18n::tr!("ui-wearable-favorites-empty-hint"),
+            )
+        };
+        if let Some(t) = icons::global(icon) {
             ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(34.0)).tint(p.muted_dim));
         }
         ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(aurora_i18n::tr!("ui-wearable-favorites-empty"))
-                .color(p.ink)
-                .size(13.5),
-        );
+        ui.label(egui::RichText::new(title).color(p.ink).size(13.5));
         ui.add_space(2.0);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(aurora_i18n::tr!("ui-wearable-favorites-empty-hint"))
-                    .color(p.muted)
-                    .size(11.5),
-            )
-            .wrap(),
-        );
+        ui.add(egui::Label::new(egui::RichText::new(hint).color(p.muted).size(11.5)).wrap());
     });
 }
 
@@ -445,7 +537,8 @@ fn picture(inv: &crate::world::inventory::Inventory, entry: &Entry) -> Option<Uu
         .find(|id| !id.is_nil())
 }
 
-/// "Shirt", "Object · Left Hand" (where it is worn, else its saved point).
+/// "Shirt", "Object · Left Hand": the tooltip's line, and what the search
+/// reads besides the name.
 fn detail(world: &World, it: &InvItem, worn_point: Option<u8>) -> String {
     let kind: String = match it.asset_type {
         5 | 13 => crate::world::appearance::wearables()
@@ -454,13 +547,20 @@ fn detail(world: &World, it: &InvItem, worn_point: Option<u8>) -> String {
             .unwrap_or_default(),
         _ => aurora_i18n::tr!("common-object").into(),
     };
-    if it.asset_type != 6 {
-        return kind;
+    match point(world, it, worn_point) {
+        Some(point) => format!("{kind} · {point}"),
+        None => kind,
     }
-    let point = worn_point.or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0));
-    let Some(point) = point else {
-        return kind;
-    };
+}
+
+/// "Left Hand", "HUD : Top Right": the point an object is worn on, else
+/// its saved point; none for clothing, body parts and an object that was
+/// never attached. A row's second line.
+fn point(world: &World, it: &InvItem, worn_point: Option<u8>) -> Option<String> {
+    if it.asset_type != 6 {
+        return None;
+    }
+    let point = worn_point.or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))?;
     let name = world
         .avatar_lib
         .attach_names
@@ -468,12 +568,46 @@ fn detail(world: &World, it: &InvItem, worn_point: Option<u8>) -> String {
         .map(|name| items::point_name(name).to_owned())
         .unwrap_or_else(|| aurora_i18n::tr!("attachment-point", point = point));
     let hud = world.avatar_lib.attach_points.get(&point).is_some_and(|ap| ap.hud);
-    format!("{kind} · {}{name}", if hud { "HUD : " } else { "" })
+    Some(format!("{}{name}", if hud { "HUD : " } else { "" }))
+}
+
+/// The row's Wear or Take off button at the right end of `row` (Detach for
+/// an object, as the menus say); true when clicked.
+fn wear_button(ui: &mut egui::Ui, p: &Palette, row: Rect, it: &InvItem, worn: bool) -> bool {
+    let (icon, tip) = match (worn, it.asset_type == 6) {
+        (false, _) => ("shirt-filled", aurora_i18n::tr!("common-wear")),
+        (true, true) => ("circle-x-filled", aurora_i18n::tr!("common-detach")),
+        (true, false) => ("circle-x-filled", aurora_i18n::tr!("inventory-take-off")),
+    };
+    let rect = Rect::from_center_size(
+        egui::pos2(row.right() - 6.0 - WEAR_BUTTON / 2.0, row.center().y),
+        Vec2::splat(WEAR_BUTTON),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(WEAR_BUTTON))
+            .on_hover_text(tip)
+            .clicked()
+    })
+    .inner
+}
+
+const WEAR_BUTTON: f32 = 28.0;
+
+/// "Wearing Boots", "Taking off Boots": the status line after a button or
+/// a double-click.
+fn asked_status(it: &InvItem, worn: bool) -> String {
+    let name = it.name.clone();
+    if worn {
+        aurora_i18n::tr!("ui-wearable-favorites-taking-off", name = name).to_string()
+    } else {
+        aurora_i18n::tr!("ui-wearable-favorites-wearing", name = name).to_string()
+    }
 }
 
 /// One picture row at `rect`: its face (selected, hovered, none), the
-/// picture (or the type icon), the name, the detail below, a check at the
-/// end when worn.
+/// picture (or the type icon) ringed in violet with a check badge when
+/// worn, the name, and the attachment point below it when there is one.
+/// The right end is kept for the hovered row's Wear button.
 #[allow(clippy::too_many_arguments)]
 fn paint_row(
     ui: &egui::Ui,
@@ -482,14 +616,14 @@ fn paint_row(
     it: &InvItem,
     texture: Option<&egui::TextureHandle>,
     worn: bool,
-    detail: &str,
+    point: Option<&str>,
     face: Option<egui::Color32>,
 ) {
     let radius = ui.visuals().window_corner_radius;
     if let Some(face) = face {
         ui.painter().rect_filled(rect, radius, face);
     }
-    let pic = Rect::from_center_size(egui::pos2(rect.left() + 5.0 + PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
+    let pic = Rect::from_center_size(egui::pos2(rect.left() + 6.0 + PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
     ui.painter().rect_filled(pic, radius, p.field);
     if let Some(t) = texture {
         let uv = crop_square(t.size_vec2());
@@ -502,22 +636,31 @@ fn paint_row(
         let tint = crate::ui::inventory::item_icon_color(it.asset_type, it.inv_type, p);
         egui::Image::new(&t)
             .tint(tint)
-            .paint_at(ui, Rect::from_center_size(pic.center(), Vec2::splat(20.0)));
+            .paint_at(ui, Rect::from_center_size(pic.center(), Vec2::splat(22.0)));
     }
-    let check = 22.0;
-    let left = pic.right() + 9.0;
-    let width = (rect.right() - left - if worn { check } else { 6.0 }).max(20.0);
+    if worn {
+        // the "equipped" mark on the item itself, as game inventories show it
+        ui.painter()
+            .rect_stroke(pic, radius, egui::Stroke::new(2.0, p.violet), egui::StrokeKind::Inside);
+        let badge = pic.right_bottom() + Vec2::splat(3.0);
+        ui.painter()
+            .circle_filled(badge, 8.5, face.map_or(p.panel, |face| p.panel.blend(face)));
+        if let Some(t) = icons::global("circle-check-filled") {
+            egui::Image::new(&t)
+                .tint(p.violet)
+                .paint_at(ui, Rect::from_center_size(badge, Vec2::splat(15.0)));
+        }
+    }
+    let left = pic.right() + 10.0;
+    let width = (rect.right() - left - WEAR_BUTTON - 10.0).max(20.0);
     let name_font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let name = one_line(ui, &it.name, name_font, p.ink, width);
-    let sub = one_line(ui, detail, FontId::proportional(11.0), p.muted, width);
-    let top = rect.center().y - (name.size().y + sub.size().y + 1.0) / 2.0;
+    let sub = point.map(|point| one_line(ui, point, FontId::proportional(11.0), p.muted, width));
+    let height = name.size().y + sub.as_ref().map_or(0.0, |sub| sub.size().y + 2.0);
+    let top = rect.center().y - height / 2.0;
     ui.painter().galley(egui::pos2(left, top), name.clone(), p.ink);
-    ui.painter().galley(egui::pos2(left, top + name.size().y + 1.0), sub, p.muted);
-    if worn && let Some(t) = icons::global("circle-check-filled") {
-        egui::Image::new(&t).tint(p.violet).paint_at(
-            ui,
-            Rect::from_center_size(egui::pos2(rect.right() - check / 2.0 - 2.0, rect.center().y), Vec2::splat(15.0)),
-        );
+    if let Some(sub) = sub {
+        ui.painter().galley(egui::pos2(left, top + name.size().y + 2.0), sub, p.muted);
     }
 }
 
@@ -730,8 +873,8 @@ pub fn demo_mode() -> Option<&'static str> {
 
 /// The demo's favorites over `appearance::seed_demo`'s wardrobe: a long
 /// name, pictures of several shapes (and items with none, which show
-/// their type icon), two tabs. `new` leaves the folder to the window,
-/// `empty` makes it with nothing in it, `tab` opens Date night.
+/// their type icon), seven folders (one empty). `new` leaves the folder to
+/// the window, `empty` makes it with nothing in it, `tab` opens Date night.
 pub fn demo_seed(
     ctx: &egui::Context,
     inv: &mut crate::world::inventory::Inventory,
@@ -825,6 +968,11 @@ pub fn demo_seed(
     for (name, members) in [
         ("Date night", [link(790), link(718), link(720)].as_slice()),
         ("Work", &[link(715), link(716)]),
+        ("Beach", &[link(714)]),
+        ("Club", &[link(715), link(790), link(721)]),
+        ("Gym", &[link(710)]),
+        ("Roleplay - medieval court", &[link(790), link(717)]),
+        ("Spring", &[]),
     ] {
         let Ok((id, change)) = model::new_folder(root, name) else {
             continue;
@@ -852,10 +1000,16 @@ fn demo_id() -> egui::Id {
     egui::Id::unique("wearable_favorites_demo_rows")
 }
 
+fn demo_picker_id() -> egui::Id {
+    egui::Id::unique("wearable_favorites_demo_picker")
+}
+
 /// The demo's pointer: `tooltip` rests on the long name's row at frame
 /// 520, for its tooltip; `drag` picks up the second row at frame 500 and
 /// carries it two rows down, held there for the capture; `drop` lets it go
-/// at frame 560, so that the capture shows it landed in Custom order.
+/// at frame 560, so that the capture shows it landed in Custom order;
+/// `menu` opens the folder menu at frame 540; `hover` rests on the second
+/// row's Wear button at frame 520.
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Some(mode) = demo_mode() else {
         return Vec::new();
@@ -872,6 +1026,26 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         "tooltip" if (520..=521).contains(&frame) => rects
             .first()
             .map(|rect| vec![egui::Event::PointerMoved(egui::pos2(rect.left() + 60.0, rect.center().y))])
+            .unwrap_or_default(),
+        "menu" => {
+            let Some(rect) = ctx.data(|d| d.get_temp::<Rect>(demo_picker_id())) else {
+                return Vec::new();
+            };
+            match frame {
+                539 => vec![egui::Event::PointerMoved(rect.center())],
+                540 => vec![button(rect.center(), true)],
+                541 => vec![button(rect.center(), false)],
+                _ => Vec::new(),
+            }
+        }
+        "hover" if (520..=521).contains(&frame) => rects
+            .get(1)
+            .map(|rect| {
+                vec![egui::Event::PointerMoved(egui::pos2(
+                    rect.right() - 6.0 - WEAR_BUTTON / 2.0,
+                    rect.center().y,
+                ))]
+            })
             .unwrap_or_default(),
         "drag" | "drop" => {
             let Some(rect) = rects.get(1) else {
