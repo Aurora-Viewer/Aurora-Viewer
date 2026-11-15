@@ -1,4 +1,4 @@
-//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|scenes: experiences
+//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes: experiences
 //! asking for permissions without a grid. In SL, llRequestExperiencePermissions
 //! can follow any event of the script: a click (touch_start), walking into
 //! an object or a phantom volume (collision_start, volume_detect), arriving
@@ -14,13 +14,16 @@
 //! - `walk`: a translucent teal pad in front of the avatar (a phantom
 //!   volume): walking into it asks, then teleports;
 //! - `arrive`: a land-scope experience of the parcel asks on arrival, from a
-//!   greeter object the viewer has never seen.
+//!   greeter object the viewer has never seen;
+//! - `edit`: the club's experience is the agent's own: its profile opens on
+//!   the Edit tab (IsExperienceAdmin), and Save is answered as
+//!   UpdateExperience would.
 
 use super::{HANDLE, floor_at, height, prim, shape, te};
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::NetCommand;
 use aurora_net::NetEvent;
-use aurora_net::experience::{ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange};
+use aurora_net::experience::{ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange, ExperienceUpdate};
 use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
 use glam::{Quat, Vec3};
@@ -96,6 +99,7 @@ enum Mode {
     Profile,
     Walk,
     Arrive,
+    Edit,
     Scenes,
 }
 
@@ -107,6 +111,10 @@ pub struct ExperienceDemo {
     asked: bool,
     /// The avatar stands in the pad (collision_start on entering).
     inside: bool,
+    /// The agent (`edit`: the club experience's owner).
+    agent: Uuid,
+    /// The club's experience as last saved (`edit`).
+    saved: Option<ExperienceDetails>,
 }
 
 /// What a command or a frame leads to.
@@ -129,6 +137,7 @@ impl ExperienceDemo {
             "profile" => Mode::Profile,
             "walk" => Mode::Walk,
             "arrive" => Mode::Arrive,
+            "edit" => Mode::Edit,
             "scenes" => Mode::Scenes,
             _ => Mode::Click,
         };
@@ -149,6 +158,25 @@ impl ExperienceDemo {
             placed: false,
             asked: false,
             inside: false,
+            agent: Uuid::nil(),
+            saved: None,
+        }
+    }
+
+    /// GetExperienceInfo's row: in `edit`, the club's experience is the
+    /// agent's, with a logo and a marketplace address, as last saved.
+    fn details(&self, id: Uuid) -> ExperienceDetails {
+        if self.mode != Mode::Edit || id != EXPERIENCE {
+            return details(id);
+        }
+        if let Some(saved) = &self.saved {
+            return saved.clone();
+        }
+        ExperienceDetails {
+            owner: self.agent,
+            logo: crate::demo::TEX_SNAPSHOT,
+            marketplace: "https://marketplace.secondlife.com/stores/0".into(),
+            ..details(id)
         }
     }
 
@@ -159,6 +187,7 @@ impl ExperienceDemo {
     /// Once a frame: the door or the pad, then what asks on its own (`auto`,
     /// `profile`, `arrive`) or because the avatar walked into the pad.
     pub fn tick(&mut self, frame: u64, world: &mut crate::world::World) -> Option<Reply> {
+        self.agent = world.agent_id;
         if !self.placed && frame >= ARRIVE_FRAME {
             self.placed = true;
             match self.mode {
@@ -180,6 +209,14 @@ impl ExperienceDemo {
             return None;
         }
         match self.mode {
+            Mode::Edit if !self.asked && frame >= AUTO_FRAME => {
+                self.asked = true;
+                // opened to be edited (LLFloaterExperienceProfile::mPostEdit)
+                world.experiences.open_profile(EXPERIENCE);
+                world.experiences.profile_edit = true;
+                log::info!("demo experience: the club's profile opens on its Edit tab");
+                None
+            }
             Mode::Scenes => match frame {
                 620 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, false)])),
                 900 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, true)])),
@@ -236,8 +273,29 @@ impl ExperienceDemo {
                 Some(self.act(source))
             }
             NetCommand::ExperienceInfo(ids) if ids.iter().any(|id| *id == EXPERIENCE || *id == GREETER_EXPERIENCE) => Some(Reply::Events(
-                vec![NetEvent::ExperienceInfo(ids.iter().map(|id| details(*id)).collect())],
+                vec![NetEvent::ExperienceInfo(ids.iter().map(|id| self.details(*id)).collect())],
             )),
+            NetCommand::ExperienceAdmin(experience) if *experience == EXPERIENCE || *experience == GREETER_EXPERIENCE => {
+                Some(Reply::Events(vec![NetEvent::ExperienceAdmin {
+                    experience: *experience,
+                    admin: self.mode == Mode::Edit && *experience == EXPERIENCE,
+                }]))
+            }
+            NetCommand::UpdateExperience { experience, body } if *experience == EXPERIENCE && self.mode == Mode::Edit => {
+                // the server answers the saved row, its owner included
+                let mut row = body.clone();
+                row.insert("agent_id", self.agent);
+                let saved = ExperienceDetails::from_row(&row);
+                log::info!("demo experience: UpdateExperience saved \"{}\"", saved.name);
+                self.saved = Some(saved.clone());
+                Some(Reply::Events(vec![NetEvent::ExperienceUpdated {
+                    experience: *experience,
+                    result: Ok(ExperienceUpdate {
+                        notes: Vec::new(),
+                        details: Some(saved),
+                    }),
+                }]))
+            }
             NetCommand::MyExperiences => Some(Reply::Events(self.lists())),
             NetCommand::ExperiencePermission { experience, change } if *experience == EXPERIENCE || *experience == GREETER_EXPERIENCE => {
                 let permission = match change {
@@ -273,7 +331,10 @@ impl ExperienceDemo {
             (ExperienceListKind::Blocked, with(ExperiencePermission::Blocked)),
             (ExperienceListKind::Admin, vec![EXPERIENCE]),
             (ExperienceListKind::Contributor, vec![GREETER_EXPERIENCE]),
-            (ExperienceListKind::Owned, Vec::new()),
+            (
+                ExperienceListKind::Owned,
+                if self.mode == Mode::Edit { vec![EXPERIENCE] } else { Vec::new() },
+            ),
         ]
         .into_iter()
         .map(|(kind, ids)| NetEvent::ExperienceList { kind, ids: Some(ids) })
@@ -369,6 +430,7 @@ fn details(id: Uuid) -> ExperienceDetails {
         owner: Uuid::from_u128(0x2222),
         group: Uuid::nil(),
         slurl: slurl.into(),
+        ..Default::default()
     }
 }
 

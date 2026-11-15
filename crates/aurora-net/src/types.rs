@@ -977,6 +977,17 @@ pub enum NetEvent {
         change: crate::experience::ExperiencePermissionChange,
         result: Result<crate::experience::ExperiencePermission, String>,
     },
+    /// IsExperienceAdmin, with the region's UpdateExperience capability:
+    /// the agent may edit the experience.
+    ExperienceAdmin {
+        experience: Uuid,
+        admin: bool,
+    },
+    /// UpdateExperience's answer.
+    ExperienceUpdated {
+        experience: Uuid,
+        result: Result<crate::experience::ExperienceUpdate, String>,
+    },
     /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
     /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
     SitResponse {
@@ -1893,6 +1904,14 @@ pub enum NetCommand {
     ExperiencePermission {
         experience: Uuid,
         change: crate::experience::ExperiencePermissionChange,
+    },
+    /// IsExperienceAdmin, answered by NetEvent::ExperienceAdmin.
+    ExperienceAdmin(Uuid),
+    /// UpdateExperience: the package `update_body` built, answered by
+    /// NetEvent::ExperienceUpdated.
+    UpdateExperience {
+        experience: Uuid,
+        body: aurora_llsd::Llsd,
     },
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {

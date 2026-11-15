@@ -1356,6 +1356,14 @@ impl Renderer {
     pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
         self.vr.head_pose()
     }
+    /// The VR runtime announced it is closing (SteamVR quit by the user): VR
+    /// is over for this renderer. The device was opened through the runtime,
+    /// which ends the process a few seconds later unless this renderer is
+    /// dropped by then: the viewer replaces it with one opened without the
+    /// runtime (aurora-viewer's `gpu_recovery.rs`).
+    pub fn vr_runtime_lost(&self) -> bool {
+        self.vr.runtime_lost()
+    }
     pub fn vr_focused(&self) -> bool {
         self.vr.focused()
     }

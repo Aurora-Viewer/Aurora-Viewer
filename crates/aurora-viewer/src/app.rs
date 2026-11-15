@@ -471,6 +471,10 @@ pub struct App {
     /// otherwise the restart dialog explains that VR is set up only once
     /// used.
     vr_set_up: bool,
+    /// The VR runtime closed during this run (SteamVR quit): the renderer
+    /// was made again without it, and VR waits for the next start
+    /// (`reopen_without_vr`).
+    vr_runtime_gone: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -847,6 +851,8 @@ pub struct App {
     display_name_ui: ui::display_name::DisplayNameUi,
     /// World › Landmark this Place (LLFloaterCreateLandmark).
     create_landmark_ui: ui::landmark_create::CreateLandmarkUi,
+    /// The experience profile, with its Edit tab (LLFloaterExperienceProfile).
+    experience_profile_ui: ui::experience_profile::ExperienceProfileUi,
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
@@ -1702,6 +1708,7 @@ impl App {
             vr_restart: false,
             restart_into_vr: false,
             vr_set_up: false,
+            vr_runtime_gone: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -1903,6 +1910,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             create_landmark_ui: Default::default(),
+            experience_profile_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
             debug_settings_ui: Default::default(),
@@ -2861,7 +2869,7 @@ impl App {
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
                     ),
                     7 => crate::world::inventory::demo::note_asset(
-                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "note-embedded" | "note-image" | "note-landmark" | "note-copy" | "note-menu-right")),
+                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "note-embedded" | "note-image" | "note-landmark" | "note-copy" | "note-menu-right" | "note-rez")),
                     ),
                     _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
                 });
@@ -4241,7 +4249,7 @@ impl App {
                         "viewer: arrival applied ({}), seated {}, {} worn objects",
                         if self.world.arrived_by_crossing { "crossing" } else { "teleport" },
                         self.world.agent.seated,
-                        self.scene.own_attachment_count()
+                        self.world.own_attachment_count()
                     )
                 });
                 self.stop_local_typing();
@@ -7543,6 +7551,9 @@ impl App {
                 self.world.apply(NetEvent::ObjectsKilled { handle, local_ids });
             }
             self.world.apply(crate::demo::beacons::events());
+            if mode == "guides" {
+                self.world.apply(crate::demo::beacons::guide_events());
+            }
             if mode == "parcels" {
                 for event in crate::demo::beacons::overlay_events() {
                     self.world.apply(event);
@@ -9132,6 +9143,7 @@ impl App {
         images.extend(self.avatar_textures.wanted_images.drain());
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.experience_profile_ui.wanted_images.drain());
         images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
@@ -10082,6 +10094,12 @@ impl App {
             crate::demo::coplanar_decal::tick(&mut self.world, &mut self.scene, self.frame_count, view);
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
+            }
+            // AURORA_DEMO_SHAPE_MORPH: the Wolf and the crowd change shape
+            for ev in crate::demo::shape_morph::tick(self.frame_count, &self.world.avatar_lib.shape_params) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
             }
             // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
             if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
@@ -11205,6 +11223,10 @@ impl App {
             if studio_view.is_some() {
                 self.scene.fov_y = render_fov;
             }
+            // other avatars' shapes gliding to a new appearance
+            if self.world.shape_tweens.active() {
+                self.world.shape_tweens.step(Instant::now());
+            }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -11567,7 +11589,7 @@ impl App {
             }
         }
         // no answer from the region: stop waiting, without ending the session
-        if self.world.arrival_overdue(Instant::now(), self.scene.own_attachment_count()) {
+        if self.world.arrival_overdue(Instant::now(), self.world.own_attachment_count()) {
             let kind = if self.world.teleporting {
                 aurora_net::transition::Kind::Teleport
             } else {
@@ -13590,6 +13612,21 @@ impl App {
             self.close_while_gpu_stalled(event_loop);
             return;
         }
+        // the VR runtime is closing (SteamVR quit) and ends the process soon
+        // if its device is still open: a new renderer without it, once the
+        // desktop camera is back (gpu_recovery.rs)
+        if !self.vr_runtime_gone
+            && self.vr_camera.is_none()
+            && self
+                .gfx
+                .as_ref()
+                .is_some_and(|g| g.renderer.vr_runtime_lost() && !g.renderer.vr_engaged())
+        {
+            if !self.reopen_without_vr(event_loop) {
+                self.close_while_gpu_stalled(event_loop);
+            }
+            return;
+        }
         self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
@@ -14350,6 +14387,20 @@ impl App {
         if self.demo
             && let Ok(v) = std::env::var("AURORA_DEMO_BUILD")
         {
+            // AURORA_DEMO_BUILD_OPTIONS: the camera looks at the selected
+            // object from 12 m once the script selected it
+            if self.frame_count == 700
+                && std::env::var_os("AURORA_DEMO_BUILD_OPTIONS").is_some()
+                && let Some(idx) = crate::build::demo::target_index(&v, &self.world)
+                && let Some((center, _, false)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            {
+                self.camera.set_view(
+                    center + Vec3::new(-7.0, -7.0, 6.0),
+                    center,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             for step in crate::build::demo::steps(&v, self.frame_count, &self.build, &self.world, &self.settings.build) {
                 match step {
                     crate::build::demo::Step::Open(t, m, land) => {
@@ -15331,6 +15382,10 @@ impl App {
             }
             BarAction::EditParticles => self.open_particle_editor(),
             BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
+            BarAction::BuildOptions(options) => {
+                options.apply(&mut self.settings.build);
+                self.settings.save();
+            }
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -17319,6 +17374,7 @@ impl App {
                     [self.settings.sun_beacon, self.settings.moon_beacon],
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
+                ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
@@ -17502,6 +17558,7 @@ impl App {
                         .unwrap_or_default(),
                     edit_particles: self.particle_editor_target().is_some(),
                     save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
+                    build_options: crate::build::MenuOptions::of(&self.settings.build),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -17981,6 +18038,8 @@ impl App {
                     }
                     self.build
                         .draw_overlay(&ctx, &self.palette, &self.world, &self.scene, &self.settings.build, mods);
+                    self.build
+                        .draw_probe_volumes(&ctx, &self.palette, &self.world, &self.settings.build);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
@@ -19053,6 +19112,7 @@ impl App {
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
+                    tip_seconds: f64::from(self.settings.tip_toast_seconds),
                     restart,
                     presence_at,
                     classic_bars,
@@ -19222,7 +19282,7 @@ impl App {
                     self.send(cmd);
                 }
                 // the experience profile (the permission question's link)
-                if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
+                if let Some((experience, change)) = self.experience_profile_ui.show(&ctx, &p, &mut self.world, &self.ui_images) {
                     self.world.experiences.change(experience, change);
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
@@ -20211,6 +20271,10 @@ impl ApplicationHandler for App {
                 if value == "inventory:recent-period" {
                     self.settings.inventory.recent_hours = 7 * 24;
                 }
+                // the tip toasts' duration with the Legacy toasts, its row on
+                if value.split(':').nth(1) == Some("tip-toast-legacy") {
+                    self.settings.notifications_style = crate::settings::NotificationsStyle::Legacy;
+                }
                 // the confirmation of a restore, for a backup of the demo's
                 // own profile
                 if value.split(':').nth(1) == Some("restore") {
@@ -20580,6 +20644,9 @@ impl ApplicationHandler for App {
                     sound: true,
                     particles: true,
                     media: true,
+                    light_boxes: mode == "guides",
+                    region_corners: mode == "guides",
+                    chat_spheres: mode == "guides",
                     ..Default::default()
                 };
                 self.settings.world_overlays.property_lines = mode == "parcels";
@@ -20593,6 +20660,22 @@ impl ApplicationHandler for App {
                 if mode == "owned" {
                     self.panels.owned_land = true;
                     self.world.group_money.request_owned_land();
+                }
+            }
+            // AURORA_DEMO_BUILD_OPTIONS=hidden,light,probes,locked,copyable,
+            // no-group: Build › Options switched from the start
+            if let Ok(list) = std::env::var("AURORA_DEMO_BUILD_OPTIONS") {
+                let b = &mut self.settings.build;
+                for option in list.split(',').map(str::trim) {
+                    match option {
+                        "hidden" => b.show_hidden_selection = true,
+                        "light" => b.show_light_radius = true,
+                        "probes" => b.show_probe_volumes = true,
+                        "locked" => b.select_locked_only = true,
+                        "copyable" => b.select_copyable_only = true,
+                        "no-group" => b.select_group_owned = false,
+                        _ => {}
+                    }
                 }
             }
             // AURORA_DEMO_RENDER_TYPES=water,avatars,…: those rendering
@@ -22244,6 +22327,8 @@ impl ApplicationHandler for App {
                             };
                         }
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else if view == "task-preview" {
+                        self.demo_task_previews();
                     } else if view.starts_with("note-task") {
                         self.demo_task_notecard(&view);
                     } else if view.starts_with("note-") {

@@ -56,6 +56,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
+    // the experience profile's Edit (LLFloaterExperienceProfile::
+    // experienceIsAdmin, LLExperienceCache::updateExperience)
+    "IsExperienceAdmin",
+    "UpdateExperience",
     "GetMesh",
     "GetMesh2",
     "GetMetadata",
