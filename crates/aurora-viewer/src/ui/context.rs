@@ -32,6 +32,8 @@ pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
+mod radar_menu_tests;
+#[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
 #[cfg(test)]
@@ -767,6 +769,21 @@ fn voice_control(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVol
     }
 }
 
+/// The display choices of a resident (`CtxAction::SetRender`): always in
+/// full, never fully, by the preferences; the in-world menu's and the
+/// people lists'.
+pub(crate) fn render_choices() -> [(u8, &'static str, &'static str); 3] {
+    [
+        (2, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+        (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
+        (
+            0,
+            "adjustments-filled",
+            aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
+        ),
+    ]
+}
+
 fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     // menu_conversation.xml's moderator entries (ModerateVoiceMuteSelected /
     // UnMuteSelected, ModerateVoiceMute / Unmute)
@@ -966,6 +983,11 @@ fn avatar_menu_reporting(
             ) {
                 act(CtxAction::Call(id));
             }
+            // menu_fs_radar.xml's ScriptInfo (Avatar.getScriptInfo), as the
+            // avatar's own menu in the world offers it
+            if menu::item(ui, p, "code", aurora_i18n::tr!("ui-context-script-information")) {
+                act(CtxAction::ScriptInfo(id));
+            }
             menu::separator(ui, p);
             history(ui);
             menu::separator(ui, p);
@@ -1042,6 +1064,16 @@ fn avatar_menu_reporting(
                     act(CtxAction::Derender { id, permanent });
                 }
             }
+            // menu_fs_radar.xml's "Render Settings" (Nearby.People.SetRenderMode,
+            // CheckRenderMode): the in-world menu's display choices
+            let render = world.render_exceptions.get(&id).copied().unwrap_or(0);
+            menu::submenu(ui, p, "gauge-filled", aurora_i18n::tr!("ui-context-display-options"), true, |ui| {
+                for (mode, icon, label) in render_choices() {
+                    if menu::check(ui, p, icon, label, render == mode, true) && render != mode {
+                        act(CtxAction::SetRender(id, mode));
+                    }
+                }
+            });
         }
         AvatarList::Friend => {
             profile(ui);
