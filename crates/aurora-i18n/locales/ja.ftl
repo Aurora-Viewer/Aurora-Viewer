@@ -10171,6 +10171,8 @@ web-browser-secure = 安全な接続 (https)
 web-browser-not-secure = 接続は安全ではありません
 web-browser-loading = 読み込み中…
 marketplace-unavailable = Second Lifeに接続すると、マーケットプレイスがここに表示されます。
+ui-bars-avatar-welcome-pack = アバターウェルカムパック…
+avatar-welcome-unavailable = このグリッドにはアバターウェルカムパックがありません。
 destinations-unavailable = このグリッドには行き先ガイドがありません。
 destinations-hot = 今話題の場所
 destinations-search = ガイドの場所を検索
@@ -14425,6 +14427,7 @@ admin-unfreeze-message = フリーズが解除されました。
 
 ui-weather = 天気
 ui-weather-aurora = Aurora の天気
+ui-bars-aurora-weather = Aurora の天気…
 ui-weather-precipitation = 降るもの
 ui-weather-precipitation-tip = 空から降るもの（自分の表示のみ）
 ui-weather-rain = 雨

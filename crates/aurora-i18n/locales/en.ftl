@@ -10223,6 +10223,8 @@ web-browser-secure = Secure connection (https)
 web-browser-not-secure = The connection is not secure
 web-browser-loading = Loading…
 marketplace-unavailable = The Marketplace shows here once connected to Second Life.
+ui-bars-avatar-welcome-pack = Avatar Welcome Pack…
+avatar-welcome-unavailable = This grid has no avatar welcome pack.
 destinations-unavailable = This grid has no destination guide.
 destinations-hot = What's hot now
 destinations-search = Search a place in the guide
@@ -14505,6 +14507,7 @@ admin-unfreeze-message = You are no longer frozen.
 
 ui-weather = Weather
 ui-weather-aurora = Aurora Weather
+ui-bars-aurora-weather = Aurora Weather…
 ui-weather-precipitation = Falling
 ui-weather-precipitation-tip = What falls from the sky, for your view only
 ui-weather-rain = Rain

@@ -2932,6 +2932,12 @@ fn snow_deep() -> bool {
     return (u32(frame.snow_cover.z + 0.5) & 4u) != 0u;
 }
 
+// "Snow settles" off (frame.snow_cover.z bit 8): no lying snow drawn,
+// whatever falls (the memory keeps it).
+fn snow_hidden() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 8u) != 0u;
+}
+
 // Deep snow's layer under a full cover (m).
 const SNOW_DEEP_TOP: f32 = 0.25;
 
@@ -2970,8 +2976,10 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // made from the depth under the snow: what it buries would darken it
     screen_surface = false;
     contact_surface = false;
-    // "Snow settles" off (in snow, rain_look.x): none drawn
-    if (snowing() && frame.rain_look.x < 0.5) { return vec4<f32>(0.0); }
+    // "Snow settles" off: none drawn, whatever falls (it was read from the
+    // puddles' switch, rain_look.x, which is the snow's only while it
+    // snows: in rain or clear weather the snow melting away showed)
+    if (snow_hidden()) { return vec4<f32>(0.0); }
     let depth = snow_lying(lies_at + n * 0.05);
     if (depth <= 0.002) { return vec4<f32>(0.0); }
     let cam = frame.camera_pos.xyz;

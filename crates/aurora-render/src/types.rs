@@ -1497,6 +1497,10 @@ pub struct RainLook {
     /// How deep snow lies in the open at least (0..1): a region's weather
     /// gives its whole history (who comes in late sees what has built up).
     pub snow_lying: f32,
+    /// Snow lying on the ground is drawn ("Snow settles"), whatever falls
+    /// now: off, none at once, nor while what lay melts after the weather
+    /// turned to rain or cleared (the memory keeps it, unseen).
+    pub snow_settles: bool,
     /// Footprints are kept in the lying snow.
     pub footprints: bool,
     /// Their map: how wide (m, 32 to 64: the wider, the coarser) and where
@@ -1549,6 +1553,7 @@ impl Default for RainLook {
             memory_reach: 60.0,
             deep_reach: 15.0,
             snow_lying: 0.0,
+            snow_settles: true,
             footprints: false,
             trail_extent: 32.0,
             trail_centre: [0.0; 2],
