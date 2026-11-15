@@ -4094,9 +4094,6 @@ impl App {
                 if let Some(tex) = texture_id {
                     tf.texture = tex;
                 }
-                if let Some(mat) = material_id {
-                    tf.material_id = mat;
-                }
                 if let Some(rgba) = color {
                     tf.color = rgba;
                 }
@@ -4131,22 +4128,66 @@ impl App {
             }
         }
 
-        let packed = aurora_prim::te::pack_texture_entry(&te, num_faces);
-        let media_url = obj.media_url.clone();
-        obj.te = Some(Arc::new(te));
-        obj.material_dirty = true;
-        self.send(NetCommand::Build(BuildCmd::SetTextures {
-            handle,
-            local_id,
-            media_url,
-            texture_entry: packed,
-        }));
+        let te_changed = texture_id.is_some()
+            || color.is_some()
+            || repeats.is_some()
+            || offsets.is_some()
+            || rotation_rad.is_some()
+            || glow.is_some()
+            || bump_shiny.is_some()
+            || fullbright.is_some()
+            || alpha_mode.is_some();
+        if te_changed {
+            let packed = aurora_prim::te::pack_texture_entry(&te, num_faces);
+            let media_url = obj.media_url.clone();
+            obj.te = Some(Arc::new(te));
+            obj.material_dirty = true;
+            self.send(NetCommand::Build(BuildCmd::SetTextures {
+                handle,
+                local_id,
+                media_url,
+                texture_entry: packed,
+            }));
+        }
+
+        // material_id is the PBR (glTF) material, PRIM_RENDER_MATERIAL: it goes
+        // by ModifyMaterialParams, as dropping a material on a face does, not
+        // into the texture entry (whose material id is the old Blinn-Phong
+        // one, and which the simulator ignored: the face read back NULL_KEY).
+        // An inventory item's id is taken to its asset; NULL_KEY removes.
+        let mut material_asset = None;
+        if let Some(mat) = material_id {
+            let asset = match self.world.inventory.items.get(&mat) {
+                Some(item) if item.asset_type == 57 => item.asset_id,
+                Some(item) => {
+                    return Err(McpError::InvalidParams(format!(
+                        "inventory item '{}' is not a material (asset_type {})",
+                        item.name, item.asset_type
+                    )));
+                }
+                None => mat,
+            };
+            let updates = target_indices
+                .iter()
+                .map(|&fi| crate::build::materials::GltfUpdate {
+                    object: idx,
+                    face: fi as u8,
+                    asset: Some(asset),
+                    over: None,
+                })
+                .collect();
+            self.build.gltf_update(&mut self.world, updates);
+            self.flush_build();
+            material_asset = Some(asset);
+        }
 
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "local_id": local_id,
             "face": face.unwrap_or(-1),
             "num_faces": num_faces,
+            "render_material": material_asset.map(|a| a.to_string()),
+            "note": material_asset.map(|_| "sent by ModifyMaterialParams: read it back with PRIM_RENDER_MATERIAL, or radar/object properties, after a moment"),
         })))
     }
 
