@@ -254,6 +254,52 @@ impl PathfindingUi {
         }
     }
 
+    /// PathfindingDirty, opened by the rebake icon: Rebake or Close. Some(true)
+    /// when Rebake was chosen (rebakeRegionCallback: it then rebakes if a
+    /// rebake is needed).
+    pub fn dirty_dialog(&mut self, ctx: &egui::Context, p: &Palette) -> Option<bool> {
+        if !self.dirty_question {
+            return None;
+        }
+        let mut answer = None;
+        let modal = widgets::Modal::new(egui::Id::unique("pathfinding_dirty")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("pathfinding-menu-rebake"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            ui.label(RichText::new(aurora_i18n::tr!("pathfinding-dirty-text")).size(12.5).color(p.muted));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "refresh",
+                    aurora_i18n::tr!("pathfinding-rebake"),
+                    ActionKind::Primary,
+                    BUTTON,
+                )
+                .clicked()
+                {
+                    answer = Some(true);
+                }
+                if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-close"), ActionKind::Flat, BUTTON).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        if answer.is_some() {
+            self.dirty_question = false;
+        }
+        answer
+    }
+
     fn confirm_dialog(&mut self, ctx: &egui::Context, p: &Palette) -> Option<Action> {
         let confirm = self.confirm.as_ref()?;
         // no warning: sent at once (doApplyEdit)

@@ -5818,7 +5818,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets-beacon\|linksets:<count>\|characters\|characters-selected\|characters-beacon` | Open Build › Pathfinding's Region objects or Characters window on a made-up list; `:<count>` sets the number of linksets. |
+| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets-beacon\|linksets:<count>\|characters\|characters-selected\|characters-beacon\|rebake\|rebake-disabled` | Open Build › Pathfinding's Region objects or Characters window on a made-up list (`:<count>` sets the number of linksets), or show the navmesh rebake icon (`rebake`) or the "no dynamic pathfinding" one (`rebake-disabled`). |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -5851,7 +5851,14 @@ Clear empties them; sorting each column (numbers by value); the line under
 the list; Select all / Select none; Show beacon; the use dropdown greying
 the uses the selection cannot take; Apply changes, with the warning for a
 phantom toggle, an unmodifiable or a concave linkset; Take, Take copy,
-Return and Delete (several rows ask first). Capture after frame 700 in
+Return and Delete (several rows ask first). `rebake`: the region's navmesh
+has pending changes and the agent may rebake: the red route icon follows the
+parcel icons and Build › Pathfinding › Rebake region is enabled. A click on
+the icon asks PathfindingDirty (Rebake / Close); Rebake, or the menu entry,
+starts a rebake: the icon blinks every half second while the demo region
+builds (6 s), then goes away with the menu entry. `rebake-disabled`: an up to
+date navmesh in a region without dynamic pathfinding: the struck-out route
+icon, whose click says so in a notification. Capture after frame 700 in
 English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to

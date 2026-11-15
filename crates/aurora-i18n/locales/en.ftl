@@ -8451,6 +8451,10 @@ ui-parcel-icons-name-safe = No damage
 ui-parcel-icons-name-damage = Damage
 ui-parcel-icons-name-see = Avatars visible
 ui-parcel-icons-name-isolated = Isolated parcel
+ui-parcel-icons-name-navmesh = Navmesh
+ui-parcel-icons-navmesh-dirty = The region's navmesh has pending pathfinding changes: click to rebake it.
+ui-parcel-icons-name-no-pathfinding = No pathfinding
+ui-parcel-icons-pathfinding-disabled = Dynamic pathfinding is not enabled on this region: click for details.
 ui-parcel-icons-name-frozen = Frozen
 ui-worldmap-l-unknown-area = { $value0 }{ "\u000AL$ " }{ $price }{ " (unknown area)" }
 ui-worldmap-at-utc = { $value0 }{ "\u000AAt " }{ $h }:{ $m }{ " UTC" }
@@ -14688,6 +14692,11 @@ pathfinding-warn-restricted = Some selected linksets cannot be set to be '{ $req
 pathfinding-warn-concave = Some selected linksets cannot be set to be '{ $requested }' because the shape is non-convex.
 pathfinding-warn-concave-unchanged = Some selected linksets cannot be set to be '{ $requested }' because the shape is non-convex. These linksets' use types will not change.
 pathfinding-warn-continue = Do you wish to continue?
+pathfinding-menu-rebake = Rebake region
+pathfinding-rebake = Rebake
+pathfinding-dirty-text = The region has pending pathfinding changes. If you have build rights, you may rebake the region by clicking on the "Rebake" button.
+pathfinding-cannot-rebake = An error occurred. There may be a network or server problem, or you may not have build rights. Sometimes logging out and back in will solve this problem.
+pathfinding-dynamic-disabled = Dynamic pathfinding is not enabled on this region. Scripted objects using pathfinding LSL calls may not operate as expected on this region.
 
 # About Aurora Viewer (#1126)
 about-tab-info = Info

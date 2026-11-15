@@ -8456,6 +8456,10 @@ ui-parcel-icons-name-safe = Sans dégâts
 ui-parcel-icons-name-damage = Dégâts
 ui-parcel-icons-name-see = Avatars visibles
 ui-parcel-icons-name-isolated = Parcelle isolée
+ui-parcel-icons-name-navmesh = Navmesh
+ui-parcel-icons-navmesh-dirty = Le navmesh de la région a des modifications de recherche de chemin en attente : cliquez pour le refiger.
+ui-parcel-icons-name-no-pathfinding = Sans recherche de chemin
+ui-parcel-icons-pathfinding-disabled = La recherche de chemin dynamique n'est pas activée dans cette région : cliquez pour en savoir plus.
 ui-parcel-icons-name-frozen = Gelé
 ui-worldmap-l-unknown-area = { $value0 }{ "\u000AL$ " }{ $price }{ " (surface inconnue)" }
 ui-worldmap-at-utc = { $value0 }{ "\u000AÀ " }{ $h }:{ $m }{ " UTC" }
@@ -14693,6 +14697,11 @@ pathfinding-warn-restricted = Certains groupes de liens sélectionnés ne peuven
 pathfinding-warn-concave = Certains groupes de liens sélectionnés ne peuvent pas être définis sur « { $requested } » en raison d'une forme non convexe.
 pathfinding-warn-concave-unchanged = Certains groupes de liens sélectionnés ne peuvent pas être définis sur « { $requested } » en raison d'une forme non convexe. Les types d'usage de ces groupes de liens ne seront pas modifiés.
 pathfinding-warn-continue = Voulez-vous continuer ?
+pathfinding-menu-rebake = Refiger la région
+pathfinding-rebake = Refiger
+pathfinding-dirty-text = Des modifications de recherche de chemin sont en attente concernant cette région. Si vous disposez de droits de construction, vous pouvez la figer de nouveau en cliquant sur le bouton « Refiger ».
+pathfinding-cannot-rebake = Une erreur est survenue. Un problème réseau ou serveur s'est peut-être produit ou vous ne disposez pas de droits de construction. Se déconnecter puis se reconnecter permet parfois de résoudre le problème.
+pathfinding-dynamic-disabled = La recherche de chemin dynamique n'est pas activée dans cette région. Il se peut que les objets scriptés utilisant des appels LSL de recherche de chemin ne fonctionnent pas comme prévu pour cette région.
 
 # About Aurora Viewer (#1126)
 about-tab-info = Infos

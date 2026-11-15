@@ -5,31 +5,71 @@
 //! The demo answers the list and edit requests itself, like the region:
 //! the plaza's objects first, then numbered linksets of every kind; an edit
 //! comes back with the changed linksets.
+//! `rebake`: the navmesh has pending changes and the agent may rebake (the
+//! rebake icon, Build › Pathfinding › Rebake region; a rebake builds for
+//! `REBAKE_TIME`, then the navmesh is up to date). `rebake-disabled`: an up to
+//! date navmesh in a region without dynamic pathfinding (its icon).
 use super::*;
 use aurora_llsd::{Llsd, llsd_map};
+use aurora_net::pathfinding::navmesh::{State, Status};
 use aurora_net::pathfinding::{self, Kind};
 use uuid::Uuid;
 
 /// Synthetic rows' owner, so the owner column has a name to wait for.
 const DEMO_OWNER: Uuid = Uuid::from_u128(0x5afe_0000_0000_0000_0000_0000_0000_0042);
+/// How long the demo region takes to rebake its navmesh.
+const REBAKE_TIME: Duration = Duration::from_secs(6);
 
 #[derive(Default)]
 pub(super) struct PathfindingDemo {
     /// How many linksets the demo region holds.
     linksets: usize,
+    /// A pathfinding scenario runs: the region acts as a pathfinding one.
+    active: bool,
+    /// When the demo's rebake finishes.
+    rebake_done: Option<Instant>,
+}
+
+impl PathfindingDemo {
+    /// The demo region has pathfinding (the disabled icon may show).
+    pub(super) fn region(&self) -> bool {
+        self.active
+    }
 }
 
 fn vector(at: [f64; 3]) -> Llsd {
     Llsd::Array(at.iter().map(|&n| Llsd::Real(n)).collect())
 }
 
+fn demo_status(state: State) -> Option<Status> {
+    Some(Status {
+        region: Uuid::nil(),
+        version: 1,
+        state,
+    })
+}
+
 impl App {
     pub(super) fn demo_pathfinding(&mut self, mode: &str) {
         let (name, count) = mode.split_once(':').unwrap_or((mode, ""));
         self.pathfinding_demo.linksets = count.parse().unwrap_or(40).clamp(1, 20_000);
+        self.pathfinding_demo.active = true;
         self.panels.chat = false;
         self.panels.people = false;
         self.panels.minimap = false;
+        if name.starts_with("rebake") {
+            let disabled = name == "rebake-disabled";
+            let region = self.world.main_region.unwrap_or_default();
+            if let Some(r) = self.world.regions.get_mut(&region) {
+                r.dynamic_pathfinding = !disabled;
+            }
+            let rebake = &mut self.pathfinding.rebake;
+            rebake.region_changed(Some(region));
+            let state = if disabled { State::Complete } else { State::Pending };
+            rebake.on_status(region, demo_status(state), Instant::now());
+            rebake.on_agent_state(region, true);
+            return;
+        }
         let kind = if name.starts_with("characters") {
             Kind::Characters
         } else {
@@ -183,5 +223,28 @@ impl App {
             }
         }
         data
+    }
+}
+
+impl App {
+    /// The demo region accepts the rebake and builds (navMeshRebakeCoro's
+    /// answer, then NavMeshStatusUpdate "building").
+    pub(super) fn demo_rebake_answer(&mut self, region: aurora_net::RegionHandle) {
+        let now = Instant::now();
+        let rebake = &mut self.pathfinding.rebake;
+        rebake.on_response(region, true, now);
+        rebake.on_status(region, demo_status(State::Building), now);
+        self.pathfinding_demo.rebake_done = Some(now + REBAKE_TIME);
+    }
+
+    /// The demo's rebake ends: NavMeshStatusUpdate "complete".
+    pub(super) fn demo_rebake_frame(&mut self) {
+        let now = Instant::now();
+        if self.pathfinding_demo.rebake_done.is_some_and(|at| now >= at) {
+            self.pathfinding_demo.rebake_done = None;
+            if let Some(region) = self.world.main_region {
+                self.pathfinding.rebake.on_status(region, demo_status(State::Complete), now);
+            }
+        }
     }
 }

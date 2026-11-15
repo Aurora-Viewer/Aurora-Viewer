@@ -813,7 +813,13 @@ the Legacy layout (`view.rs`) and the wire physics capsule (`capsule.rs`).
 `app/pathfinding.rs` opens them, resolves owner names, works out which actions
 the in-world selection allows (with RLVa's `rlva_can_delete_or_return`), makes
 the list selection the in-world one, carries out Take / Return / Delete /
-Teleport / Apply and draws Show beacon (`ui::beacons::labeled`);
+Teleport / Apply and draws Show beacon (`ui::beacons::labeled`). The navmesh
+rebake (`ui/pathfinding/rebake.rs`: LLMenuOptionPathfindingRebakeNavmesh's
+modes, the menu's enabling, the rebake icon's blinking and stuck dimming)
+is driven by `app/pathfinding_rebake.rs`: the network's status and agent
+state, Build › Pathfinding › Rebake region, and the two pathfinding icons it
+adds after the parcel icons (`parcel_icons::pathfinding_icons`, whose
+`Click` sends them to their own notices instead of About Land);
 `app/pathfinding_demo.rs` is `AURORA_DEMO_PATHFINDING`.
 `aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
 (`mod.rs`: the object, character and terrain rows), the linkset rules

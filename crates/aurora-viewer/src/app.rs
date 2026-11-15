@@ -125,6 +125,7 @@ mod outfit_portrait;
 mod own_motion;
 mod pathfinding;
 mod pathfinding_demo;
+mod pathfinding_rebake;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
@@ -3601,6 +3602,9 @@ impl App {
             return;
         }
         let Some(ev) = self.on_pathfinding_event(ev) else {
+            return;
+        };
+        let Some(ev) = self.on_rebake_event(ev) else {
             return;
         };
         if let NetEvent::ServerReleaseNotes(page) = ev {
@@ -15799,6 +15803,8 @@ impl App {
                 self.ik_editor.toggle();
             }
             BarAction::Pathfinding(kind) => self.open_pathfinding_from_selection(kind),
+            BarAction::RebakeNavMesh => self.rebake_navmesh(),
+            BarAction::ParcelIcon(click) => self.parcel_icon_click(click),
             BarAction::Poser => {
                 self.ik_editor.open_poser();
                 let window = self.ik_editor.poser_window(&self.settings.poser);
@@ -18005,17 +18011,22 @@ impl App {
                     avatar_welcome: avatar_welcome_page.is_some(),
                     linden_home: self.second_life(),
                     destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
-                    parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
-                        (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
-                            region_flags: region.region_flags,
-                            parcel,
-                            agent_id: self.world.agent_id,
-                            group: self.world.groups.group(&parcel.group_id),
-                            health: self.world.health,
-                            frozen: self.world.frozen,
-                            god_level: self.world.god_level,
-                        }),
-                        _ => Vec::new(),
+                    parcel_icons: {
+                        let mut icons = match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
+                            (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
+                                region_flags: region.region_flags,
+                                parcel,
+                                agent_id: self.world.agent_id,
+                                group: self.world.groups.group(&parcel.group_id),
+                                health: self.world.health,
+                                frozen: self.world.frozen,
+                                god_level: self.world.god_level,
+                            }),
+                            _ => Vec::new(),
+                        };
+                        // the navmesh's own icons follow the parcel's abilities
+                        icons.extend(self.pathfinding_parcel_icons());
+                        icons
                     },
                     classic_bars,
                     islands,
@@ -18046,6 +18057,7 @@ impl App {
                     save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     build_options: crate::build::MenuOptions::of(&self.settings.build),
                     pathfinding: self.demo || self.world.main_has_cap("NavMeshGenerationStatus"),
+                    pathfinding_rebake: self.pathfinding.rebake.menu_enabled(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -19431,6 +19443,7 @@ impl App {
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
                 self.object_profile_window(&ctx, &p);
 
+                self.pathfinding_rebake_frame(&ctx, &p);
                 self.pathfinding_windows(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);

@@ -10,6 +10,7 @@
 pub mod capsule;
 mod edit;
 mod list;
+pub mod rebake;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -89,6 +90,10 @@ pub struct PathfindingUi {
     /// Show physics capsule (Characters).
     pub capsule: bool,
     confirm: Option<Confirm>,
+    /// The navmesh rebake of the agent's region (Rebake region, the icons).
+    pub rebake: rebake::Rebake,
+    /// PathfindingDirty is open (the rebake icon was clicked).
+    pub dirty_question: bool,
 }
 
 impl Default for PathfindingUi {
@@ -105,6 +110,8 @@ impl Default for PathfindingUi {
             character_beacons: false,
             capsule: false,
             confirm: None,
+            rebake: rebake::Rebake::default(),
+            dirty_question: false,
         }
     }
 }

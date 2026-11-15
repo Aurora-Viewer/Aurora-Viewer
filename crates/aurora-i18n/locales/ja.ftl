@@ -8402,6 +8402,10 @@ ui-parcel-icons-name-safe = ダメージなし
 ui-parcel-icons-name-damage = ダメージ
 ui-parcel-icons-name-see = アバターが見える
 ui-parcel-icons-name-isolated = 隔離された区画
+ui-parcel-icons-name-navmesh = ナビメッシュ
+ui-parcel-icons-navmesh-dirty = リージョンのナビメッシュに保留中の経路探索の変更があります。クリックしてリベイクできます。
+ui-parcel-icons-name-no-pathfinding = 経路探索なし
+ui-parcel-icons-pathfinding-disabled = このリージョンにおいて、動的経路探索が有効になっていません。クリックして詳細を表示します。
 ui-parcel-icons-name-frozen = フリーズ
 ui-worldmap-l-unknown-area = { $value0 }{ "\u000AL$ " }{ $price }{ "（面積不明）" }
 ui-worldmap-at-utc = { $value0 }{ "\u000A" }{ $h }：{ $m }{ "ＵＴＣ" }
@@ -14597,6 +14601,11 @@ pathfinding-warn-restricted = 一部の選択されたリンクセットは、�
 pathfinding-warn-concave = 選択された一部のリンクセットは、形状が凸状でないため「{ $requested }」に設定できません。
 pathfinding-warn-concave-unchanged = 選択された一部のリンクセットは、形状が凸状でないため、「{ $requested }」に設定できません。これらのリンクセットの用途タイプは変わりません。
 pathfinding-warn-continue = 続けてもよろしいですか？
+pathfinding-menu-rebake = リージョンの再構築
+pathfinding-rebake = リベイク
+pathfinding-dirty-text = このリージョンにおいて、保留中の経路探索の変更があります。ビルドできる権限がある場合は、「リベイク」ボタンをクリックして、リージョンをリベイクできます。
+pathfinding-cannot-rebake = エラーが発生しました。ネットワークまたはサーバーに問題があるか、ビルドする権限がない可能性があります。この問題は、一度ログアウトしてから、ログインし直すと解決される場合があります。
+pathfinding-dynamic-disabled = このリージョンにおいて、動的経路探索が有効になっていません。経路探索ＬＳＬ呼び出しを使用するスクリプトの入ったオブジェクトは、このリージョンで期待どおりに動作しない可能性があります。
 
 # About Aurora Viewer (#1126)
 about-tab-info = 情報

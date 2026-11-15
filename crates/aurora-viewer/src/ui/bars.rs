@@ -50,6 +50,10 @@ pub enum BarAction {
     BuildOptions(crate::build::MenuOptions),
     /// Build › Pathfinding › Region objects / Characters.
     Pathfinding(aurora_net::pathfinding::Kind),
+    /// Build › Pathfinding › Rebake region (Tools.DoPathfindingRebakeRegion).
+    RebakeNavMesh,
+    /// A parcel icon whose click is not About Land (the pathfinding ones).
+    ParcelIcon(super::parcel_icons::Click),
     Portals,
     CheckUpdates,
     ReportBug,
@@ -393,6 +397,9 @@ pub struct StatusInfo<'a> {
     /// Build › Pathfinding applies: the region gives pathfinding
     /// (Tools.EnablePathfinding).
     pub pathfinding: bool,
+    /// Build › Pathfinding › Rebake region applies: the navmesh is not up to
+    /// date (Tools.EnablePathfindingRebakeRegion).
+    pub pathfinding_rebake: bool,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -1488,7 +1495,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             st.edit_particles,
             st.save_to_contents,
             st.build_options,
-            st.pathfinding,
+            [st.pathfinding, st.pathfinding_rebake],
         );
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
@@ -1738,7 +1745,7 @@ fn build_menu(
     edit_particles: bool,
     save_to_contents: bool,
     options: crate::build::MenuOptions,
-    pathfinding: bool,
+    pathfinding: [bool; 2],
 ) {
     if menu::check(
         ui,
@@ -1804,12 +1811,17 @@ fn build_menu(
     });
     // Build › Pathfinding (menu_viewer.xml, Tools.EnablePathfinding): the
     // windows open on the in-world selection
+    let [pathfinding, rebake] = pathfinding;
     menu::submenu(ui, p, "route", aurora_i18n::tr!("pathfinding-menu"), pathfinding, |ui| {
         if menu::item(ui, p, "list-details", aurora_i18n::tr!("pathfinding-menu-linksets")) {
             *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Objects);
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("pathfinding-menu-characters")) {
             *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Characters);
+        }
+        // Tools.EnablePathfindingRebakeRegion: the navmesh is not up to date
+        if menu::item_if(ui, p, "refresh", aurora_i18n::tr!("pathfinding-menu-rebake"), rebake) {
+            *action = BarAction::RebakeNavMesh;
         }
     });
     menu::separator(ui, p);
@@ -2588,10 +2600,10 @@ pub fn top_bars(
                                 // the right edge of the field
                                 if icons_w > 0.0 {
                                     ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
-                                    ui.scope(|ui| {
-                                        if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
-                                            panels.about_land = !panels.about_land;
-                                        }
+                                    ui.scope(|ui| match super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
+                                        Some(super::parcel_icons::Click::AboutLand) => panels.about_land = !panels.about_land,
+                                        Some(click) => action = BarAction::ParcelIcon(click),
+                                        None => {}
                                     });
                                 } else {
                                     ui.add_space((ui.available_width() - STAR_W).max(0.0));
