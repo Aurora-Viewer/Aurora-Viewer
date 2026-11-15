@@ -10230,6 +10230,10 @@ impl App {
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
+            // the weather's memory of the ground (snow, wet, footprints)
+            if let Some(gfx) = &mut self.gfx {
+                gfx.renderer.shift_world(shift);
+            }
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
@@ -10247,6 +10251,10 @@ impl App {
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::alpha_sort::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::snow_roof::tick(&mut self.world, self.frame_count);
+            if let Some((eye, at)) = crate::demo::snow_roof::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
