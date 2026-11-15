@@ -783,7 +783,7 @@ mod history_stress_tests {
         let items = history_many(4_000);
         assert_eq!(items.len(), 4_000);
         let now = items.last().map(|i| i.date).unwrap_or(0.0) + 1.0;
-        let sections = crate::ui::places::history_sections(&items, "", now);
+        let sections = crate::ui::places::history_sections(&items, "", now, 0.0);
         let old = sections.iter().filter(|(s, _)| *s >= 7).map(|(_, ix)| ix.len()).sum::<usize>();
         assert!(old > 2_000, "most visits older than a month: {old}");
     }
