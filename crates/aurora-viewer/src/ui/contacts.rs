@@ -1121,7 +1121,13 @@ fn friend_menu(
     if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
-    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+    if menu::item_if(
+        ui,
+        p,
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        context::can_pay_resident(world),
+    ) {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
@@ -1326,7 +1332,8 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         p,
         aurora_i18n::tr!("ui-contacts-pay"),
         aurora_i18n::tr!("ui-contacts-pay-help"),
-        n == 1,
+        // refreshUI: one friend, whom RLVa @pay lets us pay
+        n == 1 && context::can_pay_resident(world),
     ) {
         crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(sel[0]));
     }

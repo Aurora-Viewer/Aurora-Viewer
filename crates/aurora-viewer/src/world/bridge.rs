@@ -16,6 +16,9 @@ pub const FOLDER: &str = "#Aurora";
 pub const SUBFOLDER: &str = "Aurora Bridge";
 const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
+/// Center 2, where both viewers wear their bridge (FS_BRIDGE_POINT,
+/// fslslbridge.h).
+const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
 const VERSION: &str = "1.41";
@@ -74,6 +77,50 @@ mod tests;
 /// each rez, so the channel changes with every login and is never a fixed
 /// one that any listener could watch. The bridge scripts compute the same
 /// value: `-0x10000000 - (integer)("0x" + llGetSubString((string)key, 0, 6))`.
+/// The agent's own folder `name`, directly under the inventory root.
+fn root_folder(inv: &super::inventory::Inventory, name: &str) -> Option<Uuid> {
+    inv.folders.get(&inv.root)?.children.iter().copied().find(|id| {
+        inv.folders
+            .get(id)
+            .is_some_and(|f| f.info.parent == inv.root && f.info.name == name && !f.library)
+    })
+}
+
+/// FS_BRIDGE_NAME (fslslbridge.h) with its exact version syntax: a chat tag
+/// or a similarly named ordinary HUD is not the Legacy Viewer's bridge.
+fn legacy_bridge_name(name: &str) -> bool {
+    name.strip_prefix("#Firestorm LSL Bridge v")
+        .and_then(|v| v.split_once('.'))
+        .is_some_and(|(major, minor)| {
+            [major, minor]
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// Whether the inventory item is a viewer's scripting bridge: ours in
+/// `#Aurora`, or the one the Legacy Viewer left worn, in `#Firestorm`. The
+/// name alone is not enough: the agent owns it and it lies under the
+/// viewer's own folder. RLVa leaves such an object out of what the avatar
+/// wears on `point` (FSLSLBridge::isBridgeValid and getAttachedID, used by
+/// RlvHandler::onGetAttach and RlvForceWear::isForceDetachable).
+pub(crate) fn viewer_bridge(world: &World, item: Uuid, point: u8) -> bool {
+    let inv = &world.inventory;
+    point == POINT
+        && inv.items.get(&item).is_some_and(|entry| {
+            let folder = if entry.name == NAME {
+                FOLDER
+            } else if legacy_bridge_name(&entry.name) {
+                "#Firestorm"
+            } else {
+                return false;
+            };
+            entry.owner == world.agent_id
+                && entry.asset_type == 6
+                && root_folder(inv, folder).is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
+        })
+}
+
 pub(crate) fn private_channel(key: Uuid) -> i32 {
     // The first seven hex digits of the key's text form: 28 bits.
     -0x1000_0000 - (key.as_u128() >> 100) as i32
@@ -571,13 +618,7 @@ impl Bridge {
         }
         self.own_poll = Some(now);
         let inv = &world.inventory;
-        let folder = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == FOLDER && !f.library)
-            })
-        });
+        let folder = root_folder(inv, FOLDER);
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let ours = item == self.item
@@ -632,7 +673,7 @@ impl Bridge {
         self.commands.push(NetCommand::RezAttachments(vec![AttachRequest {
             item_id: item.id,
             owner_id: world.agent_id,
-            point: 31,
+            point: POINT,
             add: true,
             flags: item.flags,
             group_mask: item.group_mask,
@@ -652,35 +693,23 @@ impl Bridge {
         }
         self.firestorm_poll = Some(now);
         let inv = &world.inventory;
-        let Some(folder) = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == "#Firestorm" && !f.library)
-            })
-        }) else {
+        let Some(folder) = root_folder(inv, "#Firestorm") else {
             return;
         };
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let Some(entry) = inv.items.get(&item) else { continue };
             // FS_BRIDGE_NAME and FS_BRIDGE_POINT (fslslbridge.h). Exact
-            // version syntax, inventory ancestry and a worn root are required;
-            // a chat tag or a similarly named ordinary HUD is insufficient.
-            let version = entry.name.strip_prefix("#Firestorm LSL Bridge v").and_then(|v| v.split_once('.'));
+            // version syntax, inventory ancestry and a worn root are required.
             if entry.owner != world.agent_id
                 || entry.asset_type != 6
-                || !version.is_some_and(|(major, minor)| {
-                    [major, minor]
-                        .iter()
-                        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-                })
+                || !legacy_bridge_name(&entry.name)
                 || !super::inventory::actions::under(inv, item, folder)
             {
                 continue;
             }
             if let Some(root) = world.worn_attachment(&item).and_then(|i| world.objects.get(i))
-                && root.attachment_point() == 31
+                && root.attachment_point() == POINT
                 && self.firestorm_detached.insert(root.full_id)
             {
                 detach.push(item);

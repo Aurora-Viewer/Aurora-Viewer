@@ -1592,7 +1592,8 @@ when unfocused") is ignored during a screenshot.
   Preferences › Camera keeps the interface there.
   `locked` sits on the ground and adds RLVa `@unsit=n` at 300: Stand stays
   shown but greyed (capture at 460). `fly-rlva` takes off and adds
-  `@fly=n` at 300 (the log at 470 tells whether the flight went on).
+  `@fly=n` at 300: the avatar lands (the log at 470 says `flying false`)
+  and "Stop flying" is gone.
   Preferences › Layout › Bars has a switch that hides the panel.
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the

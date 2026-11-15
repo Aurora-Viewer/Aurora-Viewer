@@ -124,8 +124,10 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
     out
 }
 
+/// The marker of a resident: none for a blocked one, none either for one
+/// whose name RLVa hides (its set would tell who stands there).
 fn marked(world: &World, id: &Uuid) -> Option<Marker> {
-    world.contact_sets.appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
+    world.rlva_contact_appearance(id).marker.filter(|_| !world.is_avatar_blocked(id))
 }
 
 /// One frame of markers. `shown` is off with the setting, in immersive mode

@@ -2,6 +2,59 @@
 use super::*;
 use uuid::Uuid;
 
+/// The mini-map window across @showminimap, as the static `fPrevVisibile` of
+/// RlvUIEnabler::onToggleShowMinimap (rlvui.cpp): hidden while the
+/// restriction holds, shown again at its release only if it was shown when
+/// the restriction came. The world map (onToggleShowWorldMap) and the
+/// inventory (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle,
+/// rlvhandler.cpp) are closed and stay closed after the release.
+#[derive(Default)]
+pub(super) struct HiddenMinimap(Option<bool>);
+
+impl HiddenMinimap {
+    pub(super) fn apply(&mut self, restricted: bool, open: &mut bool) {
+        match (restricted, self.0) {
+            (true, None) => self.0 = Some(std::mem::take(open)),
+            (true, Some(_)) => *open = false,
+            (false, Some(was_open)) => {
+                self.0 = None;
+                *open |= was_open;
+            }
+            (false, None) => {}
+        }
+    }
+}
+
+/// The windows @showinv, @showminimap and @showworldmap hide never show,
+/// whatever asked for them: run every frame, and again once the bars have
+/// drawn, whose buttons and menus open a window in the frame it is drawn.
+pub(super) fn keep_windows_closed(rlva: &crate::world::rlva::Rlva, panels: &mut ui::Panels) {
+    panels.inventory &= !rlva.has("showinv");
+    panels.minimap &= !rlva.has("showminimap");
+    panels.world_map &= !rlva.has("showworldmap");
+}
+
+/// RlvActions::canHighlightTransparent (rlvactions.cpp) refuses the
+/// highlight under @edit and @showloc, and the @viewtransparent toggle
+/// handler (rlvhandler.cpp) turns it off: the three keep it off here.
+fn can_highlight_transparent(rlva: &crate::world::rlva::Rlva) -> bool {
+    !["viewtransparent", "edit", "showloc"].iter().any(|b| rlva.has(b))
+}
+
+/// A shortcut the restrictions refuse outright, with no notice:
+/// RlvUIEnabler::filterFloaterGeneric (rlvui.cpp) validates the inventory,
+/// mini-map and world map floaters without a message, and
+/// LLViewHighlightTransparent (llviewermenu.cpp) leaves the highlight off.
+fn refuses_shortcut(rlva: &crate::world::rlva::Rlva, action: Action) -> bool {
+    match action {
+        Action::Inventory | Action::NewInventoryWindow => rlva.has("showinv"),
+        Action::Minimap => rlva.has("showminimap"),
+        Action::WorldMap => rlva.has("showworldmap"),
+        Action::ShowTransparency => !can_highlight_transparent(rlva),
+        _ => false,
+    }
+}
+
 impl App {
     pub(super) fn camera_aspect(&self) -> f32 {
         self.gfx
@@ -134,21 +187,22 @@ impl App {
                 self.send(command);
             }
         }
+        self.rlva_minimap
+            .apply(self.world.rlva.has("showminimap"), &mut self.panels.minimap);
+        keep_windows_closed(&self.world.rlva, &mut self.panels);
         if self.world.rlva.has("showinv") {
-            self.panels.inventory = false;
             self.inventory_ui.close_additional_window();
-        }
-        if self.world.rlva.has("showminimap") {
-            self.panels.minimap = false;
-        }
-        if self.world.rlva.has("showworldmap") {
-            self.panels.world_map = false;
         }
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
         }
         if self.world.rlva.has("temprun") {
             self.temp_run = None;
+        }
+        // RlvUIEnabler::onToggleMovement (rlvui.cpp): @fly lands a flight
+        // under way (gAgent.setFlying(false)), not only refuses a takeoff.
+        if self.world.agent.flying && self.world.rlva.has("fly") {
+            self.world.agent.flying = false;
         }
         let invalid: Vec<_> = self
             .build
@@ -164,12 +218,21 @@ impl App {
         if locked_hud {
             self.settings.show_huds = true;
         }
+        self.world.rlva_limit_hud_zoom(locked_hud);
         if self.world.rlva.has("viewwireframe") || locked_hud {
             self.settings.debug.wireframe = false;
         }
-        if self.world.rlva.has("viewtransparent") || self.world.rlva.has("edit") || self.world.rlva.has("showloc") {
+        if !self.rlva_can_highlight_transparent() {
             self.settings.debug.show_alpha = false;
         }
+    }
+
+    pub(super) fn rlva_can_highlight_transparent(&self) -> bool {
+        can_highlight_transparent(&self.world.rlva)
+    }
+
+    pub(super) fn rlva_refuses_shortcut(&self, action: Action) -> bool {
+        refuses_shortcut(&self.world.rlva, action)
     }
 
     fn demo_rlva(&mut self) {
@@ -756,12 +819,15 @@ impl App {
                 continue;
             }
             if c.behaviour == "getheightoffset" {
-                if c.option.is_empty()
-                    && let Param::Reply(channel) = c.param
-                {
-                    self.world
-                        .rlva
-                        .reply(channel, &c.behaviour, format!("{:.2}", self.world.hover_height.value() * 100.0));
+                if let Param::Reply(channel) = c.param {
+                    // an option fails the query, which still answers, with
+                    // nothing (RlvReplyHandler<RLV_BHVR_GETHEIGHTOFFSET>)
+                    let text = if c.option.is_empty() {
+                        format!("{:.2}", self.world.hover_height.value() * 100.0)
+                    } else {
+                        String::new()
+                    };
+                    self.world.rlva.reply(channel, &c.behaviour, text);
                 }
                 continue;
             }
@@ -851,5 +917,102 @@ impl App {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn restricted(commands: &str) -> crate::world::rlva::Rlva {
+        let mut rlva = crate::world::rlva::Rlva::default();
+        rlva.configure(true);
+        assert!(rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: commands.into(),
+        }));
+        rlva
+    }
+
+    /// RlvUIEnabler::onToggleShowMinimap: `fPrevVisibile`.
+    #[test]
+    fn rlva_minimap_comes_back_at_the_release_only_if_it_was_open() {
+        for was_open in [true, false] {
+            let mut hidden = HiddenMinimap::default();
+            let mut open = was_open;
+            hidden.apply(false, &mut open);
+            assert_eq!(open, was_open, "no restriction: the window is the user's");
+            hidden.apply(true, &mut open);
+            assert!(!open);
+            // whatever opens it while the restriction holds, it closes
+            open = true;
+            hidden.apply(true, &mut open);
+            assert!(!open);
+            hidden.apply(false, &mut open);
+            assert_eq!(open, was_open);
+            // the release is remembered once: closing it afterwards holds
+            open = false;
+            hidden.apply(false, &mut open);
+            assert!(!open);
+        }
+    }
+
+    #[test]
+    fn rlva_hidden_windows_open_by_no_path_and_their_shortcuts_do_nothing() {
+        let all = |open: bool| {
+            let mut panels = ui::Panels::from_settings(&crate::settings::Settings::default());
+            (panels.inventory, panels.minimap, panels.world_map) = (open, open, open);
+            panels
+        };
+        let free = crate::world::rlva::Rlva::default();
+        let mut panels = all(true);
+        keep_windows_closed(&free, &mut panels);
+        assert!(panels.inventory && panels.minimap && panels.world_map);
+        for (command, shortcuts) in [
+            ("@showinv=n", &[Action::Inventory, Action::NewInventoryWindow][..]),
+            ("@showminimap=n", &[Action::Minimap][..]),
+            ("@showworldmap=n", &[Action::WorldMap][..]),
+        ] {
+            let rlva = restricted(command);
+            let mut panels = all(true);
+            keep_windows_closed(&rlva, &mut panels);
+            assert_eq!(
+                (panels.inventory, panels.minimap, panels.world_map),
+                (command != "@showinv=n", command != "@showminimap=n", command != "@showworldmap=n"),
+                "{command}"
+            );
+            // it closes, it never opens
+            let mut panels = all(false);
+            keep_windows_closed(&rlva, &mut panels);
+            assert!(!panels.inventory && !panels.minimap && !panels.world_map);
+            for action in [Action::Inventory, Action::NewInventoryWindow, Action::Minimap, Action::WorldMap] {
+                assert_eq!(
+                    refuses_shortcut(&rlva, action),
+                    shortcuts.contains(&action),
+                    "{command}: {action:?}"
+                );
+                assert!(!refuses_shortcut(&free, action));
+            }
+        }
+    }
+
+    /// RlvActions::canHighlightTransparent and the @viewtransparent toggle.
+    #[test]
+    fn rlva_transparency_highlight_is_refused_under_edit_showloc_and_viewtransparent() {
+        let free = crate::world::rlva::Rlva::default();
+        assert!(can_highlight_transparent(&free) && !refuses_shortcut(&free, Action::ShowTransparency));
+        for command in ["@edit=n", "@showloc=n", "@viewtransparent=n"] {
+            let rlva = restricted(command);
+            assert!(!can_highlight_transparent(&rlva), "{command}");
+            assert!(refuses_shortcut(&rlva, Action::ShowTransparency), "{command}");
+        }
+        let other = restricted("@showinv=n");
+        assert!(can_highlight_transparent(&other));
     }
 }

@@ -904,14 +904,22 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
+        // LLPanelProfileSecondLife::updateButtons: greyed when @showloc
+        // forbids offering our location to them
         Act::OfferTeleport => (
             "send-filled",
             aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
             ActionKind::Flat,
-            true,
+            env.world.rlva_can_offer_teleport(id),
             None,
         ),
-        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
+        Act::Pay => (
+            "coin-filled",
+            aurora_i18n::tr!("common-pay"),
+            ActionKind::Flat,
+            context::can_pay_resident(env.world),
+            None,
+        ),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")
@@ -991,7 +999,8 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let names = &world.social.avatar_names;
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
-    let mappable = world.can_locate_avatar(id);
+    // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
+    let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     crate::ui::chat::moderation::demo_mark(&resp.ctx, crate::ui::chat::moderation::DemoMark::ProfileMore, resp.rect);
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
@@ -1157,7 +1166,7 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
     let soft = |c: Color32| c.gamma_multiply(0.14);
     match b {
         Badge::Friend => {
-            if env.world.contact_sets.appearance(&id).replace_friend {
+            if env.world.rlva_contact_appearance(&id).replace_friend {
                 return;
             }
             pill(
@@ -1183,7 +1192,7 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
             pill(ui, Some(Lead::Icon(icon)), name, None, fg, soft(fg), Sense::hover());
         }
         Badge::Set(name, color) => {
-            let appearance = env.world.contact_sets.appearance(&id);
+            let appearance = env.world.rlva_contact_appearance(&id);
             let icon = appearance.icons.iter().find(|icon| &icon.set == name);
             let lead = icon
                 .map(|icon| Lead::Icon(crate::world::contact_sets::appearance::ICONS[icon.icon]))

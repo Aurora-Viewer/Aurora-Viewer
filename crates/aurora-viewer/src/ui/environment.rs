@@ -77,6 +77,13 @@ pub struct EnvironmentUi {
     pub open_list: Option<SettingsKind>,
     /// Type this into an open list's search field (demo captures).
     pub search_list: Option<(SettingsKind, &'static str)>,
+    /// RLVa holds the environment (@setenv or @setsphere, kept by the app):
+    /// the lists, "Personal lighting", the way back to the shared
+    /// environment and the time presets are greyed, as
+    /// FloaterQuickPrefs::enableWindlightButtons does
+    /// (indra/newview/quickprefs.cpp). The Environment window has them
+    /// greyed too, where the Legacy Viewer has no such window.
+    pub rlva_locked: bool,
 }
 
 impl EnvironmentUi {
@@ -205,6 +212,7 @@ impl EnvironmentUi {
         out: &mut Vec<EnvAction>,
     ) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+        let free = !self.rlva_locked;
         let rows = [
             (
                 SettingsKind::Sky,
@@ -238,9 +246,11 @@ impl EnvironmentUi {
                         p.ink,
                     );
                     resp.on_hover_text(tip);
-                    if let Some(a) = self.list_row(ui, p, kind, shown) {
-                        out.push(a);
-                    }
+                    ui.add_enabled_ui(free, |ui| {
+                        if let Some(a) = self.list_row(ui, p, kind, shown) {
+                            out.push(a);
+                        }
+                    });
                 });
             });
         }
@@ -248,12 +258,14 @@ impl EnvironmentUi {
         widgets::divider(ui, p);
         ui.horizontal(|ui| {
             ui.add_space(label_w + 4.0);
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
-                .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
-                .clicked()
-            {
-                *lighting = !*lighting;
-            }
+            ui.add_enabled_ui(free, |ui| {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
+                    .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
+                    .clicked()
+                {
+                    *lighting = !*lighting;
+                }
+            });
             // each arrow right after its own button: this one the sky's,
             // water's and day cycle's (it leaves my own weather alone)
             if widgets::icon_button(
@@ -261,7 +273,7 @@ impl EnvironmentUi {
                 p,
                 "restore",
                 aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
-                true,
+                free,
             ) {
                 out.push(EnvAction::Shared);
             }
@@ -324,7 +336,11 @@ impl EnvironmentUi {
                         .fill(if on { p.violet } else { p.raised })
                         .corner_radius(ui.visuals().window_corner_radius)
                         .min_size(Vec2::new(0.0, 20.0));
-                    if ui.add(b).on_hover_text(super::bars::time_of_day()[preset as usize]).clicked() {
+                    if ui
+                        .add_enabled(free, b)
+                        .on_hover_text(super::bars::time_of_day()[preset as usize])
+                        .clicked()
+                    {
                         // FSRepeatedEnvTogglesShared is off by default: the
                         // same preset again stays
                         out.push(EnvAction::Preset(preset));

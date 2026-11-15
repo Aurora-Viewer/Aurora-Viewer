@@ -197,6 +197,17 @@ impl AppearanceUi {
         self.open(if self.tab < 2 { self.tab } else { 0 }, false);
     }
 
+    /// @showinv: the outfit tabs are left for the worn one and the list of
+    /// items to add closes, as
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// (rlvhandler.cpp) leaves "My Outfits" for the worn tab and
+    /// LLPanelOutfitEdit::showAddWearablesPanel refuses its inventory panel.
+    /// The gallery shows the same outfit folders as the list: both go.
+    pub fn hide_inventory(&mut self) {
+        self.tab = 2;
+        self.adding = false;
+    }
+
     /// Scrolls the gallery or the list to the current outfit and selects
     /// it, after clearing a filter that hides it; from the worn tab, in the
     /// gallery. An Aurora addition (#971): the Legacy Viewer only marks the
@@ -1682,6 +1693,10 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    let inventory_hidden = world.rlva.has("showinv");
+    if inventory_hidden {
+        st.hide_inventory();
+    }
     if *open {
         st.read_pictures(world);
     }
@@ -1770,7 +1785,8 @@ pub fn show(
                         super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
                     }
                     if !st.editing {
-                        let can_locate = locatable(inv).is_some();
+                        // it opens an outfit tab, which @showinv disables
+                        let can_locate = locatable(inv).is_some() && !inventory_hidden;
                         let locate = ui
                             .add_enabled_ui(can_locate, |ui| {
                                 icon_button(
@@ -1822,8 +1838,8 @@ pub fn show(
                 p,
                 &mut st.tab,
                 &[
-                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), true),
-                    (aurora_i18n::tr!("ui-appearance-outfits"), true),
+                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), !inventory_hidden),
+                    (aurora_i18n::tr!("ui-appearance-outfits"), !inventory_hidden),
                     (&worn, true),
                 ],
             );
@@ -1896,16 +1912,16 @@ pub fn show(
         }
         if st.editing {
             ui.horizontal(|ui| {
-                if widgets::flat_button(
-                    ui,
-                    p,
-                    if st.adding {
-                        aurora_i18n::tr!("ui-appearance-back-to-worn-items")
-                    } else {
-                        aurora_i18n::tr!("ui-appearance-add-more")
-                    },
-                )
-                .clicked()
+                let label = if st.adding {
+                    aurora_i18n::tr!("ui-appearance-back-to-worn-items")
+                } else {
+                    aurora_i18n::tr!("ui-appearance-add-more")
+                };
+                // LLPanelOutfitEdit::showAddWearablesPanel: no inventory to add from under @showinv
+                if ui
+                    .add_enabled_ui(!inventory_hidden, |ui| widgets::flat_button(ui, p, label))
+                    .inner
+                    .clicked()
                 {
                     st.adding = !st.adding;
                     st.selected_item = None;
@@ -2247,6 +2263,21 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle: the
+    /// window is left on the worn tab, with no list of items to add.
+    #[test]
+    fn rlva_showinv_leaves_the_outfit_tabs_for_the_worn_one() {
+        for tab in 0..=2 {
+            let mut st = AppearanceUi {
+                tab,
+                adding: true,
+                ..Default::default()
+            };
+            st.hide_inventory();
+            assert_eq!((st.tab, st.adding), (2, false));
+        }
+    }
 
     #[test]
     fn outfit_previews_fit_or_fill_without_distortion_or_overflow() {
@@ -4431,16 +4462,27 @@ mod tests {
                     let pos = label_position(&ctx, &mut world, &mut st, label);
                     modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary)
                 } else {
-                    if !egui::Popup::is_any_open(&ctx) {
-                        click_row(
-                            &ctx,
-                            &mut world,
-                            &mut st,
-                            &name,
-                            egui::Modifiers::NONE,
-                            egui::PointerButton::Secondary,
-                        );
+                    // RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+                    // (rlvhandler.cpp): the outfits tab is left for the worn
+                    // one, and the outfit's rows go with it
+                    if !enabled {
+                        assert_eq!(st.tab, 2, "@showinv leaves the outfits tab");
+                        continue;
                     }
+                    // the release leaves the window on the worn tab
+                    st.open_outfit(folder);
+                    st.reveal_outfit = None;
+                    for _ in 0..5 {
+                        draw(&ctx, &mut world, &mut st, None);
+                    }
+                    click_row(
+                        &ctx,
+                        &mut world,
+                        &mut st,
+                        &name,
+                        egui::Modifiers::NONE,
+                        egui::PointerButton::Secondary,
+                    );
                     click_menu(&ctx, &mut world, &mut st, label)
                 };
                 if enabled {
@@ -4450,9 +4492,6 @@ mod tests {
                     );
                 } else {
                     assert!(actions.is_empty(), "profile={profile}: a disabled command must not dispatch");
-                    if !profile {
-                        assert!(egui::Popup::is_any_open(&ctx), "clicking the disabled entry keeps its menu open");
-                    }
                 }
             }
         }

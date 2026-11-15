@@ -199,9 +199,24 @@ pub struct Facts {
     pub ground_sit_blocked: bool,
     pub stand_blocked: bool,
     pub object_sit_blocked: bool,
+    /// No takeoff from here: RLVa's @fly or a land that refuses flight
+    /// (enable_fly_land, indra/newview/llviewermenu.cpp). "Fly" is greyed;
+    /// "Land" never is.
+    pub fly_blocked: bool,
+    /// RLVa keeps the build window closed (@edit and @rez together,
+    /// LLToolMgr::canEdit): "Build" is greyed.
+    pub build_blocked: bool,
+    /// RLVa refuses a rezzed object on its default point ("Wear", "Add":
+    /// any attachment lock) and on these points of "Attach to"
+    /// (object_selected_and_point_valid, indra/newview/llviewermenu.cpp).
+    pub wear_default_blocked: bool,
+    pub wear_blocked_points: Vec<u8>,
     /// RLVa is on for the session: Derender is greyed on our own
     /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
     pub rlva_enabled: bool,
+    /// RLVa greys "Pay" on the avatar: @pay, or a name @shownames hides
+    /// (enable_pay_avatar, indra/newview/llviewermenu.cpp).
+    pub pay_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
     /// Appearance > Export shape XML: the worn shape may be written to a
@@ -819,6 +834,23 @@ pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
     avatar_menu_reporting(ui, p, world, id, AvatarList::Name, Some(crate::report_abuse::chat_target(id, line)));
 }
 
+/// RlvActions::canPayAvatar (rlvactions.cpp): under @pay the "Pay" of a
+/// resident is greyed where it is offered (PeopleContextMenu, FSRadarMenu,
+/// FSFloaterContacts::refreshUI, LLInspectAvatar::enablePay), instead of
+/// being refused after the click.
+pub fn can_pay_resident(world: &World) -> bool {
+    !world.rlva.has("pay")
+}
+
+/// @showworldmap greys the buttons and entries that open the world map on a
+/// resident or a place (LLPanelProfileSecondLife::updateButtons and
+/// onEnableMenu, LLPanelPlaces::updateVerbs, LLLandmarksPanel::isActionEnabled,
+/// LLTeleportHistoryPanel::updateVerbs and isActionEnabled,
+/// FSFloaterContacts::refreshUI): the map itself does not open.
+pub fn can_show_on_map(world: &World) -> bool {
+    !world.rlva.has("showworldmap")
+}
+
 fn avatar_menu_reporting(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1005,7 +1037,7 @@ fn avatar_menu_reporting(
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
                 act(CtxAction::PayResident(id));
             }
             block(ui);
@@ -1088,7 +1120,7 @@ fn avatar_menu_reporting(
             }
             offer_tp(ui);
             request_tp(ui);
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
                 act(CtxAction::PayResident(id));
             }
             navigation(ui);
@@ -1731,6 +1763,57 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// RlvActions::canPayAvatar: the entry is greyed, not refused after the click.
+    #[test]
+    fn rlva_pay_of_a_residents_list_menu_is_greyed_under_pay() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        assert!(can_pay_resident(&world) && can_show_on_map(&world));
+        for restricted in [false, true] {
+            if restricted {
+                world.rlva.configure(true);
+                assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                    from_name: "Fixture".into(),
+                    source_id: Uuid::from_u128(99),
+                    owner_id: Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::OwnerSay,
+                    region: None,
+                    position: glam::Vec3::ZERO,
+                    message: "@pay=n,showworldmap=n".into(),
+                }));
+                assert!(!can_pay_resident(&world) && !can_show_on_map(&world));
+            }
+            for kind in [AvatarList::Friend, AvatarList::Nearby] {
+                let mut frames = Frames::new();
+                let mut point = egui::Pos2::ZERO;
+                for _ in 0..2 {
+                    let texts = frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                    point = painted(&texts, aurora_i18n::text("common-pay")).rect.center();
+                }
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        |ui| avatar_list_menu(ui, &p, &world, id, kind),
+                    );
+                }
+                let actions = take_requests(&frames.ctx);
+                assert_eq!(actions.len(), usize::from(!restricted), "{kind:?}, restricted {restricted}");
+                assert!(actions.iter().all(|a| matches!(a, CtxAction::PayResident(i) if *i == id)));
             }
         }
     }

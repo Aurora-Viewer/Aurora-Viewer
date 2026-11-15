@@ -149,9 +149,26 @@ impl Rlva {
 
     /// RlvReplyCamMinMaxModifierHandler returns an empty reply for an
     /// inactive modifier, even when normal camera limits have defaults.
+    /// An option these queries do not take fails them, and a failed query
+    /// still answers, with nothing, so that the script does not wait
+    /// (RlvCommandHandlerBaseImpl<RLV_TYPE_REPLY>::processCommand,
+    /// rlvhandler.cpp).
     pub fn camera_reply(&self, command: &Command, distance: f32, fov: f32) -> Option<String> {
-        if !command.option.is_empty() || !matches!(command.param, Param::Reply(_)) {
+        if !matches!(command.param, Param::Reply(_)) {
             return None;
+        }
+        if !command.option.is_empty() {
+            return matches!(
+                command.behaviour.as_str(),
+                "getcam_avdist"
+                    | "getcam_avdistmin"
+                    | "getcam_avdistmax"
+                    | "getcam_fov"
+                    | "getcam_fovmin"
+                    | "getcam_fovmax"
+                    | "getcam_textures"
+            )
+            .then(String::new);
         }
         if command.behaviour == "getcam_textures" {
             return Some(self.camera_texture().map(|id| id.to_string()).unwrap_or_default());

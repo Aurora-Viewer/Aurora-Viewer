@@ -1169,7 +1169,7 @@ fn second_life_tab(
             }
         }
     });
-    let appearance = world.contact_sets.appearance(&id);
+    let appearance = world.rlva_contact_appearance(&id);
     if !appearance.icons.is_empty() {
         ui.horizontal_wrapped(|ui| {
             for badge in &appearance.icons {
@@ -1477,22 +1477,33 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.vertical(|ui| {
+            // LLPanelProfileSecondLife::updateButtons: no map under
+            // @showworldmap, no teleport offer that @showloc forbids
             if ui
                 .add_enabled(
-                    world.can_locate_avatar(id),
+                    world.can_locate_avatar(id) && super::context::can_show_on_map(world),
                     egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
                 )
                 .clicked()
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
+            if ui
+                .add_enabled(
+                    super::context::can_pay_resident(world),
+                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
+                )
+                .clicked()
+            {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
         ui.vertical(|ui| {
             if ui
-                .add(egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size))
+                .add_enabled(
+                    world.rlva_can_offer_teleport(id),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size),
+                )
                 .clicked()
             {
                 actions.push(ProfileAction::OfferTeleport(id));
@@ -1537,10 +1548,13 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
+        // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
+        let mappable = world.can_locate_avatar(id) && super::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        let payable = super::context::can_pay_resident(world);
+        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), payable) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {

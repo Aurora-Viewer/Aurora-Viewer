@@ -164,6 +164,16 @@ impl AvatarName {
         }
     }
 
+    /// LLAvatarName::getLegacyName: "Firstname Lastname" with the last name
+    /// whatever it is ("Resident" too), the display name without either.
+    pub fn legacy_name(&self) -> String {
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            self.display_name.clone()
+        } else {
+            format!("{} {}", self.legacy_first, self.legacy_last)
+        }
+    }
+
     /// LLAvatarName::getDisplayName.
     pub fn display(&self, o: &NameOptions) -> String {
         if o.use_display_names {
@@ -352,9 +362,20 @@ impl AvatarNames {
             self.ask.lock().insert(*id);
         }
         if self.rlva_private && !self.rlva_allowed.contains(id) {
-            return Some(super::rlva::privacy::anonymous(*id));
+            return Some(self.anonymous(id));
         }
         n.map(|n| self.aliased.get(id).unwrap_or(n))
+    }
+
+    /// The stand-in of a resident whose name RLVa hides
+    /// (RlvStrings::getAnonym, rlvcommon.h: by the legacy name of the cached
+    /// record, never by a contact set's alias); by the id until the name is
+    /// cached. Queues nothing.
+    pub fn anonymous(&self, id: &Uuid) -> &'static AvatarName {
+        match self.cache.get(id) {
+            Some(n) => super::rlva::privacy::anonymous_named(&n.legacy_name()),
+            None => super::rlva::privacy::anonymous(*id),
+        }
     }
 
     /// New contact set aliases: every name is rewritten again.

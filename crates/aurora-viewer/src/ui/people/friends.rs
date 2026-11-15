@@ -116,7 +116,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 (true, Some(region)) => region.clone(),
                 _ => state.to_owned(),
             };
-            let icon = world.contact_sets.appearance(&f.id).icons.first().map(|i| {
+            let icon = world.rlva_contact_appearance(&f.id).icons.first().map(|i| {
                 rows::SetMark::Icon(
                     crate::world::contact_sets::appearance::ICONS[i.icon],
                     crate::ui::colors::set_color(i.color),

@@ -736,7 +736,7 @@ pub(super) fn history_list(
         .filter_map(|(i, e)| {
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
-            privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
+            privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();

@@ -1601,6 +1601,11 @@ mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
 Disabling cancels its work; already-sent inventory replies still update the
 ordinary inventory model without restarting the naming workflow.
+`rlva/interaction.rs` answers whether an object may be interacted with at a
+hovered point (@interact, @fartouch). The world's cursor, hover tips and
+one-click actions ask it, with the touch, sit and buy rules of the send
+boundary (`app/object_actions.rs`, `hover_tips.rs`), so that the interface
+does not offer what the boundary would refuse.
 `rlva/wear_locks.rs` snapshots what the locks leave of wearing (add, replace)
 and taking off, by item, point, layer and folder, for the inventory menus
 and buttons (`Facts::rlva`), which see the inventory but not the world; its

@@ -412,7 +412,9 @@ pub fn people_window(
     aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
-    if world.rlva.has("shownearby") && panels.people_tab == TAB_NEARBY {
+    // (the sheet of a row names it: none either while @shownames makes the
+    // list anonymous)
+    if (radar::nearby_hidden(world) || radar::names_hidden(world)) && panels.people_tab == TAB_NEARBY {
         nearby::close_sheet(st);
     }
     let mut open = panels.people;

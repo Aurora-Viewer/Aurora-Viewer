@@ -273,7 +273,8 @@ fn buttons(
             aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
             ActionKind::Flat,
             size,
-            online && !own,
+            // LLInspectAvatar::enableTeleportOffer (LLAvatarActions::canOfferTeleport)
+            online && !own && world.rlva_can_offer_teleport(id),
         );
         if tp.clicked() {
             actions.push(PeopleAction::OfferTeleport(id));
@@ -574,11 +575,23 @@ fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, friend: Optio
     ui.spacing_mut().item_spacing.x = 5.0;
     let size = Vec2::new(0.0, BUTTON_H);
     // a friend who lets us see them on the map can be shown there from afar
-    let mappable = world.can_locate_avatar(id);
+    let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
-    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, size).clicked() {
+    // LLInspectAvatar::enablePay
+    let payable = context::can_pay_resident(world);
+    if widgets::action_button_if(
+        ui,
+        p,
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        ActionKind::Flat,
+        size,
+        payable,
+    )
+    .clicked()
+    {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     if friend.is_some() {

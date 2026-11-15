@@ -1,32 +1,90 @@
 //! Display-only identity and location filtering. Canonical IDs, name cache
 //! records and region coordinates stay available to protocol handlers.
-use super::super::{World, names::AvatarName};
+use super::super::{
+    World,
+    contact_sets::Appearance,
+    names::{AvatarName, AvatarNames},
+};
 use std::borrow::Cow;
 use uuid::Uuid;
 mod matcher;
 
-pub fn anonymous(id: Uuid) -> &'static AvatarName {
+/// The stand-ins of a hidden name, by their message: the `anonyms` list of
+/// the Legacy Viewer's rlva_strings.xml, in its order, which
+/// RlvStrings::getAnonym indexes.
+const ANONYMS: [&str; 28] = [
+    "rlva-anonym-a-resident",
+    "rlva-anonym-this-resident",
+    "rlva-anonym-that-resident",
+    "rlva-anonym-an-individual",
+    "rlva-anonym-this-individual",
+    "rlva-anonym-that-individual",
+    "rlva-anonym-a-person",
+    "rlva-anonym-this-person",
+    "rlva-anonym-that-person",
+    "rlva-anonym-a-stranger",
+    "rlva-anonym-this-stranger",
+    "rlva-anonym-that-stranger",
+    "rlva-anonym-a-being",
+    "rlva-anonym-this-being",
+    "rlva-anonym-that-being",
+    "rlva-anonym-an-agent",
+    "rlva-anonym-this-agent",
+    "rlva-anonym-that-agent",
+    "rlva-anonym-a-soul",
+    "rlva-anonym-this-soul",
+    "rlva-anonym-that-soul",
+    "rlva-anonym-somebody",
+    "rlva-anonym-some-people",
+    "rlva-anonym-someone",
+    "rlva-anonym-mysterious-one",
+    "rlva-anonym-an-unknown-being",
+    "rlva-anonym-unidentified-one",
+    "rlva-anonym-an-unknown-person",
+];
+
+/// RlvStrings::getAnonym (rlvcommon.cpp): the bytes of the name summed in a
+/// U32 as the signed `char` they are there, so that a name outside ASCII
+/// lands on the same stand-in, modulo the list.
+pub fn anonym_index(name: &str) -> usize {
+    let hash = name.bytes().fold(0u32, |hash, byte| hash.wrapping_add(byte as i8 as u32));
+    hash as usize % ANONYMS.len()
+}
+
+/// The stand-in of the resident whose legacy name ("First Last", as
+/// LLAvatarName::getLegacyName) is `name`: the same one as in the Legacy
+/// Viewer, so that two viewers side by side tell the same strangers apart.
+pub fn anonymous_named(name: &str) -> &'static AvatarName {
     static NAMES: aurora_i18n::Localized<Vec<AvatarName>> = aurora_i18n::Localized::new();
     let names = NAMES.get(|| {
-        (1..=32)
-            .map(|number| {
-                let label = aurora_i18n::tr!("rlva-anonymous", number = number.to_string()).to_owned();
+        ANONYMS
+            .iter()
+            .map(|key| {
+                let label = aurora_i18n::text(key);
                 AvatarName {
-                    username: label.clone(),
-                    display_name: label.clone(),
-                    legacy_first: label,
+                    username: label.to_owned(),
+                    display_name: label.to_owned(),
+                    legacy_first: label.to_owned(),
                     is_default: true,
                     ..Default::default()
                 }
             })
             .collect()
     });
-    let hash = id
-        .as_bytes()
-        .iter()
-        .fold(0u8, |hash, byte| hash.wrapping_mul(31).wrapping_add(*byte));
-    &names[hash as usize % names.len()]
+    &names[anonym_index(name)]
 }
+
+/// The stand-in of a resident whose name is not known yet: by the id as
+/// text, which is what RlvUtil::filterMentions (rlvcommon.cpp) hashes for
+/// a name missing from the cache. With a name cache at hand, ask
+/// `World::rlva_anonymous` instead: it follows the legacy name.
+pub fn anonymous(id: Uuid) -> &'static AvatarName {
+    anonymous_named(&id.to_string())
+}
+
+/// What a resident outside every contact set looks like: the one shown for
+/// a resident whose name is hidden.
+static PLAIN_APPEARANCE: std::sync::LazyLock<std::sync::Arc<Appearance>> = std::sync::LazyLock::new(Default::default);
 
 #[derive(Default, Clone)]
 pub struct TextFilter {
@@ -37,7 +95,14 @@ pub struct TextFilter {
 }
 
 impl TextFilter {
-    pub fn redact_notice(&self, title: &mut String, body: &mut String, links: &mut [super::super::notification_history::NameLink]) {
+    /// `names`: the name cache, for the stand-in of each hidden resident.
+    pub fn redact_notice(
+        &self,
+        names: &AvatarNames,
+        title: &mut String,
+        body: &mut String,
+        links: &mut [super::super::notification_history::NameLink],
+    ) {
         if !self.private_names && self.replacements.is_empty() {
             return;
         }
@@ -47,7 +112,7 @@ impl TextFilter {
                 && self.private_names
                 && !self.allowed_names.contains(&id)
             {
-                let replacement = &anonymous(id).display_name;
+                let replacement = &names.anonymous(&id).display_name;
                 if *title == link.name {
                     *title = replacement.clone();
                 }
@@ -149,7 +214,12 @@ impl World {
         let mut filter = self.rlva_text_filter(false);
         filter.reuse_matcher(&self.rlva_privacy);
         for notification in &mut self.notifications.list {
-            filter.redact_notice(&mut notification.title, &mut notification.body, &mut notification.name_links);
+            filter.redact_notice(
+                &self.social.avatar_names,
+                &mut notification.title,
+                &mut notification.body,
+                &mut notification.name_links,
+            );
         }
         self.rlva_privacy = filter;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
@@ -162,7 +232,43 @@ impl World {
     }
 
     pub fn rlva_can_name(&self, id: Uuid) -> bool {
-        !self.rlva.enabled() || id == self.agent_id || self.rlva.allows("shownames", &id.to_string())
+        // asked for every tag, dot and chat line of a frame: the id is
+        // written on the stack
+        !self.rlva.enabled()
+            || id == self.agent_id
+            || self
+                .rlva
+                .allows("shownames", id.hyphenated().encode_lower(&mut Uuid::encode_buffer()))
+    }
+
+    /// The stand-in shown for a resident whose name is hidden
+    /// (RlvStrings::getAnonym over the cached name, rlvcommon.h). The name
+    /// is asked for like LLAvatarNameCache::get does there: the stand-in
+    /// follows it, and is the id's own until it comes.
+    pub fn rlva_anonymous(&self, id: Uuid) -> &'static AvatarName {
+        let names = &self.social.avatar_names;
+        names.want(&id);
+        names.anonymous(&id)
+    }
+
+    /// The contact-set appearance to show for `id`: none for a resident
+    /// whose name is hidden, whose sets would tell who they are
+    /// (LGGContactSets::hasFriendColorThatShouldShow, lggcontactsets.cpp).
+    /// The settings windows that edit the sets read `contact_sets` itself.
+    pub fn rlva_contact_appearance(&self, id: &Uuid) -> &std::sync::Arc<Appearance> {
+        if self.rlva_can_name(*id) {
+            self.contact_sets.appearance(id)
+        } else {
+            &PLAIN_APPEARANCE
+        }
+    }
+
+    /// A friend shown as one: never a resident whose name is hidden
+    /// (`is_friend = fRlvShowAvName && isBuddy()` in
+    /// LLVOAvatar::idleUpdateNameTagText, llvoavatar.cpp; the same test in
+    /// LGGContactSets::colorize for the chat, the tags and the mini-map).
+    pub fn rlva_shown_friend(&self, id: &Uuid) -> bool {
+        self.rlva_can_name(*id) && self.social.is_friend(id)
     }
 
     pub fn rlva_private_region(&self, region: &str) -> bool {
@@ -295,7 +401,7 @@ impl World {
                 let replacement = if clear_nearby {
                     String::new()
                 } else {
-                    anonymous(id).display_name.clone()
+                    self.social.avatar_names.anonymous(&id).display_name.clone()
                 };
                 if let Some(name) = self.social.names.get(&id) {
                     filter.add_identity(name, &replacement);
@@ -353,6 +459,168 @@ mod tests {
             position: glam::Vec3::ZERO,
             message: format!("@{commands}"),
         }));
+    }
+
+    /// The stand-in `index` in any language: another test may change the
+    /// interface language while this one runs.
+    fn is_anonym(text: &str, index: usize) -> bool {
+        ["en", "fr", "ja"]
+            .iter()
+            .any(|language| aurora_i18n::text_in(language, ANONYMS[index]) == text)
+    }
+
+    #[test]
+    fn rlva_anonyms_are_the_legacy_list_picked_by_the_sum_of_the_name() {
+        let english: Vec<&str> = ANONYMS.iter().map(|key| aurora_i18n::text_in("en", key)).collect();
+        assert_eq!(
+            english,
+            [
+                "A resident",
+                "This resident",
+                "That resident",
+                "An individual",
+                "This individual",
+                "That individual",
+                "A person",
+                "This person",
+                "That person",
+                "A stranger",
+                "This stranger",
+                "That stranger",
+                "A being",
+                "This being",
+                "That being",
+                "An agent",
+                "This agent",
+                "That agent",
+                "A soul",
+                "This soul",
+                "That soul",
+                "Somebody",
+                "Some people",
+                "Someone",
+                "Mysterious one",
+                "An unknown being",
+                "Unidentified one",
+                "An unknown person",
+            ]
+        );
+        for language in ["fr", "ja"] {
+            let translated: std::collections::HashSet<&str> = ANONYMS.iter().map(|key| aurora_i18n::text_in(language, key)).collect();
+            assert_eq!(translated.len(), ANONYMS.len(), "{language}: two strangers must not read the same");
+            assert!(ANONYMS.iter().all(|key| !translated.contains(key)), "{language}: a missing message");
+        }
+        assert_eq!(anonym_index(""), 0, "a name not known yet is \"A resident\" there");
+        assert_eq!(anonym_index("A"), 65 % 28);
+        // 74 + 97 + 110 + 101 + 32 + 68 + 111 + 101 = 694
+        assert_eq!(anonym_index("Jane Doe"), 694 % 28);
+        assert_eq!(anonym_index("eoD enaJ"), anonym_index("Jane Doe"), "a sum, whatever the order");
+        // a signed char: 0xC3 0x89 is -61 - 119, which wraps in the U32
+        assert_eq!(anonym_index("É"), (-180i32 as u32 % 28) as usize);
+        assert_eq!(anonym_index("É"), 20);
+        let id = Uuid::from_u128(42);
+        assert!(is_anonym(&anonymous(id).display_name, anonym_index(&id.to_string())));
+    }
+
+    #[test]
+    fn rlva_hidden_names_use_the_stand_in_of_their_legacy_name_everywhere() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let agent = world.agent_id;
+        let id = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != agent).unwrap();
+        // not in the scene: the stand-in only needs the cached name
+        let resident = Uuid::from_u128(0x50f0);
+        let cache = |world: &mut World, id: Uuid, first: &str, last: &str| {
+            let name = aurora_net::AvatarNameData {
+                id,
+                username: format!("{first}.{last}").to_lowercase(),
+                display_name: format!("{first} {last}"),
+                legacy_first: first.into(),
+                legacy_last: last.into(),
+                ..Default::default()
+            };
+            world.social.avatar_names.on_display_names(&[name], &[], None);
+        };
+        cache(&mut world, id, "Jane", "Doe");
+        // LLAvatarName::getLegacyName keeps the last name of a "Resident"
+        cache(&mut world, resident, "Solo", "Resident");
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        let jane = anonym_index("Jane Doe");
+        assert_ne!(jane, anonym_index("Jane"));
+        assert!(is_anonym(&world.social.avatar_names.get(&id).unwrap().display_name, jane));
+        assert!(is_anonym(&world.rlva_anonymous(id).display_name, jane));
+        assert!(is_anonym(&world.avatar_name(&id).unwrap(), jane));
+        let filtered = world.rlva_filter_text("Jane Doe waves");
+        assert!(
+            is_anonym(filtered.strip_suffix(" waves").expect("the rest is kept"), jane),
+            "{filtered}"
+        );
+        let solo = anonym_index("Solo Resident");
+        assert_ne!(solo, anonym_index("Solo"));
+        assert!(is_anonym(&world.rlva_anonymous(resident).display_name, solo));
+        // a notification's link: by the cached name, not by what the link shows
+        let mut title = String::from("Janey");
+        let mut body = String::from("Janey sent a message.");
+        let mut links = [crate::world::notification_history::NameLink {
+            name: "Janey".into(),
+            target: crate::world::notification_history::NameTarget::Avatar(id),
+        }];
+        world
+            .rlva_privacy
+            .redact_notice(&world.social.avatar_names, &mut title, &mut body, &mut links);
+        assert!(is_anonym(&title, jane) && is_anonym(&links[0].name, jane), "{title}");
+        assert!(!body.contains("Janey"));
+        // not cached: by the id, until the name comes
+        let unknown = Uuid::from_u128(0xdead);
+        assert!(is_anonym(
+            &world.rlva_anonymous(unknown).display_name,
+            anonym_index(&unknown.to_string())
+        ));
+        cache(&mut world, unknown, "Jane", "Doe");
+        assert!(is_anonym(&world.rlva_anonymous(unknown).display_name, jane));
+    }
+
+    #[test]
+    fn rlva_hidden_names_have_neither_contact_set_nor_friendship_to_show() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let friend = Uuid::from_u128(0xf00d);
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: 0,
+        });
+        let sets = &mut world.contact_sets;
+        sets.add_set("Team");
+        sets.add_to_set(&[friend], "Team", |_| false);
+        sets.set_color("Team", [0.6, 0.2, 0.8, 1.0]);
+        sets.set_visuals(
+            "Team",
+            crate::world::contact_sets::Visuals {
+                border: true,
+                minimap: true,
+                ..Default::default()
+            },
+        );
+        world.rlva.configure(true);
+        let shown = world.contact_sets.appearance(&friend).clone();
+        assert_ne!(*shown, Appearance::default());
+        assert_eq!(world.rlva_contact_appearance(&friend), &shown);
+        assert!(world.rlva_shown_friend(&friend));
+        restrict(&mut world, "shownames=n");
+        assert_eq!(**world.rlva_contact_appearance(&friend), Appearance::default());
+        assert!(!world.rlva_shown_friend(&friend));
+        assert_eq!(world.contact_sets.appearance(&friend), &shown, "the set itself is untouched");
+        restrict(&mut world, &format!("shownames:{friend}=add"));
+        assert_eq!(world.rlva_contact_appearance(&friend), &shown, "an exception is named again");
+        assert!(world.rlva_shown_friend(&friend));
     }
 
     #[test]

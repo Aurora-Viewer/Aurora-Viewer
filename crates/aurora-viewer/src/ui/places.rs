@@ -825,7 +825,9 @@ impl PlacesUi {
                 name: it.name.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), resolved.is_some())
+        // LLLandmarksPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = resolved.is_some() && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = resolved
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -1011,7 +1013,9 @@ impl PlacesUi {
         {
             actions.push(history_profile(it));
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), some)
+        // LLTeleportHistoryPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = some && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some((_, it)) = &sel
         {
             actions.push(PlacesAction::ShowOnMap(it.global));
@@ -1121,7 +1125,8 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-map"),
                 aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                map_target.is_some(),
+                // LLTeleportHistoryPanel::updateVerbs: not under @showworldmap
+                map_target.is_some() && super::context::can_show_on_map(world),
                 w,
             )) && let Some(g) = map_target
             {
@@ -1206,7 +1211,8 @@ impl PlacesUi {
                     look,
                     aurora_i18n::tr!("common-map"),
                     aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                    place.global.is_some(),
+                    // LLPanelPlaces::updateVerbs: not under @showworldmap
+                    place.global.is_some() && super::context::can_show_on_map(world),
                 ) && let Some(g) = place.global
                 {
                     actions.push(PlacesAction::ShowOnMap(g));
