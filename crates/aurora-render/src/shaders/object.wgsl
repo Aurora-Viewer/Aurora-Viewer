@@ -3392,13 +3392,6 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     return out;
 }
 
-// Whether a fragment of the shelter map belongs to a triangle facing up:
-// seen from above through its orthographic view (+Y up on the map, as on
-// the ground), an upward face keeps the winding it has seen from above.
-fn shelter_faces_up(front: bool) -> bool {
-    return front;
-}
-
 // Transparent texels cast no shadow; semi-transparent texels use alternating
 // shadow-map columns. Opaque material modes ignore the texture alpha.
 // Blended faces (a blended face that is also alpha-tested casts like a
@@ -3414,15 +3407,19 @@ fn shelter_faces_up(front: bool) -> bool {
 fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    // the rain's shelter map, seen from straight above: only a surface
-    // that faces up keeps the rain and snow off. A ceiling whose roof is
-    // fully transparent (a skybox's painted sky, its top not drawn at all)
-    // lets the snow fall through it, as people asked; a visible roof, glass
-    // too, still keeps it off (its top faces up). Not alpha-masked cutouts:
-    // a tree's leaves are one-sided cards, half of them facing down, and
-    // without them the cover under a tree broke into bare texels
-    let cutout = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && (rec.flags.x & FLAG_ALPHA_BLEND) == 0u;
-    if (shadow_params.kind.x == 1u && !cutout && !shelter_faces_up(front)) { discard; }
+    // the rain's shelter map, seen from straight above (+Y up on the map,
+    // as on the ground: a face turned up keeps its winding, `front`): it
+    // holds what is seen from above, so a face turned down that the scene
+    // culls is left out. A ceiling whose roof is fully transparent (a
+    // skybox's painted sky, its top not drawn at all) lets the snow fall
+    // through it, as people asked; a visible roof, glass too, still keeps
+    // it off (its top faces up). Kept both ways: a two-sided face (seen
+    // from above whichever way it was modelled), and the faces with alpha,
+    // masked or blended (the usual mode of a texture with alpha): a tree's
+    // leaves are one-sided cards, half of them facing down, and without
+    // them the cover under a tree broke into bare texels
+    let both_ways = (rec.flags.x & (FLAG_DOUBLE_SIDED | FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u;
+    if (shadow_params.kind.x == 1u && !both_ways && !front) { discard; }
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     // the rain's shelter map: any blended texel that is there at all keeps

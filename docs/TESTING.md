@@ -4591,7 +4591,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
 | `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
-| `AURORA_DEMO_SNOW_ROOF=1` | Three canopies in the snow: plain, open at the top, glass |
+| `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
@@ -4612,13 +4612,16 @@ both open states and the selection count. Capture at frame 620.
   quality the same way, to measure each with `AURORA_PROFILE`. The wind,
   the puddles and the thunder come from the settings.
   `AURORA_DEMO_SNOW_ROOF=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)
-  sets three canopies 3 m above the plaza, north of the arrival, and looks
+  sets four canopies 3 m above the plaza, north of the arrival, and looks
   at them from the side: a plain one (snow on it, bare ground under it),
   one whose top face is fully transparent while its underside still shows
   (a skybox's painted ceiling: the snow falls through it onto the ground
-  under it), and a glass one at 30 % (bare ground under it; the snow on
-  blended faces is not drawn). Only what faces up enters the rain's
-  shelter map. `AURORA_RAIN_DEBUG=1` colours the
+  under it), a glass one at 30 % (bare ground under it; the snow on
+  blended faces is not drawn), and leaves: the same open top over a
+  blended underside at 70 %, as a tree's cards facing down (bare ground
+  under it). The rain's shelter map holds what is seen from above: a face
+  turned down is left out, unless it is two-sided or has alpha (masked or
+  blended). `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why

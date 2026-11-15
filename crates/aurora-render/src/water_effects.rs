@@ -152,9 +152,13 @@ pub const RAIN_GROUND_SIZE: u32 = 128;
 /// Rain prototype: cells a side of the wetness memory (`fs_rain_wet_update`).
 pub const RAIN_WET_SIZE: u32 = 512;
 
-/// The wetness memory's two textures `size` texels a side: the one drawn
-/// each frame and the copy the next frame and the wet ground read.
-fn wet_textures(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
+/// The wetness memory's two textures (`wet_textures`): the one drawn each
+/// frame and its view, the copy the next frame and the wet ground read and
+/// its view.
+pub(crate) type WetTextures = (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView);
+
+/// The wetness memory's two textures `size` texels a side.
+pub(crate) fn wet_textures(device: &wgpu::Device, size: u32) -> WetTextures {
     let wet = |label, usage| {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -346,10 +350,11 @@ impl WaterGpu {
         );
     }
 
-    /// The wetness memory at `size` texels a side, its old one dropped
-    /// (the renderer starts it fresh and binds the new views again).
-    pub fn resize_wet(&mut self, device: &wgpu::Device, size: u32) {
-        let (target, target_view, read, read_view) = wet_textures(device, size);
+    /// The wetness memory at `size` texels a side (`wet_textures`, made by
+    /// the renderer under its video memory check), its old one dropped (the
+    /// renderer starts its texels again and binds the new views).
+    pub(crate) fn install_wet(&mut self, made: WetTextures, size: u32) {
+        let (target, target_view, read, read_view) = made;
         self.rain_wet_target = target;
         self.rain_wet_target_view = target_view;
         self.rain_wet = read;

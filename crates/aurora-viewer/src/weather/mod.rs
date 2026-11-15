@@ -303,6 +303,18 @@ impl WeatherSettings {
         ]
     }
 
+    /// How far the weather's memory of the ground must reach (m,
+    /// `RainLook::memory_reach`): the wet ground's distance (drawn in any
+    /// rain, puddles or not), and the snow's while it settles (with "Snow
+    /// settles" off none lies, and its hidden slider changes nothing).
+    /// Both whichever falls: the memory's square keeps its size from rain
+    /// to snow (a new size starts its texels again).
+    fn memory_reach(&self) -> f32 {
+        let wet = self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end());
+        let snow = self.snow_distance.clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end());
+        if self.snow_settles { wet.max(snow) } else { wet }
+    }
+
     pub fn rain_look(&self, wind: &Wind) -> aurora_render::RainLook {
         // in snow, the puddles' switch and distance are the lying snow's
         let snowing = self.snowing();
@@ -320,12 +332,7 @@ impl WeatherSettings {
             snow_detail: 0,
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
-            // both distances, whichever falls: the memory's square stays
-            // the same size from rain to snow (a new size starts it again)
-            memory_reach: self
-                .snow_distance
-                .clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end())
-                .max(self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end())),
+            memory_reach: self.memory_reach(),
             deep_reach: env_snow_deep_reach()
                 .filter(|_| !self.touched)
                 .unwrap_or(self.snow_deep_reach)
@@ -522,6 +529,17 @@ mod tests {
         // the farther of the two, whatever falls now
         assert_eq!(look.memory_reach, 200.0);
         assert_eq!(look.deep_reach, 30.0);
+        // the snow's only while it settles: its hidden slider sizes nothing
+        let snow_far = WeatherSettings {
+            snow_distance: 250.0,
+            ..w.clone()
+        };
+        assert_eq!(snow_far.rain_look(&Wind::default()).memory_reach, 250.0);
+        let unsettled = WeatherSettings {
+            snow_settles: false,
+            ..snow_far
+        };
+        assert_eq!(unsettled.rain_look(&Wind::default()).memory_reach, 200.0);
         // the defaults keep today's sizes
         let d = WeatherSettings {
             touched: true,

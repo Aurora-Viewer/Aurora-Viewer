@@ -3676,7 +3676,9 @@ struct SnowMeshOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) n: vec3<f32>,
-    @location(2) valid: f32,
+    // whether its triangle is drawn: one value a triangle, its first
+    // vertex's (the only one that judges it: `vs_snow_mesh`)
+    @location(2) @interpolate(flat) valid: f32,
     // the height of the surface under the snow (a triangle across a jump
     // of it is dropped; one down a footprint's or an edge's slope is not)
     @location(3) base: f32,
@@ -3685,23 +3687,30 @@ struct SnowMeshOut {
     @location(4) ground: vec3<f32>,
 };
 
-// The grid at this Weather quality: x cells a side of each of its levels,
-// y how far it reaches from my avatar (m). Its levels are nested squares
-// (`vs_snow_mesh`): the finest SNOW_MESH_FIRST m across, a few centimetres
-// a cell (footprints), each next one twice as coarse.
-fn snow_mesh_grid() -> vec2<f32> {
-    let q = rain_quality();
-    // the reach set (frame.snow_trail_step.z, m at High), each quality
-    // its share
-    let reach = select(15.0, frame.snow_trail_step.z, frame.snow_trail_step.z > 0.0) / 15.0;
-    if (q <= 0) { return vec2<f32>(64.0, 10.0 * reach); }
-    if (q == 1) { return vec2<f32>(96.0, 13.0 * reach); }
-    return vec2<f32>(128.0, 15.0 * reach);
+// The grid of this frame (renderer.rs `DeepSnowMesh`, the draw's own, in
+// frame.snow_trail_step.zw): x cells a side of each of its levels, y how far
+// it reaches from my avatar (m), z how many levels. Its levels are nested
+// squares (`vs_snow_mesh`): the finest SNOW_MESH_FIRST m across, a few
+// centimetres a cell (footprints), each next one twice as coarse.
+fn snow_mesh_grid() -> vec3<f32> {
+    let packed = u32(frame.snow_trail_step.w + 0.5);
+    return vec3<f32>(f32(max(packed / 16u, 2u)), frame.snow_trail_step.z, f32(max(packed % 16u, 1u)));
 }
 
 // The finest level's side (m): 4 cm cells at High (renderer.rs
-// `deep_snow_mesh` counts the levels from it).
+// `SNOW_MESH_FIRST`, the same).
 const SNOW_MESH_FIRST: f32 = 5.12;
+
+// Deep snow thins to nothing toward its reach, from this share of it to
+// SNOW_MESH_EDGE_END (renderer.rs, the same: no level reaches past it).
+const SNOW_MESH_EDGE_FROM: f32 = 0.85;
+const SNOW_MESH_EDGE_END: f32 = 0.98;
+
+// How much of deep snow's reach still shows at `xy`: none past
+// SNOW_MESH_EDGE_END of it, no step at its edge.
+fn snow_mesh_edge(xy: vec2<f32>, me: vec2<f32>, reach: f32) -> f32 {
+    return 1.0 - smoothstep(SNOW_MESH_EDGE_FROM, SNOW_MESH_EDGE_END, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+}
 
 // How much of a level, from my avatar out, keeps its own vertices: past it
 // they slide onto the next level's (every other one), whole by its outer
@@ -3826,7 +3835,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let g = snow_mesh_grid();
     let n = u32(g.x);
     let reach = g.y;
-    let levels = max(u32(frame.snow_trail_step.w + 0.5), 1u);
+    let levels = u32(g.z);
     let corners = array<vec2<u32>, 6>(
         vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
         vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
@@ -3872,7 +3881,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let gv = origin + vec2<f32>(cell_ij + corners[vertex % 6u]);
     let xy = snow_mesh_morph(gv, s, half, me, last);
     // thinning to nothing toward the reach: no step at its edge
-    let edge = 1.0 - smoothstep(0.85, 0.98, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+    let edge = snow_mesh_edge(xy, me, reach);
     // and as the flat snow, thinning on a slope, gone past about 55°: it
     // sinks into the ground there, its height with it, rather than end in
     // a slab cut along its triangles (teeth, and slivers along their edges)
@@ -3880,43 +3889,19 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let fade = edge * smoothstep(0.55, 0.85, ground.z);
     let cell = s;
     let c = snow_mesh_top_soft(xy, fade, cell);
-    // the triangle's three corners, where they are drawn (the same for each
-    // of its vertices, whatever the camera): dropped where the surface under
-    // it jumps more than 10 cm across it (a ledge, a roof's edge), not drawn
-    // up as a wall
-    let first = (vertex % 6u) / 3u * 3u;
-    var lowest = 1e9;
-    var highest = -1e9;
-    var at: array<vec2<f32>, 3>;
-    var hb: array<f32, 3>;
-    for (var k = 0u; k < 3u; k++) {
-        at[k] = snow_mesh_morph(origin + vec2<f32>(cell_ij + corners[first + k]), s, half, me, last);
-        hb[k] = snow_mesh_surface(at[k], cam.z);
-        lowest = min(lowest, hb[k]);
-        highest = max(highest, hb[k]);
-    }
-    // not too steep for snow to stay (35°, or 10 cm across a cell of a few
-    // centimetres), and no step inside it: each edge's middle on the line
-    // between its ends. A fixed 10 cm across it dropped the outer, coarse
-    // cells on any hill (they came back as I came nearer, finer)
-    var across = lowest > -1e8 && highest - lowest <= max(0.1, 0.7 * s * 1.4142);
-    for (var k = 0u; k < 3u; k++) {
-        let j = (k + 1u) % 3u;
-        let mid = snow_mesh_surface((at[k] + at[j]) * 0.5, cam.z);
-        across = across && mid > -1e8 && abs(mid - 0.5 * (hb[k] + hb[j])) <= 0.1;
-    }
     out.base = c.x;
     // judged on level ground, the deep snow stood whole on a slope the
     // flat snow only dusted (two layouts of the same snow)
     out.ground = ground;
-    // drawn where the snow lies whole at all three corners (the same for
-    // each of its vertices: one that differed drew a sliver of the
-    // triangle along its other edge, spikes)
-    var whole = across;
-    for (var k = 0u; k < 3u; k++) {
-        let e = 1.0 - smoothstep(0.85, 0.98, max(abs(at[k].x - me.x), abs(at[k].y - me.y)) / reach);
-        let lies = snow_memory_depth(at[k]) * e * smoothstep(0.55, 0.85, snow_mesh_ground(at[k]).z);
-        whole = whole && lies > SNOW_MESH_SOLID;
+    // whether the triangle is drawn, judged once, by its first vertex (the
+    // value the fragments take, `valid` being flat): one value for the
+    // whole triangle (where its vertices differed, a sliver of it was drawn
+    // along its other edge, spikes), and the other two vertices spared the
+    // work (it read about two thirds of each vertex's shelter map taps)
+    let first = (vertex % 6u) / 3u * 3u;
+    var whole = false;
+    if (vertex % 6u == first) {
+        whole = snow_mesh_triangle_whole(origin, cell_ij, first, s, half, me, last, reach, ground);
     }
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
@@ -3963,6 +3948,49 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     return out;
 }
 
+// Whether a triangle of deep snow's grid is drawn: its corners `first` to
+// `first + 2` of `vs_snow_mesh`'s cell `cell_ij` (the first one's ground
+// facing given). Dropped where the surface under it jumps more than 10 cm
+// across it (a ledge, a roof's edge), not drawn up as a wall; drawn where
+// the snow lies whole at all three corners.
+fn snow_mesh_triangle_whole(origin: vec2<f32>, cell_ij: vec2<u32>, first: u32, s: f32, half: f32, me: vec2<f32>, last: bool, reach: f32, first_ground: vec3<f32>) -> bool {
+    let corners = array<vec2<u32>, 6>(
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
+    let z = frame.camera_pos.z;
+    var lowest = 1e9;
+    var highest = -1e9;
+    var at: array<vec2<f32>, 3>;
+    var hb: array<f32, 3>;
+    for (var k = 0u; k < 3u; k++) {
+        at[k] = snow_mesh_morph(origin + vec2<f32>(cell_ij + corners[first + k]), s, half, me, last);
+        hb[k] = snow_mesh_surface(at[k], z);
+        lowest = min(lowest, hb[k]);
+        highest = max(highest, hb[k]);
+    }
+    // not too steep for snow to stay (35°, or 10 cm across a cell of a few
+    // centimetres), and no step inside it: each edge's middle on the line
+    // between its ends. A fixed 10 cm across it dropped the outer, coarse
+    // cells on any hill (they came back as I came nearer, finer)
+    // (and none of them under the water, where `snow_mesh_top_soft` puts
+    // no snow: that vertex would stand at the camera's height)
+    if (lowest < -1e8 || lowest < frame.params.y || highest - lowest > max(0.1, 0.7 * s * 1.4142)) { return false; }
+    for (var k = 0u; k < 3u; k++) {
+        let j = (k + 1u) % 3u;
+        let mid = snow_mesh_surface((at[k] + at[j]) * 0.5, z);
+        if (mid < -1e8 || abs(mid - 0.5 * (hb[k] + hb[j])) > 0.1) { return false; }
+    }
+    // the snow whole at each corner, as the flat snow lies there (by the
+    // facing of the ground; the first corner's is the vertex's own)
+    for (var k = 0u; k < 3u; k++) {
+        var facing = first_ground;
+        if (k > 0u) { facing = snow_mesh_ground(at[k]); }
+        let lies = snow_memory_depth(at[k]) * snow_mesh_edge(at[k], me, reach) * smoothstep(0.55, 0.85, facing.z);
+        if (lies <= SNOW_MESH_SOLID) { return false; }
+    }
+    return true;
+}
+
 // How deep the snow lies (0..1) before deep snow's surface stands: where
 // the cover is whole (`snow_cover_lit`: settled snow covers all from 0.65).
 // Thinner, it is the flat dusting on the ground itself. The surface writes
@@ -3983,7 +4011,7 @@ fn on_deep_snow(world: vec3<f32>) -> bool {
     var me = frame.snow_trail_step.xy;
     if (all(me == vec2<f32>(0.0))) { me = frame.camera_pos.xy; }
     let d = abs(world.xy - me);
-    if (max(d.x, d.y) > snow_mesh_grid().y * 0.85) { return false; }
+    if (max(d.x, d.y) > snow_mesh_grid().y * SNOW_MESH_EDGE_FROM) { return false; }
     let surface = snow_mesh_surface(world.xy, frame.camera_pos.z);
     if (surface < -1e8) { return false; }
     // 8 mm at least: the surface's lift over what it lies on

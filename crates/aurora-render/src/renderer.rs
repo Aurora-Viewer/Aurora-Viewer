@@ -536,7 +536,7 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>, map_px: u32) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
@@ -549,13 +549,13 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>, map_
     // projectors' (`projector_shadows::shelter_slot`), so that none of them
     // loses its shadow; the last projector's only at the full budget. No
     // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
-    if let Some(slot) = shelter.filter(|&k| k < SPOT_SHADOWS) {
+    if let Some((slot, vp)) = shelter.filter(|&(k, _)| k < SPOT_SHADOWS) {
         views[slot] = Some((
             SpotShadow {
                 light: u32::MAX,
                 fade: 0.0,
             },
-            rain_shelter_matrix(f.camera_pos, map_px),
+            vp,
         ));
     }
     views
@@ -1977,8 +1977,11 @@ pub(crate) struct Backend {
     shelter_slot: usize,
     /// With the shadows off, the shelter map drawn alone: its matrix and
     /// when (kept in the atlas, which nothing else draws then; drawn again
-    /// when the camera crosses a metre, or after `SHELTER_REFRESH`).
+    /// when it follows the camera, or after `SHELTER_REFRESH`).
     shelter_drawn: Option<(Mat4, Instant)>,
+    /// Where the shelter map is centred (`follow_shelter`): the camera when
+    /// it last went a metre from it.
+    shelter_centre: Option<Vec3>,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -2522,28 +2525,61 @@ struct RainWet {
     snow_cover: [f32; 4],
 }
 
-/// Deep snow's grid (env.wgsl `vs_snow_mesh`) at a weather quality and a
-/// reach set (m at High): the cells a side of each of its nested squares,
-/// and how many squares, each twice as coarse as the one inside it, from
-/// the finest (`SNOW_MESH_FIRST`, 5.12 m across) out to cover the reach
-/// (each quality its share of it, as `snow_mesh_grid`), whichever cell the
-/// outermost is snapped to.
-fn deep_snow_mesh(quality: u32, reach: f32) -> (u32, u32) {
-    const FIRST: f32 = 5.12;
-    let (cells, share) = match quality {
-        0 => (64u32, 10.0 / 15.0),
-        1 => (96, 13.0 / 15.0),
-        _ => (128, 1.0),
-    };
-    let reach = reach.clamp(1.0, 60.0) * share;
-    let mut levels = 1u32;
-    loop {
-        let s = FIRST / cells as f32 * (1u32 << (levels - 1)) as f32;
-        let half = cells as f32 * 0.5 * s;
-        if half - 2.0 * s >= reach || levels >= 8 {
-            return (cells, levels);
+/// Deep snow's grid (env.wgsl `vs_snow_mesh`, which takes it from the frame:
+/// `snow_trail_step.zw`) at a weather quality and a reach set (m at High).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DeepSnowMesh {
+    /// Cells a side of each of its nested squares.
+    cells: u32,
+    /// How many squares, each twice as coarse as the one inside it, from
+    /// the finest (`SNOW_MESH_FIRST`, 5.12 m across).
+    levels: u32,
+    /// How far it reaches from my avatar (m): this quality's share of the
+    /// reach set.
+    reach: f32,
+}
+
+/// The finest square's side (m, env.wgsl `SNOW_MESH_FIRST`).
+const SNOW_MESH_FIRST: f32 = 5.12;
+/// Where deep snow has thinned to nothing toward its reach (a share of it,
+/// env.wgsl `SNOW_MESH_EDGE_END`): no square has to reach past it.
+const SNOW_MESH_EDGE_END: f32 = 0.98;
+
+impl DeepSnowMesh {
+    /// The grid at weather `quality` (0 Low, 1 Medium, 2 High) for a reach
+    /// of `reach` m at High: Low and Medium keep less of it, and coarser
+    /// cells, as before the reach could be set. As many squares as cover
+    /// where the snow still shows, whichever cell the outermost is snapped
+    /// to (its centre on twice its own cell: two cells of margin).
+    fn new(quality: u32, reach: f32) -> Self {
+        let (cells, share) = match quality {
+            0 => (64u32, 10.0 / 15.0),
+            1 => (96, 13.0 / 15.0),
+            _ => (128, 1.0),
+        };
+        let reach = reach.clamp(1.0, 60.0) * share;
+        let mut levels = 1u32;
+        loop {
+            let s = SNOW_MESH_FIRST / cells as f32 * (1u32 << (levels - 1)) as f32;
+            let half = cells as f32 * 0.5 * s;
+            if half - 2.0 * s >= reach * SNOW_MESH_EDGE_END || levels >= 8 {
+                return Self { cells, levels, reach };
+            }
+            levels += 1;
         }
-        levels += 1;
+    }
+
+    /// For the frame (`snow_trail_step.zw`): the reach, and the cells a
+    /// side times 16 plus the levels (both exact in an f32).
+    fn uniform(&self) -> [f32; 2] {
+        [self.reach, (self.cells * 16 + self.levels) as f32]
+    }
+
+    /// The vertices of its draw: six a cell, every square whole (the
+    /// cells another square covers, or past the reach, are dropped in the
+    /// vertex stage).
+    fn vertices(&self) -> u32 {
+        self.levels * self.cells * self.cells * 6
     }
 }
 
@@ -2551,9 +2587,30 @@ fn deep_snow_mesh(quality: u32, reach: f32) -> (u32, u32) {
 /// away (`RainLook::memory_reach`): 128 m by default, 256 m or 512 m for
 /// farther puddles or snow, always 4 texels a metre (512 to 2048 a side:
 /// 8 to 128 MB for its two textures). Its square must reach as far as
-/// what is drawn: beyond it no puddle or snow shows.
+/// what is drawn whichever way the camera looks: beyond it no puddle or
+/// snow shows. Its centre is snapped to `RAIN_WET_SNAP` (`rain_wet_origin`),
+/// so it reaches at least half its side less half a snap from the camera.
+/// Past 252 m (the slider's last 4 m) the largest square ends just short,
+/// within the last 2 % of the distance's fade, where nearly nothing shows.
 fn wet_extent_for(reach: f32) -> f32 {
-    [128.0, 256.0, 512.0].into_iter().find(|e| e * 0.5 >= reach).unwrap_or(512.0)
+    [128.0, 256.0, 512.0]
+        .into_iter()
+        .find(|e| e * 0.5 - RAIN_WET_SNAP * 0.5 >= reach)
+        .unwrap_or(512.0)
+}
+
+/// The memory's square (m) to keep: `wet_extent_for` while `busy` (rain or
+/// snow falls, or the memory still holds some), the smallest while it is
+/// empty, so that a far distance holds no video memory in clear weather.
+fn wet_extent_wanted(reach: f32, busy: bool) -> f32 {
+    if busy { wet_extent_for(reach) } else { wet_extent_for(0.0) }
+}
+
+/// The wetness memory's corner for the camera at `at`: its centre the
+/// nearest multiple of `RAIN_WET_SNAP` (it moves only after the camera has),
+/// so the camera is never more than half a snap off its centre.
+fn rain_wet_origin(at: Vec2, extent: f32) -> Vec2 {
+    (at / RAIN_WET_SNAP).round() * RAIN_WET_SNAP - Vec2::splat(extent * 0.5)
 }
 const RAIN_WET_TEXELS_PER_M: f32 = 4.0;
 const RAIN_WET_SNAP: f32 = 8.0;
@@ -2613,6 +2670,14 @@ impl SnowTrail {
     fn active(&self) -> bool {
         self.last.is_some()
     }
+
+    /// Every position moved by `by` (a border crossing): the map stays on
+    /// the ground it covers.
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
 }
 
 impl RainWet {
@@ -2621,6 +2686,22 @@ impl RainWet {
         // all is still dry: skipped, the next frame was no longer fresh and
         // read the old memory back (cleaned up in rain, the snow returned)
         (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY || self.step[2] < 0.0) && self.last.is_some()
+    }
+
+    /// Every position moved by `by` (a border crossing): the memory stays
+    /// on the ground it covers (left in place, it was read 256 m off).
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
+
+    /// Its texels start again (a new size of its square): every place is
+    /// new to it, as wet and as snowed on as the open is now (`soak`, the
+    /// standing water and the snow so far are kept, so the ground does
+    /// not dry or melt at once).
+    fn restart_texels(&mut self) {
+        self.origin = None;
     }
 
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
@@ -2667,7 +2748,7 @@ impl RainWet {
             *self = RainWet::default();
             return;
         }
-        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(extent * 0.5);
+        let origin = rain_wet_origin(at, extent);
         self.origin = Some(origin);
         let fresh = was.is_none() || self.last.is_none();
         let prev = was.unwrap_or(origin);
@@ -2690,9 +2771,56 @@ impl Backend {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 
-    /// The projector map the shelter is drawn into this frame, if it is.
-    fn rain_shelter_map(&self, f: &FrameParams) -> Option<usize> {
-        self.rain_shelter(f).then_some(self.shelter_slot)
+    /// The projector map the shelter is drawn into this frame, if it is,
+    /// and its view-projection.
+    fn rain_shelter_map(&self, f: &FrameParams) -> Option<(usize, Mat4)> {
+        self.rain_shelter(f).then(|| (self.shelter_slot, self.shelter_matrix()))
+    }
+
+    /// The shelter map's view-projection this frame: around where it was
+    /// last centred (`follow_shelter`), on its own texels (`shadow_size / 2`
+    /// a side, as the projectors' maps). Every view of the frame reads it
+    /// (reflections, probe faces), as the one map drawn.
+    fn shelter_matrix(&self) -> Mat4 {
+        rain_shelter_matrix(self.shelter_centre.unwrap_or(Vec3::ZERO), self.shadow_size / 2)
+    }
+
+    /// The shelter map follows the camera once it has gone a metre from
+    /// where the map was centred (in any direction, height too), as it did
+    /// when it was snapped to whole metres: with the shadows off it is drawn
+    /// again only then (or after `SHELTER_REFRESH`). Snapped to its own
+    /// texels it would move, and be drawn again, every few centimetres.
+    fn follow_shelter(&mut self, camera: Vec3) {
+        if let Some(c) = shelter_centre_after(self.shelter_centre, camera) {
+            self.shelter_centre = Some(c);
+        }
+    }
+
+    /// A border crossing (`Renderer::shift_world`, `by` m): what this
+    /// renderer keeps in world positions moves with every position, once.
+    fn shift_weather(&mut self, by: [f32; 2]) {
+        if by == [0.0; 2] {
+            return;
+        }
+        let by = Vec2::from(by);
+        self.rain_wet.shift(by);
+        self.snow_trail.shift(by);
+        if let Some(c) = &mut self.shelter_centre {
+            *c += by.extend(0.0);
+        }
+    }
+}
+
+/// How far the camera goes from the shelter map's centre before the map
+/// follows it (m).
+const SHELTER_FOLLOW: f32 = 1.0;
+
+/// The shelter map's new centre for the camera at `camera`, if it moves
+/// (`Backend::follow_shelter`): none yet, or the camera a metre or more away.
+fn shelter_centre_after(centre: Option<Vec3>, camera: Vec3) -> Option<Vec3> {
+    match centre {
+        Some(c) if (camera - c).abs().max_element() < SHELTER_FOLLOW => None,
+        _ => Some(camera),
     }
 }
 
@@ -4235,6 +4363,7 @@ impl Backend {
             shadow_count: 2,
             shelter_slot: 2,
             shelter_drawn: None,
+            shelter_centre: None,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -6355,27 +6484,13 @@ impl Backend {
         let show = t.gtao.is_some() && (gtao || t.ao.is_none());
         if show != t.gtao_shown {
             self.targets.gtao_shown = show;
-            self.groups = Self::make_frame_groups(
-                &self.device,
-                &self.frame_layout,
-                &self.frame_buffer,
-                &self.refl_buffers,
-                &self.shadow_view,
-                &self.probe_shadow_view,
-                &self.shadow_sampler,
-                &self.lin_clamp,
-                &self.dummies,
-                &self.targets,
-                &self.probes,
-                &self.water_effects,
-                &self.stars,
-                &self.milky_way,
-            );
+            self.remake_frame_groups();
         }
     }
 
-    /// Recreate every bind group that references size- or setting-dependent targets.
-    fn rebuild_bind_groups(&mut self) {
+    /// The frame groups made again, bound to the targets and memories as
+    /// they are now: alone, when only one of these changed.
+    fn remake_frame_groups(&mut self) {
         self.groups = Self::make_frame_groups(
             &self.device,
             &self.frame_layout,
@@ -6392,6 +6507,11 @@ impl Backend {
             &self.stars,
             &self.milky_way,
         );
+    }
+
+    /// Recreate every bind group that references size- or setting-dependent targets.
+    fn rebuild_bind_groups(&mut self) {
+        self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
@@ -7103,14 +7223,10 @@ impl Backend {
         // my avatar: deep snow's grid centred on it, not on the camera (an
         // orbiting camera would move it, and its cells resample what they
         // cover: narrow strips spiking as it pans)
-        // z: deep snow's reach (m, env.wgsl `snow_mesh_grid`)
-        // w: deep snow's levels (`deep_snow_mesh`)
-        u.snow_trail_step = [
-            f.rain_look.trail_centre[0],
-            f.rain_look.trail_centre[1],
-            f.rain_look.deep_reach,
-            deep_snow_mesh(f.rain_look.quality, f.rain_look.deep_reach).1 as f32,
-        ];
+        // zw: deep snow's grid (`DeepSnowMesh::uniform`, env.wgsl
+        // `snow_mesh_grid`), the draw's own
+        let [reach, grid] = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach).uniform();
+        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], reach, grid];
         u.snow_stamps = f.rain_look.snow_stamps;
         for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
             u.snow_stamp_z[i / 4][i % 4] = *z;
@@ -7231,7 +7347,7 @@ impl Backend {
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         // Aurora Weather: the shelter map's slot + 1, 0 when it is not drawn
         // (env.wgsl `rain_shelter_on`)
-        u.features[1] = self.rain_shelter_map(f).map_or(0, |k| k as u32 + 1);
+        u.features[1] = self.rain_shelter_map(f).map_or(0, |(k, _)| k as u32 + 1);
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -7252,7 +7368,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.shadow_size / 2)
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -7481,6 +7597,15 @@ impl Backend {
         let Some(mut world) = self.xr_world.take() else {
             return Err(Box::new(packet));
         };
+        // a border crossing moves each renderer's weather memory once: both
+        // eyes' (each keeps its own) and the window's, idle while the
+        // headset draws and drawing again after it or on a frame the
+        // headset skips (the packet goes on without it, never applied twice)
+        let shift = std::mem::take(&mut packet.world_shift);
+        for eye in &mut world.backends {
+            eye.shift_weather(shift);
+        }
+        self.shift_weather(shift);
         if !self.vr.wanted() {
             world.session.request_stop();
         }
@@ -7565,7 +7690,7 @@ impl Backend {
             capture: None,
             histogram: None,
             motion_cut: packet.motion_cut,
-            // (moved once, with the first eye)
+            // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
         };
@@ -7779,15 +7904,7 @@ impl Backend {
         } = packet;
         let external_output = output.is_some();
         self.motion_cut |= motion_cut;
-        if world_shift != [0.0; 2] {
-            let by = Vec2::from(world_shift);
-            if let Some(o) = &mut self.rain_wet.origin {
-                *o += by;
-            }
-            if let Some(o) = &mut self.snow_trail.origin {
-                *o += by;
-            }
-        }
+        self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
             t.harvest();
@@ -8224,19 +8341,32 @@ impl Backend {
             self.rain_wet = RainWet::default();
             self.rain_wet.snow = 1.0;
         }
-        // the memory's square, as far as the weather is drawn: a new size
-        // starts it again (its textures made anew, the frame groups bound
-        // to them), as a clean-up does
-        let extent = wet_extent_for(f.rain_look.memory_reach);
-        let texels = (extent * RAIN_WET_TEXELS_PER_M) as u32;
-        if texels != self.water_effects.rain_wet_size {
-            log::info!("weather memory: {extent} m square ({texels} texels a side)");
-            self.water_effects.resize_wet(&self.device, texels);
-            self.rebuild_bind_groups();
-            let snow = self.rain_wet.snow;
-            self.rain_wet = RainWet::default();
-            self.rain_wet.snow = snow;
+        // the memory's square, as far as the weather is drawn, while there
+        // is weather to keep (falling, or still on the ground); the
+        // smallest while it is empty, which loses nothing. A new size makes
+        // its textures anew (the old ones kept if video memory refuses
+        // them, tried again later) and starts its texels again from the
+        // open's wetness and snow so far
+        let busy = rain > 0.0 || snow > 0.0 || f.rain_look.snow_lying > 0.0 || self.rain_wet.origin.is_some();
+        let wet_texels = (wet_extent_wanted(f.rain_look.memory_reach, busy) * RAIN_WET_TEXELS_PER_M) as u32;
+        if wet_texels != self.water_effects.rain_wet_size {
+            let lost = self.lost.get();
+            let made = extra(&mut self.oom, &self.device, lost, "weather memory, a new size", |d| {
+                crate::water_effects::wet_textures(d, wet_texels)
+            });
+            if let Some(made) = made {
+                log::info!(
+                    "weather memory: {} m square ({wet_texels} texels a side)",
+                    wet_texels as f32 / RAIN_WET_TEXELS_PER_M
+                );
+                self.water_effects.install_wet(made, wet_texels);
+                // (only the frame groups bind it: the TAA history stays)
+                self.remake_frame_groups();
+                self.rain_wet.restart_texels();
+            }
         }
+        let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
+        self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet
             .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
@@ -8649,13 +8779,13 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.shadow_size / 2).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|k| i == CASCADES + k)), 0, 0, 0],
+                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
@@ -8885,7 +9015,7 @@ impl Backend {
             let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
             // the shelter map: what stands still, glass too (as the GPU's
             // shelter bin), not the shadows' casters
-            let casters = if shelter_map == Some(k) {
+            let casters = if shelter_map.is_some_and(|(s, _)| s == k) {
                 &lists.shelter_casters
             } else {
                 &lists.shadow_casters
@@ -9329,11 +9459,11 @@ impl Backend {
         let shelter_kept = shelter_only
             && self
                 .shelter_drawn
-                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos, self.shadow_size / 2) && at.elapsed() < SHELTER_REFRESH);
+                .is_some_and(|(m, at)| m == self.shelter_matrix() && at.elapsed() < SHELTER_REFRESH);
         if f.shadows || !shelter {
             self.shelter_drawn = None;
         } else if shelter_only && !shelter_kept {
-            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos, self.shadow_size / 2), Instant::now()));
+            self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
@@ -10683,11 +10813,11 @@ impl Backend {
             // it); it writes the depth, so the frame group without it
             let snow_on = f.rain_look.snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY;
             if f.rain_look.deep_snow && snow_on && !f.cutout && self.rain_shelter(f) {
-                let (cells, levels) = deep_snow_mesh(f.rain_look.quality, f.rain_look.deep_reach);
+                let mesh = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach);
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "deep snow", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
                 pass.set_pipeline(&self.pipelines.snow_mesh);
-                pass.draw(0..levels * cells * cells * 6, 0..1);
+                pass.draw(0..mesh.vertices(), 0..1);
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -12110,22 +12240,72 @@ mod tests {
     fn deep_snow_has_enough_levels_for_its_reach() {
         // High at the default 15 m: four squares (the finest 5.12 m across,
         // the fourth 41 m), as many cells as the one warped grid had
-        assert_eq!(deep_snow_mesh(2, 15.0), (128, 4));
-        assert_eq!(4 * 128 * 128, 256 * 256);
-        // 40 m: six (five reach 40.96 m, 39.7 m less their snap)
-        assert_eq!(deep_snow_mesh(2, 40.0), (128, 6));
-        // the outermost square reaches past the reach, whatever its snap,
-        // and a morph ends before each square's edge (10 % of a half side
-        // is at least two cells)
+        let high = DeepSnowMesh::new(2, 15.0);
+        assert_eq!((high.cells, high.levels, high.reach), (128, 4, 15.0));
+        assert_eq!(high.vertices(), 256 * 256 * 6);
+        // 40 m: five (the fifth reaches 39.68 m whatever its snap, past
+        // 39.2 m, where the snow has thinned to nothing): a quarter more
+        // vertices than at 15 m, not half more
+        let far = DeepSnowMesh::new(2, 40.0);
+        assert_eq!((far.cells, far.levels), (128, 5));
+        assert_eq!(far.vertices() * 4, high.vertices() * 5);
+        // Low and Medium keep their share of the reach, coarser
+        assert_eq!(DeepSnowMesh::new(0, 15.0).reach, 10.0);
+        assert_eq!(DeepSnowMesh::new(1, 15.0).cells, 96);
+        // the outermost square reaches where the snow still shows, whatever
+        // its snap, and a morph ends before each square's edge (10 % of a
+        // half side is at least two cells)
         for q in 0..3u32 {
             for reach in [10.0f32, 15.0, 25.0, 40.0] {
-                let (cells, levels) = deep_snow_mesh(q, reach);
-                let s = 5.12 / cells as f32 * (1u32 << (levels - 1)) as f32;
+                let m = DeepSnowMesh::new(q, reach);
+                let s = SNOW_MESH_FIRST / m.cells as f32 * (1u32 << (m.levels - 1)) as f32;
                 let share = [10.0 / 15.0, 13.0 / 15.0, 1.0][q as usize];
-                assert!(cells as f32 * 0.5 * s - 2.0 * s >= reach * share, "{q} {reach}");
-                assert!(0.1 * cells as f32 * 0.5 >= 2.0);
+                assert_eq!(m.reach, reach * share);
+                assert!(m.cells as f32 * 0.5 * s - 2.0 * s >= m.reach * SNOW_MESH_EDGE_END, "{q} {reach}");
+                assert!(0.1 * m.cells as f32 * 0.5 >= 2.0);
+                // one fewer would not do: no square drawn for nothing
+                let s = s * 0.5;
+                assert!(m.levels == 1 || m.cells as f32 * 0.5 * s - 2.0 * s < m.reach * SNOW_MESH_EDGE_END, "{q} {reach}");
             }
         }
+    }
+
+    #[test]
+    fn the_shader_reads_deep_snows_grid_as_the_draw_has_it() {
+        // env.wgsl `snow_mesh_grid`: cells = w / 16, levels = w % 16, reach z
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 40.0] {
+                let m = DeepSnowMesh::new(q, reach);
+                let [z, w] = m.uniform();
+                let packed = (w + 0.5) as u32;
+                assert_eq!((packed / 16, packed % 16, z), (m.cells, m.levels, m.reach));
+                assert!(m.levels < 16);
+            }
+        }
+    }
+
+    #[test]
+    fn the_shelter_map_follows_the_camera_a_metre_at_a_time() {
+        // walking 10 m in 1 cm steps: drawn again (with the shadows off)
+        // about once a metre, as when it was snapped to whole metres; on
+        // its texels it would have moved 32 times at 256 px, 128 at 1024 px
+        let mut centre = None;
+        let mut moves = 0;
+        for step in 0..=1000 {
+            let camera = Vec3::new(100.0 + step as f32 * 0.01, 60.0, 30.0);
+            if let Some(c) = shelter_centre_after(centre, camera) {
+                centre = Some(c);
+                moves += 1;
+            }
+            let c = centre.expect("centred on the first frame");
+            assert!((camera - c).abs().max_element() < SHELTER_FOLLOW);
+        }
+        // (the first frame centres it)
+        assert!((10..=11).contains(&moves), "{moves}");
+        // turning, or going up and down less than a metre, moves nothing
+        let c = Vec3::new(10.0, 10.0, 22.0);
+        assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.4, -0.6, 0.9)), None);
+        assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.0, 0.0, 1.2)), Some(c + Vec3::new(0.0, 0.0, 1.2)));
     }
 
     #[test]
@@ -12157,13 +12337,76 @@ mod tests {
     fn the_weather_memory_covers_what_is_drawn() {
         // today's defaults (puddles 38 m, snow 60 m): the same 128 m as before
         assert_eq!(wet_extent_for(60.0), 128.0);
-        assert_eq!(wet_extent_for(64.0), 128.0);
-        assert_eq!(wet_extent_for(65.0), 256.0);
-        assert_eq!(wet_extent_for(128.0), 256.0);
+        assert_eq!(wet_extent_for(61.0), 256.0);
+        assert_eq!(wet_extent_for(124.0), 256.0);
+        assert_eq!(wet_extent_for(125.0), 512.0);
         assert_eq!(wet_extent_for(256.0), 512.0);
         // never more than 512 m (2048 texels)
         assert_eq!(wet_extent_for(1000.0), 512.0);
         assert_eq!((wet_extent_for(256.0) * RAIN_WET_TEXELS_PER_M) as u32, 2048);
+        // the square reaches that far on every side, wherever the camera is
+        // in its snap (with the corner floored, it fell 8 m short on the
+        // east and north sides: 56 m for the default 60 m)
+        for reach in [20.0f32, 38.0, 60.0, 61.0, 100.0, 124.0, 125.0, 200.0, 252.0] {
+            let extent = wet_extent_for(reach);
+            for i in 0..=160 {
+                let at = Vec2::new(-40.0 + i as f32 * 0.1, 300.0 - i as f32 * 0.07);
+                let o = rain_wet_origin(at, extent);
+                let near = (at - o).min(o + Vec2::splat(extent) - at).min_element();
+                assert!(near >= reach - 1e-3, "{reach} m at {at}: {near}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_weather_memory_is_small_while_empty() {
+        // a far distance holds no video memory in clear weather (8 MB, not
+        // 128): the memory grows when rain or snow comes, nothing in it lost
+        assert_eq!(wet_extent_wanted(256.0, false), 128.0);
+        assert_eq!(wet_extent_wanted(256.0, true), 512.0);
+        assert_eq!(wet_extent_wanted(60.0, true), 128.0);
+    }
+
+    #[test]
+    fn a_new_size_keeps_the_weather_so_far() {
+        let mut wet = RainWet::default();
+        for _ in 0..3 {
+            wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 128.0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (soak, level) = (wet.soak, wet.level);
+        assert!(soak > 0.0 && level > 0.0);
+        assert!(wet.step[2] >= 0.0);
+        // the texels start again (every place new to it, `step.z` -1),
+        // as wet as the open is: not dried, not drained
+        wet.restart_texels();
+        wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 256.0);
+        assert_eq!(wet.step[2], -1.0);
+        assert!(wet.soak >= soak && wet.level >= level);
+        assert_eq!(wet.step[3], wet.soak);
+        assert_eq!(wet.uniform[2], 256.0);
+    }
+
+    #[test]
+    fn a_border_crossing_moves_the_weathers_memories() {
+        // a crossing to the east neighbour: every position 256 m less in x;
+        // the memories move with them, so the next frame reads the same
+        // ground (not fresh, the old corner where the new one is)
+        let at = Vec2::new(250.0, 40.0);
+        let mut wet = RainWet::default();
+        wet.advance(1.0, 0.0, at, false, false, 128.0);
+        let mut trail = SnowTrail::default();
+        trail.advance(true, 1.0, at, 0.0, 32.0);
+        let by = Vec2::new(-256.0, 0.0);
+        wet.shift(by);
+        trail.shift(by);
+        std::thread::sleep(Duration::from_millis(2));
+        wet.advance(1.0, 0.0, at + by, false, false, 128.0);
+        trail.advance(true, 1.0, at + by, 0.0, 32.0);
+        assert!(wet.step[2] >= 0.0);
+        assert_eq!([wet.step[0], wet.step[1]], [wet.uniform[0], wet.uniform[1]]);
+        assert!(trail.step[2] >= 0.0);
+        assert_eq!([trail.step[0], trail.step[1]], [trail.uniform[0], trail.uniform[1]]);
     }
 
     /// The mirror's blended faces: those it does not see left out, the rigged
