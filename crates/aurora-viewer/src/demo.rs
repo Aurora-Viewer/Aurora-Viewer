@@ -278,6 +278,10 @@ pub mod social_menu;
 /// (AURORA_DEMO_SOFT_SHADOWS).
 #[path = "demo_soft_shadows.rs"]
 pub mod soft_shadows;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
