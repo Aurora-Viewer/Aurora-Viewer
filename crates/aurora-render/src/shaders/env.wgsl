@@ -919,7 +919,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustics(in.world_pos,n), a);
         var color=hazed*water_scene_light(in.world_pos);
-        if(camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){color=apply_fog(color,in.world_pos);}
+        if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustics(in.world_pos,n);
@@ -955,7 +955,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
             + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
         color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
-        if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+        if (water_fogs_source(in.world_pos)) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
     } else {
@@ -1149,9 +1149,10 @@ fn analytic_wave(p: vec2<f32>, t: f32) -> vec3<f32> {
 }
 
 // Reuse opaque depth/color: no second scene render or GPU/CPU synchronization.
+// The water fog a point of the scene copy already holds (apply_fog).
 fn water_source_fog(source:vec3<f32>)->WaterFog {
-    if(!water_fx_on(256u) && !camera_underwater()){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
-    return water_fog_view(source-frame.camera_pos.xyz,frame.water_normal.w);
+    if(!water_fogs_source(source)){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+    return water_fog_view(source-frame.camera_pos.xyz,water_source_density());
 }
 
 // Rays cover the same 200 m at every quality, with finer steps at high quality.
@@ -1454,13 +1455,20 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     }
     var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
     // Fog of the water volume between the surface and the refracted point.
-    let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
     if (water_fx_on(256u)) {
         let source_fog=water_source_fog(ref_pos);
         fb=max(fb-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
         let volume=water_fog_segment(ref_pos-in.world_pos,frame.water_normal.w,0.0,max(in.level-ref_pos.z,0.0));
         fb=fb*volume.transmission+volume.color;
-    } else { fb = fb * wf.transmission + wf.color; }
+    } else if (d1 <= 0.0) {
+        // Legacy fog: what lies under the water holds its own already, each
+        // layer by its own depth (water_fogs_source; waterF.glsl adds none
+        // to its screen copy). Only where nothing was drawn behind the
+        // surface (the void, the sky under the horizon) does the water take
+        // its fog here, to its far end.
+        let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
+        fb = fb * wf.transmission + wf.color;
+    }
 
     // reflection: planar texture, screen-space rays, or the sky
     var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
