@@ -1,6 +1,7 @@
 //! AURORA_DEMO_PATHFINDING: the pathfinding windows on made-up lists, no
-//! grid. `linksets`, `linksets-selected`, `linksets:<count>` (a list of that
-//! many linksets, for the scale check), `characters`, `characters-selected`.
+//! grid. `linksets`, `linksets-selected`, `linksets-beacon` (selected, with
+//! Show beacon ticked), `linksets:<count>` (a list of that many linksets, for
+//! the scale check), `characters`, `characters-selected`, `characters-beacon`.
 //! The demo answers the list and edit requests itself, like the region:
 //! the plaza's objects first, then numbered linksets of every kind; an edit
 //! comes back with the changed linksets.
@@ -34,7 +35,8 @@ impl App {
         } else {
             Kind::Objects
         };
-        let select = if name.ends_with("-selected") {
+        let beacon = name.ends_with("-beacon");
+        let select = if name.ends_with("-selected") || beacon {
             self.world
                 .objects
                 .iter()
@@ -46,6 +48,10 @@ impl App {
             Vec::new()
         };
         self.open_pathfinding(kind, select);
+        match kind {
+            Kind::Objects => self.pathfinding.linkset_beacons = beacon,
+            Kind::Characters => self.pathfinding.character_beacons = beacon,
+        }
     }
 
     /// The region's answer to a pathfinding request, made up locally.

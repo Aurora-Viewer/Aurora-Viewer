@@ -5818,7 +5818,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets:<count>\|characters\|characters-selected` | Open Build › Pathfinding's Region objects or Characters window on a made-up list; `:<count>` sets the number of linksets. |
+| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets-beacon\|linksets:<count>\|characters\|characters-selected\|characters-beacon` | Open Build › Pathfinding's Region objects or Characters window on a made-up list; `:<count>` sets the number of linksets. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -5843,7 +5843,8 @@ exclusion volume, a concave one, unmodifiable ones), 40 by default;
 `linksets:7600` makes a list that large, the scale check (sort, filter and
 Select all must not hitch: `AURORA_PROFILE=1`). `-selected` opens with the
 first two objects selected, so the edit panel is filled and the selection is
-made in the world. `characters` opens Characters on two of the plaza's
+made in the world; `-beacon` also ticks Show beacon (those two exist in the
+demo world; the numbered linksets do not, so they get no beacon). `characters` opens Characters on two of the plaza's
 objects as characters (one horizontal); select one and tick Show physics
 capsule to see its wire capsule. Check: the filters apply on Apply or Enter,
 Clear empties them; sorting each column (numbers by value); the line under

@@ -132,34 +132,46 @@ impl PathfindingUi {
                 *beacons = false;
             }
         });
-        ui.horizontal(|ui| {
-            let mut button = |icon: &str, key: &'static str, enabled: bool| {
-                widgets::action_button_if(ui, p, icon, aurora_i18n::text(key), ActionKind::Flat, BUTTON, enabled).clicked()
-            };
-            if button("hand-grab", "pathfinding-take", any && facts.take) {
-                actions.push(Action::Take(ids.clone()));
-            }
-            if button("copy-filled", "pathfinding-take-copy", any && facts.take_copy) {
-                actions.push(Action::TakeCopy(ids.clone()));
-            }
-            if button("location-filled", "pathfinding-teleport", single.is_some())
-                && let (Some(id), Some(listed)) = (single, listed)
-            {
-                actions.push(Action::Teleport { id, listed });
-            }
-            if button("arrow-back-up", "pathfinding-return", any && facts.return_) {
-                match ids.len() {
-                    1 => actions.push(Action::Return(ids.clone())),
-                    _ => self.confirm = Some(Confirm::Return(ids.clone())),
-                }
-            }
-            if button("trash-filled", "pathfinding-delete", any && facts.delete) {
-                match ids.len() {
-                    1 => actions.push(Action::Delete(ids.clone())),
-                    _ => self.confirm = Some(Confirm::Delete(ids.clone())),
-                }
-            }
+        // the Legacy row: Take and Take copy on the left, Teleport me to it
+        // in the middle, Return and Delete on the right
+        let button = |ui: &mut egui::Ui, icon: &str, key: &'static str, enabled: bool| {
+            widgets::action_button_if(ui, p, icon, aurora_i18n::text(key), ActionKind::Flat, BUTTON, enabled).clicked()
+        };
+        let [mut take, mut take_copy, mut teleport, mut return_, mut delete] = [false; 5];
+        ui.columns(3, |cols| {
+            cols[0].horizontal(|ui| {
+                take = button(ui, "hand-grab", "pathfinding-take", any && facts.take);
+                take_copy = button(ui, "copy-filled", "pathfinding-take-copy", any && facts.take_copy);
+            });
+            cols[1].vertical_centered(|ui| {
+                teleport = button(ui, "location-filled", "pathfinding-teleport", single.is_some());
+            });
+            cols[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                delete = button(ui, "trash-filled", "pathfinding-delete", any && facts.delete);
+                return_ = button(ui, "arrow-back-up", "pathfinding-return", any && facts.return_);
+            });
         });
+        if take {
+            actions.push(Action::Take(ids.clone()));
+        }
+        if take_copy {
+            actions.push(Action::TakeCopy(ids.clone()));
+        }
+        if teleport && let (Some(id), Some(listed)) = (single, listed) {
+            actions.push(Action::Teleport { id, listed });
+        }
+        if return_ {
+            match ids.len() {
+                1 => actions.push(Action::Return(ids.clone())),
+                _ => self.confirm = Some(Confirm::Return(ids.clone())),
+            }
+        }
+        if delete {
+            match ids.len() {
+                1 => actions.push(Action::Delete(ids)),
+                _ => self.confirm = Some(Confirm::Delete(ids)),
+            }
+        }
     }
 
     /// updateEditFieldValues whenever the selection changes.
@@ -182,7 +194,9 @@ impl PathfindingUi {
         ui.label(RichText::new(aurora_i18n::tr!("pathfinding-edit-title")).strong().color(p.ink));
         let mut apply = false;
         ui.add_enabled_ui(enabled, |ui| {
-            ui.horizontal(|ui| {
+            // top-aligned: Apply changes lines up with the fields, the
+            // suggested uses hang under them as in the Legacy panel
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                 use_choice(ui, &mut self.edit, &self.possible);
                 ui.add_space(16.0);
                 ui.label(aurora_i18n::tr!("pathfinding-walkability"));
