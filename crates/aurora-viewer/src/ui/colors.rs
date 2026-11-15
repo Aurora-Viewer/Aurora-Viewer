@@ -269,6 +269,7 @@ mod tests {
             kind,
             source: Uuid::from_u128(7),
             origin: Origin::Live,
+            blocked: false,
             beyond_range,
         }
     }

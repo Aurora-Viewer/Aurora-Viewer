@@ -447,6 +447,7 @@ impl HistoryUi {
                     find: &needle,
                     layout: super::view::Layout::Classic,
                     first_unread: None,
+                    blocked: Default::default(),
                 },
                 width,
             );
