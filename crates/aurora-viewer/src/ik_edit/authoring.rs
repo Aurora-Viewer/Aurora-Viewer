@@ -14,9 +14,7 @@ impl State {
     /// the old base held. Translations are already offsets from the base.
     fn rebase(&mut self, old: &ik::LocalPose, new: &ik::LocalPose) {
         for (_, edit) in &mut self.edits {
-            let (Some(rotation), Some(from), Some(to)) =
-                (edit.rotation, old.rotations.get(edit.bone), new.rotations.get(edit.bone))
-            else {
+            let (Some(rotation), Some(from), Some(to)) = (edit.rotation, old.rotations.get(edit.bone), new.rotations.get(edit.bone)) else {
                 continue;
             };
             edit.rotation = Some((*to * from.inverse() * rotation).normalize());

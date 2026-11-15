@@ -3521,7 +3521,10 @@ fn the_scene_hands_the_editor_the_pose_under_its_edits() {
     let offset = pelvis / rig.parent_scale[rig.pelvis];
     assert!(base.pose.positions[rig.pelvis].abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-6));
     pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true).unwrap();
-    assert!(Arc::ptr_eq(&base, pose.edit_base.as_ref().unwrap()), "an unchanged base is not copied again");
+    assert!(
+        Arc::ptr_eq(&base, pose.edit_base.as_ref().unwrap()),
+        "an unchanged base is not copied again"
+    );
     pose.edit = ik::EditRequest::default();
     let _ = pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true);
     assert!(pose.edit_base.is_none(), "no base outside an edit session");

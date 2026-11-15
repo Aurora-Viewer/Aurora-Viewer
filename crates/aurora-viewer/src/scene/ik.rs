@@ -157,7 +157,12 @@ impl Pose {
             b.rest == *rest
                 && b.pose.rotations == base.rotations
                 && b.pose.positions.len() == base.positions.len()
-                && b.pose.positions.iter().zip(&base.positions).enumerate().all(|(j, (a, p))| *a == position(j, *p))
+                && b.pose
+                    .positions
+                    .iter()
+                    .zip(&base.positions)
+                    .enumerate()
+                    .all(|(j, (a, p))| *a == position(j, *p))
         });
         if unchanged {
             return;

@@ -865,9 +865,10 @@ impl Editor {
         let (shaped, scales) = authoring::local_pose(rig, frame)?;
         let base = if !self.clip.active || self.clip.waiting_source() {
             // without its base an edit cannot be told from it: nothing is recorded
-            let base = world.ik_edit_base.clone().filter(|b| {
-                b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len()
-            })?;
+            let base = world
+                .ik_edit_base
+                .clone()
+                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len())?;
             Some(base)
         } else {
             None
