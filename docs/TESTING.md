@@ -5036,6 +5036,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]` | `n` translucent panes filling the view ahead of the start position: `n` blended layers on every pixel; spacing 0: coplanar |
+| `AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]` | One translucent pane covering that part of the view (10 % by default), the rest holding no blended face: what the stochastic transparency spends outside the transparency |
 | `AURORA_DEMO_OIT_COLUMN=<tubes>[,<alpha>]` | A tall translucent column of nested tubes with a fine woven texture, left of the start view: many curved blended layers for the transparency in each anti-aliasing mode |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
@@ -12380,6 +12381,15 @@ What the inventory must show with these scenarios:
   method off); with it off, the sorted order shows as seams and bands
   where the walls' order flips.
 
+- **`AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]`**: one translucent pane
+  (`alpha`, 0.5 by default) 3 m ahead of the start position, facing the
+  camera, covering `percent` of the view (10 by default, from 1 to 100:
+  the pane that fills the view, scaled in both directions). The rest of the
+  view holds no blended face: with `AURORA_BLEND_ORDER=5` it is the case the
+  stochastic transparency pays for without needing, measured with
+  `AURORA_PROFILE=1` (the `oit stochastic gpu ms` line, every 120 frames,
+  and the `perf summary` frame). Capture it to see the pane's edge: it is
+  as sharp as with `AURORA_BLEND_ORDER=0`.
 - **`AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`**: `n` translucent
   panes (1 to 64, 8 when the value is not a number; `alpha` their opacity,
   0.3 by default) ahead of the start position (`AURORA_DEMO_POS`), facing
