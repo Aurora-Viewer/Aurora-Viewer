@@ -1142,7 +1142,7 @@ fn transform_fields_keep_the_stretch_undo_batch_when_they_restate_the_root() {
             object::show_transform(ui, &p, &mut tool, &mut world, &mut settings, Mods::default());
         });
     }
-    assert_eq!(tool.stretch_prims, vec![root_key, child_key]);
+    assert_eq!(tool.stretch_prims(), vec![root_key, child_key]);
     tool.out.clear();
     history_frame(
         &ctx,

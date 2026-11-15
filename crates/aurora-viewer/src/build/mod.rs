@@ -171,8 +171,9 @@ pub struct BuildSettings {
     /// ScaleStretchTextures.
     pub scale_stretch_textures: bool,
     /// Aurora: the stretch tool's face handles also stretch a whole linkset
-    /// on one axis, which the Legacy Viewer shows for a single prim only
-    /// (`stretch_linksets`; off by default, so a stretch looks as there).
+    /// on one axis (`stretch_linksets`; off by default). The Legacy Viewer
+    /// shows those handles for a single prim only and scales a whole linkset
+    /// uniformly (UPD_LINKED_SETS).
     pub stretch_linksets: bool,
     /// Keep the camera attached to the focused object while editing it.
     pub follow_edit_object: bool,
@@ -944,13 +945,8 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
-    /// Prims the last one-axis linkset stretch named in its
-    /// MultipleObjectUpdate (no UPD_LINKED_SETS). Ctrl+Z / Ctrl+Y name them
-    /// with the selected roots (`undo`) for each stretch still on the
-    /// simulator undo stack, once later edits of those prims have been undone.
-    stretch_prims: Vec<ObjKey>,
-    /// Pose the last recorded step went out with. The Object tab restating
-    /// the same numbers is not a later edit.
+    /// Pose the last recorded stretch-undo step went out with. The Object tab
+    /// restating the same numbers is not a later edit.
     stretch_sent: Vec<StretchSent>,
     /// Stretches and later Transforms of those prims, newest last: each
     /// stretch names the children, a later move names the roots alone.
@@ -1026,7 +1022,6 @@ impl Default for BuildTool {
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
-            stretch_prims: Vec::new(),
             stretch_sent: Vec::new(),
             stretch_stack: Vec::new(),
             stretch_redo: Vec::new(),
@@ -1275,7 +1270,7 @@ impl BuildTool {
         }
         let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
         if stretch {
-            self.stretch_prims = updates
+            let prims: Vec<ObjKey> = updates
                 .iter()
                 .map(|u| ObjKey {
                     region: handle,
@@ -1283,16 +1278,12 @@ impl BuildTool {
                 })
                 .collect();
             self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
-            self.stretch_stack.push(StretchStep::Stretch(self.stretch_prims.clone()));
+            self.stretch_stack.push(StretchStep::Stretch(prims));
             self.stretch_redo.clear();
             return;
         }
-        if updates
-            .iter()
-            .any(|u| self.stretch_prims.iter().any(|k| k.region == handle && k.local_id == u.local_id))
-        {
+        if self.touches_stretch(handle, updates) {
             if self.stretch_stack.is_empty() {
-                self.stretch_prims.clear();
                 self.stretch_sent.clear();
                 self.stretch_redo.clear();
                 return;
@@ -1310,20 +1301,47 @@ impl BuildTool {
                 .all(|u| self.stretch_sent.iter().any(|sent| sent.local_id == u.local_id && sent.matches(u)))
     }
 
+    fn touches_stretch(&self, handle: RegionHandle, updates: &[TransformUpdate]) -> bool {
+        self.last_stretch_prims(false)
+            .or_else(|| self.last_stretch_prims(true))
+            .is_some_and(|prims| {
+                updates
+                    .iter()
+                    .any(|u| prims.iter().any(|k| k.region == handle && k.local_id == u.local_id))
+            })
+    }
+
+    /// Prims of the stretch being undone or redone. Walks through a later
+    /// Transform, and into the other stack when that later step is the only
+    /// one on redo (the stretch itself is still on the undo stack).
+    fn last_stretch_prims(&self, redo: bool) -> Option<&[ObjKey]> {
+        let (primary, secondary) = if redo {
+            (self.stretch_redo.as_slice(), self.stretch_stack.as_slice())
+        } else {
+            (self.stretch_stack.as_slice(), self.stretch_redo.as_slice())
+        };
+        primary.iter().rev().chain(secondary.iter().rev()).find_map(|step| match step {
+            StretchStep::Stretch(prims) => Some(prims.as_slice()),
+            StretchStep::Later => None,
+        })
+    }
+
     /// Prims Ctrl+Z / Ctrl+Y must name besides the selected roots: the children
-    /// of the stretch being undone or redone. An empty stack with recorded
-    /// prims is a single stretch (tests that fill `stretch_prims` directly).
+    /// of the stretch at the top of the stack (or redo stack).
     fn stretch_name_prims(&self, redo: bool) -> Option<&[ObjKey]> {
-        let step = if redo {
+        match if redo {
             self.stretch_redo.last()
         } else {
             self.stretch_stack.last()
-        };
-        match step {
+        } {
             Some(StretchStep::Stretch(prims)) => Some(prims),
-            None if !redo && self.stretch_redo.is_empty() && !self.stretch_prims.is_empty() => Some(&self.stretch_prims),
             _ => None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stretch_prims(&self) -> &[ObjKey] {
+        self.last_stretch_prims(false).unwrap_or(&[])
     }
 
     /// The edit manipulator in use, with the modifier keys of the Edit tool
@@ -2072,10 +2090,11 @@ impl BuildTool {
             }
         }
         let applies = !self.selection_linked
-            && self
-                .stretch_prims
-                .iter()
-                .any(|key| world.objects.index_of(key).is_some_and(|idx| units.contains(&root_of(world, idx))));
+            && self.last_stretch_prims(redo).is_some_and(|prims| {
+                prims
+                    .iter()
+                    .any(|key| world.objects.index_of(key).is_some_and(|idx| units.contains(&root_of(world, idx))))
+            });
         // A linkset stretched on one axis has an undo step of its own on every
         // prim: the roots alone would leave the children stretched, and a child
         // turned 90 degrees cannot get its size back from the root's step.

@@ -296,6 +296,9 @@ pub struct Drag {
     /// Textures" option of the stretch handles (ScaleStretchTextures).
     textures: Vec<TexSave>,
     stretch_textures: bool,
+    /// Construction setting at grab: one-axis stretch of a whole linkset.
+    /// The Legacy Viewer only scales a linkset uniformly (UPD_LINKED_SETS).
+    stretch_linksets: bool,
     /// The saved texture entries changed during the drag: they go out on
     /// release (LLManipScale::handleMouseUp, sendTEUpdate).
     te_due: bool,
@@ -321,8 +324,8 @@ pub(super) struct Frame {
     pub(super) bounds: Bounds,
     pub(super) pivot: Vec3,
     pub(super) grid: Grid,
-    /// The one-axis face handles: one prim, or a whole linkset when
-    /// `BuildSettings::stretch_linksets` asks for them.
+    /// The one-axis face handles: one prim, as the Legacy Viewer, or a whole
+    /// world linkset when `BuildSettings::stretch_linksets` asks for them.
     faces: bool,
     /// `BuildSettings::gizmo_scale`: factor of every on-screen size.
     pub(super) size: f32,
@@ -594,6 +597,7 @@ impl Manip {
             changed: false,
             textures,
             stretch_textures: s.scale_stretch_textures,
+            stretch_linksets: s.stretch_linksets,
             te_due: false,
             scale_line: None,
         };
@@ -1576,7 +1580,13 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
             for c in &m.children {
                 let Some(o) = world.objects.get_mut(c.idx) else { continue };
                 o.position = c.local_pos * f;
-                let factor = if uniform { f } else { child_factors(m.rot, c.world_rot, f) };
+                // One-axis child sizes are the setting; off, a linkset follows
+                // the root uniformly, as the Legacy Viewer does.
+                let factor = if uniform || !d.stretch_linksets || d.linked {
+                    f
+                } else {
+                    child_factors(m.rot, c.world_rot, f)
+                };
                 o.scale = d.limits.clamp3(c.scale * factor);
                 o.render.needs_records = true;
             }
@@ -1599,12 +1609,18 @@ fn child_factors(root_rot: Quat, child_rot: Quat, f: Vec3) -> Vec3 {
     )
 }
 
-/// Does this drag stretch a whole linkset on one axis? Its children then
-/// follow with sizes only the viewer computes, so every prim goes out on its
-/// own (LLSelectMgr::sendMultipleUpdate leaves SEND_ONLY_ROOTS, and
-/// LLManipScale::sendUpdates stops streaming).
+/// Does this drag stretch a whole linkset on one axis? The Legacy Viewer
+/// only scales a linkset uniformly (UPD_LINKED_SETS). With the setting on,
+/// children follow with sizes only the viewer computes, so every prim goes
+/// out on its own (LLSelectMgr::sendMultipleUpdate leaves SEND_ONLY_ROOTS,
+/// and LLManipScale::sendUpdates stops streaming). Off, or Edit linked
+/// parts, a stretch looks as there.
 fn linkset_stretch(d: &Drag) -> bool {
-    d.mode == EditMode::Stretch && matches!(d.part, Part::Face(..)) && d.movers.iter().any(|m| !m.children.is_empty())
+    d.stretch_linksets
+        && !d.linked
+        && d.mode == EditMode::Stretch
+        && matches!(d.part, Part::Face(..))
+        && d.movers.iter().any(|m| !m.children.is_empty())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2036,10 +2052,11 @@ fn scale_face(d: &mut Drag, s: &BuildSettings, cam: &Cam, o: Vec3, dir: Vec3, cu
 }
 
 /// MultipleObjectUpdate for the movers (LLSelectMgr::sendMultipleUpdate):
-/// whole linksets (UPD_LINKED_SETS) unless "Edit linked", roots first. A
-/// linkset stretched on one axis sends its root and every child itself: the
-/// root's UPD_LINKED_SETS would scale the linkset uniformly and undo their
-/// own sizes.
+/// whole linksets (UPD_LINKED_SETS) unless "Edit linked", roots first. The
+/// Legacy Viewer always scales a linkset that way, uniformly. A one-axis
+/// linkset stretch (the construction setting) sends its root and every child
+/// itself: the root's UPD_LINKED_SETS would scale the linkset uniformly and
+/// undo their own sizes.
 fn send_updates(world: &World, d: &Drag, linked: bool, out: &mut Vec<BuildCmd>) {
     let (pos, rot, scale, uniform) = match d.mode {
         EditMode::Move | EditMode::Face | EditMode::Align => (true, false, false, false),
@@ -3589,7 +3606,7 @@ mod tests {
         tool.out.clear();
         tool.mouse_up(&mut world, &settings, None);
         assert_eq!(
-            tool.stretch_prims,
+            tool.stretch_prims(),
             vec![root_key, children[0]],
             "Ctrl+Z / Ctrl+Y must name every prim the stretch sent"
         );
@@ -3615,7 +3632,7 @@ mod tests {
         tool.set_transform(&mut world, &settings, None, Some(restated_scale), None, true);
         tool.set_transform(&mut world, &settings, None, None, Some(restated_rot), true);
         assert!(tool.out.is_empty(), "restating the stretched root is not a new Transform");
-        assert_eq!(tool.stretch_prims, vec![root_key, children[0]]);
+        assert_eq!(tool.stretch_prims(), vec![root_key, children[0]]);
         // A Transform that only repeats those numbers (the Object tab if a
         // spinner still reports changed) must not drop the children.
         tool.send(BuildCmd::Transform {
@@ -3630,7 +3647,7 @@ mod tests {
             }],
         });
         assert_eq!(
-            tool.stretch_prims,
+            tool.stretch_prims(),
             vec![root_key, children[0]],
             "restating the stretch's own numbers is not a later edit"
         );
@@ -3657,7 +3674,7 @@ mod tests {
             }],
         });
         assert_eq!(
-            tool.stretch_prims,
+            tool.stretch_prims(),
             vec![root_key, children[0]],
             "a later move keeps the stretch batch for the undo after that"
         );
@@ -3738,7 +3755,9 @@ mod tests {
     }
 
     /// The one-axis handles stay for a single prim as before; a linkset gets
-    /// them only with the setting on, never on a HUD.
+    /// them only with the setting on, never on a HUD. Off, a forced face
+    /// stretch of a linkset still sends UPD_LINKED_SETS of the root, as the
+    /// Legacy Viewer scales a whole linkset uniformly.
     #[test]
     fn the_face_handles_cover_a_linkset_only_when_asked() {
         let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
@@ -3748,6 +3767,47 @@ mod tests {
         let sel = tool.selection.clone();
         settings.stretch_linksets = false;
         assert!(!frame(&world, &settings, &sel, false, now, None).unwrap().faces);
+        let bounds = bounds_of(&world, &sel, false, now).unwrap();
+        let center = bounds.center;
+        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            center,
+            projection * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let start = cam.project_px(center + Vec3::X * cam.meters_for_pixels(center, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &sel, false, EditMode::Move, start, now));
+        let mut drag = manip.drag.take().unwrap();
+        drag.mode = EditMode::Stretch;
+        drag.part = Part::Face(0, true);
+        drag.started = true;
+        drag.changed = true;
+        let mut out = Vec::new();
+        send_updates(&world, &drag, false, &mut out);
+        assert!(
+            matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+                if updates.len() == 1 && updates[0].linked),
+            "setting off sends UPD_LINKED_SETS of the root: {out:?}"
+        );
+        manip.drag = Some(drag);
+        tool.manip = manip;
+        tool.out.clear();
+        tool.mouse_up(&mut world, &settings, None);
+        assert!(tool.stretch_prims().is_empty(), "setting off does not record a stretch batch");
+        let root_id = world.objects.get(root).unwrap().full_id;
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(matches!(
+            tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id]
+        ));
         settings.stretch_linksets = true;
         assert!(frame(&world, &settings, &sel, false, now, None).unwrap().faces);
         let world = hud_world();
