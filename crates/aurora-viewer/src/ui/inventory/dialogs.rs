@@ -741,7 +741,7 @@ pub(super) fn preview(
             }
             if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, aurora_i18n::tr!("common-apply-to-myself-only")).clicked()
             {
-                actions.push(InvAction::Environment(it.asset_id, it.flags));
+                actions.push(InvAction::Environment(it.asset_id, it.flags, it.id));
             }
             let mut edited = super::embedded::EditorResult::default();
             match &mut st.preview_text {
@@ -854,6 +854,16 @@ pub(super) fn preview(
             if let Some(marker) = edited.copy {
                 st.dialog = Some(EditDialog::CopyEmbedded(id, marker));
             }
+            if let Some(marker) = edited.drag {
+                egui::DragAndDrop::set_payload(
+                    ui.ctx(),
+                    super::NotecardDrag {
+                        editor: st.ui_id,
+                        notecard: id,
+                        marker,
+                    },
+                );
+            }
             let valid_size = st.preview_text.as_ref().is_some_and(|r| {
                 r.as_ref()
                     .is_ok_and(|text| it.asset_type != 7 || aurora_net::inventory::notecard::Notecard::validate_text(text).is_ok())
@@ -906,7 +916,7 @@ pub(super) fn preview(
             }
         }
     });
-    super::embedded::preview(ctx, p, st, images);
+    super::embedded::preview(ctx, p, st, inv, images);
     if !open {
         if st.save_pending {
             st.close_after_save = true;

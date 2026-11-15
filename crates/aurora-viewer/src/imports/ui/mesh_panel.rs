@@ -146,23 +146,37 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
         draft.preview_bend,
     );
     if entry.local {
+        let scene_supported = crate::imports::local::scene::supported(draft);
+        entry.local_scene &= scene_supported;
+        let mut model = (!entry.local_scene).then_some(entry.local_model);
         ui.label(aurora_i18n::tr!("import-local-mesh-instance"));
         egui::ComboBox::from_id_salt("local_mesh_instance")
             .width(ui.available_width() - 20.0)
-            .selected_text(
+            .selected_text(if entry.local_scene {
+                aurora_i18n::tr!("import-local-mesh-scene")
+            } else {
                 draft
                     .scene
                     .instances
                     .get(entry.local_model)
                     .map(|instance| instance.name.as_str())
-                    .unwrap_or(aurora_i18n::tr!("import-mesh")),
-            )
+                    .unwrap_or(aurora_i18n::tr!("import-mesh"))
+            })
             .show_ui(ui, |ui| {
+                if scene_supported {
+                    selection(ui, &mut model, None, aurora_i18n::tr!("import-local-mesh-scene"));
+                }
                 for (index, instance) in draft.scene.instances.iter().enumerate() {
-                    selection(ui, &mut entry.local_model, index, &instance.name);
+                    selection(ui, &mut model, Some(index), &instance.name);
                 }
             });
-        checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        entry.local_scene = model.is_none();
+        if let Some(model) = model {
+            entry.local_model = model;
+        }
+        ui.add_enabled_ui(!entry.local_scene, |ui| {
+            checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        });
     }
     checkbox(ui, p, &mut entry.view.edges, aurora_i18n::tr!("import-edges"));
     checkbox(ui, p, &mut draft.show_textures, aurora_i18n::tr!("import-textures"));

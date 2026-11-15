@@ -160,6 +160,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -202,6 +203,9 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 // the snow on an avatar (x of its first column), and the entries per
 // skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
 const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
