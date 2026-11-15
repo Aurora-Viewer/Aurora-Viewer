@@ -19543,11 +19543,12 @@ impl App {
                         self.open_web_link(u, None);
                     }
                 }
-                // an Omnifilter rule's "Gotopage" (callback_load_url), web
-                // links only as above
+                // an Omnifilter rule's "Gotopage" (callback_load_url ->
+                // LLWeb::loadURL): web links only, through the same link
+                // checks and browser routing as a click on "Go to page"
                 for u in self.world.take_omnifilter_urls() {
                     if u.starts_with("https://") || u.starts_with("http://") {
-                        ctx.open_url(egui::OpenUrl::new_tab(u));
+                        self.open_web_link(u, None);
                     }
                 }
                 self.world.record_notification_history();
