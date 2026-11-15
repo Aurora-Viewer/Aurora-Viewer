@@ -2,9 +2,11 @@
 // single-sample depth prepass: a WGSL port of Bend Studio's screen space
 // shadows (bend_sss_gpu.h, as shipped in Days Gone), run in the dispatches
 // that contact_shadows.rs lays out. The result is the shadow in `.r` (0 lit,
-// 1 in contact shadow: `clear` empties the target first each frame, so a
-// pixel no wavefront writes, the light's own one, stays lit) that the shading
+// 1 in contact shadow) that the shading
 // combines with the sun's shadow map (`contact_shadow` in common.wgsl).
+// Every pixel of the screen is written each frame without emptying the
+// target first: a wavefront writes its sky pixels lit, and `clear_light`
+// the one pixel no wavefront writes, under the light's point.
 //
 // Original notice:
 //
@@ -79,6 +81,14 @@ var<workgroup> depth_data: array<f32, READ_COUNT * WAVE_SIZE>;
 // Several live invocations set this concurrently. Atomic writes avoid a
 // workgroup data race before the uniform load's barrier (zero at the start).
 var<workgroup> any_live: atomic<u32>;
+
+// A pixel lit, when it is on the target.
+fn store_lit(p: vec2<i32>) {
+    let size = vec2<i32>(textureDimensions(out_tex));
+    if (all(p >= vec2<i32>(0)) && all(p < size)) {
+        textureStore(out_tex, p, vec4<f32>(0.0));
+    }
+}
 
 fn load_depth(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depth_tex));
@@ -202,12 +212,14 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         pixel_xy += xy_delta * direction;
     }
 
-    // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1)
+    // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1),
+    // its pixels lit
     let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;
     if (!skip_pixel) {
         atomicOr(&any_live, 1u);
     }
     if (workgroupUniformLoad(&any_live) == 0u) {
+        store_lit(write_xy);
         return;
     }
 
@@ -222,6 +234,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     }
     workgroupBarrier();
     if (skip_pixel) {
+        store_lit(write_xy);
         return;
     }
 
@@ -271,8 +284,19 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     }
 }
 
-// Every pixel lit, before the wavefronts (wgpu's clear_texture needs a
-// device feature).
+// The pixel under the light's point, which no wavefront writes, lit (one
+// invocation). Emptying the whole target first instead took 0.02 ms of the
+// pass's 0.25 at 1920 x 1080 (demo plaza, RTX 4090).
+@compute @workgroup_size(1, 1, 1)
+fn clear_light() {
+    let p = floor(params.light.xy);
+    if (all(p >= vec2<f32>(0.0)) && all(p < vec2<f32>(textureDimensions(out_tex)))) {
+        store_lit(vec2<i32>(p));
+    }
+}
+
+// Every pixel lit, for `AURORA_CONTACT_VARIANT=skip`, which dispatches no
+// wavefront (wgpu's clear_texture needs a device feature).
 @compute @workgroup_size(8, 8, 1)
 fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);

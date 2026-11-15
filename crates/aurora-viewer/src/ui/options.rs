@@ -294,6 +294,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
+        "tip-toast" | "tip-toast-legacy" => row(Page::Chat, 1, tr!("ui-options-toast-friends-seconds")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
