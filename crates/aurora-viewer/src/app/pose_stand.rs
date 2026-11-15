@@ -1,3 +1,10 @@
+// ----------------------------------------------------------------------------
+// "THE BEER-WARE LICENSE" (Revision 42):
+// Cinder Roxley wrote this file. As long as you retain this notice you can do
+// whatever you want with this stuff. If we meet some day, and you think this
+// stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
+// ----------------------------------------------------------------------------
+
 //! The toolbar's pose stand: its window opened and closed in any way (the
 //! button, the cross, Ctrl+W) runs FSFloaterPoseStand's onOpen / onClose
 //! (rules in `pose_stand.rs`), and its effects go to the simulator here.
@@ -16,7 +23,7 @@ impl App {
             p,
             &mut self.panels.pose_stand,
             self.pose_stand.current(),
-            self.settings.pose_stand.lock,
+            self.pose_stand.lock_shown(self.settings.pose_stand.lock),
         );
         match action {
             Some(ui::pose_stand::Action::Pose(id)) => self.choose_pose(id),
@@ -29,10 +36,10 @@ impl App {
         }
         self.sync_pose_stand();
         // stood up from outside (the appearance editor, a script, a teleport):
-        // the checkbox follows the avatar, as the saved setting does
+        // the checkbox follows the avatar for this opening only; the saved
+        // FSPoseStandLock stays, so the next opening is locked again
         if self.pose_stand.lock_lost(self.world.agent.is_sitting()) {
-            log::info!("pose stand: the ground lock was lost, lock turned off");
-            self.settings.pose_stand.lock = false;
+            log::info!("pose stand: the ground lock was lost, checkbox unticked for this opening");
         }
         let effects = self
             .pose_stand

@@ -1,3 +1,10 @@
+// ----------------------------------------------------------------------------
+// "THE BEER-WARE LICENSE" (Revision 42):
+// Cinder Roxley wrote this file. As long as you retain this notice you can do
+// whatever you want with this stuff. If we meet some day, and you think this
+// stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
+// ----------------------------------------------------------------------------
+
 //! The pose stand's window (toolbar `pose_stand`): the list of poses and
 //! the ground lock, as floater_fs_posestand.xml (a combo box, then the
 //! FSPoseStandLock check box with its lock icon). The rules are in

@@ -1,8 +1,17 @@
+// ----------------------------------------------------------------------------
+// "THE BEER-WARE LICENSE" (Revision 42):
+// Cinder Roxley wrote this file. As long as you retain this notice you can do
+// whatever you want with this stuff. If we meet some day, and you think this
+// stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
+// ----------------------------------------------------------------------------
+
 //! The pose stand (toolbar `pose_stand`): our avatar held in one of the
 //! Legacy Viewer's stand poses while attachments are adjusted. Port of
 //! FSFloaterPoseStand and FSPose (indra/newview/fsfloaterposestand.cpp,
 //! fspose.cpp, app_settings/posestand.xml; settings FSPoseStandLock and
-//! FSPoseStandLastSelectedPose in app_settings/settings.xml).
+//! FSPoseStandLastSelectedPose in app_settings/settings.xml), by Cinder
+//! Roxley, under the Beer-Ware Licence (Revision 42): see the notice above
+//! and NOTICE.md.
 //!
 //! The poses are grid animations started and stopped through the
 //! simulator (AgentAnimation, `LLAgent::sendAnimationRequest`), which plays
@@ -124,6 +133,9 @@ pub struct Stand {
     current: Option<Uuid>,
     /// FSFloaterPoseStand::mPoseStandLock: we sat down for the lock.
     locked: bool,
+    /// The lock was lost from outside during this opening: the checkbox
+    /// shows off (`lock_shown`) while the saved setting stays as it was.
+    dropped: bool,
     /// mAOPaused: the opening turned the AO off.
     ao_paused: bool,
     /// The window closed before the ground-sit it asked for was confirmed:
@@ -144,9 +156,9 @@ impl Stand {
     /// from outside. The lock sat us down and the server confirmed it; if we
     /// no longer sit (the shape editor's stand-up, a script unsit, the user
     /// standing, a teleport), the lock is dropped and this returns true, so
-    /// that the checkbox and the saved setting follow what the avatar does.
-    /// The Legacy Viewer stands the avatar up the same way and leaves its
-    /// checkbox ticked; following the real state is an Aurora clarity fix.
+    /// that the checkbox follows what the avatar does for the rest of this
+    /// opening (`lock_shown`). The saved setting is left alone: the Legacy
+    /// Viewer keeps FSPoseStandLock on, so the next opening locks again.
     /// The stand's own moves never trigger it: `set_lock` clears the
     /// confirmation, and `close` releases the lock itself. Nothing sits the
     /// avatar again.
@@ -161,9 +173,16 @@ impl Stand {
         if self.sit_confirmed {
             self.locked = false;
             self.sit_confirmed = false;
+            self.dropped = true;
             return true;
         }
         false
+    }
+
+    /// The state of the checkbox: the saved setting, unticked for the rest
+    /// of this opening once the lock was lost from outside.
+    pub fn lock_shown(&self, saved: bool) -> bool {
+        saved && !self.dropped
     }
 
     /// Each frame after a closing: the ground-sit asked by the lock may be
@@ -197,6 +216,7 @@ impl Stand {
     pub fn open(&mut self, facts: Facts, settings: &Settings) -> Vec<Effect> {
         let mut out = Vec::new();
         self.open = true;
+        self.dropped = false;
         self.release_until = None;
         // set at each opening: the Legacy Viewer keeps an old mAOPaused when
         // the AO was turned on again meanwhile, and a later closing could
@@ -236,6 +256,7 @@ impl Stand {
     /// The lock switched while the stand is open (handleSetPoseStandLock):
     /// sit down or stand up, then the pose sent again (onCommitCombo).
     pub fn lock_changed(&mut self, on: bool) -> Vec<Effect> {
+        self.dropped = false;
         let mut out = self.set_lock(on);
         if let Some(pose) = self.current {
             out.extend(self.select(pose));
@@ -287,6 +308,22 @@ mod tests {
         assert!(stand.lock_lost(false));
         assert!(!stand.holds_lock());
         assert!(!stand.lock_lost(false), "reported once");
+        // the checkbox shows off, the saved setting is not touched
+        assert!(!stand.lock_shown(lock.lock));
+        assert!(lock.lock);
+        // the next opening is locked again
+        stand.close(false, false);
+        let out = stand.open(Facts::default(), &lock);
+        assert!(out.contains(&Effect::SitOnGround));
+        assert!(stand.lock_shown(lock.lock));
+        // ticking the box again locks again
+        stand.lock_lost(true);
+        assert!(stand.lock_lost(false));
+        assert!(!stand.lock_shown(lock.lock));
+        stand.lock_changed(true);
+        assert!(stand.lock_shown(lock.lock));
+        assert!(stand.holds_lock());
+        stand.close(false, false);
 
         // the stand's own release: unticking sits no more, nothing to report
         let mut stand = Stand::default();

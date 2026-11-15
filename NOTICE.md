@@ -59,7 +59,8 @@ The Second Life viewer and Firestorm sources hold code written by other
 viewer projects and by individual residents, who keep the copyright on it.
 The ported parts of Aurora Viewer that follow their files are listed below,
 with the authors named in those files' notices. Their code is originally
-LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
+LGPL 2.1 unless the Licence column says otherwise, distributed here under
+GPL-3.0-or-later as described above.
 
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
@@ -97,6 +98,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Pose stand, `newview/fsfloaterposestand.cpp`, `fspose.cpp` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Bundled assets
 
@@ -364,6 +366,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Pose stand by Cinder Roxley
+
+The pose stand (`crates/aurora-viewer/src/pose_stand.rs`,
+`ui/pose_stand.rs`, `app/pose_stand.rs`) is a port of the Legacy Viewer's
+`newview/fsfloaterposestand.cpp` and `fspose.cpp`, which are not LGPL: their
+author released them under the Beer-Ware Licence (Revision 42), whose only
+condition is to retain this notice, kept here and at the top of the three
+Aurora files:
+
+```
+----------------------------------------------------------------------------
+"THE BEER-WARE LICENSE" (Revision 42):
+Cinder Roxley wrote this file. As long as you retain this notice you can do
+whatever you want with this stuff. If we meet some day, and you think this
+stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
+----------------------------------------------------------------------------
+```
 
 ## SMAA
 
