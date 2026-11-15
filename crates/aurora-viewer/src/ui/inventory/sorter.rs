@@ -118,6 +118,8 @@ pub(super) struct State {
     snapshots: Vec<(i64, std::path::PathBuf)>,
     /// Batches confirmed since the journal was last written.
     unsaved: usize,
+    /// Batches are held: a teleport runs or no region is connected.
+    held: bool,
 }
 
 /// The Import window: the pasted text, what it holds and what is ticked.
@@ -200,7 +202,13 @@ struct InFlight {
     /// queue.
     request: Option<Uuid>,
     frames: u32,
+    /// When it left; an answer that never comes (a lost connection) times
+    /// out and the batch is tried again, re-checked entry by entry.
+    sent_at: Instant,
 }
+
+/// A batch with no answer after this is tried again.
+const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 impl Job {
     fn new(queue: VecDeque<Move>, base: String) -> Self {
@@ -344,7 +352,8 @@ impl State {
     fn snapshot(&mut self, inv: &Inventory) {
         let Some(dir) = self.account_dir() else { return };
         let at = unix_now();
-        let snapshot = sorter::journal::Snapshot::take(inv, at);
+        let Some(account) = self.account else { return };
+        let snapshot = sorter::journal::Snapshot::take(inv, at, account);
         self.snapshots.insert(0, (at, sorter::journal::snapshot_path(&dir, at)));
         self.snapshots.truncate(sorter::journal::SNAPSHOTS);
         std::thread::spawn(move || {
@@ -540,8 +549,10 @@ pub(super) fn show(
     prefs: &mut InventoryPreferences,
     worn: &HashSet<Uuid>,
     agent: Uuid,
+    hold: bool,
     actions: &mut Vec<InvAction>,
 ) {
+    st.sorter.held = hold;
     if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
         st.sorter.load_account(agent);
     }
@@ -564,6 +575,16 @@ pub(super) fn show(
         });
         if dropped && let Some(batch) = job.in_flight.take() {
             job.requeue(batch.moves);
+            state.submitted = false;
+        }
+        let silent = job
+            .in_flight
+            .as_ref()
+            .is_some_and(|batch| now.duration_since(batch.sent_at) > ANSWER_LIMIT);
+        if silent {
+            if let Some(message) = job.finish(Some(aurora_i18n::tr!("inventory-sorter-no-answer")), now) {
+                state.status = message;
+            }
             state.submitted = false;
         }
     }
@@ -589,7 +610,10 @@ pub(super) fn show(
     if state.unsaved >= SAVE_EVERY {
         state.save_progress();
     }
+    // while a teleport runs or no region is connected, nothing is sent and
+    // no retry is spent: the job resumes on its own
     if free
+        && !hold
         && !state.submitted
         && let Some(job) = state.job.as_mut()
         && !job.paused
@@ -601,6 +625,7 @@ pub(super) fn show(
                     moves,
                     request: None,
                     frames: 0,
+                    sent_at: now,
                 });
                 job.waiting_since = None;
                 state.submitted = true;
@@ -646,7 +671,7 @@ pub(super) fn show(
             }
         }
     }
-    send_trash_batch(inv, st, prefs, worn, actions, free);
+    send_trash_batch(inv, st, prefs, worn, actions, free && !hold);
     let state = &mut st.sorter;
     if !state.open {
         return;
@@ -1504,7 +1529,9 @@ fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: boo
         let handled = job.done + job.skipped + job.failed;
         let fraction = if job.total == 0 { 1.0 } else { handled as f32 / job.total as f32 };
         let mut text = aurora_i18n::tr!("inventory-sorter-progress", done = job.done, total = job.total);
-        if job.paused {
+        if state.held {
+            text = aurora_i18n::tr!("inventory-sorter-held", done = job.done, total = job.total);
+        } else if job.paused {
             text = aurora_i18n::tr!("inventory-sorter-paused", done = job.done, total = job.total);
         } else if let Some(left) = job.eta() {
             text.push_str(&format!(
@@ -1994,9 +2021,26 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
     if let Some((at, path)) = restore {
         match sorter::journal::load::<sorter::journal::Snapshot>(&path) {
             Ok(snapshot) => {
-                let (moves, _) = sorter::journal::restore_moves(inv, &snapshot, &protected, worn);
-                state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));
-                state.tab = PREVIEW;
+                let account = state.account.unwrap_or_default();
+                let by_runs = sorter::journal::moved_since(&state.journal, snapshot.at);
+                match sorter::journal::restore_moves(inv, &snapshot, account, &by_runs, &protected, worn) {
+                    Ok((moves, summary)) => {
+                        state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));
+                        state.tab = PREVIEW;
+                        // what stays, said before anything moves
+                        state.status = aurora_i18n::tr!(
+                            "inventory-sorter-restore-summary",
+                            new = summary.new_since,
+                            hand = summary.by_hand,
+                            trashed = summary.trashed,
+                            gone = summary.gone + summary.folder_gone,
+                            kept = summary.kept
+                        );
+                    }
+                    Err(sorter::journal::OtherAccount) => {
+                        state.status = aurora_i18n::tr!("inventory-sorter-snapshot-other-account").to_owned();
+                    }
+                }
             }
             Err(error) => {
                 log::warn!("auto-sort: the snapshot {} could not be read: {error}", path.display());

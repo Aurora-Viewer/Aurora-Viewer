@@ -1416,3 +1416,59 @@ fn a_delivery_folder_whose_name_says_nothing_is_never_opened() {
     let plan = plan(&inv, id(OBJECTS), &word_rule(false), &HashSet::new(), &HashSet::new());
     assert!(!plan.moves.iter().any(|m| m.id == id(600)));
 }
+
+/// A tester's report: a folder of 4,000+ animations failed to sort. They
+/// go now in batches of at most 200, every one of them, none refused.
+#[test]
+fn four_thousand_animations_sort_in_batches_with_no_failure() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, 1, "My dances");
+    add_folder(&mut inv, 71, 70, "Favourites");
+    inv.add_items(
+        (0..4200u128)
+            .map(|n| InvItem {
+                id: id(100_000 + n),
+                parent: id(70),
+                name: format!("Dance {n}"),
+                asset_type: 20,
+                inv_type: 19,
+                owner: id(AGENT),
+                created_at: NEW,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    inv.generation += 1;
+    let prefs = Preferences::default();
+    let planned = plan(&inv, id(70), &prefs, &HashSet::new(), &HashSet::new());
+    assert_eq!(planned.moves.len(), 4200);
+    let mut queue: VecDeque<Move> = planned.moves.into();
+    let mut skipped = 0;
+    let mut batches = 0;
+    while let Step::Change(change, moves) = step(
+        &mut inv,
+        &prefs.base_name(),
+        &mut queue,
+        &HashSet::new(),
+        &HashSet::new(),
+        &mut skipped,
+    ) {
+        assert!(moves.len() <= BATCH);
+        assert!(change.operations.len() <= 2048, "far under the network layer's limit");
+        actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
+        batches += 1;
+    }
+    assert_eq!(skipped, 0);
+    assert_eq!(batches, 4200 / BATCH);
+    assert!(inv.folders[&id(70)].items.is_empty(), "every animation moved");
+    // the same animations in the Animations default folder stay: it is
+    // hands-off, and the preview says why instead of failing
+    let mut inv = fixture(&[]);
+    inv.folders.insert(id(80), folder(id(80), id(1), "Animations", 20));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(id(80));
+    add_typed(&mut inv, 800, 80, "Dance", NEW, 20);
+    assert!(!source_allowed(&inv, id(80)));
+    let planned = plan(&inv, id(80), &prefs, &HashSet::new(), &HashSet::new());
+    assert!(planned.moves.is_empty());
+    assert_eq!(planned.kept_list.first().map(|(_, why)| *why), Some(Kept::Protected));
+}

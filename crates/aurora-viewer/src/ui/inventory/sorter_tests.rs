@@ -66,6 +66,7 @@ fn in_flight(st: &mut InventoryUi, range: std::ops::Range<u128>, request: Uuid) 
         moves: batch,
         request: None,
         frames: 0,
+        sent_at: Instant::now(),
     });
     st.sorter.job = Some(job);
     st.sorter.submitted = true;
@@ -130,6 +131,7 @@ fn a_batch_the_app_never_took_goes_back_to_the_queue() {
         moves: moves(0..3),
         request: None,
         frames: 3,
+        sent_at: Instant::now(),
     });
     st.sorter.job = Some(job);
     st.sorter.submitted = true;

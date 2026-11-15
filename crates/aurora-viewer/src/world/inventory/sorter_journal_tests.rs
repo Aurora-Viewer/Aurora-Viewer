@@ -192,12 +192,13 @@ fn undo_never_moves_into_or_out_of_a_hands_off_folder() {
 #[test]
 fn a_snapshot_puts_the_layout_back() {
     let mut inv = fixture();
-    let snapshot = Snapshot::take(&inv, 42);
+    let snapshot = Snapshot::take(&inv, 42, id(AGENT));
     assert!(snapshot.items.iter().any(|(item, parent, _)| *item == id(100) && *parent == id(10)));
     let _ = sort(&mut inv);
     // a folder the snapshot knew is gone: its entries are counted, not guessed
-    let (moves, missing) = restore_moves(&inv, &snapshot, &HashSet::new(), &HashSet::new());
-    assert_eq!(missing, 0);
+    let (moves, summary) =
+        restore_moves(&inv, &snapshot, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    assert_eq!(summary.folder_gone, 0);
     send(&mut inv, moves);
     for n in [100, 101, 102] {
         assert_eq!(inv.items[&id(n)].parent, id(10), "{n} back in Objects");
@@ -208,8 +209,8 @@ fn a_snapshot_puts_the_layout_back() {
     if let Some(it) = inv.items.get_mut(&id(100)) {
         it.parent = id(12);
     }
-    let (_, missing) = restore_moves(&inv, &gone, &HashSet::new(), &HashSet::new());
-    assert_eq!(missing, 1);
+    let (_, summary) = restore_moves(&inv, &gone, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    assert_eq!(summary.folder_gone, 1);
 }
 
 #[test]
@@ -242,11 +243,95 @@ fn files_round_trip_and_snapshots_are_pruned() {
     assert_eq!(load::<Unfinished>(&unfinished_path(&dir)).expect("load"), unfinished);
     let inv = fixture();
     for at in 0..(SNAPSHOTS as i64 + 2) {
-        save(&snapshot_path(&dir, at), &Snapshot::take(&inv, at)).expect("snapshot");
+        save(&snapshot_path(&dir, at), &Snapshot::take(&inv, at, id(AGENT))).expect("snapshot");
     }
     prune_snapshots(&dir);
     let kept = snapshots(&dir);
     assert_eq!(kept.len(), SNAPSHOTS);
     assert_eq!(kept.first().map(|(at, _)| *at), Some(SNAPSHOTS as i64 + 1));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After a snapshot, items arrive, are deleted, trashed, moved by hand,
+/// folders are renamed or deleted: putting the layout back never errors,
+/// it skips and counts, and lists what was moved by hand on its own.
+#[test]
+fn a_layout_restore_survives_everything_that_changed_since() {
+    let mut inv = fixture();
+    add_folder(&mut inv, 15, 1, "Temp", -1);
+    add_item(&mut inv, 103, 15, "Old shoes");
+    add_item(&mut inv, 104, 12, "Kept note");
+    add_item(&mut inv, 105, 12, "To bin");
+    add_item(&mut inv, 106, 12, "Gone for good");
+    let snapshot = Snapshot::take(&inv, 100, id(AGENT));
+    // a run sorts Objects (the journal remembers it)
+    let journal = sort(&mut inv);
+    let by_runs = moved_since(&journal, 0);
+    // then by hand: a new item, one trashed, one deleted, one moved, a
+    // folder renamed and one deleted
+    add_item(&mut inv, 107, 10, "Arrived later");
+    if let Some(it) = inv.items.get_mut(&id(105)) {
+        it.parent = id(11);
+    }
+    inv.items.remove(&id(106));
+    if let Some(it) = inv.items.get_mut(&id(104)) {
+        it.parent = id(15);
+    }
+    if let Some(f) = inv.folders.get_mut(&id(12)) {
+        f.info.name = "My stuff renamed".into();
+    }
+    if let Some(it) = inv.items.get_mut(&id(103)) {
+        it.parent = id(12);
+    }
+    inv.folders.remove(&id(15));
+    inv.generation += 1;
+    let (moves, summary) = restore_moves(&inv, &snapshot, id(AGENT), &by_runs, &HashSet::new(), &HashSet::new()).expect("same account");
+    assert_eq!(summary.new_since, 1, "the new item is counted, never moved");
+    assert!(!moves.iter().any(|m| m.id == id(107)));
+    assert_eq!(summary.trashed, 1, "nothing comes out of the Trash but by Undo");
+    assert!(!moves.iter().any(|m| m.id == id(105)));
+    // the deleted item and the deleted Temp folder
+    assert_eq!(summary.gone, 2);
+    // the shoes' snapshot folder (Temp) is gone: not guessed
+    assert!(summary.folder_gone >= 1);
+    assert!(!moves.iter().any(|m| m.id == id(103)));
+    // what the run moved goes back as such; the rest moved by hand is
+    // listed on its own
+    let back: Vec<_> = moves.iter().filter(|m| [100, 101, 102].map(id).contains(&m.id)).collect();
+    assert_eq!(back.len(), 3);
+    assert!(
+        back.iter()
+            .all(|m| !m.label.starts_with(aurora_i18n::tr!("inventory-sorter-moved-by-hand")))
+    );
+    send(&mut inv, moves);
+    for n in [100, 101, 102] {
+        assert_eq!(inv.items[&id(n)].parent, id(10));
+    }
+    assert_eq!(inv.items[&id(107)].parent, id(10), "the new item did not move");
+    assert_eq!(inv.items[&id(105)].parent, id(11), "still in the Trash");
+    // another account's snapshot is refused
+    assert_eq!(
+        restore_moves(&inv, &snapshot, id(99), &by_runs, &HashSet::new(), &HashSet::new()).err(),
+        Some(OtherAccount)
+    );
+}
+
+/// Undo after the same changes: it skips and counts, and it is the only
+/// path that takes things out of the Trash (for a Trash run).
+#[test]
+fn undo_survives_everything_that_changed_since() {
+    let mut inv = fixture();
+    let journal = sort(&mut inv);
+    let run = journal.last().expect("run").clone();
+    // one sorted item deleted, one trashed by hand, one left where the run put it
+    inv.items.remove(&id(100));
+    if let Some(it) = inv.items.get_mut(&id(101)) {
+        it.parent = id(11);
+    }
+    let (moves, skipped) = undo_moves(&inv, &run, &HashSet::new(), &HashSet::new());
+    assert_eq!(skipped, 2, "the deleted and the trashed one are counted");
+    assert_eq!(moves.len(), 1);
+    send(&mut inv, moves);
+    assert_eq!(inv.items[&id(102)].parent, id(10));
+    assert_eq!(inv.items[&id(101)].parent, id(11), "a Move run's undo leaves the Trash alone");
 }

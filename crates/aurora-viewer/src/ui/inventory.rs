@@ -2290,10 +2290,14 @@ pub fn show(
             facts.names.insert(*id, world.social.name_of(id));
         }
     }
+    // Auto-sort holds its batches while a teleport runs or no region is
+    // connected, and counts active gestures as worn (never moved)
+    let sorter_hold = world.teleporting;
+    let sorter_worn: HashSet<Uuid> = facts.worn.iter().chain(facts.active_gestures.iter()).copied().collect();
     let inv = &mut world.inventory;
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
-    sorter::show(ctx, p, inv, st, prefs, &facts.worn, facts.agent, &mut actions);
+    sorter::show(ctx, p, inv, st, prefs, &sorter_worn, facts.agent, sorter_hold, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -2504,8 +2508,9 @@ pub fn show(
             &mut world.inventory,
             &mut w.state,
             prefs,
-            &facts.worn,
+            &sorter_worn,
             facts.agent,
+            sorter_hold,
             &mut actions,
         );
         if w.id != listings::PANEL {

@@ -141,13 +141,16 @@ fn restore_move(inv: &Inventory, id: Uuid, folder: bool, name: &str, from: Uuid,
 pub struct Snapshot {
     /// Seconds since 1970.
     pub at: i64,
+    /// The account it was taken on: never restored on another one.
+    #[serde(default)]
+    pub account: Uuid,
     pub folders: Vec<(Uuid, Uuid, String, i32)>,
     pub items: Vec<(Uuid, Uuid, String)>,
 }
 
 impl Snapshot {
     /// My Inventory as it is now, the Library left out.
-    pub fn take(inv: &Inventory, at: i64) -> Self {
+    pub fn take(inv: &Inventory, at: i64, account: Uuid) -> Self {
         let folders = inv
             .folders
             .values()
@@ -160,31 +163,93 @@ impl Snapshot {
             .filter(|it| !actions::library(inv, it.id))
             .map(|it| (it.id, it.parent, it.name.clone()))
             .collect();
-        Self { at, folders, items }
+        Self {
+            at,
+            account,
+            folders,
+            items,
+        }
     }
 }
 
-/// The moves that put entries back where a snapshot saw them: the user's
-/// own folders and the items whose folder then still exists and is open
-/// now. Entries now in a hands-off place stay (a worn item, an outfit, the
-/// Current Outfit…); folders the snapshot had but that are gone are not
-/// made again: their entries are counted as not restored.
-pub fn restore_moves(inv: &Inventory, snapshot: &Snapshot, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> (Vec<Move>, usize) {
+/// What a layout restore leaves alone, for the preview's summary. A
+/// restore never stops on any of these: it skips and counts them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreSummary {
+    /// Deleted for good since the snapshot.
+    pub gone: usize,
+    /// In the Trash since: only Undo takes things out of the Trash.
+    pub trashed: usize,
+    /// Their snapshot folder is gone or now hands-off: not guessed.
+    pub folder_gone: usize,
+    /// Arrived after the snapshot: left exactly where they are.
+    pub new_since: usize,
+    /// Moved by hand since (not by an Auto-sort run): listed in their own
+    /// group of the preview, moved back only when its Sort is pressed.
+    pub by_hand: usize,
+    /// Worn, a link, locked, or now in a hands-off place: they stay.
+    pub kept: usize,
+}
+
+/// A snapshot of another account: never restored here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OtherAccount;
+
+/// The moves that put entries back where a snapshot saw them. Only the
+/// user's own folders and items whose snapshot folder still exists and is
+/// open; nothing out of the Trash (Undo only), nothing worn, linked, locked
+/// or now in a hands-off place. `moved_by_runs` holds what Auto-sort runs
+/// moved since the snapshot: anything else that moved was moved by hand and
+/// is labelled apart so the preview shows it on its own.
+pub fn restore_moves(
+    inv: &Inventory,
+    snapshot: &Snapshot,
+    account: Uuid,
+    moved_by_runs: &HashSet<Uuid>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+) -> Result<(Vec<Move>, RestoreSummary), OtherAccount> {
+    if !snapshot.account.is_nil() && snapshot.account != account {
+        return Err(OtherAccount);
+    }
     let holds_worn = actions::worn_ancestors(inv, worn);
+    let trash = actions::system(inv, 14);
+    let by_hand_label = aurora_i18n::tr!("inventory-sorter-moved-by-hand");
     let mut moves = Vec::new();
-    let mut missing = 0;
+    let mut summary = RestoreSummary::default();
+    // what the snapshot knew: the rest arrived after it
+    let known: HashSet<Uuid> = snapshot
+        .items
+        .iter()
+        .map(|(id, _, _)| *id)
+        .chain(snapshot.folders.iter().map(|(id, ..)| *id))
+        .collect();
     let mut consider = |id: Uuid, folder: bool, name: &str, was_in: Uuid| {
-        let Some(now) = actions::parent(inv, id) else { return };
+        let Some(now) = actions::parent(inv, id) else {
+            summary.gone += 1;
+            return;
+        };
         if now == was_in {
             return;
         }
-        if !inv.folders.contains_key(&was_in) || !target_allowed(inv, was_in) {
-            missing += 1;
+        if trash.is_some_and(|t| actions::under(inv, id, t)) {
+            summary.trashed += 1;
             return;
         }
-        if restorable(inv, id, protected, &holds_worn) && !actions::under(inv, was_in, id) {
-            moves.push(restore_move(inv, id, folder, name, now, was_in));
+        if !inv.folders.contains_key(&was_in) || !target_allowed(inv, was_in) {
+            summary.folder_gone += 1;
+            return;
         }
+        if !restorable(inv, id, protected, &holds_worn) || actions::under(inv, was_in, id) {
+            summary.kept += 1;
+            return;
+        }
+        let mut m = restore_move(inv, id, folder, name, now, was_in);
+        if !moved_by_runs.contains(&id) {
+            summary.by_hand += 1;
+            m.label = format!("{by_hand_label} · {}", m.label);
+        }
+        moves.push(m);
     };
     for (id, parent, name, kind) in &snapshot.folders {
         if *kind == -1 {
@@ -194,10 +259,25 @@ pub fn restore_moves(inv: &Inventory, snapshot: &Snapshot, protected: &HashSet<U
     for (id, parent, name) in &snapshot.items {
         consider(*id, false, name, *parent);
     }
+    summary.new_since = inv
+        .items
+        .keys()
+        .filter(|id| !known.contains(id) && !actions::library(inv, **id))
+        .count();
     moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
-    (moves, missing)
+    Ok((moves, summary))
 }
 
+/// What Auto-sort runs moved at or after `since` (seconds): a restore tells
+/// those apart from what was moved by hand.
+pub fn moved_since(journal: &Journal, since: i64) -> HashSet<Uuid> {
+    journal
+        .runs
+        .iter()
+        .filter(|run| run.at >= since)
+        .flat_map(|run| run.entries.iter().map(|e| e.id))
+        .collect()
+}
 /// A run's moves left when the viewer stopped, to resume at the next login.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Unfinished {
