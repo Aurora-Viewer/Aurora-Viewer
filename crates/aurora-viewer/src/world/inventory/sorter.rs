@@ -141,10 +141,6 @@ pub struct Preferences {
     pub kinds: Vec<Kind>,
     /// Store → category, for the stores whose names say nothing.
     pub store_hints: Vec<StoreHint>,
-    /// Default folders the user allowed Auto-sort into, with a warning:
-    /// only [`unlockable`] ones count. Kept per account with the other
-    /// options, never shared nor imported.
-    pub unlocked: Vec<Uuid>,
 }
 
 impl Default for Preferences {
@@ -158,22 +154,11 @@ impl Default for Preferences {
             cleanup: Cleanup::default(),
             kinds: Kind::ALL.to_vec(),
             store_hints: Vec::new(),
-            unlocked: Vec::new(),
         }
     }
 }
 
 impl Preferences {
-    /// The folders the hands-off rule opens for the user: the unlocked
-    /// ones that may be (an older setting that listed another is ignored).
-    pub fn unlocked_set(&self, inv: &Inventory) -> HashSet<Uuid> {
-        self.unlocked
-            .iter()
-            .copied()
-            .filter(|id| inv.folders.get(id).is_some_and(|f| unlockable(f.info.type_default)))
-            .collect()
-    }
-
     /// The sort folder's name, as the inventory keeps it. A name that would
     /// reach somewhere it must not (a `#` viewer folder, the Pre-Trash
     /// folder, a default folder's name) is refused for the default one:
@@ -1046,38 +1031,10 @@ const OPEN_DEFAULT: i32 = 6;
 /// Trash steps), checked when planning and again before each batch: no
 /// setting, rule or imported text can reach past it.
 fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
-    !folder.library
-        && (folder.info.id == inv.root
-            || matches!(folder.info.type_default, -1 | OPEN_DEFAULT)
-            || unlockable(folder.info.type_default) && inv.sorter_unlocked.contains(&folder.info.id))
+    !folder.library && (folder.info.id == inv.root || matches!(folder.info.type_default, -1 | OPEN_DEFAULT))
 }
 
-/// The default folders the user may allow Auto-sort into, one by one, with
-/// a warning: Textures, Sounds, Notecards, Scripts, Photo Album,
-/// Animations, Gestures. Never, whatever the settings (human request of
-/// 2026-11-15): Clothing, Body Parts, Landmarks, Calling Cards, Materials,
-/// Settings, Favorites, the Trash, Lost and Found, Marketplace Listings
-/// and its folders, the Current Outfit, My Outfits and the outfits, the
-/// Library, Received Items, the viewer folders.
-pub fn unlockable(kind: i32) -> bool {
-    matches!(kind, 0 | 1 | 7 | 10 | 15 | 20 | 21)
-}
-
-/// The default folders of My Inventory's root the user may unlock.
-pub fn unlockable_folders(inv: &Inventory) -> Vec<Uuid> {
-    inv.folders
-        .get(&inv.root)
-        .map(|root| {
-            root.children
-                .iter()
-                .copied()
-                .filter(|id| inv.folders.get(id).is_some_and(|f| !f.library && unlockable(f.info.type_default)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The viewer folders at the root, never touched and never unlockable:
+/// The viewer folders at the root, never touched:
 /// RLVa reads `#RLV` (RlvInventory::getSharedRootID), the AO and the
 /// scripting bridge live in `#Firestorm` and `#Aurora`, and the AO reads
 /// another viewer's `Animation Overrides` (ao::inventory::ALCHEMY_FOLDER).
@@ -1232,7 +1189,6 @@ pub fn snapshot(inv: &Inventory) -> Inventory {
         missing_items: inv.missing_items.clone(),
         too_big: inv.too_big.clone(),
         listing_holds: inv.listing_holds.clone(),
-        sorter_unlocked: inv.sorter_unlocked.clone(),
         ..Default::default()
     }
 }

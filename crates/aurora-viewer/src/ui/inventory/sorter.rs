@@ -58,9 +58,6 @@ enum Confirm {
     Trash(Vec<(Uuid, Uuid)>),
     /// Imported settings replacing the user's rules and store hints.
     Replace,
-    /// Allow Auto-sort into a default folder (its id and name), or Lost
-    /// and Found's switch (None).
-    Unlock(Uuid, String),
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
@@ -682,11 +679,6 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     st.sorter.held = hold;
-    // the default folders the user allowed, for the hands-off rule
-    let unlocked = prefs.sorter.unlocked_set(inv);
-    if inv.sorter_unlocked != unlocked {
-        inv.sorter_unlocked = unlocked;
-    }
     if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
         st.sorter.load_account(agent);
     }
@@ -1022,17 +1014,6 @@ pub(super) fn show(
                     if !waiting.is_empty() {
                         pre_trash_card(ui, p, state, &waiting, waiting_in, busy);
                         ui.add_space(6.0);
-                    }
-                    // the default folders the user opened, named in every preview
-                    if !inv.sorter_unlocked.is_empty() {
-                        let mut names: Vec<String> = inv.sorter_unlocked.iter().map(|id| rules::name(inv, *id)).collect();
-                        names.sort();
-                        let folders = names.join(", ");
-                        ui.label(
-                            RichText::new(aurora_i18n::tr!("inventory-sorter-unlocked-list", folders = folders.as_str()))
-                                .small()
-                                .color(p.warn),
-                        );
                     }
                     if state.updating {
                         ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-updating")).small().color(p.muted));
@@ -1739,34 +1720,6 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                     }
                 });
             }
-            Confirm::Unlock(_, name) => {
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("inventory-sorter-unlock-title", folder = name.as_str()))
-                        .size(15.0)
-                        .strong()
-                        .color(p.ink),
-                );
-                ui.add_space(8.0);
-                ui.label(aurora_i18n::tr!("inventory-sorter-unlock-text", folder = name.as_str()));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if action_button(
-                        ui,
-                        p,
-                        "lock-open",
-                        aurora_i18n::tr!("inventory-sorter-unlock-confirm"),
-                        ActionKind::Danger,
-                        size,
-                    )
-                    .clicked()
-                    {
-                        answer = Some(true);
-                    }
-                    if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
-                        answer = Some(false);
-                    }
-                });
-            }
             Confirm::Replace => {
                 ui.label(
                     RichText::new(aurora_i18n::tr!("inventory-import-replace-title"))
@@ -1811,11 +1764,6 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
     }
     match asked {
         Confirm::Whole => start(&mut st.sorter, prefs),
-        Confirm::Unlock(id, _) => {
-            if !prefs.sorter.unlocked.contains(&id) {
-                prefs.sorter.unlocked.push(id);
-            }
-        }
         Confirm::Replace => {
             if let Some(import) = st.sorter.import.as_mut() {
                 import.found.apply(&mut prefs.sorter, &import.pick, true);
@@ -2355,7 +2303,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
         state.picker = Some(Picker::new(Pick::Exclude));
     }
     ui.add_space(10.0);
-    default_folders(ui, p, inv, state, options);
+    default_folders(ui, p);
     ui.add_space(10.0);
     undo_and_snapshots(ui, p, inv, state, worn_none());
     ui.add_space(10.0);
@@ -2387,40 +2335,16 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     });
 }
 
-/// The default folders Auto-sort keeps its hands off, and the user's
-/// exceptions: Lost and Found's switch and an Allow per unlockable folder,
-/// each behind a warning that names the folder. The Trash, Marketplace,
-/// outfits, the Current Outfit, Received Items, Favorites, the Library and
-/// the viewer folders are not listed: they can never be allowed.
-fn default_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, options: &mut sorter::Preferences) {
+/// What Auto-sort never touches, said once in Options: every default
+/// folder but Objects, outfits, Marketplace, the Library and the viewer
+/// folders. Nothing there can be allowed (human request of 2026-11-15).
+fn default_folders(ui: &mut egui::Ui, p: &Palette) {
     crate::ui::widgets::section_header(ui, p, "lock-filled", aurora_i18n::tr!("inventory-sorter-defaults"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-sorter-defaults-hint"))
             .small()
             .color(p.muted),
     );
-    for id in sorter::unlockable_folders(inv) {
-        let name = rules::name(inv, id);
-        let allowed = options.unlocked.contains(&id);
-        ui.horizontal(|ui| {
-            crate::ui::widgets::glyph(
-                ui,
-                if allowed { "lock-open" } else { "lock-filled" },
-                if allowed { p.warn } else { p.muted },
-                14.0,
-            );
-            ui.label(&name);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if allowed {
-                    if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-unlock-remove")).clicked() {
-                        options.unlocked.retain(|u| *u != id);
-                    }
-                } else if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-unlock")).clicked() {
-                    state.confirm = Some(Confirm::Unlock(id, name.clone()));
-                }
-            });
-        });
-    }
 }
 
 /// No worn set where the Options tab has none: the preview re-checks every
