@@ -414,6 +414,7 @@ impl World {
                     kind,
                     source,
                     origin: Origin::Log,
+                    beyond_range: false,
                 }
             })
             .collect()
@@ -507,6 +508,7 @@ impl World {
                     kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
+                    beyond_range: false,
                 }
             })
             .collect();
@@ -711,6 +713,7 @@ mod tests {
             kind: ChatKind::Local(ChatType::Shout),
             source: Uuid::from_u128(2),
             origin: Origin::Live,
+            beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)

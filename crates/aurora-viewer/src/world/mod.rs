@@ -321,6 +321,10 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+    /// Said beyond the say range from where we stood when it arrived
+    /// (LLViewerChat::getChatColor, indra/newview/llviewerchat.cpp): drawn
+    /// dimmed by Preferences › Chat's factor (`ui::colors::beyond_range_alpha`).
+    pub beyond_range: bool,
 }
 
 /// The name an object speaks under in the nearby chat. A name of nothing but
@@ -2283,6 +2287,7 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2298,6 +2303,7 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -4815,6 +4821,13 @@ impl World {
                 slurl,
             });
         }
+        // LLViewerChat::getChatColor: a resident's or an object's line said
+        // beyond the say range from where we stand now is dimmed (ours is
+        // said where we stand; a line of an unknown region is not judged)
+        let beyond_range = !kind.is_own()
+            && c.region
+                .and_then(|h| self.region_offset(h))
+                .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
         self.push_chat(ChatLine {
             time,
             from,
@@ -4822,6 +4835,7 @@ impl World {
             kind,
             source: c.source_id,
             origin: Origin::Live,
+            beyond_range,
         });
     }
 
@@ -4907,6 +4921,7 @@ impl World {
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
                 origin: Origin::Live,
+                beyond_range: false,
             };
             self.conversation_push(im.from_agent_id, line, true);
             if rlva_filter != rlva::communication::Received::Masked {
@@ -5001,6 +5016,7 @@ impl World {
             kind,
             source,
             origin: Origin::Live,
+            beyond_range: false,
         });
     }
 
@@ -5984,6 +6000,7 @@ impl World {
             kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.conversation_push(to, line, false);
     }

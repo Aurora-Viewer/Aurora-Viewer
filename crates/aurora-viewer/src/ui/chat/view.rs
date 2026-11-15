@@ -778,6 +778,7 @@ mod tests {
             kind: ChatKind::Im,
             source: uuid::Uuid::from_u128(from.len() as u128),
             origin: Origin::Live,
+            beyond_range: false,
         }
     }
 
