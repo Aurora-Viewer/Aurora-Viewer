@@ -55,6 +55,12 @@ impl App {
         self.director.d.playing() && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
     }
 
+    /// The key color (linear RGB) the isolation's empty background shows
+    /// while the Director is open: a green screen to film against.
+    pub(super) fn director_key_color(&self) -> Option<[f32; 3]> {
+        self.director.d.key_color.filter(|_| self.panels.director).map(director::linear)
+    }
+
     /// The track may not take the view: RLVa restricts the camera, or the
     /// view is a headset's.
     fn director_restricted(&self) -> bool {
@@ -433,7 +439,7 @@ impl App {
     /// track of four keyframes around our avatar; `play` plays it at once,
     /// without a start delay; `lock` locks the view on our avatar's neck,
     /// live and at the two middle keyframes, in a 2.39:1 frame with the
-    /// rule of thirds.
+    /// rule of thirds; `green` shows our avatar alone on a green screen.
     fn director_demo(&mut self) {
         if !self.demo || self.director.demo_done {
             return;
@@ -477,6 +483,13 @@ impl App {
             d.format = director::Format::Scope;
             d.thirds = true;
             log::info!("director demo: view locked on our avatar's neck, 2.39:1");
+        }
+        if mode == "green" {
+            let isolation = &mut self.world.photo_isolation;
+            isolation.set_mode(crate::snapshot::isolate::Mode::Own);
+            isolation.set_transparent(true);
+            self.director.d.key_color = Some(director::KEY_GREEN);
+            log::info!("director demo: our avatar alone on a green screen");
         }
     }
 }

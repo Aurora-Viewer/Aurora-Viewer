@@ -33,6 +33,17 @@ pub const SMOOTHING_RANGE: RangeInclusive<f32> = 0.0..=1.0;
 /// teleport, another target): the view goes to it at once.
 const FOLLOW_SNAP: f32 = 8.0;
 
+/// The green of a green screen (the key color proposed first).
+pub const KEY_GREEN: [u8; 3] = [0, 177, 64];
+
+/// An sRGB color as the renderer mixes it: linear RGB, 0 to 1.
+pub fn linear(color: [u8; 3]) -> [f32; 3] {
+    color.map(|c| {
+        let c = f32::from(c) / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    })
+}
+
 /// The joint of an avatar the view is locked on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Joint {
@@ -220,6 +231,9 @@ pub struct Director {
     pub format: Format,
     /// The rule of thirds drawn over the picture while the track is edited.
     pub thirds: bool,
+    /// The color (sRGB) the isolation's empty background shows, to film
+    /// against and key out; `None`: left empty.
+    pub key_color: Option<[u8; 3]>,
 }
 
 impl Default for Director {
@@ -237,6 +251,7 @@ impl Default for Director {
             lock: Lock::default(),
             format: Format::Window,
             thirds: false,
+            key_color: None,
         }
     }
 }
@@ -763,6 +778,18 @@ mod tests {
             undone += 1;
         }
         assert_eq!(undone, HISTORY);
+    }
+
+    #[test]
+    fn a_key_color_is_given_to_the_renderer_in_linear_light() {
+        assert_eq!(linear([0, 0, 0]), [0.0; 3]);
+        let white = linear([255, 255, 255]);
+        assert!(white.iter().all(|c| (c - 1.0).abs() < 1e-5));
+        // middle grey of the screen is about a fifth of the light
+        assert!((linear([128, 128, 128])[0] - 0.2158).abs() < 1e-3);
+        let green = linear(KEY_GREEN);
+        assert!(green[1] > green[2] && green[2] > green[0]);
+        assert_eq!(Director::default().key_color, None);
     }
 
     #[test]

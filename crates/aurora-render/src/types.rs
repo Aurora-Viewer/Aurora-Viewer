@@ -1691,6 +1691,11 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The flat color (linear RGB) the live view of a cut-out frame shows
+    /// where nothing is drawn, instead of the checkerboard: a key color to
+    /// film against (the Director's green screen). A snapshot keeps its
+    /// alpha whatever this says.
+    pub cutout_key: Option<[f32; 3]>,
     /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
     pub rain: f32,
     /// Aurora Weather: the footprints kept in the region, each x, y (m),

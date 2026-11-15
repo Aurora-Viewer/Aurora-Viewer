@@ -227,7 +227,7 @@ pub fn window(
                         picture_section(ui, p, d);
                     });
                     widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
-                        isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out);
+                        isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
                     });
                     let Env {
                         ui: lists,
@@ -405,7 +405,14 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
 /// or the avatars and objects chosen in the scene, on an empty background or
 /// not. The same state, rule and choices as the photo's (`snapshot::isolate`,
 /// `ui::viewfinder::isolate`): what is chosen here is chosen there.
-fn isolate_section(ui: &mut egui::Ui, p: &Palette, iso: &Isolation, rows: &[IsolateRow], out: &mut Vec<Isolate>) {
+fn isolate_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    iso: &Isolation,
+    rows: &[IsolateRow],
+    out: &mut Vec<Isolate>,
+    key: &mut Option<[u8; 3]>,
+) {
     let modes = [Shown::Off, Shown::Own, Shown::Chosen];
     let mut mode = modes.iter().position(|shown| *shown == iso.mode).unwrap_or(0);
     let options = [
@@ -448,6 +455,24 @@ fn isolate_section(ui: &mut egui::Ui, p: &Palette, iso: &Isolation, rows: &[Isol
         {
             out.push(Isolate::Transparent(empty));
         }
+        // a flat color in place of the empty background: a green screen
+        ui.add_enabled_ui(iso.transparent, |ui| {
+            ui.horizontal(|ui| {
+                let mut on = key.is_some();
+                if widgets::checkbox(ui, p, &mut on, aurora_i18n::tr!("director-key-color"))
+                    .on_hover_text(aurora_i18n::tr!("director-key-color-tip"))
+                    .changed()
+                {
+                    *key = on.then_some(director::KEY_GREEN);
+                }
+                if let Some([r, g, b]) = *key {
+                    let mut color = [r, g, b, 255];
+                    if widgets::color_button(ui, p, "director_key_color", &mut color, false).changed() {
+                        *key = Some([color[0], color[1], color[2]]);
+                    }
+                }
+            });
+        });
     }
 }
 

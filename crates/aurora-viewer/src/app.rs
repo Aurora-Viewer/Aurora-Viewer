@@ -12112,6 +12112,8 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            // (the Director's green screen, in place of the checkerboard)
+            cutout_key: self.director_key_color(),
             // rain or snow: the drops pass draws either
             rain: self.weather_now.fall(),
             snow_prints: Some(self.scene.snow_trails.prints.clone()),
