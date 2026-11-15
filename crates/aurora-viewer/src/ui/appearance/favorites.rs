@@ -7,11 +7,13 @@
 //! 2026-11-11): the item's own inventory picture, or its type icon, then its
 //! name and "type · point" on one line each, a full tooltip for long names.
 //! The subfolders are tabs instead of a combo box with three buttons.
+//! Rows can be dragged into a custom order (`widgets::reorder`; human
+//! request, 2026-11-15), which the Legacy window does not have.
 
 use super::{Action, AppearanceUi, items, selection::Selection};
 use crate::{
     theme::Palette,
-    ui::{icons, menu, widgets},
+    ui::{icons, menu, widgets, widgets::reorder},
     world::{
         World,
         inventory::actions,
@@ -41,6 +43,19 @@ pub(crate) struct State {
     /// once per account (initCategory) and again after a relog.
     requested: Option<Uuid>,
     message: String,
+    /// A view's new custom order (its folder, its wearables), for the app
+    /// to keep in the settings.
+    reordered: Option<(Uuid, Vec<Uuid>)>,
+    /// Where a row was let go: no tooltip until the pointer leaves that
+    /// spot, so that a drop does not end on a tooltip over the list.
+    quiet_at: Option<egui::Pos2>,
+}
+
+impl State {
+    /// The custom order changed this frame: the view and its new order.
+    pub(crate) fn take_reordered(&mut self) -> Option<(Uuid, Vec<Uuid>)> {
+        self.reordered.take()
+    }
 }
 
 enum Dialog {
@@ -50,7 +65,8 @@ enum Dialog {
 }
 
 /// The window, while `open`. `sort` is the remembered order
-/// (`FSWearableFavoritesSortOrder`).
+/// (`FSWearableFavoritesSortOrder`), `orders` the account's custom orders.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -59,6 +75,7 @@ pub fn show(
     open: &mut bool,
     images: &HashMap<Uuid, egui::TextureHandle>,
     sort: &mut Sort,
+    orders: Option<&model::Orders>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if !*open {
@@ -85,14 +102,22 @@ pub fn show(
     }
     let shown = st.favorites.shown.or(root);
     let mut list = shown.map(|id| model::entries(inv, id)).unwrap_or_default();
-    model::sort(inv, &mut list, *sort);
+    let saved = shown.and_then(|id| orders?.get(&id)).map_or(&[][..], Vec::as_slice);
+    model::sort(inv, &mut list, *sort, saved);
     let total = list.len();
     let all = match (root, st.favorites.shown) {
         (Some(root), Some(_)) => model::entries(inv, root).len(),
         _ => total,
     };
     let filter = st.favorites.filter.trim().to_string();
-    list.retain(|e| model::matches(inv, e, &filter));
+    if !filter.is_empty() {
+        let points = world.worn_attachment_points();
+        list.retain(|e| {
+            inv.items
+                .get(&e.item)
+                .is_some_and(|it| model::matches(inv, e, &filter, &detail(world, it, points.get(&it.id).copied())))
+        });
+    }
     let order: Vec<Uuid> = list.iter().map(|e| e.item).collect();
     st.favorites.selection.retain(&order);
 
@@ -118,7 +143,7 @@ pub fn show(
         if !st.favorites.message.is_empty() {
             ui.label(egui::RichText::new(&st.favorites.message).color(p.danger).size(11.5));
         }
-        list_area(ui, p, world, st, images, root, &list, &order, total, &filter, &mut actions);
+        list_area(ui, p, world, st, images, root, &list, &order, total, &filter, sort, &mut actions);
     });
     dialog(ctx, p, world, st, root, &mut actions);
     actions
@@ -150,6 +175,7 @@ fn header(
                 (Sort::Name, aurora_i18n::tr!("ui-wearable-favorites-sort-name")),
                 (Sort::Recent, aurora_i18n::tr!("ui-wearable-favorites-sort-recent")),
                 (Sort::Type, aurora_i18n::tr!("ui-wearable-favorites-sort-type")),
+                (Sort::Custom, aurora_i18n::tr!("ui-wearable-favorites-sort-custom")),
             ] {
                 if menu::check(ui, p, "", label, *sort == value, true) {
                     *sort = value;
@@ -218,7 +244,12 @@ fn tab_row(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, tabs: &[(Uuid,
 }
 
 /// The rows, the empty states, and the drop of wearables from the
-/// inventory (FSWearableFavoritesItemsList::handleDragAndDrop).
+/// inventory (FSWearableFavoritesItemsList::handleDragAndDrop). A row
+/// dragged is carried to another place (`widgets::reorder`): the first drag
+/// turns the sort to Custom order, starting from the order shown, as Apple
+/// Reminders does. Not while searching, where the places shown are not the
+/// list's. In Custom order, wearables dropped from the inventory open a gap
+/// and land where they were let go.
 #[allow(clippy::too_many_arguments)]
 fn list_area(
     ui: &mut egui::Ui,
@@ -231,6 +262,7 @@ fn list_area(
     order: &[Uuid],
     total: usize,
     filter: &str,
+    sort: &mut Sort,
     actions: &mut Vec<Action>,
 ) {
     let inv = &world.inventory;
@@ -243,6 +275,9 @@ fn list_area(
         .unwrap_or_default();
     let worn = items::worn_items(world);
     let points = world.worn_attachment_points();
+    let draggable = filter.is_empty() && st.favorites.dialog.is_none();
+    let pointer_y = ui.input(|i| i.pointer.hover_pos()).map(|at| at.y);
+    let mut gap = None;
     egui::ScrollArea::vertical()
         .id_salt("wearable_favorites_rows")
         .auto_shrink([false, false])
@@ -251,7 +286,45 @@ fn list_area(
             if list.is_empty() {
                 empty(ui, p, inv, target, total, filter);
             }
-            for entry in list {
+            // the places, fixed: what the pointer clicks, drags and drops on
+            let rows: Vec<egui::Response> = list
+                .iter()
+                .map(|_| {
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click_and_drag())
+                        .1
+                })
+                .collect();
+            if let (Some(first), Some(y)) = (rows.first(), pointer_y)
+                && *sort == Sort::Custom
+                && draggable
+                && !carried.is_empty()
+            {
+                let pitch = ROW + ui.spacing().item_spacing.y;
+                gap = Some(reorder::insert_slot(y - ROW / 2.0, first.rect.top(), pitch, rows.len()));
+                // room for the rows pushed down
+                ui.allocate_space(Vec2::new(1.0, ROW));
+            }
+            let id = ui.make_persistent_id(("wearable_favorites_reorder", target));
+            let layout = reorder::update(ui, id, order, &rows, draggable, gap);
+            if layout.started.is_some() && *sort != Sort::Custom {
+                *sort = Sort::Custom;
+                st.favorites.reordered = Some((target, order.to_vec()));
+            }
+            if let Some((from, to)) = layout.moved {
+                st.favorites.reordered = Some((target, model::moved(order, from, to)));
+            }
+            let pointer = ui.input(|i| i.pointer.hover_pos());
+            if layout.moved.is_some() {
+                st.favorites.quiet_at = pointer;
+            } else if st.favorites.quiet_at.is_some() && pointer != st.favorites.quiet_at {
+                st.favorites.quiet_at = None;
+            }
+            let quiet = layout.busy() || st.favorites.quiet_at.is_some();
+            if demo_mode().is_some() {
+                let rects: Vec<Rect> = rows.iter().map(|r| r.rect).collect();
+                ui.ctx().data_mut(|d| d.insert_temp(demo_id(), rects));
+            }
+            for (i, (entry, response)) in list.iter().zip(&rows).enumerate() {
                 let Some(it) = inv.items.get(&entry.item) else {
                     continue;
                 };
@@ -262,18 +335,33 @@ fn list_area(
                 let texture = picture.and_then(|image| images.get(&image));
                 let is_worn = worn.contains(&it.id);
                 let detail = detail(world, it, points.get(&it.id).copied());
-                let selected = st.favorites.selection.contains(it.id);
-                let response = row(ui, p, it, texture, is_worn, &detail, selected);
-                if demo_mode().is_some() && it.id == Uuid::from_u128(790) {
-                    ui.ctx().data_mut(|d| d.insert_temp(demo_id(), response.rect));
+                let at = layout.rect(i, response.rect);
+                if layout.lifted == Some(i) {
+                    reorder::lifted_card(ui, p, id, at, |card| paint_row(card, p, at, it, texture, is_worn, &detail, None));
+                    continue;
                 }
+                let selected = st.favorites.selection.contains(it.id);
+                let face = if selected {
+                    Some(p.violet.gamma_multiply(0.25))
+                } else if response.hovered() && !layout.busy() {
+                    Some(p.raised)
+                } else {
+                    None
+                };
+                paint_row(ui, p, at, it, texture, is_worn, &detail, face);
                 if response.clicked() || response.secondary_clicked() {
                     let modifiers = ui.input(|i| i.modifiers);
                     st.favorites.selection.click(it.id, order, modifiers, response.secondary_clicked());
                 }
                 // onDoubleClick: wear or take off, as the outfit lists do
-                items::double_click(&response, world, it, is_worn, actions);
-                let response = response.on_hover_ui(|ui| tooltip(ui, p, inv, it, texture, is_worn, &detail));
+                items::double_click(response, world, it, is_worn, actions);
+                let response = if quiet {
+                    response.clone()
+                } else {
+                    response
+                        .clone()
+                        .on_hover_ui(|ui| tooltip(ui, p, inv, it, texture, is_worn, &detail))
+                };
                 row_menu(&response, p, world, st, root, it, order, actions);
             }
         });
@@ -292,6 +380,10 @@ fn list_area(
             egui::DragAndDrop::clear_payload(ui.ctx());
             if let Some(change) = model::add(inv, target, &carried) {
                 actions.push(Action::Folders(change));
+                // in Custom order, where it was let go
+                if let Some(at) = gap {
+                    st.favorites.reordered = Some((target, model::inserted(order, at, &carried)));
+                }
             }
         }
     }
@@ -379,22 +471,23 @@ fn detail(world: &World, it: &InvItem, worn_point: Option<u8>) -> String {
     format!("{kind} · {}{name}", if hud { "HUD : " } else { "" })
 }
 
-/// One picture row: the picture (or the type icon), the name in bold when
-/// worn, the detail below, a check at the end when worn.
-fn row(
-    ui: &mut egui::Ui,
+/// One picture row at `rect`: its face (selected, hovered, none), the
+/// picture (or the type icon), the name, the detail below, a check at the
+/// end when worn.
+#[allow(clippy::too_many_arguments)]
+fn paint_row(
+    ui: &egui::Ui,
     p: &Palette,
+    rect: Rect,
     it: &InvItem,
     texture: Option<&egui::TextureHandle>,
     worn: bool,
     detail: &str,
-    selected: bool,
-) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
+    face: Option<egui::Color32>,
+) {
     let radius = ui.visuals().window_corner_radius;
-    if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, radius, if selected { p.violet.gamma_multiply(0.25) } else { p.raised });
+    if let Some(face) = face {
+        ui.painter().rect_filled(rect, radius, face);
     }
     let pic = Rect::from_center_size(egui::pos2(rect.left() + 5.0 + PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
     ui.painter().rect_filled(pic, radius, p.field);
@@ -426,7 +519,6 @@ fn row(
             Rect::from_center_size(egui::pos2(rect.right() - check / 2.0 - 2.0, rect.center().y), Vec2::splat(15.0)),
         );
     }
-    response
 }
 
 fn one_line(ui: &egui::Ui, text: &str, font: FontId, color: egui::Color32, width: f32) -> std::sync::Arc<egui::Galley> {
@@ -757,17 +849,45 @@ pub fn demo_seed(
 }
 
 fn demo_id() -> egui::Id {
-    egui::Id::unique("wearable_favorites_demo_row")
+    egui::Id::unique("wearable_favorites_demo_rows")
 }
 
-/// `AURORA_DEMO_WEARABLE_FAVORITES=tooltip`: the pointer rests on the long
-/// name's row at frame 520, for its tooltip.
+/// The demo's pointer: `tooltip` rests on the long name's row at frame
+/// 520, for its tooltip; `drag` picks up the second row at frame 500 and
+/// carries it two rows down, held there for the capture; `drop` lets it go
+/// at frame 560, so that the capture shows it landed in Custom order.
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
-    // moved once and left there: egui shows a tooltip under a still pointer
-    if !(520..=521).contains(&frame) || demo_mode() != Some("tooltip") {
+    let Some(mode) = demo_mode() else {
         return Vec::new();
+    };
+    let rects: Vec<Rect> = ctx.data(|d| d.get_temp(demo_id())).unwrap_or_default();
+    let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    match mode {
+        // moved once and left there: egui shows a tooltip under a still pointer
+        "tooltip" if (520..=521).contains(&frame) => rects
+            .first()
+            .map(|rect| vec![egui::Event::PointerMoved(egui::pos2(rect.left() + 60.0, rect.center().y))])
+            .unwrap_or_default(),
+        "drag" | "drop" => {
+            let Some(rect) = rects.get(1) else {
+                return Vec::new();
+            };
+            let start = egui::pos2(rect.left() + 60.0, rect.center().y);
+            // two rows down, 3 points a frame, as a hand moves
+            let at = |f: u64| start + Vec2::new(0.0, (f.saturating_sub(502) as f32 * 3.0).min(2.0 * (ROW + 2.0)));
+            match frame {
+                500 => vec![egui::Event::PointerMoved(start)],
+                501 => vec![button(start, true)],
+                502..=559 => vec![egui::Event::PointerMoved(at(frame))],
+                560 if mode == "drop" => vec![button(at(frame), false)],
+                _ => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
     }
-    ctx.data(|d| d.get_temp::<Rect>(demo_id()))
-        .map(|rect| vec![egui::Event::PointerMoved(egui::pos2(rect.left() + 60.0, rect.center().y))])
-        .unwrap_or_default()
 }

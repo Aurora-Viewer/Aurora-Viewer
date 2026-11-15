@@ -3818,6 +3818,11 @@ buttons (`button_track`, `track_button`), an inspector row's two-way choice
 (`labelled_choice`), the Apple-style help tag (`help_tag`) and a row's
 icon-over-label button face (`paint_tile_button`). The compact poser is
 their first user.
+`ui/widgets/reorder.rs` is the one drag-to-reorder list: the row dragged
+is carried as a lifted card, the others slide out of its way, a drop waits
+where it was let go until the caller's new order shows, and a gap can open
+for something dropped from elsewhere (Favorite wearables; the contact sets'
+priority list moves onto it later).
 `ui/widgets/unread.rs` is the one unread counter (islands, dock, Firestorm's
 bars, Conversations list): dark red, its digits' ink centred to the pixel.
 `ui/widgets/volume.rs` is the one volume slider (Preferences › Sound, the

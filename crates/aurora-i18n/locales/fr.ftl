@@ -14672,12 +14672,13 @@ joystick-layout-xinput = XInput
 # Favorite Wearables window (FSFloaterWearableFavorites)
 ui-wearable-favorites-invalid-name = Un nom de dossier ne peut pas contenir / ni \ : « { $name } »
 ui-wearable-favorites-title = Vêtements préférés
-ui-wearable-favorites-help = Vos vêtements, parties du corps et objets préférés, à porter d’un double-clic. Glissez-les ici depuis votre inventaire ; clic droit sur un onglet pour le renommer ou le supprimer.
+ui-wearable-favorites-help = Vos vêtements, parties du corps et objets préférés, à porter d’un double-clic. Glissez-les ici depuis votre inventaire, et glissez une ligne pour changer l’ordre. La recherche trouve les noms, les types et les points d’attache. Clic droit sur un onglet pour le renommer ou le supprimer.
 ui-wearable-favorites-search = Chercher dans les favoris
 ui-wearable-favorites-sort = Trier
 ui-wearable-favorites-sort-name = Par nom
 ui-wearable-favorites-sort-recent = Les plus récents d’abord
 ui-wearable-favorites-sort-type = Par type
+ui-wearable-favorites-sort-custom = Ordre personnalisé
 ui-wearable-favorites-remove = Retirer des favoris
 ui-wearable-favorites-assign = Ajouter au dossier
 ui-wearable-favorites-empty = Aucun favori pour l’instant

@@ -6053,7 +6053,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
-| `AURORA_DEMO_WEARABLE_FAVORITES=list\|tab\|tooltip\|empty\|new` | Favorite wearables window with pictures, tabs and a long name |
+| `AURORA_DEMO_WEARABLE_FAVORITES=list\|tab\|tooltip\|drag\|drop\|empty\|new` | Favorite wearables window with pictures, tabs, a long name and a row dragged |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -10293,7 +10293,7 @@ descriptions, chat, notice bodies and local filenames continue to accept Unicode
 The same rules apply in both interface styles. The agent uses demo mode only;
 the human verifies actual saved inventory names on the grid.
 
-**`AURORA_DEMO_WEARABLE_FAVORITES=list|tab|tooltip|empty|new`** — opens
+**`AURORA_DEMO_WEARABLE_FAVORITES=list|tab|tooltip|drag|drop|empty|new`** — opens
 Me › Favorite wearables over the Appearance demo's wardrobe. The favorites
 live in `#Aurora/Wearable Favorites`: nine wearables, five with a picture
 (round, wide and tall, cropped to the square), the others with their type
@@ -10308,6 +10308,11 @@ from favorites; drag a wearable from the inventory onto the list to add it
 - `tooltip`: searches "gown" and rests the pointer on its row at frame 520:
   the tooltip shows the larger picture, the full name, "Object", and the
   permissions;
+- `drag`: picks up Black pants (the second row) at frame 500 and carries it
+  two rows down, held at frame 620: the lifted card with its violet edge
+  under the pointer, Leather jacket and Star tattoo stepped up;
+- `drop`: the same, let go at frame 560: at frame 620 Black pants is fourth,
+  the sort menu checks Custom order, and no tooltip covers the list;
 - `empty`: the folder with nothing in it: the empty state and its hint;
 - `new`: no folder yet: the window makes `#Aurora/Wearable Favorites` once
   (one "inventory mutation: 2 operations" line in the log, never a second).

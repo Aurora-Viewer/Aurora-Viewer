@@ -10,7 +10,7 @@
 
 use super::inventory::{FetchState, Inventory, actions};
 use aurora_net::inventory::operations::{Mutation, Operation};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// Aurora's own folder at the inventory root, shared with the AO.
@@ -29,13 +29,23 @@ pub enum Sort {
     /// The Legacy default.
     #[default]
     Type,
+    /// The order the user dragged the rows into (`Orders`). Aurora only:
+    /// the Legacy window has no manual order (human request, 2026-11-15).
+    Custom,
 }
+
+/// The custom orders of one account: for each view (the root for All, else
+/// a tab's folder), its wearables in the order they were dragged into.
+/// Kept in the settings, per account (human decision, 2026-11-15): one
+/// order for All and one for each tab, on this computer only.
+pub type Orders = HashMap<Uuid, Vec<Uuid>>;
 
 impl From<u8> for Sort {
     fn from(value: u8) -> Self {
         match value {
             0 => Self::Name,
             1 => Self::Recent,
+            CUSTOM => Self::Custom,
             _ => Self::Type,
         }
     }
@@ -47,9 +57,14 @@ impl From<Sort> for u8 {
             Sort::Name => 0,
             Sort::Recent => 1,
             Sort::Type => 3,
+            Sort::Custom => CUSTOM,
         }
     }
 }
+
+/// The stored value of `Sort::Custom`, far from the Legacy values (0 to 3)
+/// so that a later Legacy order cannot take it.
+const CUSTOM: u8 = 100;
 
 /// One favorite: the link and the wearable it points to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,8 +173,10 @@ fn wearable(inv: &Inventory, id: Uuid) -> bool {
 
 /// The list in the chosen order. Name: the wearable's name; most recent:
 /// the link's creation date, newest first, then the name; type: the
-/// wearable lists' type order (`appearance::type_rank`), then the name.
-pub fn sort(inv: &Inventory, entries: &mut [Entry], sort: Sort) {
+/// wearable lists' type order (`appearance::type_rank`), then the name;
+/// custom: the order of `saved` (the view's entry of `Orders`), the
+/// wearables it does not hold yet after it in type order.
+pub fn sort(inv: &Inventory, entries: &mut [Entry], sort: Sort, saved: &[Uuid]) {
     let name = |id: &Uuid| crate::natural_order::key(inv.items.get(id).map_or("", |it| it.name.as_str()));
     match sort {
         Sort::Name => entries.sort_by_cached_key(|e| (name(&e.item), e.item)),
@@ -168,17 +185,47 @@ pub fn sort(inv: &Inventory, entries: &mut [Entry], sort: Sort) {
             (std::cmp::Reverse(date), name(&e.item), e.item)
         }),
         Sort::Type => entries.sort_by_cached_key(|e| (super::appearance::type_rank(inv.items.get(&e.item)), name(&e.item), e.item)),
+        Sort::Custom => {
+            self::sort(inv, entries, Sort::Type, &[]);
+            let place: HashMap<Uuid, usize> = saved.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+            // stable: the unsaved keep their type order, after the saved
+            entries.sort_by_key(|e| place.get(&e.item).copied().unwrap_or(usize::MAX));
+        }
     }
 }
 
-/// The search: every word in the wearable's name, case ignored
-/// (LLInventoryItemsList::setFilterSubString matches the name).
-pub fn matches(inv: &Inventory, entry: &Entry, filter: &str) -> bool {
+/// `order` with the wearable at `from` moved to `to`: what a row dragged
+/// in the list leaves as the new custom order.
+pub fn moved(order: &[Uuid], from: usize, to: usize) -> Vec<Uuid> {
+    let mut out = order.to_vec();
+    if from < out.len() {
+        let item = out.remove(from);
+        out.insert(to.min(out.len()), item);
+    }
+    out
+}
+
+/// `order` with `items` put at `at` (those it already holds stay where they
+/// are): wearables dropped from the inventory between two rows.
+pub fn inserted(order: &[Uuid], at: usize, items: &[Uuid]) -> Vec<Uuid> {
+    let mut out = order.to_vec();
+    let mut seen: HashSet<Uuid> = order.iter().copied().collect();
+    let new: Vec<Uuid> = items.iter().copied().filter(|id| seen.insert(*id)).collect();
+    let at = at.min(out.len());
+    out.splice(at..at, new);
+    out
+}
+
+/// The search: every word in the wearable's name or in `detail`, the
+/// row's "type · point" line, case ignored. Wider than the Legacy
+/// LLInventoryItemsList::setFilterSubString, which matches the name only
+/// (human request, 2026-11-15: find what is worn on a point).
+pub fn matches(inv: &Inventory, entry: &Entry, filter: &str, detail: &str) -> bool {
     let Some(it) = inv.items.get(&entry.item) else {
         return false;
     };
-    let name = it.name.to_lowercase();
-    filter.split_whitespace().all(|word| name.contains(&word.to_lowercase()))
+    let text = format!("{} {}", it.name, detail).to_lowercase();
+    filter.split_whitespace().all(|word| text.contains(&word.to_lowercase()))
 }
 
 /// The wearables of `ids` a drop may add to `folder`: what

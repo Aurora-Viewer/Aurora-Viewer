@@ -18817,12 +18817,21 @@ impl App {
                     &mut open,
                     &self.ui_images,
                     &mut sort,
+                    self.settings.wearable_favorites_order.get(&self.world.agent_id),
                 ) {
                     self.apply_appearance_action(action);
                 }
                 self.panels.wearable_favorites = open;
-                if sort != self.settings.wearable_favorites_sort {
+                let reordered = self.appearance_ui.favorites.take_reordered();
+                if sort != self.settings.wearable_favorites_sort || reordered.is_some() {
                     self.settings.wearable_favorites_sort = sort;
+                    if let Some((view, order)) = reordered {
+                        self.settings
+                            .wearable_favorites_order
+                            .entry(self.world.agent_id)
+                            .or_default()
+                            .insert(view, order);
+                    }
                     self.settings.save();
                 }
                 self.outfit_portrait_window(&ctx, &p);

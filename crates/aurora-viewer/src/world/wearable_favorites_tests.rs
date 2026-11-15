@@ -156,7 +156,7 @@ fn each_sort_follows_its_own_key() {
     link(&mut inv, 203, root, 101, 20); // Blue shirt, clothing
     let order = |sort_by: Sort| {
         let mut list = entries(&inv, root);
-        sort(&inv, &mut list, sort_by);
+        sort(&inv, &mut list, sort_by, &[]);
         list.into_iter().map(|e| inv.items[&e.item].name.clone()).collect::<Vec<_>>()
     };
     assert_eq!(order(Sort::Name), ["Anklet", "Blue shirt", "Coat", "Zest skin"]);
@@ -167,7 +167,7 @@ fn each_sort_follows_its_own_key() {
 
 #[test]
 fn the_sort_keeps_the_legacy_setting_values() {
-    for (value, sort) in [(0, Sort::Name), (1, Sort::Recent), (3, Sort::Type)] {
+    for (value, sort) in [(0, Sort::Name), (1, Sort::Recent), (3, Sort::Type), (100, Sort::Custom)] {
         assert_eq!(Sort::from(value), sort);
         assert_eq!(u8::from(sort), value);
     }
@@ -253,11 +253,53 @@ fn folders_are_named_renamed_and_deleted_like_the_legacy_window() {
 }
 
 #[test]
-fn the_search_needs_every_word() {
+fn the_search_needs_every_word_in_the_name_or_the_type_and_point() {
     let (mut inv, root) = with_favorites();
     link(&mut inv, 200, root, 101, 1);
     let entry = entries(&inv, root)[0];
-    assert!(matches(&inv, &entry, "SHIRT blue"));
-    assert!(matches(&inv, &entry, ""));
-    assert!(!matches(&inv, &entry, "blue coat"));
+    assert!(matches(&inv, &entry, "SHIRT blue", ""));
+    assert!(matches(&inv, &entry, "", ""));
+    assert!(!matches(&inv, &entry, "blue coat", ""));
+    // the row's second line: its type and where it is worn
+    let detail = "Object · Spine";
+    assert!(matches(&inv, &entry, "spine", detail));
+    assert!(matches(&inv, &entry, "blue SPINE", detail), "a word of each");
+    assert!(!matches(&inv, &entry, "pelvis", detail));
+}
+
+#[test]
+fn the_custom_order_puts_the_saved_first_and_the_others_after_by_type() {
+    let (mut inv, root) = with_favorites();
+    link(&mut inv, 200, root, 103, 30); // Coat, clothing
+    link(&mut inv, 201, root, 100, 10); // Zest skin, body part
+    link(&mut inv, 202, root, 102, 40); // Anklet, object
+    link(&mut inv, 203, root, 101, 20); // Blue shirt, clothing
+    let order = |saved: &[Uuid]| {
+        let mut list = entries(&inv, root);
+        sort(&inv, &mut list, Sort::Custom, saved);
+        list.into_iter().map(|e| inv.items[&e.item].name.clone()).collect::<Vec<_>>()
+    };
+    // nothing saved yet: the type order, so that the first drag starts from it
+    assert_eq!(order(&[]), ["Zest skin", "Blue shirt", "Coat", "Anklet"]);
+    assert_eq!(
+        order(&[id(102), id(103), id(100), id(101)]),
+        ["Anklet", "Coat", "Zest skin", "Blue shirt"]
+    );
+    // a removed favorite saved earlier is skipped; a new one comes last
+    assert_eq!(order(&[id(999), id(102), id(103)]), ["Anklet", "Coat", "Zest skin", "Blue shirt"]);
+}
+
+#[test]
+fn a_drag_moves_one_wearable_and_a_drop_inserts_between_rows() {
+    let [a, b, c, d] = [id(1), id(2), id(3), id(4)];
+    assert_eq!(moved(&[a, b, c, d], 0, 2), [b, c, a, d], "down: the rows between step up");
+    assert_eq!(moved(&[a, b, c, d], 3, 1), [a, d, b, c], "up: the rows between step down");
+    assert_eq!(moved(&[a, b, c, d], 1, 1), [a, b, c, d]);
+    assert_eq!(moved(&[a, b], 0, 9), [b, a], "past the end: last");
+    assert_eq!(moved(&[a, b], 5, 0), [a, b], "a row that is gone: no change");
+    let [e, f] = [id(5), id(6)];
+    assert_eq!(inserted(&[a, b, c], 1, &[e, f]), [a, e, f, b, c]);
+    assert_eq!(inserted(&[a, b, c], 0, &[e]), [e, a, b, c]);
+    assert_eq!(inserted(&[a, b, c], 9, &[e]), [a, b, c, e], "past the end: last");
+    assert_eq!(inserted(&[a, b, c], 1, &[c, e, e]), [a, e, b, c], "held ones stay, no twice");
 }

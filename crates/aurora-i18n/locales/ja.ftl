@@ -14589,12 +14589,13 @@ joystick-layout-xinput = XInput
 # Favorite Wearables window (FSFloaterWearableFavorites)
 ui-wearable-favorites-invalid-name = フォルダー名に / や \ は使えません：「{ $name }」
 ui-wearable-favorites-title = お気に入りの着用物
-ui-wearable-favorites-help = お気に入りの衣類・身体部位・オブジェクトを、ダブルクリックひとつで着用できます。インベントリからここへドラッグして追加します。タブを右クリックすると名前の変更や削除ができます。
+ui-wearable-favorites-help = お気に入りの衣類・身体部位・オブジェクトを、ダブルクリックひとつで着用できます。インベントリからここへドラッグして追加し、行をドラッグすると並び順を変えられます。検索では名前・種類・装着ポイントを探せます。タブを右クリックすると名前の変更や削除ができます。
 ui-wearable-favorites-search = お気に入りを検索
 ui-wearable-favorites-sort = 並べ替え
 ui-wearable-favorites-sort-name = 名前順
 ui-wearable-favorites-sort-recent = 新しい順
 ui-wearable-favorites-sort-type = 種類順
+ui-wearable-favorites-sort-custom = カスタム順
 ui-wearable-favorites-remove = お気に入りから外す
 ui-wearable-favorites-assign = フォルダーに追加
 ui-wearable-favorites-empty = お気に入りはまだありません

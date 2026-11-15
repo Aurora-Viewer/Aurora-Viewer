@@ -846,6 +846,8 @@ pub struct Settings {
     pub appearance_tab: u8,
     /// The Favorite Wearables order (FSWearableFavoritesSortOrder).
     pub wearable_favorites_sort: crate::world::wearable_favorites::Sort,
+    /// The Favorite Wearables custom orders, for each account (Aurora only).
+    pub wearable_favorites_order: std::collections::HashMap<uuid::Uuid, crate::world::wearable_favorites::Orders>,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -2292,6 +2294,7 @@ impl Default for Settings {
             appearance_fill_previews: false,
             appearance_tab: 0,
             wearable_favorites_sort: Default::default(),
+            wearable_favorites_order: Default::default(),
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
