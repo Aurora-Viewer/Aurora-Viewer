@@ -122,7 +122,7 @@ impl App {
         self.inventory_ui.message = aurora_i18n::tr!("task-transfer-requested").into();
     }
 
-    fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+    pub(super) fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
         }

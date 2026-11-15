@@ -1090,6 +1090,7 @@ rez-worn-contents = Retirez les éléments portés avant de les mettre dans le c
 rez-hold-ctrl = Maintenez Ctrl au-dessus d’un objet pour mettre ces éléments dans son contenu.
 rez-task-single = Sortez un seul objet à la fois du contenu d’un objet.
 rez-task-denied = Un objet ne peut être rezzé depuis un contenu que si vous pouvez le copier et que son propriétaire peut le transférer.
+rez-notecard-unsaved = Enregistrez la note avant de poser cet objet.
 notecard-task-demo-object = Objet de démonstration
 notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = Cette note ou son objet n’est plus disponible.

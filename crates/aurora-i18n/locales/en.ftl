@@ -1087,6 +1087,7 @@ rez-worn-contents = Take off worn items before putting them into an object’s c
 rez-hold-ctrl = Hold Ctrl over an object to put these items into its contents.
 rez-task-single = Drag one object at a time out of an object’s contents.
 rez-task-denied = An object can only be rezzed from contents if you may copy it and its owner may transfer it.
+rez-notecard-unsaved = Save the notecard before rezzing this object.
 notecard-task-demo-object = Demo object
 notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = This notecard or its object is no longer available.
