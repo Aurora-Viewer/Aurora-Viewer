@@ -290,6 +290,8 @@ const PALETTE_STRIDE: u32 = 261u;
 // The traced probes' sight of the sky at half resolution (rt_gi.wgsl
 // `cs_gi_sky`): in g how open each place is (`screen_open`).
 @group(0) @binding(32) var gi_open_tex: texture_2d<f32>;
+// the point lights' tint maps (point_tint)
+@group(0) @binding(30) var point_tint_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
@@ -2732,22 +2734,24 @@ const POINT_GUARD: f32 = 1.04;
 // (that entry is otherwise unused: the light's bit in `light_projectors`
 // stays off). The map is six faces of a
 // cube around the light; projector_shadows.rs point_face_matrix is this same
-// projection, and its tests compare the two.
-fn point_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+// projection, and its tests compare the two. With the tint maps
+// (`light_projectors.z` 2), the light left is coloured by the blended glass
+// it crossed (point_tint).
+fn point_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     // checked first and alone: with the setting off, this is all a lit
     // fragment pays
     if (frame.light_projectors.z == 0u) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
     let slot = frame.projectors[i].tex.y;
     if (slot == 0u || frame.params.z < 0.5) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
     let k = slot - 1u;
     let far = frame.cascade_splits.z;
     let depth = distance(world_pos, frame.camera_pos.xyz);
     if (depth >= far) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
     let lt = frame.lights[i];
     let radius = lt.pos_radius.w;
@@ -2775,7 +2779,7 @@ fn point_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     let d = abs(s);
     let near = frame.projectors[i].params.x;
     if (d <= near) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
     let face = axis * 2u + select(0u, 1u, s < 0.0);
     let ndc = across / (d * POINT_GUARD);
@@ -2800,10 +2804,44 @@ fn point_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
         let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
         sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (corner + at * side) / dims, compare);
     }
-    var shadow = sum / 6.0;
+    var light = vec3<f32>(sum / 6.0);
+    let tint_map = u32(frame.projectors[i].params.y);
+    if (frame.light_projectors.z == 2u && tint_map > 0u) {
+        light *= point_tint(tint_map - 1u, face, uv, side, length(v) / radius, radius);
+    }
     // the map fades in and out as its light takes or loses it
-    shadow = clamp(shadow + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
-    return mix(1.0, shadow, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
+    light = clamp(light + frame.spot_fade[k / 4u][k % 4u], vec3<f32>(0.0), vec3<f32>(1.0));
+    return mix(vec3<f32>(1.0), light, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
+}
+
+// What the blended glass in front of a point lets through of a point
+// light's light (fs_shadow_tint): its tint map `j`, laid out as its shadow
+// map, four maps to a row (renderer.rs point_tint_origin). The four texels
+// around the point, each of them only where its nearest pane lies before the
+// point (the pane does not tint itself nor what stands before it), weighted
+// as a bilinear filter: a pane's edge seen at a grazing angle, against its
+// frame, blends instead of stepping texel by texel. `dist`:
+// the point's distance over the radius, as the map holds it. An Aurora
+// addition: the Legacy Viewer has no coloured shadows.
+fn point_tint(j: u32, face: u32, uv: vec2<f32>, side: f32, dist: f32, radius: f32) -> vec3<f32> {
+    let corner = vec2<f32>(f32((j % 4u) * 3u + face % 3u), f32((j / 4u) * 2u + face / 3u)) * side;
+    let at = corner + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * side - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(at));
+    let f = fract(at);
+    let lo = vec2<i32>(corner);
+    let hi = lo + vec2<i32>(i32(side) - 1);
+    // the map's distances are half floats (steps of 1/2048 to 1/1024 below
+    // the radius); 3 cm more for the receiver's own offset along its normal
+    let bias = 2.0 / 1024.0 + 0.03 / max(radius, 0.001);
+    var sum = vec3<f32>(0.0);
+    for (var t = 0; t < 4; t++) {
+        let step = vec2<i32>(t % 2, t / 2);
+        let texel = clamp(base + step, lo, hi);
+        let pane = textureLoad(point_tint_tex, texel, 0);
+        let w = mix(1.0 - f, f, vec2<f32>(step));
+        sum += select(vec3<f32>(1.0), pane.rgb, dist > pane.a + bias) * (w.x * w.y);
+    }
+    return sum;
 }
 
 // What a local light sends to a point.

@@ -1742,6 +1742,10 @@ pub struct Settings {
     /// camera: the lamps nearest it cast, which changes the look as the
     /// camera moves.
     pub point_shadow_avatar: bool,
+    /// Experimental, with `point_shadows`: blended glass colours their light
+    /// by its colour and alpha instead of shading it by half. An Aurora
+    /// addition: the Legacy Viewer has no coloured shadows.
+    pub point_shadow_tint: bool,
     /// Screen-space contact shadows of the sun or the moon, beyond the
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
@@ -2901,6 +2905,7 @@ impl Default for Settings {
             point_shadows: false,
             point_shadow_limit: 1,
             point_shadow_avatar: true,
+            point_shadow_tint: false,
             contact_shadows: false,
             soft_shadows: false,
             shadow_softness: SHADOW_SOFTNESS,
@@ -4249,6 +4254,7 @@ impl Settings {
             } else {
                 0
             },
+            point_shadow_tint: self.point_shadows && self.shadow_quality > 0 && self.point_shadow_tint,
             ssao: self.ssao,
             ao_method: if self.ao_method == 1 {
                 AoMethod::Gtao {
@@ -4645,6 +4651,12 @@ mod tests {
         assert_eq!(settings.point_shadow_limit, 1);
         assert!(settings.point_shadow_avatar, "ranked from the avatar once turned on");
         assert_eq!(settings.render_settings().point_shadow_limit, 0, "off: no map is made");
+        assert!(!settings.point_shadow_tint);
+        let tint_alone = Settings {
+            point_shadow_tint: true,
+            ..Settings::default()
+        };
+        assert!(!tint_alone.render_settings().point_shadow_tint, "the tint needs the point shadows");
 
         let mut on = Settings {
             point_shadows: true,

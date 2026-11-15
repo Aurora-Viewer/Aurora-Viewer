@@ -1398,6 +1398,11 @@ pub struct RenderSettings {
     /// Point lights with a shadow map (0 disables them, no map is made for
     /// them and they light through walls, as in the Legacy Viewer).
     pub point_shadow_limit: u8,
+    /// Blended glass tints the light of those point lights by its colour and
+    /// alpha instead of shading it by half (a second, translucent map per
+    /// light: `point_tint` in common.wgsl). An Aurora addition: the Legacy
+    /// Viewer has no coloured shadows.
+    pub point_shadow_tint: bool,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
@@ -1472,6 +1477,7 @@ impl Default for RenderSettings {
             shadow_resolution: 2048,
             projector_shadow_limit: 2,
             point_shadow_limit: 0,
+            point_shadow_tint: false,
             ssao: 1,
             ao_method: AoMethod::Legacy,
             screen_indirect: false,

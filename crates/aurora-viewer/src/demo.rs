@@ -5321,7 +5321,7 @@ pub fn events() -> Vec<NetEvent> {
             ));
         }
     }
-    // AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass: a warm point light behind a wall with
+    // AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass|stained: a warm point light behind a wall with
     // a doorway, seen from the other side, and a blue one inside its own
     // solid 80 cm prim with a post beside it. With AURORA_POINT_SHADOWS=2 the
     // warm light only passes the doorway, the prim lets its own light out
@@ -5340,11 +5340,14 @@ pub fn events() -> Vec<NetEvent> {
             ..Default::default()
         };
         let mode = std::env::var("AURORA_DEMO_POINT_SHADOW").unwrap_or_default();
-        if mode.starts_with("window") || mode.starts_with("glass") {
+        if point_shadow_window(&mode) {
             // `window`: a wall with a mullioned window, a point light
             // outside, the floor inside lit through it at a low angle;
             // `glass` adds a blended pane (alpha 0.3), which shades the point
-            // light by half, without stripes (fs_shadow, point_shadow)
+            // light by half, without stripes (fs_shadow, point_shadow);
+            // `stained`, three panes, red, green and blue at alpha 0.3, 0.5
+            // and 0.7, which colour it with AURORA_POINT_SHADOW_TINT=1
+            // (fs_shadow_tint, point_tint)
             let (lo, hi) = (floor + 0.6, floor + 2.4);
             let pieces = [
                 (9740, Vec3::new(x - 2.0, y, floor - 0.1), Vec3::new(14.0, 14.0, 0.2)),
@@ -5383,6 +5386,25 @@ pub fn events() -> Vec<NetEvent> {
                     ExtraParams::default(),
                     "",
                 ));
+            }
+            if mode.starts_with("stained") {
+                let panes = [
+                    (9752, -1.0, [0.9, 0.15, 0.1, 0.3]),
+                    (9753, 0.0, [0.15, 0.8, 0.2, 0.5]),
+                    (9754, 1.0, [0.15, 0.3, 0.95, 0.7]),
+                ];
+                for (id, across, color) in panes {
+                    add(prim(
+                        id,
+                        Vec3::new(x, y + across, (lo + hi) * 0.5),
+                        Quat::IDENTITY,
+                        Vec3::new(0.02, 1.0, hi - lo),
+                        boxp,
+                        plain(color),
+                        ExtraParams::default(),
+                        "",
+                    ));
+                }
             }
             add(prim(
                 9744,
@@ -9571,11 +9593,16 @@ fn point_shadow_start() -> Vec3 {
     Vec3::new(x - 5.0, y, height(x, y) + 0.3 + 0.84)
 }
 
+/// AURORA_DEMO_POINT_SHADOW's modes with the mullioned window.
+fn point_shadow_window(mode: &str) -> bool {
+    ["window", "glass", "stained"].iter().any(|m| mode.starts_with(m))
+}
+
 /// Framing of AURORA_DEMO_POINT_SHADOW: the room side of the wall, fixed, or
-/// (`orbit`) swinging from side to side, or (`turn`) looking away from the
-/// wall from frame 800 to 900, then back: the warm light stays in view but
-/// loses its map to a light of the plaza, and must take it back; or
-/// (`room`) circling our avatar 4 m away from frame 700.
+/// (`orbit`, `<window mode>-orbit`) swinging from side to side, or (`turn`)
+/// looking away from the wall from frame 800 to 900, then back: the warm
+/// light stays in view but loses its map to a light of the plaza, and must
+/// take it back; or (`room`) circling our avatar 4 m away from frame 700.
 fn point_shadow_camera(mode: &str, frame: u64) -> (Vec3, Vec3) {
     let (x, y) = POINT_SHADOW_WALL;
     let floor = height(x, y) + 0.3;
@@ -9585,17 +9612,21 @@ fn point_shadow_camera(mode: &str, frame: u64) -> (Vec3, Vec3) {
         let eye = Vec3::new(avatar.x + angle.cos() * 4.0, avatar.y + angle.sin() * 4.0, floor + 2.2);
         return (eye, Vec3::new(avatar.x, avatar.y, floor + 1.0));
     }
-    if mode.starts_with("window") || mode.starts_with("glass") {
-        return (Vec3::new(x - 4.5, y + 1.5, floor + 1.8), Vec3::new(x - 1.5, y - 0.3, floor));
-    }
     if mode == "turn" && (800..900).contains(&frame) {
         return (Vec3::new(x - 8.0, y, floor + 3.0), Vec3::new(x - 16.0, y, floor + 0.8));
     }
-    let swing = if mode == "orbit" {
+    let swing = if mode.ends_with("orbit") {
         (frame.saturating_sub(700) as f32 * 0.02).sin() * 3.0
     } else {
         0.0
     };
+    if point_shadow_window(mode) {
+        // `<mode>-orbit`: the same view, swinging from side to side
+        return (
+            Vec3::new(x - 4.5, y + 1.5 + swing * 0.5, floor + 1.8),
+            Vec3::new(x - 1.5, y - 0.3, floor),
+        );
+    }
     (Vec3::new(x - 8.0, y + swing, floor + 3.0), Vec3::new(x, y, floor + 0.8))
 }
 

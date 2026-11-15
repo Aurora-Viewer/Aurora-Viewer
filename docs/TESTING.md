@@ -189,6 +189,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 | `AURORA_POINT_SHADOWS=<0-8>` | Point lights with shadows, 0: off |
+| `AURORA_POINT_SHADOW_TINT=0\|1` | Overrides "Glass colours point lights" (needs point light shadows) |
 | `AURORA_BLEND_ORDER=<0..5>` | Override the order of transparent surfaces: 0 sorted (Standard), 1 to 4 exact, from fast to full, 5 stochastic |
 | `AURORA_LOCAL_LIGHTS=0..64` | Overrides "Maximum nearby lights" (Graphics › Light) |
 | `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
@@ -4935,7 +4936,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
-| `AURORA_DEMO_POINT_SHADOW=1\|orbit\|turn\|room\|window\|glass` | Point lights behind a wall with a doorway and in a closed shade, or through a window (fixed framing) |
+| `AURORA_DEMO_POINT_SHADOW=1\|orbit\|turn\|room\|window\|glass\|stained` | Point lights behind a wall with a doorway and in a closed shade, or through a window (fixed framing) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>[,<fog density>]]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
@@ -5309,7 +5310,7 @@ both open states and the selection count. Capture at frame 620.
   alpha panels — smooth scrolling, grid of 4 × 4 frames, ping-pong,
   rotation, scale (alpha mask: prepass and shadows), a cube animated on
   a single face, a legacy material (the normal map follows) and a PBR face.
-- **`AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass`**: a warm point light behind a wall
+- **`AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass|stained`**: a warm point light behind a wall
   with a doorway, seen from the other side, and a blue one inside a solid
   80 cm prim, with a post beside it. Use `AURORA_DEMO_SUN=0,-40` for a dark
   sky. `AURORA_POINT_SHADOWS=0`: the warm light crosses the wall, as in the
@@ -5331,7 +5332,12 @@ both open states and the selection count. Capture at frame 620.
   window instead, lighting the floor inside at a low angle: with `2`, the
   frame and bars cast clean shadows. `glass` adds a blended pane (alpha
   0.3): it shades the point light by half, evenly, as it does the sun,
-  without stripes on the floor.
+  without stripes on the floor. `stained` puts three coloured panes in the
+  window instead: red at alpha 0.3, green at 0.5, blue at 0.7. With
+  `AURORA_POINT_SHADOW_TINT=1` each throws its own colour on the floor,
+  stronger as its alpha rises; without it, they shade the light by half
+  as `glass` does. `window-orbit`, `glass-orbit` and `stained-orbit`
+  swing the camera as `orbit` does.
 - **`AURORA_DEMO_PROJECTOR=1|point`**: four lights, three of them
   projectors: a white projector facing a wall at 4.5 m, which projects
   the demo image (four colour quarters around a white disc), with

@@ -1704,6 +1704,9 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.point_shadows = limit > 0;
         settings.point_shadow_limit = limit.clamp(1, aurora_render::projector_shadows::MAX_POINT_SHADOWS as u8);
     }
+    if let Ok(v) = std::env::var("AURORA_POINT_SHADOW_TINT") {
+        settings.point_shadow_tint = v != "0";
+    }
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }

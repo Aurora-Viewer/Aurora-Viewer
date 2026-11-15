@@ -66,6 +66,11 @@ const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The point lights' tint maps: the light the blended casters let through
+/// (rgb) and the distance of the nearest of them over the light's radius (a).
+/// Half floats: in 8 bits that distance moves by 1/255 of the radius (5 cm
+/// at 12 m), and a frame against its pane showed those steps as teeth.
+const POINT_TINT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -242,8 +247,13 @@ struct FrameU {
 struct ShadowU {
     vp: [[f32; 4]; 4],
     anim_clock: [u32; 4],
-    /// x: 1 for the rain prototype's shelter map (`fs_shadow`)
+    /// x: 1 for the rain prototype's shelter map (`fs_shadow`); y: 1 for a
+    /// point light's face whose blended casters go to its tint map instead
+    /// (`point_shadow_tint`)
     kind: [u32; 4],
+    /// A point light's face: the light's position and radius, for the
+    /// distances of its tint map (`fs_shadow_tint`)
+    light: [f32; 4],
 }
 
 #[repr(C)]
@@ -551,6 +561,22 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
             *channel *= light_scale;
         }
     }
+}
+
+/// Size of the point lights' tint maps, `maps` of them: each laid out as its
+/// light's map (three faces across, two down, `point_face_origin`'s side),
+/// four maps to a row (`point_tint` in common.wgsl reads the same).
+fn point_tint_size(cascade: u32, maps: u8) -> (u32, u32) {
+    let side = cascade / 2 / 3;
+    let maps = u32::from(maps);
+    (maps.min(4) * 3 * side, maps.div_ceil(4) * 2 * side)
+}
+
+/// Where face `face` of tint map `j` lies, in texels: x, y and its side.
+fn point_tint_origin(cascade: u32, j: usize, face: usize) -> (u32, u32, u32) {
+    let side = cascade / 2 / 3;
+    let (j, face) = (j as u32, face as u32);
+    ((j % 4 * 3 + face % 3) * side, (j / 4 * 2 + face / 3) * side, side)
 }
 
 fn shadow_vp_buffer(device: &wgpu::Device) -> wgpu::Buffer {
@@ -1287,6 +1313,9 @@ struct Pipelines {
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
     shadow_depth: wgpu::RenderPipeline,
+    /// The blended casters of a point light's face, into its tint map
+    /// (`fs_shadow_tint`, `point_shadow_tint`).
+    shadow_tint: wgpu::RenderPipeline,
     /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
     /// the other casters keep `fs_shadow` without the terrain's inputs.
     shadow_terrain: wgpu::RenderPipeline,
@@ -2213,6 +2242,9 @@ pub(crate) struct Backend {
     /// The projector map the rain's shelter takes while it is drawn
     /// (`projector_shadows::shelter_slot`): past the projectors' maps.
     shelter_slot: usize,
+    /// The point lights' tint maps (`point_shadow_tint`), made only while
+    /// the setting asks for them, and how many maps they hold.
+    point_tint: Option<(wgpu::TextureView, u8)>,
     /// With the shadows off, the shelter map drawn alone: its matrix and
     /// when (kept in the atlas, which nothing else draws then; drawn again
     /// when it follows the camera, or after `SHELTER_REFRESH`).
@@ -4308,6 +4340,8 @@ impl Backend {
                 },
                 count: None,
             },
+            // the point lights' tint maps (`point_shadow_tint`)
+            float_tex(30),
             // the Milky Way map (stars.rs milky_way_texels)
             wgpu::BindGroupLayoutEntry {
                 binding: 25,
@@ -4679,6 +4713,7 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4815,6 +4850,7 @@ impl Backend {
             shadow_count: 2,
             projector_maps: 2,
             shelter_slot: 2,
+            point_tint: None,
             shelter_drawn: None,
             shelter_centre: None,
             shadow_merge,
@@ -6293,6 +6329,31 @@ impl Backend {
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
         let shadow_depth = batch.add(&module, &shadow_pl, shadow_desc("shadow depth", None));
+        // the tint map: what light the blended casters let through, each
+        // multiplying it (rgb), and the nearest of them (alpha, its smallest)
+        let shadow_tint = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::Src,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Min,
+                    },
+                }),
+                format: Some(POINT_TINT_FORMAT),
+                depth_format: None,
+                depth_write: false,
+                depth_bias: wgpu::DepthBiasState::default(),
+                ..shadow_desc("shadow tint", Some("fs_shadow_tint"))
+            },
+        );
         let shadow_terrain = batch.add(
             &module,
             &shadow_pl,
@@ -6452,6 +6513,7 @@ impl Backend {
             refl_blend: refl_blend.resolve(&mut done),
             shadow: shadow.resolve(&mut done),
             shadow_depth: shadow_depth.resolve(&mut done),
+            shadow_tint: shadow_tint.resolve(&mut done),
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
@@ -6744,7 +6806,9 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        point_tint: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
+        let point_tint = point_tint.unwrap_or(&dummies.white);
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
                   ao: &wgpu::TextureView,
@@ -6781,6 +6845,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 30,
+                        resource: wgpu::BindingResource::TextureView(point_tint),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -7237,6 +7305,7 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.point_tint.as_ref().map(|t| &t.0),
         );
     }
 
@@ -7752,6 +7821,34 @@ impl Backend {
         }
         // the budget can change without the map count (one projector for one light)
         self.grow_shadow_views(usize::from(point_maps));
+        // the point lights' tint maps: as many as their maps, the faces as
+        // large as theirs, none while the setting is off
+        let tint_maps = if s.point_shadow_tint { point_maps } else { 0 };
+        let tint_dirty = shadows_dirty || self.point_tint.as_ref().map_or(0, |t| t.1) != tint_maps;
+        if tint_dirty {
+            self.point_tint = (tint_maps > 0).then(|| {
+                let (width, height) = point_tint_size(res, tint_maps);
+                log::info!(
+                    "point light tint maps: {tint_maps}, {width}x{height} ({} KiB)",
+                    u64::from(width) * u64::from(height) * 8 / 1024
+                );
+                let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("point light tint maps"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: POINT_TINT_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                (tex.create_view(&wgpu::TextureViewDescriptor::default()), tint_maps)
+            });
+        }
         self.settings = s;
         self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
@@ -7770,7 +7867,7 @@ impl Backend {
         }
         if targets_dirty {
             self.rebuild_targets();
-        } else if shadows_dirty || probes_dirty {
+        } else if tint_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
@@ -8337,10 +8434,16 @@ impl Backend {
             }
             // a point light's map: where its casters start (`point_shadow`)
             if let Some(light) = f.lights.get(spot.light as usize).filter(|l| l.projector.is_none()) {
+                let tint = self
+                    .point_tint
+                    .as_ref()
+                    .is_some_and(|t| k.checked_sub(self.projector_maps as usize).is_some_and(|j| j < usize::from(t.1)));
                 if let Some(p) = u.projectors.get_mut(spot.light as usize) {
                     p.params[0] = crate::projector_shadows::point_near(light.radius, light.source_radius);
+                    // its tint map, from 1 (`point_tint`)
+                    p.params[1] = if tint { (k - self.projector_maps as usize + 1) as f32 } else { 0.0 };
                 }
-                u.light_projectors[2] = 1;
+                u.light_projectors[2] = u.light_projectors[2].max(if tint { 2 } else { 1 });
             }
         }
         u
@@ -10128,6 +10231,7 @@ impl Backend {
                         anim_clock: self.anim_now,
                         // not the rain prototype's shelter map
                         kind: [0; 4],
+                        light: [0.0; 4],
                     };
                     self.queue.write_buffer(&self.probe_shadow_buffer, 0, bytemuck::bytes_of(&shadow));
                 }
@@ -10217,12 +10321,29 @@ impl Backend {
             .iter()
             .take(crate::projector_shadows::MAX_POINT_SHADOWS)
             .flat_map(|faces| faces.unwrap_or([None; crate::projector_shadows::POINT_FACES]));
+        // each point map's light, for its tint map (`fs_shadow_tint`)
+        let tint_on = self.point_tint.is_some();
+        let point_lights: [[f32; 4]; crate::projector_shadows::MAX_POINT_SHADOWS] = std::array::from_fn(|j| {
+            views
+                .get(projector_maps + j)
+                .copied()
+                .flatten()
+                .and_then(|(s, _)| f.lights.get(s.light as usize))
+                .map_or([0.0; 4], |l| [l.position.x, l.position.y, l.position.z, l.radius])
+        });
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).chain(face_views).enumerate() {
             let Some(m) = m else { continue };
+            let face = i.checked_sub(CASCADES + SPOT_SHADOWS);
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
+                kind: [
+                    u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)),
+                    u32::from(tint_on && face.is_some()),
+                    0,
+                    0,
+                ],
+                light: face.map_or([0.0; 4], |face| point_lights[face / crate::projector_shadows::POINT_FACES]),
             };
             let Some(buffer) = self.shadow_buffers.get(i) else { continue };
             self.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
@@ -11204,6 +11325,56 @@ impl Backend {
                     && i + 1 < passes.len()
                 {
                     self.shadow_merge.extract(&mut encoder, i, &merges[i]);
+                }
+            }
+            // the point lights' tint maps (`point_shadow_tint`): the same
+            // casters as each face's map, of which `fs_shadow_tint` keeps the
+            // blended texels that map leaves out; no depth test, the receiver
+            // compares with the map's own nearest blended distance
+            if let Some((tint_view, tint_maps)) = self.point_tint.as_ref().filter(|_| f.shadows) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("point light tint"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: tint_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.shadow_tint);
+                for (j, k) in (projector_maps..SPOT_SHADOWS).take(usize::from(*tint_maps)).enumerate() {
+                    let Some(faces) = point_faces[k].filter(|_| spot_vp[k].is_some()) else {
+                        continue;
+                    };
+                    for (face, seen) in faces.iter().enumerate() {
+                        if seen.is_none() {
+                            continue;
+                        }
+                        let (x, y, side) = point_tint_origin(size, j, face);
+                        pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
+                        pass.set_scissor_rect(x, y, side, side);
+                        let bind = CASCADES + SPOT_SHADOWS + j * crate::projector_shadows::POINT_FACES + face;
+                        pass.set_bind_group(3, &self.shadow_bind_groups[bind], &[]);
+                        let bin = spot_bins.faces[k][face];
+                        let (off, count) = rg.spot[bin];
+                        if count > 0 {
+                            pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                            calls.set(calls.get() + 1);
+                        }
+                        draw_bin(&mut pass, None, BIN_SPOT + bin, BIN_SPOT + bin);
+                    }
                 }
             }
         }
