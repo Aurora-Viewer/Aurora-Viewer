@@ -7736,6 +7736,11 @@ fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
 /// child prims) on bones all over the body, so every worn prim follows its
 /// animated bone each frame. With `rigged` (AURORA_DEMO_ANIMESH, whose mesh
 /// and skin are installed), each also wears the rigged demo mesh.
+/// The id of the `k`-th avatar of the crowd ("Foule<k> Resident").
+pub const fn crowd_avatar(k: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128)
+}
+
 pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
@@ -7758,7 +7763,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
             "",
         );
         a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128);
+        a.full_id = crowd_avatar(k);
         a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
         anims.push(NetEvent::AvatarAnimations {
             avatar: a.full_id,
