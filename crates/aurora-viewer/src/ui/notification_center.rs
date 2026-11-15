@@ -493,7 +493,8 @@ fn rolled_out(
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
+    // ToastGap, as between the Legacy toasts
+    ui.spacing_mut().item_spacing.y = env.toast_gap;
     let (shown, behind) = visible(&nui.center);
     // newest on top
     for peek in shown.iter().rev() {
@@ -852,7 +853,7 @@ fn presence_toasts(
         .collect();
     let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
     let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
-    let rects = presence::stack(room, env.presence_at, &only, &avoid);
+    let rects = presence::stack(room, env.presence_at, &only, &avoid, env.toast_gap);
     let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
         return;
     };
