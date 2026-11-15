@@ -1068,15 +1068,19 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_DIRECTOR=1|play|lock`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
-  in the log). With `1` and a capture at frame 700: the window on the right
-  (Camera, Lock, Keyframe 3, Path, Playback, Picture, Environment folded),
+  in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  thousand frames a second and frame 700 is still under the loading fade.
+  With `1` and a capture at frame 900: the window on the right (Camera,
+  Lock, Keyframe 3 and Path open, Playback, Picture and Environment folded,
+  the body scrolling when the viewer's window is short),
   the timeline strip above the bottom bar with four diamonds, the third
   violet, the playhead on it and the camera's speed written on each segment
   (`m/s`); in the world the turquoise path through four small cameras
   numbered 1 to 4, each pointing at the avatar, a dot each second, the
   selected camera violet with its two Bézier handles. `play` plays the
   track at once without a start delay (`director: playing 4 keyframes`):
-  the capture shows the world alone, no bar, window, name tag or HUD; the
+  captures at frames 800 and 1000 show the world alone from two places of
+  the path, no bar, window, name tag or HUD; the
   log says `director: playback ended at 9.0 s` once the last view has been
   held a second, and the interface is back. `lock` turns the lock on, on our
   avatar's neck (`director demo: view locked on our avatar's neck`): the

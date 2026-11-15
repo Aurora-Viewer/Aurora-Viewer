@@ -30,6 +30,11 @@ pub const WINDOW: &str = "director";
 const WIDTH: f32 = 340.0;
 const LABEL_W: f32 = 112.0;
 const SLIDER_W: f32 = 120.0;
+/// What the window keeps clear of the room the bars leave: its own title
+/// and margins, the timeline strip under it, and a little air.
+const WINDOW_MARGIN: f32 = 230.0;
+/// The body is never shorter than this, however small the viewer's window.
+const WINDOW_MIN_BODY: f32 = 220.0;
 /// The view angle's slider, degrees (within `camera::FOV_RANGE`).
 const LENS_DEGREES: RangeInclusive<f32> = 10.0..=170.0;
 const ROLL_DEGREES: RangeInclusive<f32> = -180.0..=180.0;
@@ -123,10 +128,17 @@ fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egu
     .inner
 }
 
+/// An angle in radians as the sliders show it, in whole degrees: under
+/// half a degree it is 0, never the "-0°" a rounding leaves on a level view.
+fn shown_degrees(radians: f32) -> f32 {
+    let degrees = radians.to_degrees();
+    if degrees.abs() < 0.5 { 0.0 } else { degrees }
+}
+
 /// A slider of an angle kept in radians and shown in degrees: the new angle
 /// when it moved.
 fn degrees(ui: &mut egui::Ui, value: f32, range: RangeInclusive<f32>, fill: bool) -> Option<f32> {
-    let mut shown = value.to_degrees().clamp(*range.start(), *range.end());
+    let mut shown = shown_degrees(value).clamp(*range.start(), *range.end());
     ui.spacing_mut().slider_width = SLIDER_W;
     let slider = egui::Slider::new(&mut shown, range)
         .custom_parser(aurora_i18n::parse_number)
@@ -147,53 +159,70 @@ fn clock(seconds: f32, tenths: bool) -> String {
     }
 }
 
-/// The window: the camera, the selected keyframe, the path, the playback and
-/// the environment.
+/// The window: the camera, the lock, the selected keyframe, the path, the
+/// playback, the picture and the environment, each a section that folds
+/// (the first four open at first), in a body that scrolls when the room
+/// the bars leave is too short for them all.
 pub fn window(ctx: &egui::Context, p: &Palette, open: &mut bool, d: &mut Director, live: &Live, env: Env<'_>, actions: &mut Vec<Action>) {
     if !*open {
         return;
     }
     let screen = ctx.content_rect();
     let pos = egui::pos2(screen.right() - WIDTH - 24.0, screen.top() + 90.0);
+    let room = (super::layout::work_area(ctx).height() - WINDOW_MARGIN).max(WINDOW_MIN_BODY);
     Floater::new(WINDOW, aurora_i18n::tr!("director-title"), pos, Vec2::new(WIDTH, 560.0))
         .auto_height()
         .show(ctx, p, open, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-            camera_section(ui, p, live, actions);
-            widgets::divider(ui, p);
-            lock_section(ui, p, d, live, actions);
-            widgets::divider(ui, p);
-            keyframe_section(ui, p, d, actions);
-            widgets::divider(ui, p);
-            path_section(ui, p, d);
-            widgets::divider(ui, p);
-            playback_section(ui, p, d);
-            widgets::divider(ui, p);
-            picture_section(ui, p, d);
-            widgets::divider(ui, p);
-            let Env {
-                ui: lists,
-                view,
-                loading,
-                time_of_day,
-                lighting,
-                out,
-            } = env;
-            widgets::collapsing(
-                ui,
-                p,
-                "director_environment",
-                aurora_i18n::tr!("director-environment"),
-                false,
-                |ui| {
-                    lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
-                },
-            );
+            egui::ScrollArea::vertical()
+                .max_height(room)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
+                        camera_section(ui, p, live, actions);
+                    });
+                    widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
+                        lock_section(ui, p, d, live, actions);
+                    });
+                    let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
+                        Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
+                        None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
+                    };
+                    widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
+                        keyframe_section(ui, p, d, actions);
+                    });
+                    widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
+                        path_section(ui, p, d);
+                    });
+                    widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
+                        playback_section(ui, p, d);
+                    });
+                    widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
+                        picture_section(ui, p, d);
+                    });
+                    let Env {
+                        ui: lists,
+                        view,
+                        loading,
+                        time_of_day,
+                        lighting,
+                        out,
+                    } = env;
+                    widgets::collapsing(
+                        ui,
+                        p,
+                        "director_environment",
+                        aurora_i18n::tr!("director-environment"),
+                        false,
+                        |ui| {
+                            lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
+                        },
+                    );
+                });
         });
 }
 
 fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec<Action>) {
-    widgets::section_header(ui, p, "video-filled", aurora_i18n::tr!("director-camera"));
     row(ui, p, aurora_i18n::tr!("director-lens"), |ui| {
         ui.add_enabled_ui(!live.lens_locked, |ui| {
             if let Some(fov) = degrees(ui, live.fov, LENS_DEGREES, true) {
@@ -256,7 +285,6 @@ fn format_label(format: Format) -> String {
 /// The lock of the view on a target: live on the user's own camera, with
 /// no keyframe needed, and kept by the keyframes taken meanwhile.
 fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, actions: &mut Vec<Action>) {
-    widgets::section_header(ui, p, "focus-centered", aurora_i18n::tr!("director-lock"));
     ui.add_enabled_ui(!live.restricted, |ui| {
         widgets::switch_labeled(ui, p, &mut d.lock.on, aurora_i18n::tr!("director-lock-on"))
             .on_hover_text(aurora_i18n::tr!("director-lock-on-tip"));
@@ -330,7 +358,6 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
 
 /// The picture's proportions and the guides drawn over it.
 fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
-    widgets::section_header(ui, p, "movie", aurora_i18n::tr!("director-picture"));
     row(ui, p, aurora_i18n::tr!("director-format"), |ui| {
         egui::ComboBox::from_id_salt("director_format")
             .selected_text(format_label(d.format))
@@ -347,11 +374,9 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
 
 fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &mut Vec<Action>) {
     let Some((index, key)) = d.selected.and_then(|i| d.track.keys().get(i).map(|key| (i, *key))) else {
-        widgets::section_header(ui, p, "keyframe-filled", aurora_i18n::tr!("director-keyframe-title"));
         ui.label(RichText::new(aurora_i18n::tr!("director-keyframe-none")).size(12.0).color(p.muted));
         return;
     };
-    widgets::section_header(ui, p, "keyframe-filled", &aurora_i18n::tr!("director-keyframe", number = index + 1));
     row(ui, p, aurora_i18n::tr!("director-key-time"), |ui| {
         // the first keyframe is where the track starts: always 0
         let mut time = key.time;
@@ -479,7 +504,6 @@ fn span_rows(ui: &mut egui::Ui, p: &Palette, d: &mut Director, index: usize) {
 }
 
 fn path_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
-    widgets::section_header(ui, p, "route", aurora_i18n::tr!("director-path"));
     row(ui, p, aurora_i18n::tr!("director-duration"), |ui| {
         let mut seconds = d.track.duration();
         let field = egui::DragValue::new(&mut seconds)
@@ -545,7 +569,6 @@ fn path_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
 }
 
 fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
-    widgets::section_header(ui, p, "player-play-filled", aurora_i18n::tr!("director-playback"));
     row(ui, p, aurora_i18n::tr!("director-start-delay"), |ui| {
         ui.spacing_mut().slider_width = SLIDER_W;
         let slider = egui::Slider::new(&mut d.start_delay, director::START_DELAY_RANGE)
@@ -1284,6 +1307,14 @@ mod tests {
             bench.ctx.memory(|m| m.area_rect(Id::unique("director_countdown"))).is_some(),
             "the start delay counts down"
         );
+    }
+
+    #[test]
+    fn a_level_view_shows_zero_degrees() {
+        assert_eq!(shown_degrees(-1e-7).to_bits(), 0.0f32.to_bits(), "no -0°");
+        assert_eq!(shown_degrees(0.004), 0.0);
+        assert!((shown_degrees(-0.5) + 28.65).abs() < 0.01);
+        assert!((shown_degrees(1.0) - 57.3).abs() < 0.01);
     }
 
     #[test]
