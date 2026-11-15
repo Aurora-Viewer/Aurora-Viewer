@@ -310,9 +310,14 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     if contents_selection::shortcuts(ctx, tool, world) {
         return;
     }
-    if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
+    // A focused text field keeps Ctrl+Z / Ctrl+Y (LLLineEditor). A button
+    // or list that has the keyboard is not typing: those keys undo the
+    // object, as a press in the world would after
+    // LLTool::handleAnyMouseClick cleared the keyboard.
+    if ctx.text_edit_focused() || egui::Popup::is_any_open(ctx) {
         return;
     }
+    let wants_keyboard = ctx.egui_wants_keyboard_input();
     if tool.replacement_active() {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             tool.cancel_replacement(world);
@@ -340,6 +345,9 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
             if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
+                continue;
+            }
+            if wants_keyboard && !matches!(command, Shortcut::History(_)) {
                 continue;
             }
             if !repeat || matches!(command, Shortcut::History(_)) {

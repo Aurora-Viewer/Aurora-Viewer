@@ -1082,6 +1082,36 @@ fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_
     }
 }
 
+#[test]
+fn object_history_runs_while_a_button_keeps_the_keyboard() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let frame = |world: &mut World, tool: &mut BuildTool, settings: &mut BuildSettings, events: Vec<egui::Event>| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::super::shortcuts(ui.ctx(), tool, world, settings);
+                ui.button("focus").request_focus();
+            },
+        );
+        output.textures_delta.clear();
+    };
+    frame(&mut world, &mut tool, &mut settings, vec![]);
+    frame(&mut world, &mut tool, &mut settings, vec![]);
+    tool.out.clear();
+    frame(&mut world, &mut tool, &mut settings, vec![history_key(egui::Key::Z, false, false)]);
+    assert!(
+        tool.out
+            .iter()
+            .any(|cmd| matches!(cmd, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { .. }))),
+        "a focused button leaves Ctrl+Z to the object: {:?}",
+        tool.out
+    );
+}
+
 fn text_shapes(shape: &egui::Shape, result: &mut Vec<(String, egui::Rect)>) {
     match shape {
         egui::Shape::Text(text) => result.push((text.galley.job.text.clone(), text.galley.rect.translate(text.pos.to_vec2()))),
