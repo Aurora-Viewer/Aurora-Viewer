@@ -184,6 +184,10 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+#[path = "demo_muted_chat.rs"]
+pub mod muted_chat;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -1490,6 +1494,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
         beyond_range: false,
     };
     match view {
@@ -1728,6 +1733,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             kind,
             source,
             origin: Origin::Live,
+            blocked: false,
             beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
@@ -1750,6 +1756,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             kind: crate::world::ChatKind::Im,
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
+            blocked: false,
             beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
@@ -1912,6 +1919,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
         beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
