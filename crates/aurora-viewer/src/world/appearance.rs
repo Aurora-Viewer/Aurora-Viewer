@@ -549,9 +549,21 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     // the rewritten COF drops its broken links
     warn_broken(inv, cof);
     let mut current = usable_links(inv, cof);
+    // An object that arrived worn is linked a moment later
+    // (`update_attachment_inventory`: never while an outfit change is pending,
+    // at most every few seconds). Every action that keeps the current outfit
+    // keeps it too, as LLAppearanceMgr::updateAppearanceFromCOF keeps the
+    // attachments of LLAttachmentsMgr::getPendingAttachments
+    // (indra/newview/llappearancemgr.cpp): without it, adding a folder right
+    // after a wear took the objects of that wear off again.
     if matches!(
         action,
         Action::Add(_)
+            | Action::Wear(_, true)
+            | Action::WearContents {
+                mode: WearMode::Append | WearMode::ReplaceItems,
+                ..
+            }
             | Action::WearItem { .. }
             | Action::WearItems { .. }
             | Action::Force { .. }
@@ -2019,6 +2031,37 @@ mod tests {
             );
         }
         assert!(change.links.iter().any(|link| link.folder && Some(link.target) == base(&inv)));
+    }
+
+    #[test]
+    fn adding_a_folder_keeps_objects_worn_before_their_link() {
+        // The Avatar Welcome Pack wears a body (head, mesh body), then adds a
+        // look a second later: the body's objects are worn but not linked yet.
+        let mut inv = fixture();
+        let mut head = inv.items[&Uuid::from_u128(723)].clone();
+        head.id = Uuid::from_u128(724);
+        inv.add_items(vec![head]);
+        let worn = HashMap::from([(Uuid::from_u128(724), 5)]);
+        let outfit = Uuid::from_u128(703);
+        let contents = |mode| Action::WearContents { folder: outfit, mode };
+        for action in [
+            Action::Wear(outfit, true),
+            contents(WearMode::Append),
+            contents(WearMode::ReplaceItems),
+        ] {
+            let (change, _) = plan(&inv, action.clone(), &worn).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(
+                change.links.iter().any(|link| link.target == Uuid::from_u128(724)),
+                "{action:?} keeps the worn object"
+            );
+        }
+        for action in [Action::Wear(outfit, false), contents(WearMode::ReplaceOutfit)] {
+            let (change, _) = plan(&inv, action.clone(), &worn).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(
+                !change.links.iter().any(|link| link.target == Uuid::from_u128(724)),
+                "{action:?} replaces the outfit"
+            );
+        }
     }
 
     #[test]
