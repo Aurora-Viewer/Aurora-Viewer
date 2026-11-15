@@ -1821,6 +1821,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
+| `AURORA_DEMO_BUILD_OPTIONS=hidden,light,probes,locked,copyable,no-group` | Build › Options switched from the start |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
@@ -1839,7 +1840,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_OBJECT_EXPORT=collada\|obj` | Object › Save as › Collada / OBJ on a linked lamp, its rights and texture files |
 | `AURORA_DEMO_OBJECT_EXPORT_FILE=<path>` | With the above: Save as writes that file without the file dialog |
 
-**Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
+**Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. `guides` adds a light prim and turns on Bounding boxes for lights, Region corners and Chat range spheres: look for the white bounds and the yellow radius box of the light, the whisper, say and shout rings around the avatar (hidden by the ground and objects in front of them), and the labelled amber beacons of the region's far corners. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
 **Rendering types details.** `AURORA_DEMO_RENDER_TYPES` takes the kinds to hide, separated by commas: `terrain`, `water`, `sky`, `clouds`, `objects`, `avatars`, `animesh`, `trees`, `grass`, `particles` (unknown words are left aside). With `AURORA_DEMO_BARS=hidden` and a capture at frame 900: `objects` leaves the avatar on the bare terrain, the plaza's shadows gone; `avatars,animesh` leaves the name tag over an empty spot; `terrain,water` shows the sky under the plaza; `terrain,water,sky` a flat clear colour instead of the sky's gradient. Then open Advanced › Rendering types: the ticks match, and ticking back draws the kind at once. The grid check compares Develop › Rendering Types of the Legacy Viewer in a busy region (Avatars hides worn objects too; Animesh, Trees and Grass apart).
 
@@ -1869,6 +1870,8 @@ falls back, and `inject` also presses Inject at frame 760 (the window shows
 #Aurora). Look for the preview on the prim, the greyed fields (end colour and
 scale follow the interpolation flags, angles the pattern) and, with `1`, the
 prim's own particles hidden while the editor is open.
+
+`AURORA_DEMO_BUILD_OPTIONS` turns on Build › Options entries from the start: `hidden` (Show hidden selection: the far edges of the selection outline, fainter), `light` (Show light radius for selection: three circles of the selected light's radius, in its colour), `probes` (Show reflection probe volumes: the box or sphere of every probe of the plaza, in teal), `locked` and `copyable` (the selection filters), `no-group` (Include group-owned objects off). With `AURORA_DEMO_BUILD=move,object:108` the teal lamp on a pillar of the plaza is selected and the camera looks at it from frame 700: look for its radius circles and the far edges of its outline; add `AURORA_DEMO_PROBES=1` for probes to outline. `AURORA_DEMO_MENU_SEARCH=` a word of an entry (`only`, `show`) lists the entries in the wolf menu's search.
 
 `AURORA_DEMO_BUILD=physics,object:99621` selects an encoded ring mesh with a
 separate triangular collision surface. `physics-analysed` uses two convex
@@ -3666,6 +3669,7 @@ To check with these scenarios:
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
+| `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
 | `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
@@ -4414,6 +4418,16 @@ tests do not establish that this report uses an invalid joint or index.
   contain "avatar … (own) shown after 1.0 s", then the time each part
   completed. Screenshots with `AURORA_FPS_LIMIT=60` and
   `AURORA_CAPTURE_FRAMES=240,1200`: the avatar is already shown at 240.
+- **`AURORA_DEMO_SHAPE_MORPH=1`**: from frame 600, every 200 frames, the
+  Wolf and the avatars of `AURORA_DEMO_CROWD` take the other of two shapes,
+  tall and thin, then short and broad. The first one lands at once (a first
+  appearance); each one after it glides over 0.65 s as in the Legacy
+  Viewer: a little back first, past the new shape, then settling. Use
+  `AURORA_DEMO_CROWD=20 AURORA_DEMO_POS=150,127` to face the crowd; a
+  capture 12 frames after a change (`AURORA_CAPTURE_FRAMES=812` at 60 fps)
+  shows the bodies between the two shapes. With `AURORA_PROFILE=1`, the
+  seconds of a glide show it in `poses` and `sync` (about 0.1 ms per
+  avatar).
 - **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
   avatars, the system body with a skin bake whose alpha is soft in a band
   at the waist and cut by a row of holes (an alpha layer), and a hair bake
@@ -10774,6 +10788,11 @@ separate searches enabled and disabled; that preference controls only the text.
   after frame 740. Any added item must be saved before it is opened.
   Landmarks are fetched into the inventory before their place is opened,
   as in Firestorm; a landmark already present for the same asset is reused.
+- `note-rez`: the notecard of `note-embedded`; its object is dragged out
+  of the text from frame 650 and released over the world at frame 680. A
+  new box appears where the pointer let go (RezObjectFromNotecard, the
+  offline simulator rezzes it like any inventory object); the notecard stays
+  open and unchanged. Capture after frame 760.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
   Capture at frame 2250 to inspect the saved message in both the editor and

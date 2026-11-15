@@ -2857,7 +2857,7 @@ impl App {
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
                     ),
                     7 => crate::world::inventory::demo::note_asset(
-                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "note-embedded" | "note-image" | "note-landmark" | "note-copy" | "note-menu-right")),
+                        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "note-embedded" | "note-image" | "note-landmark" | "note-copy" | "note-menu-right" | "note-rez")),
                     ),
                     _ => aurora_i18n::tr!("app-demo-content", value0 = it.name.to_string()).into_bytes(),
                 });
@@ -7539,6 +7539,9 @@ impl App {
                 self.world.apply(NetEvent::ObjectsKilled { handle, local_ids });
             }
             self.world.apply(crate::demo::beacons::events());
+            if mode == "guides" {
+                self.world.apply(crate::demo::beacons::guide_events());
+            }
             if mode == "parcels" {
                 for event in crate::demo::beacons::overlay_events() {
                     self.world.apply(event);
@@ -10079,6 +10082,12 @@ impl App {
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
+            // AURORA_DEMO_SHAPE_MORPH: the Wolf and the crowd change shape
+            for ev in crate::demo::shape_morph::tick(self.frame_count, &self.world.avatar_lib.shape_params) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
             // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
             if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
@@ -11187,6 +11196,10 @@ impl App {
             self.scene.held_at = hold.map(|h| h.at);
             if studio_view.is_some() {
                 self.scene.fov_y = render_fov;
+            }
+            // other avatars' shapes gliding to a new appearance
+            if self.world.shape_tweens.active() {
+                self.world.shape_tweens.step(Instant::now());
             }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
@@ -14332,6 +14345,20 @@ impl App {
         if self.demo
             && let Ok(v) = std::env::var("AURORA_DEMO_BUILD")
         {
+            // AURORA_DEMO_BUILD_OPTIONS: the camera looks at the selected
+            // object from 12 m once the script selected it
+            if self.frame_count == 700
+                && std::env::var_os("AURORA_DEMO_BUILD_OPTIONS").is_some()
+                && let Some(idx) = crate::build::demo::target_index(&v, &self.world)
+                && let Some((center, _, false)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            {
+                self.camera.set_view(
+                    center + Vec3::new(-7.0, -7.0, 6.0),
+                    center,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             for step in crate::build::demo::steps(&v, self.frame_count, &self.build, &self.world, &self.settings.build) {
                 match step {
                     crate::build::demo::Step::Open(t, m, land) => {
@@ -15313,6 +15340,10 @@ impl App {
             }
             BarAction::EditParticles => self.open_particle_editor(),
             BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
+            BarAction::BuildOptions(options) => {
+                options.apply(&mut self.settings.build);
+                self.settings.save();
+            }
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -17291,6 +17322,7 @@ impl App {
                     [self.settings.sun_beacon, self.settings.moon_beacon],
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
+                ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
@@ -17474,6 +17506,7 @@ impl App {
                         .unwrap_or_default(),
                     edit_particles: self.particle_editor_target().is_some(),
                     save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
+                    build_options: crate::build::MenuOptions::of(&self.settings.build),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -17953,6 +17986,8 @@ impl App {
                     }
                     self.build
                         .draw_overlay(&ctx, &self.palette, &self.world, &self.scene, &self.settings.build, mods);
+                    self.build
+                        .draw_probe_volumes(&ctx, &self.palette, &self.world, &self.settings.build);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
@@ -20552,6 +20587,9 @@ impl ApplicationHandler for App {
                     sound: true,
                     particles: true,
                     media: true,
+                    light_boxes: mode == "guides",
+                    region_corners: mode == "guides",
+                    chat_spheres: mode == "guides",
                     ..Default::default()
                 };
                 self.settings.world_overlays.property_lines = mode == "parcels";
@@ -20565,6 +20603,22 @@ impl ApplicationHandler for App {
                 if mode == "owned" {
                     self.panels.owned_land = true;
                     self.world.group_money.request_owned_land();
+                }
+            }
+            // AURORA_DEMO_BUILD_OPTIONS=hidden,light,probes,locked,copyable,
+            // no-group: Build › Options switched from the start
+            if let Ok(list) = std::env::var("AURORA_DEMO_BUILD_OPTIONS") {
+                let b = &mut self.settings.build;
+                for option in list.split(',').map(str::trim) {
+                    match option {
+                        "hidden" => b.show_hidden_selection = true,
+                        "light" => b.show_light_radius = true,
+                        "probes" => b.show_probe_volumes = true,
+                        "locked" => b.select_locked_only = true,
+                        "copyable" => b.select_copyable_only = true,
+                        "no-group" => b.select_group_owned = false,
+                        _ => {}
+                    }
                 }
             }
             // AURORA_DEMO_RENDER_TYPES=water,avatars,…: those rendering
