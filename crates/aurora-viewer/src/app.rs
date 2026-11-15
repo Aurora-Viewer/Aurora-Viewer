@@ -58,6 +58,7 @@ mod color_picker;
 mod contents_copy;
 mod context_menu;
 mod controls;
+mod conversation_log;
 mod crash_state;
 mod cursor_hold;
 mod derender;
@@ -909,6 +910,8 @@ pub struct App {
     grid_status: crate::grid_status::GridStatus,
     grid_status_listed: bool,
     grid_status_was_open: bool,
+    /// The conversation log's window (`app/conversation_log.rs`).
+    conversation_log_ui: ui::conversation_log::ConversationLogUi,
     about: about::About,
     /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
     uninstall: uninstall::Uninstall,
@@ -1981,6 +1984,7 @@ impl App {
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
+            conversation_log_ui: Default::default(),
             about: Default::default(),
             uninstall: Default::default(),
             stream_titles: Default::default(),
@@ -3108,6 +3112,7 @@ impl App {
             // the demo never reads the PC's real Legacy Viewer folders: its
             // import scenario starts its own import on its own files
             import_at_login: s.log_import_at_login && !self.demo,
+            log_conversations: s.log_conversations,
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
@@ -3427,6 +3432,8 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
+        // and the conversation log's filter and selection
+        self.conversation_log_ui = Default::default();
         self.chat_import_closed();
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
@@ -6986,7 +6993,9 @@ impl App {
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
+        // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
+        self.world.chat_log.save_conversations(true);
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
@@ -9248,6 +9257,7 @@ impl App {
         wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
+        wanted.extend(self.conversation_log_ui.wanted_pics.drain());
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -9302,6 +9312,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.conversation_log_ui.wanted_images.drain());
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
@@ -16963,6 +16974,7 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
@@ -17140,6 +17152,9 @@ impl App {
         }
         if let Some(folders) = res.import_legacy_logs.take() {
             self.chat_import_start(folders);
+        }
+        if res.clear_conversation_log {
+            self.world.chat_log.clear_conversations();
         }
         if res.erase_chat_logs {
             self.options_ui.chat_log_status = if self.world.chat_log.busy() {
@@ -19041,6 +19056,9 @@ impl App {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }
                         ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
+                        ui::people::PeopleAction::ConversationLog => {
+                            ui::widgets::toggle_floater(&ctx, ui::conversation_log::WINDOW, &mut self.panels.conversation_log)
+                        }
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
                             if let Err(e) = self.world.block(uuid::Uuid::nil(), &name, crate::world::mutes::MuteType::ByName) {
@@ -19675,6 +19693,7 @@ impl App {
                     &mut self.settings,
                     &mut self.panels.omnifilter,
                 );
+                self.conversation_log_window(&ctx, &p);
                 self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
                     &ctx,
@@ -22317,6 +22336,8 @@ impl ApplicationHandler for App {
                         | "filters"
                         | "preferences"
                         | "recent"
+                        | "recent-date"
+                        | "aurora-recent-date"
                         | "worn"
                         | "filtered"
                         | "large"
@@ -22500,6 +22521,45 @@ impl ApplicationHandler for App {
                     }
                     if view == "recent" {
                         self.inventory_ui.tab = 2;
+                    }
+                    if matches!(view.as_str(), "recent-date" | "aurora-recent-date") {
+                        // The Recent tab under a Date rule of the advanced
+                        // search. The filter items are dated a day apart
+                        // (seed_view: an hour apart): since the last logout
+                        // (a day, on a first launch) lists two of them, the
+                        // rule "newer than 5 days" six.
+                        use ui::inventory::smart::{Field, Group, Node, Rule, SmartQuery};
+                        use ui::inventory::view::{Age, SearchField};
+                        let time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs() as i64);
+                        let parent = uuid::Uuid::from_u128(8000);
+                        for it in self
+                            .world
+                            .inventory
+                            .items
+                            .values_mut()
+                            .filter(|it| it.parent == parent && it.id.as_u128() >= 8100 && !matches!(it.asset_type, 24 | 25))
+                        {
+                            it.created_at = time - (it.id.as_u128() as i64 - 8100) * 86_400;
+                        }
+                        self.world.inventory.generation += 1;
+                        self.inventory_ui.tab = 2;
+                        self.inventory_ui.enter_advanced(SearchField::Name);
+                        if let Some(query) = self.inventory_ui.smart_query() {
+                            *query = SmartQuery {
+                                root: Group {
+                                    nodes: vec![Node::Rule(Rule {
+                                        age: Age::Newer,
+                                        hours: 5 * 24,
+                                        ..Rule::of(Field::Date)
+                                    })],
+                                    ..Group::default()
+                                },
+                            };
+                        }
+                        // the classic layout edits the rules in the Filters floater
+                        self.inventory_ui.filters_open = view == "recent-date";
                     }
                     if view.ends_with("received-sort") || view.ends_with("received-sort-name") {
                         crate::world::inventory::demo::seed_received_sort(&mut self.world.inventory, self.world.agent_id);

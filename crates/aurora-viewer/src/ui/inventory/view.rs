@@ -819,9 +819,13 @@ impl ViewCache {
             within(inv, &favorites)
         };
         // Advanced search: patterns and creator names resolved once, then
-        // shared by the parallel walk. Its Date rules keep their own clock;
-        // the Recent tab still limits to since logout.
+        // shared by the parallel walk. Its Date rules keep their own clock.
+        // The Recent tab keeps its since-logout limit under rules on other
+        // fields; a Date rule replaces it, as the finder's hours ago replace
+        // "Since Logoff" on the Recent Items panel
+        // (LLInventoryFilter::setHoursAgo resets the date range).
         let recent = recent_cutoff(prefs, time);
+        let recent_limit = tab == 2 && !smart.is_some_and(|q| q.uses(SmartField::Date));
         let matcher = smart.map(|q| Matcher::new(q, &query.names, recent, time));
         let folder_names: HashMap<Uuid, &str> = if smart.is_some_and(|q| q.uses(SmartField::Folder)) {
             self.entries.iter().filter(|e| e.folder).map(|e| (e.id, e.name.as_str())).collect()
@@ -896,7 +900,7 @@ impl ViewCache {
                     }
                     let original_id = rules::original(inv, e.id).unwrap_or(e.id);
                     let original = inv.items.get(&original_id).unwrap_or(it);
-                    if tab == 2 && (e.date <= 0 || e.date < recent) {
+                    if recent_limit && (e.date <= 0 || e.date < recent) {
                         return false;
                     }
                     if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
@@ -1936,6 +1940,43 @@ mod tests {
         let (inv, facts) = fixture();
         let hour = InventoryPreferences { recent_hours: 1, ..week };
         assert_eq!(search(&inv, &facts, &hour, &Filters::default(), 2), [id(11), id(10)]);
+    }
+
+    /// A date filter set on the Recent tab replaces its since-logout limit,
+    /// as the finder's hours ago replace "Since Logoff" on the Recent Items
+    /// panel (LLInventoryFilter::setHoursAgo resets the date range): in the
+    /// quick filters and as a Date rule of the advanced search.
+    #[test]
+    fn a_date_filter_on_the_recent_tab_replaces_the_since_logout_limit() {
+        use super::super::smart::{Field, Node, Rule};
+        let (inv, facts) = fixture();
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        assert_eq!(search(&inv, &facts, &prefs, &Filters::default(), 2), [id(11)], "since logout alone");
+        let quick = Filters {
+            age: Age::Newer,
+            hours: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            search(&inv, &facts, &prefs, &quick, 2),
+            [id(11), id(10)],
+            "quick filter: the last hour"
+        );
+        let mut rule = Rule::of(Field::Date);
+        rule.age = Age::Newer;
+        rule.hours = 1;
+        assert_eq!(
+            search(&inv, &facts, &prefs, &smart(vec![Node::Rule(rule)], false), 2),
+            [id(11), id(10)],
+            "advanced search: the same Date rule"
+        );
+        // a rule on another field keeps the Recent tab's limit
+        let mut types = Rule::of(Field::Type);
+        types.bits = 1 << 6;
+        assert_eq!(search(&inv, &facts, &prefs, &smart(vec![Node::Rule(types)], false), 2), [id(11)]);
     }
 
     #[test]

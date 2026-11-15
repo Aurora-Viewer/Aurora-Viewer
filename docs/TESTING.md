@@ -6211,6 +6211,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 | `AURORA_DEMO_GRID_STATUS=open\|new\|none\|error` | Help › Grid status: the grid's incidents, and its toolbar button's flash |
+| `AURORA_DEMO_CONVERSATION_LOG=open\|name\|filter\|off\|empty\|live` | The conversation log window with demo conversations |
 
 ### Details
 
@@ -9888,6 +9889,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   where the incident is first and marked "New". `none`: a grid without a
   feed ("This grid does not publish its status."); `error`: a feed that
   cannot be read ("The grid status could not be loaded." and the reason).
+- **`AURORA_DEMO_CONVERSATION_LOG=open|name|filter|off|empty|live`** (`1`
+  is `open`): the conversation log filled at frame 590 from memory (no file
+  is read or written) with the demo's residents and groups, then its window
+  opened at frame 600 (capture at frame 640). `open`: by date with friends
+  first (the defaults): the demo friend first, then Nova Example two hours
+  ago with the violet inbox mark of unread offline messages, a group, a
+  resident, a conference and older entries; Loup Example, blocked in the
+  demo, stays hidden until the view menu's Show blocked. `name`: sorted by
+  name.
+  `filter`: "no" typed in the filter, the matching letters in violet.
+  `off`: logging turned off, the entries still listed. `empty`: logging on
+  and nothing from before: only the demo's open group chat, logged as it
+  opens. `live`: an
+  empty log; at frame 600 a message Nova Example sent while we were
+  offline opens a conversation, which the log lists at once with its
+  inbox mark (the log says `conversation log demo: … entries`).
 
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
@@ -10757,6 +10774,15 @@ separate searches enabled and disabled; that preference controls only the text.
   All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
   "Quick search" in the search options) brings quick search back with its
   text. The demo keeps saved searches in memory only.
+- `recent-date`, `aurora-recent-date`: the Recent tab in advanced mode
+  under the Date rule "newer than 5 days", the filter items dated a day
+  apart: six of them are listed, where the tab alone (since the last
+  logout, a day on a first launch) lists two. The rule replaces the tab's
+  limit, as the finder's hours ago replace "Since Logoff" on the Recent
+  Items panel of the Legacy Viewer; a rule on another field keeps it.
+  `recent-date` shows the classic window with the rule builder open in
+  the Filters floater, `aurora-recent-date` Aurora's narrow window with
+  its chip bar.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
