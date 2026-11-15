@@ -1208,6 +1208,30 @@ impl App {
             .get_or_insert_with(|| LutLibrary::new(crate::settings::config_dir().join("photo-luts")))
     }
 
+    /// A single colour table over the full world viewport.
+    pub(super) fn world_lut_look(&mut self, size: (u32, u32)) -> Option<aurora_render::looks::PhotoLook> {
+        let strength = self.settings.world_lut_strength;
+        if strength == 0 || self.settings.world_lut.is_empty() {
+            return None;
+        }
+        let id = self.settings.world_lut.clone();
+        let library = self.photo_luts();
+        if let Some(file) = id.strip_prefix(looks::LUT) {
+            if !library.names().iter().any(|name| name == file) {
+                return None;
+            }
+        } else if !id.starts_with(looks::PACK) {
+            return None;
+        }
+        let lut = looks::resolve(&id, &looks::Settings::new(), library)?;
+        let place = Placement {
+            origin: [0.0, 0.0],
+            photo: size,
+            scale: 1.0,
+        };
+        looks::frame_look(&[(lut, strength)], place, None, false, None)
+    }
+
     /// The look of the live view (`snapshot::looks`) while the photo
     /// window is open: the filter pointed at in a list, or the one chosen,
     /// over the photo's frame of the `window` (pixels; `ui::snapshot::fit`),
