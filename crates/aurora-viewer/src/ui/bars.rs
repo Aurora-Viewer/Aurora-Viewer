@@ -163,6 +163,9 @@ pub enum BarAction {
     /// World › Environment › New sky / water / day cycle (World.EnvPreset
     /// new_sky, new_water, new_day_cycle).
     NewEnvironment(crate::world::env_select::SettingsKind),
+    /// World › Environment › Aurora Weather: its window (testers looked
+    /// for the weather there, beside Personal lighting).
+    AuroraWeather,
     /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
@@ -1334,6 +1337,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
             if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
                 panels.personal_lighting = true;
+            }
+            // Aurora's own: the weather beside the lighting it rides on
+            if menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather")) {
+                *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
             menu::separator(ui, p);
