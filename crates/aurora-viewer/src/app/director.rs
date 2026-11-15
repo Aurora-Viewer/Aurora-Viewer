@@ -104,6 +104,8 @@ pub(super) struct DirectorState {
     /// and Ctrl+Y are its own.
     keys: bool,
     demo_done: bool,
+    /// The demo's film waits for the ffmpeg found to answer.
+    demo_record: bool,
 }
 
 impl App {
@@ -875,7 +877,11 @@ impl App {
     /// live and at the two middle keyframes, in a 2.39:1 frame with the
     /// rule of thirds; `green` shows our avatar alone on a green screen.
     fn director_demo(&mut self) {
-        if !self.demo || self.director.demo_done {
+        if !self.demo {
+            return;
+        }
+        if self.director.demo_done {
+            self.director_demo_record();
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_DIRECTOR") else {
@@ -919,7 +925,8 @@ impl App {
             log::info!("director demo: view locked on our avatar's neck, 2.39:1");
         }
         if mode.starts_with("record") {
-            // a second of film, into AURORA_DEMO_DIRECTOR_FILM as raw frames
+            // a second of film, through the ffmpeg found or, with
+            // AURORA_DEMO_DIRECTOR_FILM, as raw frames
             self.director.d.track.set_duration(1.0);
             self.director.d.time = 0.0;
             self.settings.director_record.fps = 24;
@@ -929,7 +936,7 @@ impl App {
                 isolation.set_transparent(true);
                 self.settings.director_record.format = recorder::Format::ProResAlpha;
             }
-            self.director.record_request = true;
+            self.director.demo_record = true;
             log::info!("director demo: recording a second of the track");
         }
         if mode == "green" {
@@ -938,6 +945,25 @@ impl App {
             isolation.set_transparent(true);
             self.director.d.key_color = Some(director::KEY_GREEN);
             log::info!("director demo: our avatar alone on a green screen");
+        }
+    }
+
+    /// The demo's film starts once there is something to write it with: the
+    /// raw file at once, the ffmpeg found when it has said what it encodes
+    /// (it is asked on a thread when the window opens).
+    fn director_demo_record(&mut self) {
+        if !self.director.demo_record {
+            return;
+        }
+        let raw = std::env::var_os("AURORA_DEMO_DIRECTOR_FILM").is_some();
+        let ready = raw || matches!(self.director.ffmpeg, Ffmpeg::Ready(_));
+        let missing = !raw && matches!(self.director.ffmpeg, Ffmpeg::Missing);
+        if missing {
+            log::warn!("director demo: no ffmpeg to record with");
+        }
+        if ready || missing {
+            self.director.demo_record = false;
+            self.director.record_request = ready;
         }
     }
 }

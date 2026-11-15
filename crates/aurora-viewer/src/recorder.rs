@@ -33,8 +33,9 @@ const QUEUE: usize = 3;
 /// A frame is never written more than this many times in a row (two seconds
 /// of a 60 fps film): past it the film is shortened rather than frozen.
 const MAX_REPEAT: u32 = 120;
-/// The last lines of what ffmpeg wrote, kept for the message of a failure.
-const ERROR_TAIL: usize = 600;
+/// The first lines of what ffmpeg wrote, kept for the message of a failure:
+/// it names the cause first, then what stopped because of it.
+const ERROR_HEAD: usize = 600;
 
 /// What the film is written as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -81,9 +82,15 @@ impl Format {
         self == Format::ProResAlpha
     }
 
-    /// Its pixels are stored 4:2:0: the picture's sides must be even.
-    fn even(self) -> bool {
-        matches!(self, Format::Mp4 | Format::Webm)
+    /// The sides of its picture that must be even (width, height): pixels
+    /// stored 4:2:0 halve both, 4:2:2 the width (`prores_ks` would pad an odd
+    /// one, the other ProRes encoder refuses it).
+    fn even(self) -> (bool, bool) {
+        match self {
+            Format::Mp4 | Format::Webm => (true, true),
+            Format::ProRes => (true, false),
+            Format::ProResAlpha | Format::Lossless => (false, false),
+        }
     }
 }
 
@@ -140,8 +147,11 @@ pub fn picture(size: (u32, u32), aspect: Option<f32>, format: Format) -> [u32; 4
         }
         _ => (width, height),
     };
-    if format.even() {
+    let (even_width, even_height) = format.even();
+    if even_width {
         w -= w % 2;
+    }
+    if even_height {
         h -= h % 2;
     }
     [w, h, (width - w) / 2, (height - h) / 2]
@@ -368,13 +378,13 @@ fn write_frames(frames: &Receiver<Frame>, mut out: impl Write) -> Outcome {
     Ok(written)
 }
 
-fn tail(text: &str) -> &str {
+fn head(text: &str) -> &str {
     let text = text.trim();
-    let mut start = text.len().saturating_sub(ERROR_TAIL);
-    while !text.is_char_boundary(start) {
-        start += 1;
+    let mut end = text.len().min(ERROR_HEAD);
+    while !text.is_char_boundary(end) {
+        end -= 1;
     }
-    &text[start..]
+    text[..end].trim_end()
 }
 
 /// The writer thread's work: the frames into the sink until the recording
@@ -404,7 +414,7 @@ fn run(sink: Sink, frames: &Receiver<Frame>) -> Outcome {
                 (Ok(written), true) => Ok(written),
                 // what ffmpeg says of a failure tells more than the broken pipe
                 (Err(pipe), _) if said.trim().is_empty() => Err(pipe),
-                _ => Err(tail(&said).to_owned()),
+                _ => Err(head(&said).to_owned()),
             }
         }
     }
@@ -527,6 +537,7 @@ pub fn free_path(folder: &Path, stamp: &str, format: Format) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     const LISTING: &str = "Encoders:
  V..... = Video
@@ -567,7 +578,10 @@ mod tests {
     fn the_picture_is_the_format_centred_in_the_frame() {
         // the whole frame, its sides made even for an MP4
         assert_eq!(picture((1683, 900), None, Format::Mp4), [1682, 900, 0, 0]);
-        assert_eq!(picture((1683, 901), None, Format::ProRes), [1683, 901, 0, 0]);
+        // ProRes 422 keeps an odd height, not an odd width; 4444 keeps both
+        assert_eq!(picture((1683, 901), None, Format::ProRes), [1682, 901, 0, 0]);
+        assert_eq!(picture((1683, 901), None, Format::ProResAlpha), [1683, 901, 0, 0]);
+        assert_eq!(picture((1683, 901), None, Format::Lossless), [1683, 901, 0, 0]);
         // scope in a 16:9 frame: cut above and below
         assert_eq!(picture((1920, 1080), Some(2.39), Format::Mp4), [1920, 802, 0, 139]);
         // vertical: cut on the sides
@@ -756,7 +770,173 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(odd.rate(), 30);
-        assert_eq!(tail("  short  "), "short");
-        assert_eq!(tail(&"é".repeat(ERROR_TAIL)).len(), ERROR_TAIL);
+        assert_eq!(head("  short  "), "short");
+        // (never cut inside a character)
+        assert_eq!(head(&"é".repeat(ERROR_HEAD)).len(), ERROR_HEAD);
+        assert_eq!(head(&format!("a{}", "é".repeat(ERROR_HEAD))).len(), ERROR_HEAD - 1);
+        assert!(head(&format!("the cause\n{}", "x".repeat(2 * ERROR_HEAD))).starts_with("the cause\n"));
+    }
+
+    /// The frames of a test film.
+    const TEST_FRAMES: u32 = 12;
+
+    /// The color the left half of a test film's frame has.
+    fn test_color(index: u32) -> [u8; 3] {
+        [(40 + 15 * index) as u8, 90, (220 - 12 * index) as u8]
+    }
+
+    /// A frame of a test film: its left half one color, opaque, that changes
+    /// with the frame; its right half empty, as the isolation's background.
+    fn test_frame(size: (u32, u32), index: u32) -> Vec<u8> {
+        let [r, g, b] = test_color(index);
+        let (filmed, empty) = ([r, g, b, 255], [0; 4]);
+        let mut pixels = Vec::with_capacity(size.0 as usize * size.1 as usize * 4);
+        for _ in 0..size.1 {
+            for x in 0..size.0 {
+                pixels.extend_from_slice(if x < size.0 / 2 { &filmed } else { &empty });
+            }
+        }
+        pixels
+    }
+
+    /// A film read back by the ffmpeg that wrote it: its frames, as RGBA.
+    fn read_back(tool: &Tool, film: &Path) -> Result<Vec<u8>, String> {
+        let output = quiet(&tool.path)
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(film)
+            .args(["-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(head(&String::from_utf8_lossy(&output.stderr)).to_owned())
+        }
+    }
+
+    /// Record a test film as the Director does, then read it back: what the
+    /// file holds, or what went wrong.
+    fn test_film(
+        tool: &Tool,
+        out: &Path,
+        encoder: &str,
+        format: Format,
+        quality: Quality,
+        size: (u32, u32),
+        aspect: Option<f32>,
+    ) -> Result<String, String> {
+        let crop = picture(size, aspect, format);
+        let args = arguments(encoder, format, quality, size, crop, 24, out);
+        let mut recording = Recording::start(Sink::Ffmpeg(tool.path.clone(), args), size, 24, out.to_owned());
+        let started = recording.started;
+        for index in 0..TEST_FRAMES {
+            // the middle of that frame's period, on the film's clock
+            let at = started + Duration::from_secs_f64((f64::from(index) + 0.5) / 24.0);
+            let pixels = test_frame(size, index);
+            // (a full queue skips the frame: it is offered again)
+            loop {
+                let skipped = recording.skipped;
+                if !recording.frame(at, size, pixels.clone()) {
+                    return Err("a frame was refused".to_owned());
+                }
+                if recording.skipped == skipped {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        let mut finishing = recording.finish();
+        let (file, frames) = loop {
+            if let Some(done) = finishing.done() {
+                break done?;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        if frames != u64::from(TEST_FRAMES) {
+            return Err(format!("{frames} frames written"));
+        }
+        let bytes = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+        let back = read_back(tool, &file)?;
+        let (w, h) = (crop[0] as usize, crop[1] as usize);
+        let frame = w * h * 4;
+        if back.len() != frame * TEST_FRAMES as usize {
+            return Err(format!("{} bytes read back: not {TEST_FRAMES} frames of {w}x{h}", back.len()));
+        }
+        // lossless keeps the colors as they are, the others near them
+        let slack = if format == Format::Lossless { 0 } else { 14 };
+        for index in [0, TEST_FRAMES - 1] {
+            let pixel = |x: usize| {
+                let at = index as usize * frame + ((h / 2) * w + x) * 4;
+                [back[at], back[at + 1], back[at + 2], back[at + 3]]
+            };
+            let (left, right) = (pixel(w / 4), pixel(w * 3 / 4));
+            let color = test_color(index);
+            let near = (0..3).all(|c| left[c].abs_diff(color[c]) <= slack);
+            if !near || left[3] != 255 {
+                return Err(format!("frame {index}: {left:?} where {color:?} was filmed"));
+            }
+            let empty = if format.alpha() { 0 } else { 255 };
+            if right[3] != empty {
+                return Err(format!("frame {index}: alpha {} on the empty side, not {empty}", right[3]));
+            }
+        }
+        Ok(format!("{w}x{h}, {bytes} bytes"))
+    }
+
+    /// Every format, through each encoder the ffmpeg of this computer has
+    /// for it, at every quality, read back by that ffmpeg: the frames are
+    /// all there, of the picture's size, with their colors and, for the
+    /// format that keeps it, their transparency. Run by hand:
+    /// `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "runs the ffmpeg found on the PATH"]
+    fn the_ffmpeg_found_writes_every_format_it_has() {
+        let path = std::env::var_os("PATH")
+            .and_then(|path| find_on_path(&path))
+            .expect("an ffmpeg on the PATH");
+        let tool = Tool::probe(&path).expect("ffmpeg answers");
+        let root = std::env::temp_dir().join(format!("aurora-ffmpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("folder");
+        // odd sides, as a window has: each format cuts what it cannot keep
+        let all = [Quality::Light, Quality::Good, Quality::Best];
+        let shots: [((u32, u32), Option<f32>, &[Quality]); 3] = [
+            ((323, 181), None, &all),
+            ((323, 181), Some(2.39), &[Quality::Good]),
+            ((1683, 901), None, &[Quality::Good]),
+        ];
+        let (mut films, mut failures) = (0, Vec::new());
+        for (size, aspect, qualities) in shots {
+            for format in Format::ALL {
+                let have = format
+                    .encoders()
+                    .iter()
+                    .copied()
+                    .filter(|name| tool.encoders.iter().any(|e| e == name));
+                for encoder in have {
+                    for quality in qualities.iter().copied() {
+                        let cut = aspect.map_or_else(|| "frame".to_owned(), |aspect| aspect.to_string());
+                        let name = format!("{format:?}-{encoder}-{quality:?}-{}x{}-{cut}", size.0, size.1);
+                        let out = root.join(format!("{name}.{}", format.extension()));
+                        films += 1;
+                        match test_film(&tool, &out, encoder, format, quality, size, aspect) {
+                            Ok(what) => eprintln!("ok    {name}: {what}"),
+                            Err(why) => {
+                                eprintln!("FAIL  {name}: {why}");
+                                failures.push(format!("{name}: {why}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(films > 0, "this ffmpeg has none of the encoders");
+        assert!(
+            failures.is_empty(),
+            "{} of {films} films failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }
