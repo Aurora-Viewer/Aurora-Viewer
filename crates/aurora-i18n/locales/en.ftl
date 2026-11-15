@@ -14470,7 +14470,7 @@ inventory-sorter-exclude-add = Add a folder…
 inventory-sorter-exclude-remove = Remove from the list
 inventory-sorter-whole = Whole inventory
 inventory-sorter-whole-tip = Sort the loose items of My Inventory, Objects and your own folders
-inventory-sorter-whole-intro = Sorts the loose items of My Inventory, the contents of Objects and of your own folders; deliveries move whole, never opened. Never touched: every other default folder (Clothing, Body Parts, Landmarks…), outfits, the Trash, Marketplace, Received Items, Lost and Found, # folders (RLV, AO), excluded and locked folders.
+inventory-sorter-whole-intro = Sorts the loose items of My Inventory, the contents of Objects and of your own folders; deliveries move whole, never opened. Never touched: every other default folder (Clothing, Body Parts, Landmarks…), outfits, the Trash, Marketplace, Received Items, Lost and Found, #RLV, #Firestorm, #Aurora and Animation Overrides (other # folders are your own), excluded and locked folders.
 inventory-sorter-whole-title = Sort the whole inventory?
 inventory-sorter-whole-text = { $count ->
     [one] 1 entry from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted.

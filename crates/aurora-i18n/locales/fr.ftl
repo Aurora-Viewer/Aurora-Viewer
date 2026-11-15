@@ -14475,7 +14475,7 @@ inventory-sorter-exclude-add = Ajouter un dossier…
 inventory-sorter-exclude-remove = Retirer de la liste
 inventory-sorter-whole = Tout l’inventaire
 inventory-sorter-whole-tip = Trier les éléments en vrac de Mon inventaire, d’Objets et de vos propres dossiers
-inventory-sorter-whole-intro = Trie les éléments en vrac de Mon inventaire, le contenu d’Objets et de vos propres dossiers ; les livraisons sont déplacées d’un bloc, jamais ouvertes. Jamais touchés : les autres dossiers par défaut (Habits, Parties du corps, Repères…), les tenues, la corbeille, la Place du marché, les objets reçus, les objets trouvés, les dossiers # (RLV, AO), les dossiers exclus et verrouillés.
+inventory-sorter-whole-intro = Trie les éléments en vrac de Mon inventaire, le contenu d’Objets et de vos propres dossiers ; les livraisons sont déplacées d’un bloc, jamais ouvertes. Jamais touchés : les autres dossiers par défaut (Habits, Parties du corps, Repères…), les tenues, la corbeille, la Place du marché, les objets reçus, les objets trouvés, #RLV, #Firestorm, #Aurora et Animation Overrides (les autres dossiers # sont les vôtres), les dossiers exclus et verrouillés.
 inventory-sorter-whole-title = Trier tout l’inventaire ?
 inventory-sorter-whole-text = { $count ->
     [one] { $count } élément de tout votre inventaire va être déplacé dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé.

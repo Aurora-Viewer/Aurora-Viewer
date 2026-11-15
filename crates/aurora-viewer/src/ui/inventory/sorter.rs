@@ -329,6 +329,17 @@ impl Job {
     /// The server's answer to the batch on its way.
     fn finish(&mut self, error: Option<&str>, now: Instant) -> Option<String> {
         let batch = self.in_flight.take()?;
+        if let Some(error) = error {
+            // for a tester's report (Dev Toolbox J3): what was refused, why,
+            // and which attempt; no name, no id
+            let folders = batch.moves.iter().filter(|m| m.folder).count();
+            log::warn!(
+                "auto-sort: a batch of {} moves ({} folders) was refused, attempt {}: {error}",
+                batch.moves.len(),
+                folders,
+                self.retries + 1
+            );
+        }
         match error {
             None => {
                 self.done += batch.moves.len();
@@ -768,6 +779,10 @@ pub(super) fn show(
                 if now.duration_since(since) > WAIT_LIMIT {
                     if job.queue.pop_front().is_some() {
                         job.skipped += 1;
+                        log::warn!(
+                            "auto-sort: a destination folder did not load in {} s: the entry stays",
+                            WAIT_LIMIT.as_secs()
+                        );
                     }
                     job.waiting_since = None;
                 }
