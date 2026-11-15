@@ -23,6 +23,13 @@ const RADIUS: i32 = 2;
 const TILE: i32 = 8 + 2 * RADIUS;
 var<workgroup> tile_depth: array<f32, 144>;
 var<workgroup> tile_mask: array<f32, 144>;
+// Whether any pixel of the tile is in contact shadow. Most of the screen has
+// none: there the result is lit (a weighted sum of zeros) and the 25 taps are
+// skipped, 0.05 ms of the pass's 0.25 at 1920 x 1080 (demo plaza, RTX 4090).
+// Off (`Filter::new`, contact_shadows.rs) on the AMD RX 9000 cards, whose
+// pass runs without workgroup memory: no atomic there either.
+override SKIP_LIT: bool = true;
+var<workgroup> any_shadow: atomic<u32>;
 
 fn tile_at(t: vec2<i32>) -> i32 {
     return (t.y + RADIUS) * TILE + t.x + RADIUS;
@@ -50,11 +57,18 @@ fn main(
         let c = clamp(q, vec2<i32>(0), size - 1);
         tile_depth[k] = textureLoad(depth_tex, c, 0);
         tile_mask[k] = select(-1.0, textureLoad(mask_tex, c, 0).r, inside);
+        if (SKIP_LIT && tile_mask[k] > 0.0) {
+            atomicOr(&any_shadow, 1u);
+        }
     }
     workgroupBarrier();
     let t = vec2<i32>(local.xy);
     let p = origin + RADIUS + t;
     if (any(p >= size)) {
+        return;
+    }
+    if (SKIP_LIT && atomicLoad(&any_shadow) == 0u) {
+        textureStore(out_tex, p, vec4<f32>(0.0));
         return;
     }
     let d0 = tile_depth[tile_at(t)];
