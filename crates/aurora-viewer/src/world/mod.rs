@@ -2584,8 +2584,6 @@ impl World {
             .collect()
     }
 
-    /// The root prim of the object our avatar wears from inventory item
-    /// `item` (LLVOAvatar::getWornAttachment).
     /// How many objects our avatar wears, HUDs included, each linkset once:
     /// LLVOAvatar::getAttachmentCount (indra/newview/llvoavatar.cpp) adds up
     /// the attached objects of every attachment point, never their child
@@ -2601,6 +2599,8 @@ impl World {
             .count()
     }
 
+    /// The root prim of the object our avatar wears from inventory item
+    /// `item` (LLVOAvatar::getWornAttachment).
     pub fn worn_attachment(&self, item: &Uuid) -> Option<usize> {
         if item.is_nil() {
             return None;
@@ -8482,8 +8482,8 @@ mod motion_tests {
         let t = Instant::now();
         let count = world.own_attachment_count();
         assert!(!world.arrival_overdue(t, count));
-        assert!(!world.arrival_overdue(t + std::time::Duration::from_secs(24), count));
-        assert!(world.arrival_overdue(t + std::time::Duration::from_secs(25), count));
+        assert!(!world.arrival_overdue(t + Duration::from_secs(24), count));
+        assert!(world.arrival_overdue(t + Duration::from_secs(25), count));
     }
 
     #[test]
