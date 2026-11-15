@@ -243,9 +243,15 @@ pub(super) fn show(
                                     task_inventory::owned(world, object, build.props.get(&object)),
                                 );
                             }
+                            let preview = matches!(item.asset_type, 0 | 1 | 20)
+                                && world
+                                    .objects
+                                    .index_of_uuid(&object)
+                                    .is_some_and(|idx| build.task_preview_allowed(world, idx, item));
                             let document = || match item.asset_type {
                                 10 => Some(ContentsAction::Script(object, item.id)),
                                 7 => Some(ContentsAction::Notecard(object, item.id)),
+                                _ if preview => Some(ContentsAction::Notecard(object, item.id)),
                                 _ => None,
                             };
                             if response.double_clicked() {
@@ -254,7 +260,7 @@ pub(super) fn show(
                             menu::context_menu(&response, p, |ui| {
                                 let transfers: Result<Vec<_>, _> =
                                     taken.iter().map(|item| build.task_transfer_kind(world, object, item)).collect();
-                                if matches!(item.asset_type, 7 | 10)
+                                if (matches!(item.asset_type, 7 | 10) || preview)
                                     && menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"))
                                 {
                                     actions.extend(document());
@@ -271,7 +277,7 @@ pub(super) fn show(
                                     .as_ref()
                                     .err()
                                     .copied()
-                                    .unwrap_or(aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory"));
+                                    .unwrap_or(aurora_i18n::tr!("contents-copy-selection-tip"));
                                 if menu::item_tip(ui, p, "briefcase-filled", label, transfers.is_ok(), tip) {
                                     actions.push(ContentsAction::Take(object, taken.to_vec()));
                                 }

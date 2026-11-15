@@ -461,9 +461,38 @@ pub enum Sources {
     Find { apps: Vec<PathBuf>, account: Account },
 }
 
+/// Which conversations an import takes. The window takes them all, the user
+/// asked for them; the import at login follows what the user chose to save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Kinds {
+    /// Instant messages, group chats and conferences.
+    pub im: bool,
+    /// The nearby chat.
+    pub nearby: bool,
+}
+
+impl Kinds {
+    pub const ALL: Kinds = Kinds { im: true, nearby: true };
+
+    pub fn any(self) -> bool {
+        self.im || self.nearby
+    }
+
+    fn take(self, source: &Path) -> bool {
+        let nearby = source
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| undated(s) == names::NEARBY);
+        if nearby { self.nearby } else { self.im }
+    }
+}
+
 /// An import to run.
 pub struct Request {
     pub sources: Sources,
+    /// A file left out here is not marked as imported: it comes in at the
+    /// first login with its setting on.
+    pub kinds: Kinds,
     /// The folder of the account in Aurora.
     pub dir: PathBuf,
     pub dated: bool,
@@ -561,7 +590,11 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
             .map(|found| found.dir)
             .collect(),
     };
-    let sources: Vec<PathBuf> = folders.iter().flat_map(|folder| transcripts(folder)).collect();
+    let sources: Vec<PathBuf> = folders
+        .iter()
+        .flat_map(|folder| transcripts(folder))
+        .filter(|source| request.kinds.take(source))
+        .collect();
     let left_out = folders.iter().map(|folder| left_out(folder)).sum();
     let spelled = spellings(&request.dir, &sources);
     let plan: Vec<(PathBuf, PathBuf)> = sources
@@ -784,9 +817,14 @@ mod tests {
 
     /// Runs an import of `from` at login to its end.
     fn import_at_login(from: &Path, to: &Path, dated: bool) -> Report {
+        import_kinds_at_login(from, to, dated, Kinds::ALL)
+    }
+
+    fn import_kinds_at_login(from: &Path, to: &Path, dated: bool, kinds: Kinds) -> Report {
         let worker = store::Worker::start().unwrap();
         let request = Request {
             sources: Sources::Folders(vec![from.to_path_buf()]),
+            kinds,
             dir: to.to_path_buf(),
             dated,
             state: to.join("state.json"),
@@ -811,6 +849,53 @@ mod tests {
         // the file deleted: the first source to create it does not end the run
         std::fs::remove_file(to.join("Bob.txt")).unwrap();
         assert_eq!(import_at_login(&from, &to, false).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    /// One conversation of each kind in a Legacy Viewer's folder.
+    fn each_kind(from: &Path) {
+        let line = "[2026/10/01 12:00]  Jane Doe: hello\n";
+        for name in ["Bob.txt", "Demo Club (group).txt", "chat.txt", "chat-2026-10-02.txt"] {
+            std::fs::write(from.join(name), line).unwrap();
+        }
+    }
+
+    #[test]
+    fn save_ims_off_leaves_ims_and_groups_out_of_the_login_import() {
+        let (from, to) = (temp(), temp());
+        each_kind(&from);
+        let kinds = Kinds { im: false, nearby: true };
+        assert_eq!(import_kinds_at_login(&from, &to, false, kinds).added, 1);
+        assert!(to.join("chat.txt").is_file());
+        assert!(!to.join("Bob.txt").exists());
+        assert!(!to.join("Demo Club (group).txt").exists());
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn save_nearby_off_leaves_the_nearby_chat_out_of_the_login_import() {
+        let (from, to) = (temp(), temp());
+        each_kind(&from);
+        let kinds = Kinds { im: true, nearby: false };
+        assert_eq!(import_kinds_at_login(&from, &to, true, kinds).added, 2);
+        assert!(to.join("Bob.txt").is_file());
+        assert!(to.join("Demo Club (group).txt").is_file());
+        assert!(!to.join("chat.txt").exists());
+        assert!(!to.join("chat-2026-10-02.txt").exists());
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn what_a_setting_left_out_comes_in_once_it_is_on() {
+        let (from, to) = (temp(), temp());
+        each_kind(&from);
+        let kinds = Kinds { im: true, nearby: false };
+        assert_eq!(import_kinds_at_login(&from, &to, true, kinds).added, 2);
+        assert_eq!(import_kinds_at_login(&from, &to, true, Kinds::ALL).added, 2);
+        assert_eq!(import_kinds_at_login(&from, &to, true, Kinds::ALL).added, 0);
         std::fs::remove_dir_all(from).unwrap();
         std::fs::remove_dir_all(to).unwrap();
     }

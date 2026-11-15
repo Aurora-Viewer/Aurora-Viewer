@@ -66,17 +66,11 @@ impl App {
         }
     }
 
-    /// Where the HUDs are laid out, in window pixels (`None`: the whole
-    /// window). The Legacy Viewer draws the world and its HUDs in the world
-    /// view rectangle, the window less its toolbars, navigation and status
-    /// bars, and takes the whole window in mouselook or with the interface
-    /// hidden (LLViewerWindow::draw and updateWorldViewRect,
-    /// indra/newview/llviewerwindow.cpp, originally LGPL 2.1). Aurora keeps
-    /// the world under its glass bars, but lays the HUDs out in the room the
-    /// bars leave (`Interface::last_room`): the same size as in the Legacy
-    /// Viewer, and their corners clear of the bars. A photo frame takes the
-    /// whole window, like the photo.
-    pub(super) fn hud_area(&self) -> Option<[f32; 4]> {
+    /// Projection follows the Legacy Viewer's world view rectangle,
+    /// independently of Aurora's floater movement limits. Mouselook, a
+    /// hidden interface and full-frame photos use the whole window
+    /// (LLViewerWindow::updateWorldViewRect, indra/newview/llviewerwindow.cpp).
+    pub(super) fn hud_area(&self, size: [u32; 2]) -> Option<[f32; 4]> {
         if self.camera.mouselook()
             || self.interface.hidden
             || self.snapshots.capturing.is_some()
@@ -85,9 +79,7 @@ impl App {
         {
             return None;
         }
-        let (room, _) = self.interface.last_room?;
-        let ppp = self.egui_ctx.pixels_per_point();
-        Some([room.left() * ppp, room.top() * ppp, room.right() * ppp, room.bottom() * ppp])
+        Some(legacy_hud_view_area(size, self.egui_ctx.pixels_per_point()))
     }
 
     pub(super) fn keep_scaled_huds_accessible(&mut self, view: HudView) {
@@ -588,6 +580,22 @@ fn hud_metadata_commands(world: &mut World, selected: &[usize], now: Instant) ->
     commands
 }
 
+/// The standard world_view_rect starts below the 19-unit status/menu strip
+/// (indra/newview/skins/default/xui/en/main_view.xml). Match its physical
+/// pixel rounding in LLViewerWindow::updateWorldViewRect. Aurora's floating
+/// bars and floater work area do not change this projection reference.
+fn legacy_hud_view_area(size: [u32; 2], pixels_per_point: f32) -> [f32; 4] {
+    let width = size[0].max(1) as f32;
+    let height = size[1].max(1) as f32;
+    let scale = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+        pixels_per_point
+    } else {
+        1.0
+    };
+    let top = (19.0 * scale).round().min(height - 1.0);
+    [0.0, top, width, height]
+}
+
 /// Legacy Viewer's wheel factor with winit's opposite scroll sign; same bounds
 /// as Aurora's World > HUDs view zoom controls (never a per-object resize).
 fn hud_view_zoom(zoom: f32, steps: f32) -> f32 {
@@ -614,6 +622,63 @@ fn accessible_delta(rect: [f32; 4], screen: [f32; 2]) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_projection_uses_the_legacy_viewport_instead_of_the_floater_work_area() {
+        let size = [2560, 1369];
+        let view = HudView::new(size, 1.0, -1.0, 1.0).in_area(legacy_hud_view_area(size, 1.0));
+        assert_eq!(view.area, [0.0, 19.0, 2560.0, 1369.0]);
+        assert_eq!(view.unit(), 1350.0);
+        // The reported HUD's 0.35 x 0.03 base spans 472.5 x 40.5 px,
+        // regardless of Aurora's 1259-pixel floater work-area height.
+        let first = view.pixel(Vec3::new(0.0, 0.175, 0.015));
+        let last = view.pixel(Vec3::new(0.0, -0.175, -0.015));
+        assert!((last[0] - first[0] - 472.5).abs() < 0.001);
+        assert!((last[1] - first[1] - 40.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn hud_projection_places_the_reported_panel_edges_on_adjacent_pixel_rows() {
+        let size = [2560, 1369];
+        // Actual draw-matrix coordinates from the human's J1 report.
+        let base_top = Vec3::new(0.0, 0.0, -0.400_529_9 + 0.015);
+        let panel_bottom = Vec3::new(0.0, 0.0, -0.402_529_9 + 0.069_999_99 * 0.249_996_22 + 0.000_007_1 * 0.5);
+        let gap_rows = |view: HudView| {
+            let base_first = (view.pixel(base_top)[1] - 0.5).ceil() as i32;
+            let panel_end = (view.pixel(panel_bottom)[1] - 0.5).ceil() as i32;
+            base_first - panel_end
+        };
+        let view = HudView::new(size, 1.0, -1.0, 1.0);
+        assert_eq!(gap_rows(view.in_area([8.0, 52.0, 2552.0, 1311.0])), 1);
+        assert_eq!(gap_rows(view.in_area(legacy_hud_view_area(size, 1.0))), 0);
+    }
+
+    #[test]
+    fn hud_projection_preserves_picking_and_anchor_corners_at_display_scales() {
+        for size in [[2560, 1369], [900, 1600], [1, 1]] {
+            for scale in [0.75, 1.0, 1.5, 2.0] {
+                let area = legacy_hud_view_area(size, scale);
+                for zoom in [0.1, 0.5, 1.0] {
+                    let view = HudView::new(size, zoom, -2.0, 3.0).in_area(area);
+                    let [width, height] = view.area_size();
+                    let aspect = width / height;
+                    for point in [Vec3::new(0.0, aspect * 0.5, 0.5), Vec3::new(0.0, -aspect * 0.5, -0.5)] {
+                        let pixel = view.pixel(point);
+                        let (origin, direction) = view.ray(pixel[0], pixel[1]);
+                        assert!((origin.y - point.y).abs() < 0.001 && (origin.z - point.z).abs() < 0.001);
+                        let clip = view.matrix() * (origin + direction).extend(1.0);
+                        assert!((clip.x - (pixel[0] / view.width * 2.0 - 1.0)).abs() < 0.001);
+                        assert!((clip.y - (1.0 - pixel[1] / view.height * 2.0)).abs() < 0.001);
+                    }
+                    if zoom == 1.0 {
+                        assert_eq!(view.screen_bounds(), area);
+                    }
+                }
+            }
+        }
+        assert_eq!(legacy_hud_view_area([2560, 1369], 1.5), [0.0, 29.0, 2560.0, 1369.0]);
+        assert_eq!(legacy_hud_view_area([0, 0], f32::NAN), [0.0, 0.0, 1.0, 1.0]);
+    }
 
     #[test]
     fn hud_metadata_queries_are_batched_retry_and_preserve_the_existing_selection() {

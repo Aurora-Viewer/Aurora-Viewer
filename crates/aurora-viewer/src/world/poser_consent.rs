@@ -311,8 +311,31 @@ impl State {
             .collect()
     }
     /// Offline fixture only; callers gate this on the application's demo mode.
+    /// The compact demo's stand-in for the peer: a request to `peer` older
+    /// than `after` is accepted, as her viewer's reply would be.
+    pub fn demo_accept(&mut self, world: &World, peer: Uuid, after: Duration) {
+        let now = Instant::now();
+        if let Some(r) = self.outgoing.get(&peer).filter(|r| now.duration_since(r.at) >= after) {
+            let id = r.id;
+            self.receive(world, &format!("<auroraPose>{id}|accept|{peer}</auroraPose>"), now);
+        }
+    }
     pub fn demo(&mut self, world: &World, peer: Uuid, mode: &str, frame: u64) {
         let now = Instant::now();
+        // consent-reply: nothing asked by itself; whoever the user asks
+        // accepts two seconds later, as a resident would
+        if mode == "consent-reply" {
+            let due: Vec<Request> = self
+                .outgoing
+                .values()
+                .filter(|r| now.duration_since(r.at) >= Duration::from_secs(2))
+                .copied()
+                .collect();
+            for r in due {
+                self.receive(world, &format!("<auroraPose>{}|accept|{}</auroraPose>", r.id, r.peer), now);
+            }
+            return;
+        }
         if frame == 450 {
             if mode == "consent-request" || mode == "consent-reminder" {
                 let id = Uuid::new_v4();

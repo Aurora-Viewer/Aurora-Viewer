@@ -280,6 +280,59 @@ pub(crate) fn organization_drag_preview(ctx: &egui::Context, p: &Palette, id: eg
     }
 }
 
+/// A drag grip and outline painted over the existing control geometry.
+pub(crate) fn organization_source(ui: &egui::Ui, p: &Palette, rect: egui::Rect, leading: bool, hot: bool) {
+    let color = if hot { p.violet_light } else { p.muted_dim };
+    ui.painter().rect_stroke(
+        rect.shrink(0.5),
+        ui.visuals().widgets.inactive.corner_radius,
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
+    let center = egui::pos2(if leading { rect.left() + 8.0 } else { rect.right() - 8.0 }, rect.center().y);
+    let grip = egui::Rect::from_center_size(center, egui::vec2(15.0, 16.0));
+    ui.painter()
+        .rect_filled(grip, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    super::paint_glyph(
+        ui.painter(),
+        "grip-vertical",
+        center,
+        12.0,
+        if hot { p.violet_light } else { p.muted },
+    );
+}
+
+/// Every compatible destination stays visible throughout a layout drag.
+pub(crate) fn organization_drop_target(ui: &egui::Ui, p: &Palette, rect: egui::Rect, label: Option<&str>, insertion: Option<bool>) {
+    let color = p.violet_light;
+    if insertion.is_some() {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.violet.gamma_multiply(0.25));
+    }
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().widgets.inactive.corner_radius,
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
+    if let Some(label) = label {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(11.0),
+            color,
+        );
+    }
+    if let Some(after) = insertion {
+        ui.painter().hline(
+            rect.x_range(),
+            if after { rect.bottom() } else { rect.top() },
+            Stroke::new(2.0, color),
+        );
+    }
+}
+
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
@@ -363,6 +416,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();
@@ -405,7 +461,8 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 /// toolbar and the menus. A window opened by another one (a picker, a tool of
 /// the script editor) is named after its owner: its own function comes first.
 pub(super) fn window_icon(id: &str) -> &'static str {
-    if id == "poser" {
+    // both poser windows, the compact one included
+    if id == "poser" || id == "poser-compact" {
         return "wand";
     }
     if id.starts_with("poser-") {
@@ -480,6 +537,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
+        "region_tracker" => "location-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -517,23 +575,41 @@ pub(super) fn window_icon(id: &str) -> &'static str {
 /// Reserve a drawing slot before the content, then resolve its exact bounds
 /// after layout. The opaque skin remains available with panel_alpha = 255.
 pub(crate) fn finish_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette, radius: f32) {
+    finish_glass_faded(painter, slot, rect, p, radius, 1.0);
+}
+
+/// `finish_glass` of a see-through window (`ui::surface_opacity`).
+pub(crate) fn finish_glass_faded(
+    painter: &egui::Painter,
+    slot: egui::layers::ShapeIdx,
+    rect: egui::Rect,
+    p: &Palette,
+    radius: f32,
+    opacity: f32,
+) {
     if p.panel_alpha < 255 {
-        painter.set(
-            slot,
-            aurora_render::glass_panel(
-                rect.shrink(1.0),
-                radius,
-                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
-            ),
-        );
+        painter.set(slot, faded_glass(rect.shrink(1.0), radius, p.panel, p.panel_alpha, opacity));
+    }
+}
+
+/// The blur and the tint of `color` at `opacity` of a surface's own alpha.
+fn faded_glass(rect: egui::Rect, radius: f32, color: Color32, alpha: u8, opacity: f32) -> egui::Shape {
+    let (blur, alpha) = crate::ui::surface_opacity::glass(alpha, opacity);
+    let tint = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+    match blur {
+        Some(blur) => aurora_render::glass_panel_faded(rect, radius, tint, blur),
+        None => egui::Shape::rect_filled(rect, radius, tint),
     }
 }
 
 /// Glass of the top and bottom bars: the windows' blur under the `bar` color.
 pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::ShapeIdx, rect: egui::Rect, p: &Palette) {
+    let opacity = crate::ui::surface_opacity::bars();
+    crate::ui::surface_opacity::fade_after(painter.ctx(), painter.layer_id(), slot, p, opacity);
     if p.panel_alpha < 255 {
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha);
-        painter.with_clip_rect(rect).set(slot, aurora_render::glass_panel(rect, 0.0, tint));
+        painter
+            .with_clip_rect(rect)
+            .set(slot, faded_glass(rect, 0.0, p.bar, p.panel_alpha, opacity));
     }
 }
 
@@ -546,14 +622,18 @@ pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::Shap
 pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -> egui::Shape {
     let visuals = &ctx.global_style().visuals;
     let radius = visuals.window_corner_radius;
-    let shadow = visuals.window_shadow.as_shape(rect, radius);
+    let opacity = crate::ui::surface_opacity::bars();
+    let shadow = egui::Shadow {
+        color: visuals.window_shadow.color.gamma_multiply(opacity),
+        ..visuals.window_shadow
+    }
+    .as_shape(rect, radius);
     let border = super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)));
     let face = if p.panel_alpha < 255 {
         let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
-        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha);
-        aurora_render::glass_panel(rect.shrink(1.0), f32::from(radius.nw), tint)
+        faded_glass(rect.shrink(1.0), f32::from(radius.nw), p.bar, alpha, opacity)
     } else {
-        egui::Shape::rect_filled(rect, radius, p.bar)
+        egui::Shape::rect_filled(rect, radius, p.bar.gamma_multiply(opacity))
     };
     egui::Shape::Vec(vec![
         shadow.into(),
@@ -564,6 +644,17 @@ pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -
 
 /// The islands' tint against the bars' (0.80 / 0.90).
 const ISLAND_TINT: f32 = 0.8 / 0.9;
+
+/// Content-sized island sharing the top bars' glass and vertical inset,
+/// with room for the first and last labels at its sides.
+pub(crate) fn island<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let response = egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(10, super::super::bars::islands::PAD as i8))
+        .show(ui, body);
+    ui.painter().set(slot, island_shape(ui.ctx(), p, response.response.rect));
+    response
+}
 
 /// Frame of a panel drawn outside a window (toasts, drop-down panels, the
 /// login cards): the windows' tint, border, corners and shadow.

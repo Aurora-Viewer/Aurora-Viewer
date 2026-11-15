@@ -34,11 +34,19 @@
 //! worn by our own avatar lets a left click through even when scripted, as
 //! in the Legacy Viewer: a press on our mesh body steers our avatar.
 //!
+//! **Wanted difference from the Legacy Viewer, inventory drops.** There,
+//! LLToolDragAndDrop::pick treats any attachment outside the HUD as its
+//! avatar, where a texture does nothing (dad3dNULL). Here a texture or a
+//! material dragged over the world lands on the face shown of what we wear
+//! and may edit, with the permission rules of the Texture tab
+//! (`Gesture::Drop`, app/texture_library.rs). Ctrl+Shift covers its whole
+//! linkset, where dropTextureAllFaces stops at the prim hit.
+//!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
 //! [`reaches`] is that rule, alone and tested. Worn Blend faces intercept a
-//! press regardless of texel opacity; world Blend left picks skip alpha zero.
+//! press regardless of texel opacity; world Blend left picks skip alpha <= 32/255.
 
 use super::*;
 use aurora_net::TouchSurface;
@@ -53,6 +61,8 @@ pub enum Gesture {
     Menu,
     /// Build tools: selection.
     Build,
+    /// A texture or a material dragged over the world, on what is worn.
+    Drop,
 }
 
 /// What a gesture needs to know of the object of a drawn face.
@@ -93,6 +103,8 @@ pub fn reaches(gesture: Gesture, s: Status, build_open: bool) -> bool {
         // attachment in front of an avatar rather than the avatar
         Gesture::Menu => s.posed_by_gpu || s.worn || s.avatar,
         Gesture::Build => s.posed_by_gpu && s.selectable,
+        // `selectable` carries RLVa's edit restrictions
+        Gesture::Drop => s.worn && s.selectable,
     }
 }
 
@@ -107,6 +119,55 @@ pub struct DrawnObject {
 }
 
 impl Scene {
+    /// Cursor feedback follows the same surface and designation as a left
+    /// press, including the bounded search under a wearer's body. The
+    /// caller caches this asynchronous answer; HUD picking stays separate.
+    pub fn drawn_hover(
+        &self,
+        world: &World,
+        drawn: &Drawn,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let adjusted = self.touch_depth(world, drawn, Some(ray), depth, far);
+        let point = self.action_point(world, Some(ray), adjusted, false, far);
+        if let Some(shown) = self.designated(world, Gesture::Touch, drawn, Some(ray), point, depth, false) {
+            return (Some(shown.hit.point), Some(shown.idx));
+        }
+        (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
+    }
+
+    /// A press on our displayed body, including meshes skinned to it.
+    /// LLVOAvatar::lineSegmentIntersect tests posed collision volumes rather
+    /// than accepting its bounding box. The GPU already gives us the posed
+    /// surface: empty space around the head or between the legs stays empty.
+    pub fn own_avatar_surface(&self, world: &World, drawn: &Drawn, ray: (Vec3, Vec3), found: Option<Vec3>) -> Option<Vec3> {
+        for hit in [drawn.blend, drawn.opaque].into_iter().flatten() {
+            let (idx, _) = self.record_object(hit.record)?;
+            let status = self.drawn_status(world, idx);
+            if status.ignored {
+                continue;
+            }
+            // A transparent touch surface in front keeps its click, just as
+            // it does before any other surface designated from the GPU answer.
+            if found.is_some_and(|p| (p - hit.point).dot(ray.1) < -0.05) {
+                return None;
+            }
+            let own_body = world.objects.get(idx).is_some_and(|o| o.is_avatar() && o.full_id == world.agent_id);
+            // LLToolPie::handleLeftClickPick walks a passive attachment's
+            // parents back to its wearer; a scripted prim keeps its touch.
+            let own_passive = status.worn
+                && !status.actionable
+                && self.gpu[idx]
+                    .owner_avatar
+                    .and_then(|i| world.objects.get(i))
+                    .is_some_and(|o| o.full_id == world.agent_id);
+            return (own_body || status.own_rigged || own_passive).then_some(hit.point);
+        }
+        None
+    }
+
     /// The object and the face a draw record belongs to. A scan of the
     /// objects' faces: at a click, never per frame.
     pub fn record_object(&self, record: u32) -> Option<(usize, Option<usize>)> {
@@ -172,11 +233,25 @@ impl Scene {
         let Some((idx, _)) = self.record_object(face.record) else {
             return depth;
         };
+        let at = (face.point - ray.0).dot(ray.1);
+        if self.gpu.get(idx).is_some_and(|g| g.is_avatar && !g.hud) {
+            // LLPipeline::lineSegmentIntersectInWorld (indra/newview/pipeline.cpp,
+            // LGPL 2.1): ATTACHMENT_OVERRIDE_DIST lets an attachment up to
+            // 10 cm inside the avatar win. Use the displayed body surface,
+            // so standing and seated poses share the same bounded policy.
+            return self
+                .point_behind_rigged(world, ray, at, (at + 0.1).next_up(), Some(idx))
+                .filter(|point| {
+                    self.interaction_at_ray(world, *point, ray, true)
+                        .and_then(|i| self.gpu.get(i))
+                        .is_some_and(|g| g.owner_avatar.is_some() && !g.is_avatar && !g.hud)
+                })
+                .or(depth);
+        }
         if !self.touch_passes_through(world, idx) {
             return depth;
         }
         let wearer = self.gpu.get(idx).and_then(|g| g.owner_avatar);
-        let at = (face.point - ray.0).dot(ray.1);
         let limit = if wearer.is_some() { at + UNDER_WORN } else { far };
         // (the drawn face is a frame younger than the CPU's poses)
         self.point_behind_rigged(world, ray, at - 0.05, limit, wearer).or(depth)
@@ -267,6 +342,117 @@ mod tests {
         selectable: true,
     };
 
+    #[test]
+    fn own_avatar_steering_requires_a_drawn_body_surface() {
+        let (world, mut scene, front, back) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+        scene.gpu[own].is_avatar = true;
+        let body_draw = FaceDraw {
+            record: 2,
+            ..scene.gpu[front].faces[0]
+        };
+        scene.gpu[own].faces.push(body_draw);
+        scene.gpu[back].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let face = |record, point| DrawnFace {
+            record,
+            point,
+            st: glam::Vec2::splat(0.5),
+            normal: -Vec3::X,
+            binormal: Vec3::Z,
+        };
+        let body_point = Vec3::new(2.5, 0.0, 50.0);
+        let body = face(2, body_point);
+        let drawn = Drawn {
+            opaque: Some(body),
+            blend: None,
+        };
+        let pick = |scene: &Scene, drawn: &Drawn, point| scene.own_avatar_surface(&world, drawn, ray, point);
+        assert_eq!(pick(&scene, &drawn, Some(body_point)), Some(body_point));
+
+        // A nearby world surface, a distant one behind the avatar's axis,
+        // and sky all leave the avatar's empty silhouette unclaimed.
+        for point in [body_point + Vec3::X * 0.1, body_point + Vec3::X * 4.0] {
+            let gap = Drawn {
+                opaque: Some(face(1, point)),
+                blend: None,
+            };
+            assert_eq!(pick(&scene, &gap, Some(point)), None);
+        }
+        assert_eq!(pick(&scene, &Drawn::default(), None), None);
+        assert_eq!(pick(&scene, &drawn, Some(body_point - Vec3::X)), None);
+
+        // Blended objects and actionable worn prims in front keep their
+        // own gestures, even when the opaque answer is our body.
+        let covered = Drawn {
+            blend: Some(face(0, body_point - Vec3::X)),
+            ..drawn
+        };
+        assert_eq!(pick(&scene, &covered, Some(body_point)), None);
+        scene.gpu[front].owner_avatar = Some(own);
+        assert_eq!(pick(&scene, &covered, Some(body_point)), None);
+
+        // A mesh skinned to our skeleton remains our body, including
+        // Blend clothing and parts outside the simulator's size box.
+        scene.gpu[front].rigged = true;
+        let mesh = Drawn {
+            opaque: Some(face(0, body_point)),
+            blend: None,
+        };
+        assert_eq!(pick(&scene, &mesh, Some(body_point)), Some(body_point));
+        assert_eq!(pick(&scene, &covered, Some(body_point)), Some(body_point - Vec3::X));
+        let other = world.objects.avatars().find(|(_, o)| o.full_id != world.agent_id).unwrap().0;
+        scene.gpu[front].owner_avatar = Some(other);
+        assert_eq!(pick(&scene, &mesh, Some(body_point)), None);
+    }
+
+    #[test]
+    fn passive_own_attachments_steer_but_scripted_ones_keep_their_touch() {
+        let (mut world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        scene.gpu[front].owner_avatar = Some(own);
+        let point = Vec3::new(2.5, 0.0, 50.0);
+        let ray = (point - Vec3::X, Vec3::X);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point,
+                st: glam::Vec2::ZERO,
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            blend: None,
+        };
+        let o = world.objects.get_mut(front).unwrap();
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        assert_eq!(scene.own_avatar_surface(&world, &drawn, ray, Some(point)), Some(point));
+        world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(scene.own_avatar_surface(&world, &drawn, ray, Some(point)), None);
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(scene.own_avatar_surface(&world, &drawn, ray, Some(point)), None);
+        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+        let body = FaceDraw {
+            record: 2,
+            ..scene.gpu[front].faces[0]
+        };
+        scene.gpu[own].faces.push(body);
+        let face = drawn.opaque.unwrap();
+        let through = Drawn {
+            blend: Some(face),
+            opaque: Some(DrawnFace {
+                record: 2,
+                point: point + Vec3::X,
+                ..face
+            }),
+        };
+        assert_eq!(
+            scene.own_avatar_surface(&world, &through, ray, Some(point + Vec3::X)),
+            Some(point + Vec3::X)
+        );
+    }
+
     /// Gesture x target: what Aurora designates from the drawn faces.
     #[test]
     fn every_gesture_reaches_a_rigged_mesh_without_requiring_an_action() {
@@ -287,6 +473,29 @@ mod tests {
                 assert_eq!(reaches(Gesture::Build, target, build), target.selectable);
             }
         }
+    }
+
+    #[test]
+    fn a_drop_reaches_what_is_worn_and_editable_and_nothing_else() {
+        let worn = Status { worn: true, ..RIGGED };
+        assert!(reaches(Gesture::Drop, worn, false), "rigged or not");
+        let worn_prim = Status {
+            posed_by_gpu: false,
+            ..worn
+        };
+        assert!(reaches(Gesture::Drop, worn_prim, false), "a worn prim too");
+        assert!(!reaches(Gesture::Drop, RIGGED, false), "an animesh is a world object");
+        let locked = Status { selectable: false, ..worn };
+        assert!(!reaches(Gesture::Drop, locked, false), "not editable");
+        let ignored = Status { ignored: true, ..worn };
+        assert!(!reaches(Gesture::Drop, ignored, false));
+        let avatar = Status {
+            avatar: true,
+            worn: false,
+            posed_by_gpu: false,
+            ..RIGGED
+        };
+        assert!(!reaches(Gesture::Drop, avatar, false));
     }
 
     #[test]
@@ -488,6 +697,7 @@ mod tests {
         );
         let hit = scene.action_point(&world, Some(ray), depth, false, 100.0).expect("a point");
         assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(clicker));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0).1, Some(clicker));
         let designated = scene.designated(&world, Gesture::Touch, &drawn, Some(ray), Some(hit), Some(on_body), false);
         assert_eq!(designated, None, "the body without a script lets the touch through");
 
@@ -536,6 +746,10 @@ mod tests {
                 .map(|d| d.idx)
         };
         assert_eq!(designated(&scene, &world, &drawn), Some(prim));
+        assert_eq!(
+            scene.drawn_hover(&world, &drawn, ray, Some(on_prim), 100.0),
+            (Some(on_prim), Some(prim))
+        );
 
         // a worn Blend prim without an action in front stops the press
         let o = world.objects.get_mut(front).unwrap();
@@ -570,5 +784,133 @@ mod tests {
         assert!(!reaches(Gesture::Build, scripted, false));
         // an avatar is never touched from what is drawn
         assert!(!reaches(Gesture::Touch, Status { avatar: true, ..scripted }, false));
+    }
+    #[test]
+    fn attachment_click_targets_stop_at_the_wearer_when_standing_or_seated() {
+        for own in [false, true] {
+            for seated in [false, true] {
+                let (mut world, mut scene, child, root) = super::super::picking::tests::indexed_scene_with_two_objects();
+                let (wearer, avatar) = world
+                    .objects
+                    .avatars()
+                    .find(|(_, a)| (a.full_id == world.agent_id) == own)
+                    .map(|(i, a)| (i, a.key.local_id))
+                    .expect("wearer");
+                let root_id = world.objects.get(root).unwrap().key.local_id;
+                world.objects.get_mut(root).unwrap().parent_id = avatar;
+                world.objects.get_mut(root).unwrap().state = 0x10;
+                world.objects.get_mut(child).unwrap().parent_id = root_id;
+                world.objects.get_mut(child).unwrap().update_flags = 0;
+                if seated {
+                    world.apply(crate::demo::action_overlay(
+                        989,
+                        Vec3::new(130.0, 128.0, 49.0),
+                        Quat::from_rotation_z(0.6),
+                    ));
+                    let a = world.objects.get_mut(wearer).unwrap();
+                    a.parent_id = 989;
+                    a.position = Vec3::new(0.15, 0.0, 0.65);
+                }
+                let owner = world.objects.get(wearer).unwrap().full_id;
+                assert_eq!(Scene::wearer_avatar(&world, child), Some((owner, wearer)));
+                assert_eq!(Scene::skeleton_owner(&world, child), Some((owner, wearer)));
+                scene.gpu[child].owner_avatar = Some(wearer);
+                scene.gpu[child].faces[0].record = 0;
+                let hit = DrawnFace {
+                    record: 0,
+                    point: Vec3::new(3.0, 0.0, 50.0),
+                    st: glam::Vec2::splat(0.5),
+                    normal: Vec3::X,
+                    binormal: Vec3::Y,
+                };
+                for scripted in [false, true] {
+                    world.objects.get_mut(root).unwrap().update_flags = if scripted { crate::ui::context::flags::HANDLE_TOUCH } else { 0 };
+                    let target = crate::interaction::target(&world, child, &HashMap::new());
+                    assert_eq!(target.is_some(), scripted, "own={own}, seated={seated}");
+                    if let Some(target) = target {
+                        assert_eq!(target.action, crate::interaction::Action::Touch);
+                        assert_eq!(target.clicked_id, world.objects.get(child).unwrap().full_id);
+                        assert_eq!(target.root, world.objects.get(root).unwrap().full_id);
+                    }
+                    for rigged in [false, true] {
+                        scene.gpu[child].rigged = rigged;
+                        assert_eq!(scene.drawn_status(&world, child).own_rigged, own && rigged);
+                        assert_eq!(scene.touch_passes_through(&world, child), rigged && (own || !scripted));
+                        for blend in [false, true] {
+                            let drawn = if blend {
+                                Drawn {
+                                    blend: Some(hit),
+                                    ..Default::default()
+                                }
+                            } else {
+                                Drawn {
+                                    opaque: Some(hit),
+                                    ..Default::default()
+                                }
+                            };
+                            let picked = scene.designated(&world, Gesture::Touch, &drawn, None, None, None, false);
+                            assert_eq!(
+                                picked.map(|p| p.idx),
+                                (scripted && !(own && rigged)).then_some(child),
+                                "own={own}, seated={seated}, rigged={rigged}, blend={blend}, scripted={scripted}"
+                            );
+                            assert_eq!(
+                                scene
+                                    .designated(&world, Gesture::Menu, &drawn, None, None, None, false)
+                                    .map(|p| p.idx),
+                                Some(child)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn classic_avatar_keeps_the_legacy_ten_centimetre_attachment_priority() {
+        let (mut world, mut scene, body, clicker) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let o = world.objects.get_mut(clicker).unwrap();
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for face in &mut Arc::make_mut(o.te.as_mut().unwrap()).faces {
+            face.color[3] = 0.0;
+        }
+        scene.gpu[body].is_avatar = true;
+        scene.gpu[body].faces[0].record = 0;
+        scene.gpu[clicker].built_faces = 1;
+        scene.gpu[clicker].faces.clear();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_body = Vec3::new(2.5, 0.0, 50.0);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: on_body,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        for (gap, worn, hud, accepted) in [
+            (0.05, true, false, true),
+            (0.099, true, false, true),
+            (0.101, true, false, false),
+            (0.05, false, false, false),
+            (0.05, true, true, false),
+        ] {
+            world.objects.get_mut(clicker).unwrap().position.x = 3.0 + gap;
+            scene.gpu[clicker].owner_avatar = worn.then_some(body);
+            scene.gpu[clicker].hud = hud;
+            let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0).unwrap();
+            let expected = if accepted { on_body + Vec3::X * gap } else { on_body };
+            assert!(depth.abs_diff_eq(expected, 1e-5), "gap={gap}, worn={worn}, hud={hud}: {depth:?}");
+            if accepted {
+                assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(clicker));
+            }
+            if worn || hud {
+                let hover = scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0);
+                assert_eq!(hover.1, accepted.then_some(clicker), "hover: gap={gap}, worn={worn}, hud={hud}");
+            }
+        }
     }
 }

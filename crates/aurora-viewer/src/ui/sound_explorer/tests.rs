@@ -7,6 +7,7 @@ fn row(id: u64, asset: u128, avatar: bool, stopped: bool) -> Row {
     let now = Instant::now();
     Row {
         owner: format!("Owner {id}"),
+        asset_shown: true,
         entry: Entry {
             id,
             asset: Uuid::from_u128(asset),
@@ -19,6 +20,16 @@ fn row(id: u64, asset: u128, avatar: bool, stopped: bool) -> Row {
             looped: !avatar,
         },
     }
+}
+
+#[test]
+fn the_sound_column_and_tooltip_follow_the_asset_id_rule() {
+    let mut r = row(1, 100, false, false);
+    assert_eq!(r.asset_text(), Uuid::from_u128(100).to_string());
+    assert_eq!(r.tooltip(), format!("Owner 1\n{}", Uuid::from_u128(100)));
+    r.asset_shown = false;
+    assert_eq!(r.asset_text(), "");
+    assert_eq!(r.tooltip(), "Owner 1");
 }
 
 #[test]

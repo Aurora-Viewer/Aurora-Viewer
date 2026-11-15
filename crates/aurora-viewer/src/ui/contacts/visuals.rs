@@ -1,8 +1,8 @@
 //! Optional visual overrides and a preview using the actual nameplate painter.
 
 use super::*;
-use crate::world::contact_sets::appearance::{ICON_LABELS, ICONS};
-use crate::world::contact_sets::{PlateSize, Visuals};
+use crate::world::contact_sets::appearance::{ICON_LABELS, ICONS, MARKER_FADE_DEFAULT, MARKER_FADE_RANGE};
+use crate::world::contact_sets::{MarkerScope, MarkerShape, PlateSize, Visuals};
 
 pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &str, original: &Visuals) {
     let mut v = original.clone();
@@ -32,6 +32,39 @@ pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &s
             .small()
             .color(p.muted),
     );
+    ui.label(aurora_i18n::tr!("contact-visual-marker"));
+    for (scope, key) in [
+        (MarkerScope::Off, "contact-visual-marker-off"),
+        (MarkerScope::Parcel, "contact-visual-marker-parcel"),
+        (MarkerScope::Region, "contact-visual-marker-region"),
+    ] {
+        widgets::radio_value(ui, p, &mut v.marker, scope, aurora_i18n::text(key));
+    }
+    ui.label(
+        egui::RichText::new(aurora_i18n::tr!("contact-visual-marker-hint"))
+            .small()
+            .color(p.muted),
+    );
+    if v.marker != MarkerScope::Off {
+        ui.label(aurora_i18n::tr!("contact-visual-marker-shape"));
+        for (shape, key) in [
+            (MarkerShape::Circle, "contact-visual-marker-shape-circle"),
+            (MarkerShape::Diamond, "contact-visual-marker-shape-diamond"),
+        ] {
+            widgets::radio_value(ui, p, &mut v.marker_shape, shape, aurora_i18n::text(key));
+        }
+        let mut fades = v.marker_fade.is_some();
+        if widgets::switch_labeled(ui, p, &mut fades, aurora_i18n::tr!("contact-visual-marker-fade")).changed() {
+            v.marker_fade = fades.then_some(MARKER_FADE_DEFAULT);
+        }
+        if let Some(fade) = &mut v.marker_fade {
+            ui.add(
+                egui::Slider::new(fade, MARKER_FADE_RANGE)
+                    .suffix(" m")
+                    .text(aurora_i18n::tr!("contact-visual-marker-fade-distance")),
+            );
+        }
+    }
     for (value, key) in [
         (&mut v.border, "contact-visual-border"),
         (&mut v.background, "contact-visual-background"),
@@ -95,5 +128,8 @@ pub(super) fn preview(ui: &mut egui::Ui, p: &Palette, world: &World, name: &str)
         let id = Uuid::from_u128(1);
         sample.add_to_set(&[id], name, |_| true);
         crate::ui::nameplate::preview(ui, p, sample.appearance(&id).clone());
+        if let Some(marker) = sample.appearance(&id).marker {
+            crate::ui::contact_markers::preview(ui, p, &marker);
+        }
     }
 }

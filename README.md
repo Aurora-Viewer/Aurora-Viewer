@@ -25,7 +25,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
-**High framerates and low frame time, ultra fast teleports/loading, thanks to modern technologies like Vulkan/Rust.**  
+**Multi-threaded from the ground up: parallel loading, ultra fast teleports, built for today's hardware with Vulkan and Rust.**  
 <img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  
 
 
@@ -93,8 +93,8 @@ while rethinking the user interface.
 <table>
   <tr>
     <td width="25%" align="center" valign="top">
-      <h3>≈ 5×</h3>
-      the frame rate of a classic viewer in a busy store
+      <h3>Multi-core</h3>
+      the work shared across your processor while the graphics card draws
     </td>
     <td width="25%" align="center" valign="top">
       <h3>≈ ½</h3>
@@ -111,36 +111,34 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.0 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.9 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>OpenSim and Hypergrid, for real</h3>
-      Your avatar bakes on grids that do not, large regions show past
-      256 m, and the inventory, outfits and profiles save without AIS.
-      The grid's own currency and money symbol, and a viewer that follows
-      the grid you are on after a Hypergrid teleport.
+      <h3>Aurora Weather</h3>
+      Rain, snow, wind, thunder and northern lights, with puddles, lying
+      snow and footprints. Choose yours in the Environment window, or let
+      regions set it (off by default).
     </td>
     <td width="50%" valign="top">
-      <h3>Snap to objects, place on surface</h3>
-      Moved objects go flush against their neighbours, with purple guides
-      on the faces that meet. Press P to place the selection on any surface
-      or the ground, previewed as a hologram.
+      <h3>Avatar Studio</h3>
+      A calm space to dress, pose and photograph your avatar, with its own
+      animation editor: keyframes, a timeline, ANIM and BVH import.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>The Legacy toolbar, complete</h3>
-      Quick preferences, a built-in web browser, the voice controls,
-      Statistics, Picks, Beacons and Show Friends Only on the toolbar, the
-      Legacy Viewer's menu shortcuts, and the fly override (Ctrl+Alt+V).
+      <h3>Lua scripts</h3>
+      SLua scripts get a real editor: Lua colours, completion, hover help,
+      and the compile target of your choice. New script can create a Lua
+      script on a region with SLua.
     </td>
     <td valign="top">
-      <h3>Steadier on your graphics card</h3>
-      Intel Iris Xe starts again, the card is shared fairly with other
-      viewers and programs, and Photo quality climbs as far as the video
-      memory allows instead of losing the card.
+      <h3>Gamepad and VR</h3>
+      Switch between First Person, Avatar Mode and Flycam with a gamepad,
+      on the desktop or in VR. The camera can also follow an animated
+      body part.
     </td>
   </tr>
 </table>
@@ -150,10 +148,10 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Fast, and smooth
 
-- **Hundreds of frames per second in crowded places.** In a busy store of
-  about 16,000 objects, Aurora ran at around 340 fps where a classic viewer
-  gave 68, on the same PC and at the same spot
-  ([how it was measured](#performance)).
+- **Built for every core.** The work is shared across your processor: while
+  the render thread draws one frame, the main thread prepares the next, and
+  the big loops of a frame are split between helper threads
+  ([who does what](#performance)).
 - **The picture keeps moving when you arrive.** Textures and meshes are
   decoded on background threads and written straight into GPU memory, so
   landing in a busy region doesn't freeze the view.
@@ -165,8 +163,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Instant teleports within a region.** The other teleports show your last
   view, blurred, with real step-by-step progress.
 - **A graphics card that finally does the work.** It decides by itself what
-  is visible and draws thousands of objects in a handful of calls, while a
-  dedicated render thread keeps the frames coming.
+  is visible and draws thousands of objects in a handful of calls.
 - **Faster arrivals**: what you are looking at downloads first, and after a
   teleport the region shows about a second sooner. Downloads keep pace with
   your connection, so avatars come out of the cloud about three times
@@ -199,8 +196,10 @@ are planned or in progress: they are not in the viewer yet.
   in front keeps its frame rate. Aurora also shares the card fairly with the
   other viewers and programs on it, and caps world textures at 512, 1024 or
   2048 pixels if you wish (Preferences › Graphics).
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
-  graphics card.
+- **AMD FSR 3.1 upscaling** and its native anti-aliasing, on every brand of
+  graphics card: the world drawn at 67 % down to 33 % of the window, then
+  rebuilt sharp at its size, for more frames per second (Preferences ›
+  Graphics › Anti-aliasing).
 
 ### A sharper, richer picture
 
@@ -571,9 +570,11 @@ are planned or in progress: they are not in the viewer yet.
   move ([setup and limits](docs/VR.md)).
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
-  history or search results, and walk, run or fly through it to teleport. Other Aurora
+  history or search results, and walk, run or fly through it to teleport.
+  A portal opens where you may build, like rezzing an object. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in.
+  portal that appears on someone never pulls them in. The portal back home
+  is yours alone on land where you may not build.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -618,28 +619,26 @@ are planned or in progress: they are not in the viewer yet.
 
 ## Performance
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Legacy Viewer statistics window in a busy store: 68 fps"><br>
-      <b>Legacy Viewer</b> · 68 fps
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
-      <b>Aurora Viewer</b> · 386 fps
-    </td>
-  </tr>
-</table>
+Aurora shares the work across your processor and hands the heavy lifting to
+your graphics card. A frame costs the longer of the main and render threads,
+not their sum: while one frame is drawn, the next is already being prepared.
 
-Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
-one busy store of about 16,000 objects. This is an informal test, not a
-benchmark:
+| Who | Does what, side by side |
+|---|---|
+| Main thread | The world and the interface: prepares the next frame |
+| Render thread | Draws the current frame, with two helpers that finish the GPU commands in parallel |
+| Frame helpers | Share the big loops of a frame: object placement, draw lists, poses, flexible prims |
+| Background tasks | Decode textures and build meshes at low priority, written straight into GPU memory |
+| Network | Downloads on its own runtime, from 24 up to 192 at once while your connection keeps up, what you look at first |
+| Graphics card | Decides what is visible and draws thousands of objects in a handful of calls (bindless textures, multi-draw-indirect, compute culling) |
 
-- 138 fps where the Legacy Viewer gave 68 fps at the same spot;
-- about 343 fps at that spot (median) once the render thread landed, 386 fps
-  in the capture above.
+Built for today's hardware: Vulkan on Windows and Linux, Metal on macOS
+(Apple Silicon), the dedicated graphics card picked on a laptop, AMD FSR 3.1
+on every brand of card, and a texture memory budget set automatically from
+the video memory your driver grants.
 
-The texture memory budget is set automatically from the detected VRAM.
+The resource monitor (Performance window) shows the time of each step of the
+frame on your own PC.
 
 ## What works today
 
@@ -672,7 +671,7 @@ The texture memory budget is set automatically from the detected VRAM.
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
   music and media
-  on prims, with Aurora's downloadable media plugins pack; an area search
+  on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
@@ -753,8 +752,6 @@ Voice is WebRTC only; Vivox is not supported.
 
 **Planned**
 
-- AMD FSR (FidelityFX Super Resolution) upscaling and native anti-aliasing,
-  on every GPU vendor.
 - Frame Generation (under investigation).
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
@@ -803,7 +800,7 @@ setting is on by default, like the Legacy Viewer. The translations are in
 
 ### Frame limiter
 
-The frame limiter is enabled at **120 fps by default** and can be disabled
+The frame limiter is enabled at **60 fps by default** and can be disabled
 or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
 preserved.
 
@@ -870,6 +867,14 @@ and wears the confirmed copy; Copy permission is required. **Cancel** restores
 the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
+
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
 
 ### Hover height
 
@@ -1018,6 +1023,18 @@ Conversation history (plain text, one file per conversation) is in
 Preferences › Chat shows the folder, turns logging off and erases it. These
 files never leave the machine and are never attached to a bug report.
 
+### Removing Aurora
+
+Preferences › Language and updates › "Remove Aurora from this computer"
+(or `aurora-viewer --uninstall`, see [Command line](#command-line)) removes
+what Aurora registered outside its own folders: the `secondlife://`,
+`hop://` and `x-grid-location-info://` link handler when it opens this
+Aurora (another viewer's stays), the Windows notification identity, the
+cache key and saved logins of the system's credential store, and Aurora's
+Blender add-on. It then lists the folders that remain (settings, cache,
+logs, media plugins, and the cache or history folders you chose), each with
+an "Open folder" button: quit Aurora, then delete them and the viewer.
+
 ## Under the hood
 
 **What it is**
@@ -1112,9 +1129,15 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
+With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
+Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
 ordinary sampled-texture limit, avoiding the former 79-page ceiling on Metal.
 
@@ -1135,6 +1158,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
@@ -1142,6 +1166,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |
+| `--uninstall` | Removes what Aurora registered on this computer, prints it and the folders left, then exits, with no window |
 
 - `--title`: the build profile ends the title (Dev, Release, Debug); the log
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
@@ -1157,13 +1182,23 @@ exe before publishing; the local build also writes it to `version.txt`.
   it). Nothing after it is read, so a link from a web page cannot add other
   options. Before login the place is the start location of the next login
   (the saved choice stays); in the world it opens the place's details; a
-  command runs once in the world. When a viewer already runs (same demo
-  mode and `--title`), the link goes to it and the new process stops.
+  command runs once in the world. When a viewer already runs, the link goes
+  to it and the new process stops. On Windows, the last focused matching
+  window receives it: a browser launch without `--title` reaches any online
+  Aurora window, including a titled test window; an explicit `--title` or
+  offline demo stays isolated. Linux matches the demo mode and `--title`.
   Preferences › Language and updates › "Open SLURL and Hypergrid links in
   Aurora" registers all three schemes for the current user (the registry on
   Windows, a desktop entry and `mimeapps.list` on Linux, see
   [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
   the login grid menu or Preferences › Network and cache › Manage grids.
+- `--uninstall`: what Preferences › Language and updates › "Remove Aurora
+  from this computer" does, without its confirmation (see
+  [Removing Aurora](#removing-aurora)); it prints each part with its result,
+  then the folders to delete, and exits with code 1 when a part could not be
+  removed. On Windows, run it as `aurora-viewer.exe --uninstall | more` so
+  the terminal waits for its text. With `AURORA_DEMO=1` it is a dry run that
+  removes nothing.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.
@@ -1223,6 +1258,14 @@ its own task in its own git worktree:
   contact prototype and the creator's LSL script
 - [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
   offsets and general bone-contact authoring for LSL
+
+Pull requests follow the [pull request template](.github/pull_request_template.md):
+a check lists what a description is missing, and maintainers review a PR
+once its description and its CI are complete. An outside contributor's PR
+still incomplete 3 days later is closed, and can be reopened once it is
+complete. Each outside contributor has up to 10 pull requests in review at
+a time; the others wait in a queue and come back to review on their own,
+oldest first.
 
 Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from

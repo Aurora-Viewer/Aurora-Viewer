@@ -453,6 +453,7 @@ fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
     let asset = uuid::Uuid::from_u128(0x7993);
     inspector.world.objects.get_mut(index).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
     inspector.scene.materials.insert(asset, Default::default());
+    inspector.list_contents(index);
     for _ in 0..5 {
         inspector.show(vec![]);
     }

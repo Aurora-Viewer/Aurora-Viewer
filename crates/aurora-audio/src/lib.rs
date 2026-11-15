@@ -7,6 +7,8 @@
 //!   a mute flag and an "enabled" flag; gain changes are smoothed (no clicks).
 //! * Parcel music: Shoutcast/Icecast streams over HTTP(S) (MP3, AAC/ADTS,
 //!   Ogg Vorbis) with ICY `StreamTitle` metadata and automatic reconnection.
+//!   Radio URLs may also name PLS/M3U playlists or AzuraCast public players;
+//!   discovered links stay on the player's HTTP(S) origin.
 //! * PCM sinks ([`VoiceSink`]) used by the voice client (and later media)
 //!   to push 48 kHz audio with jitter buffering.
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
@@ -14,8 +16,9 @@
 //!   Ambient channel.
 //! * The reverb of the surroundings ([`AudioEngine::set_reverb`]): one
 //!   shared bus the world sounds feed.
-//! * Device selection ([`output_devices`], [`input_devices`],
-//!   [`AudioEngine::set_output_device`]) and microphone capture
+//! * Device selection ([`output_devices`], [`input_devices`], listed off the
+//!   UI thread by [`DeviceLister`], [`AudioEngine::set_output_device`]) and
+//!   microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
 //!
 //! The device (cpal; WASAPI on Windows) is driven from a dedicated thread.
@@ -34,6 +37,7 @@ mod http;
 mod icy;
 mod mixer;
 mod output;
+mod playlist;
 mod processing;
 mod resample;
 mod reverb;
@@ -47,12 +51,12 @@ use parking_lot::Mutex;
 
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
-pub use devices::{input_devices, output_devices};
+pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use reverb::ReverbParams;
-pub use stream::StreamStatus;
+pub use stream::{StreamError, StreamStatus};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -232,10 +236,9 @@ impl AudioEngine {
     /// the same id): mono, looped or not, with (left, right) gains updated
     /// by [`AudioEngine::world_gain`] as the listener or the source moves.
     pub fn play_world(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: (f32, f32)) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(
+            WorldVoice::new(id, ch, clip.samples.clone(), looped, gain).starting_at(clip.start),
+        ));
     }
 
     /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
@@ -243,7 +246,7 @@ impl AudioEngine {
     /// direction in the listener's frame (x to the right, y ahead, z up),
     /// updated by [`AudioEngine::world_binaural`].
     pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
-        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction).starting_at(clip.start);
         let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
     }
 
@@ -297,10 +300,9 @@ impl AudioEngine {
 
     /// Plays a one-shot sound on `ch` with an extra per-sound `gain` (0..=1).
     pub fn play_clip(&self, ch: Channel, clip: &SoundClip, gain: f32) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayClip(ClipVoice::new(ch, clip.samples.clone(), gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayClip(
+            ClipVoice::new(ch, clip.samples.clone(), gain).starting_at(clip.start),
+        ));
     }
 }
 
@@ -373,6 +375,14 @@ impl PcmSink {
         let (pushed, _) = prod.push_partial_slice(stereo);
         pushed.len() / 2
     }
+
+    /// Frames queued and not yet taken by the mixer (0 for a null sink): the
+    /// sound waiting between the producer and the output. One atomic load.
+    pub fn queued_frames(&self) -> usize {
+        self.prod
+            .as_ref()
+            .map_or(0, |p| p.buffer().capacity().saturating_sub(p.slots()) / 2)
+    }
 }
 
 /// Consumer end of [`PcmSink::loopback`]: interleaved stereo 48 kHz samples.
@@ -408,9 +418,12 @@ mod tests {
         let (mut sink, mut tap) = PcmSink::loopback(16);
         assert_eq!(sink.push(&[0.5, -0.5], 2), 1);
         assert_eq!(tap.available(), 2);
+        assert_eq!(sink.queued_frames(), 1);
         let mut out = [0.0; 4];
         assert_eq!(tap.read(&mut out), 2);
         assert_eq!(&out[..2], &[0.5, -0.5]);
+        assert_eq!(sink.queued_frames(), 0);
+        assert_eq!(PcmSink::null().queued_frames(), 0);
     }
 
     #[test]
