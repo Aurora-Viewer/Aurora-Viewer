@@ -68,6 +68,10 @@ pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
+/// Nearby chat from near and from beyond the say range, the far lines
+/// dimmed (AURORA_DEMO_CHAT_RANGE).
+#[path = "demo_chat_range.rs"]
+pub mod chat_range;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -270,6 +274,9 @@ pub mod sky;
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
 pub mod slideshow;
+/// AURORA_DEMO_SNOW_SPIN: turning boxes in lying snow (#3642).
+#[path = "demo_snow_spin.rs"]
+pub mod snow_spin;
 /// A resident's "Invite to group", "Add to contact set" and "Block
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
@@ -1469,6 +1476,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         kind,
         source,
         origin: Origin::Live,
+        beyond_range: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1706,6 +1714,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             kind,
             source,
             origin: Origin::Live,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1727,6 +1736,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             kind: crate::world::ChatKind::Im,
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1888,6 +1898,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         kind,
         source,
         origin: Origin::Live,
+        beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -7720,6 +7731,11 @@ fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
 /// child prims) on bones all over the body, so every worn prim follows its
 /// animated bone each frame. With `rigged` (AURORA_DEMO_ANIMESH, whose mesh
 /// and skin are installed), each also wears the rigged demo mesh.
+/// The id of the `k`-th avatar of the crowd ("Foule<k> Resident").
+pub const fn crowd_avatar(k: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128)
+}
+
 pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
@@ -7742,7 +7758,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
             "",
         );
         a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128);
+        a.full_id = crowd_avatar(k);
         a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
         anims.push(NetEvent::AvatarAnimations {
             avatar: a.full_id,

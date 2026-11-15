@@ -955,6 +955,51 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
 
+    #[test]
+    fn what_moves_however_slowly_is_out_of_the_shelter_map() {
+        use crate::scene::{MOVED_SHELTER_HOLD, Scene};
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+        let mut f = Fixture::new();
+        let root = f.add(9100, 0, false);
+        let child = f.add(9101, 9100, false);
+        let other = f.add(9102, 0, false);
+        let now = Instant::now();
+        let none = HashMap::new();
+        let moving =
+            |f: &Fixture, idx: usize, lately: &HashMap<usize, Instant>, at: Instant| Scene::moves_for_shelter(&f.world, lately, idx, at);
+        assert!(!moving(&f, root, &none, now));
+        // a slow turn (0.005 rad/s, 0.3°/s: under the old 1e-4 threshold),
+        // drawn turning: out, its linked prims too
+        f.update(root, |u| u.angular_velocity = Vec3::Z * 0.005);
+        assert!(moving(&f, root, &none, now));
+        assert!(moving(&f, child, &none, now));
+        assert!(!moving(&f, other, &none, now));
+        f.update(root, |u| u.angular_velocity = Vec3::ZERO);
+        assert!(!moving(&f, child, &none, now));
+        // a rotation a script steps (no motion reported), drawn in a new
+        // pose: out for a while, then back
+        let lately = HashMap::from([(root, now)]);
+        assert!(moving(&f, child, &lately, now + Duration::from_secs(1)));
+        assert!(!moving(&f, child, &lately, now + MOVED_SHELTER_HOLD + Duration::from_millis(1)));
+        // physical
+        f.update(other, |u| u.update_flags |= 1);
+        assert!(moving(&f, other, &none, now));
+    }
+
+    #[test]
+    fn a_region_crossing_moves_nothing_out_of_the_shelter_map() {
+        use crate::scene::Scene;
+        // a new pose of its own
+        assert!(Scene::new_pose_for_shelter(true, false, false, false));
+        // the origin shifted: every matrix changed, nothing moved
+        assert!(!Scene::new_pose_for_shelter(true, false, false, true));
+        // unchanged, a HUD, or placed from an anchor
+        assert!(!Scene::new_pose_for_shelter(false, false, false, false));
+        assert!(!Scene::new_pose_for_shelter(true, true, false, false));
+        assert!(!Scene::new_pose_for_shelter(true, false, true, false));
+    }
+
     /// Test double of the scene state: rigged meshes, objects needing a
     /// sync beyond their flags, pending geometry.
     #[derive(Default)]

@@ -863,6 +863,10 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Mark ▸ Custom color… of the radar and mini-map menus, and the last
+    /// colour it gave this session.
+    avatar_mark_ui: Option<ui::avatar_marks::CustomMark>,
+    avatar_mark_last: Option<crate::world::avatar_marks::Rgb>,
     /// Debug Settings (Advanced.ShowDebugSettings).
     debug_settings_ui: ui::debug_settings::DebugSettingsUi,
     debug_settings_demo_done: bool,
@@ -1923,6 +1927,8 @@ impl App {
             experience_profile_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            avatar_mark_ui: None,
+            avatar_mark_last: None,
             debug_settings_ui: Default::default(),
             debug_settings_demo_done: false,
             quick_prefs_ui: Default::default(),
@@ -3307,6 +3313,9 @@ impl App {
             self.settings.release_hover_account();
         }
         self.hover_height_ui = Default::default();
+        // the marks go with the session's World; their window too
+        self.avatar_mark_ui = None;
+        self.avatar_mark_last = None;
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
         self.object_export = Default::default();
@@ -10193,6 +10202,10 @@ impl App {
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::alpha_sort::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::alpha_sort::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -10217,6 +10230,10 @@ impl App {
             }
             // AURORA_DEMO_SOUND_REVERB: the clapper above our avatar
             if let Some(e) = crate::demo::sound_reverb::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
+            // AURORA_DEMO_CHAT_RANGE: near and far speakers around us
+            if let Some(e) = crate::demo::chat_range::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
         }
@@ -10507,6 +10524,9 @@ impl App {
         self.update_native_movelock();
         self.update_movement();
         self.update_weather_now();
+        if self.demo {
+            crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+        }
         self.update_audio();
         self.update_wind_sound(dt);
         self.update_thunder();
@@ -12133,13 +12153,17 @@ impl App {
             snow_fallen: self.scene.snow_trails.fallen,
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
-                // AURORA_SNOW_LYING=<0..1>: snow already lying that deep
-                // (demo captures of deep snow, which takes minutes to gather)
-                snow_lying: {
+                // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
+                // (demo captures of deep snow, which takes minutes to gather);
+                // else a region's snow so far. Neither with "Snow settles"
+                // off: the region's floor laid it again every frame (#3642)
+                snow_lying: if self.weather_now.snow_settles {
                     static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
                     LYING
                         .get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse().ok()))
                         .unwrap_or(self.snow_lying.0)
+                } else {
+                    0.0
                 },
                 trail_centre: self.trail_centre().truncate().to_array(),
                 clean: weather_clean,
@@ -15675,6 +15699,7 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::AuroraWeather => self.env_ui.weather_open = true,
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
                 kind => self.open_env_editor_snapshot(kind),
@@ -19443,6 +19468,10 @@ impl App {
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);
                 self.object_export_window(&ctx, &p);
+                ui::avatar_marks::show(&ctx, &p, &mut self.world, &mut self.avatar_mark_ui);
+                if let Some(mark) = &self.avatar_mark_ui {
+                    self.avatar_mark_last = Some(mark.rgb());
+                }
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
@@ -20947,6 +20976,22 @@ impl ApplicationHandler for App {
                 self.panels.minimap = false;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_RADAR_MARKS=1|legacy: the crowd's first residents
+            // marked, People › Near you with its mini-map, and the mini-map
+            // window (legacy: People's radar table, for the run only)
+            if ui::avatar_marks::demo_mode().is_some() {
+                let crowd: Vec<uuid::Uuid> = (0..crate::demo::crowd_count().unwrap_or(0))
+                    .map(crate::demo::crowd_avatar)
+                    .collect();
+                ui::avatar_marks::demo(&mut self.world, &crowd);
+                self.settings.radar.show_minimap = true;
+                self.panels.people = true;
+                self.panels.people_tab = ui::people::TAB_NEARBY;
+                self.panels.minimap = true;
+                self.panels.inventory = false;
+                self.panels.chat = false;
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_CHAT_LINES: the lines above the chat bar, the
             // Conversations window closed (it hides them while it shows the
             // local chat)
@@ -21329,6 +21374,19 @@ impl ApplicationHandler for App {
                 self.panels.chat = scene.style.is_some();
                 if let Some(style) = scene.style {
                     self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
+                    self.chat_ui.demo_style = Some(style);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+                }
+            }
+            // AURORA_DEMO_CHAT_RANGE=<style>|lines: the same, for the lines
+            // from near and from beyond the say range
+            if let Some(style) = crate::demo::chat_range::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = style.is_some();
+                if let Some(style) = style {
+                    self.chat_ui.selected = None;
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
