@@ -3926,3 +3926,53 @@ fn rlva_sit_when_away_asks_for_nothing_rlva_would_refuse() {
     world.set_away(false);
     assert!(sits(&mut world).is_empty(), "seated under @unsit");
 }
+
+/// LLAttachmentsMgr::onAttachmentArrived: a forced wear that has arrived is
+/// no longer on its way. Taken off within the repeat window, the same object
+/// is asked for again (seen on the grid: the second of two forced wears of
+/// one object, a second apart with a detach in between, was dropped).
+#[test]
+fn rlva_forced_wear_is_asked_again_once_its_object_came_and_left() {
+    use crate::world::appearance::{Action, WearRequest};
+    use aurora_net::NetEvent;
+    let mut world = parity_demo_world();
+    let handle = world.main_region.unwrap();
+    let item = Uuid::from_u128(0x7101);
+    world.inventory.items.insert(
+        item,
+        aurora_net::inventory::InvItem {
+            id: item,
+            asset_type: 6,
+            flags: 5,
+            ..Default::default()
+        },
+    );
+    let action = Action::Force {
+        remove: Vec::new(),
+        wear: vec![WearRequest {
+            item,
+            replace: true,
+            point: 0,
+        }],
+    };
+    let start = std::time::Instant::now();
+    assert!(!world.rlva_force_settled(&action, start), "the first request goes out");
+    assert!(world.rlva.requested_wears.contains_key(&item), "and is on its way");
+
+    // it arrives, then is taken off
+    worn_attachment(&mut world, 0x7101, 5);
+    let local = parity_local(&world, item);
+    world.apply(NetEvent::ObjectsKilled {
+        handle,
+        local_ids: vec![local],
+    });
+    assert!(world.objects.index_of_uuid(&item).is_none());
+    assert!(
+        !world.rlva.requested_wears.contains_key(&item),
+        "it came and left: nothing is on its way"
+    );
+    assert!(
+        !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
+        "the same object is asked for again"
+    );
+}

@@ -73,6 +73,11 @@ impl World {
             return;
         }
         let item = root.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(root.full_id);
+        // The wear a forced batch asked for had arrived, since it leaves: it
+        // is no longer on its way, and a new forced wear of the same object
+        // is a new request (LLAttachmentsMgr::onAttachmentArrived forgets
+        // the request at the arrival, llattachmentsmgr.cpp).
+        self.rlva.requested_wears.remove(&item);
         let mut gone: std::collections::BTreeSet<Uuid> = self
             .objects
             .subtree(idx)
