@@ -150,6 +150,14 @@ rigid worn linksets as well as meshes skinned to that point (#1694).
 CPU transforms and GPU anchors share this frame; missing poses use the
 existing bone/rest fallback, and HUD points stay in screen space.
 
+`world/shape_tween.rs` glides another avatar's visual parameters to a new
+appearance over 0.65 s (the Legacy Viewer's appearance animation, its
+bouncy curve), for the avatars within 32 m of the agent: `World::visual_params`
+returns the values of the moment and `appearance_generation` moves at each
+step, so the scene rebuilds the skeleton and the morphs as for any new
+appearance. `demo_shape_morph.rs` (`AURORA_DEMO_SHAPE_MORPH`) changes the
+Wolf's and the crowd's shapes.
+
 `world/appearance_xml.rs` snapshots only the agent’s current visual parameters
 and joint palette for Legacy Viewer-compatible `linden_genepool` XML export.
 The Appearance gear menu shares the scoped file-job lifecycle in
