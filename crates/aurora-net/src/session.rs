@@ -1908,6 +1908,8 @@ impl Session<'_> {
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
             NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
+            NetCommand::ExperienceAdmin(experience) => self.experience_admin(experience),
+            NetCommand::UpdateExperience { experience, body } => self.update_experience(experience, body),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
                 let mut g = ObjectGrab::default();
@@ -3662,6 +3664,33 @@ impl Session<'_> {
                 change,
                 result,
             });
+        });
+    }
+
+    /// LLFloaterExperienceProfile::experienceIsAdmin: an administrator may
+    /// edit only where the region has UpdateExperience.
+    fn experience_admin(&self, experience: Uuid) {
+        let update = self.main_cap("UpdateExperience").is_some();
+        let cap = self.main_cap("IsExperienceAdmin");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let admin = update && crate::experience::is_admin(&http, cap.as_deref(), experience).await;
+            let _ = events.send(NetEvent::ExperienceAdmin { experience, admin });
+        });
+    }
+
+    /// LLExperienceCache::updateExperience, on a task.
+    fn update_experience(&self, experience: Uuid, body: aurora_llsd::Llsd) {
+        let cap = self.main_cap("UpdateExperience");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = crate::experience::update(&http, cap.as_deref(), experience, &body).await;
+            if let Err(e) = &result {
+                log::warn!("experience {experience} update: {e}");
+            }
+            let _ = events.send(NetEvent::ExperienceUpdated { experience, result });
         });
     }
 
