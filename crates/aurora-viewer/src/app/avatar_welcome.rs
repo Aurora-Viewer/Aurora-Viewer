@@ -26,8 +26,11 @@
 //! failed copy (wearInventoryCategoryOnAvatar returns on a null category,
 //! llappearancemgr.cpp). When a `wear_folder` fails, the `add_folder` of the
 //! same choice is skipped, so that the clothing is not layered on the old
-//! outfit. A copy that times out is still finished when its reply comes, but
-//! never worn. At most eight commands wait.
+//! outfit: each `add_folder` belongs to the oldest `wear_folder` sent less
+//! than `PAIR_WINDOW` before it that has none yet, so that two choices made
+//! in a row (body A, body B, clothing A, clothing B) are told apart. A copy
+//! that times out is still finished when its reply comes, but never worn. At
+//! most eight commands wait.
 
 use super::*;
 use crate::slapp::{FolderAction, FolderCommand};
@@ -46,24 +49,43 @@ const QUEUE_CAP: usize = 8;
 /// Timed-out copies still waiting for their reply. A bound, not a guarantee:
 /// past it the oldest is forgotten and its folder stays as it is.
 const LATE_CAP: usize = 4;
-/// After a failed `wear_folder`, the page's `add_folder` of the same choice
-/// (sent a couple of seconds later) is skipped within this long.
-const SKIP_ADD_WINDOW: Duration = Duration::from_secs(10);
+/// The page sends a choice's `add_folder` two and a half seconds after its
+/// `wear_folder`: an `add_folder` sent later than this after a `wear_folder`
+/// is not that choice's (a choice without clothing, say).
+const PAIR_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub(super) struct WelcomeWears {
-    queue: VecDeque<FolderCommand>,
+    queue: VecDeque<Queued>,
     job: Option<Job>,
     /// Copies whose job timed out: `(request, folder)`. Their late reply is
     /// still applied and finished, like ContentsCopies' `timed_out`, so that
     /// the folder is not left empty; they never wear anything.
     late: Vec<(Uuid, Uuid)>,
-    /// Until when the next `add_folder` is skipped (a `wear_folder` failed).
-    skip_add_until: Option<Instant>,
+    /// The `wear_folder`s of the last `PAIR_WINDOW` still waiting for their
+    /// `add_folder`, oldest first.
+    unpaired: VecDeque<Unpaired>,
+    /// The number of the next `wear_folder`.
+    next_wear: u64,
+}
+
+/// A queued command and its choice: for a `wear_folder` its own number, for
+/// an `add_folder` the number of the `wear_folder` it belongs to.
+struct Queued {
+    command: FolderCommand,
+    wear: Option<u64>,
+}
+
+struct Unpaired {
+    wear: u64,
+    at: Instant,
+    /// Its `add_folder` is skipped when it comes.
+    failed: bool,
 }
 
 struct Job {
     command: FolderCommand,
+    wear: Option<u64>,
     since: Instant,
     stage: Stage,
 }
@@ -83,43 +105,57 @@ impl WelcomeWears {
     /// Queues the commands, at most `QUEUE_CAP` in all. The queue is not
     /// emptied when the window closes: that would lose a body's `add_folder`.
     pub fn push(&mut self, commands: Vec<FolderCommand>, now: Instant) {
+        self.unpaired.retain(|body| now.saturating_duration_since(body.at) <= PAIR_WINDOW);
         for command in commands {
-            if self.skip_add(&command, now) {
-                continue;
-            }
-            if self.queue.len() >= QUEUE_CAP {
+            let full = self.queue.len() >= QUEUE_CAP;
+            let wear = match command.action {
+                FolderAction::Wear => {
+                    let wear = self.next_wear;
+                    self.next_wear += 1;
+                    // a body dropped from the queue is not worn: nor is its clothing
+                    self.unpaired.push_back(Unpaired {
+                        wear,
+                        at: now,
+                        failed: full,
+                    });
+                    Some(wear)
+                }
+                FolderAction::Add => match self.unpaired.pop_front() {
+                    Some(body) if body.failed => {
+                        log::warn!(
+                            "avatar welcome pack: add_folder {:?} skipped, the wear_folder before it failed",
+                            command.name
+                        );
+                        continue;
+                    }
+                    body => body.map(|body| body.wear),
+                },
+                FolderAction::Remove => None,
+            };
+            if full {
                 log::warn!("avatar welcome pack: too many folder commands queued, {:?} dropped", command.name);
                 continue;
             }
-            self.queue.push_back(command);
+            self.queue.push_back(Queued { command, wear });
         }
     }
 
-    /// True for the `add_folder` that follows a failed `wear_folder`, once.
-    fn skip_add(&mut self, command: &FolderCommand, now: Instant) -> bool {
-        let Some(until) = self.skip_add_until else {
-            return false;
+    /// A command ended without wearing: when it is a `wear_folder`, the
+    /// `add_folder` of its choice is skipped, queued or still to come.
+    fn failed(&mut self, action: FolderAction, wear: Option<u64>) {
+        let (FolderAction::Wear, Some(wear)) = (action, wear) else {
+            return;
         };
-        if now >= until {
-            self.skip_add_until = None;
-            return false;
-        }
-        if command.action != FolderAction::Add {
-            return false;
-        }
-        self.skip_add_until = None;
-        log::warn!(
-            "avatar welcome pack: add_folder {:?} skipped, the wear_folder before it failed",
-            command.name
-        );
-        true
-    }
-
-    /// A command ended without wearing: a failed `wear_folder` also skips
-    /// the page's follow-up `add_folder`.
-    fn failed(&mut self, action: FolderAction, now: Instant) {
-        if action == FolderAction::Wear {
-            self.skip_add_until = Some(now + SKIP_ADD_WINDOW);
+        let theirs = |q: &Queued| q.command.action == FolderAction::Add && q.wear == Some(wear);
+        if let Some(at) = self.queue.iter().position(theirs) {
+            if let Some(skipped) = self.queue.remove(at) {
+                log::warn!(
+                    "avatar welcome pack: add_folder {:?} skipped, the wear_folder before it failed",
+                    skipped.command.name
+                );
+            }
+        } else if let Some(body) = self.unpaired.iter_mut().find(|body| body.wear == wear) {
+            body.failed = true;
         }
     }
 
@@ -237,7 +273,7 @@ impl App {
         let step = welcome_step(&mut self.world.inventory, &mut job, busy);
         match step {
             Step::Keep => self.welcome_wears.job = Some(job),
-            Step::Done => self.welcome_wears.failed(job.command.action, now),
+            Step::Done => self.welcome_wears.failed(job.command.action, job.wear),
             Step::Send(command) => {
                 // the copy's budget starts now, not at the Library fetch
                 job.since = now;
@@ -262,17 +298,13 @@ fn start_next(wears: &mut WelcomeWears, now: Instant) {
     if wears.job.is_some() {
         return;
     }
-    let command = loop {
-        let Some(command) = wears.queue.pop_front() else {
-            return;
-        };
-        if !wears.skip_add(&command, now) {
-            break command;
-        }
+    let Some(Queued { command, wear }) = wears.queue.pop_front() else {
+        return;
     };
     log::info!("avatar welcome pack: {:?} {:?} {:?}", command.action, command.name, command.id);
     wears.job = Some(Job {
         command,
+        wear,
         since: now,
         stage: Stage::Find,
     });
@@ -297,7 +329,7 @@ fn expire(wears: &mut WelcomeWears, now: Instant) {
     let Some(job) = wears.job.take() else {
         return;
     };
-    wears.failed(job.command.action, now);
+    wears.failed(job.command.action, job.wear);
     if let Stage::Copy { request, root } = job.stage {
         if wears.late.len() >= LATE_CAP {
             let (dropped, _) = wears.late.remove(0);
@@ -368,9 +400,9 @@ fn copy_reply(
         }
         Err(reason) => {
             log::warn!("avatar welcome pack: copy failed ({reason}), outfit unchanged");
-            let action = job.command.action;
+            let (action, wear) = (job.command.action, job.wear);
             wears.job = None;
-            wears.failed(action, now);
+            wears.failed(action, wear);
             None
         }
     }
@@ -585,6 +617,7 @@ mod tests {
                 name: None,
                 id: Some(id(40)),
             },
+            wear: None,
             since: Instant::now(),
             stage: Stage::Find,
         };
@@ -657,6 +690,7 @@ mod tests {
         WelcomeWears {
             job: Some(Job {
                 command: command(action),
+                wear: None,
                 since,
                 stage: Stage::Copy { request, root: id(100) },
             }),
@@ -781,6 +815,7 @@ mod tests {
             let mut wears = WelcomeWears {
                 job: Some(Job {
                     command: command(FolderAction::Add),
+                    wear: None,
                     since,
                     stage,
                 }),
@@ -825,49 +860,127 @@ mod tests {
         assert!(inv.folders.contains_key(&id(101)), "the copied folder stays");
     }
 
+    fn named(action: FolderAction, name: &str) -> FolderCommand {
+        FolderCommand {
+            action,
+            name: Some(name.into()),
+            id: None,
+        }
+    }
+
+    /// Starts the next queued command and puts it at its copy.
+    fn start_copy(wears: &mut WelcomeWears, request: Uuid, now: Instant) {
+        start_next(wears, now);
+        wears.job.as_mut().expect("job").stage = Stage::Copy { request, root: id(100) };
+    }
+
+    fn refuse(wears: &mut WelcomeWears, inv: &mut Inventory, request: Uuid, now: Instant) {
+        assert!(copy_reply(wears, inv, request, Err("refused".into()), now).is_none());
+        assert!(wears.job.is_none());
+    }
+
+    fn queued(wears: &WelcomeWears) -> Vec<(FolderAction, String)> {
+        let pair = |q: &Queued| (q.command.action, q.command.name.clone().expect("name"));
+        wears.queue.iter().map(pair).collect()
+    }
+
+    fn at(now: Instant, millis: u64) -> Instant {
+        now + Duration::from_millis(millis)
+    }
+
     #[test]
-    fn a_failed_wear_folder_skips_the_follow_up_add_folder_only() {
+    fn a_failed_wear_folder_skips_its_own_add_folder_only() {
         let now = Instant::now();
         let mut inv = inventory();
         let request = Uuid::new_v4();
-        let mut wears = copying(request, now);
-        // the page's add_folder is already queued
-        wears.push(vec![command(FolderAction::Add)], now);
-        copy_reply(&mut wears, &mut inv, request, Err("refused".into()), now);
-        start_next(&mut wears, now + Duration::from_secs(2));
-        assert!(wears.job.is_none(), "the queued add_folder was skipped");
-        assert!(wears.queue.is_empty());
-        // a later unrelated add_folder runs
-        wears.push(vec![command(FolderAction::Add)], now + Duration::from_secs(3));
-        start_next(&mut wears, now + Duration::from_secs(3));
-        assert_eq!(wears.job.as_ref().map(|j| j.command.action), Some(FolderAction::Add));
 
-        // an add_folder that arrives within the window is skipped too
-        let mut wears = copying(request, now);
-        copy_reply(&mut wears, &mut inv, request, Err("refused".into()), now);
-        wears.push(vec![command(FolderAction::Add)], now + Duration::from_secs(2));
-        assert!(wears.queue.is_empty());
-        // one only: the next one is not
-        wears.push(vec![command(FolderAction::Add)], now + Duration::from_secs(3));
-        assert_eq!(wears.queue.len(), 1);
+        // the page's add_folder is already queued when the copy fails
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A")], now);
+        start_copy(&mut wears, request, now);
+        wears.push(vec![named(FolderAction::Add, "A")], at(now, 2500));
+        refuse(&mut wears, &mut inv, request, at(now, 3000));
+        assert!(queued(&wears).is_empty(), "the queued add_folder was skipped");
+        // a later add_folder of no choice runs
+        wears.push(vec![named(FolderAction::Add, "other")], at(now, 4000));
+        assert_eq!(queued(&wears), [(FolderAction::Add, "other".into())]);
 
-        // after the window an add_folder is not skipped
-        let mut wears = copying(request, now);
-        copy_reply(&mut wears, &mut inv, request, Err("refused".into()), now);
-        wears.push(vec![command(FolderAction::Add)], now + SKIP_ADD_WINDOW + Duration::from_secs(1));
-        assert_eq!(wears.queue.len(), 1);
+        // the copy fails before the page's add_folder comes
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A")], now);
+        start_copy(&mut wears, request, now);
+        refuse(&mut wears, &mut inv, request, at(now, 1000));
+        wears.push(vec![named(FolderAction::Add, "A")], at(now, 2500));
+        assert!(queued(&wears).is_empty(), "skipped when it comes");
+        wears.push(vec![named(FolderAction::Add, "other")], at(now, 3000));
+        assert_eq!(queued(&wears).len(), 1, "one only");
+
+        // a wear_folder that times out skips its add_folder too
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A"), named(FolderAction::Add, "A")], now);
+        start_copy(&mut wears, request, now);
+        expire(&mut wears, now + TIMEOUT + Duration::from_secs(1));
+        assert!(queued(&wears).is_empty());
 
         // a failed add_folder skips nothing
-        let mut wears = copying_as(FolderAction::Add, request, now);
-        copy_reply(&mut wears, &mut inv, request, Err("refused".into()), now);
-        wears.push(vec![command(FolderAction::Add)], now);
-        assert_eq!(wears.queue.len(), 1);
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A"), named(FolderAction::Add, "A")], now);
+        start_next(&mut wears, now);
+        wears.job = None; // the body is worn
+        start_copy(&mut wears, request, now);
+        refuse(&mut wears, &mut inv, request, now);
+        wears.push(vec![named(FolderAction::Wear, "B"), named(FolderAction::Add, "B")], now);
+        assert_eq!(queued(&wears).len(), 2);
+    }
 
-        // a wear_folder that times out skips it too
-        let mut wears = copying(request, now);
-        expire(&mut wears, now + TIMEOUT + Duration::from_secs(1));
-        wears.push(vec![command(FolderAction::Add)], now + TIMEOUT + Duration::from_secs(2));
-        assert!(wears.queue.is_empty());
+    #[test]
+    fn two_choices_in_a_row_skip_the_failed_ones_clothing_only() {
+        // body A, body B a second later, then clothing A and clothing B
+        let now = Instant::now();
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A")], now);
+        start_copy(&mut wears, request, now);
+        wears.push(vec![named(FolderAction::Wear, "B")], at(now, 1000));
+        refuse(&mut wears, &mut inv, request, at(now, 1500));
+        start_next(&mut wears, at(now, 1500));
+        assert_eq!(wears.job.as_ref().and_then(|j| j.command.name.clone()), Some("B".into()));
+        wears.push(vec![named(FolderAction::Add, "A")], at(now, 2500));
+        wears.push(vec![named(FolderAction::Add, "B")], at(now, 3500));
+        assert_eq!(queued(&wears), [(FolderAction::Add, "B".into())], "A's clothing is not added to B");
+    }
+
+    #[test]
+    fn a_choice_without_clothing_does_not_take_the_next_ones() {
+        // body A fails and its page sends no add_folder; body B comes later
+        let now = Instant::now();
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let mut wears = WelcomeWears::default();
+        wears.push(vec![named(FolderAction::Wear, "A")], now);
+        start_copy(&mut wears, request, now);
+        refuse(&mut wears, &mut inv, request, at(now, 1000));
+        let later = now + PAIR_WINDOW + Duration::from_secs(1);
+        wears.push(vec![named(FolderAction::Wear, "B")], later);
+        wears.push(vec![named(FolderAction::Add, "B")], at(later, 2500));
+        assert_eq!(
+            queued(&wears),
+            [(FolderAction::Wear, "B".into()), (FolderAction::Add, "B".into())],
+            "B's clothing is worn"
+        );
+    }
+
+    #[test]
+    fn a_body_dropped_from_a_full_queue_drops_its_clothing() {
+        let now = Instant::now();
+        let mut wears = WelcomeWears::default();
+        wears.push((0..QUEUE_CAP).map(|n| named(FolderAction::Remove, &n.to_string())).collect(), now);
+        wears.push(vec![named(FolderAction::Wear, "A")], now);
+        start_next(&mut wears, now);
+        assert_eq!(wears.queue.len(), QUEUE_CAP - 1);
+        wears.push(vec![named(FolderAction::Add, "A")], at(now, 2500));
+        assert_eq!(wears.queue.len(), QUEUE_CAP - 1, "A's clothing is not queued without its body");
     }
 
     #[test]
@@ -916,7 +1029,7 @@ mod tests {
         };
         wears.push((0..6).map(named).collect(), now);
         wears.push((6..12).map(named).collect(), now);
-        let kept: Vec<_> = wears.queue.iter().map(|c| c.name.clone().expect("name")).collect();
+        let kept: Vec<_> = wears.queue.iter().map(|q| q.command.name.clone().expect("name")).collect();
         assert_eq!(kept, ["0", "1", "2", "3", "4", "5", "6", "7"]);
     }
 }
