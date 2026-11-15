@@ -202,6 +202,29 @@ mod tests {
     }
 
     #[test]
+    fn source_preferences_filter_remote_emergence_without_hiding_our_own() {
+        let (mut world, mut state) = super::super::tests::fixture();
+        let now = Instant::now();
+        world.portal_sources = Sources::Nobody;
+        let owner = Uuid::from_u128(20);
+        let mut event = event();
+        event.starts = unix_millis() + 250;
+        let wire = super::super::tests::wire(owner, Message::Arrival(event));
+        state.receive(&world, &wire, now, unix_time());
+        assert!(!state.arrivals.contains_key(&owner));
+        world.portal_sources = Sources::Friends;
+        world.social.form_friendship(owner);
+        state.receive(&world, &wire, now, unix_time());
+        assert!(state.arrivals.contains_key(&owner));
+        let root = world.agent.position;
+        assert!(state.begin_arrival(root, root.z - 0.84, 1.8, now));
+        world.portal_sources = Sources::Nobody;
+        state.sync(&world, None, unix_time());
+        assert!(!state.arrivals.contains_key(&owner));
+        assert!(state.arrivals.contains_key(&world.agent_id));
+    }
+
+    #[test]
     fn authenticated_arrival_replays_and_stale_messages_cannot_restart_the_drop() {
         let (world, mut state) = super::super::tests::fixture();
         let now = Instant::now();

@@ -12,9 +12,10 @@
 //!   viewport first, so that scrolling meets measured rows.
 //! - When a row above the viewport changes height, what is in sight must
 //!   not move: the frame draws with the old scroll origin and the offset is
-//!   corrected for the next one (`show` returns that correction). At the
-//!   end of the conversation the rows stand against the bottom in the same
-//!   frame: the scroll area follows the end only a frame later, and a
+//!   corrected for the next one (`show` scrolls the area by it, before the
+//!   area applies the frame's wheel). At the end of the conversation the
+//!   rows stand against the bottom in the same frame: the scroll area
+//!   follows the end only a frame later, and a
 //!   resize, which wraps every row again, made the messages jump for one
 //!   frame at each line a row gained or lost (the human's report of
 //!   2026-10-16).
@@ -31,6 +32,32 @@ use std::time::{Duration, Instant};
 const GAP: f32 = 2.0;
 /// Time spent per frame measuring rows out of sight.
 const MEASURE_BUDGET: Duration = Duration::from_micros(300);
+
+#[cfg(test)]
+thread_local! {
+    /// Rows measured out of sight per frame in place of the time budget:
+    /// how many rows a frame measures must not depend on the test machine's
+    /// speed (a Mac mini measured 3 where a PC measured all of them, and a
+    /// test failed on it alone).
+    static ROWS_PER_FRAME: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// The rows out of sight a frame measures on this thread: `n` each, or
+/// the time budget again with `None`.
+#[cfg(test)]
+pub fn measure_rows_per_frame(n: Option<usize>) {
+    ROWS_PER_FRAME.with(|r| r.set(n));
+}
+
+/// The frame measured enough rows out of sight: `rows` since `started`.
+fn budget_spent(started: Instant, rows: usize) -> bool {
+    #[cfg(test)]
+    if let Some(n) = ROWS_PER_FRAME.with(|r| r.get()) {
+        return rows >= n;
+    }
+    let _ = rows;
+    started.elapsed() > MEASURE_BUDGET
+}
 
 /// What precedes a line's text: the day when it changes, the sender's
 /// header when the sender or the moment does. `tail`: the last line of its
@@ -299,6 +326,10 @@ impl View {
         self.rows.get(i)
     }
 
+    pub fn is_filtered(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
     /// Bring a row in sight at the next `show`.
     pub fn scroll_to(&mut self, row: usize) {
         self.scroll_to = Some(row);
@@ -502,19 +533,19 @@ impl View {
     /// visible part is `viewport` (content coordinates). `draw` draws one
     /// row in the Ui it is given (`painted` false: measuring only).
     ///
-    /// Returns how much the scroll offset must grow so that the next frame
-    /// shows the same rows at the same place (0 at the end of the
-    /// conversation, which the scroll area follows by itself), and the
-    /// response of the content under the rows: it takes the clicks and the
-    /// drags (a text selection, `select.rs`), which then never move the
-    /// window.
+    /// The scroll area moves itself in the same frame so that the next one
+    /// shows the same rows at the same place, or the end at the end of the
+    /// conversation: it must not animate its scrolls (`animated(false)`),
+    /// which would put that off to the next frame. Returns the response of
+    /// the content under the rows: it takes the clicks and the drags (a
+    /// text selection, `select.rs`), which then never move the window.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         viewport: egui::Rect,
         first: u64,
         draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool),
-    ) -> (f32, egui::Response) {
+    ) -> egui::Response {
         let width = self.width;
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom), a frame late: the rows are placed
@@ -570,7 +601,7 @@ impl View {
                 let delta = self.measure(ui, first, i, draw);
                 note(i, delta);
             }
-            let (mut up, mut down) = (top, bottom);
+            let (mut up, mut down, mut rows) = (top, bottom, 0);
             while self.unmeasured > 0 && (up > 0 || down < self.rows.len()) {
                 let mut measured = false;
                 if up > 0 {
@@ -585,8 +616,11 @@ impl View {
                     note(down, delta);
                     down += 1;
                 }
-                if measured && started.elapsed() > MEASURE_BUDGET {
-                    break;
+                if measured {
+                    rows += 1;
+                    if budget_spent(started, rows) {
+                        break;
+                    }
                 }
             }
             if dirty_from != usize::MAX {
@@ -622,17 +656,8 @@ impl View {
         if !ui.is_sizing_pass() {
             self.lift = lift;
         }
+        let grown = height - self.shown_height;
         self.shown_height = height;
-        // (not a window's sizing pass: it scrolls an area of its own, at its
-        // top)
-        if !ui.is_sizing_pass() {
-            if anchored {
-                (self.below, self.left_end) = (0.0, None);
-            } else {
-                self.below = (height - viewport.bottom()).max(0.0);
-                self.left_end.get_or_insert(first + self.len as u64);
-            }
-        }
         // Moving the New marker or measuring an earlier row must not move
         // the menu's target. Keep a surviving visible row at its old screen
         // position; never retain the transcript itself after eviction.
@@ -647,6 +672,18 @@ impl View {
                     .map(|r| r.y + lift - y - viewport.top())
             })
             .unwrap_or(shift_above);
+        // (not a window's sizing pass: it scrolls an area of its own, at its
+        // top)
+        if !ui.is_sizing_pass() {
+            if anchored {
+                (self.below, self.left_end) = (0.0, None);
+            } else {
+                // where the viewport stands once corrected: rows still
+                // measured above it would otherwise count as distance
+                self.below = (height - viewport.bottom() - correction).max(0.0);
+                self.left_end.get_or_insert(first + self.len as u64);
+            }
+        }
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
@@ -702,7 +739,22 @@ impl View {
             self.positions = positions;
             self.resume_following = false;
         }
-        (if at_end { 0.0 } else { correction }, content)
+        // The offset moves before the scroll area applies this frame's
+        // wheel, which it then measures from the right place. Left to the
+        // next frame (or, at the end, to the area following the end), the
+        // wheel was clamped to the shrunken content first: rows measured
+        // above the end lost their too-tall estimates, 90 points a frame
+        // on a slow machine, and a 250-point wheel kept only 5 of them.
+        // (at the end: by what the content gained or lost, not to an
+        // offset taken from `viewport`, which egui's spring back from
+        // past the end may already have moved)
+        // (with a row to bring in sight, its scroll is measured from the
+        // rows as drawn, the correction included)
+        let to = if anchored { grown } else { correction };
+        if to.abs() > 0.001 {
+            ui.scroll_with_delta_animation(egui::vec2(0.0, -to), egui::style::ScrollAnimation::none());
+        }
+        content
     }
 
     /// The lines shown, in order: their index in the conversation.
@@ -961,8 +1013,9 @@ mod tests {
             let mut last = None;
             frames.run(Vec::new(), |ui| {
                 ui.set_max_width(width);
-                let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "resize")
+                crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "resize")
                     .stick_to_bottom(true)
+                    .animated(false)
                     .auto_shrink([false, false])
                     .max_height(300.0)
                     .min_scrolled_height(300.0)
@@ -976,7 +1029,7 @@ mod tests {
                             first_unread: None,
                         };
                         view.sync(&source, width);
-                        let (shift, _) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                        view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                             // a message in sight wraps on two lines when narrow
                             let narrow = ui.max_rect().width() < 350.0;
                             let h = if row.line == 37 && narrow { 40.0 } else { 20.0 };
@@ -985,12 +1038,7 @@ mod tests {
                                 last = Some(rect.bottom());
                             }
                         });
-                        shift
                     });
-                if out.inner != 0.0 {
-                    let offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
-                    crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
-                }
             });
             bottoms.push(last.expect("the last message is drawn"));
         }
@@ -1012,6 +1060,7 @@ mod tests {
                 ui.set_max_width(400.0);
                 let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "latest")
                     .stick_to_bottom(true)
+                    .animated(false)
                     .auto_shrink([false, false])
                     .max_height(300.0)
                     .min_scrolled_height(300.0)
@@ -1027,14 +1076,12 @@ mod tests {
                         view.sync(&source, 400.0);
                         view.show(ui, viewport, clock.first, &mut |ui, _, _| {
                             ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), 20.0), egui::Sense::hover());
-                        })
-                        .0
+                        });
                     });
-                let mut offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
                 if jump {
-                    offset.y = out.content_size.y;
+                    let offset = egui::vec2(out.state.unclamped_offset().x, out.content_size.y);
+                    crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
                 }
-                crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
             });
         };
         for _ in 0..3 {

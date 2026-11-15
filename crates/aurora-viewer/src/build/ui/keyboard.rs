@@ -147,7 +147,11 @@ impl Shortcut {
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
             Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),
-            Self::Link => tool.link(world),
+            Self::Link => {
+                if tool.can_link(world) {
+                    tool.link(world);
+                }
+            }
             Self::Unlink => tool.unlink(world),
             Self::EditLinked => {
                 let on = !settings.edit_linked;
@@ -190,6 +194,7 @@ mod tests {
         let active = Uuid::from_u128(8800);
         let nil = Uuid::nil();
         let source = world.objects.index_of_uuid(&crate::demo::action_id(99610)).unwrap();
+        world.objects.get_mut(source).unwrap().update_flags |= crate::ui::context::flags::OBJECT_COPY;
         let mut tool = BuildTool::default();
         tool.open_build(Tool::Edit);
         let mut settings = BuildSettings::default();

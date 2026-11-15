@@ -191,8 +191,24 @@ pub fn asset(
     decomposition: &process::Physics,
     options: Options,
 ) -> Result<Vec<u8>, AssetError> {
+    asset_with_face_limit(lods, physics, decomposition, options, 8)
+}
+
+/// Render-only assemblies may use the prim's 45 texture-entry slots. These
+/// bytes stay in memory; uploads must continue through `asset` and its 8-face limit.
+pub fn local_asset(lods: &[Option<Model>; 4]) -> Result<Vec<u8>, AssetError> {
+    asset_with_face_limit(lods, None, &process::Physics::default(), Options::default(), 45)
+}
+
+fn asset_with_face_limit(
+    lods: &[Option<Model>; 4],
+    physics: Option<&Model>,
+    decomposition: &process::Physics,
+    options: Options,
+    face_limit: usize,
+) -> Result<Vec<u8>, AssetError> {
     let high = lods[3].as_ref().ok_or_else(|| AssetError::invalid("mesh has no high LOD"))?;
-    if high.faces.len() > 8 {
+    if high.faces.len() > face_limit {
         return Err(AssetError::TooLarge("mesh textureable faces"));
     }
     let mut sections = Vec::<(&str, Vec<u8>)>::new();
@@ -286,6 +302,25 @@ mod tests {
             let faces = crate::decode_mesh_lod(&encoded[section.0..section.0 + section.1]).expect("decode");
             assert_eq!(faces[0].indices, [0, 1, 2]);
             assert_eq!(faces[0].positions[2], [0.0, 1.0, 0.0]);
+        }
+    }
+
+    #[test]
+    fn local_assembly_face_limit_does_not_relax_the_upload_limit() {
+        for count in [9, 45, 46] {
+            let mut model = triangle();
+            model.faces = vec![model.faces[0].clone(); count];
+            let lods = [None, None, None, Some(model)];
+            assert!(asset(&lods, None, &process::Physics::default(), Options::default()).is_err());
+            let local = local_asset(&lods);
+            if count > 45 {
+                assert!(local.is_err());
+                continue;
+            }
+            let bytes = local.expect("local assembly");
+            let header = crate::parse_mesh_header(&bytes).expect("header");
+            let section = crate::mesh::section_bytes(&bytes, header.lods[3].expect("High")).expect("section");
+            assert_eq!(crate::decode_mesh_lod(section).expect("decode all faces").len(), count);
         }
     }
 

@@ -134,9 +134,12 @@ mod tests {
     }
 
     #[test]
-    fn the_built_in_notice_names_the_licence_and_every_bundled_work() {
+    fn the_built_in_notice_names_the_copyright_the_licence_and_every_bundled_work() {
         let blocks = blocks();
-        assert!(matches!(&blocks[0], Block::Paragraph(p) if p.contains("GNU General Public License")));
+        // the copyright line opens the Licences tab: modified versions must
+        // keep it on screen (GPLv3 section 5(d))
+        assert!(matches!(&blocks[0], Block::Paragraph(p) if p.starts_with("Copyright © ") && p.contains("Aurora Viewer contributors")));
+        assert!(matches!(&blocks[1], Block::Paragraph(p) if p.contains("GNU General Public License")));
         let rows = blocks.iter().filter(|b| matches!(b, Block::Row { .. })).count();
         let table_lines = NOTICE.lines().filter(|l| l.trim_start().starts_with('|')).count();
         let tables = NOTICE.lines().filter(|l| l.trim_start().starts_with("|---")).count();
@@ -146,5 +149,41 @@ mod tests {
             Block::Heading(t) | Block::Paragraph(t) | Block::Item(t) => !t.contains("](") && !t.contains("**"),
             Block::Row { work, licence } => !work.is_empty() && !licence.is_empty() && !licence.contains("]("),
         }));
+    }
+
+    /// A ported file renamed or moved must keep its authors' credit: every
+    /// path of the "Authors of the ported code" table still exists. A path
+    /// starting with a crate (`aurora-viewer/src/…`) sets the folder of the
+    /// short ones after it, up to the next `;`.
+    #[test]
+    fn the_ported_code_credits_name_files_that_exist() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let table = NOTICE
+            .split("## Authors of the ported code")
+            .nth(1)
+            .and_then(|s| s.split("\n## ").next())
+            .expect("NOTICE.md credits the authors of the ported code");
+        let mut checked = 0;
+        let mut missing = Vec::new();
+        for row in table.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| Original")) {
+            let ported = row.split('|').nth(2).unwrap_or_default();
+            for group in ported.split(';') {
+                let mut base = String::new();
+                for path in group.split('`').skip(1).step_by(2) {
+                    let full = if path.starts_with("aurora-") {
+                        base = path.split_once("/src/").map(|(c, _)| format!("{c}/src/")).unwrap_or_default();
+                        path.to_owned()
+                    } else {
+                        format!("{base}{path}")
+                    };
+                    checked += 1;
+                    if !crates.join(&full).exists() {
+                        missing.push(full);
+                    }
+                }
+            }
+        }
+        assert!(checked > 50, "the table's paths were not read");
+        assert!(missing.is_empty(), "NOTICE.md credits files that no longer exist: {missing:?}");
     }
 }

@@ -47,7 +47,10 @@ impl App {
                 access: Access::Everyone,
                 expires: unix_time() + LIFETIME,
             };
-            self.world.portals.create(portal, position, Instant::now(), unix_time());
+            let build = self.build_right_at(Vec3::from(portal.center));
+            if let Err(refusal) = self.world.portals.create(portal, build, position, Instant::now(), unix_time()) {
+                log::warn!("portal repeat demo create refused: {refusal:?}");
+            }
             if mode.ends_with("busy") {
                 let occupied = Portal {
                     id: uuid::Uuid::new_v4(),
@@ -78,9 +81,10 @@ impl App {
                 .move_complete_at
                 .is_some_and(|at| (0.1..1.5).contains(&at.elapsed().as_secs_f32()))
         {
-            self.world.apply(NetEvent::TeleportStarted);
+            self.world.apply(NetEvent::TeleportStarted { flags: 0 });
             self.world.apply(NetEvent::TeleportProgress {
                 message: "arriving".into(),
+                flags: 0,
             });
             log::info!(
                 "portal repeat late status: frame {}, teleporting {}",
@@ -118,6 +122,8 @@ impl App {
             self.panels.inventory = false;
             self.panels.appearance = false;
             self.settings.portal_returns = true;
+            self.settings.portal_sources = crate::world::portals::Sources::Everyone;
+            self.world.portal_sources = self.settings.portal_sources;
             let root = self.world.agent.position + self.world.agent.forward() * 4.0;
             let portal = Portal {
                 id: uuid::Uuid::from_u128(40),
@@ -131,12 +137,13 @@ impl App {
             };
             let now = Instant::now();
             let unix = unix_time();
+            let build = self.build_right_at(root);
             let mut state = std::mem::take(&mut self.world.portals);
             let creator = uuid::Uuid::from_u128(20);
             for i in 0..20 {
                 let mut next = portal.clone();
                 next.id = uuid::Uuid::from_u128(40 + i);
-                state.share_return(next, creator, self.world.agent.position, now, unix);
+                state.share_return(next, creator, build, self.world.agent.position, now, unix);
             }
             for i in 0..20 {
                 let mut next = portal.announcement();
@@ -205,6 +212,8 @@ impl App {
             self.panels.people = false;
             self.panels.inventory = false;
             self.panels.appearance = false;
+            self.settings.portal_sources = crate::world::portals::Sources::Everyone;
+            self.world.portal_sources = self.settings.portal_sources;
             self.settings.reduce_motion = mode.ends_with("static");
             self.world.portals.reduced_motion = self.settings.reduce_motion;
             let floor = self.scene.preview_floor(&self.world, point, terrain + 4.0).unwrap_or(terrain);
@@ -424,8 +433,7 @@ impl App {
         }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
-            && mode.starts_with("private-")
-            && (mode.contains("-chat-") || mode.contains("-keyboard-"))
+            && (mode.starts_with("private-") && (mode.contains("-chat-") || mode.contains("-keyboard-")) || mode.starts_with("stranger"))
         {
             self.portal_keyboard_demo_input(raw, mode.contains("-chat-"));
             return;
@@ -538,14 +546,15 @@ impl App {
         }
         if (600..=840).contains(&self.frame_count) && self.frame_count.is_multiple_of(60) {
             log::info!(
-                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}",
+                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}, question {}",
                 self.frame_count,
                 self.chat_ui.has_focus,
                 self.egui_ctx.egui_wants_keyboard_input(),
                 self.input.forward,
                 self.world.agent.position,
                 self.world.portals.entries.iter().any(|entry| entry.allowed(&self.world)),
-                self.portal_journey.is_some()
+                self.portal_journey.is_some(),
+                self.portal_ask.is_some()
             );
         }
     }
@@ -579,7 +588,12 @@ impl App {
         let mut state = crate::world::portals::State::default();
         let now = Instant::now();
         state.sync(&world, None, unix_time());
-        state.create(portal, world.agent.position, now, unix_time());
+        // the peer stands on our plaza: the same land test as ours
+        world.parcel = self.world.parcel.clone();
+        let build = world.build_right_at(world.main_region.unwrap_or(256), Vec3::from(portal.center), None);
+        if let Err(refusal) = state.create(portal, build, world.agent.position, now, unix_time()) {
+            log::warn!("portal peer demo: {refusal:?}");
+        }
         if let Some(group) = state.take_group_refresh() {
             world.group_data.request_members(group);
             for command in world.group_data.take_commands() {

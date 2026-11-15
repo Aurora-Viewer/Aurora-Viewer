@@ -62,6 +62,13 @@ impl Document {
         }
         Ok(document)
     }
+    /// Project files (local catalogue, draft, exported file and notecard)
+    /// name animations by inventory item; see `SavedStack::name_assets`.
+    fn name_assets(&mut self, shared: impl Fn(Uuid) -> Option<Uuid>) {
+        for stack in &mut self.animations {
+            stack.name_assets(&shared);
+        }
+    }
     fn encode(&self) -> Result<Vec<u8>, String> {
         let bytes = serde_json::to_vec(self).map_err(|_| invalid())?;
         Self::decode(&bytes)?;
@@ -196,7 +203,7 @@ impl Editor {
             name: name.clone(),
         });
         document.source_name = name;
-        self.project.library.import(document.encode()?)
+        self.project.library.import(document.encode()?, &world.inventory)
     }
 
     pub(super) fn begin_project_creation(&mut self) {
@@ -230,6 +237,13 @@ impl Editor {
                 String::new()
             },
         }
+    }
+    /// `project_document` as it is written to disk: the account folder is
+    /// plain and its projects can be exported later.
+    fn stored_document(&self, inv: &crate::world::inventory::Inventory) -> Document {
+        let mut document = self.project_document();
+        document.name_assets(|id| animations::shared_asset(inv, id));
+        document
     }
     fn apply_project(&mut self, world: &World, bytes: &[u8]) -> Result<(), String> {
         let document = Document::decode(bytes)?;
@@ -288,7 +302,7 @@ impl Editor {
             Err(e) => e.clone(),
         });
     }
-    pub fn project_preview(&mut self, _world: &World, item: Uuid, result: &Result<Vec<u8>, String>) -> bool {
+    pub fn project_preview(&mut self, world: &World, item: Uuid, result: &Result<Vec<u8>, String>) -> bool {
         if self.project.loading.is_none_or(|(id, _)| id != item) {
             return false;
         }
@@ -297,7 +311,7 @@ impl Editor {
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|bytes| Notecard::decode(bytes))
-            .and_then(|card| self.project.library.import(card.text.into_bytes()));
+            .and_then(|card| self.project.library.import(card.text.into_bytes(), &world.inventory));
         if let Err(e) = loaded {
             self.project.message = Some(e);
         }
@@ -328,7 +342,7 @@ impl Editor {
                 | Output::LibraryDeleted(_, _)
                 | Output::LibraryFailed(_)) => self.library_output(world, output),
                 Output::Loaded(bytes) => {
-                    if let Err(e) = self.project.library.import(bytes) {
+                    if let Err(e) = self.project.library.import(bytes, &world.inventory) {
                         self.project.message = Some(e);
                     }
                 }
@@ -408,7 +422,7 @@ impl Editor {
             return;
         }
         let root = crate::settings::account_dir(&world.agent_id).join("ik-projects");
-        if self.library_tick(jobs, ctx, &root) {
+        if self.library_tick(jobs, ctx, &root, &world.inventory) {
             return;
         }
         let path = self.project.library.active.as_ref().map_or(path, |p| library::path(&root, p.id));
@@ -427,7 +441,7 @@ impl Editor {
         let bytes = match if matches!(action, Some(Action::Open)) {
             Ok(Vec::new())
         } else {
-            self.project_document().encode()
+            self.stored_document(&world.inventory).encode()
         } {
             Ok(b) => b,
             Err(e) => {
@@ -505,9 +519,11 @@ impl Editor {
             }
         });
     }
-    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, world: &World) {
+    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
         if self.project.picker {
-            ui.add(egui::TextEdit::singleline(&mut self.project.filter).hint_text(aurora_i18n::tr!("ik-project-notecard-search")));
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.project.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ik-project-notecard-search"))
+            });
             let signature = (world.inventory.generation, self.project.filter.clone());
             if self.project.candidates_at.as_ref() != Some(&signature) {
                 let filter = self.project.filter.to_lowercase();
@@ -519,7 +535,7 @@ impl Editor {
                         it.asset_type == 7 && it.name.to_lowercase().contains(&filter) && !world.inventory.in_folder_type(it.id, 14)
                     })
                     .collect();
-                candidates.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+                candidates.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then(a.id.cmp(&b.id)));
                 self.project.candidates = candidates.iter().map(|it| it.id).collect();
                 self.project.candidates_at = Some(signature);
             }

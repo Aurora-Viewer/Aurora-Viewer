@@ -173,7 +173,9 @@ jobs:
           cargo build --profile ci --locked -p aurora-viewer
       - name: Save the Rust cache
         if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.cache.outputs.cache-hit != 'true'
+        # a cache that is not saved only slows the next run: never a red job
         timeout-minutes: 10
+        continue-on-error: true
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -200,6 +202,16 @@ jobs:
           AURORA_CAPTURE_FRAMES: '620'
           AURORA_CAPTURE_EXIT: '1'
         run: |
+          # The team's Mac mini has nobody at its keyboard: once its display
+          # sleeps, macOS presents no frame of the window, which then never
+          # shows, and the capture never comes (the step ran into its time
+          # limit on every run from 2026-11-05 17:00 UTC). Wake the display
+          # (a user-activity assertion), then keep it awake while the viewer
+          # runs. A locked screen is the runner owner's setting to change.
+          if [ "${{ runner.environment }}" = self-hosted ]; then
+            caffeinate -u -t 5
+            caffeinate -d -i -w $$ &
+          fi
           cargo run --profile ci --locked -p aurora-viewer -- --title "CI macOS"
           test -s "$AURORA_CAPTURE"
           log="$HOME/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-ci-macos.log"

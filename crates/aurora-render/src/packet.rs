@@ -147,6 +147,9 @@ pub(crate) struct FrameResult {
     pub picks: Vec<ClickAnswer>,
     /// What was drawn under the pixels asked, by ticket.
     pub drawn: Vec<DrawnAnswer>,
+    /// The poser's part pick read back since the last result (part_pick.rs):
+    /// the visible part class under the cursor, 0 for none of the subject.
+    pub part_pick: Option<(u32, [u32; 2])>,
     /// Last GPU culling counts read back.
     pub cull: CullCounts,
     /// The capture asked with this frame (width, height, RGBA8); None when

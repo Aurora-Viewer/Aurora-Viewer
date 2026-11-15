@@ -187,6 +187,34 @@ def install(request, state):
     return str(backup)
 
 
+def uninstall(state):
+    """Disable and delete Aurora's package from this profile, then save the
+    preferences so Blender no longer lists it. Only the folders that hold
+    Aurora's own package are deleted; the backups made by `install` stay,
+    as copies of the user's own preferences."""
+    extension, config, legacy, repo, target, module = state
+    removed = []
+    disabled = False
+    for name in dict.fromkeys([module, "aurora_live"]):
+        if name in bpy.context.preferences.addons:
+            checked(bpy.ops.preferences.addon_disable(module=name))
+            disabled = True
+    for path, is_extension in dict.fromkeys([(target, extension), (legacy, False)]):
+        if path.is_symlink() or not path.is_dir() or package_version(path, is_extension) is None:
+            continue
+        shutil.rmtree(path)
+        removed.append(str(path))
+    if disabled or removed:
+        try:
+            if AUTO_SAVE is not None:
+                bpy.context.preferences.use_preferences_save = AUTO_SAVE
+            checked(bpy.ops.wm.save_userpref())
+        finally:
+            if AUTO_SAVE is not None:
+                bpy.context.preferences.use_preferences_save = False
+    return removed
+
+
 def run(request):
     report = {"version": list(bpy.app.version[:3]), "plugin_version": None, "enabled": False,
               "profile": "", "target": "", "backup": None, "error": None}
@@ -201,6 +229,12 @@ def run(request):
         with install_lock(config.parent / ".aurora-install.lock"):
             report["backup"] = install(request, state)
             report["plugin_version"], report["enabled"] = request["plugin_version"], True
+    elif request["operation"] == "uninstall":
+        lock = config.parent / ".aurora-install.lock"
+        with install_lock(lock):
+            report["removed"] = uninstall(state)
+            report["plugin_version"], report["enabled"] = None, False
+        lock.unlink(missing_ok=True)
     return report
 
 

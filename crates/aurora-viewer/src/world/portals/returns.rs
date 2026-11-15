@@ -23,9 +23,20 @@ impl State {
         self.entries.iter().filter(|entry| self.materialized(entry))
     }
 
+    pub(super) fn shown_entry(&self, world: &World, entry: &Entry) -> bool {
+        entry.shown(world)
+            && (entry.portal.creator.is_none()
+                || !self
+                    .entries
+                    .iter()
+                    .any(|other| other.portal.creator.is_none() && other.shown(world) && overlaps(&other.portal, &entry.portal)))
+    }
+
     /// The accepted journey grants only this traveler a return pass. Other
     /// residents still need the original creator's Friends/Group permission.
-    pub fn share_return(&mut self, portal: Portal, creator: Uuid, position: Vec3, now: Instant, unix: u64) -> bool {
+    pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
+        let share = build == BuildRight::Allowed;
+        let unknown = build == BuildRight::Unknown;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
@@ -61,14 +72,15 @@ impl State {
             let entry = &self.entries[index];
             announcement = entry.portal.clone();
             announcement.creator = Some(creator);
-            if !entry.shared && !self.queue(Uuid::nil(), Message::Open(announcement.clone())) {
+            if share && !entry.shared && !self.queue(Uuid::nil(), Message::Open(announcement.clone())) {
                 return false;
             }
             let entry = &mut self.entries[index];
             // Retain a normal source's local priority. Only its relayed wire
             // needs the creator hint; converting its stored kind would expose
             // an older overlapping return that the source currently suppresses.
-            entry.shared = true;
+            entry.shared |= share;
+            entry.awaiting_land = unknown && !entry.shared;
             entry.return_pass = true;
             entry.gate = Gate::arrival(Vec3::from(entry.portal.center), position, now);
         } else {
@@ -77,7 +89,7 @@ impl State {
                     .entries
                     .iter()
                     .any(|entry| entry.portal.id == portal.id || overlaps(&entry.portal, &announcement))
-                || !self.queue(Uuid::nil(), Message::Open(announcement.clone()))
+                || (share && !self.queue(Uuid::nil(), Message::Open(announcement.clone())))
             {
                 return false;
             }
@@ -88,12 +100,14 @@ impl State {
                 portal: announcement,
                 details: Some(portal.details()),
                 relays: Vec::new(),
-                shared: true,
+                shared: share,
                 created: false,
                 return_pass: true,
+                awaiting_land: unknown,
             });
         }
-        if let Access::Group(group) = portal.access
+        if share
+            && let Access::Group(group) = portal.access
             && !self.group_refresh.contains(&group)
         {
             self.group_refresh.push_back(group);

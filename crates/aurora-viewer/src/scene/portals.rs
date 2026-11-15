@@ -117,7 +117,7 @@ pub struct Portals {
     // GPU clock drives the opening once without per-frame record writes.
     births: HashMap<Identity, u32>,
     records: Vec<u32>,
-    pub cmds: Vec<(f32, DrawCmd)>,
+    pub cmds: Vec<(Vec3, DrawCmd)>,
 }
 
 impl Portals {
@@ -191,6 +191,20 @@ impl Portals {
                     (portal.id.as_u128() as u16) as u32,
                     birth,
                 ],
+                // the OIT tie-break: a namespace of their own and the portal's
+                // place (not its rank among the visible ones, which changes
+                // as portals come and go)
+                identity: [
+                    aurora_render::oit_tie(
+                        *b"aurora-portal-fx",
+                        portal.center[0].to_bits()
+                            ^ portal.center[1].to_bits().rotate_left(11)
+                            ^ portal.center[2].to_bits().rotate_left(22),
+                    ),
+                    0,
+                    0,
+                    0,
+                ],
                 ..Default::default()
             };
             let slot = if let Some(&slot) = self.records.get(used) {
@@ -203,7 +217,7 @@ impl Portals {
             };
             used += 1;
             self.cmds.push((
-                eye.distance(center),
+                center,
                 DrawCmd {
                     index_count: mesh.index_count,
                     first_index: mesh.index_offset,
@@ -240,6 +254,9 @@ impl Portals {
                         effect.event.id.as_u128() as u16 as u32,
                         renderer.anim_clock().ms(now).wrapping_sub(8000),
                     ],
+                    // Simultaneous arrivals keep a stable transparency order,
+                    // independent of the subjects' HashMap iteration order.
+                    identity: [aurora_render::oit_tie(*effect.event.id.as_bytes(), 0), 0, 0, 0],
                     ..Default::default()
                 };
                 let slot = if let Some(&slot) = self.records.get(used) {
@@ -252,7 +269,7 @@ impl Portals {
                 };
                 used += 1;
                 self.cmds.push((
-                    eye.distance(center),
+                    center,
                     DrawCmd {
                         index_count: mesh.index_count,
                         first_index: mesh.index_offset,
@@ -341,9 +358,10 @@ impl super::Scene {
             self.portals.clipping.clear();
             self.portals.planes.clear();
         } else {
+            // A portal the setting hides cuts no body either.
             let portals: Vec<_> = world
                 .portals
-                .apertures()
+                .shown(world)
                 .map(|entry| clipping::Aperture {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),

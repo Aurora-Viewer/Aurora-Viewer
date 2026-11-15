@@ -32,6 +32,8 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         "depth_contact",
         "fs_depth_contact_normal",
         "fs_glow",
+        "glow_amount",
+        "blend_glow",
     ] {
         let start = object.find(&format!("fn {name}(")).unwrap();
         let end = start + object[start..].find("\n}").unwrap() + 2;
@@ -111,12 +113,12 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
     }
     let aperture_cases = cases.clone();
     let aperture_expected = expected.clone();
-    for pass in 1..=4 {
+    for pass in 1..=5 {
         cases.extend(aperture_cases.iter().map(|case| Case {
             flags: [flags::PORTAL_CLIP, pass, 0, 0],
             ..*case
         }));
-        if pass == 4 {
+        if pass >= 4 {
             expected.extend(aperture_cases.iter().zip(&aperture_expected).map(|(case, &kept)| {
                 kept && PortalClip { data: case.clip }
                     .normal()
@@ -129,7 +131,7 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
     }
     // Completed travelers have no remaining body, feet, attachments or glow,
     // even after moving beside the opening while the teleport is pending.
-    for pass in 0..=4 {
+    for pass in 0..=5 {
         for point in [Vec3::ZERO, Vec3::new(2.0, 4.0, -2.0), Vec3::new(-2.0, -4.0, 3.0)] {
             let clip = PortalClip::hidden();
             assert!(!clip.keeps_point(point));
@@ -141,13 +143,13 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
             expected.push(false);
         }
     }
-    for pass in 0..=4 {
+    for pass in 0..=5 {
         cases.push(Case {
             clip: [0.0; 4],
             point: [-0.5, 0.0, 0.0, 1.0],
             flags: [0, pass, 0, 0],
         });
-        expected.push(pass != 4);
+        expected.push(pass < 4);
     }
     // A contact glow cannot fill transparent texture holes or invisible
     // blended faces. Opaque material texture alpha remains non-opacity data.
@@ -157,12 +159,14 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         (flags::ALPHA_BLEND, 0, 1, false),
         (0, 1, 0, true),
     ] {
-        cases.push(Case {
-            clip: [0.0; 4],
-            point: [0.225, 0.0, 0.0, 1.0],
-            flags: [flags::PORTAL_CLIP | material, 4, texture, alpha],
-        });
-        expected.push(glow);
+        for pass in [4, 5] {
+            cases.push(Case {
+                clip: [0.0; 4],
+                point: [0.225, 0.0, 0.0, 1.0],
+                flags: [flags::PORTAL_CLIP | material, pass, texture, alpha],
+            });
+            expected.push(glow);
+        }
     }
     // The normal contact pass must share the analytic portal core rather
     // than treating the decorative quad's corners as solid depth.
@@ -230,13 +234,15 @@ const frame=Frame(vec4<u32>(8000u,0u,0u,0u));
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
 fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0,1.0,1.0,select(1.0,0.0,i==1u));}}
-fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn blend_sample(i:u32,uv:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec4<f32>{{return sample_tex(i,uv);}}
+fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>,c:f32)->vec4<f32>{{return vec4<f32>(1.0);}}
 fn srgb_to_linear(c:vec3<f32>)->vec3<f32>{{return c;}}
 var<private> rez_fw:vec3<f32>;
 fn rez_lines(p:vec3<f32>,n:vec3<f32>,step:f32)->f32{{return 0.5;}}
 fn rez_glow(rec:DrawRecord,v:VsOut)->f32{{return 0.0;}}
 struct PortalSurface{{glow:f32}};
 fn portal_surface(rec:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->PortalSurface{{return PortalSurface(0.0);}}
+fn normal_composition(r:DrawRecord)->f32{{return 0.0;}}
 fn water_clip(p:vec3<f32>){{}}
 {cut}
 {opening}
@@ -255,6 +261,11 @@ fn water_clip(p:vec3<f32>){{}}
     if(c.flags.y==2u){{return fs_depth_mask_normal(m,true);}}
     if(c.flags.y==3u){{return fs_depth_contact_normal(m,true);}}
     if(c.flags.y==4u){{return fs_glow(v,true);}}
+    if(c.flags.y==5u){{
+        portal_clip(rec,c.point.xyz);
+        rez_fw=fwidth(v.world_pos);
+        return vec4<f32>(0.0,0.0,0.0,blend_glow(v,vec2<f32>(0.0),vec2<f32>(0.0)));
+    }}
     portal_clip(rec,c.point.xyz);
     return vec4<f32>(1.0);
 }}
@@ -357,7 +368,7 @@ fn water_clip(p:vec3<f32>){{}}
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(height) * 256,
+        size: crate::readback::readback_size(u64::from(height) * 256),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });

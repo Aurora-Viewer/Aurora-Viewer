@@ -18,6 +18,7 @@ mod ui;
 
 pub use demo::fixture as demo_fixture;
 pub use demo::static_fixture as demo_static_fixture;
+pub(crate) use installer::{Removal as AddonRemoval, remove_everywhere as remove_addon_everywhere};
 
 use parking_lot::Mutex;
 use std::{

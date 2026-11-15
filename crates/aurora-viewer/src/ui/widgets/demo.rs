@@ -67,6 +67,13 @@ pub fn rez_events(ctx: &egui::Context, frame: u64, destination: egui::Pos2) -> V
         }],
         686 => vec![button(destination, false)],
         687 if mode == "cancel" => vec![button(destination, false)],
+        720 | 721 if mode == "build-delete" => vec![egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed: frame == 720,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
         _ => Vec::new(),
     }
 }

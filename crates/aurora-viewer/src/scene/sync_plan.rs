@@ -6,7 +6,7 @@ use super::anchors::{self, AnchorRef};
 use super::meshes::MeshStreamer;
 use super::sync_sets::{PendingGeom, SyncState, Xf, XfCache};
 use super::textures::TextureStreamer;
-use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh, lod_for};
+use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh};
 use crate::fast_hash::FastMap;
 use crate::world::World;
 use crate::world::objects::Object;
@@ -126,7 +126,12 @@ impl SyncState for FrameState<'_> {
     }
 
     fn anchored(&self, idx: usize) -> bool {
-        self.gpu.get(idx).is_some_and(|g| g.anchor.is_some())
+        // (in the seconds of AURORA_MOVING_ANCHORS=alt that leave them to
+        // the sync, what hangs from a mover is placed by it again)
+        self.gpu
+            .get(idx)
+            .and_then(|g| g.anchor)
+            .is_some_and(|a| a.slot != anchors::MOVER || anchors::movers_now())
     }
 
     fn needs_sync(&self, idx: usize, o: &Object) -> bool {
@@ -231,6 +236,7 @@ pub(super) struct SyncCtx<'a> {
     geoms: &'a FastMap<GeomKey, GeomEntry>,
     gpu: &'a [ObjGpu],
     palette_slots: &'a FastMap<Uuid, u32>,
+    anchors: &'a super::anchors::Anchors,
     skin_binds: &'a super::skin_binds::SkinBinds,
     palettes: &'a [[[f32; 4]; 4]],
     anim_boxes: &'a FastMap<Uuid, super::anim_box::AnimBox>,
@@ -239,9 +245,11 @@ pub(super) struct SyncCtx<'a> {
     now: Instant,
     eye: Vec3,
     lod_factor: f32,
+    tree_lod_factor: f32,
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mesh_lod_resets: &'a HashMap<crate::world::objects::ObjKey, super::mesh_inspection::LodReset>,
+    surface_hidden: &'a std::collections::HashSet<usize>,
     mat_gen: u64,
     mat_changes: &'a super::mat_changes::MatChanges,
 }
@@ -325,7 +333,7 @@ impl SyncCtx<'_> {
                 self.mesh_lod_resets,
                 o,
                 false,
-                lod_for(radius, distance, self.lod_factor, self.fov_y),
+                super::object_lod(o, radius, distance, self.lod_factor, self.tree_lod_factor, self.fov_y),
             ),
             radius,
             distance,
@@ -375,15 +383,24 @@ impl SyncCtx<'_> {
                 matrix,
             })
         });
-        // a worn object that only follows its attachment point: placed
-        // relative to it once, the GPU does the rest
+        // a worn object that only follows its attachment point, or an object
+        // that moves by itself and what is linked below it: placed relative
+        // to it once, the GPU does the rest
         // (a Linden plant keeps its own placement, worn or not)
         let plant = super::plants::plant_model(geom_key, o, pos, rot);
         let point_anchor = (!rigged && on_gpu && plant.is_none())
             .then(|| {
-                anchors::anchored(world, o, |wearer, slot| {
-                    Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot)
-                })
+                anchors::anchored_or_moving(
+                    world,
+                    idx,
+                    o,
+                    |wearer, slot| Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot),
+                    |mover, m| {
+                        self.anchors
+                            .mover_matrix(mover, m.full_id)
+                            .filter(|&matrix| (matrix as usize) < self.palettes.len())
+                    },
+                )
             })
             .flatten();
         let unbind = unbind.unwrap_or(Mat4::IDENTITY);
@@ -465,7 +482,7 @@ impl SyncCtx<'_> {
             self.mesh_lod_resets,
             o,
             hud,
-            lod_for(radius, distance, self.lod_factor, self.fov_y),
+            super::object_lod(o, radius, distance, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         Some(Scene::object_geom_key(o, lod))
     }
@@ -503,7 +520,7 @@ impl SyncCtx<'_> {
             xf: Some(xf),
             interim: self.interim_move(idx, o, g, xf),
         };
-        if o.shape_dirty || o.material_dirty {
+        if o.shape_dirty || o.material_dirty || self.surface_hidden.contains(&idx) {
             return full();
         }
         if g.sculpt_wait.is_some() || self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen) {
@@ -516,7 +533,7 @@ impl SyncCtx<'_> {
             self.mesh_lod_resets,
             o,
             hud,
-            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y),
+            super::object_lod(o, metrics.0, metrics.1, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
@@ -616,6 +633,7 @@ impl Scene {
             geoms: &self.geoms,
             gpu: &self.gpu,
             palette_slots: &self.palette_slots,
+            anchors: &self.anchors,
             skin_binds: &self.skin_binds,
             palettes: &self.palettes,
             anim_boxes: &self.anim_boxes,
@@ -624,9 +642,11 @@ impl Scene {
             now,
             eye,
             lod_factor: self.lod_factor,
+            tree_lod_factor: self.tree_lod_factor,
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
             mesh_lod_resets: &self.mesh_lod_resets,
+            surface_hidden: &self.surface_hidden,
             mat_gen: self.materials.generation,
             mat_changes: &self.mat_changes,
         }
@@ -646,6 +666,7 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::lod_for;
     use aurora_prim::params::{
         LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, LL_SCULPT_TYPE_MESH,
         LL_SCULPT_TYPE_SPHERE, SculptParams, VolumeParams,
