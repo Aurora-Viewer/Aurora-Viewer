@@ -648,7 +648,7 @@ impl MediaManager {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
         let paths = self.paths.clone();
-        let browser = browser_settings(f.cache_dir, f.language);
+        let browser = browser_settings(f.cache_dir, f.language, f.settings);
         for m in &mut self.impls {
             if m.priority == Priority::Unloaded {
                 if m.plugin.take().is_some() {

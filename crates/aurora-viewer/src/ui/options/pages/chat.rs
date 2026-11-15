@@ -76,6 +76,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
@@ -751,6 +757,24 @@ fn notifications(cx: &mut Cx) {
                             });
                     });
                     changed
+                },
+            );
+            // NotificationTipToastLifeTime (User Interface › 2D Overlay,
+            // "Tip Toast life"): the Legacy toasts only
+            let hint = if center {
+                tr!("ui-options-toast-friends-seconds-aurora")
+            } else {
+                tr!("ui-options-toast-friends-seconds-hint")
+            };
+            cx.row(
+                tr!("ui-options-toast-friends-seconds"),
+                hint,
+                &field!(tip_toast_seconds),
+                |ui, s| {
+                    ui.add_enabled_ui(!center, |ui| {
+                        super::super::slider_whole(ui, &mut s.tip_toast_seconds, 1.0..=30.0, " s")
+                    })
+                    .inner
                 },
             );
         });
