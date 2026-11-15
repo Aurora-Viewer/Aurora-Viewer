@@ -303,6 +303,10 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
+    if who.object && !line.source.is_nil() {
+        super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), env.p, env.world, line);
+        return;
+    }
     if who.avatar.is_nil() {
         return;
     }

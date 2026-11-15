@@ -4,7 +4,7 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
@@ -460,7 +460,7 @@ fn quality(cx: &mut Cx) {
             tr!("common-draw-distance"),
             tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
             &field!(draw_distance),
-            32.0..=512.0,
+            crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
             " m",
         );
         // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
@@ -713,6 +713,15 @@ fn quality(cx: &mut Cx) {
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-local-lights"), |cx| {
+        // the Legacy Viewer's "Max. nearby lights" (RenderLocalLightCount),
+        // up to the 64 the renderer holds (Settings::local_light_count)
+        cx.slider(
+            tr!("ui-options-max-nearby-lights"),
+            tr!("ui-options-max-nearby-lights-help"),
+            &field!(local_light_count),
+            0..=crate::scene::lights::MAX_LIGHTS as u32,
+            "",
+        );
         cx.toggle(
             tr!("ui-options-others-attached-lights"),
             tr!("ui-options-others-attached-lights-help"),
@@ -928,11 +937,14 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_range),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
-                        .custom_parser(aurora_i18n::parse_number)
-                        .step_by(16.0)
-                        .suffix(" m")
-                        .trailing_fill(true),
+                    egui::Slider::new(
+                        &mut s.probe_range,
+                        crate::settings::PROBE_RANGE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
+                    )
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(16.0)
+                    .suffix(" m")
+                    .trailing_fill(true),
                 )
                 .changed()
             },
@@ -995,6 +1007,25 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        let p = cx.p;
+        // the search finds the row by its methods and the exact order's
+        // precisions
+        let mut words = vec![
+            tr!("ui-options-blend-order-standard"),
+            tr!("ui-options-blend-order-exact"),
+            tr!("ui-options-blend-order-stochastic"),
+        ];
+        words.extend(blend_precisions().map(|(_, label)| label));
+        cx.wide().keywords(&words.join(" ")).row(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            |ui, s| blend_order_choice(ui, &p, &mut s.blend_order),
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another

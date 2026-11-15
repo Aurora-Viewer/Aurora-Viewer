@@ -978,14 +978,24 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
 fn content_body(item: Uuid, kind: i32, lua: bool) -> Llsd {
     let mut body = llsd_map! { "item_id" => item };
     if kind == 10 {
-        let luau = if lua {
-            crate::scripts::Luau::Lua
+        let target = if lua {
+            crate::scripts::CompileTarget::Luau
         } else {
-            crate::scripts::Luau::Off
+            crate::scripts::CompileTarget::Mono
         };
-        body.insert("target", Llsd::String(crate::scripts::compile_target(true, luau).into()));
+        body.insert("target", Llsd::String(target.name().into()));
     }
     body
+}
+
+/// What `save_content` refuses in a material before anything is sent: more
+/// than 1 MiB, or an asset that does not parse. A new material's upload runs
+/// it before its inventory item is created, so a refusal leaves no empty item.
+pub fn material_content_check(data: &[u8]) -> Result<(), String> {
+    if data.len() > 1024 * 1024 {
+        return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
+    }
+    aurora_assets::parse_material_asset(data).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// LLPreviewNotecard::saveIfNeeded / LLPreviewLSL::saveIfNeeded:
@@ -1015,6 +1025,9 @@ pub async fn save_content_for(
     lua: bool,
     data: Vec<u8>,
 ) -> Result<InvItem, String> {
+    if kind == 57 {
+        material_content_check(&data)?;
+    }
     if data.len() > 1024 * 1024 {
         return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
     }
@@ -1023,9 +1036,6 @@ pub async fn save_content_for(
     }
     if kind == 21 {
         aurora_assets::gesture::Gesture::decode(&data).map_err(|_| aurora_i18n::tr!("gesture-invalid").to_owned())?;
-    }
-    if kind == 57 {
-        aurora_assets::parse_material_asset(&data).map_err(|e| e.to_string())?;
     }
     let ack = upload_content(http, cap, &content_body(item, kind, lua), data).await?;
     if kind == 10 && !crate::scripts::compile_ok(&ack) {
@@ -1116,6 +1126,20 @@ async fn upload_content(http: &reqwest::Client, cap: &str, body: &Llsd, data: Ve
 mod tests {
     use super::*;
     use crate::outfits::tests::server;
+
+    #[test]
+    fn a_material_is_checked_before_anything_is_sent() {
+        let valid = aurora_assets::PbrMaterial::default()
+            .encode_asset()
+            .expect("default material encodes");
+        assert_eq!(material_content_check(&valid), Ok(()));
+        assert_eq!(
+            material_content_check(&vec![b' '; 1024 * 1024 + 1]),
+            Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").to_string())
+        );
+        assert!(material_content_check(b"not a material").is_err());
+        assert!(material_content_check(&[]).is_err());
+    }
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
     }

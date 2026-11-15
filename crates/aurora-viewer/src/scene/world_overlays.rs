@@ -70,6 +70,26 @@ impl Scene {
         let now = Instant::now();
         let mut highlights = HashSet::new();
         self.beacon_markers.clear();
+        self.light_boxes.clear();
+        if s.light_boxes {
+            // renderLights draws the lights of the drawables in view: the
+            // scene's own list of light prims, culled like the beacons
+            for &idx in &self.light_objects {
+                let Some(l) = world.objects.get(idx).and_then(|o| o.extra.light.map(|l| (o.visual_scale(), l))) else {
+                    continue;
+                };
+                let (scale, light) = l;
+                if world.parcel_object_visible(idx)
+                    && let Some((pos, rot, false)) = Scene::object_transform(world, idx, now, 0)
+                {
+                    let radius = scale.length() * 0.5;
+                    if pos.distance(view.eye) - radius <= self.draw_distance && view.sphere_visible(pos, radius.max(light.radius)) {
+                        self.light_boxes
+                            .push(crate::world::beacons::LightBox::new(pos, rot, scale, light.radius));
+                    }
+                }
+            }
+        }
         if s.objects_enabled() {
             let groups = frame_par::fold(
                 &world.objects.slots,

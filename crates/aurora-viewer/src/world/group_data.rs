@@ -110,7 +110,8 @@ impl GroupData {
         self.members_complete && self.roles_complete && self.role_members_complete && !self.members.is_empty()
     }
 
-    /// The title we wear (the selected one of GroupTitlesReply).
+    /// The title we wear (the selected one of GroupTitlesReply), including
+    /// a blank one. The group profile combo is what hides that blank title.
     pub fn selected_title(&self) -> Option<&GroupTitle> {
         self.titles.iter().find(|t| t.selected)
     }
@@ -1026,6 +1027,40 @@ mod tests {
         let g = mgr.get(&G).unwrap();
         assert!(g.members_complete);
         assert_eq!(g.online().count(), 2);
+    }
+
+    /// GroupTitlesReply is stored as it arrives. A blank title is not
+    /// dropped here (the net parser used to drop it; the profile combo
+    /// hides it).
+    #[test]
+    fn an_empty_title_stays_in_the_profile_data() {
+        let mut mgr = GroupMgr::default();
+        mgr.open(G, true);
+        let cmds = mgr.take_commands();
+        let request = request_of(&cmds, |c| match c {
+            NetCommand::GroupTitlesRequest { request, .. } => Some(*request),
+            _ => None,
+        });
+        mgr.on_event(&NetEvent::GroupTitles {
+            group: G,
+            request,
+            titles: vec![
+                GroupTitle {
+                    title: String::new(),
+                    role: Uuid::from_u128(6),
+                    selected: true,
+                },
+                GroupTitle {
+                    title: "Member".into(),
+                    role: Uuid::nil(),
+                    selected: false,
+                },
+            ],
+        });
+        let blank = mgr.get(&G).unwrap().selected_title().unwrap();
+        assert!(blank.title.is_empty());
+        assert_eq!(blank.role, Uuid::from_u128(6));
+        assert_eq!(mgr.get(&G).unwrap().titles.len(), 2);
     }
 
     #[test]

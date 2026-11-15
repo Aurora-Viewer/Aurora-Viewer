@@ -191,7 +191,8 @@ pub enum InvAction {
         text: String,
         close: bool,
     },
-    Environment(Uuid, u32),
+    /// A sky, water or day for myself: its asset, flags and item.
+    Environment(Uuid, u32, Uuid),
     EnvironmentParcel(Uuid),
     ExportTextures {
         items: Vec<Uuid>,
@@ -441,6 +442,16 @@ pub struct InvDrag(pub Uuid);
 /// A single folder dragged to inventory or Marketplace listings.
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
+
+/// An object embedded in an open notecard, dragged out of its text
+/// (LLViewerTextEditor::handleHover, SOURCE_NOTECARD): the editor and the
+/// notecard that hold it, and its marker in the text.
+#[derive(Debug, Clone, Copy)]
+pub struct NotecardDrag {
+    pub editor: Uuid,
+    pub notecard: Uuid,
+    pub marker: char,
+}
 
 pub(crate) struct WorldDrag {
     pub item: Uuid,
@@ -1024,6 +1035,8 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (5 | 13, _) => wearable_icon(asset_type, flags),
         (6, _) => "Inv_Object",
         (7, _) => "Inv_Notecard",
+        // LLInventoryIcon::getIconName: SST_LUA scripts get Inv_Script_Luau
+        (10, _) if aurora_net::scripts::is_slua_item(flags) => "Inv_Script_Luau",
         (10, _) => "Inv_Script",
         (20, _) => "Inv_Animation",
         (21, _) => "Inv_Gesture",
@@ -1609,7 +1622,10 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
             continue;
         }
         complete &= folder.state == FetchState::Fetched;
-        if matches!(folder.state, FetchState::Unknown | FetchState::Failed) && inv.queue.len() + requests.len() < 16 {
+        if !inv.too_big.contains(&id)
+            && matches!(folder.state, FetchState::Unknown | FetchState::Failed)
+            && inv.queue.len() + requests.len() < 16
+        {
             requests.push(id);
         }
         todo.extend(folder.children.iter().copied());
@@ -3495,6 +3511,7 @@ mod tests {
         // A snapshot is a texture whatever its asset type says.
         assert_eq!(item_icon_color(0, 15, &p), p.indigo_light);
         assert_eq!(item_icon_color(24, 24, &p), p.muted);
+        assert_eq!(item_icon_color(10, 10, &p), p.teal);
     }
 
     #[test]

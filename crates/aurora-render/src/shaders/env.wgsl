@@ -919,7 +919,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustics(in.world_pos,n), a);
         var color=hazed*water_scene_light(in.world_pos);
-        if(camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){color=apply_fog(color,in.world_pos);}
+        if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustics(in.world_pos,n);
@@ -955,7 +955,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
             + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
         color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
-        if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+        if (water_fogs_source(in.world_pos)) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
     } else {
@@ -1149,9 +1149,10 @@ fn analytic_wave(p: vec2<f32>, t: f32) -> vec3<f32> {
 }
 
 // Reuse opaque depth/color: no second scene render or GPU/CPU synchronization.
+// The water fog a point of the scene copy already holds (apply_fog).
 fn water_source_fog(source:vec3<f32>)->WaterFog {
-    if(!water_fx_on(256u) && !camera_underwater()){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
-    return water_fog_view(source-frame.camera_pos.xyz,frame.water_normal.w);
+    if(!water_fogs_source(source)){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+    return water_fog_view(source-frame.camera_pos.xyz,water_source_density());
 }
 
 // Rays cover the same 200 m at every quality, with finer steps at high quality.
@@ -1336,6 +1337,10 @@ fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f3
     return clamp(nl * (f * g * d / (4.0 * nl * nv)), vec3<f32>(0.0), vec3<f32>(10.0));
 }
 
+// The sun glint under which its shadow is not looked up (water_pixel):
+// 1 / 255 / 1000 of the white the surface is capped at.
+const WATER_GLINT_FLOOR: f32 = 0.0000039;
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1454,13 +1459,20 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     }
     var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
     // Fog of the water volume between the surface and the refracted point.
-    let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
     if (water_fx_on(256u)) {
         let source_fog=water_source_fog(ref_pos);
         fb=max(fb-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
         let volume=water_fog_segment(ref_pos-in.world_pos,frame.water_normal.w,0.0,max(in.level-ref_pos.z,0.0));
         fb=fb*volume.transmission+volume.color;
-    } else { fb = fb * wf.transmission + wf.color; }
+    } else if (d1 <= 0.0) {
+        // Legacy fog: what lies under the water holds its own already, each
+        // layer by its own depth (water_fogs_source; waterF.glsl adds none
+        // to its screen copy). Only where nothing was drawn behind the
+        // surface (the void, the sky under the horizon) does the water take
+        // its fog here, to its far end.
+        let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
+        fb = fb * wf.transmission + wf.color;
+    }
 
     // reflection: planar texture, screen-space rays, or the sky
     var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
@@ -1474,24 +1486,29 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         r = reflect(view_vec, normalize(wave_ibl));
         sky_dir = r;
     }
-    var radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
-    if (probes_on()) {
-        // without a planar reflection the water reflects its probes
-        // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
-        // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
-        // at lod 0 whitened the surface
-        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
-        let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
-        if (s.w > 0.0) {
-            radiance = s.rgb;
-        }
-    }
+    var radiance = vec3<f32>(0.0);
     if (frame.misc.z > 0.5) {
+        // the planar reflection stands for the sky and the probes: neither
+        // is read under it
         let ruv = clamp(uv + n.xy * 0.035 / max(dmod * 0.25, 1.0), vec2<f32>(0.001), vec2<f32>(0.999));
         radiance = textureSampleLevel(water_refl_tex, lin_clamp, ruv, 0.0).rgb;
-    } else if (frame.misc.y > 0.5) {
-        let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, select(40,16 + i32(water_fx.counts.w) * 12,water_fx.counts.z!=0u));
-        radiance = mix(radiance, hit.rgb, hit.a);
+    } else {
+        radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
+        if (probes_on()) {
+            // without a planar reflection the water reflects its probes
+            // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
+            // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
+            // at lod 0 whitened the surface
+            let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+            let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
+            if (s.w > 0.0) {
+                radiance = s.rgb;
+            }
+        }
+        if (frame.misc.y > 0.5) {
+            let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, select(40,16 + i32(water_fx.counts.w) * 12,water_fx.counts.z!=0u));
+            radiance = mix(radiance, hit.rgb, hit.a);
+        }
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
     if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
@@ -1504,39 +1521,15 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let gn = select(n, legacy_glint_n, legacy_water);
-    let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
-    // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
-    // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
-    // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
-    // light's colour normalized, x (1.5 + 6 x its horizontal part squared),
-    // made linear). The sun colour used to multiply the highlight before the
-    // clamp: its faint tail became a second, larger sun beside the reflected
-    // one (the Legacy Viewer shows one).
-    let light_rgb = frame.sky_obj_light.rgb;
-    let light_hue = select(vec3<f32>(0.0), light_rgb / max(length(light_rgb), 1e-6), dot(light_rgb, light_rgb) > 0.0);
-    let spec_color = srgb_to_linear(light_hue * (1.5 + 6.0 * dot(l.xy, l.xy)));
-    let perceptual = select(rough, frame.water_params.w, legacy_water);
-    let atm = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-    // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
-    // probe ambiance, then x sky_sunlight_scale (1.5)
-    let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
-    let punctual = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * shadow * atm.atten;
-
-    var reflectance = min(1.0,df2.x);
-    var glint = punctual;
-    if (water_fx_on(512u)) {
-        // (the glint has its own fresnel, F of pbrPunctual)
-        let cos_i = clamp(dot(n,vv),0.0,1.0);
-        reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
-    }
-    var color = mix(fb, radiance, reflectance) + glint;
-    color = mix(fb, color, min(1.0, fade * 60.0));
+    // The foam of enhanced water, how much of it: before the sun's shadow,
+    // which is looked up only where the glint or the foam shows it.
+    var foam = 0.0;
     if((water_fx.counts.z &14u)!=0u) {
         let p=in.world_pos.xy;let bed=water_fx_bed(p);let depth=max(in.level-bed.x,0.0);
         let field=water_fx_sample(p);
         // Shore depth always comes from terrain, never an avatar or submerged
         // mesh in the opaque depth. Contact refinement is masked below.
-        var foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
+        foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
         if(water_fx_on(2u) && depth<2.0) {
             // Travel along the depth gradient: the front approaches every coast orientation.
             let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
@@ -1564,6 +1557,43 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // Applying the coarse accumulation threshold twice erased slow swimmers.
         if(water_fx_on(4u)){foam+=smoothstep(0.018,0.18,wake.w)*water_foam_coverage(p,1.0,footprint)*0.55;}
         foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+    }
+    // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
+    // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
+    // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
+    // light's colour normalized, x (1.5 + 6 x its horizontal part squared),
+    // made linear). The sun colour used to multiply the highlight before the
+    // clamp: its faint tail became a second, larger sun beside the reflected
+    // one (the Legacy Viewer shows one).
+    let light_rgb = frame.sky_obj_light.rgb;
+    let light_hue = select(vec3<f32>(0.0), light_rgb / max(length(light_rgb), 1e-6), dot(light_rgb, light_rgb) > 0.0);
+    let spec_color = srgb_to_linear(light_hue * (1.5 + 6.0 * dot(l.xy, l.xy)));
+    let perceptual = select(rough, frame.water_params.w, legacy_water);
+    let atm = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+    // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
+    // probe ambiance, then x sky_sunlight_scale (1.5)
+    let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
+    let glint_lit = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * atm.atten;
+    // The sun's shadow, the costliest lookup of the surface, only where
+    // something shows it: the glint, a narrow lobe that is next to nothing
+    // over most of the water (under WATER_GLINT_FLOOR, a thousandth of the
+    // smallest step an 8-bit image can show), or the foam.
+    var shadow = 1.0;
+    if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR) {
+        shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
+    }
+    let punctual = glint_lit * shadow;
+
+    var reflectance = min(1.0,df2.x);
+    var glint = punctual;
+    if (water_fx_on(512u)) {
+        // (the glint has its own fresnel, F of pbrPunctual)
+        let cos_i = clamp(dot(n,vv),0.0,1.0);
+        reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
+    }
+    var color = mix(fb, radiance, reflectance) + glint;
+    color = mix(fb, color, min(1.0, fade * 60.0));
+    if(foam>0.0) {
         let nl=max(frame.sun_dir.z,0.0);
         var foam_light=(frame.sky_horizon.rgb*0.3+frame.sun_color.rgb*nl*shadow/PI)*0.75;
         if(is_classic_sky()) {
@@ -2792,7 +2822,7 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     // edge, never in the map's squares
     let st = rain_shelter_texel(world.xy, world.z);
     if (st.z < 0.5) {
-        let surface = textureLoad(rain_wetness, i, 0).x;
+        let surface = snow_known_surface(world.xy, i);
         if (surface < -1e8) { return depth; }
         return depth * snow_gate(world.z - surface);
     }
@@ -2806,8 +2836,9 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     for (var k = 0; k < 16; k++) {
         var h = rain_shelter_height_at(s0 + vec2<i32>(k % 4 - 1, k / 4 - 1));
         if (h < -1e8) {
-            // beyond the map's reach: the height the memory keeps there
-            h = textureLoad(rain_wetness, i, 0).x;
+            // beyond the map's reach, or nothing drawn there (bare land):
+            // the height the memory keeps there, else the terrain's
+            h = snow_known_surface(world.xy, i);
             if (h < -1e8) { return depth; }
         }
         hs[k] = h;
@@ -2858,6 +2889,17 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     return depth * clamp(taken / counted, 0.0, 1.0) * open;
 }
 
+// The surface the snow lies on at `xy` where the shelter map has none: the
+// height the memory keeps in its cell `i`, else the terrain's (-1e9: none
+// known). Without the terrain, a cell the memory had not seen yet (all of
+// them, just after the snow-fill button) laid the ground's snow on whatever
+// stood there, avatars too.
+fn snow_known_surface(xy: vec2<f32>, i: vec2<i32>) -> f32 {
+    let kept = textureLoad(rain_wetness, i, 0).x;
+    if (kept > -1e8) { return kept; }
+    return rain_terrain(xy);
+}
+
 // How much snow a point `at` metres above the topmost surface the snow
 // lands on takes: all of it on that surface, none well below it (under
 // cover) nor well above it (what stands there and is not in the map).
@@ -2882,6 +2924,12 @@ fn snow_noise(p: vec2<f32>) -> f32 {
 // Deep snow (experimental, frame.snow_cover.z bit 4).
 fn snow_deep() -> bool {
     return (u32(frame.snow_cover.z + 0.5) & 4u) != 0u;
+}
+
+// "Snow settles" off (frame.snow_cover.z bit 8): no lying snow drawn,
+// whatever falls (the memory keeps it).
+fn snow_hidden() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 8u) != 0u;
 }
 
 // Deep snow's layer under a full cover (m).
@@ -2922,8 +2970,10 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // made from the depth under the snow: what it buries would darken it
     screen_surface = false;
     contact_surface = false;
-    // "Snow settles" off (in snow, rain_look.x): none drawn
-    if (snowing() && frame.rain_look.x < 0.5) { return vec4<f32>(0.0); }
+    // "Snow settles" off: none drawn, whatever falls (it was read from the
+    // puddles' switch, rain_look.x, which is the snow's only while it
+    // snows: in rain or clear weather the snow melting away showed)
+    if (snow_hidden()) { return vec4<f32>(0.0); }
     let depth = snow_lying(lies_at + n * 0.05);
     if (depth <= 0.002) { return vec4<f32>(0.0); }
     let cam = frame.camera_pos.xyz;

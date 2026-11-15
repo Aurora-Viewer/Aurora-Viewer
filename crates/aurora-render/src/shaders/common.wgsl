@@ -123,7 +123,7 @@ struct Frame {
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
     rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
-    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z flags (1 rain melts it, 2 the puddles may freeze, 4 deep snow, 8 lying snow hidden), w the detail texture's slot (0: none)
     snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
     snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
@@ -160,6 +160,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -202,6 +203,9 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 // the snow on an avatar (x of its first column), and the entries per
 // skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
 const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -1255,10 +1259,32 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
 }
 
+// Whether a surface takes the water's fog in its own shading (apply_fog):
+// everything seen from below the water, and from above what lies under it.
+// The Legacy Viewer hazes the opaque scene by its own depth before the
+// blended faces under the water (LLPipeline::renderGeomPostDeferred, "do
+// water haze just before pre water alpha"; doWaterHaze,
+// indra/newview/pipeline.cpp), and those faces fog themselves
+// (applySkyAndWaterFog, class2/deferred/alphaF.glsl): each layer by its own
+// depth, and the surface adds none (class3/environment/waterF.glsl). Aurora's
+// surface used to fog its whole copy of the scene by the first depth under
+// it: where a faint blended face lay just under the surface, the bed behind
+// it lost its fog, and a sheet crossing the water plane showed its triangles.
+fn water_fogs_source(world_pos: vec3<f32>) -> bool {
+    return camera_underwater() || world_pos.z < camera_water_level();
+}
+
+// Density of that fog: the under-water one from below (and for the enhanced
+// absorption, which is tuned on it), the plain one from above, as
+// LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
+fn water_source_density() -> f32 {
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+}
+
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+    if (water_fogs_source(world_pos)) {
         if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
-        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,water_source_density());
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);
@@ -1524,9 +1550,17 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     // the camera read a far cascade, and no caster could be left out of a
     // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
     // distance, to compare (AURORA_SHADOW_LEGACY).
+    // A planar reflection (the mirror) reads the main view's cascades, fitted
+    // around the real camera: the pixel's distance to that camera, its own
+    // camera mirrored back through the clip plane, picks the cascade
     var view_depth = vertex_depth;
-    if (splits.w > 0.5) {
-        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    let planar = in_reflection_pass() && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.5;
+    if (splits.w > 0.5 || planar) {
+        var eye = frame.camera_pos.xyz;
+        if (planar) {
+            eye -= 2.0 * (dot(frame.clip_plane.xyz, eye) + frame.clip_plane.w) * frame.clip_plane.xyz;
+        }
+        view_depth = distance(world_pos, eye);
     }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
@@ -1549,6 +1583,13 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
             } else if (next >= 0.0) {
                 s = mix(s, next, t);
             }
+        }
+    }
+    // the mirror also sees behind the main camera, where the near cascades
+    // do not reach: a coarser one that does
+    if (planar) {
+        for (var k = cascade + 1u; k < 3u && s < 0.0; k++) {
+            s = cascade_shadow(world_pos, n, k);
         }
     }
     if (s < 0.0) {

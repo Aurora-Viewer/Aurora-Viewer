@@ -294,6 +294,7 @@ impl World {
     /// Empty the nearby chat (the "clear" command of the chat bar).
     pub fn clear_nearby_chat(&mut self) {
         self.chat.clear();
+        self.chat_objects.clear();
         self.chat_clock.renumbered();
     }
 
@@ -413,6 +414,7 @@ impl World {
                     kind,
                     source,
                     origin: Origin::Log,
+                    beyond_range: false,
                 }
             })
             .collect()
@@ -506,6 +508,7 @@ impl World {
                     kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
+                    beyond_range: false,
                 }
             })
             .collect();
@@ -710,6 +713,7 @@ mod tests {
             kind: ChatKind::Local(ChatType::Shout),
             source: Uuid::from_u128(2),
             origin: Origin::Live,
+            beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -719,6 +723,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: ChatType::Whisper,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "psst".into(),
         }));
