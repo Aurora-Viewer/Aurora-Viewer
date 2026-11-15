@@ -2598,15 +2598,9 @@ impl RainWet {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let snow = snow.clamp(0.0, 1.0);
-        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
-        // snows (demo captures, without waiting for it to build)
-        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
-        if snow > 0.0
-            && let Some(v) = lying
-        {
-            self.snow = self.snow.max(v.clamp(0.0, 1.0));
-        }
+        // (AURORA_SNOW_LYING reaches it as `RainLook::snow_lying`, the floor
+        // set before this step: the app reads it, and drops it with "Snow
+        // settles" off)
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
