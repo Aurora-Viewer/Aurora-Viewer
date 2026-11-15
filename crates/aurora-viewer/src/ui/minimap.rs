@@ -258,6 +258,13 @@ fn formatted_avatar_name(
                 format!("{} ({})", name.display_name, legacy)
             }
         }
+        MiniAvatarNameFormat::LegacyAndDisplay => {
+            if name.is_default || name.display_name == legacy {
+                legacy
+            } else {
+                format!("{} ({})", legacy, name.display_name)
+            }
+        }
     }
 }
 
@@ -299,6 +306,10 @@ mod name_format_tests {
             formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
             "Captain Jack (John Smith)"
         );
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::LegacyAndDisplay),
+            "John Smith (Captain Jack)"
+        );
     }
 
     #[test]
@@ -310,10 +321,18 @@ mod name_format_tests {
             formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
             "Captain Jack"
         );
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::LegacyAndDisplay),
+            "John Smith"
+        );
         name.is_default = false;
         name.display_name = "John Smith".into();
         assert_eq!(
             formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
+            "John Smith"
+        );
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::LegacyAndDisplay),
             "John Smith"
         );
     }
@@ -342,8 +361,14 @@ mod name_format_tests {
             MiniAvatarNameFormat::Display,
             MiniAvatarNameFormat::Legacy,
             MiniAvatarNameFormat::DisplayAndLegacy,
+            MiniAvatarNameFormat::LegacyAndDisplay,
         ];
-        let expected = ["Captain Jack", "John Smith", "Captain Jack (John Smith)"];
+        let expected = [
+            "Captain Jack",
+            "John Smith",
+            "Captain Jack (John Smith)",
+            "John Smith (Captain Jack)",
+        ];
         for (format, name) in formats.into_iter().zip(expected) {
             assert_eq!(avatar_name(&world, &known, format), name);
         }
@@ -1038,27 +1063,26 @@ impl MiniMap {
                     &mut opts.mini_collision,
                 );
             });
-            menu::submenu(
-                ui,
-                p,
-                "user-filled",
-                aurora_i18n::tr!("ui-minimap-avatar-name-format"),
-                true,
-                |ui| {
-                    for (label, choice) in [
-                        (aurora_i18n::tr!("ui-minimap-name-display"), MiniAvatarNameFormat::Display),
-                        (aurora_i18n::tr!("ui-minimap-name-legacy"), MiniAvatarNameFormat::Legacy),
-                        (
-                            aurora_i18n::tr!("ui-minimap-name-display-legacy"),
-                            MiniAvatarNameFormat::DisplayAndLegacy,
-                        ),
-                    ] {
-                        if menu::check(ui, p, "user-filled", label, opts.mini_avatar_name_format == choice, true) {
-                            opts.mini_avatar_name_format = choice;
-                        }
+            menu::submenu(ui, p, "id-filled", aurora_i18n::tr!("radar-opt-name-format"), true, |ui| {
+                for (label, icon, choice) in [
+                    (aurora_i18n::tr!("radar-name-display"), "user-filled", MiniAvatarNameFormat::Display),
+                    (aurora_i18n::tr!("radar-name-user"), "at", MiniAvatarNameFormat::Legacy),
+                    (
+                        aurora_i18n::tr!("radar-name-display-user"),
+                        "id-filled",
+                        MiniAvatarNameFormat::DisplayAndLegacy,
+                    ),
+                    (
+                        aurora_i18n::tr!("radar-name-user-display"),
+                        "user-square",
+                        MiniAvatarNameFormat::LegacyAndDisplay,
+                    ),
+                ] {
+                    if menu::check(ui, p, icon, label, opts.mini_avatar_name_format == choice, true) {
+                        opts.mini_avatar_name_format = choice;
                     }
-                },
-            );
+                }
+            });
             if menu::check(
                 ui,
                 p,

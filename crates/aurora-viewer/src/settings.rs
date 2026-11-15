@@ -3502,6 +3502,7 @@ pub enum MiniAvatarNameFormat {
     Legacy,
     #[default]
     DisplayAndLegacy,
+    LegacyAndDisplay,
 }
 
 /// Mini-map (LLNetMap) and world map (LLFloaterWorldMap) options, with the

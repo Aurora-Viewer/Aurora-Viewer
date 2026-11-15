@@ -14144,9 +14144,3 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
-
-# Minimap avatar name format.
-ui-minimap-avatar-name-format = Format du nom d’avatar
-ui-minimap-name-display = Nom d'affichage
-ui-minimap-name-legacy = Nom classique
-ui-minimap-name-display-legacy = Nom d'affichage (nom classique)
