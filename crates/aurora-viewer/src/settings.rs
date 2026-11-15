@@ -1417,6 +1417,11 @@ pub struct Settings {
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
     pub world_mouse_walk: bool,
+    /// Aurora extension, MMO-style mouse buttons: the right button's drag
+    /// steers our avatar (the turn keys slide, the left button walks
+    /// forward) and the left button held on our avatar orbits the camera,
+    /// the other way round from the default. Off by default.
+    pub mmo_mouse_buttons: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -2044,6 +2049,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
+    /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
+    pub doppler: f32,
     /// World sounds muffled behind walls and objects (Aurora's own, on;
     /// off: heard unobstructed, as in the Legacy Viewer).
     pub sound_occlusion: bool,
@@ -2108,6 +2116,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
             sound_reverb: false,
@@ -2499,6 +2508,7 @@ impl Default for Settings {
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
+            mmo_mouse_buttons: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
@@ -3275,6 +3285,11 @@ impl Settings {
             self.audio.mic_gain = 1.0;
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
+        self.audio.doppler = if self.audio.doppler.is_finite() {
+            self.audio.doppler.clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
         self.time_of_day = self.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
         self.env_manual_transition = if self.env_manual_transition.is_finite() {
             self.env_manual_transition.clamp(0.0, 60.0)

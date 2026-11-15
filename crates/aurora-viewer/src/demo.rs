@@ -274,6 +274,10 @@ pub mod slideshow;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
@@ -9707,23 +9711,28 @@ fn demo_day(sky: Llsd) -> Llsd {
 }
 
 /// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
-/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
-/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
-/// included; a missing or unreadable value keeps the default.
+/// scale>[,<fog r>,<fog g>,<fog b>[,<fog density>]]: the water of the demo's
+/// EEP day (with AURORA_DEMO_SKY), as a region's asset carries it,
+/// out-of-range values included; a missing or unreadable value keeps the
+/// default.
 fn demo_water_eep(v: &str) -> Llsd {
     use aurora_llsd::llsd_map;
     let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
     let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
     let scale = at(3, 2.0);
-    llsd_map! {
+    let mut water = llsd_map! {
         "type" => "water",
         "fresnel_offset" => at(0, 0.5),
         "fresnel_scale" => at(1, 0.3999),
         "blur_multiplier" => at(2, 0.04),
         "normal_scale" => arr(&[scale, scale, scale]),
         "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
+    };
+    if let Some(density) = n.get(7).copied().flatten() {
+        water.insert("water_fog_density", density);
     }
+    water
 }
 
 #[cfg(test)]

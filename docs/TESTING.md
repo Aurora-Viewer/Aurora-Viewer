@@ -1601,7 +1601,10 @@ when unfocused") is ignored during a screenshot.
   the `backing up from` and `after walking` yaws match, #1259). Additional
   comma-separated flags:
   `world` enables the world mouse-walk preference for this demo; `world-off`
-  disables it. Aim at land or a noninteractive object to compare both.
+  disables it. `mmo` turns on MMO-style mouse buttons: the left press
+  on the avatar then orbits the camera without turning it, and a right drag
+  (past the click's 10 points) steers instead, the left button walking
+  forward while it steers. Aim at land or a noninteractive object to compare both.
   `left-first` releases the left button before the right; by default the
   right is released first. `right-before-left` presses the right button first.
   `quick` queues both buttons and both releases behind the deferred left
@@ -1944,6 +1947,18 @@ channel switching, all map pickers and tint transactions, alpha/material factors
 vector copy/paste, linked selection, ruler settings and the bottom collapse strip.
 At 330 by 620 the property panel scrolls while the tool block and tabs stay
 in place.
+With the same `AURORA_DEMO_BUILD=move,object:118` and `AURORA_DEMO_BUILD_TAB=object`,
+in both `AURORA_DEMO_BUILD_STYLE=legacy` and `aurora`: rest the pointer on a
+position, size or rotation field without clicking. Roll the wheel up and down,
+one notch at a time (the panel stays put; up raises, down lowers). Hold Alt,
+Ctrl or Shift and roll again, and hold each with an arrow: Alt steps ten
+increments, Ctrl a tenth, Shift a hundredth, rounded to the decimals the
+field shows (on the colour picker's R/G/B in 0-255, Ctrl and Shift change
+nothing). Hold an arrow past half a second
+and it keeps stepping until you release it; a short click is still one step.
+Tab moves from field to field and skips the arrows. Dragging a number and
+typing one still work; the wheel leaves a field being typed in alone. The colour picker's number fields take the wheel
+too, and their arrows still click and repeat while held.
 Switch Preferences > Aurora > Build tools between Aurora and Legacy while
 editing; the selection, properties and custom Aurora arrangement must survive.
 The bulk Aurora/Legacy choices include this preference, which persists on restart.
@@ -3659,6 +3674,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
+| `AURORA_DEMO_ANIM_SPEED=0.1..2` | Starting session animation speed (Advanced › Animation Speed) for every avatar and animesh; combine with `AURORA_DEMO_ANIM_LOOP` |
 | `AURORA_DEMO_PELVIS_CONSTRAINT=1` | An animation constraint carrying the avatar's body out of sight, 4 s out of 8 |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
@@ -4334,6 +4350,15 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   must preserve their current phase and suspend again during subsequent edits.
   Check persistence after reopening the viewer, both bulk Aurora/Legacy choices,
   and Reset this section restoring Legacy.
+- **`AURORA_DEMO_ANIM_SPEED=0.1..2`**, with `AURORA_DEMO_ANIM_LOOP=1`: the
+  session starts at that animation speed (rounded to one decimal, clamped to
+  0.1..2), as if Advanced › Animation Speed had been used. With `0.2` the
+  loop and its sequence changes play five times slower, with `2` twice as
+  fast; the stop / restart frames do not move. Then use All Animations 10%
+  Faster / Slower and Reset All Animation Speed live: the pose must never
+  jump, only its pace changes, for the avatars and `AURORA_DEMO_ANIMESH=1`
+  animesh alike. Slow Motion Animations slows only our avatar (0.2), the
+  others keep the global speed. Nothing is saved: a restart is back at 1.0.
 - **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim|interface-swim-missing`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. `interface-swim-missing` removes Floating from that fixture: its state row must show an amber warning triangle, assigned required states a green check, and optional states no marker. The detail pane, compact AO panel and Movement gate share the triangle and missing-animation message; tooltips distinguish missing and assigned required states. No optional-slot counter remains. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
@@ -4547,7 +4572,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
-| `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
+| `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>[,<fog density>]]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
@@ -4818,11 +4843,12 @@ both open states and the selection count. Capture at frame 620.
   which: 0 and `none` change nothing; 1 greys Save As, 2 the panels too; 4
   keeps Save As, the new item's next owner without transfer; 8 leaves only
   "Apply to myself only".
-- **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
+- **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>[,<fog density>]]`**:
   the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
   values as a region's asset carries them (the normal scale on its three
   axes); a missing or unreadable value keeps the default (0.5, 0.3999,
-  0.04, 2, fog 0.0156 / 0.149 / 0.2509). Values beyond the Legacy Viewer's
+  0.04, 2, fog 0.0156 / 0.149 / 0.2509, and the asset's default fog
+  density). Values beyond the Legacy Viewer's
   ranges are clamped to them like LLSettingsWater's validation (unit test
   `water_values_are_clamped_to_the_legacy_ranges`; the image does not show
   it: a fresnel offset clamped to 1 still mirrors the whole sky, so
@@ -10938,6 +10964,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
 | `AURORA_SOUND_HRTF=0` or `1` | "3D sound for headphones (HRTF)" forced off or on for this launch, without saving it |
+| `AURORA_DEMO_SOUND_DOPPLER=1` | A sound passing in front of the listener at 20 m/s, back and forth, for the Doppler effect (see Details) |
 | `AURORA_DEMO_SOUND_REVERB=1`, `room` or `hall` | A clapper above our avatar, a small room and a large hall to walk into (or to start in), for the reverb of the surroundings; its estimate in the log |
 | `AURORA_SOUND_REVERB=0` or `1` | "Reverb from the surroundings" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
@@ -11405,6 +11432,18 @@ What the inventory must show with these scenarios:
 - **`AURORA_SOUND_OCCLUSION=0|1`**: overrides Preferences › Sound, "Muffle
   sounds behind walls", for this launch (demo or grid), without saving it:
   the same build measured with and without the occlusion.
+- **`AURORA_DEMO_SOUND_DOPPLER=1`**: listen with headphones or speakers.
+  Our avatar starts on the open slope west of the plaza (the 3D sound
+  scenario's spot: run the two one at a time) and "Passing sound", a lit
+  orange cube playing a steady buzz, goes back and forth along a straight
+  line 8 m ahead of the start, 50 m to each side, at 20 m/s (5 s a pass).
+  With Preferences › Sound, "Doppler effect" at 1 (the default, as in the
+  Legacy Viewer), the buzz is about a semitone higher while it comes
+  closer and drops by about two semitones as it passes in front (340 / 320
+  then 340 / 360); at 0 its pitch stays the same, only its loudness
+  changes; at 2 the drop doubles. Walking toward it or away from it shifts
+  it too (the agent's velocity, as in the Legacy Viewer). The slider
+  applies at once.
 - **`AURORA_DEMO_SOUND_HRTF=1|circle|updown`**: listen with headphones. Our
   avatar starts on the open slope west of the plaza (the occlusion
   scenario's spot: run the two one at a time) and two looping sources move
@@ -13669,7 +13708,7 @@ The enhanced-water master is disabled by default (2026-10-19), including missing
 
 Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. `:alpha-layers` adds, with its own camera, blended layers stacked under the water, as the animated surfaces of a pond lying in region water: a blue and a yellow sheet tilted opposite ways, crossing along a line, and a red tile under both. From above (`off:alpha-layers`, `medium:alpha-layers`, also with `AURORA_AA=3` for the MSAA path), both sheets must tint the whole area they cover and the red tile must show through them, on both sides of the crossing; before the fix the first sheet drawn cut the other out along the crossing line and hid the tile. The water must still fog and refract them like the ground around. `:alpha-cross` adds, with the same camera, one faint white sheet crossing the water plane, half just under the water and half just above it: the water must keep its fog and its reflection on both sides of the crossing line. Use a dense fog to see it (`AURORA_DEMO_SKY=midday AURORA_DEMO_WATER_EEP=0.5,0.4,0.04,2,0.25,0.648,0.953,32`, without `AURORA_DEMO_TOD`; `off:alpha-cross`, `medium:alpha-cross`, also with `AURORA_AA=3`): before the fix the half under the water was a dark hole in the blue, the bed seen without any fog, cut along the sheet's edge; with `off:alpha-layers` and the same fog, the stacked sheets were such a hole too. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
 
 With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
 
