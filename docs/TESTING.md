@@ -5987,6 +5987,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `walk`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, a resident who comes and goes, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_RADAR_MARKS=1\|legacy` | Radar marks: crowd residents pre-marked, People › Near you and the mini-map open |
 | `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
@@ -8832,6 +8833,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_RADAR_MARKS=1|legacy`**: radar marks, with
+  `AURORA_DEMO_CROWD=<n>` (20 is enough). The first six residents of the
+  crowd ("Foule0" to "Foule5 Resident") are marked: red, green, blue,
+  purple and yellow (the Legacy Viewer's five colours), then a custom
+  orange. People opens on Near you with its mini-map shown, and the
+  mini-map window is open: the six dots take their mark's colour in both
+  maps, the six rows ring their picture with it, and their name tags take
+  it too. `1`: Aurora's look of People; `legacy`: the Legacy radar table,
+  for the run only. Right-click a row (or select several, or right-click
+  a dot of a mini-map) › Markers: a colour marks them at once; "Custom
+  color…" opens the colour picker, whose colour marks them as it changes;
+  "Clear marker" and "Clear all markers" remove them. The marks are kept
+  for the session only, as in the Legacy Viewer.
 - **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview, and its marker's. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
