@@ -533,9 +533,9 @@ pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             let Some(second) = rects.second else {
                 return Vec::new();
             };
-            // held, the ghost stands in the gap that opens under the second
+            // held, the card stands over the room the second leaves it
             let y = if demo == Demo::Hold {
-                second.bottom() + (source.center().y - source.top()) + 2.0
+                second.center().y + 8.0
             } else {
                 second.bottom() - 6.0
             };
