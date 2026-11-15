@@ -1053,14 +1053,14 @@ fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
 }
 
 /// The default folders the user may allow Auto-sort into, one by one, with
-/// a warning: Textures, Sounds, Calling Cards, Landmarks, Clothing,
-/// Notecards, Scripts, Body Parts, Photo Album, Animations, Gestures,
-/// Settings, Materials. Never, whatever the settings: the Trash, Lost and
-/// Found, Marketplace Listings and its folders, the Current Outfit, My
-/// Outfits and the outfits, the Library, Received Items, Favorites, the
-/// viewer folders.
+/// a warning: Textures, Sounds, Landmarks, Notecards, Scripts, Body
+/// Parts, Photo Album, Animations, Gestures, Settings. Never, whatever the
+/// settings (human request of 2026-11-15): Clothing, Calling Cards,
+/// Materials, Favorites, the Trash, Lost and Found, Marketplace Listings
+/// and its folders, the Current Outfit, My Outfits and the outfits, the
+/// Library, Received Items, the viewer folders.
 pub fn unlockable(kind: i32) -> bool {
-    matches!(kind, 0 | 1 | 2 | 3 | 5 | 7 | 10 | 13 | 15 | 20 | 21 | 56 | 57)
+    matches!(kind, 0 | 1 | 3 | 7 | 10 | 13 | 15 | 20 | 21 | 56)
 }
 
 /// The default folders of My Inventory's root the user may unlock.
