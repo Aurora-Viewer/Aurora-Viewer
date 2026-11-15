@@ -5299,19 +5299,27 @@ impl Backend {
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
-        // the depth of the blended faces under the water, from 1/255, drawn
-        // after their colour: into the single-sampled scene depth the water
-        // samples for its refraction and fog, and with MSAA into the
+        // the depth of the blended faces under the water, drawn after their
+        // colour: into the single-sampled scene depth the water samples for
+        // its refraction and its shallow-water fade, and with MSAA into the
         // multisampled one too, which what is drawn after the water tests
         // (culled as their colour pass: a face seen from behind, which draws
-        // no colour, must not give the water a depth either)
+        // no colour, must not give the water a depth either). Only where a
+        // face is at least half covered (DEPTH_CONTACT_ALPHA's default), not
+        // from 1/255 as LLDrawPoolAlpha::forwardRender writes it
+        // (indra/newview/lldrawpoolalpha.cpp, "needed for accurate water
+        // fog"): the fog no longer reads this depth (common.wgsl
+        // water_fogs_source), and a faint sheet just under the surface,
+        // foam or a caustic, would take the water's reflection away over
+        // its whole shape (waterF.glsl's `fade`), which showed its triangles
+        // wherever it crossed the water plane
         let under_depth = |label: &'static str, samples: u32| {
             sided_pipe(PipeDesc {
                 fs: Some("fs_depth_contact"),
                 samples,
                 format: None,
                 depth_compare: wgpu::CompareFunction::Greater,
-                constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 2.0)],
+                constants: &[("WATER_CLIP", 2.0)],
                 ..base(label, "vs_main", "fs_opaque")
             })
         };

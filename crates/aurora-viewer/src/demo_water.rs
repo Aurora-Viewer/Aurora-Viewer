@@ -73,7 +73,7 @@ pub fn update(
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
         let (eye, target) = if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
-        } else if mode.contains("alpha-layers") {
+        } else if mode.contains("alpha-layers") || mode.contains("alpha-cross") {
             (Vec3::new(46.0, 117.0, 24.0), Vec3::new(56.0, 130.0, 19.5))
         } else if mode.contains("parts-") {
             let x = if mode.contains("parts-feet") { 62.0 } else { 52.0 };
@@ -249,7 +249,8 @@ pub fn update(
                 || mode.contains("parts-")
                 || mode.contains("waterline")
                 || mode.contains("optics-")
-                || mode.contains("alpha-layers"))
+                || mode.contains("alpha-layers")
+                || mode.contains("alpha-cross"))
         {
             continue;
         }
@@ -345,6 +346,23 @@ pub fn update(
                 "",
             ));
         }
+    }
+    if mode.contains("alpha-cross") {
+        // A faint blended sheet crossing the water plane, as the animated
+        // surface of a pond lying in region water: one half just under the
+        // water, the other just above it. The water must keep its fog and
+        // its reflection on both sides of the crossing line; the half under
+        // the water must not show the bed clear, as through a hole.
+        objects.push(super::prim(
+            99536,
+            Vec3::new(56.0, 130.0, 20.0),
+            Quat::from_rotation_y(0.05),
+            Vec3::new(16.0, 12.0, 0.02),
+            box_shape,
+            super::te([0.9, 0.95, 1.0, 0.15], 0, false, 0.0),
+            Default::default(),
+            "",
+        ));
     }
     for (id, pos) in [
         // Shin-deep wading: feet cross the surface during the fixture's gait.
