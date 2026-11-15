@@ -125,7 +125,8 @@ mod tests {
 
     #[test]
     fn typing_selects_the_suffix_and_enter_sends_the_completed_trigger() {
-        // (Shift+Enter is the line break now, whisper unbound by default)
+        // (Shift+Enter is the line break now; shout and whisper unbound by
+        // default, so Ctrl+Enter sends at the volume chosen)
         for modifiers in [egui::Modifiers::NONE, egui::Modifiers::CTRL] {
             let mut f = Fixture::new();
             f.text("/ej");
@@ -134,14 +135,7 @@ mod tests {
             let sent = f.key(egui::Key::Enter, modifiers).expect("completed gesture sent");
             assert_eq!(sent.message, "/eject");
             assert_eq!(sent.channel, 0);
-            assert_eq!(
-                sent.chat_type,
-                if modifiers.ctrl {
-                    aurora_net::ChatType::Shout
-                } else {
-                    aurora_net::ChatType::Normal
-                }
-            );
+            assert_eq!(sent.chat_type, aurora_net::ChatType::Normal);
             assert!(f.chat.input.is_empty());
             let (_, id) = f.gestures.revise(&sent.message);
             assert_eq!(id, Some(Uuid::from_u128(1)));

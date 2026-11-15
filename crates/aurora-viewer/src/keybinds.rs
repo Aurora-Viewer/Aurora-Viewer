@@ -519,7 +519,9 @@ pub enum Action {
     /// them be rebound (human request of 2026-11-15). A line break: the
     /// Legacy Ctrl+Shift+Enter second, Shift+Enter first.
     ChatNewLine,
-    /// Shout in nearby chat (FSUseCtrlShout: Ctrl+Enter).
+    /// Shout in nearby chat. The Legacy Viewer's Ctrl+Enter
+    /// (FSUseCtrlShout) is not bound by default (human request of
+    /// 2026-11-15): the volume menu shouts, or a key the user sets.
     ChatShout,
     /// Whisper in nearby chat. The Legacy Viewer's Shift+Enter
     /// (FSUseShiftWhisper) is the line break here: unbound by default.
@@ -598,7 +600,8 @@ pub fn is_held(a: Action) -> bool {
     )
 }
 
-/// Actions by section, with their French labels (preferences table order).
+/// Actions by section, with their French labels (preferences table order;
+/// `ui/options/pages/shortcuts.rs` groups them in tabs by this order).
 pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
     static TABLE: aurora_i18n::Localized<Vec<(&'static str, Vec<(Action, &'static str)>)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -656,6 +659,22 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Chat, aurora_i18n::tr!("keybinds-type-in-chat")),
                     (Action::PushToTalk, aurora_i18n::tr!("keybinds-speak-push-to-talk")),
                     (Action::ToggleMic, aurora_i18n::tr!("extra-enable-mute-microphone")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("keybinds-chat-typing"),
+                vec![
+                    (Action::ChatNewLine, aurora_i18n::tr!("keybinds-chat-new-line")),
+                    (Action::ChatShout, aurora_i18n::tr!("keybinds-chat-shout")),
+                    (Action::ChatWhisper, aurora_i18n::tr!("keybinds-chat-whisper")),
+                    (Action::ChatOoc, aurora_i18n::tr!("keybinds-chat-ooc")),
+                    (Action::ChatHistoryPrevious, aurora_i18n::tr!("keybinds-chat-history-previous")),
+                    (Action::ChatHistoryNext, aurora_i18n::tr!("keybinds-chat-history-next")),
+                    (Action::ChatNextConversation, aurora_i18n::tr!("keybinds-chat-next-conversation")),
+                    (
+                        Action::ChatPreviousConversation,
+                        aurora_i18n::tr!("keybinds-chat-previous-conversation"),
+                    ),
                 ],
             ),
             (
@@ -721,22 +740,6 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
                     (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
-                ],
-            ),
-            (
-                aurora_i18n::tr!("keybinds-chat-typing"),
-                vec![
-                    (Action::ChatNewLine, aurora_i18n::tr!("keybinds-chat-new-line")),
-                    (Action::ChatShout, aurora_i18n::tr!("keybinds-chat-shout")),
-                    (Action::ChatWhisper, aurora_i18n::tr!("keybinds-chat-whisper")),
-                    (Action::ChatOoc, aurora_i18n::tr!("keybinds-chat-ooc")),
-                    (Action::ChatHistoryPrevious, aurora_i18n::tr!("keybinds-chat-history-previous")),
-                    (Action::ChatHistoryNext, aurora_i18n::tr!("keybinds-chat-history-next")),
-                    (Action::ChatNextConversation, aurora_i18n::tr!("keybinds-chat-next-conversation")),
-                    (
-                        Action::ChatPreviousConversation,
-                        aurora_i18n::tr!("keybinds-chat-previous-conversation"),
-                    ),
                 ],
             ),
             (
@@ -1082,7 +1085,7 @@ impl KeyBindings {
             // 2026-11-15. Send (Enter), Close (Ctrl+W) and Find (Ctrl+F)
             // stay fixed.
             (Action::ChatNewLine, [kmod(K::Enter, false, true), kmod(K::Enter, true, true)]),
-            (Action::ChatShout, [kmod(K::Enter, true, false), None]),
+            (Action::ChatShout, [None, None]),
             (Action::ChatWhisper, [None, None]),
             (Action::ChatOoc, [kalt(K::Enter, false, false), None]),
             (Action::ChatHistoryPrevious, [kmod(K::ArrowUp, true, false), None]),

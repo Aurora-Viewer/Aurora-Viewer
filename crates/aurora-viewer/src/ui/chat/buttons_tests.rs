@@ -424,11 +424,11 @@ fn input_history_is_shared_both_ways_between_local_fields_in_every_style() {
         }
         h.bar_frame(vec![egui::Event::Text("/42 café 🙂".into())]);
         let sent = h
-            .bar_frame(history_events(egui::Key::Enter, egui::Modifiers::CTRL))
+            .bar_frame(history_events(egui::Key::Enter, egui::Modifiers::NONE))
             .expect("bar sends");
         assert_eq!(sent.channel, 42);
         assert_eq!(sent.message, "café 🙂");
-        assert_eq!(sent.chat_type, aurora_net::ChatType::Shout);
+        assert_eq!(sent.chat_type, aurora_net::ChatType::Normal);
         h.open(None);
         h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
         assert_eq!(h.st.draft_mut(None), "/42 café 🙂", "{style:?}");
@@ -1036,6 +1036,8 @@ fn nearby_bar_paragraph_chord_keeps_focus_and_volume_shortcuts() {
     let mut h = H::new(ChatStyle::Aurora);
     h.st.keep_focus = true;
     h.st.focus_request = true;
+    // a Shout key set (none by default): the Legacy Viewer's Ctrl+Enter
+    super::shortcuts::publish(&h.frames.ctx, &super::shortcuts::ctrl_enter_shout());
     h.bar_frame(Vec::new());
     h.bar_frame(Vec::new());
     h.bar_frame(vec![egui::Event::Paste("first\r\nsecond\rthird".into())]);
@@ -2452,8 +2454,9 @@ fn ooc_shortcut_uses_the_enter_events_modifiers() {
 }
 
 /// The bar/island shares event classification with conversations. Wrapping
-/// comes before channel parsing, and Ctrl retains its event's volume
-/// (Shift+Enter is the line break: `paragraph_chord_edits_…`).
+/// comes before channel parsing; with no Shout key (the default) Ctrl+Enter
+/// sends at the selected volume (Shift+Enter is the line break:
+/// `paragraph_chord_edits_…`).
 #[test]
 fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
     use aurora_net::ChatType as C;
@@ -2462,7 +2465,7 @@ fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
         (M::ALT, M::NONE, Some((0, "(( /5 brb ))", C::Normal))),
         (M::CTRL | M::ALT, M::ALT, None),
         (M::SHIFT | M::ALT, M::ALT, None),
-        (M::CTRL, M::NONE, Some((5, "brb", C::Shout))),
+        (M::CTRL, M::NONE, Some((5, "brb", C::Normal))),
     ];
     for (pressed, after, expected) in cases {
         let mut h = H::new(ChatStyle::Aurora);

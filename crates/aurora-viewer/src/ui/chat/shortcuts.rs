@@ -1,5 +1,5 @@
 //! The chat fields' rebindable shortcuts (Preferences › Controls ›
-//! Shortcuts › Chat, `keybinds::is_chat`): a line break, shout, whisper,
+//! Shortcuts › Communication › Chat (while typing), `keybinds::is_chat`): a line break, shout, whisper,
 //! ((OOC)), the sent messages' history and the conversations' cycling.
 //! The Legacy Viewer hard-codes them (FSFloaterIM::handleKeyHere,
 //! FSNearbyChatControl::handleKeyHere, indra/newview); Aurora reads them
@@ -110,6 +110,20 @@ pub(super) fn volume_tip(keys: &ChatKeys) -> String {
     tip
 }
 
+/// The defaults with the Legacy Viewer's Ctrl+Enter shout set, as a user
+/// would, for the tests of the shout path.
+#[cfg(test)]
+pub(crate) fn ctrl_enter_shout() -> KeyBindings {
+    let mut kb = KeyBindings::default();
+    let ctrl = crate::keybinds::Mods {
+        ctrl: true,
+        ..Default::default()
+    };
+    let enter = crate::keybinds::Input::key(winit::keyboard::KeyCode::Enter);
+    kb.set(Action::ChatShout, 0, Some(Binding::captured(enter, ctrl)));
+    kb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,7 +149,6 @@ mod tests {
         let ctrl_shift = CTRL | SHIFT;
         assert!(keys.pressed(Action::ChatNewLine, &press(Key::Enter, SHIFT)));
         assert!(keys.pressed(Action::ChatNewLine, &press(Key::Enter, ctrl_shift)));
-        assert!(keys.pressed(Action::ChatShout, &press(Key::Enter, CTRL)));
         assert!(keys.pressed(Action::ChatOoc, &press(Key::Enter, Modifiers::ALT)));
         assert!(keys.pressed(Action::ChatHistoryPrevious, &press(Key::ArrowUp, CTRL)));
         assert!(keys.pressed(Action::ChatHistoryNext, &press(Key::ArrowDown, CTRL)));
@@ -146,10 +159,13 @@ mod tests {
         // whisper is unbound: Shift+Enter is the line break now
         assert_eq!(keys.label(Action::ChatWhisper), None);
         assert!(!keys.pressed(Action::ChatWhisper, &press(Key::Enter, SHIFT)));
+        // shout too: Ctrl+Enter sends at the volume chosen
+        assert_eq!(keys.label(Action::ChatShout), None);
+        assert!(!keys.pressed(Action::ChatShout, &press(Key::Enter, CTRL)));
         // Alt+Left / Right no longer cycle (two keys per action)
         assert!(!keys.pressed(Action::ChatNextConversation, &press(Key::ArrowRight, Modifiers::ALT)));
         // exact modifiers: plain Enter is none of them, Ctrl+Alt+Enter neither
-        for a in [Action::ChatNewLine, Action::ChatShout, Action::ChatOoc] {
+        for a in [Action::ChatNewLine, Action::ChatOoc] {
             assert!(!keys.pressed(a, &press(Key::Enter, Modifiers::NONE)));
             assert!(!keys.pressed(a, &press(Key::Enter, CTRL | Modifiers::ALT)));
         }
@@ -207,9 +223,10 @@ mod tests {
             command: true,
             ..Default::default()
         };
-        // Command+Enter shouts, as the Legacy Viewer's MASK_CONTROL on macOS
-        assert!(keys.pressed(Action::ChatShout, &press(Key::Enter, cmd)));
+        // the table's Ctrl chords answer to Command, as the Legacy Viewer's
+        // MASK_CONTROL on macOS
         assert!(keys.pressed(Action::ChatNewLine, &press(Key::Enter, cmd | SHIFT)));
+        assert!(keys.pressed(Action::ChatPreviousConversation, &press(Key::Tab, cmd | SHIFT)));
         // Command+Up stays the field's: the start of the text
         assert!(!keys.pressed(Action::ChatHistoryPrevious, &press(Key::ArrowUp, cmd)));
     }
@@ -225,15 +242,19 @@ mod tests {
         let keys = ChatKeys::of(&KeyBindings::default());
         let local = tip(&keys, true, true);
         let im = tip(&keys, false, false);
-        let shout = keys.label(Action::ChatShout).expect("shout bound");
         let new_line = keys.label(Action::ChatNewLine).expect("new line bound");
-        assert!(local.contains(&shout) && local.contains(&new_line));
-        assert!(im.contains(&new_line) && !im.contains(&shout));
-        // whisper is unbound: send, new line, shout, ((OOC)) and the channel
-        assert_eq!(local.split(aurora_i18n::tr!("ui-chat-keys-join")).count(), 5);
+        assert!(local.contains(&new_line) && im.contains(&new_line));
+        // shout and whisper are unbound: send, new line, ((OOC)) and the channel
+        assert_eq!(local.split(aurora_i18n::tr!("ui-chat-keys-join")).count(), 4);
         assert_eq!(im.split(aurora_i18n::tr!("ui-chat-keys-join")).count(), 3);
+        assert_eq!(volume_tip(&keys), aurora_i18n::tr!("ui-chat-volume-tip"));
+        // a shout key set: the nearby chat's tip and the volume's say it, an IM's not
         let mut kb = KeyBindings::default();
-        kb.set(Action::ChatShout, 0, None);
-        assert_eq!(volume_tip(&ChatKeys::of(&kb)), aurora_i18n::tr!("ui-chat-volume-tip"));
+        let f6 = Binding::captured(Input::key(winit::keyboard::KeyCode::F6), crate::keybinds::Mods::default());
+        kb.set(Action::ChatShout, 0, Some(f6));
+        let keys = ChatKeys::of(&kb);
+        let shout = keys.label(Action::ChatShout).expect("shout bound");
+        assert!(tip(&keys, true, true).contains(&shout) && !tip(&keys, false, false).contains(&shout));
+        assert!(volume_tip(&keys).contains(&shout));
     }
 }

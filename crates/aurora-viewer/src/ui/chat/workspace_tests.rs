@@ -2704,6 +2704,38 @@ fn the_latest_button_brings_the_end_back() {
     }
 }
 
+/// With the button turned off (Preferences › Chat › Conversations), a
+/// conversation scrolled away from its end shows none, even when lines come
+/// in, and the reader stays where they are, in both windows.
+#[test]
+fn the_latest_button_can_be_turned_off() {
+    let jump = aurora_i18n::tr!("ui-chat-latest");
+    let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.hide_latest = true;
+        for k in 0..60 {
+            h.world
+                .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+        }
+        h.st.selected = Some(JANE);
+        h.settle();
+        h.st.demo_scroll = Some(JANE);
+        h.settle();
+        h.settle();
+        assert!(h.st.demo_scrolled, "{style:?}");
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert!(has(&texts, "old 0"), "{style:?}: at the top");
+        assert!(!has(&texts, jump), "{style:?}: far from the end, no button");
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: no count either");
+        assert!(has(&texts, "old 0"), "{style:?}: the reader stays at the top");
+    }
+}
+
 /// The column's entries say the last line with its links by their labels,
 /// as the thread shows them, never the raw `secondlife:///app` address
 /// (#947): the nearby chat's entry and a conversation's.

@@ -7927,9 +7927,9 @@ failure. Grid validation and any paid upload are performed by the human.
   private/group IMs and detached conversations. Paste paragraphs and use
   Shift+Enter or Ctrl+Shift+Enter (the New line shortcut, in every
   conversation): preserve line breaks, replace selected text and support
-  undo without sending. Enter sends, Ctrl+Enter shouts in nearby chat;
-  Whisper has no key until one is set in Preferences › Controls ›
-  Shortcuts › Chat, and its key leaves an IM's draft, completion and focus
+  undo without sending. Enter sends; Shout and Whisper have no key until
+  one is set in Preferences › Controls › Shortcuts › Communication ›
+  Chat (while typing), and the Whisper key leaves an IM's draft, completion and focus
   unchanged. A long conversation name in the placeholder ("Write to …")
   ends with "…" on one line. The field wraps and grows to four rows, then scrolls;
   the dock stays in place, while the full Legacy bar reserves its taller

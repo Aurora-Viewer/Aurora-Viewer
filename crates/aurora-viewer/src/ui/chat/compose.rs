@@ -1,7 +1,7 @@
 //! The field of a conversation in Aurora's workspace: who is typing above
 //! it, then a wide box with the emoji, the volume of the nearby chat (a
-//! menu of whisper, say, shout, kept at every width: Ctrl+Enter shouts and
-//! Shift+Enter whispers whatever is chosen, like the chat bar), the text, the
+//! menu of whisper, say, shout, kept at every width: the Shout and Whisper
+//! keys, when set, override whatever is chosen, like the chat bar), the text, the
 //! channel of the nearby chat (when Preferences show its selector) and send.
 //! The gestures are played from their
 //! window, their keys or their trigger typed in the nearby chat.

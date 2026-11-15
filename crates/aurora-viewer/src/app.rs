@@ -17736,6 +17736,7 @@ impl App {
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                self.chat_ui.hide_latest = !self.settings.chat_latest_button;
                 // the chat fields' suggestions (#980); the residents around
                 // only while a nearby field lists or predicts them
                 let suggest = &mut self.chat_ui.suggest;

@@ -892,7 +892,8 @@ mod tests {
         }
     }
 
-    /// The island's field is the chat bar's: Enter says, Ctrl+Enter shouts,
+    /// The island's field is the chat bar's: Enter says, the Shout key set
+    /// (Ctrl+Enter here) shouts,
     /// `/5` picks the channel, and the islands keep the 56 px of the dock.
     #[test]
     fn the_chat_island_says_and_shouts_like_the_chat_bar() {
@@ -909,6 +910,7 @@ mod tests {
         bench.chat.focus_request = true;
         bench.frame(vec![]);
         bench.frame(vec![egui::Event::Text("/5 loud".into())]);
+        crate::ui::chat::shortcuts::publish(&bench.ctx, &crate::ui::chat::shortcuts::ctrl_enter_shout());
         let (out, _, _) = bench.frame(vec![
             egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
             key(egui::Key::Enter, true, egui::Modifiers::CTRL),

@@ -79,6 +79,9 @@ pub struct ChatUi {
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
     pub keep_focus: bool,
+    /// No button back to the latest messages (Preferences › Chat ›
+    /// Conversations, `Settings::chat_latest_button` off): `latest.rs`.
+    pub hide_latest: bool,
     /// The chat bar shows only while it is used (Preferences › Chat; the
     /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
     pub autohide: bool,
@@ -748,7 +751,7 @@ impl SendKey {
 /// frame must change neither permission to send, OOC wrapping nor volume.
 /// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
 /// the event's mask. The ((OOC)), shout and whisper keys are the user's
-/// (`shortcuts.rs`: Alt+Enter, Ctrl+Enter, none by default); Enter
+/// (`shortcuts.rs`: Alt+Enter, then none by default); Enter
 /// otherwise sends at the selected volume, an Alt chord left unclaimed
 /// (AltGr). The New line key never comes here: `input::prepare` made it
 /// a line break.
@@ -2753,7 +2756,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -4590,7 +4593,8 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 }
 
 /// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
-/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
+/// Enter says, the Shout and Whisper keys (`shortcuts.rs`, none by
+/// default) shout and whisper, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
 /// its own frame (`build` dresses the field) and shows emoji pictures.
@@ -4701,8 +4705,7 @@ pub(crate) fn bar_input(
 mod tests {
     #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
-        let keys = super::shortcuts::ChatKeys::of(&crate::keybinds::KeyBindings::default());
-        let send = |modifiers: egui::Modifiers| {
+        let send_with = |keys: &super::shortcuts::ChatKeys, modifiers: egui::Modifiers| {
             let mut input = egui::InputState::default();
             input.events.push(egui::Event::Key {
                 key: egui::Key::Enter,
@@ -4711,14 +4714,20 @@ mod tests {
                 repeat: false,
                 modifiers,
             });
-            super::send_enter(&input, &keys)
+            super::send_enter(&input, keys)
         };
+        let keys = super::shortcuts::ChatKeys::of(&crate::keybinds::KeyBindings::default());
+        let send = |modifiers| send_with(&keys, modifiers);
         let alt = egui::Modifiers::ALT;
         assert_eq!(send(alt), Some(super::SendKey::Ooc));
         // AltGr (Ctrl+Alt) and other Alt chords stay unclaimed
         assert_eq!(send(alt | egui::Modifiers::CTRL), None);
         assert_eq!(send(alt | egui::Modifiers::SHIFT), None);
-        assert_eq!(send(egui::Modifiers::CTRL), Some(super::SendKey::Shout));
+        // no Shout key by default: Ctrl+Enter sends at the volume chosen
+        assert_eq!(send(egui::Modifiers::CTRL), Some(super::SendKey::Normal));
+        let shout = super::shortcuts::ChatKeys::of(&super::shortcuts::ctrl_enter_shout());
+        assert_eq!(send_with(&shout, egui::Modifiers::CTRL), Some(super::SendKey::Shout));
+        assert_eq!(send_with(&shout, alt), Some(super::SendKey::Ooc));
         assert_eq!(send(egui::Modifiers::NONE), Some(super::SendKey::Normal));
         assert_eq!(super::ooc("brb"), "(( brb ))");
         assert_eq!(super::ooc(""), "");
