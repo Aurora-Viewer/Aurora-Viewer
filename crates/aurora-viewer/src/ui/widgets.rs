@@ -290,6 +290,23 @@ pub(crate) fn spin_key_scale(modifiers: egui::Modifiers) -> f32 {
     }
 }
 
+/// clamp_precision (indra/llui/llspinctrl.cpp): an arrow or wheel step is
+/// rounded to the field's decimals, so a step finer than the field shows
+/// (Ctrl or Shift on a 0-decimal field) changes nothing instead of leaving
+/// a hidden fraction. In f64, ten at a time like the Legacy Viewer, with
+/// halves rounded up (ll_round: floor(x + 0.5)).
+pub(crate) fn clamp_precision(value: f32, decimals: usize) -> f32 {
+    let mut v = f64::from(value);
+    for _ in 0..decimals {
+        v *= 10.0;
+    }
+    v = (v + 0.5).floor();
+    for _ in 0..decimals {
+        v /= 10.0;
+    }
+    v as f32
+}
+
 /// Points of a trackpad flick that make one notch. Same grain as the shape
 /// editor's category wheel.
 const WHEEL_POINTS_PER_NOTCH: f32 = 55.0;

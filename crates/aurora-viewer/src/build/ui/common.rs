@@ -255,6 +255,10 @@ fn spinner(
     let (r, step) = row.inner;
     // A typed draft and a drag keep the number they already own. The wheel
     // over the row is still eaten, so the panel does not jump underneath.
+    // Deliberate difference: LLSpinCtrl::handleScrollWheel calls onUpBtn /
+    // onDownBtn, which step from the typed text and commit it; here the
+    // wheel leaves a field being typed in alone, as a spin arrow pressed
+    // while typing does (TASKS.md).
     let protect = r.has_focus() || r.dragged() || r.drag_stopped() || draft.is_some();
     let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, !protect);
     // A spin click or a drag is not a typed entry; otherwise an abandoned
@@ -270,9 +274,14 @@ fn spinner(
         return Edit::default();
     }
     let stepped = step != 0 || wheel.scaled != 0.0;
+    let before_step = *v;
     if stepped {
-        *v = (*v + increment * (step as f32 * scale + wheel.scaled)).clamp(*range.start(), *range.end());
+        // LLSpinCtrl::onUpBtn: clamp_precision, then the range. Only the
+        // step is rounded: a typed or dragged number keeps its own value.
+        let next = before_step + increment * (step as f32 * scale + wheel.scaled);
+        *v = crate::ui::widgets::clamp_precision(next, decimals).clamp(*range.start(), *range.end());
     }
+    let stepped = stepped && *v != before_step;
     if r.dragged() {
         ui.data_mut(|data| data.insert_temp(draft_id, SpinnerDrag { widget: r.id, value: *v }));
     }
@@ -912,6 +921,58 @@ mod tests {
         assert!(edit.edit.commit);
         run(vec![egui::Event::PointerMoved(field), wheel(1.0, egui::MouseWheelUnit::Line, ctrl)]);
         assert!((value.get() - 3.021).abs() < 1e-3, "Ctrl on the wheel is ×0.1, got {}", value.get());
+    }
+
+    /// LLSpinCtrl::onUpBtn rounds a step with clamp_precision: on a field
+    /// with no decimals, Ctrl and Shift change nothing, report nothing and
+    /// leave no hidden fraction; Alt still steps.
+    #[test]
+    fn steps_finer_than_the_field_round_away() {
+        let ctx = egui::Context::default();
+        let value = std::cell::Cell::new(100.0f32);
+        let run = |events: Vec<egui::Event>| {
+            let mut field = egui::Pos2::ZERO;
+            let mut edit = Edit::default();
+            let mut current = value.get();
+            let mut output = ctx.run_ui(input(0.0, events), |ui| {
+                field = ui.cursor().min + egui::vec2(20.0, 10.0);
+                edit = spin(ui, &mut current, 1.0, 0.0..=255.0, 0, 90.0, false);
+            });
+            output.textures_delta.clear();
+            value.set(current);
+            (field, edit)
+        };
+        let (field, _) = run(vec![]);
+        for (name, modifiers) in [
+            (
+                "Ctrl",
+                egui::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "Shift",
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let (_, edit) = run(vec![
+                egui::Event::PointerMoved(field),
+                wheel(1.0, egui::MouseWheelUnit::Line, modifiers),
+            ]);
+            assert_eq!(value.get(), 100.0, "{name} on a 0-decimal field leaves 100 at 100");
+            assert!(!edit.changed && !edit.commit, "{name} reports no change");
+        }
+        let alt = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let (_, edit) = run(vec![egui::Event::PointerMoved(field), wheel(1.0, egui::MouseWheelUnit::Line, alt)]);
+        assert_eq!(value.get(), 110.0);
+        assert!(edit.changed && edit.commit);
     }
 
     #[test]

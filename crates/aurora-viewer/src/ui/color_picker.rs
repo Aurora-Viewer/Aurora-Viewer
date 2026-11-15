@@ -729,8 +729,13 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
     let protect = response.has_focus() || response.dragged() || response.drag_stopped();
     let wheel = widgets::spin_wheel(ui, row_rect, response.id, !protect);
     if step != 0 || wheel.scaled != 0.0 {
-        *value = (*value + increment * (scale * step as f32 + wheel.scaled)).clamp(0.0, max);
-        response.mark_changed();
+        // clamp_precision, as LLSpinCtrl::onUpBtn: on a 0-decimal field
+        // (R/G/B in 0-255) Ctrl and Shift round to no change.
+        let next = widgets::clamp_precision(*value + increment * (scale * step as f32 + wheel.scaled), decimals).clamp(0.0, max);
+        if next != *value {
+            *value = next;
+            response.mark_changed();
+        }
     }
     response
 }
