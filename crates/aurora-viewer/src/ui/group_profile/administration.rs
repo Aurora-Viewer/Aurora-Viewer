@@ -12,9 +12,13 @@
 //! - Abilities: who has which ability, by role and member;
 //! - Banned residents: the list (GroupAPIv1), unban, ban by name;
 //! - Invitations: the invitation window.
+//!
+//! The tab of the Aurora window and the "Administration" section of the
+//! classic one: in a narrow window the sections are pills above the body
+//! and the Roles and Abilities lists go above what they edit.
 
 use super::abilities::{self, AbilitySet};
-use super::members::role_name;
+use super::members::{self, role_name};
 use super::view::{self, View};
 use super::{GroupAction, GroupProfileUi};
 use crate::theme::Palette;
@@ -86,6 +90,29 @@ pub struct AdminState {
     to_ban: Vec<Uuid>,
 }
 
+/// Below this width the section list becomes a row of pills.
+const NARROW: f32 = 560.0;
+
+/// Below this width a section's list goes above what it edits.
+const STACKED: f32 = 480.0;
+
+/// Two areas of `full` from the cursor of `ui`: side by side (the left one
+/// `left_w` wide), or stacked when `full` is narrow (the top one `top_h`
+/// high).
+pub(super) fn split(ui: &egui::Ui, full: Rect, left_w: f32, top_h: f32) -> (Rect, Rect) {
+    let min = ui.cursor().min;
+    if full.width() < STACKED {
+        let top = Rect::from_min_max(min, Pos2::new(full.right(), (min.y + top_h).min(full.bottom())));
+        (top, Rect::from_min_max(Pos2::new(min.x, top.bottom() + 10.0), full.right_bottom()))
+    } else {
+        let left = Rect::from_min_max(min, Pos2::new(min.x + left_w, full.bottom()));
+        (
+            left,
+            Rect::from_min_max(Pos2::new(left.right() + 12.0, left.top()), full.right_bottom()),
+        )
+    }
+}
+
 /// The tab shows with one of the administration abilities.
 pub fn visible(v: &View) -> bool {
     v.member.is_some() && v.can(ADMIN)
@@ -113,7 +140,7 @@ pub fn roles_now(d: &GroupData, changes: &BTreeMap<Uuid, RoleUpdate>, owner_role
     let mut ids: Vec<Uuid> = d.roles.keys().copied().collect();
     ids.extend(changes.keys().filter(|id| !d.roles.contains_key(id)));
     let mut v: Vec<GroupRole> = ids.iter().filter_map(|id| role_now(d, changes, id)).collect();
-    v.sort_by_cached_key(|r| (!r.id.is_nil(), r.id != owner_role, role_name(&r.name).to_lowercase()));
+    v.sort_by_cached_key(|r| (!r.id.is_nil(), r.id != owner_role, crate::natural_order::key(&role_name(&r.name))));
     v
 }
 
@@ -274,24 +301,41 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
     {
         st.admin.section = s.0;
     }
+    // narrow (the classic window): the sections as pills above the body
+    let narrow = ui.available_width() < NARROW;
+    if narrow {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for (section, _, label, shown, _) in &sections {
+                if *shown && members::pill(ui, p, label, st.admin.section == *section).clicked() {
+                    st.admin.section = *section;
+                }
+            }
+        });
+        ui.add_space(8.0);
+    }
     let body = Rect::from_min_max(
         ui.cursor().min + Vec2::new(4.0, 0.0),
         ui.max_rect().right_bottom() - Vec2::new(4.0, 0.0),
     );
     ui.allocate_rect(body, Sense::hover());
-    let nav = Rect::from_min_max(body.min, Pos2::new(body.left() + 190.0, body.bottom()));
-    let main = Rect::from_min_max(Pos2::new(nav.right() + 12.0, body.top()), body.max);
-    let mut n = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(nav)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-    n.spacing_mut().item_spacing.y = 2.0;
-    for (section, icon, label, shown, count) in sections {
-        if shown && nav_item(&mut n, p, icon, label, count, st.admin.section == section).clicked() {
-            st.admin.section = section;
+    let main = if narrow {
+        body
+    } else {
+        let nav = Rect::from_min_max(body.min, Pos2::new(body.left() + 190.0, body.bottom()));
+        let mut n = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(nav)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        n.spacing_mut().item_spacing.y = 2.0;
+        for (section, icon, label, shown, count) in sections {
+            if shown && nav_item(&mut n, p, icon, label, count, st.admin.section == section).clicked() {
+                st.admin.section = section;
+            }
         }
-    }
+        Rect::from_min_max(Pos2::new(nav.right() + 12.0, body.top()), body.max)
+    };
     let mut m = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(main)
@@ -385,55 +429,63 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
         st.admin.role = list.get(1).or(list.first()).map(|r| r.id);
     }
     let full = ui.max_rect();
-    let left = Rect::from_min_max(ui.cursor().min, Pos2::new(ui.cursor().min.x + 220.0, full.bottom()));
-    let right = Rect::from_min_max(Pos2::new(left.right() + 12.0, left.top()), full.right_bottom());
+    // stacked: the list (scrolled) and its buttons over a third of the height
+    let (left, right) = split(ui, full, 220.0, (full.height() * 0.35).max(170.0));
     let mut l = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(left)
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    l.spacing_mut().item_spacing.y = 2.0;
-    for r in &list {
-        let members = if r.id.is_nil() { d.member_total.max(0) as u32 } else { r.members };
-        let (rect, resp) = l.allocate_exact_size(Vec2::new(l.available_width(), 40.0), Sense::click());
-        let on = st.admin.role == Some(r.id);
-        let radius = l.visuals().widgets.inactive.corner_radius;
-        if on {
-            l.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
-        } else if resp.hovered() {
-            l.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.35));
-        }
-        let changed = st.admin.changes.contains_key(&r.id);
-        let name = if changed {
-            format!("{} •", role_name(&r.name))
-        } else {
-            role_name(&r.name)
-        };
-        widgets::paint_elided(
-            &l,
-            &name,
-            Pos2::new(rect.left() + 8.0, rect.center().y - 8.0),
-            rect.width() - 16.0,
-            FontId::new(13.0, crate::ui::fonts::semibold(l.ctx())),
-            p.ink,
-        );
-        let sub = aurora_i18n::tr!(
-            "ui-group-profile-members",
-            count = i64::from(members),
-            shown = aurora_i18n::integer(i64::from(members))
-        );
-        widgets::paint_elided(
-            &l,
-            &sub,
-            Pos2::new(rect.left() + 8.0, rect.center().y + 9.0),
-            rect.width() - 16.0,
-            FontId::proportional(11.5),
-            p.muted,
-        );
-        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            st.admin.role = Some(r.id);
-        }
-    }
+    l.set_clip_rect(left.intersect(ui.clip_rect()));
+    let note_h = if list.len() >= MAX_ROLES { 18.0 } else { 0.0 };
+    egui::ScrollArea::vertical()
+        .id_salt("group_admin_role_list")
+        .max_height((left.height() - 40.0 - note_h).max(42.0))
+        .auto_shrink([false, true])
+        .show(&mut l, |l| {
+            l.spacing_mut().item_spacing.y = 2.0;
+            for r in &list {
+                let members = if r.id.is_nil() { d.member_total.max(0) as u32 } else { r.members };
+                let (rect, resp) = l.allocate_exact_size(Vec2::new(l.available_width(), 40.0), Sense::click());
+                let on = st.admin.role == Some(r.id);
+                let radius = l.visuals().widgets.inactive.corner_radius;
+                if on {
+                    l.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
+                } else if resp.hovered() {
+                    l.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.35));
+                }
+                let changed = st.admin.changes.contains_key(&r.id);
+                let name = if changed {
+                    format!("{} •", role_name(&r.name))
+                } else {
+                    role_name(&r.name)
+                };
+                widgets::paint_elided(
+                    l,
+                    &name,
+                    Pos2::new(rect.left() + 8.0, rect.center().y - 8.0),
+                    rect.width() - 16.0,
+                    FontId::new(13.0, crate::ui::fonts::semibold(l.ctx())),
+                    p.ink,
+                );
+                let sub = aurora_i18n::tr!(
+                    "ui-group-profile-members",
+                    count = i64::from(members),
+                    shown = aurora_i18n::integer(i64::from(members))
+                );
+                widgets::paint_elided(
+                    l,
+                    &sub,
+                    Pos2::new(rect.left() + 8.0, rect.center().y + 9.0),
+                    rect.width() - 16.0,
+                    FontId::proportional(11.5),
+                    p.muted,
+                );
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    st.admin.role = Some(r.id);
+                }
+            }
+        });
     l.add_space(6.0);
     l.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
@@ -561,7 +613,7 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
                     }
                 });
             // the abilities, by set
-            let catalogue = abilities::catalogue();
+            let catalogue = abilities::catalogue(v.post_links);
             let total: usize = catalogue.iter().map(|s| s.abilities.len()).sum();
             let has: usize = catalogue
                 .iter()
@@ -688,7 +740,7 @@ fn dialog(st: &mut GroupProfileUi, ctx: &egui::Context, p: &Palette, v: &View, d
     let role_label = role_now(d, &st.admin.changes, &role)
         .map(|r| role_name(&r.name))
         .unwrap_or_default();
-    let catalogue = abilities::catalogue();
+    let catalogue = abilities::catalogue(v.post_links);
     let ability = |bit: u32| {
         catalogue
             .iter()
@@ -1004,13 +1056,9 @@ fn rating_choice(ui: &mut egui::Ui, p: &Palette, chosen: &mut Option<bool>, info
 /// set, the roles and members of the one chosen.
 fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData) {
     let p = c.p;
-    let catalogue = abilities::catalogue();
+    let catalogue = abilities::catalogue(v.post_links);
     let full = ui.max_rect();
-    let left = Rect::from_min_max(
-        ui.cursor().min,
-        Pos2::new(ui.cursor().min.x + (full.width() * 0.5).min(320.0), full.bottom()),
-    );
-    let right = Rect::from_min_max(Pos2::new(left.right() + 12.0, left.top()), full.right_bottom());
+    let (left, right) = split(ui, full, (full.width() * 0.5).min(320.0), full.height() * 0.45);
     let mut l = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(left)
@@ -1085,7 +1133,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
     let ability = catalogue.iter().flat_map(|s| s.abilities.iter()).find(|a| a.bit == bit);
     let roles: Vec<&GroupRole> = {
         let mut v: Vec<&GroupRole> = d.roles.values().filter(|r| r.powers & power != 0).collect();
-        v.sort_by_cached_key(|r| role_name(&r.name).to_lowercase());
+        v.sort_by_cached_key(|r| crate::natural_order::key(&role_name(&r.name)));
         v
     };
     view::card(
@@ -1126,7 +1174,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
         })
         .map(|m| (m.id, c.world.social.display_name_of(&m.id)))
         .collect();
-    members.sort_by_cached_key(|m| m.1.to_lowercase());
+    members.sort_by_cached_key(|m| crate::natural_order::key(&m.1));
     let title = aurora_i18n::tr!("ui-group-admin-members-with", count = members.len() as i64);
     view::card(&mut r, p, "users", p.muted_dim, &title, None, |ui| {
         egui::ScrollArea::vertical()

@@ -15,15 +15,18 @@ pub(super) struct TaskNotecard {
 }
 
 /// Permissions of the item and its containing object are both required.
-fn editor_item(mut item: InvItem, agent: Uuid, member: bool, manipulate: bool, object_editable: bool) -> InvItem {
-    item.owner_mask = if item.owner == agent || (item.group_owned && manipulate) {
-        item.owner_mask
-    } else {
-        item.everyone_mask | if member { item.group_mask } else { 0 }
-    };
+/// The notecard as we may use it: our rights on it, no modify on an object
+/// we cannot edit. Any god reads any (LLTaskNotecardBridge::openItem and
+/// LLPreviewNotecard::loadAsset: isGodlike()); editing goes through
+/// LLAgent::allowOperation (LLPreviewNotecard::canModify), so only from
+/// GOD_MAINTENANCE ([`rules::with_god`]).
+fn editor_item(mut item: InvItem, agent: Uuid, member: bool, manipulate: bool, object_editable: bool, god_level: u8) -> InvItem {
+    let mut mask = rules::task_notecard_mask(&item, agent, member, manipulate);
     if !object_editable {
-        item.owner_mask &= !rules::MODIFY;
+        mask &= !rules::MODIFY;
     }
+    let read = if god_level > 0 { rules::COPY } else { 0 };
+    item.owner_mask = mask | read | (rules::with_god(0, god_level) & (rules::COPY | rules::MODIFY));
     item
 }
 
@@ -39,7 +42,11 @@ impl TaskNotecard {
                 &Err(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
             );
         } else if item.asset_id.is_nil() {
-            state.load_document(7, crate::world::inventory::preview::can_edit(&inventory, item.id), &Ok(Vec::new()));
+            state.load_document(
+                7,
+                crate::world::inventory::preview::can_edit(&inventory, item.id, 0),
+                &Ok(Vec::new()),
+            );
         }
         Self { inventory, state }
     }
@@ -47,7 +54,7 @@ impl TaskNotecard {
     fn load(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
         if self.inventory.items.get(&item).is_some_and(|it| it.asset_id == asset) {
             self.state
-                .load_document(7, crate::world::inventory::preview::can_edit(&self.inventory, item), &result);
+                .load_document(7, crate::world::inventory::preview::can_edit(&self.inventory, item, 0), &result);
         }
     }
 }
@@ -74,6 +81,7 @@ impl App {
             group.is_some(),
             group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
             self.build.contents_editable(&self.world, idx),
+            self.world.god_level,
         ))
     }
 
@@ -355,7 +363,7 @@ mod tests {
     #[test]
     fn item_permissions_and_object_permissions_are_both_required() {
         let agent = Uuid::from_u128(2);
-        let metadata = editor_item(item(), agent, false, false, false);
+        let metadata = editor_item(item(), agent, false, false, false, 0);
         assert_eq!(metadata.owner_mask, rules::COPY);
         let note = TaskNotecard::new(metadata);
         assert_eq!(note.state.preview_text, Some(Ok(String::new())));
@@ -363,13 +371,23 @@ mod tests {
         let mut foreign = item();
         foreign.owner = Uuid::from_u128(8);
         foreign.group_mask = rules::COPY;
-        assert_eq!(editor_item(foreign.clone(), agent, false, false, true).owner_mask, 0);
-        assert_eq!(editor_item(foreign.clone(), agent, true, false, true).owner_mask, rules::COPY);
+        assert_eq!(editor_item(foreign.clone(), agent, false, false, true, 0).owner_mask, 0);
+        assert_eq!(editor_item(foreign.clone(), agent, true, false, true, 0).owner_mask, rules::COPY);
         foreign.group_owned = true;
         assert_eq!(
-            editor_item(foreign, agent, true, true, true).owner_mask,
+            editor_item(foreign.clone(), agent, true, true, true, 0).owner_mask,
             rules::COPY | rules::MODIFY
         );
+        // any god reads a stranger's no-copy notecard; editing it takes
+        // GOD_MAINTENANCE (LLAgent::allowOperation), not OpenSim's 200 to 249
+        foreign.group_owned = false;
+        foreign.group_mask = 0;
+        for level in [1, 225, rules::GOD_MAINTENANCE - 1] {
+            let god = editor_item(foreign.clone(), agent, false, false, true, level).owner_mask;
+            assert_eq!(god & (rules::COPY | rules::MODIFY), rules::COPY, "level {level}");
+        }
+        let god = editor_item(foreign, agent, false, false, false, rules::GOD_MAINTENANCE).owner_mask;
+        assert_eq!(god & (rules::COPY | rules::MODIFY), rules::COPY | rules::MODIFY);
     }
 
     #[test]

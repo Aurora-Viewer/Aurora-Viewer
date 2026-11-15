@@ -10,6 +10,16 @@ use crate::interaction::{self, Action, Contents, Held, Target};
 const ASK_LEAD: Duration = Duration::from_millis(34);
 const ASK_EVERY: Duration = Duration::from_millis(100);
 
+/// handle_object_sit uses the clicked prim's LLPickInfo::mObjectOffset,
+/// computed by LLAgentCamera::calcFocusOffset (indra/newview). Keep the
+/// clicked child origin and world axes; neither a root-relative offset nor
+/// an inverse object rotation belongs in AgentRequestSit.
+pub(super) fn object_sit_offset(world: &World, camera: &Camera, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Option<Vec3> {
+    let object = world.objects.get(idx)?;
+    let geometry = crate::camera::focus_object_geom(world, &object.full_id, Instant::now())?;
+    Some(camera.object_pick_offset(&geometry, point, ray))
+}
+
 impl App {
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
         self.activate_object_action_at(target, idx, point, ray, None);
@@ -39,11 +49,11 @@ impl App {
         match target.action {
             Action::Disabled => {}
             Action::Sit => {
-                if let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, now, 0) {
+                if let Some(offset) = object_sit_offset(&self.world, &self.camera, idx, point, ray) {
                     self.send(NetCommand::RequestSit {
                         handle: target.key.region,
                         target: target.object,
-                        offset: rot.inverse() * (point - pos),
+                        offset,
                     });
                 }
             }
@@ -337,6 +347,70 @@ fn hidden_behind(origin: Vec3, dir: Vec3, point: Vec3, center: Vec3, radius: f32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sit_offsets_keep_world_axes_and_the_clicked_child_origin() {
+        use glam::Quat;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let origin = Vec3::new(100.0, 120.0, 30.0);
+        for linked in [false, true] {
+            for (turn, degrees) in [0.0_f32, 90.0, 180.0, 237.0].into_iter().enumerate() {
+                let rotation = Quat::from_rotation_z(degrees.to_radians());
+                // Distinct objects avoid interpolating one case's rotation
+                // into the next case while testing a stationary seat.
+                let local_id = 31000 + (u32::from(linked) * 4 + turn as u32) * 2;
+                let mut root = crate::demo::action_avatar(false);
+                root.local_id = local_id;
+                root.full_id = crate::demo::action_id(local_id);
+                root.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+                root.parent_id = 0;
+                root.position = origin;
+                root.rotation = rotation;
+                root.scale = Vec3::new(4.0, 1.0, 0.5);
+                root.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                    texture: uuid::Uuid::from_u128(31000),
+                    sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+                });
+                let mut seat = root.clone();
+                seat.local_id = local_id + 1;
+                seat.full_id = crate::demo::action_id(local_id + 1);
+                if linked {
+                    root.rotation = rotation * Quat::from_rotation_z(-0.4);
+                    root.position = origin - root.rotation * Vec3::new(3.0, -2.0, 1.0);
+                    seat.parent_id = root.local_id;
+                    seat.position = Vec3::new(3.0, -2.0, 1.0);
+                    seat.rotation = Quat::from_rotation_z(0.4);
+                }
+                world.apply(aurora_net::NetEvent::ObjectUpdates {
+                    handle,
+                    objects: vec![root, seat],
+                });
+                let idx = world.objects.index_of_uuid(&crate::demo::action_id(local_id + 1)).expect("seat");
+                let mut camera = Camera::default();
+                camera.position = origin + rotation * Vec3::new(0.0, -7.0, 4.0);
+                camera.target = origin;
+                for side in [-1.0, 1.0] {
+                    let point = origin + rotation * Vec3::new(side, -0.25, 0.25);
+                    let ray = (camera.position, (point - camera.position).normalize());
+                    let offset = object_sit_offset(&world, &camera, idx, point, Some(ray)).expect("offset");
+                    // calcFocusOffset intersects the cursor ray with the
+                    // seat's central XY plane at t=4/3.75; at this distance
+                    // its near-surface bias is zero. No scale division.
+                    let expected = rotation * Vec3::new(side * 16.0 / 15.0, 0.2, 0.0);
+                    assert!(
+                        offset.abs_diff_eq(expected, 1e-4),
+                        "linked={linked}, turn={degrees}, side={side}: {offset:?}"
+                    );
+                    let fallback = object_sit_offset(&world, &camera, idx, point, None).expect("offset without ray");
+                    assert!(fallback.abs_diff_eq(point - origin, 1e-4));
+                }
+            }
+        }
+    }
 
     #[test]
     fn a_surface_in_front_of_the_held_object_hides_it() {

@@ -11,8 +11,11 @@
 //!   Home (charter, latest notices, members online, "Me in this group")
 //!   and Members (the list, read only for now);
 //! - classic: the general information of LLPanelGroupGeneral drawn by the
-//!   group pane of "Search" (`search/details.rs`), with the members below
-//!   in a collapsing section, as Firestorm's accordions.
+//!   group pane of "Search" (`search/details.rs`), then collapsing
+//!   sections, as the Legacy Viewer's accordions: the members (managed with
+//!   a management ability), Administration (roles, identity, abilities,
+//!   bans, invitations, with an administration ability), notices, land and
+//!   experiences.
 //!
 //! "Create a group" (`group_profile/create.rs`) is a version of the same
 //! window: the header and the identity cards, or Firestorm's creation panel.
@@ -195,6 +198,10 @@ pub struct GroupProfileUi {
     group: Option<Uuid>,
     open: bool,
     raise: bool,
+    /// Frames left to scroll the classic window to the section of the tab a
+    /// `show_*` asked for (while the section unfolds; the Aurora window
+    /// ignores it).
+    reveal: u8,
     pub(super) tab: Tab,
     /// The data was asked for this group, as member or not: asked again
     /// when the membership changes or the data was forgotten.
@@ -259,6 +266,7 @@ impl GroupProfileUi {
     /// demo's captures).
     pub fn show_admin(&mut self, identity: bool) {
         self.tab = Tab::Admin;
+        self.reveal = REVEAL_FRAMES;
         if identity {
             self.admin.section = administration::Section::Identity;
         }
@@ -267,12 +275,14 @@ impl GroupProfileUi {
     /// Open the Experiences tab (the demo's captures).
     pub fn show_experiences(&mut self) {
         self.tab = Tab::Experiences;
+        self.reveal = REVEAL_FRAMES;
     }
 
     /// Open the "Land and L$" tab on a page of the accounts (the demo's
     /// captures).
     pub fn show_land(&mut self, ledger: aurora_net::group_money::Ledger) {
         self.tab = Tab::Land;
+        self.reveal = REVEAL_FRAMES;
         self.land.ledger = ledger;
     }
 
@@ -280,6 +290,7 @@ impl GroupProfileUi {
     /// `compose`.
     pub fn show_notices(&mut self, compose: bool) {
         self.tab = Tab::Notices;
+        self.reveal = REVEAL_FRAMES;
         if compose {
             self.notices.compose = Some(Default::default());
         }
@@ -288,6 +299,7 @@ impl GroupProfileUi {
     /// Open the Members tab with a member selected (the demo's captures).
     pub fn show_member(&mut self, id: Uuid) {
         self.tab = Tab::Members;
+        self.reveal = REVEAL_FRAMES;
         self.members.selected = Some(id);
     }
 
@@ -366,7 +378,7 @@ impl GroupProfileUi {
                 size,
             );
             floater.min_size = Vec2::new(320.0, 300.0);
-            floater.show(ctx, c.p, &mut open, |ui| self.classic(ui, c, &v, actions));
+            floater.show(ctx, c.p, &mut open, |ui| self.classic(ui, c, env, &v, actions));
         } else {
             let size = Vec2::new(960.0, 840.0);
             let mut floater = Floater::new(WINDOW, v.name.clone(), screen.center() - size * 0.5, size);
@@ -424,10 +436,25 @@ impl GroupProfileUi {
         }
     }
 
-    /// The classic look: the pane of "Search", then the members in a
-    /// collapsing section (Firestorm's "Members and roles" accordion).
-    fn classic(&mut self, ui: &mut egui::Ui, c: &mut Ctx, v: &view::View, actions: &mut Vec<GroupAction>) {
+    /// The classic look: the pane of "Search", then the Legacy Viewer's
+    /// accordions (panel_group_info_sidetray.xml): "Members and roles", whose
+    /// members are managed with a management ability (the Members sub-tab
+    /// of panel_group_roles.xml), "Administration" with an administration
+    /// ability (its Roles, Abilities and Banned Residents sub-tabs and the
+    /// editable General panel), Notices, Land and L$, Experiences. A section
+    /// opens on its own the first time for the tab the window was asked on.
+    fn classic(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &view::View, actions: &mut Vec<GroupAction>) {
         let mut pane_actions = Vec::new();
+        // the header of the asked section at the top of the window, counted
+        // from the frame it shows (Administration waits for the group data)
+        let reveal = self.reveal > 0;
+        let mut revealed = false;
+        let mut scroll_here = |ui: &mut egui::Ui, open: bool| {
+            if reveal && open {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
+                revealed = true;
+            }
+        };
         egui::ScrollArea::vertical()
             .id_salt("group_profile_classic")
             .auto_shrink([false, false])
@@ -442,51 +469,59 @@ impl GroupProfileUi {
                 pane.set_clip_rect(body.intersect(ui.clip_rect()));
                 super::search::group_details(&mut pane, c, v.id, &v.name, true, &mut pane_actions);
                 ui.add_space(6.0);
+                // the managed members and Administration fit the window under
+                // their header, so that their buttons show with them
+                let fit = (ui.clip_rect().height() - 44.0).max(380.0);
                 let title = aurora_i18n::tr!("ui-group-profile-members-and-roles");
-                widgets::collapsing(ui, c.p, "group_profile_classic_members", title, false, |ui| {
-                    members::classic_list(self, ui, c, v);
+                let open = self.tab == Tab::Members;
+                scroll_here(ui, open);
+                widgets::collapsing(ui, c.p, "group_profile_classic_members", title, open, |ui| {
+                    if members::manages(v) {
+                        members::show(self, &mut part(ui, fit), c, env, v, actions);
+                    } else {
+                        members::classic_list(self, ui, c, v);
+                    }
                 });
+                if administration::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-admin-tab");
+                    let open = self.tab == Tab::Admin;
+                    scroll_here(ui, open);
+                    widgets::collapsing(ui, c.p, "group_profile_classic_admin", title, open, |ui| {
+                        administration::show(self, &mut part(ui, fit), c, v, actions);
+                    });
+                }
                 // Firestorm's "Notices" accordion: the same list, reading and
                 // new notice, in a part of the window's height
                 if notices::visible(v) {
                     let title = aurora_i18n::tr!("ui-group-profile-notices");
-                    widgets::collapsing(ui, c.p, "group_profile_classic_notices", title, false, |ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 420.0), egui::Sense::hover());
-                        let mut part = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(rect)
-                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                        );
-                        notices::show(self, &mut part, c, v, actions);
+                    let open = self.tab == Tab::Notices;
+                    scroll_here(ui, open);
+                    widgets::collapsing(ui, c.p, "group_profile_classic_notices", title, open, |ui| {
+                        notices::show(self, &mut part(ui, 420.0), c, v, actions);
                     });
                 }
                 // Firestorm's "Land & L$" accordion
                 if land::visible(v) {
                     let title = aurora_i18n::tr!("ui-group-profile-land");
-                    widgets::collapsing(ui, c.p, "group_profile_classic_land", title, false, |ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 460.0), egui::Sense::hover());
-                        let mut part = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(rect)
-                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                        );
-                        land::show(self, &mut part, c, v, actions);
+                    let open = self.tab == Tab::Land;
+                    scroll_here(ui, open);
+                    widgets::collapsing(ui, c.p, "group_profile_classic_land", title, open, |ui| {
+                        land::show(self, &mut part(ui, 460.0), c, v, actions);
                     });
                 }
                 // and its "Experiences" accordion
                 if experiences::visible(v) {
                     let title = aurora_i18n::tr!("ui-group-profile-experiences");
-                    widgets::collapsing(ui, c.p, "group_profile_classic_experiences", title, false, |ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 220.0), egui::Sense::hover());
-                        let mut part = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(rect)
-                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                        );
-                        experiences::show(self, &mut part, c, v, actions);
+                    let open = self.tab == Tab::Experiences;
+                    scroll_here(ui, open);
+                    widgets::collapsing(ui, c.p, "group_profile_classic_experiences", title, open, |ui| {
+                        experiences::show(self, &mut part(ui, 220.0), c, v, actions);
                     });
                 }
             });
+        if revealed {
+            self.reveal -= 1;
+        }
         actions.extend(pane_actions.into_iter().map(|a| match a {
             SearchAction::RefreshGroup(group) => GroupAction::Refresh {
                 group,
@@ -581,6 +616,21 @@ impl GroupProfileUi {
             }
         }
     }
+}
+
+/// How long a `show_*` keeps the classic window on its section: the time
+/// of the section's unfolding, after which the scroll can reach it.
+const REVEAL_FRAMES: u8 = 30;
+
+/// A part of the classic window's sections: the full width, `height` high,
+/// for a tab of the Aurora window drawn in a section.
+fn part(ui: &mut egui::Ui, height: f32) -> egui::Ui {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::hover());
+    ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    )
 }
 
 #[cfg(test)]

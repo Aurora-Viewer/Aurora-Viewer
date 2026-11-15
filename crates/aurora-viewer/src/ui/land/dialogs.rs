@@ -675,6 +675,7 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
 /// A selectable row of a picker's list.
 pub(crate) fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::click());
+    super::super::widgets::reveal_search_selection(ui, &r, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
@@ -712,11 +713,13 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
         world.land.search_experiences(&f.query);
     }
     ui.horizontal(|ui| {
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut f.query)
-                .hint_text(aurora_i18n::tr!("ui-land-picker-experience-hint"))
-                .desired_width(ui.available_width() - 100.0),
-        );
+        let r = {
+            let width = ui.available_width();
+            crate::ui::widgets::search_text_edit(ui, p, &mut f.query, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ui-land-picker-experience-hint"))
+                    .desired_width(width - 100.0)
+            })
+        };
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-search")).clicked() || enter {
             world.land.search_experiences(&f.query);
@@ -797,11 +800,9 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
     let loading = env_select::scan_step(&mut world.inventory) > 0;
     let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
     let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
-    ui.add(
-        egui::TextEdit::singleline(&mut f.filter)
-            .hint_text(aurora_i18n::tr!("common-search"))
-            .desired_width(f32::INFINITY),
-    );
+    crate::ui::widgets::search_text_edit(ui, p, &mut f.filter, |edit| {
+        edit.hint_text(aurora_i18n::tr!("common-search")).desired_width(f32::INFINITY)
+    });
     ui.add_space(4.0);
     let needle = f.filter.trim().to_lowercase();
     let mut chosen = None;

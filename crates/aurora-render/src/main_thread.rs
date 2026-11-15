@@ -57,8 +57,15 @@ pub struct GpuInfo {
     /// Elements a shader can bind in the array of texture pages: the pages
     /// the texture table can hold (its textures: `TextureTable::capacity`).
     pub max_textures: u32,
-    /// Dedicated video memory (MB) when it can be detected.
+    /// Device-local heap size (MB), retained for adapter selection and the
+    /// existing viewer-statistics protocol.
     pub vram_mb: Option<u64>,
+    /// Classified dedicated heap capacity (MB); unlike `vram_mb`, this is
+    /// zero when an integrated adapter exposes one unified shared heap.
+    pub dedicated_mb: Option<u64>,
+    /// Separate host-visible system memory (MB) available to an integrated
+    /// GPU, when Vulkan exposes a distinct shared heap.
+    pub shared_mb: Option<u64>,
     /// Integrated GPU (shares the system memory).
     pub integrated: bool,
     /// The PCI vendor id and the largest 2D texture side the adapter takes
@@ -74,6 +81,13 @@ pub struct GpuInfo {
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
+}
+
+impl GpuInfo {
+    /// Both independently reported heaps, without counting a unified heap twice.
+    pub fn memory_label(&self) -> String {
+        gpu_memory_label(self.dedicated_mb, self.shared_mb, self.integrated, self.vram_mb)
+    }
 }
 
 /// What Linden Lab's viewer statistics report of the Vulkan driver, in
@@ -212,6 +226,7 @@ pub struct Renderer {
     vsync: bool,
     settings: RenderSettings,
     msaa_supported: Vec<u32>,
+    blend_exact_supported: bool,
     /// The surface can be read back (captures).
     can_capture: bool,
     output_format: wgpu::TextureFormat,
@@ -231,6 +246,8 @@ pub struct Renderer {
     /// The same for the faces drawn under a pixel (`request_drawn`).
     drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
     drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
+    /// The poser's part pick read back last (`take_part_pick`).
+    part_pick: Option<(u32, [u32; 2])>,
     /// Frames handed over.
     frames: u64,
     /// The renderer's side of the last frame result, and whether it came
@@ -313,11 +330,7 @@ impl Renderer {
         let desc = || {
             let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
             desc.backends = crate::BACKENDS;
-            desc.flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
-                wgpu::InstanceFlags::debugging()
-            } else {
-                wgpu::InstanceFlags::empty()
-            };
+            desc.flags = gpu_instance_flags(std::env::var_os("AURORA_GPU_VALIDATION").is_some());
             desc
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -440,6 +453,10 @@ impl Renderer {
             instance.create_surface_unsafe(target)
         }
         .map_err(|e| RenderError::Surface(e.to_string()))?;
+        let memories: Vec<(Option<u64>, Option<u64>)> = adapters
+            .iter()
+            .map(|adapter| crate::vram::heap_sizes_mb(adapter).unwrap_or((detect_vram_mb(adapter), None)))
+            .collect();
         let candidates: Vec<crate::adapter_choice::Candidate> = adapters
             .iter()
             .map(|a| {
@@ -447,6 +464,8 @@ impl Renderer {
                 crate::adapter_choice::Candidate {
                     name: info.name,
                     kind: crate::adapter_choice::Kind::from_wgpu(info.device_type),
+                    // Keep adapter selection's existing device-local size
+                    // preference unchanged; shared RAM is reported separately.
                     vram_mb: detect_vram_mb(a),
                     surface: a.is_surface_supported(&surface),
                 }
@@ -457,7 +476,12 @@ impl Renderer {
                 "GPU adapter {i}: {} ({}, {}, {})",
                 c.name,
                 c.kind.label(),
-                c.vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "memory unknown".into()),
+                gpu_memory_label(
+                    memories[i].0,
+                    memories[i].1,
+                    c.kind == crate::adapter_choice::Kind::Integrated,
+                    c.vram_mb,
+                ),
                 if c.surface { "can present" } else { "cannot present to the window" }
             );
         }
@@ -500,18 +524,21 @@ impl Renderer {
         }
         let (index, o) = opened.ok_or(failure)?;
         let adapter = adapters.swap_remove(index);
+        let (dedicated_mb, shared_mb) = memories[index];
         let vram_mb = candidates[index].vram_mb;
         let ainfo = adapter.get_info();
         log::info!(
-            "GPU: {} ({:?}, driver {} {})",
+            "GPU: {} ({:?}, driver {} {}, memory {})",
             ainfo.name,
             ainfo.backend,
             ainfo.driver,
-            ainfo.driver_info
-        );
-        log::info!(
-            "GPU memory: {}",
-            vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "unknown".into())
+            ainfo.driver_info,
+            gpu_memory_label(
+                dedicated_mb,
+                shared_mb,
+                ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+                vram_mb,
+            )
         );
         let OpenedDevice {
             device,
@@ -530,7 +557,7 @@ impl Renderer {
             let line = throttle
                 .lock()
                 .ok()
-                .and_then(|mut t| t.note(&format!("wgpu error: {e}"), std::time::Instant::now()));
+                .and_then(|mut t| t.note(&format!("wgpu error: {}", error_text(&e)), std::time::Instant::now()));
             if let Some(line) = line {
                 log::error!("{line}");
             }
@@ -566,6 +593,8 @@ impl Renderer {
             timestamps,
             max_textures,
             vram_mb,
+            dedicated_mb,
+            shared_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
             vendor_id: ainfo.vendor,
             max_texture_size: alim.max_texture_dimension_2d,
@@ -580,15 +609,32 @@ impl Renderer {
         // (as many textures as the table has slots; `max_textures` bounds
         // the pages they are grouped in)
         let slots = crate::textures::slot_capacity(std::env::var("AURORA_TEXTURE_SLOTS").ok().as_deref());
-        let textures = TextureTable::new(&device, &mut writes, slots, max_textures, 8);
+        let textures = TextureTable::new_with_integrated(
+            &device,
+            &mut writes,
+            slots,
+            max_textures,
+            8,
+            ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+        );
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
         let records = RecordStore::new(&device);
         let cull = CullTables::new(&device);
         let palette_buffer = Self::make_palette_buffer(&device, 64 * 160);
         let prev_palette_buffer = device.create_buffer(&Self::prev_palette_desc(64 * 160));
         let skin_bind_buffer = Self::make_skin_bind_buffer(&device, 256);
-        // staging memory of the streamed uploads, created once here
-        let uploads = UploadQueue::new(&device, info.integrated || info.vram_mb.is_some_and(|mb| mb < 4096));
+        // staging memory of the streamed uploads, created once here: fewer
+        // chunks where the CPU can map little video memory (no Resizable
+        // BAR), which the large pool would fill alone (#2171)
+        let mappable_mb = crate::vram::mappable_mb(&adapter);
+        let pool_size = crate::upload::PoolSize::choose(info.integrated, info.vram_mb, mappable_mb);
+        let uploads = UploadQueue::sized(&device, pool_size);
+        log::info!(
+            "staging pool: {} MB in {} MB chunks (mappable video memory: {})",
+            uploads.pool().bytes() >> 20,
+            uploads.pool().max_region_bytes() >> 20,
+            mappable_mb.map_or_else(|| "none".to_owned(), |mb| format!("{mb} MB"))
+        );
         let gpu_cull = GpuCull::supported(&device);
         log::info!(
             "draw lists: {}",
@@ -607,6 +653,14 @@ impl Renderer {
         let vr = Arc::new(crate::vr_control::Control::new(xr_graphics.is_some()));
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         let vr = Arc::new(crate::vr_control::Control::new(false));
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if let Some((runtime, system)) = xr_graphics.as_ref().map(|g| g.binding()) {
+            vr.set_default_resolution(crate::xr_frame::default_resolution(
+                &runtime,
+                system,
+                device.limits().max_texture_dimension_2d,
+            ));
+        }
         // the compiled pipelines of the earlier starts (pipeline_cache.rs),
         // before the first one is made
         crate::pipeline_cache::open(&device, &ainfo);
@@ -636,6 +690,8 @@ impl Renderer {
             adapter_specific,
             gpu_cull,
             tex_layout: textures.layout.clone(),
+            tex_layout_entries: textures.layout_entries.clone(),
+            instance_flags: desc().flags,
             scene: scene_gpu(
                 &records,
                 &cull,
@@ -650,6 +706,7 @@ impl Renderer {
             lost: lost.clone(),
         })?;
         let msaa_supported = backend.msaa_supported().to_vec();
+        let blend_exact_supported = backend.blend_exact_supported();
         let can_capture = backend.can_capture();
         let output_format = backend.output_format();
         let host = Host::new(
@@ -695,6 +752,7 @@ impl Renderer {
             vsync,
             settings: RenderSettings::default(),
             msaa_supported,
+            blend_exact_supported,
             can_capture,
             output_format,
             anim_clock,
@@ -707,6 +765,7 @@ impl Renderer {
             pick_ticket: 0,
             drawn_requests: Vec::new(),
             drawn_answers: Vec::new(),
+            part_pick: None,
             frames: 0,
             last_stats: RenderStats::default(),
             fresh: false,
@@ -961,6 +1020,13 @@ impl Renderer {
         self.snapshot_request.map_or(self.size, |s| (s.width, s.height))
     }
 
+    /// The probe slots this device holds of the `slots` asked: the viewer
+    /// places probes in those only, a capture for a slot beyond them would
+    /// overwrite the last one.
+    pub fn fitted_probe_slots(&self, slots: u32) -> u32 {
+        crate::probes::Probes::fitted_slots(&self.device, slots)
+    }
+
     /// The largest side a photo can be drawn at in one pass.
     pub fn max_texture_dimension(&self) -> u32 {
         self.device.limits().max_texture_dimension_2d
@@ -983,6 +1049,12 @@ impl Renderer {
     /// Supported MSAA sample counts (besides 1).
     pub fn msaa_supported(&self) -> &[u32] {
         &self.msaa_supported
+    }
+
+    /// Whether the device can draw the blended faces in the exact order of
+    /// their fragments (`RiggedBlendDepth::Exact`).
+    pub fn blend_exact_supported(&self) -> bool {
+        self.blend_exact_supported
     }
 
     /// Frames are drawn by the render thread (false: AURORA_RENDER_THREAD=0).
@@ -1062,6 +1134,12 @@ impl Renderer {
         self.settings = s;
     }
 
+    /// Rain prototype: keep the G-buffer while it rains (pipelines and
+    /// targets follow with a later frame, as with any setting).
+    pub fn set_rain_surfaces(&mut self, on: bool) {
+        self.settings.rain_surfaces = on;
+    }
+
     pub fn set_vsync(&mut self, vsync: bool) {
         self.vsync = vsync;
     }
@@ -1074,6 +1152,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// Aurora Weather: snow lay on the ground in the last frame the backend
+    /// finished. The app's footprints and snow work wait for it, or for snow
+    /// falling.
+    pub fn snow_lying(&self) -> bool {
+        self.last_stats.snow_lying
     }
 
     /// The last frame the backend finished was drawn with the settings last
@@ -1189,6 +1274,9 @@ impl Renderer {
         }
         self.pick_answers.append(&mut r.picks);
         self.drawn_answers.append(&mut r.drawn);
+        if let Some(joint) = r.part_pick {
+            self.part_pick = Some(joint);
+        }
         // (the answer of a click given up while it was in flight is never
         // taken: the next ones push it out)
         const KEPT: usize = 16;
@@ -1240,11 +1328,22 @@ impl Renderer {
     /// returns at once, with the statistics of that frame before; without,
     /// the frame is drawn here. A frame that carries a capture is waited
     /// for: `captured` holds it when this returns.
+    pub fn vr_default_resolution(&self) -> Option<[u32; 2]> {
+        self.vr.default_resolution()
+    }
+
     pub fn vr_state(&self) -> crate::VrState {
         self.vr.state()
     }
     pub fn vr_engaged(&self) -> bool {
         self.vr.state().engaged()
+    }
+    /// Latest coherent head pose; None on focus loss, stale tracking or contention.
+    pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
+        self.vr.head_pose()
+    }
+    pub fn vr_focused(&self) -> bool {
+        self.vr.focused()
     }
     pub fn set_vr_enabled(&self, on: bool) -> bool {
         self.vr.request(on)
@@ -1471,6 +1570,7 @@ impl Renderer {
             // capture): the last readbacks stay, the timings are not
             // counted twice
             stats = RenderStats {
+                video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
@@ -1483,6 +1583,7 @@ impl Renderer {
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
+                gpu_weather: self.last_stats.gpu_weather,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -1643,6 +1744,15 @@ impl Renderer {
         }
         let i = self.drawn_answers.iter().position(|(t, _)| *t == ticket)?;
         Some(self.drawn_answers.swap_remove(i).1)
+    }
+
+    /// The poser's part under the cursor read back since the last call
+    /// (part_pick.rs, asked with `FrameParams::part_pick`), with the window
+    /// pixel it was read at: 0 when nothing of the subject is there,
+    /// a part class otherwise.
+    pub fn take_part_pick(&mut self) -> Option<(u32, [u32; 2])> {
+        self.collect();
+        self.part_pick.take()
     }
 
     /// Give up a [`Self::request_drawn`] nobody waits for any more.
@@ -1845,12 +1955,26 @@ fn open_device(
     if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
         features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
     }
+    // depth-based stochastic transparency (oit_stochastic.rs): the triangle
+    // in the seed of a fragment's mask
+    if afeat.contains(wgpu::Features::PRIMITIVE_INDEX) {
+        features |= wgpu::Features::PRIMITIVE_INDEX;
+    }
     // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
+    // The depth test before the fragment shader that files blended
+    // fragments (blend_exact.rs): only what shows is filed
+    features |= afeat & crate::blend_exact::EARLY_TEST;
+    // and their pass over the screen in one draw
+    features |= afeat & crate::blend_exact::TWO_SOURCES;
+    // and the places of their haze whole in its target
+    features |= afeat & crate::blend_exact::WIDE_RANGE;
     // Aurora's own pipeline cache on disk (pipeline_cache.rs)
     features |= crate::pipeline_cache::feature(afeat);
+    // naga's SampleMask built-in fixed on Vulkan (spirv_fix.rs)
+    features |= crate::spirv_fix::feature(afeat);
     let in_all_pools = descriptors_in_all_pools(adapter);
     let max_textures = texture_page_limit(&alim, in_all_pools);
     if max_textures < texture_page_limit(&alim, None) {
@@ -1925,6 +2049,16 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
         .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
         .map(|h| h.size / (1024 * 1024))
         .max()
+}
+
+fn gpu_memory_label(dedicated: Option<u64>, shared: Option<u64>, integrated: bool, fallback_mb: Option<u64>) -> String {
+    match (dedicated, shared) {
+        (Some(dedicated), Some(shared)) => format!("{dedicated} MB dedicated + {shared} MB shared"),
+        (_, None) if integrated => fallback_mb.map_or_else(|| "memory unknown".into(), |mb| format!("{mb} MB video memory")),
+        (Some(dedicated), None) => format!("{dedicated} MB dedicated"),
+        (None, Some(shared)) => format!("0 MB dedicated + {shared} MB shared"),
+        (None, None) => "memory unknown".into(),
+    }
 }
 
 /// The Vulkan driver's version and limits the viewer statistics report.
@@ -2008,6 +2142,30 @@ fn descriptors_in_all_pools(_adapter: &wgpu::Adapter) -> Option<u32> {
 /// src/vulkan/descriptor.rs). Check it again when wgpu is updated.
 const WGPU_POOL_MIN_SETS: u32 = 64;
 
+/// A wgpu error for the log. `Error::OutOfMemory` prints as "Out of Memory"
+/// alone, and the call that failed is only in its sources: wgpu-core loses
+/// the device on most out-of-memory results (`handle_hal_error`), so this
+/// line is all that says which call ended the session (#2482). The other
+/// errors already carry these lines; this is their layout, which the crash
+/// report reads (aurora-viewer crash/summary.rs).
+pub(crate) fn error_text(error: &wgpu::Error) -> String {
+    use std::fmt::Write as _;
+    let mut text = error.to_string();
+    if matches!(error, wgpu::Error::OutOfMemory { .. }) {
+        let mut source = std::error::Error::source(error);
+        let mut indent = 2;
+        if source.is_some() {
+            text.push_str("\n\nCaused by:");
+        }
+        while let Some(cause) = source {
+            let _ = write!(text, "\n{:indent$}{cause}", "");
+            source = cause.source();
+            indent += 2;
+        }
+    }
+    text
+}
+
 /// Texture pages, the length of the "textures" binding array.
 ///
 /// Binding-array entries have their own limit; they do not consume the
@@ -2030,9 +2188,75 @@ fn texture_page_limit(limits: &wgpu::Limits, descriptors_in_all_pools: Option<u3
     }
 }
 
+fn gpu_instance_flags(validation: bool) -> wgpu::InstanceFlags {
+    if validation {
+        wgpu::InstanceFlags::debugging()
+    } else {
+        // No VALIDATION_INDIRECT_CALL: wgpu does not apply it to the GPU-culled
+        // scene's multi_draw_indexed_indirect_count (cull.wgsl clamps those
+        // ranges), and the CPU-built lists are range-checked when pushed.
+        wgpu::InstanceFlags::empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An error and what caused it, as wgpu chains its `ContextError`.
+    #[derive(Debug)]
+    struct Chained(&'static str, Option<Box<Chained>>);
+
+    impl std::fmt::Display for Chained {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Chained {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1.as_deref().map(|c| c as _)
+        }
+    }
+
+    #[test]
+    fn an_out_of_memory_error_names_the_call_that_failed() {
+        let inner = Chained("Not enough memory left.", None);
+        let source = Chained("In Device::create_bind_group, label = 'textures'", Some(Box::new(inner)));
+        let error = wgpu::Error::OutOfMemory { source: Box::new(source) };
+        assert_eq!(
+            error_text(&error),
+            "Out of Memory\n\nCaused by:\n  In Device::create_bind_group, label = 'textures'\n    Not enough memory left."
+        );
+    }
+
+    #[test]
+    fn a_validation_error_keeps_its_own_text() {
+        let error = wgpu::Error::Validation {
+            source: Box::new(Chained("not repeated", None)),
+            description: "Validation Error\n\nCaused by:\n  In Queue::submit\n".to_owned(),
+        };
+        assert_eq!(error_text(&error), "Validation Error\n\nCaused by:\n  In Queue::submit\n");
+    }
+
+    #[test]
+    fn indirect_call_validation_is_left_to_debugging() {
+        assert!(!gpu_instance_flags(false).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
+        assert!(!gpu_instance_flags(false).contains(wgpu::InstanceFlags::DEBUG));
+        assert!(gpu_instance_flags(true).contains(wgpu::InstanceFlags::DEBUG));
+    }
+
+    #[test]
+    fn memory_summary_reports_distinct_heaps_without_fabricating_a_second_pool() {
+        assert_eq!(
+            gpu_memory_label(Some(512), Some(7800), true, Some(8312)),
+            "512 MB dedicated + 7800 MB shared"
+        );
+        assert_eq!(gpu_memory_label(None, Some(16_000), true, None), "0 MB dedicated + 16000 MB shared");
+        assert_eq!(gpu_memory_label(Some(8192), None, false, Some(8192)), "8192 MB dedicated");
+        assert_eq!(gpu_memory_label(Some(16_000), None, true, Some(16_000)), "16000 MB video memory");
+        assert_eq!(gpu_memory_label(None, None, false, None), "memory unknown");
+    }
 
     #[test]
     fn bindless_pages_are_not_limited_by_ordinary_texture_slots() {

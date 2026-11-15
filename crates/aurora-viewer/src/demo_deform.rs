@@ -69,6 +69,7 @@ pub fn animation(rig: &crate::scene::anim::Rig) -> Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: false,
+        ends_after: None,
         ease_in: 0.2,
         ease_out: 0.2,
         hand_pose: 0,

@@ -1487,7 +1487,7 @@ impl Bridge {
                             target: ScriptTarget { object: *object, item },
                             handle: root.key.region,
                             options: ScriptOptions {
-                                mono: true,
+                                compile: aurora_net::scripts::CompileTarget::Mono,
                                 running: true,
                                 experience: Uuid::nil(),
                             },

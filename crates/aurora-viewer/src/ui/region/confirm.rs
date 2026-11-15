@@ -8,7 +8,10 @@
 //! SettingsConfirmReset before the region goes back to the default
 //! environment, EstateParcelEnvironmentOverride (ChangeLindenEstate on a
 //! Linden estate) for the parcels' own environments and
-//! EstateChangeCovenant before the covenant is replaced or cleared.
+//! EstateChangeCovenant before the covenant is replaced or cleared. One is
+//! Aurora's own: an access change that shuts people out (the lists only, a
+//! public limit turned on) is confirmed before it is sent, with how many
+//! people are in the region.
 
 use super::advanced::MaterialProblem;
 use super::{RegionUi, View, estate_wide, manage};
@@ -23,6 +26,12 @@ use egui::{RichText, Sense, Vec2};
 pub(crate) enum Ask {
     AccessOverride,
     LindenEstate,
+    /// The access shuts people out: `Access::restrictions`' flags, and
+    /// how many other people the region's coarse locations count.
+    RestrictAccess {
+        what: u64,
+        here: usize,
+    },
     ObjectBonus {
         dont_ask: bool,
     },
@@ -80,6 +89,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         }
         _ => String::new(),
     };
+    let restrict_text = match ask {
+        Ask::RestrictAccess { what, here } => restrict_text(what, here),
+        _ => String::new(),
+    };
     let (icon, danger, title, text) = match ask {
         Ask::AccessOverride => (
             "alert-triangle-filled",
@@ -92,6 +105,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
             true,
             aurora_i18n::tr!("region-ask-linden-title"),
             aurora_i18n::tr!("region-ask-linden"),
+        ),
+        Ask::RestrictAccess { .. } => (
+            "alert-triangle-filled",
+            true,
+            aurora_i18n::tr!("region-ask-restrict-title"),
+            &*restrict_text,
         ),
         Ask::ObjectBonus { .. } => (
             "alert-triangle-filled",
@@ -155,6 +174,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     // the main button says what happens, as the mockup's confirmations do
     let (main, main_kind) = match ask {
         Ask::LindenEstate => (aurora_i18n::tr!("region-ask-linden-ok"), ActionKind::Danger),
+        Ask::RestrictAccess { .. } => (aurora_i18n::tr!("region-ask-restrict-ok"), ActionKind::Danger),
         Ask::ObjectBonus { .. } => (aurora_i18n::tr!("region-ask-bonus-ok"), ActionKind::Primary),
         Ask::TextureHeights => (aurora_i18n::tr!("region-ask-heights-ok"), ActionKind::Primary),
         Ask::Bake => (aurora_i18n::tr!("region-ask-bake-ok"), ActionKind::Primary),
@@ -230,6 +250,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     };
     let mut prefs = false;
     match (ask, answer) {
+        (Ask::RestrictAccess { .. }, Choice::Ok) => manage::access_confirmed(s, v, world),
         (Ask::LindenEstate, Choice::Ok) => manage::send_access(s, v, world),
         (Ask::ObjectBonus { dont_ask }, Choice::Ok) => {
             if dont_ask {
@@ -251,6 +272,30 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         _ => {}
     }
     prefs
+}
+
+/// What the restriction does, one line per thing it shuts out, then who it
+/// reaches and how many are here.
+fn restrict_text(what: u64, here: usize) -> String {
+    use aurora_net::estate::estate_flags as ef;
+    let lines: Vec<&str> = [
+        (ef::EXTERNALLY_VISIBLE, aurora_i18n::tr!("region-ask-restrict-lists")),
+        (ef::DENY_AGEUNVERIFIED, aurora_i18n::tr!("region-ask-restrict-age")),
+        (ef::DENY_ANONYMOUS, aurora_i18n::tr!("region-ask-restrict-payment")),
+        (ef::DENY_BOTS, aurora_i18n::tr!("region-ask-restrict-bots")),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| what & flag != 0)
+    .map(|(_, line)| line)
+    .collect();
+    let mut text = lines.join("\n");
+    text.push_str("\n\n");
+    text.push_str(aurora_i18n::tr!("region-ask-restrict-sent-home"));
+    if here > 0 {
+        text.push_str("\n\n");
+        text.push_str(&aurora_i18n::tr!("region-ask-restrict-here", count = here as i64));
+    }
+    text
 }
 
 fn button(label: &str, kind: ActionKind) -> DialogButton<'_> {

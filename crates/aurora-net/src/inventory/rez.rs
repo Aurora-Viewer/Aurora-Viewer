@@ -21,6 +21,9 @@ pub struct RezInventory {
     pub remove: bool,
     /// Library and trash items must not be taken back into their source folder.
     pub source_folder: Uuid,
+    /// The object whose contents hold the item, nil for the agent's
+    /// inventory: the simulator copies it out of that object (FromTaskID).
+    pub from_task: Uuid,
 }
 
 impl RezInventory {
@@ -34,7 +37,7 @@ impl RezInventory {
                 group_id: self.group,
             },
             rez_data: rez_object::RezData {
-                from_task_id: Uuid::nil(),
+                from_task_id: self.from_task,
                 bypass_raycast: u8::from(land),
                 ray_start: self.ray_start,
                 // The simulator traces only the picked object. Extend the ray
@@ -107,12 +110,14 @@ mod tests {
             selected: true,
             remove: true,
             source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
         };
         let land = r.message(Uuid::from_u128(5), Uuid::nil());
         assert_eq!(land.agent_data.group_id, r.group);
         assert_eq!(land.inventory_data.group_id, r.item.group_id);
         assert_ne!(land.agent_data.group_id, land.inventory_data.group_id);
         assert_eq!(land.rez_data.bypass_raycast, 1);
+        assert_eq!(land.rez_data.from_task_id, Uuid::nil());
         assert_eq!(land.rez_data.ray_end, Vec3::new(3.0, 20.0, 10.0));
         assert!(land.rez_data.remove_item && land.rez_data.rez_selected);
         assert_eq!(land.inventory_data.folder_id, Uuid::nil());
@@ -132,5 +137,7 @@ mod tests {
         assert_eq!(object.rez_data.ray_target_id, r.target);
         assert_eq!(object.rez_data.ray_end, Vec3::new(18.0, 10.0, -20.0));
         assert!(!object.rez_data.ray_end_is_intersection);
+        r.from_task = Uuid::from_u128(7);
+        assert_eq!(r.message(Uuid::nil(), Uuid::nil()).rez_data.from_task_id, r.from_task);
     }
 }

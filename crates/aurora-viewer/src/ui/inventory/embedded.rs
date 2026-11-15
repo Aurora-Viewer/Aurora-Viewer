@@ -266,7 +266,7 @@ pub(super) fn editor(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(url.as_ref());
             if output.response.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(url.as_ref()));
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::OpenUrl(url.to_string()));
             }
         }
     }
@@ -353,8 +353,14 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
+    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
+    // a texture preview already open closes when @viewtexture applies, as
+    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
+    if !inv.can_preview(0) {
+        st.attachment_preview = None;
+    }
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(

@@ -58,10 +58,14 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        let name = if edit.name == it.name {
+        // (a coded settings item's field shows its name without the code,
+        // which the rename keeps)
+        let name = if edit.name == super::shown_name(it) {
             it.name.clone()
         } else {
-            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
+            rules::clean_name(&edit.name)
+                .map(|name| crate::weather::region::keep_code(&it.name, &name))
+                .unwrap_or_else(|_| it.name.clone())
         };
         let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
@@ -193,7 +197,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             edit.commit_name |= name.lost_focus();
             if can_describe && edit.commit_name && !ui.input(|input| input.pointer.any_down()) {
                 edit.commit_name = false;
-                if edit.name != it.name
+                if edit.name != super::shown_name(it)
                     && let Ok(name) = rules::clean_name(&edit.name)
                 {
                     edit.name = name.clone();
