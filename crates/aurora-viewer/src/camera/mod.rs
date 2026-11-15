@@ -388,6 +388,9 @@ pub struct Camera {
     /// The photo window's free camera: while set, the view is its own and
     /// the rest of the camera waits behind the avatar (`free.rs`).
     free: Option<FreeCamera>,
+    /// The free camera is an agent's shot (set_free_view), not the snapshot
+    /// window's: that window's switch must not end it.
+    free_for_agent: bool,
     pub flycam: Option<crate::joystick::flycam::Flycam>,
     /// Lens retained when flycam stops, until a reset or avatar movement.
     flycam_lens: Option<(f32, f32)>,
@@ -487,6 +490,7 @@ impl Default for Camera {
             dt: 0.0,
             initialized: false,
             free: None,
+            free_for_agent: false,
             flycam: None,
             flycam_lens: None,
             shake: Vec3::ZERO,
@@ -1256,13 +1260,20 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         self.free = Some(FreeCamera::from_view(eye, focus));
+        self.free_for_agent = true;
         self.position = eye;
         self.target = focus;
         self.anim = None;
     }
 
     /// Back to the avatar, gliding from where the free camera was.
+    /// The free camera is an agent's shot (set_free_view).
+    pub fn free_for_agent(&self) -> bool {
+        self.free.is_some() && self.free_for_agent
+    }
+
     pub fn end_free(&mut self, s: &CameraSettings) {
+        self.free_for_agent = false;
         if self.free.take().is_some() {
             // the smoothing restarts from here, not from before the flight
             self.smoothing_stop = true;
