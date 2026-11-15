@@ -5818,6 +5818,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
+| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets:<count>\|characters\|characters-selected` | Open Build › Pathfinding's Region objects or Characters window on a made-up list; `:<count>` sets the number of linksets. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -5833,6 +5834,24 @@ In demo mode, and with `AURORA_DEMO=1 aurora-viewer --uninstall`, nothing is
 read from or removed in the registry, the desktop files, the credential
 store or Blender: the log says what a real removal would do. Capture after
 frame 700 in English, French and Japanese.
+
+`AURORA_DEMO_PATHFINDING`: the demo answers RegionObjects,
+CharacterProperties and the linkset edits itself, like a pathfinding region.
+`linksets` opens Region objects on the plaza's objects followed by numbered
+linksets of every kind (walkable, static and movable obstacle, material and
+exclusion volume, a concave one, unmodifiable ones), 40 by default;
+`linksets:7600` makes a list that large, the scale check (sort, filter and
+Select all must not hitch: `AURORA_PROFILE=1`). `-selected` opens with the
+first two objects selected, so the edit panel is filled and the selection is
+made in the world. `characters` opens Characters on two of the plaza's
+objects as characters (one horizontal); select one and tick Show physics
+capsule to see its wire capsule. Check: the filters apply on Apply or Enter,
+Clear empties them; sorting each column (numbers by value); the line under
+the list; Select all / Select none; Show beacon; the use dropdown greying
+the uses the selection cannot take; Apply changes, with the warning for a
+phantom toggle, an unmodifiable or a concave linkset; Take, Take copy,
+Return and Delete (several rows ask first). Capture after frame 700 in
+English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and

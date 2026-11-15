@@ -28,8 +28,6 @@ mod object_profile;
 pub use object_profile::ObjectProfileUi;
 mod multi;
 mod notecards;
-mod pathfinding;
-pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
@@ -55,6 +53,7 @@ pub mod flags {
     /// FLAGS_AFFECTS_NAVMESH: flagObjectPermanent.
     pub const AFFECTS_NAVMESH: u32 = 1 << 12;
     pub const OBJECT_TRANSFER: u32 = 1 << 17;
+    /// FLAGS_OBJECT_GROUP_OWNED: permGroupOwner.
     pub const OBJECT_GROUP_OWNED: u32 = 1 << 18;
 }
 

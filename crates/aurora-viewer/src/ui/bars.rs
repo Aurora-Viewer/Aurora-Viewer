@@ -48,6 +48,8 @@ pub enum BarAction {
     SaveToObjectContents,
     /// Build › Options: the switches as the menu left them.
     BuildOptions(crate::build::MenuOptions),
+    /// Build › Pathfinding › Region objects / Characters.
+    Pathfinding(aurora_net::pathfinding::Kind),
     Portals,
     CheckUpdates,
     ReportBug,
@@ -388,6 +390,9 @@ pub struct StatusInfo<'a> {
     pub save_to_contents: bool,
     /// Build > Options: the selection filters and displays.
     pub build_options: crate::build::MenuOptions,
+    /// Build › Pathfinding applies: the region gives pathfinding
+    /// (Tools.EnablePathfinding).
+    pub pathfinding: bool,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -1483,6 +1488,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             st.edit_particles,
             st.save_to_contents,
             st.build_options,
+            st.pathfinding,
         );
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
@@ -1732,6 +1738,7 @@ fn build_menu(
     edit_particles: bool,
     save_to_contents: bool,
     options: crate::build::MenuOptions,
+    pathfinding: bool,
 ) {
     if menu::check(
         ui,
@@ -1794,6 +1801,16 @@ fn build_menu(
     }
     menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
         build_options_menu(ui, p, action, options);
+    });
+    // Build › Pathfinding (menu_viewer.xml, Tools.EnablePathfinding): the
+    // windows open on the in-world selection
+    menu::submenu(ui, p, "route", aurora_i18n::tr!("pathfinding-menu"), pathfinding, |ui| {
+        if menu::item(ui, p, "list-details", aurora_i18n::tr!("pathfinding-menu-linksets")) {
+            *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Objects);
+        }
+        if menu::item(ui, p, "walk", aurora_i18n::tr!("pathfinding-menu-characters")) {
+            *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Characters);
+        }
     });
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {

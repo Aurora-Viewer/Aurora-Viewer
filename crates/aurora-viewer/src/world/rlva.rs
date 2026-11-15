@@ -1016,6 +1016,17 @@ impl Rlva {
         }
     }
 
+    /// Any rule of `behaviour`, general or about one target
+    /// (RlvHandler::hasBehaviour || hasException for the behaviours whose
+    /// targeted form is kept as an exception, @editobj).
+    pub fn has_any(&self, behaviour: &str) -> bool {
+        self.enabled
+            && self
+                .rules
+                .values()
+                .any(|rs| rs.iter().any(|r| canonical(&r.behaviour) == canonical(behaviour)))
+    }
+
     pub fn targets(&self, behaviour: &str, target: &str) -> bool {
         self.enabled
             && self

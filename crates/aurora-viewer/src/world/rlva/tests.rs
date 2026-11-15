@@ -1510,6 +1510,43 @@ fn rlva_editing_and_permissions_are_enforced_on_linksets_and_wire_commands() {
     assert_eq!(w.rlva_script_permissions(id, 1 << 2), (1 << 2, false));
 }
 
+/// rlvCanDeleteOrReturn, as the pathfinding windows use it.
+#[test]
+fn rlva_delete_or_return_follows_edit_rez_and_editobj() {
+    use crate::ui::context::flags;
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for ev in crate::demo::events() {
+        w.apply(ev);
+    }
+    let root = w
+        .objects
+        .iter()
+        .find(|(_, o)| !o.is_avatar() && w.objects.parent_of(o).is_none())
+        .map(|(i, _)| i)
+        .expect("a rezzed object");
+    let id = w.objects.get(root).unwrap().full_id;
+    let set_flags = |w: &mut crate::world::World, bits: u32| w.objects.get_mut(root).unwrap().update_flags = bits;
+    assert!(w.rlva_can_delete_or_return_all(&[root]), "RLVa off");
+    w.rlva.configure(true);
+    assert!(w.rlva_can_delete_or_return_all(&[]), "no restriction: anything goes");
+    command(&mut w.rlva, A, "@rez=n");
+    assert!(!w.rlva_can_delete_or_return_all(&[]), "restricted: an empty selection fails");
+    for (bits, allowed) in [
+        (flags::OBJECT_YOU_OWNER, false),
+        (flags::OBJECT_MODIFY, false),
+        (flags::OBJECT_GROUP_OWNED, false),
+        (flags::OBJECT_ANY_OWNER, true),
+    ] {
+        set_flags(&mut w, bits);
+        assert_eq!(w.rlva_can_delete_or_return_all(&[root]), allowed, "{bits:#x}");
+    }
+    command(&mut w.rlva, A, "@rez=y");
+    set_flags(&mut w, flags::OBJECT_YOU_OWNER);
+    assert!(w.rlva_can_delete_or_return_all(&[root]));
+    command(&mut w.rlva, B, &format!("@editobj:{id}=n"));
+    assert!(!w.rlva_can_delete_or_return_all(&[root]), "not editable");
+}
+
 #[test]
 fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_folders() {
     use crate::world::inventory::{FetchState, Folder};

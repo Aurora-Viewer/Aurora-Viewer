@@ -123,6 +123,8 @@ mod outfit_batch;
 mod outfit_hd;
 mod outfit_portrait;
 mod own_motion;
+mod pathfinding;
+mod pathfinding_demo;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
@@ -601,7 +603,9 @@ pub struct App {
     context_customization: ui::context::Customization,
     avatar_textures: ui::context::AvatarTexturesUi,
     object_profile: ui::context::ObjectProfileUi,
-    pathfinding_ui: ui::context::PathfindingUi,
+    pathfinding: ui::pathfinding::PathfindingUi,
+    pathfinding_feed: pathfinding::PathfindingFeed,
+    pathfinding_demo: pathfinding_demo::PathfindingDemo,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
@@ -1851,7 +1855,9 @@ impl App {
             context_customization: Default::default(),
             avatar_textures: Default::default(),
             object_profile: Default::default(),
-            pathfinding_ui: Default::default(),
+            pathfinding: Default::default(),
+            pathfinding_feed: Default::default(),
+            pathfinding_demo: Default::default(),
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
@@ -3594,16 +3600,9 @@ impl App {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
             return;
         }
-        if let NetEvent::Pathfinding {
-            request,
-            region,
-            kind,
-            result,
-        } = ev
-        {
-            self.pathfinding_ui.reply(request, region, kind, result);
+        let Some(ev) = self.on_pathfinding_event(ev) else {
             return;
-        }
+        };
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
@@ -15799,6 +15798,7 @@ impl App {
             BarAction::IkEdit => {
                 self.ik_editor.toggle();
             }
+            BarAction::Pathfinding(kind) => self.open_pathfinding_from_selection(kind),
             BarAction::Poser => {
                 self.ik_editor.open_poser();
                 let window = self.ik_editor.poser_window(&self.settings.poser);
@@ -17852,6 +17852,10 @@ impl App {
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
                 ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
+                ui::beacons::labeled(&ctx, &p, projector, &self.pathfinding_beacons(Instant::now(), &p));
+                if let Some(capsule) = self.pathfinding_capsule(Instant::now()) {
+                    ui::pathfinding::capsule::draw(&ctx, &p, projector, &capsule);
+                }
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 self.director_world(&ctx, &p, projector);
                 aurora_render::end_world_labels(&ctx);
@@ -18041,6 +18045,7 @@ impl App {
                     edit_particles: self.particle_editor_target().is_some(),
                     save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     build_options: crate::build::MenuOptions::of(&self.settings.build),
+                    pathfinding: self.demo || self.world.main_has_cap("NavMeshGenerationStatus"),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -19426,13 +19431,7 @@ impl App {
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
                 self.object_profile_window(&ctx, &p);
 
-                if let Some(command) = self.pathfinding_ui.show(&ctx, &p, &mut self.world) {
-                    if self.demo {
-                        self.pathfinding_ui.demo(&self.world, command);
-                    } else {
-                        self.send(command);
-                    }
-                }
+                self.pathfinding_windows(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
                 self.group_chat_moderation_ui(&ctx, &p);
@@ -22138,6 +22137,10 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_CONV_OPTIONS: Nova's conversation and its history
             if crate::demo::conv_options::scene().is_some() {
                 crate::demo::conv_options::lines(&mut self.world);
+            }
+            // AURORA_DEMO_PATHFINDING: the pathfinding windows on made-up lists.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_PATHFINDING") {
+                self.demo_pathfinding(&mode);
             }
             // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {

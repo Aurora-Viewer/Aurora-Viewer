@@ -238,3 +238,21 @@ pub fn draw_guides(
         }
     }
 }
+
+/// Debug beacons with their names (LLViewerObjectList::addDebugBeacon, as
+/// the pathfinding windows' Show beacon draws them): the object marker, its
+/// name above it, not hidden by the scene (setZCompare(false)).
+pub fn labeled(ctx: &egui::Context, p: &Palette, proj: &super::hud::Projector, beacons: &[(glam::Vec3, egui::Color32, String)]) {
+    if beacons.is_empty() {
+        return;
+    }
+    let painter = super::hud::world_painter(ctx);
+    for (at, color, name) in beacons {
+        marker(ctx, &painter, proj, *at, *color, 2.0);
+        if !name.is_empty()
+            && let Some((pos, _)) = proj.project(*at)
+        {
+            painter.text(pos, egui::Align2::CENTER_BOTTOM, name, egui::FontId::proportional(12.5), p.ink);
+        }
+    }
+}

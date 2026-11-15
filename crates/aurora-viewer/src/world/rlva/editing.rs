@@ -28,6 +28,20 @@ impl World {
         })
     }
 
+    /// rlvCanDeleteOrReturn() without an object (indra/newview/rlvcommon.cpp,
+    /// originally LGPL 2.1), on a selection: under @edit, @rez, @unsit or
+    /// @editobj, every selected root must pass the object rule
+    /// (`rlva_can_delete_or_return`), and an empty selection fails;
+    /// otherwise anything goes. The pathfinding windows grey their actions
+    /// with it (updateStateOnActionControls).
+    pub fn rlva_can_delete_or_return_all(&self, roots: &[usize]) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        let restricted = ["edit", "rez", "unsit"].iter().any(|b| self.rlva.has(b)) || self.rlva.has_any("editobj");
+        !restricted || (!roots.is_empty() && roots.iter().all(|&i| self.rlva_can_delete_or_return(i)))
+    }
+
     /// enableLinkObjects: a locked seat cannot be relinked. The regular
     /// RlvActions::canEdit policy remains enforced for every selected root.
     pub fn rlva_can_link(&self, roots: &[usize]) -> bool {

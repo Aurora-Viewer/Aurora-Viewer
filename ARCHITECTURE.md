@@ -804,10 +804,17 @@ and deed confirmation reuse `build/ui/floaters.rs` with separate widget IDs.
 `context/object_profile_tests.rs` exercises actual pointer/keyboard editing,
 sale and permission messages, target changes, HUD roots and selection lifetime.
 Group names use the existing cached GroupNames request and pathfinding attributes
-come from object flags. `context/pathfinding.rs`
-shows searchable, virtualized RegionObjects / CharacterProperties lists from
-`aurora-net/src/pathfinding/`, with correlated asynchronous requests scoped to
-the clicked object's region; this reader does not edit navmesh or terrain.
+come from object flags. The pathfinding windows (Build › Pathfinding, and the
+object menu's Show in region objects / characters) are `ui/pathfinding/`: the
+list shared by Region objects and Characters (`list.rs`: cells, filters
+applied on demand, sort by value, the Legacy messaging line, a row index so
+selections of thousands stay cheap), the edit panel (`edit.rs`), the drawing in
+the Legacy layout (`view.rs`) and the wire physics capsule (`capsule.rs`).
+`app/pathfinding.rs` opens them, resolves owner names, works out which actions
+the in-world selection allows (with RLVa's `rlva_can_delete_or_return`), makes
+the list selection the in-world one, carries out Take / Return / Delete /
+Teleport / Apply and draws Show beacon (`ui::beacons::labeled`);
+`app/pathfinding_demo.rs` is `AURORA_DEMO_PATHFINDING`.
 `aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
 (`mod.rs`: the object, character and terrain rows), the linkset rules
 (`linkset.rs`: use ↔ phantom + navmesh category, the uses a selection allows,

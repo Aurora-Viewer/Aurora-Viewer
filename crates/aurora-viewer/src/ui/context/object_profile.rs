@@ -18,23 +18,6 @@ pub struct ObjectProfileUi {
     editor: Box<BuildTool>,
 }
 
-pub(super) fn person(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
-    if id.is_nil() {
-        ui.label(aurora_i18n::tr!("status-nobody"));
-    } else if !world.rlva_can_name(id) {
-        ui.label(aurora_i18n::tr!("scene-object-hidden-person"));
-    } else {
-        world.social.want_name(id);
-        let name = world.person_name(&id).unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
-        if ui
-            .add(egui::Label::new(egui::RichText::new(name).color(p.violet_light)).sense(egui::Sense::click()))
-            .clicked()
-        {
-            super::request(ui.ctx(), super::CtxAction::Profile(id));
-        }
-    }
-}
-
 impl ObjectProfileUi {
     /// Keep the profile's live simulator subscription when a menu, inspector
     /// or build selection releases the same root. Closing releases our hold.

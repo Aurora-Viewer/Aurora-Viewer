@@ -103,6 +103,7 @@ pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
 pub mod parcel_icons;
+pub mod pathfinding;
 pub mod pay;
 pub mod people;
 pub mod perf;
