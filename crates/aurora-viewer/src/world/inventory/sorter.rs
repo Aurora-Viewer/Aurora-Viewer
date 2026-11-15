@@ -1088,9 +1088,11 @@ pub fn unlockable_folders(inv: &Inventory) -> Vec<Uuid> {
 
 /// The viewer folders at the root, never touched and never unlockable:
 /// RLVa reads `#RLV` (RlvInventory::getSharedRootID), the AO and the
-/// scripting bridge live in `#Firestorm` and `#Aurora`. Any other folder
-/// whose name starts with `#` is an ordinary folder of the user's.
-pub const VIEWER_FOLDERS: [&str; 3] = ["#RLV", "#Firestorm", "#Aurora"];
+/// scripting bridge live in `#Firestorm` and `#Aurora`, and the AO reads
+/// another viewer's `Animation Overrides` (ao::inventory::ALCHEMY_FOLDER).
+/// Any other folder whose name starts with `#` is an ordinary folder of the
+/// user's.
+pub const VIEWER_FOLDERS: [&str; 4] = ["#RLV", "#Firestorm", "#Aurora", crate::ao::inventory::ALCHEMY_FOLDER];
 
 fn viewer_folder(inv: &Inventory, folder: &super::Folder) -> bool {
     folder.info.parent == inv.root && VIEWER_FOLDERS.iter().any(|name| folder.info.name.trim().eq_ignore_ascii_case(name))

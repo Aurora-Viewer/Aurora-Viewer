@@ -1254,9 +1254,14 @@ fn hands_off_fixture() -> (Inventory, Vec<Uuid>) {
         add_item(&mut inv, folder_id + 1, folder_id, "Old denim freebie listed", OLD);
     }
     // the viewer folders: RLV shared folders, the AO, the bridge
-    for (n, (name, inside)) in [("#RLV", "Old denim freebie dress"), ("#Firestorm", "#AO"), ("#Aurora", "Aurora AO")]
-        .into_iter()
-        .enumerate()
+    for (n, (name, inside)) in [
+        ("#RLV", "Old denim freebie dress"),
+        ("#Firestorm", "#AO"),
+        ("#Aurora", "Aurora AO"),
+        ("Animation Overrides", "Old denim freebie walks"),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let folder_id = 3000 + n as u128 * 10;
         add_folder(&mut inv, folder_id, 1, name);
