@@ -1453,16 +1453,17 @@ impl App {
 
     /// A 360° panorama of the inventory, rolled to its heading: the same
     /// upload, named for the marker, and not in the photo reel.
-    pub(super) fn photo_encode_panorama(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
-        self.photo_encode_texture(size, rgba, cost, true);
+    /// (the panorama is shared with the photo window's picture, not copied)
+    pub(super) fn photo_encode_panorama(&mut self, size: (u32, u32), rgba: std::sync::Arc<Vec<u8>>, cost: i32) {
+        self.photo_encode_texture(size, SharedRgba(rgba), cost, true);
     }
 
-    fn photo_encode_texture(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, pano: bool) {
+    fn photo_encode_texture(&mut self, size: (u32, u32), rgba: impl AsRef<[u8]> + Send + 'static, cost: i32, pano: bool) {
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
             let t0 = Instant::now();
-            let encoded = inventory::encode(size.0, size.1, &rgba, texture);
+            let encoded = inventory::encode(size.0, size.1, rgba.as_ref(), texture);
             if let Ok(data) = &encoded {
                 log::info!(
                     "photo: texture {} x {} encoded in {} ms ({} KB)",
@@ -3238,5 +3239,15 @@ fn env_view<'a>(
         sun: crate::ui::environment::azimuth_elevation(sun),
         locked: eep.rlva_locked,
         loading: eep.photo_loading(),
+    }
+}
+
+/// A picture shared with another reader (the photo window's panorama),
+/// handed to the texture encoder without a copy.
+struct SharedRgba(std::sync::Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedRgba {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }

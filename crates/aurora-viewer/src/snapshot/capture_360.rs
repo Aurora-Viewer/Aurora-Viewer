@@ -118,21 +118,19 @@ pub fn output_size(face_size: u32, max_texture: u32) -> (u32, u32) {
 /// 0, east 90) is its middle column. The XMP block that carries the heading
 /// does not survive the texture upload, so the inventory's picture is
 /// rolled instead: a viewer that opens a panorama at its middle looks where
-/// the camera did. `rgba` is `width` x `height`, rows top to bottom.
-pub fn roll_to_heading(rgba: &[u8], width: u32, height: u32, heading: u32) -> Vec<u8> {
+/// the camera did. `rgba` is `width` x `height`, rows top to bottom, turned
+/// in place (no second picture of 8 MB); a malformed one is left as it is.
+pub fn roll_to_heading(rgba: &mut [u8], width: u32, height: u32, heading: u32) {
     let (w, h) = (width as usize, height as usize);
     if w == 0 || rgba.len() != w * h * 4 {
-        return rgba.to_vec();
+        return;
     }
     // the heading's column is at (heading / 360 + 0.5) of the width; the
     // middle column takes its place
     let shift = ((f64::from(heading % 360) / 360.0) * w as f64).round() as usize % w;
-    let mut out = Vec::with_capacity(rgba.len());
-    for row in rgba.chunks_exact(w * 4) {
-        out.extend_from_slice(&row[shift * 4..]);
-        out.extend_from_slice(&row[..shift * 4]);
+    for row in rgba.chunks_exact_mut(w * 4) {
+        row.rotate_left(shift * 4);
     }
-    out
 }
 
 /// The compass heading the camera looks at, as the XMP's
@@ -487,17 +485,21 @@ mod tests {
             }
             rgba
         };
+        let rolled = |mut rgba: Vec<u8>, heading: u32| {
+            roll_to_heading(&mut rgba, w, h, heading);
+            rgba
+        };
         // north is the middle already
-        assert_eq!(roll_to_heading(&image(4), w, h, 0), image(4));
+        assert_eq!(rolled(image(4), 0), image(4));
         // east, 90 degrees, a quarter of the width right of the middle
-        assert_eq!(roll_to_heading(&image(6), w, h, 90), image(4));
+        assert_eq!(rolled(image(6), 90), image(4));
         // west is left of the middle
-        assert_eq!(roll_to_heading(&image(2), w, h, 270), image(4));
+        assert_eq!(rolled(image(2), 270), image(4));
         // south wraps round to the edge
-        assert_eq!(roll_to_heading(&image(0), w, h, 180), image(4));
-        assert_eq!(roll_to_heading(&image(4), w, h, 360), image(4));
+        assert_eq!(rolled(image(0), 180), image(4));
+        assert_eq!(rolled(image(4), 360), image(4));
         // a malformed image comes back as it is
-        assert_eq!(roll_to_heading(&[1, 2, 3], w, h, 90), vec![1, 2, 3]);
+        assert_eq!(rolled(vec![1, 2, 3], 90), vec![1, 2, 3]);
     }
 
     #[test]

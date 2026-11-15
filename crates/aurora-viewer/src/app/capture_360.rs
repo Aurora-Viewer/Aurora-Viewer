@@ -192,6 +192,14 @@ impl Capture360 {
         self.face_frame.is_some()
     }
 
+    /// A border crossing moved what positions are relative to
+    /// (`Camera::shift`): the faces still to draw keep the same eye.
+    pub fn shift(&mut self, delta: glam::Vec3) {
+        if let Some(plan) = &mut self.plan {
+            plan.eye += delta;
+        }
+    }
+
     /// The panorama shown is let go (the photo window closed): its pixels
     /// here and its copy on the GPU, which the renderer drops with the last
     /// reference.
@@ -549,10 +557,11 @@ impl App {
             Shutter::Inventory(cost) => {
                 // the XMP block with the heading does not survive the
                 // texture upload: the picture is rolled instead
-                let rolled = Arc::new(rules::roll_to_heading(&rgba, width, height, plan.heading));
-                drop(rgba);
+                let mut rgba = rgba;
+                rules::roll_to_heading(&mut rgba, width, height, plan.heading);
+                let rolled = Arc::new(rgba);
                 self.capture_360_show(width, height, rolled.clone(), 0.0, plan.quality);
-                self.photo_encode_panorama((width, height), rolled.to_vec(), cost);
+                self.photo_encode_panorama((width, height), rolled.clone(), cost);
                 if let Some(folder) = self.capture_360.demo.as_ref().filter(|d| d.inventory).map(|d| d.folder.clone()) {
                     // (the demo has no grid to look at the item in: the
                     // picture that was encoded, beside the log)
@@ -696,11 +705,13 @@ impl App {
                     self.settings.snapshot.folder = Some(folder.to_path_buf());
                     self.settings.save();
                 }
-                let path = if path.extension().is_some() {
-                    path
-                } else {
-                    path.with_extension("jpg")
-                };
+                // (the file is a JPEG whatever was typed: `pano.png` would
+                // be a JPEG under another name)
+                let jpeg = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+                let path = if jpeg { path } else { path.with_extension("jpg") };
                 self.capture_360_shutter(Shutter::Disk(Some(path)));
             }
         }

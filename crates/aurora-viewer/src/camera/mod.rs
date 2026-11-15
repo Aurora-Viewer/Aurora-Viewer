@@ -1369,6 +1369,13 @@ impl Camera {
         if let Some(f) = &mut self.focus_geom {
             f.position += delta;
         }
+        // a 360° capture crossing a border goes on from the same place
+        if let Some(fixed) = &mut self.fixed_view {
+            fixed.eye += delta;
+        }
+        if let Some(real) = &mut self.fixed_real_position {
+            *real += delta;
+        }
         // (the new region sends its own plane; meanwhile the old one holds)
         self.collide_plane.w += self.collide_plane.truncate().dot(delta);
     }
@@ -2010,7 +2017,8 @@ impl Camera {
             self.position = fixed.eye;
             self.target = self.position + fixed.forward;
             self.fov_y = fixed.fov_y;
-            self.roll = 0.0;
+            // (the roll is left alone: `view` and `up` ignore it while the
+            // view is imposed, and it is the user's tilt to find afterwards)
         }
     }
 
@@ -3663,6 +3671,52 @@ mod tests {
         // released twice: nothing moves
         camera.release_fixed_view();
         assert!(camera.position.abs_diff_eq(real, 1e-5));
+    }
+
+    /// The user's tilt survives a 360° capture: the faces ignore it, and
+    /// nothing else gives it back afterwards.
+    #[test]
+    fn a_fixed_view_keeps_the_roll() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        camera.roll = 0.2;
+        let eye = camera.position;
+        camera.fixed_view = Some(FixedView {
+            eye,
+            forward: Vec3::X,
+            up: Vec3::Z,
+            fov_y: 1.0,
+        });
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-6), "the face ignores the roll");
+        camera.release_fixed_view();
+        assert_eq!(camera.roll, 0.2);
+    }
+
+    /// A border crossing during a 360° capture: the faces still to draw and
+    /// the place given back move with the rest of the camera.
+    #[test]
+    fn a_fixed_view_moves_with_a_border_crossing() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let real = camera.position;
+        let eye = real + Vec3::new(0.0, 0.0, 3.0);
+        camera.fixed_view = Some(FixedView {
+            eye,
+            forward: Vec3::X,
+            up: Vec3::Z,
+            fov_y: 1.0,
+        });
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let delta = Vec3::new(-256.0, 0.0, 0.0);
+        camera.shift(delta);
+        assert!(camera.fixed_view.is_some_and(|f| f.eye.abs_diff_eq(eye + delta, 1e-5)));
+        camera.release_fixed_view();
+        assert!(camera.position.abs_diff_eq(real + delta, 1e-4));
     }
 
     use crate::scene::avatar::AvatarLibrary;
