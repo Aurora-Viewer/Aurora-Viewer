@@ -3155,6 +3155,16 @@ impl Impostors {
         (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) = p;
     }
 
+    /// The pictures are drawn with the scene's own shaders.
+    fn shader_source(features: wgpu::Features) -> String {
+        format!(
+            "{}\n{}\n{}",
+            crate::common_shader_source(),
+            crate::object_shader_source(features),
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+        )
+    }
+
     fn make_pipelines(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
@@ -3164,15 +3174,9 @@ impl Impostors {
         samples: u32,
         ssr: bool,
     ) -> ImpostorPipelines {
-        let src = format!(
-            "{}\n{}\n{}",
-            crate::common_shader_source(),
-            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
-        );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
-            source: wgpu::ShaderSource::Wgsl(src.into()),
+            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features()).into()),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("impostors"),
@@ -4558,7 +4562,7 @@ impl Backend {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::oit_stochastic::without_st(&crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))),
+            crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let src = crate::blend_exact::scene_source(src, device.features());
@@ -12219,6 +12223,24 @@ mod tests {
         assert_eq!(blend_runs(&sides, 2..2).count(), 0);
     }
 
+    /// The impostors' module on a device without the early depth test, as
+    /// on Metal: naga refused all of it there, at every start (#3751).
+    #[test]
+    fn impostor_shader_is_valid_without_the_early_depth_test() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let valid = |src: &str| {
+            let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            Validator::new(ValidationFlags::all(), Capabilities::all() - Capabilities::EARLY_DEPTH_TEST)
+                .validate(&module)
+                .map_err(|e| e.emit_to_string(src))
+        };
+        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty())) {
+            panic!("{e}");
+        }
+        // the source a device with the test takes is refused there
+        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST)).is_err());
+    }
+
     #[test]
     #[ignore = "requires a GPU"]
     fn gpu_impostor_atlas_growth_preserves_pictures_and_separates_pages() {
@@ -12547,7 +12569,7 @@ mod tests {
                 format!(
                     "{}\n{}\n{}",
                     crate::common_shader_source(),
-                    crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+                    crate::object_shader_source(device.features()),
                     crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
                 )
                 .into(),
