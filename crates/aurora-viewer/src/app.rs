@@ -6178,6 +6178,12 @@ impl App {
             binaural,
         );
         let now = Instant::now();
+        // the Doppler shift: the agent's velocity, wherever the ear is
+        // (audio_update_listener, llvieweraudio.cpp)
+        sounds.doppler = crate::scene::sounds::doppler::Doppler {
+            factor: self.settings.audio.doppler,
+            listener_velocity: self.world.agent.velocity,
+        };
         sounds.update(engine, &self.world, &listener, now);
         // what stands between each sound and the listener (Aurora's own)
         let occlusion = crate::scene::sound_occlusion::forced().unwrap_or(self.settings.audio.sound_occlusion);
@@ -10188,6 +10194,10 @@ impl App {
             }
             // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
             if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
+            // AURORA_DEMO_SOUND_DOPPLER: the sound passing in front
+            if let Some(e) = crate::demo::sound_doppler::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
             // AURORA_DEMO_SOUND_REVERB: the clapper above our avatar
@@ -22728,6 +22738,19 @@ impl ApplicationHandler for App {
                     self.scene.sounds.insert(id, clip);
                 }
                 for ev in crate::demo::sound_hrtf::events() {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            // AURORA_DEMO_SOUND_DOPPLER=1: a sound passing in front of the
+            // listener, back and forth (moved by `demo::sound_doppler::tick`)
+            if crate::demo::sound_doppler::active() {
+                self.world.agent.get_off(crate::demo::sound_doppler::start());
+                for (id, clip) in crate::demo::sound_doppler::sounds() {
+                    self.scene.sounds.insert(id, clip);
+                }
+                for ev in crate::demo::sound_doppler::events() {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }
