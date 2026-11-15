@@ -46,15 +46,15 @@ const MAX_LIGHTS: usize = 64;
 const XR_RETRIES: u8 = 3;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
-/// How often the runtime's events are read while no VR session runs: often
-/// enough to let a closing runtime go within its grace of a few seconds
-/// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
 /// `AURORA_DEMO_VR_CLOSED`: the frame the VR runtime is taken as closing at.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 fn demo_vr_closed() -> Option<u64> {
     static AT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
     *AT.get_or_init(|| std::env::var("AURORA_DEMO_VR_CLOSED").ok()?.trim().parse().ok())
 }
+/// How often the runtime's events are read while no VR session runs: often
+/// enough to let a closing runtime go within its grace of a few seconds
+/// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
