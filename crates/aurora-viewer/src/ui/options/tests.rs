@@ -128,6 +128,7 @@ const BEFORE: &[&str] = &[
     "show_perf",
     "show_minimap",
     "show_bug_report",
+    "show_stand_fly_panel",
     "place_bar_stretch",
     "place_bar_rights_text",
     "favorites_access",
@@ -252,6 +253,7 @@ const BEFORE: &[&str] = &[
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
+    "log_legacy_layout",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
@@ -411,8 +413,9 @@ fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
-        // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer;
+        // the colored sky ambient and order-independent transparency:
+        // Graphics, and Aurora with the other differences from the Legacy
+        // Viewer;
         // inventory delete confirm: Confirmations and Inventory (#2344)
         if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;

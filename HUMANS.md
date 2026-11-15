@@ -61,6 +61,24 @@ If the agent has not finished everything, it tells you before. If a session
 is interrupted, the agent of the next session first takes up the PRs without
 a review or that left the queue.
 
+## Credits and licences
+
+Aurora is built on other people's work: the Second Life viewer, the Legacy
+Viewer and the residents and projects whose code they hold, shader authors,
+hundreds of Rust crates. We credit all of them, precisely, every time:
+
+- **Ported code**: the authors named in the original file's copyright are
+  listed in [NOTICE.md](NOTICE.md), "Authors of the ported code", with the
+  Aurora files that follow their work. Code under another licence (MIT,
+  BSD…) keeps its full notice there.
+- **Rust crates**: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) lists
+  each one with its licence and the notices to keep. Whoever changes
+  `Cargo.lock` runs `./scripts/third-party-licenses.ps1` (it needs
+  `cargo install cargo-about --locked --features cli` once) and commits the
+  file.
+- Both are shown in the viewer, Help › About (Licences and Libraries tabs),
+  and tests fail when they fall behind the code. When in doubt, credit.
+
 ## GitHub in practice
 
 - **`main` is protected**, for everyone, admins included: nobody pushes to it

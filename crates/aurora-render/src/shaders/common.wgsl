@@ -160,6 +160,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -202,6 +203,9 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 // the snow on an avatar (x of its first column), and the entries per
 // skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
 const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -1524,9 +1528,17 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     // the camera read a far cascade, and no caster could be left out of a
     // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
     // distance, to compare (AURORA_SHADOW_LEGACY).
+    // A planar reflection (the mirror) reads the main view's cascades, fitted
+    // around the real camera: the pixel's distance to that camera, its own
+    // camera mirrored back through the clip plane, picks the cascade
     var view_depth = vertex_depth;
-    if (splits.w > 0.5) {
-        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    let planar = in_reflection_pass() && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.5;
+    if (splits.w > 0.5 || planar) {
+        var eye = frame.camera_pos.xyz;
+        if (planar) {
+            eye -= 2.0 * (dot(frame.clip_plane.xyz, eye) + frame.clip_plane.w) * frame.clip_plane.xyz;
+        }
+        view_depth = distance(world_pos, eye);
     }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
@@ -1549,6 +1561,13 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
             } else if (next >= 0.0) {
                 s = mix(s, next, t);
             }
+        }
+    }
+    // the mirror also sees behind the main camera, where the near cascades
+    // do not reach: a coarser one that does
+    if (planar) {
+        for (var k = cascade + 1u; k < 3u && s < 0.0; k++) {
+            s = cascade_shadow(world_pos, n, k);
         }
     }
     if (s < 0.0) {

@@ -1177,6 +1177,74 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
 }
 
 #[test]
+fn select_only_locked_and_copyable_objects_follow_the_root_rights() {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_COPY, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(child).unwrap().update_flags = OBJECT_MOVE | OBJECT_COPY;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    settings.select_locked_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "a part follows its movable root");
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(passes_select_filters(&world, &settings, child));
+    // a permanent object is locked outside the agent's region only
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | AFFECTS_NAVMESH;
+    world.main_region = Some(world.objects.get(root).unwrap().key.region);
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.main_region = None;
+    assert!(passes_select_filters(&world, &settings, root));
+    settings.select_locked_only = false;
+    settings.select_copyable_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "the root may not be copied");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_COPY;
+    assert!(passes_select_filters(&world, &settings, child));
+    // both locked and movable: nothing passes, as in the Legacy Viewer
+    settings.select_copyable_only = false;
+    settings.select_locked_only = true;
+    settings.select_movable_only = true;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(!passes_select_filters(&world, &settings, root));
+}
+
+#[test]
+fn group_owned_objects_leave_only_the_rectangle_and_the_menu_round_trips() {
+    use crate::ui::context::flags::{OBJECT_GROUP_OWNED, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | OBJECT_GROUP_OWNED;
+    assert!(settings.select_group_owned, "FSSelectIncludeGroupOwned is on by default");
+    assert!(passes_rect_filters(&world, &settings, child));
+    settings.select_group_owned = false;
+    assert!(
+        !passes_rect_filters(&world, &settings, child),
+        "a part follows its group-owned root"
+    );
+    assert!(passes_select_filters(&world, &settings, child), "a click still takes it");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(passes_rect_filters(&world, &settings, child));
+    // Build › Options reads and writes the same switches
+    let mut options = MenuOptions::of(&settings);
+    assert!(!options.group_owned && options.highlight && !options.probe_volumes);
+    options.locked_only = true;
+    options.light_radius = true;
+    options.probe_volumes = true;
+    options.apply(&mut settings);
+    assert!(settings.select_locked_only && settings.show_light_radius && settings.show_probe_volumes);
+    assert_eq!(MenuOptions::of(&settings), options);
+    // saved, except the probe volumes (Persist=0)
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(restored.select_locked_only && restored.show_light_radius && !restored.select_group_owned);
+    assert!(!restored.show_probe_volumes);
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(!old.select_locked_only && !old.select_copyable_only && old.select_group_owned);
+    assert!(!old.show_hidden_selection && !old.show_light_radius);
+}
+
+#[test]
 fn selection_filters_persist_and_use_the_current_settings_defaults() {
     use layout::{Item, Layout, Panel};
     let mut settings = BuildSettings::default();
@@ -1333,6 +1401,8 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
     assert!(settings.rez_under_land_group);
     let roots = [object(&world, 99610), object(&world, 99614)];
     let keys: Vec<_> = roots.iter().map(|&idx| world.objects.get(idx).unwrap().key).collect();
+    // RezScript is the fallback of a region without CreateTaskInventoryItem
+    Arc::make_mut(&mut world.regions.get_mut(&keys[0].region).unwrap().caps).remove(contents::CREATE_TASK_ITEM_CAP);
     for active in [Uuid::from_u128(8800), Uuid::from_u128(8801), Uuid::nil()] {
         world.apply(NetEvent::ActiveGroup {
             id: active,
@@ -1345,7 +1415,7 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             "the parcel group must differ from the message group"
         );
         tool.out.clear();
-        tool.new_script(&world, roots[0]);
+        tool.new_script(&world, roots[0], false);
         let scripts: Vec<_> = tool
             .out
             .iter()
@@ -1368,6 +1438,14 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             (item.owner_id, item.group_id, item.asset_type),
             (world.agent_id, Uuid::nil(), contents::AT_LSL_TEXT)
         );
+        assert_eq!(item.flags, 0, "LSL");
+        // an SLua script carries SST_LUA in its flags
+        tool.out.clear();
+        tool.new_script(&world, roots[0], true);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::RezScript { item, .. }) if aurora_net::scripts::is_slua_item(item.flags)
+        )));
         for action in 0..5 {
             tool.selection = keys.clone();
             tool.out.clear();

@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::AT_LSL_TEXT;
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -20,6 +20,8 @@ use egui::{RichText, Vec2};
 fn display_name(i: &TaskItem) -> String {
     if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
+    } else if i.asset_type == AT_NOTECARD && i.name.starts_with("New Notecard") {
+        i.name.replacen("New Notecard", aurora_i18n::tr!("common-new-notecard"), 1)
     } else {
         i.name.clone()
     }
@@ -53,6 +55,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     tool.request_contents(world, idx, false);
     let editable = tool.contents_editable(world, idx);
     let single = tool.roots(world).len() == 1 || tool.sel_prims(world).len() == 1;
+    // LLPanelContents::getState: the Lua choice only where the object's region runs SLua
+    let lua_region = world
+        .objects
+        .get(idx)
+        .and_then(|o| world.regions.get(&o.key.region))
+        .is_some_and(|r| r.lua_scripts);
+    let lua = lua_region && tool.ui.new_script_lua.unwrap_or(true);
 
     let font_size = if super::legacy::active(ui) { 11.0 } else { 12.0 };
     ui.horizontal(|ui| {
@@ -63,7 +72,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             )
             .clicked()
         {
-            tool.new_script(world, idx);
+            tool.new_script(world, idx, lua);
+        }
+        if lua_region {
+            new_script_language(ui, tool, lua);
         }
         if ui
             .add_enabled(
@@ -82,6 +94,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
     });
     ui.horizontal(|ui| {
+        // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
+        // only where the region has CreateTaskInventoryItem
+        if ui
+            .add_enabled(
+                editable && single && BuildTool::contents_create_cap(world, idx),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-notecard")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.new_notecard(world, idx);
+        }
         if ui
             .button(RichText::new(aurora_i18n::tr!("common-rights")).size(font_size))
             .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
@@ -321,11 +344,13 @@ fn item_row(
             crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
         );
         let script = item.asset_type == AT_LSL_TEXT;
+        let preview =
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_allowed(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7;
+            let can_open = script || item.asset_type == 7 || preview;
             let no_open = if can_open {
                 ""
             } else {
@@ -390,13 +415,39 @@ fn item_row(
                     object: object_id,
                     item: item.item_id,
                 });
-            } else if item.asset_type == 7 {
+            } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
         }
     });
+}
+
+/// The language of "New script" on a region with SLua (the `button new
+/// script` combo of panel_tools.xml: LSL or Lua).
+fn new_script_language(ui: &mut egui::Ui, tool: &mut BuildTool, lua: bool) {
+    let label = |lua: bool| {
+        if lua {
+            aurora_i18n::tr!("script-target-luau")
+        } else {
+            aurora_i18n::tr!("build-ui-contents-script-lsl")
+        }
+    };
+    let mut chosen = lua;
+    egui::ComboBox::from_id_salt("contents_new_script_language")
+        .selected_text(label(lua))
+        .width(56.0)
+        .show_ui(ui, |ui| {
+            for option in [false, true] {
+                ui.selectable_value(&mut chosen, option, label(option));
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("build-ui-contents-script-language"));
+    if chosen != lua {
+        tool.ui.new_script_lua = Some(chosen);
+    }
 }
 
 #[cfg(test)]
