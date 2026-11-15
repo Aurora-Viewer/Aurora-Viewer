@@ -23000,6 +23000,12 @@ impl ApplicationHandler for App {
                     } else {
                         self.inventory_ui.open_sorter(objects);
                     }
+                    // AURORA_DEMO_SORTER_TAB: sample rules (the demo's own
+                    // settings) and the window on one tab or dialog
+                    if let Ok(tab) = std::env::var("AURORA_DEMO_SORTER_TAB") {
+                        crate::world::inventory::sorter::demo::seed_settings(&mut self.settings.inventory.sorter);
+                        self.inventory_ui.demo_sorter_view(tab.trim(), &mut self.settings.inventory.sorter);
+                    }
                 }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);

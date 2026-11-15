@@ -6296,6 +6296,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, Auto-sort, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_SORTER_TAB=preview\|rules\|options\|cleanup\|cleanup-custom\|share\|import\|picker\|confirm-whole` | With a `sorter` inventory mode: sample rules and store hints, and Auto-sort on one tab, window or confirmation |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7159,7 +7160,13 @@ failure. Grid validation and any paid upload are performed by the human.
   folder created once; worn, locked or linked entries kept; Objects left with
   only the names nothing can read; the FATPACK folder moved whole. A Pre-Trash
   word rule fills a root `Pre-Trash` folder that only its own confirmation sends
-  to the Trash; Whole inventory asks twice. The Clean up tab: a delivery folder
+  to the Trash; Whole inventory asks twice. `AURORA_DEMO_SORTER_TAB` (with one of these
+  modes) fills the demo's own Auto-sort settings with three rules (a path, one of my
+  folders, Pre-Trash), two store hints and an excluded folder, then opens a tab
+  (`preview`, `rules`, `options`, `cleanup`; `cleanup-custom` picks June 2013, three
+  types and empty folders), the Share or Import window (`import` pastes a friend's
+  text: two rules already there, a new one, a broken line), the folder picker or the
+  whole-inventory confirmation. Capture after about 700 frames. The Clean up tab: a delivery folder
   entirely from 2010 (`Retro Mall`) taken whole, the mixed Hex Dress FATPACK left
   whole, and two root folders (`Old freebies`, `Places I liked`) with every
   item type, whose old items are listed one by one.

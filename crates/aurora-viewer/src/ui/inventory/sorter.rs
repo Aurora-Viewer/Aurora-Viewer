@@ -184,6 +184,62 @@ impl InventoryUi {
         self.sorter.autostart = true;
     }
 
+    /// `AURORA_DEMO_SORTER_TAB`: the window on one tab, window or
+    /// confirmation, for the screenshots (docs/TESTING.md).
+    pub(crate) fn demo_sorter_view(&mut self, view: &str, prefs: &mut sorter::Preferences) {
+        let state = &mut self.sorter;
+        match view {
+            "rules" => state.tab = RULES,
+            "options" => state.tab = OPTIONS,
+            "cleanup" => {
+                state.tab = CLEANUP;
+                prefs.cleanup.age = Age::FiveYears;
+            }
+            "cleanup-custom" => {
+                state.tab = CLEANUP;
+                prefs.cleanup = sorter::Cleanup {
+                    age: Age::Custom,
+                    year: 2013,
+                    month: 6,
+                    kinds: vec![Kind::Notecards, Kind::Landmarks, Kind::Textures],
+                    empty_folders: true,
+                    ..Default::default()
+                };
+            }
+            "share" => {
+                state.tab = OPTIONS;
+                state.share = Some(sorter::share::Share::all(prefs));
+            }
+            "import" => {
+                state.tab = OPTIONS;
+                // a friend's text: one rule already here, a new one, a store
+                // hint and a broken line
+                let mut theirs = prefs.clone();
+                theirs.rules.push(Rule {
+                    words: "wings halo".into(),
+                    mode: Match::Any,
+                    folder: "Accessories/Wings".into(),
+                    ..Default::default()
+                });
+                let text = sorter::share::export(&theirs, &sorter::share::Share::all(&theirs)) + "store: Somewhere = not-a-category\n";
+                state.import = Some(ImportWindow {
+                    text,
+                    ..Default::default()
+                });
+            }
+            "picker" => {
+                state.tab = RULES;
+                state.picker = Some(Picker::new(Pick::Rule(1)));
+            }
+            "confirm-whole" => {
+                state.set_source(Source::Whole);
+                state.understood = false;
+                state.confirm = Some(Confirm::Whole);
+            }
+            _ => state.tab = PREVIEW,
+        }
+    }
+
     pub(super) fn sorter_open(&self) -> bool {
         self.sorter.open
     }
@@ -396,12 +452,15 @@ pub(super) fn show(
             ],
         );
         ui.add_space(6.0);
-        let footer = 46.0;
+        // the body in exactly the room the footer leaves (its height is
+        // measured, a larger text included), so its button is never cut
+        let (mut body, foot) = crate::ui::widgets::above_footer(ui);
+        let room = body.available_height();
         egui::ScrollArea::vertical()
             .id_salt("inventory_sorter_body")
-            .max_height((ui.available_height() - footer).max(80.0))
+            .max_height(room.max(80.0))
             .auto_shrink([false, false])
-            .show(ui, |ui| match state.tab {
+            .show(&mut body, |ui| match state.tab {
                 RULES => {
                     ui.add_enabled_ui(!busy, |ui| rules_editor(ui, p, inv, state, &mut prefs.sorter))
                         .inner
@@ -422,8 +481,10 @@ pub(super) fn show(
                     }
                 }
             });
-        crate::ui::widgets::divider(ui, p);
-        footer_row(ui, p, state, st.pending.is_none(), &mut go, &mut stop);
+        foot.show(ui, |ui| {
+            crate::ui::widgets::divider(ui, p);
+            footer_row(ui, p, state, st.pending.is_none(), &mut go, &mut stop);
+        });
     });
     // Clean up's buttons: Pre-Trash through the sort's own batches, the
     // Trash after its confirmation
@@ -635,13 +696,19 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
     window.min_size = Vec2::new(320.0, 340.0);
     window.show(ctx, p, &mut open, |ui| {
         ui.label(RichText::new(aurora_i18n::tr!("inventory-import-hint")).small().color(p.muted));
-        ui.add(
-            egui::TextEdit::multiline(&mut import.text)
-                .char_limit(sorter::share::MAX_TEXT)
-                .hint_text(sorter::share::HEADER)
-                .desired_rows(4)
-                .desired_width(f32::INFINITY),
-        );
+        // a long paste scrolls in its box instead of pushing the list away
+        egui::ScrollArea::vertical()
+            .id_salt("inventory_sorter_import_text")
+            .max_height(110.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut import.text)
+                        .char_limit(sorter::share::MAX_TEXT)
+                        .hint_text(sorter::share::HEADER)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                );
+            });
         ui.add_space(4.0);
         let (dup_rules, dup_hints) = import.found.duplicates(prefs);
         egui::ScrollArea::vertical()
@@ -686,7 +753,7 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
                     action_button(
                         ui,
                         p,
-                        "replace",
+                        "replace-filled",
                         aurora_i18n::tr!("inventory-import-replace"),
                         ActionKind::Flat,
                         size,
@@ -900,7 +967,7 @@ fn confirm(
                     if action_button(
                         ui,
                         p,
-                        "replace",
+                        "replace-filled",
                         aurora_i18n::tr!("inventory-import-replace"),
                         ActionKind::Danger,
                         size,
@@ -1223,7 +1290,7 @@ fn cleanup_tab(
             ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-before", date = date.as_str())).strong());
         }
         ui.add_space(8.0);
-        section_header(ui, p, "category-filled", aurora_i18n::tr!("inventory-cleanup-types"));
+        section_header(ui, p, "filter-filled", aurora_i18n::tr!("inventory-cleanup-types"));
         kinds_grid(ui, p, "inventory_cleanup_kinds", &mut cleanup.kinds);
         ui.add_space(8.0);
         section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-cleanup-where"));
@@ -1302,9 +1369,7 @@ fn cleanup_tab(
         }
         let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going.len());
         if ui
-            .add_enabled_ui(enabled, |ui| {
-                action_button(ui, p, "trash-x-filled", &label, ActionKind::Danger, size)
-            })
+            .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
             .inner
             .clicked()
         {
@@ -1377,7 +1442,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
             .color(p.muted),
     );
     ui.add_space(10.0);
-    crate::ui::widgets::section_header(ui, p, "category-filled", aurora_i18n::tr!("inventory-sorter-kinds"));
+    crate::ui::widgets::section_header(ui, p, "filter-filled", aurora_i18n::tr!("inventory-sorter-kinds"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-sorter-kinds-hint"))
             .small()
@@ -1387,7 +1452,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     ui.add_space(10.0);
     store_hints(ui, p, options);
     ui.add_space(10.0);
-    crate::ui::widgets::section_header(ui, p, "folder-off", aurora_i18n::tr!("inventory-sorter-excluded"));
+    crate::ui::widgets::section_header(ui, p, "eye-off", aurora_i18n::tr!("inventory-sorter-excluded"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-sorter-excluded-hint"))
             .small()
@@ -1397,7 +1462,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     let mut remove = None;
     for (index, id) in options.excluded.iter().enumerate() {
         ui.horizontal(|ui| {
-            crate::ui::widgets::glyph(ui, "folder-off", p.muted, 14.0);
+            crate::ui::widgets::glyph(ui, "eye-off", p.muted, 14.0);
             let text = if inv.folders.contains_key(id) {
                 sorter::folder_path(inv, *id)
             } else {
@@ -1476,7 +1541,7 @@ fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences
                         .desired_width(150.0),
                 );
                 ui.label(RichText::new("→").color(p.muted));
-                egui::ComboBox::from_id_salt("category")
+                egui::ComboBox::from_id_salt("hint_category")
                     .selected_text(hint.category.folder())
                     .width(150.0)
                     .show_ui(ui, |ui| {
@@ -1777,7 +1842,9 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
                 .filter(|(_, path)| query.is_empty() || path.to_lowercase().contains(&query))
                 .take(400)
             {
-                if crate::ui::widgets::rail_row(ui, p, "folder-filled", p.violet_light, path, None, false, 0).clicked() {
+                // the ink of the Move to picker's rows, not the accent:
+                // nothing is chosen until the row is clicked
+                if crate::ui::widgets::rail_row(ui, p, "folder-filled", p.ink, path, None, false, 0).clicked() {
                     chosen = Some(*id);
                 }
             }

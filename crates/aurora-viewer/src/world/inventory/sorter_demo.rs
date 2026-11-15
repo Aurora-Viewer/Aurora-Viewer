@@ -306,8 +306,7 @@ pub fn seed(inv: &mut Inventory, agent: Uuid, scale: usize) {
     }
     // The user's own folders at the root, with every kind of item, old and
     // new: Clean up opens them and takes their old items one by one.
-    for (n, name) in ["Old freebies", "Places I liked"].into_iter().enumerate() {
-        let id = Uuid::from_u128(8_605_200 + n as u128);
+    for (id, name) in [(OLD_FREEBIES, "Old freebies"), (PLACES, "Places I liked")] {
         inv.folders.insert(id, folder(id, root, name, -1));
         if let Some(f) = inv.folders.get_mut(&root) {
             f.children.push(id);
@@ -328,7 +327,61 @@ pub fn seed(inv: &mut Inventory, agent: Uuid, scale: usize) {
             }
         }
     }
+    // An empty box at the root, an empty folder inside it: Clean up's
+    // "Include empty folders" takes the box whole.
+    for (id, parent, name) in [
+        (EMPTY_BOX, root, "Empty box"),
+        (Uuid::from_u128(8_605_211), EMPTY_BOX, "Nothing inside"),
+    ] {
+        inv.folders.insert(id, folder(id, parent, name, -1));
+        if let Some(f) = inv.folders.get_mut(&parent) {
+            f.children.push(id);
+        }
+    }
     inv.add_items(items);
     inv.generation += 1;
     inv.sort_all();
+}
+
+const OLD_FREEBIES: Uuid = Uuid::from_u128(8_605_200);
+const PLACES: Uuid = Uuid::from_u128(8_605_201);
+const EMPTY_BOX: Uuid = Uuid::from_u128(8_605_210);
+
+/// `AURORA_DEMO_SORTER_TAB`: rules of every kind, store hints and an
+/// excluded folder, so that each tab of the window has something to show.
+/// Only the demo's own settings are touched.
+pub fn seed_settings(prefs: &mut super::Preferences) {
+    use super::{Category, Match, Rule, StoreHint};
+    prefs.rules = vec![
+        Rule {
+            words: "denim jeans".into(),
+            mode: Match::Any,
+            folder: "Clothes/Denim".into(),
+            ..Default::default()
+        },
+        Rule {
+            words: "gift box".into(),
+            mode: Match::Phrase,
+            target: Some(OLD_FREEBIES),
+            ..Default::default()
+        },
+        Rule {
+            words: "freebie demo".into(),
+            mode: Match::Any,
+            pre_trash: true,
+            skip_sorted: true,
+            ..Default::default()
+        },
+    ];
+    prefs.store_hints = vec![
+        StoreHint {
+            store: "Birch Hollow".into(),
+            category: Category::Furniture,
+        },
+        StoreHint {
+            store: "Neverlace".into(),
+            category: Category::Decor,
+        },
+    ];
+    prefs.excluded = vec![PLACES];
 }
