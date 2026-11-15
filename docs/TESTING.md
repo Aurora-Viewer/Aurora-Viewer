@@ -7146,7 +7146,10 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run`**: an Objects
   folder of about 700 entries named the way creators name them (made-up stores,
   body tags such as `[REBORN]`, `eBODY Reborn`, `Legacy F`, `Lara X`, unpackers,
-  furniture, names nothing can read), 24 unpacked delivery folders, clothing
+  Squish and Squeeze versions, `[Store] +` and `*Store*` tags, one item in
+  seven acquired in 2017, a texture named like a chair, a FATPACK folder with
+  its HUD, card and landmark, furniture, names nothing can read), 24 unpacked
+  delivery folders, clothing
   layers that only their wearable type names, and a `Sorted/Reborn` folder from
   an earlier run. Auto-sort opens on Objects: its preview lists each destination
   (`Reborn / Skirts (12)`) and what stays. `sorter` and `sorter-run` use the
@@ -7154,7 +7157,9 @@ failure. Grid validation and any paid upload are performed by the human.
   entries; `sorter-run` starts the sort by itself (capture after about 900
   frames). What to look for: `Sorted` and `Reborn` reused, not doubled; each
   folder created once; worn, locked or linked entries kept; Objects left with
-  only the names nothing can read.
+  only the names nothing can read; the FATPACK folder moved whole. A rule
+  "acquired before 2020" to Pre-Trash fills a root `Pre-Trash` folder that only
+  its own confirmation sends to the Trash; Whole inventory asks twice.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

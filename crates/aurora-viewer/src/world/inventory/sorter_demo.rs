@@ -29,6 +29,8 @@ const STORES: &[&str] = &[
     "[Saint Noir]",
     "rvn -",
     ". o p a l i n e . //",
+    "[Birch Hollow] +",
+    "*Neverlace*",
 ];
 
 const PRODUCTS: &[&str] = &[
@@ -104,11 +106,19 @@ const ENDINGS: &[&str] = &[
     " Pack [Unpacker]",
     " FATPACK",
     " #3",
+    " sq",
+    " (Squish)",
+    " - Squeeze",
 ];
 
 /// Things with no body, and names the sorter cannot read.
 const LOOSE: &[(&str, i32)] = &[
     ("Black leather chair", 6),
+    ("[Birch Hollow] + Tucker Round Gothic Table (regular pack)", 6),
+    ("[Birch Hollow] + Semaj Pillow Couch (black)", 6),
+    ("*Neverlace* Neon Heart Shelf - Light Pink", 6),
+    // a texture whose name says chair: its type wins
+    ("Bar bottom texture (without chair shadows)", 0),
     ("Oak dining table", 6),
     ("Velvet sofa - Rose", 6),
     ("Fern plant in clay pot", 6),
@@ -165,7 +175,8 @@ fn item(id: u128, parent: Uuid, name: String, asset_type: i32, flags: u32, agent
         base_mask: owner_mask,
         owner_mask,
         next_owner_mask: owner_mask,
-        created_at: 1_700_000_000 + id as i64,
+        // one in seven acquired in 2017, for the "acquired before" rules
+        created_at: if id.is_multiple_of(7) { 1_500_000_000 } else { 1_700_000_000 } + id as i64,
         ..Default::default()
     }
 }
@@ -243,6 +254,23 @@ pub fn seed(inv: &mut Inventory, agent: Uuid, scale: usize) {
             items.push(item(next, id, format!("{product}{part}"), 6, 0, agent));
             next += 1;
         }
+    }
+    // A fatpack delivered as a folder: its dress, HUD, card and landmark
+    // belong together and move as one.
+    let fatpack = Uuid::from_u128(8_605_100);
+    inv.folders
+        .insert(fatpack, folder(fatpack, OBJECTS, "Lumen - Hex Dress - FATPACK", -1));
+    if let Some(f) = inv.folders.get_mut(&OBJECTS) {
+        f.children.push(fatpack);
+    }
+    for (name, kind) in [
+        ("Lumen - Hex Dress (Reborn Squish) - FATPACK", 6),
+        ("Lumen - Hex Dress - FATPACK HUD", 6),
+        ("Lumen - INFO CARD", 7),
+        ("Lumen - Mainstore", 3),
+    ] {
+        items.push(item(next, fatpack, name.into(), kind, 0, agent));
+        next += 1;
     }
     inv.add_items(items);
     inv.generation += 1;

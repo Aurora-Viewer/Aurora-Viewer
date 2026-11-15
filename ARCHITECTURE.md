@@ -2566,12 +2566,16 @@ links are excluded. Its controls and type filters are shared with
 
 `world/inventory/sorter.rs` is Auto-sort's pure part: it reads a creator's item
 name (body tags, category keywords, unpackers, then the asset or wearable type)
-and the user's rules into a `<base>/<body>/<category>` path, plans the moves of
-one folder's direct contents with the drag rules (`relocatable`, nothing worn,
-no link) and builds bounded mutations that create the missing folders and move
+and the user's rules (words, acquired date) into a `<base>/<body>/<category>`
+path (with a store and a Squish folder when asked), one of the user's folders
+or the root Pre-Trash folder, plans the moves of one folder's direct contents,
+chosen entries or the whole inventory's system folders with the drag rules
+(`relocatable`, nothing worn, no link, never the Trash, Marketplace Listings or
+an excluded folder) and builds bounded mutations that create the missing folders and move
 the entries in one request. `sorter_demo.rs` seeds its demo inventory.
-`ui/inventory/sorter.rs` is its window (options, rules, preview by destination,
-progress); it sends one batch at a time through the ordinary pending inventory
+`ui/inventory/sorter.rs` is its window (source, rule cards, folder picker,
+options, preview by destination, progress, the whole-inventory and Pre-Trash
+confirmations; Pre-Trash goes to the Trash through the ordinary delete request); it sends one batch at a time through the ordinary pending inventory
 edit, like Bulk permissions, and the options live in `InventoryPreferences`.
 
 `ui/inventory/folder_colors.rs` keeps the user's folder icon colors in the

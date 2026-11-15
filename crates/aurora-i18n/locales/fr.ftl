@@ -14354,14 +14354,10 @@ inventory-bulk-load-failed = Impossible de lire tous les dossiers sélectionnés
 inventory-bulk-unchanged = Aucun élément admissible ne nécessite de modification.
 inventory-sorter-title = Tri automatique
 inventory-sorter-menu = Tri automatique…
-inventory-sorter-intro = Range les éléments et dossiers en vrac de « { $folder } » dans des dossiers par corps et par genre, d'après leur nom. Rien n'est copié, renommé ni modifié : les éléments sont seulement déplacés.
 inventory-sorter-base = Ranger dans
 inventory-sorter-base-hint = Un dossier à la racine de Mon inventaire
 inventory-sorter-folders = Trier aussi les dossiers, chacun en entier (livraisons déballées)
 inventory-sorter-rules = Mes règles
-inventory-sorter-rules-hint = Un nom qui contient tous les mots va dans le dossier, avant les règles intégrées.
-inventory-sorter-rule-words = Le nom contient
-inventory-sorter-rule-folder = Dossier, par exemple Maison/Chaises
 inventory-sorter-rule-add = Ajouter une règle
 inventory-sorter-rule-remove = Supprimer cette règle
 inventory-sorter-preview = Où va chaque élément
@@ -14424,6 +14420,73 @@ inventory-sorter-scripts = Scripts
 inventory-sorter-sounds = Sons
 inventory-sorter-textures = Textures
 inventory-sorter-gestures = Gestes
+inventory-sorter-intro = Range les éléments et dossiers en vrac dans des dossiers par corps et par genre, d'après leur nom. Rien n'est copié, renommé ni modifié : les éléments sont seulement déplacés.
+inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : la première qui correspond à un nom décide où il va.
+inventory-sorter-rule-words = Quand le nom contient
+inventory-sorter-rule-folder = Chemin du dossier, par exemple Maison/Chaises
+inventory-sorter-menu-entries = Tri automatique
+inventory-sorter-open = Tri automatique : ranger les éléments en vrac par corps et par genre
+inventory-sorter-source = Dossier à trier
+inventory-sorter-selection = { $count ->
+    [one] { $count } élément sélectionné
+   *[other] { $count } éléments sélectionnés
+    }
+inventory-sorter-change = Changer…
+inventory-sorter-options = Options
+inventory-sorter-rule-enabled = Utiliser cette règle
+inventory-sorter-rule-number = Règle { $n }
+inventory-sorter-rule-up = Monter : essayée plus tôt
+inventory-sorter-rule-down = Descendre : essayée plus tard
+inventory-sorter-rule-words-hint = Des mots, par exemple chaise noire
+inventory-sorter-match-all = Tous les mots
+inventory-sorter-match-any = Un des mots
+inventory-sorter-match-phrase = Expression exacte
+inventory-sorter-rule-to = Le déplacer vers
+inventory-sorter-to-new = Un dossier du dossier de tri
+inventory-sorter-to-mine = Un de mes dossiers
+inventory-sorter-folder-missing = Ce dossier n'existe plus
+inventory-sorter-rule-incomplete = Ajoutez des mots et une destination pour utiliser cette règle.
+inventory-sorter-pick-title = Choisir un dossier
+inventory-sorter-pick-search = Rechercher un dossier
+inventory-sorter-heads = Têtes
+inventory-sorter-huds = HUD
+inventory-sorter-vehicles = Véhicules
+inventory-sorter-pets = Animaux
+inventory-sorter-pre-trash = Pré-corbeille
+inventory-sorter-variant-squish = Squish
+inventory-sorter-stores = Boutiques
+inventory-sorter-variants = Versions Squish et Squeeze dans leur propre dossier
+inventory-sorter-variants-hint = Les noms avec sq, squish ou squeeze vont dans un dossier Squish sous leur catégorie, à part de la version normale.
+inventory-sorter-by-store = Un dossier par boutique
+inventory-sorter-by-store-hint = Lit la boutique dans l’étiquette du créateur ([Boutique] +, *Boutique*, Boutique - …) et range sous la catégorie, par exemple Mobilier / Boutique.
+inventory-sorter-excluded = Dossiers jamais touchés
+inventory-sorter-excluded-hint = Le tri automatique ne prend rien dans ces dossiers ni dans ce qu’ils contiennent. La corbeille et les annonces de la Place du marché ne sont de toute façon jamais touchées.
+inventory-sorter-exclude-add = Ajouter un dossier…
+inventory-sorter-exclude-remove = Retirer de la liste
+inventory-sorter-whole = Tout l’inventaire
+inventory-sorter-whole-tip = Trier les éléments en vrac de Mon inventaire et de ses dossiers système (Objets, Habits, Notes…)
+inventory-sorter-whole-intro = Les éléments en vrac de Mon inventaire et de ses dossiers système sont triés, et leurs dossiers sont déplacés d’un bloc. Vos propres dossiers, la corbeille, les annonces de la Place du marché, les tenues et les dossiers exclus ne sont pas touchés.
+inventory-sorter-whole-title = Trier tout l’inventaire ?
+inventory-sorter-whole-text = { $count ->
+    [one] { $count } élément de tout votre inventaire va être déplacé dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé.
+   *[other] { $count } éléments de tout votre inventaire vont être déplacés dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé, mais tout remettre en place à la main prend du temps.
+    }
+inventory-sorter-whole-check = J’ai vérifié l’aperçu et je veux trier tout mon inventaire
+inventory-sorter-rule-before = Acquis avant le
+inventory-sorter-rule-before-hint = 2020-01-01
+inventory-sorter-to-pre-trash = Pré-corbeille
+inventory-sorter-rule-pre-trash-hint = Les éléments trouvés attendent dans le dossier Pré-corbeille jusqu’à ce que vous confirmiez leur envoi à la corbeille.
+inventory-sorter-pre-trash-waiting = { $count ->
+    [one] { $count } élément attend dans la Pré-corbeille
+   *[other] { $count } éléments attendent dans la Pré-corbeille
+    }
+inventory-sorter-pre-trash-hint = Ouvrez le dossier Pré-corbeille de votre inventaire et sortez-en ce que vous voulez garder. Le reste part à la corbeille quand vous confirmez.
+inventory-sorter-pre-trash-empty = Mettre à la corbeille
+inventory-sorter-pre-trash-title = Mettre la Pré-corbeille à la corbeille ?
+inventory-sorter-pre-trash-text = { $count ->
+    [one] { $count } élément du dossier Pré-corbeille part à la corbeille. Vous pouvez encore l’en sortir tant qu’elle n’est pas vidée.
+   *[other] { $count } éléments du dossier Pré-corbeille partent à la corbeille. Vous pouvez encore les en sortir tant qu’elle n’est pas vidée.
+    }
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.
 parcel-visibility-always = Partout

@@ -128,10 +128,12 @@ fn user_rules_come_first_and_need_every_word() {
         Rule {
             words: "chair black".into(),
             folder: "Home / Black chairs".into(),
+            ..Default::default()
         },
         Rule {
             words: "".into(),
             folder: "Ignored".into(),
+            ..Default::default()
         },
     ];
     assert_eq!(
@@ -139,6 +141,14 @@ fn user_rules_come_first_and_need_every_word() {
         Some(vec!["Home".to_owned(), "Black chairs".to_owned()])
     );
     assert_eq!(destination("White chair", 6, 0, &rules), Some(vec!["Furniture".to_owned()]));
+}
+
+fn path_of(to: &Dest) -> String {
+    match to {
+        Dest::Path(path) => path.join("/"),
+        Dest::Folder(id) => format!("#{id}"),
+        Dest::PreTrash => "pre-trash".to_owned(),
+    }
 }
 
 #[test]
@@ -157,7 +167,7 @@ fn the_plan_keeps_worn_links_locked_and_sorted_folders_in_place() {
     inv.folders.get_mut(&id(OBJECTS)).expect("objects").children = vec![unpacked, id(201)];
     let worn: HashSet<Uuid> = [id(101)].into();
     let plan = plan(&inv, id(OBJECTS), &Preferences::default(), &HashSet::new(), &worn);
-    let moved: Vec<_> = plan.moves.iter().map(|m| (m.name.as_str(), m.path.join("/"))).collect();
+    let moved: Vec<_> = plan.moves.iter().map(|m| (m.name.as_str(), path_of(&m.to))).collect();
     assert_eq!(
         moved,
         [
@@ -190,14 +200,7 @@ fn a_sort_creates_each_folder_once_reuses_existing_ones_and_is_idempotent() {
     let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
     assert_eq!(plan.moves.len(), 5);
     let mut queue: VecDeque<Move> = plan.moves.into();
-    let Step::Change(change, taken) = step(
-        &mut inv,
-        id(OBJECTS),
-        &prefs.base_name(),
-        &mut queue,
-        &HashSet::new(),
-        &HashSet::new(),
-    ) else {
+    let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) else {
         panic!("a mutation")
     };
     assert_eq!(taken, 5);
@@ -218,14 +221,7 @@ fn a_sort_creates_each_folder_once_reuses_existing_ones_and_is_idempotent() {
     assert!(at(&["Furniture"]).is_some_and(|f| inv.folders[&f].items == [id(104)]));
     assert!(inv.folders[&id(OBJECTS)].items.is_empty());
     assert!(matches!(
-        step(
-            &mut inv,
-            id(OBJECTS),
-            &prefs.base_name(),
-            &mut queue,
-            &HashSet::new(),
-            &HashSet::new()
-        ),
+        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()),
         Step::Done
     ));
     // sorting Sorted/Reborn/Skirts itself moves nothing
@@ -240,14 +236,7 @@ fn a_large_sort_goes_in_bounded_batches() {
     let prefs = Preferences::default();
     let mut queue: VecDeque<Move> = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new()).moves.into();
     let mut batches = Vec::new();
-    while let Step::Change(change, taken) = step(
-        &mut inv,
-        id(OBJECTS),
-        &prefs.base_name(),
-        &mut queue,
-        &HashSet::new(),
-        &HashSet::new(),
-    ) {
+    while let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
         batches.push(taken);
         actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
     }
@@ -264,14 +253,7 @@ fn an_unloaded_destination_waits_without_sending_anything() {
     let prefs = Preferences::default();
     let mut queue: VecDeque<Move> = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new()).moves.into();
     assert!(matches!(
-        step(
-            &mut inv,
-            id(OBJECTS),
-            &prefs.base_name(),
-            &mut queue,
-            &HashSet::new(),
-            &HashSet::new()
-        ),
+        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()),
         Step::Wait
     ));
     assert_eq!(queue.len(), 1);
@@ -302,14 +284,7 @@ fn the_demo_inventory_sorts_into_reused_folders_and_keeps_what_it_cannot_read() 
     assert!(plan.unpackers() > 50);
     assert!(unknown.iter().any(|n| n == "Gift box"));
     let mut queue: VecDeque<Move> = plan.moves.into();
-    while let Step::Change(change, _) = step(
-        &mut inv,
-        demo::OBJECTS,
-        &prefs.base_name(),
-        &mut queue,
-        &HashSet::new(),
-        &HashSet::new(),
-    ) {
+    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
         actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
     }
     // the earlier run's Sorted and Sorted/Reborn are reused, not doubled
@@ -336,4 +311,259 @@ fn the_demo_inventory_sorts_into_reused_folders_and_keeps_what_it_cannot_read() 
     expected.sort();
     left_sorted.sort();
     assert_eq!(left_sorted, expected);
+}
+
+#[test]
+fn a_rule_matches_every_word_any_word_or_the_exact_phrase() {
+    let rule = |words: &str, mode: Match| Rule {
+        words: words.into(),
+        mode,
+        folder: "Mine".into(),
+        ..Default::default()
+    };
+    let name = words("Black leather CHAIR - grey");
+    assert!(rule("chair black", Match::All).matches(&name, None));
+    assert!(!rule("chair white", Match::All).matches(&name, None));
+    assert!(rule("chair white", Match::Any).matches(&name, None));
+    assert!(!rule("sofa white", Match::Any).matches(&name, None));
+    assert!(rule("leather chair", Match::Phrase).matches(&name, None));
+    assert!(!rule("chair leather", Match::Phrase).matches(&name, None));
+    // a switched-off or incomplete rule takes nothing
+    let off = Rule {
+        enabled: false,
+        ..rule("chair", Match::All)
+    };
+    assert!(!off.usable());
+    assert!(
+        !Rule {
+            folder: " / ".into(),
+            ..rule("chair", Match::All)
+        }
+        .usable()
+    );
+}
+
+#[test]
+fn a_rule_can_send_entries_to_one_of_the_users_own_folders() {
+    let mut inv = fixture(&["Black leather chair", "Velvet skirt Reborn"]);
+    let home = id(70);
+    inv.folders.insert(home, folder(home, id(1), "Home", -1));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(home);
+    let prefs = Preferences {
+        rules: vec![Rule {
+            words: "chair".into(),
+            target: Some(home),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    let chair = plan.moves.iter().find(|m| m.id == id(100)).expect("the chair moves");
+    assert_eq!(chair.to, Dest::Folder(home));
+    assert_eq!(chair.label, "My Inventory / Home");
+    let mut queue: VecDeque<Move> = plan.moves.into();
+    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
+        // the chosen folder is used as it is: nothing is made inside it
+        assert!(
+            !change
+                .operations
+                .iter()
+                .any(|op| matches!(op, Operation::Folder { parent, .. } if *parent == home))
+        );
+        actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
+    }
+    assert_eq!(inv.folders[&home].items, [id(100)]);
+    // already there: a second plan leaves it alone
+    assert!(super::plan(&inv, home, &prefs, &HashSet::new(), &HashSet::new()).moves.is_empty());
+    // a rule folder in the Trash or gone cannot receive anything
+    let gone = Preferences {
+        rules: vec![Rule {
+            words: "skirt".into(),
+            target: Some(id(11)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let plan = plan_entries(&inv, &[id(101)], &gone, &HashSet::new(), &HashSet::new());
+    assert!(plan.moves.is_empty());
+    assert_eq!(plan.unknown, ["Velvet skirt Reborn"]);
+}
+
+#[test]
+fn chosen_entries_sort_alone_wherever_they_are() {
+    let inv = fixture(&["Velvet skirt Reborn", "Lace bra Reborn", "Mystery box"]);
+    let prefs = Preferences::default();
+    let plan = plan_entries(&inv, &[id(100), id(102)], &prefs, &HashSet::new(), &HashSet::new());
+    let moved: Vec<_> = plan.moves.iter().map(|m| (m.name.as_str(), path_of(&m.to))).collect();
+    assert_eq!(moved, [("Velvet skirt Reborn", "Reborn/Skirts".to_owned())]);
+    assert_eq!(plan.unknown, ["Mystery box"]);
+}
+
+#[test]
+fn heads_huds_vehicles_and_pets_have_their_own_folders() {
+    assert_eq!(path("LeLutka Head Avalon EvoX").as_deref(), Some("Heads"));
+    assert_eq!(path("Body HUD v3").as_deref(), Some("HUDs"));
+    assert_eq!(path("Speedster motorbike").as_deref(), Some("Vehicles"));
+    assert_eq!(path("Fluffy kitten companion").as_deref(), Some("Pets"));
+}
+
+#[test]
+fn squish_versions_get_their_own_folder_when_the_option_is_on() {
+    let to = |name: &str, variants: bool| match target(name, 6, 0, None, &[], variants, false) {
+        Some(Dest::Path(path)) => path.join("/"),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(to("Kitty - Hex Dress (Reborn Squish) - FATPACK", true), "Reborn/Dresses/Squish");
+    assert_eq!(to("Reborn bra black sq", true), "Reborn/Lingerie/Squish");
+    assert_eq!(to("Lace bra Reborn - Squeeze", true), "Reborn/Lingerie/Squish");
+    assert_eq!(to("Reborn bra black sq", false), "Reborn/Lingerie");
+    assert_eq!(to("Reborn bra black", true), "Reborn/Lingerie");
+}
+
+#[test]
+fn the_store_is_read_from_the_creators_tag() {
+    assert_eq!(store("[Birch Hollow] + Tucker Round Gothic Table").as_deref(), Some("Birch Hollow"));
+    assert_eq!(store("*Neverlace* Neon Heart Shelf").as_deref(), Some("Neverlace"));
+    assert_eq!(store(".VX. Vixen Dress").as_deref(), Some("VX"));
+    assert_eq!(store("Kitty - Hex Dress (Reborn Squish) - FATPACK").as_deref(), Some("Kitty"));
+    assert_eq!(store("rvn // Platform Boots").as_deref(), Some("rvn"));
+    // a body tag or a product before the dash is no store
+    assert_eq!(store("[REBORN] Denim Skirt"), None);
+    assert_eq!(store("Reborn - Waifu Boobs"), None);
+    assert_eq!(store("Velvet Sofa Modular - PG"), None);
+    assert_eq!(store("Mystery box"), None);
+    let to = |name: &str| match target(name, 6, 0, None, &[], true, true) {
+        Some(Dest::Path(path)) => path.join("/"),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(to("[Birch Hollow] + Semaj Pillow Couch (black)"), "Furniture/Birch Hollow");
+    assert_eq!(to("*Neverlace* Mystery Crate"), "Stores/Neverlace");
+}
+
+#[test]
+fn an_items_type_wins_over_furniture_words_in_its_name() {
+    assert_eq!(
+        destination("Bar bottom texture (without chair shadows)", 0, 0, &[]),
+        Some(vec!["Textures".to_owned()])
+    );
+    assert_eq!(
+        destination("Chair sit animation", 20, 0, &[]),
+        Some(vec!["Animations & poses".to_owned()])
+    );
+    // an object is still read from its name
+    assert_eq!(destination("Black leather chair", 6, 0, &[]), Some(vec!["Furniture".to_owned()]));
+}
+
+#[test]
+fn dated_rules_take_items_acquired_before_the_date_into_pre_trash() {
+    assert_eq!(date_start("2020"), Some(1_577_836_800));
+    assert_eq!(date_start("2020-06"), Some(1_590_969_600));
+    assert_eq!(date_start("2020/06/15"), Some(1_592_179_200));
+    assert_eq!(date_start("June 2020"), None);
+    assert_eq!(date_start("2020-13"), None);
+    let mut inv = fixture(&["Old freebie dress", "New skirt Reborn", "Old Reborn skirt"]);
+    for (n, created) in [(100, 1_400_000_000), (101, 1_700_000_000), (102, 1_400_000_000)] {
+        if let Some(it) = inv.items.get_mut(&id(n)) {
+            it.created_at = created;
+        }
+    }
+    inv.generation += 1;
+    let rule = Rule {
+        before: "2020".into(),
+        pre_trash: true,
+        ..Default::default()
+    };
+    assert!(rule.usable());
+    assert!(
+        !Rule {
+            before: "someday".into(),
+            ..rule.clone()
+        }
+        .usable()
+    );
+    let prefs = Preferences {
+        rules: vec![rule],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    let to: Vec<_> = plan.moves.iter().map(|m| (m.name.as_str(), m.to.clone())).collect();
+    assert!(to.contains(&("Old freebie dress", Dest::PreTrash)));
+    assert!(to.contains(&("Old Reborn skirt", Dest::PreTrash)));
+    assert!(to.contains(&("New skirt Reborn", Dest::Path(vec!["Reborn".into(), "Skirts".into()]))));
+    let mut queue: VecDeque<Move> = plan.moves.into();
+    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
+        actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
+    }
+    // Pre-Trash sits at the root, apart from the Trash, with both old items
+    let waiting = pre_trash(&inv).expect("Pre-Trash");
+    assert_eq!(inv.folders[&waiting].info.parent, id(1));
+    let mut entries = pre_trash_entries(&inv);
+    entries.sort();
+    assert_eq!(entries, [id(100), id(102)]);
+    assert!(inv.folders[&id(11)].items.is_empty(), "nothing reached the Trash");
+}
+
+#[test]
+fn excluded_folders_the_trash_and_marketplace_listings_are_never_touched() {
+    let mut inv = fixture(&["Velvet skirt Reborn", "Lace bra Reborn"]);
+    let listings = id(80);
+    inv.folders.insert(listings, folder(listings, id(1), "Marketplace Listings", 53));
+    inv.folders.insert(id(81), folder(id(81), listings, "Reborn Skirt listing", -1));
+    inv.folders.get_mut(&listings).expect("listings").children.push(id(81));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(listings);
+    assert!(!source_allowed(&inv, listings));
+    assert!(!source_allowed(&inv, id(81)));
+    assert!(!target_allowed(&inv, id(81)));
+    assert!(!target_allowed(&inv, id(11)));
+    let picked = plan_entries(&inv, &[id(81)], &Preferences::default(), &HashSet::new(), &HashSet::new());
+    assert!(picked.moves.is_empty());
+    // an excluded Objects keeps everything
+    let prefs = Preferences {
+        excluded: vec![id(OBJECTS)],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    assert!(plan.moves.is_empty());
+    assert_eq!(plan.kept, 2);
+}
+
+#[test]
+fn the_whole_inventory_reads_system_folders_and_keeps_the_users_own_folders() {
+    let mut inv = fixture(&["Velvet skirt Reborn"]);
+    // a loose item at the root, a user folder and its contents
+    let home = id(90);
+    inv.folders.insert(home, folder(home, id(1), "My chairs", -1));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(home);
+    let mut loose = inv.items[&id(100)].clone();
+    loose.id = id(150);
+    loose.parent = id(1);
+    loose.name = "Denim skirt Legacy".into();
+    let mut kept = loose.clone();
+    kept.id = id(151);
+    kept.parent = home;
+    kept.name = "Black leather chair".into();
+    inv.add_items(vec![loose, kept]);
+    // a delivery folder in Objects moves whole, its contents stay inside
+    let fatpack = id(95);
+    inv.folders
+        .insert(fatpack, folder(fatpack, id(OBJECTS), "Kitty - Hex Dress - FATPACK", -1));
+    inv.folders.get_mut(&id(OBJECTS)).expect("objects").children.push(fatpack);
+    let mut part = inv.items[&id(100)].clone();
+    part.id = id(152);
+    part.parent = fatpack;
+    part.name = "Kitty - Hex Dress HUD".into();
+    inv.add_items(vec![part]);
+    let prefs = Preferences::default();
+    assert_eq!(whole_sources(&inv, &prefs), [id(1), id(OBJECTS)]);
+    let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
+    let mut moved: Vec<_> = plan.moves.iter().map(|m| m.id).collect();
+    moved.sort();
+    assert_eq!(moved, [fatpack, id(100), id(150)]);
+    // excluding Objects leaves only the root's loose item
+    let prefs = Preferences {
+        excluded: vec![id(OBJECTS)],
+        ..Default::default()
+    };
+    let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
+    assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(150)]);
 }

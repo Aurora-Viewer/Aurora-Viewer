@@ -14349,14 +14349,10 @@ inventory-bulk-load-failed = Could not read all selected folders. No permissions
 inventory-bulk-unchanged = No eligible item needs a permission update.
 inventory-sorter-title = Auto-sort
 inventory-sorter-menu = Auto-sort…
-inventory-sorter-intro = Moves the loose items and folders of “{ $folder }” into folders by body and by kind, read from their names. Nothing is copied, renamed or changed: entries only move.
 inventory-sorter-base = Sort into
 inventory-sorter-base-hint = A folder at the root of My Inventory
 inventory-sorter-folders = Sort folders too, each as a whole (unpacked deliveries)
 inventory-sorter-rules = My rules
-inventory-sorter-rules-hint = A name holding every word goes to the folder, before the built-in rules.
-inventory-sorter-rule-words = Name contains
-inventory-sorter-rule-folder = Folder, such as Home/Chairs
 inventory-sorter-rule-add = Add a rule
 inventory-sorter-rule-remove = Remove this rule
 inventory-sorter-preview = Where everything goes
@@ -14419,6 +14415,73 @@ inventory-sorter-scripts = Scripts
 inventory-sorter-sounds = Sounds
 inventory-sorter-textures = Textures
 inventory-sorter-gestures = Gestures
+inventory-sorter-intro = Moves loose items and folders into folders by body and by kind, read from their names. Nothing is copied, renamed or changed: entries only move.
+inventory-sorter-rules-hint = Your rules come first, from the top: the first one that matches a name decides where it goes.
+inventory-sorter-rule-words = When the name has
+inventory-sorter-rule-folder = Folder path, such as Home/Chairs
+inventory-sorter-menu-entries = Auto-sort
+inventory-sorter-open = Auto-sort: file loose items into folders by body and kind
+inventory-sorter-source = Folder to sort
+inventory-sorter-selection = { $count ->
+    [one] 1 selected entry
+   *[other] { $count } selected entries
+    }
+inventory-sorter-change = Change…
+inventory-sorter-options = Options
+inventory-sorter-rule-enabled = Use this rule
+inventory-sorter-rule-number = Rule { $n }
+inventory-sorter-rule-up = Move up: tried earlier
+inventory-sorter-rule-down = Move down: tried later
+inventory-sorter-rule-words-hint = Words, such as chair black
+inventory-sorter-match-all = All the words
+inventory-sorter-match-any = Any word
+inventory-sorter-match-phrase = Exact phrase
+inventory-sorter-rule-to = Move it to
+inventory-sorter-to-new = A folder in the sort folder
+inventory-sorter-to-mine = One of my folders
+inventory-sorter-folder-missing = This folder no longer exists
+inventory-sorter-rule-incomplete = Add words and a destination to use this rule.
+inventory-sorter-pick-title = Choose a folder
+inventory-sorter-pick-search = Search folders
+inventory-sorter-heads = Heads
+inventory-sorter-huds = HUDs
+inventory-sorter-vehicles = Vehicles
+inventory-sorter-pets = Pets
+inventory-sorter-pre-trash = Pre-Trash
+inventory-sorter-variant-squish = Squish
+inventory-sorter-stores = Stores
+inventory-sorter-variants = Squish and Squeeze versions in their own folder
+inventory-sorter-variants-hint = Names with sq, squish or squeeze go to a Squish folder below their category, apart from the regular version.
+inventory-sorter-by-store = A folder per store
+inventory-sorter-by-store-hint = Reads the store from the creator's tag ([Store] +, *Store*, Store - …) and files below the category, such as Furniture / Store.
+inventory-sorter-excluded = Folders never touched
+inventory-sorter-excluded-hint = Auto-sort takes nothing from these folders or from anything inside them. The Trash and Marketplace Listings are never touched anyway.
+inventory-sorter-exclude-add = Add a folder…
+inventory-sorter-exclude-remove = Remove from the list
+inventory-sorter-whole = Whole inventory
+inventory-sorter-whole-tip = Sort the loose items of My Inventory and of its system folders (Objects, Clothing, Notecards…)
+inventory-sorter-whole-intro = Loose items of My Inventory and of its system folders are sorted, and the folders in them move as a whole. Your own folders, the Trash, Marketplace Listings, outfits and excluded folders are left alone.
+inventory-sorter-whole-title = Sort the whole inventory?
+inventory-sorter-whole-text = { $count ->
+    [one] 1 entry from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted.
+   *[other] { $count } entries from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted, but putting them back by hand takes a while.
+    }
+inventory-sorter-whole-check = I checked the preview and want to sort my whole inventory
+inventory-sorter-rule-before = Acquired before
+inventory-sorter-rule-before-hint = 2020-01-01
+inventory-sorter-to-pre-trash = Pre-Trash
+inventory-sorter-rule-pre-trash-hint = Matches wait in the Pre-Trash folder until you confirm them for the Trash.
+inventory-sorter-pre-trash-waiting = { $count ->
+    [one] 1 entry waits in Pre-Trash
+   *[other] { $count } entries wait in Pre-Trash
+    }
+inventory-sorter-pre-trash-hint = Open the Pre-Trash folder in your inventory and move out what you want to keep. The rest goes to the Trash when you confirm.
+inventory-sorter-pre-trash-empty = Move to Trash
+inventory-sorter-pre-trash-title = Move Pre-Trash to the Trash?
+inventory-sorter-pre-trash-text = { $count ->
+    [one] 1 entry of the Pre-Trash folder goes to the Trash. You can still take it back from the Trash until it is emptied.
+   *[other] { $count } entries of the Pre-Trash folder go to the Trash. You can still take them back from the Trash until it is emptied.
+    }
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
 parcel-visibility-always = Everywhere

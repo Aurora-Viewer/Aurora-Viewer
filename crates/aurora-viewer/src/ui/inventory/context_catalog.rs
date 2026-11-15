@@ -22,6 +22,7 @@ pub(super) enum Command {
     Properties(Uuid),
     BulkPermissions(Vec<Uuid>),
     AutoSort(Uuid),
+    SortEntries(Vec<Uuid>),
     Rename(Uuid),
     Image(Uuid),
     Protect(Vec<Uuid>),
@@ -740,16 +741,27 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::BulkPermissions(ids.clone()),
             );
         }
-        if all || single && folder.is_some() {
-            c.add(
-                "auto-sort",
-                TEXT,
-                "wand",
-                aurora_i18n::tr!("inventory-sorter-menu"),
-                ready && crate::world::inventory::sorter::source_allowed(inv, id),
-                Command::AutoSort(id),
-            );
-        }
+        // A folder's contents open the window; entries are sorted at once.
+        let (sort_enabled, sort_command) = if single && folder.is_some() {
+            (crate::world::inventory::sorter::source_allowed(inv, id), Command::AutoSort(id))
+        } else {
+            (
+                ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected)),
+                Command::SortEntries(ids.clone()),
+            )
+        };
+        c.add(
+            "auto-sort",
+            TEXT,
+            "wand",
+            if single && folder.is_some() {
+                aurora_i18n::tr!("inventory-sorter-menu")
+            } else {
+                aurora_i18n::tr!("inventory-sorter-menu-entries")
+            },
+            ready && !trash && sort_enabled,
+            sort_command,
+        );
         c.add(
             "rename",
             TEXT,
@@ -1267,6 +1279,7 @@ pub(super) fn execute(
         }
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
         Command::AutoSort(id) => st.open_sorter(id),
+        Command::SortEntries(ids) => st.sort_entries(ids),
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(ids) => {

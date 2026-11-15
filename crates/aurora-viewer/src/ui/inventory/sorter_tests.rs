@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn auto_sort_is_offered_on_one_folder_of_the_agent_but_not_the_library_or_an_item() {
+fn auto_sort_is_offered_on_one_folder_of_the_agent_and_one_item_sorts_alone() {
     let agent = Uuid::from_u128(2);
     let mut inv = Inventory::default();
     crate::world::inventory::demo::seed(&mut inv, agent);
@@ -16,8 +16,16 @@ fn auto_sort_is_offered_on_one_folder_of_the_agent_but_not_the_library_or_an_ite
         catalog.entries.iter().find(|e| e.id == "auto-sort").map(|e| e.enabled)
     };
     assert_eq!(offered(8000, &inv), Some(true));
-    // an item has no entry, the Library's folders a disabled one
-    assert_eq!(offered(8100, &inv), None);
+    // an item gets the entry that sorts it alone, the Library a disabled one
+    let entries = |id: u128, inv: &Inventory| {
+        let catalog = super::super::context_catalog::build(inv, Uuid::from_u128(id), &st, &prefs, &facts);
+        catalog.entries.iter().find(|e| e.id == "auto-sort").map(|e| e.label.clone())
+    };
+    assert_eq!(offered(8100, &inv), Some(true));
+    assert_eq!(
+        entries(8100, &inv).as_deref(),
+        Some(aurora_i18n::tr!("inventory-sorter-menu-entries"))
+    );
     let library = inv.lib_root.as_u128();
     assert_eq!(offered(library, &inv), Some(false));
 }

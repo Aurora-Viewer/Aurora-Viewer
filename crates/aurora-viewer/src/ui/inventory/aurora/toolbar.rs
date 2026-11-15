@@ -340,6 +340,13 @@ fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
+/// Auto-sort, on the folder shown or selected (Objects otherwise).
+fn sorter_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    if tool_button(ui, p, "wand", aurora_i18n::tr!("inventory-sorter-open"), st.sorter_open()).clicked() {
+        st.request_sorter(st.scope);
+    }
+}
+
 /// Direct counterparts of LLPanelMainInventory's collapse_btn / expand_btn.
 fn tree_buttons(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     for (open, icon, tip) in [
@@ -474,6 +481,7 @@ pub(super) fn explorer_row(
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
             });
+            sorter_button(ui, p, st);
             additional_button(ui, p, st);
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
             menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
@@ -501,6 +509,7 @@ pub(super) fn explorer_row(
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
             });
+            sorter_button(ui, p, st);
             additional_button(ui, p, st);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
             menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {

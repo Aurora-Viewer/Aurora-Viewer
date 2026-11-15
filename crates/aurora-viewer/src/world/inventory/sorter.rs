@@ -23,14 +23,97 @@ use uuid::Uuid;
 /// layer accepts, and small enough for steady progress on a large inventory.
 pub const BATCH: usize = 200;
 
-/// A user rule: names holding every word of `words` go to `folder`, a path
-/// below the base folder (`Furniture/Chairs`). Rules are tried in order,
-/// before the built-in body and category rules.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// How a rule's words meet a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Match {
+    /// Every word, in any order.
+    #[default]
+    All,
+    /// At least one of the words.
+    Any,
+    /// The words together, in this order.
+    Phrase,
+}
+
+/// A user rule, tried in order before the built-in body and category rules.
+/// It takes an entry by its words, its acquired date (`before`), or both.
+/// Its destination is the Pre-Trash folder (`pre_trash`), one of the user's
+/// own folders (`target`) when set, otherwise `folder`, a path below the
+/// sort folder (`Home/Chairs`) created when missing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rule {
+    pub enabled: bool,
     pub words: String,
+    #[serde(rename = "match")]
+    pub mode: Match,
     pub folder: String,
+    pub target: Option<Uuid>,
+    /// Only entries acquired before this date (`2020`, `2020-06` or
+    /// `2020-06-15`); empty for any date.
+    pub before: String,
+    /// Send what it takes to the Pre-Trash folder, checked before the Trash.
+    pub pre_trash: bool,
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            words: String::new(),
+            mode: Match::All,
+            folder: String::new(),
+            target: None,
+            before: String::new(),
+            pre_trash: false,
+        }
+    }
+}
+
+/// The start of a day typed as `YYYY`, `YYYY-MM` or `YYYY-MM-DD` (also with
+/// `/` or `.`), in seconds since 1970, UTC: what an item's acquired date
+/// (`created_at`, the date its Properties show) is compared with.
+pub fn date_start(text: &str) -> Option<i64> {
+    let parts: Vec<&str> = text.trim().split(['-', '/', '.']).collect();
+    if parts.is_empty() || parts.len() > 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    let year: i32 = parts[0].parse().ok().filter(|y| (2003..=2100).contains(y))?;
+    let month: u32 = parts.get(1).map_or(Some(1), |m| m.parse().ok())?;
+    let day: u32 = parts.get(2).map_or(Some(1), |d| d.parse().ok())?;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+}
+
+impl Rule {
+    /// The rule can take entries: words, and somewhere to put them.
+    /// The rule can take entries: words or a valid date, and somewhere to
+    /// put them. A date that does not read leaves the rule incomplete
+    /// rather than matching everything.
+    pub fn usable(&self) -> bool {
+        let dated = !self.before.trim().is_empty();
+        self.enabled
+            && (dated || !words(&self.words).is_empty())
+            && (!dated || date_start(&self.before).is_some())
+            && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
+    }
+
+    /// `created` is the item's acquired date; a folder has none, so a dated
+    /// rule never takes a folder.
+    pub fn matches(&self, name_words: &[String], created: Option<i64>) -> bool {
+        let wanted = words(&self.words);
+        let named = wanted.is_empty()
+            || match self.mode {
+                Match::All => wanted.iter().all(|w| name_words.contains(w)),
+                Match::Any => wanted.iter().any(|w| name_words.contains(w)),
+                Match::Phrase => has(name_words, &wanted.join(" ")),
+            };
+        let dated = match self.before.trim() {
+            "" => true,
+            text => date_start(text).is_some_and(|limit| created.is_some_and(|c| c > 0 && c < limit)),
+        };
+        named && dated
+    }
 }
 
 /// Saved with the inventory preferences.
@@ -44,6 +127,14 @@ pub struct Preferences {
     /// whole: their contents are never split.
     pub folders: bool,
     pub rules: Vec<Rule>,
+    /// Squish and Squeeze versions (`sq`, `squish`, `squeeze`) get their
+    /// own folder below their category, apart from the regular one.
+    pub variants: bool,
+    /// A folder per store below the category (`Furniture/North Oak`), read
+    /// from the creator's tag ([`store`]).
+    pub stores: bool,
+    /// Folders Auto-sort never takes anything from, at any depth.
+    pub excluded: Vec<Uuid>,
 }
 
 impl Default for Preferences {
@@ -52,6 +143,9 @@ impl Default for Preferences {
             base: String::new(),
             folders: true,
             rules: Vec::new(),
+            variants: true,
+            stores: false,
+            excluded: Vec::new(),
         }
     }
 }
@@ -65,6 +159,30 @@ impl Preferences {
             name.to_owned()
         }
     }
+
+    /// `id` is an excluded folder or inside one.
+    pub fn excludes(&self, inv: &Inventory, id: Uuid) -> bool {
+        !self.excluded.is_empty() && actions::ancestors(inv, id).any(|a| self.excluded.contains(&a))
+    }
+}
+
+/// The folder at the root of My Inventory that receives what the Pre-Trash
+/// rules take: nothing goes to the Trash before the user checks it there.
+pub fn pre_trash_name() -> String {
+    aurora_i18n::tr!("inventory-sorter-pre-trash").to_owned()
+}
+
+/// The Pre-Trash folder, when it exists.
+pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
+    child(inv, inv.root, &pre_trash_name())
+}
+
+/// What waits in the Pre-Trash folder: its direct contents.
+pub fn pre_trash_entries(inv: &Inventory) -> Vec<Uuid> {
+    pre_trash(inv)
+        .and_then(|id| inv.folders.get(&id))
+        .map(|f| f.items.iter().chain(&f.children).copied().collect())
+        .unwrap_or_default()
 }
 
 /// A body (or the several bodies of a fatpack). Its folder carries the
@@ -197,10 +315,14 @@ pub enum Category {
     Jewelry,
     Accessories,
     BodyAddons,
+    Heads,
     Shapes,
     Animations,
+    Huds,
     Furniture,
     Decor,
+    Vehicles,
+    Pets,
     Outfits,
     Landmarks,
     Notecards,
@@ -429,9 +551,24 @@ const CATEGORY_WORDS: &[(Category, &[&str])] = &[
     ),
     (Category::Shapes, &["shape", "shapes"]),
     (
+        Category::Heads,
+        &[
+            "head",
+            "heads",
+            "lelutka",
+            "catwa",
+            "genus",
+            "evox",
+            "evo x",
+            "akeruka",
+            "logo head",
+        ],
+    ),
+    (
         Category::Animations,
         &["pose", "poses", "animation", "animations", "ao", "dance", "posestand"],
     ),
+    (Category::Huds, &["hud", "huds"]),
     (
         Category::Furniture,
         &[
@@ -446,6 +583,24 @@ const CATEGORY_WORDS: &[(Category, &[&str])] = &[
             "pillows", "mirror",
         ],
     ),
+    (
+        Category::Vehicles,
+        &[
+            "car",
+            "bike",
+            "motorbike",
+            "motorcycle",
+            "boat",
+            "yacht",
+            "vehicle",
+            "truck",
+            "scooter",
+            "skateboard",
+            "helicopter",
+            "plane",
+        ],
+    ),
+    (Category::Pets, &["pet", "pets", "puppy", "kitten", "breedable", "companion"]),
     (
         Category::Outfits,
         &["outfit", "outfits", "set", "fatpack", "fat pack", "collection", "bundle"],
@@ -477,6 +632,10 @@ impl Category {
             Category::Jewelry => aurora_i18n::tr!("inventory-sorter-jewelry"),
             Category::Accessories => aurora_i18n::tr!("inventory-sorter-accessories"),
             Category::BodyAddons => aurora_i18n::tr!("inventory-sorter-body-addons"),
+            Category::Heads => aurora_i18n::tr!("inventory-sorter-heads"),
+            Category::Huds => aurora_i18n::tr!("inventory-sorter-huds"),
+            Category::Vehicles => aurora_i18n::tr!("inventory-sorter-vehicles"),
+            Category::Pets => aurora_i18n::tr!("inventory-sorter-pets"),
             Category::Shapes => aurora_i18n::tr!("inventory-sorter-shapes"),
             Category::Animations => aurora_i18n::tr!("inventory-sorter-animations"),
             Category::Furniture => aurora_i18n::tr!("inventory-sorter-furniture"),
@@ -531,7 +690,11 @@ pub struct Classified {
     pub body: Option<Body>,
     pub category: Option<Category>,
     pub unpacker: bool,
+    /// A Squish or Squeeze version (`Reborn bra black sq`).
+    pub squish: bool,
 }
+
+const SQUISH_WORDS: &[&str] = &["sq", "squish", "squishy", "squished", "squeeze", "squeez", "squeezed", "squeezy"];
 
 const UNPACKER_WORDS: &[&str] = &[
     "unpack",
@@ -579,26 +742,32 @@ fn body(words: &[String]) -> Option<Body> {
 
 pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     let words = words(name);
-    let category = CATEGORY_WORDS
-        .iter()
-        .find(|(_, keys)| keys.iter().any(|k| has(&words, k)))
-        .map(|(c, _)| *c)
+    // A texture, a sound, a notecard… is that, whatever its name says
+    // ("Bar texture (without chair shadows)" is no chair). Objects,
+    // wearables and folders are read from their names first.
+    let typed = (!matches!(asset_type, -1 | 5 | 6 | 13))
+        .then(|| Category::of_asset(asset_type, flags))
+        .flatten();
+    let category = typed
+        .or_else(|| {
+            CATEGORY_WORDS
+                .iter()
+                .find(|(_, keys)| keys.iter().any(|k| has(&words, k)))
+                .map(|(c, _)| *c)
+        })
         .or_else(|| Category::of_asset(asset_type, flags));
     Classified {
         body: body(&words),
         category,
         unpacker: UNPACKER_WORDS.iter().any(|k| has(&words, k)),
+        squish: SQUISH_WORDS.iter().any(|k| has(&words, k)),
     }
 }
 
-/// The user rule that takes `name`, if any: every word of the rule is a
-/// whole word of the name, whatever its case.
-pub fn rule_for<'a>(rules: &'a [Rule], name: &str) -> Option<&'a Rule> {
+/// The first usable user rule that takes `name`, whole words, any case.
+pub fn rule_for<'a>(rules: &'a [Rule], name: &str, created: Option<i64>) -> Option<&'a Rule> {
     let words = words(name);
-    rules.iter().find(|rule| {
-        let wanted = self::words(&rule.words);
-        !wanted.is_empty() && !split_path(&rule.folder).is_empty() && wanted.iter().all(|w| words.contains(w))
-    })
+    rules.iter().find(|rule| rule.usable() && rule.matches(&words, created))
 }
 
 /// A folder path typed by the user (`Furniture / Chairs`), cleaned the way
@@ -610,17 +779,126 @@ pub fn split_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where an entry goes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Dest {
+    /// A path below the sort folder, made when missing.
+    Path(Vec<String>),
+    /// One of the user's own folders, chosen in a rule.
+    Folder(Uuid),
+    /// The Pre-Trash folder at the root, made when missing.
+    PreTrash,
+}
+
 /// The folder path below the base folder, or None when nothing in the name
 /// tells where it goes: such entries stay where they are.
+#[cfg(test)]
 pub fn destination(name: &str, asset_type: i32, flags: u32, rules: &[Rule]) -> Option<Vec<String>> {
-    if let Some(rule) = rule_for(rules, name) {
-        return Some(split_path(&rule.folder));
+    match target(name, asset_type, flags, None, rules, true, false)? {
+        Dest::Path(path) => Some(path),
+        Dest::Folder(_) | Dest::PreTrash => None,
+    }
+}
+
+/// Where `name` goes: a user rule first, then the body and the category,
+/// and a Squish folder below them for a Squish version (`variants`).
+/// `created` is an item's acquired date, for the dated rules.
+pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rules: &[Rule], variants: bool, stores: bool) -> Option<Dest> {
+    if let Some(rule) = rule_for(rules, name, created) {
+        return Some(match rule.target {
+            _ if rule.pre_trash => Dest::PreTrash,
+            Some(id) => Dest::Folder(id),
+            None => Dest::Path(split_path(&rule.folder)),
+        });
     }
     let found = classify(name, asset_type, flags);
     let mut path = Vec::new();
     path.extend(found.body.map(Body::folder));
     path.extend(found.category.map(|c| c.folder().to_owned()));
-    (!path.is_empty()).then_some(path)
+    // By store (`stores`): below the category, or in Stores when the name
+    // says nothing else.
+    if stores && let Some(store) = store(name) {
+        if path.is_empty() {
+            path.push(aurora_i18n::tr!("inventory-sorter-stores").to_owned());
+        }
+        path.push(store);
+    }
+    if variants && found.squish && !path.is_empty() {
+        path.push(squish_folder());
+    }
+    (!path.is_empty()).then_some(Dest::Path(path))
+}
+
+/// The store a creator's name starts with: `[North Oak] + Table`,
+/// `*Opal&Ash* Dress`, `.VX. Apron`, `Kitoomi - Hex Dress`,
+/// `rvn // Boots`. A tag that is a body, a category or an unpacker word
+/// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
+/// phrase before a dash, which is a product name.
+pub fn store(name: &str) -> Option<String> {
+    const ENCLOSED: &[(char, char)] = &[
+        ('[', ']'),
+        ('{', '}'),
+        ('(', ')'),
+        ('<', '>'),
+        ('«', '»'),
+        ('*', '*'),
+        ('~', '~'),
+        ('.', '.'),
+        (':', ':'),
+        ('^', '^'),
+        ('-', '-'),
+        ('+', '+'),
+        ('=', '='),
+        ('#', '#'),
+        ('|', '|'),
+    ];
+    const SEPARATORS: &[&str] = &[" - ", " // ", " | ", " :: ", " + ", " ~ "];
+    let text = name.trim();
+    let first = text.chars().next()?;
+    let tag = ENCLOSED
+        .iter()
+        .find(|(open, _)| *open == first)
+        .and_then(|(open, close)| {
+            let rest = &text[open.len_utf8()..];
+            rest.find(*close).map(|end| &rest[..end])
+        })
+        .or_else(|| {
+            SEPARATORS
+                .iter()
+                .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
+                .min_by_key(|tag| tag.len())
+        })?;
+    let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
+    let tag_words = words(tag);
+    let found = classify(tag, -1, 0);
+    let reads = (2..=32).contains(&tag.chars().count())
+        && (1..=4).contains(&tag_words.len())
+        && tag.chars().any(char::is_alphabetic)
+        && found.body.is_none()
+        && found.category.is_none()
+        && !found.unpacker
+        && !found.squish;
+    reads.then(|| tag.to_owned())
+}
+
+fn squish_folder() -> String {
+    aurora_i18n::tr!("inventory-sorter-variant-squish").to_owned()
+}
+
+/// The names of a folder and its parents, for the preview
+/// (`My Inventory / Home / Chairs`).
+pub fn folder_path(inv: &Inventory, id: Uuid) -> String {
+    let mut names: Vec<String> = actions::ancestors(inv, id)
+        .filter_map(|a| inv.folders.get(&a).map(|f| f.info.name.clone()))
+        .collect();
+    names.reverse();
+    names.join(" / ")
+}
+
+/// A folder a rule may send entries to: the user's own, not a system
+/// folder that refuses moves (`actions::destination`).
+pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders.get(&id).is_some_and(|f| !f.library) && actions::destination(inv, id) && !untouchable(inv, id)
 }
 
 /// One entry to move.
@@ -629,7 +907,11 @@ pub struct Move {
     pub id: Uuid,
     pub folder: bool,
     pub name: String,
-    pub path: Vec<String>,
+    /// The folder it is in now: a move whose entry left it is dropped.
+    pub from: Uuid,
+    pub to: Dest,
+    /// The destination as the preview names it.
+    pub label: String,
     pub unpacker: bool,
 }
 
@@ -647,7 +929,7 @@ impl Plan {
     pub fn groups(&self) -> Vec<(String, usize)> {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for m in &self.moves {
-            *counts.entry(m.path.join(" / ")).or_default() += 1;
+            *counts.entry(m.label.clone()).or_default() += 1;
         }
         let mut groups: Vec<_> = counts.into_iter().collect();
         groups.sort_by_cached_key(|(path, _)| crate::natural_order::key(path));
@@ -672,10 +954,49 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
         .min()
 }
 
-/// Whether the sorter can run on `source`: a loaded folder of the agent's
-/// own inventory that holds something, outside the Trash.
+/// The Trash and Marketplace Listings, at any depth: Auto-sort never takes
+/// anything out of them nor puts anything in (the Trash only through the
+/// confirmed Pre-Trash step, the ordinary delete path).
+pub fn untouchable(inv: &Inventory, id: Uuid) -> bool {
+    actions::in_type(inv, id, 14) || actions::in_type(inv, id, 53)
+}
+
+/// Whether the sorter can run on `source`: a folder of the agent's own
+/// inventory, outside the Trash and Marketplace Listings.
 pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
-    inv.folders.get(&source).is_some_and(|f| !f.library) && actions::mutable(inv, source) && !actions::in_type(inv, source, 14)
+    inv.folders.get(&source).is_some_and(|f| !f.library) && actions::mutable(inv, source) && !untouchable(inv, source)
+}
+
+/// The system folders a whole-inventory sort reads, besides the loose
+/// entries of My Inventory: those that collect deliveries and loose
+/// things. The Trash, Marketplace Listings, the outfits, the Current Outfit,
+/// Favorites and the Library are never read.
+const WHOLE_TYPES: &[i32] = &[0, 1, 3, 5, 6, 7, 10, 13, 15, 16, 20, 21, 50, 56, 57];
+
+/// The folders a whole-inventory sort takes the direct contents of: My
+/// Inventory (its loose items only) and its system folders of
+/// [`WHOLE_TYPES`], less the excluded ones. The user's own folders are
+/// their organisation: they are neither opened nor moved.
+pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
+    let mut sources = vec![inv.root];
+    if let Some(root) = inv.folders.get(&inv.root) {
+        sources.extend(root.children.iter().copied().filter(|id| {
+            inv.folders
+                .get(id)
+                .is_some_and(|f| !f.library && WHOLE_TYPES.contains(&f.info.type_default) && !prefs.excludes(inv, *id))
+        }));
+    }
+    sources
+}
+
+/// The plan of a whole-inventory sort (see [`whole_sources`]).
+pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let mut entries = Vec::new();
+    for source in whole_sources(inv, prefs) {
+        let folders = prefs.folders && source != inv.root;
+        entries.extend(contents(inv, source, prefs, folders));
+    }
+    plan_entries(inv, &entries, prefs, protected, worn)
 }
 
 /// Can `id` leave its folder for the sorted ones? The rules of a drag
@@ -683,6 +1004,7 @@ pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
 /// its folder).
 fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> bool {
     actions::relocatable(inv, id, protected)
+        && !untouchable(inv, id)
         && !holds_worn.contains(&id)
         && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
 }
@@ -693,10 +1015,13 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     let mut names: HashSet<String> = BODIES.iter().map(|b| b.body.to_lowercase()).collect();
     names.insert(Body::Several.folder().to_lowercase());
     names.insert(prefs.base_name().to_lowercase());
+    names.insert(pre_trash_name().to_lowercase());
+    names.insert(squish_folder().to_lowercase());
+    names.insert(aurora_i18n::tr!("inventory-sorter-stores").to_lowercase());
     for (category, _) in CATEGORY_WORDS {
         names.insert(category.folder().to_lowercase());
     }
-    for rule in &prefs.rules {
+    for rule in prefs.rules.iter().filter(|r| r.target.is_none()) {
         names.extend(split_path(&rule.folder).into_iter().map(|p| p.to_lowercase()));
     }
     names
@@ -706,29 +1031,48 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
 /// (`prefs.folders`), classified by its own name. Entries already in the
 /// folder they would go to are left out.
 pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
-    let mut plan = Plan::default();
-    let Some(folder) = inv.folders.get(&source) else { return plan };
-    let holds_worn = actions::worn_ancestors(inv, worn);
+    let entries = contents(inv, source, prefs, prefs.folders);
+    plan_entries(inv, &entries, prefs, protected, worn)
+}
+
+/// The direct contents of `source` a sort reads: its items, and its folders
+/// when `folders`, less the sorted folders themselves.
+fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -> Vec<Uuid> {
+    let Some(folder) = inv.folders.get(&source) else {
+        return Vec::new();
+    };
     let base = child(inv, inv.root, &prefs.base_name());
     let reserved = sorter_folder_names(prefs);
-    let mut entries: Vec<(Uuid, bool)> = folder.items.iter().map(|id| (*id, false)).collect();
-    if prefs.folders {
-        entries.extend(folder.children.iter().map(|id| (*id, true)));
+    let mut entries: Vec<Uuid> = folder.items.clone();
+    if folders {
+        // the sorted folders themselves stay where they are
+        entries.extend(folder.children.iter().copied().filter(|id| {
+            Some(*id) != base
+                && inv
+                    .folders
+                    .get(id)
+                    .is_some_and(|f| !reserved.contains(&f.info.name.trim().to_lowercase()))
+        }));
     }
+    entries
+}
+
+/// The moves of chosen entries, wherever they are: the selection a
+/// right-click sorts at once. A folder goes as a whole, by its own name.
+pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let mut plan = Plan::default();
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let base = child(inv, inv.root, &prefs.base_name());
     let mut candidates = Vec::new();
-    for (id, is_folder) in entries {
-        let (name, asset_type, flags) = match (is_folder, inv.folders.get(&id), inv.items.get(&id)) {
-            (true, Some(f), _) => {
-                if Some(id) == base || reserved.contains(&f.info.name.trim().to_lowercase()) {
-                    continue;
-                }
-                (f.info.name.clone(), -1, 0)
-            }
-            (false, _, Some(it)) => (it.name.clone(), it.asset_type, it.flags),
+    for id in entries.iter().copied() {
+        let (name, asset_type, flags, created, is_folder) = match (inv.folders.get(&id), inv.items.get(&id)) {
+            (Some(f), _) => (f.info.name.clone(), -1, 0, None, true),
+            (None, Some(it)) => (it.name.clone(), it.asset_type, it.flags, Some(it.created_at), false),
             _ => continue,
         };
-        if movable(inv, id, protected, &holds_worn) {
-            candidates.push((id, is_folder, name, asset_type, flags));
+        let Some(from) = actions::parent(inv, id) else { continue };
+        if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) {
+            candidates.push((id, is_folder, from, name, asset_type, flags, created));
         } else {
             plan.kept += 1;
         }
@@ -738,30 +1082,48 @@ pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &Hash
     use rayon::prelude::*;
     let read: Vec<_> = candidates
         .into_par_iter()
-        .map(|(id, folder, name, asset_type, flags)| {
-            let path = destination(&name, asset_type, flags, &prefs.rules);
+        .map(|(id, folder, from, name, asset_type, flags, created)| {
+            let to = target(&name, asset_type, flags, created, &prefs.rules, prefs.variants, prefs.stores);
             let unpacker = classify(&name, asset_type, flags).unpacker;
-            (id, folder, name, path, unpacker)
+            (id, folder, from, name, to, unpacker)
         })
         .collect();
-    for (id, folder, name, path, unpacker) in read {
-        let Some(path) = path else {
+    let base_name = prefs.base_name();
+    let pre_trash_at = pre_trash(inv);
+    let pre_trash_label = format!("{} / {}", folder_path(inv, inv.root), pre_trash_name());
+    for (id, folder, from, name, to, unpacker) in read {
+        let Some(to) = to else {
             plan.unknown.push(name);
             continue;
         };
-        // already sorted: its folder is the destination
-        if base.is_some_and(|base| resolve_existing(inv, base, &path) == Some(source)) {
-            continue;
-        }
+        let label = match &to {
+            // already sorted: its folder is the destination
+            Dest::Path(path) if base.is_some_and(|base| resolve_existing(inv, base, path) == Some(from)) => continue,
+            Dest::Folder(target) if *target == from || *target == id => continue,
+            Dest::PreTrash if pre_trash_at == Some(from) || pre_trash_at == Some(id) => continue,
+            Dest::PreTrash => pre_trash_label.clone(),
+            Dest::Folder(target) if !target_allowed(inv, *target) || actions::under(inv, *target, id) => {
+                // the rule's folder is gone or cannot receive it
+                plan.unknown.push(name);
+                continue;
+            }
+            Dest::Path(path) => std::iter::once(base_name.as_str())
+                .chain(path.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" / "),
+            Dest::Folder(target) => folder_path(inv, *target),
+        };
         plan.moves.push(Move {
             id,
             folder,
             name,
-            path,
+            from,
+            to,
+            label,
             unpacker,
         });
     }
-    plan.moves.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.name.cmp(&b.name)));
+    plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
     plan.unknown.sort_by_cached_key(|n| crate::natural_order::key(n));
     plan
 }
@@ -784,15 +1146,8 @@ pub enum Step {
 /// `queue`, with the folders they need. A folder that exists (any case) is
 /// reused; a missing one is created in the same mutation under a new id
 /// that later operations name. Entries that can no longer move (worn,
-/// deleted, moved away from `source` meanwhile) are dropped.
-pub fn step(
-    inv: &mut Inventory,
-    source: Uuid,
-    base_name: &str,
-    queue: &mut VecDeque<Move>,
-    protected: &HashSet<Uuid>,
-    worn: &HashSet<Uuid>,
-) -> Step {
+/// deleted, moved away from its folder meanwhile) are dropped.
+pub fn step(inv: &mut Inventory, base_name: &str, queue: &mut VecDeque<Move>, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Step {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut change = Mutation::default();
     // folders known in this mutation: (parent, lowercase name) → id
@@ -802,15 +1157,28 @@ pub fn step(
     let base_path = [base_name.to_owned()];
     'moves: while taken < BATCH {
         let Some(next) = queue.front() else { break };
-        let still_here = actions::parent(inv, next.id) == Some(source)
+        let still_here = actions::parent(inv, next.id) == Some(next.from)
             && inv.folders.contains_key(&next.id) == next.folder
             && movable(inv, next.id, protected, &holds_worn);
         if !still_here {
             queue.pop_front();
             continue;
         }
-        let path: Vec<String> = base_path.iter().chain(&next.path).cloned().collect();
-        let mut parent = inv.root;
+        let path: Vec<String> = match &next.to {
+            Dest::Folder(target) => {
+                if !target_allowed(inv, *target) {
+                    queue.pop_front();
+                    continue;
+                }
+                Vec::new()
+            }
+            Dest::Path(path) => base_path.iter().chain(path).cloned().collect(),
+            Dest::PreTrash => vec![pre_trash_name()],
+        };
+        let mut parent = match next.to {
+            Dest::Folder(target) => target,
+            Dest::Path(_) | Dest::PreTrash => inv.root,
+        };
         // The folders this move would create: kept apart until the whole
         // path resolves, so a wait leaves no half-made path in `change`.
         let mut new_folders = Vec::new();
@@ -864,13 +1232,12 @@ pub fn step(
             folder: m.folder,
             body: llsd_map! { "parent_id" => parent },
         });
-        change.refresh.push(parent);
+        change.refresh.extend([parent, m.from]);
         taken += 1;
     }
     if change.operations.is_empty() {
         return Step::Done;
     }
-    change.refresh.push(source);
     change.refresh.sort_unstable();
     change.refresh.dedup();
     Step::Change(Box::new(change), taken)
