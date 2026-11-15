@@ -14507,6 +14507,7 @@ admin-unfreeze-message = You are no longer frozen.
 
 ui-weather = Weather
 ui-weather-aurora = Aurora Weather
+ui-bars-aurora-weather = Aurora Weather…
 ui-weather-precipitation = Falling
 ui-weather-precipitation-tip = What falls from the sky, for your view only
 ui-weather-rain = Rain
