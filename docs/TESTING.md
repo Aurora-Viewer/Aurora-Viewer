@@ -10743,6 +10743,15 @@ separate searches enabled and disabled; that preference controls only the text.
   All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
   "Quick search" in the search options) brings quick search back with its
   text. The demo keeps saved searches in memory only.
+- `recent-date`, `aurora-recent-date`: the Recent tab in advanced mode
+  under the Date rule "newer than 5 days", the filter items dated a day
+  apart: six of them are listed, where the tab alone (since the last
+  logout, a day on a first launch) lists two. The rule replaces the tab's
+  limit, as the finder's hours ago replace "Since Logoff" on the Recent
+  Items panel of the Legacy Viewer; a rule on another field keeps it.
+  `recent-date` shows the classic window with the rule builder open in
+  the Filters floater, `aurora-recent-date` Aurora's narrow window with
+  its chip bar.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
