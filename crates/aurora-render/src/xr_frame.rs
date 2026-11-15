@@ -26,6 +26,9 @@ pub(crate) struct Eyes {
     pub head_rotation: Option<glam::Quat>,
     pub head_position: glam::Vec3,
     pub reference_changed: bool,
+    pub hands: [crate::GripState; 2],
+    pub tracking_to_world: glam::Mat4,
+    pub buttons: [u64; 2],
     pub textures: [wgpu::Texture; 2],
 }
 pub(crate) struct Session {
@@ -34,6 +37,7 @@ pub(crate) struct Session {
     stream: xr::FrameStream<GraphicsApi>,
     local: xr::Space,
     head: xr::Space,
+    input: Option<crate::xr_input::Input>,
     swaps: Vec<xr::Swapchain<GraphicsApi>>,
     images: Vec<Vec<wgpu::Texture>>,
     pub width: u32,
@@ -197,6 +201,20 @@ impl Session {
         }
         let local = session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY)?;
         let head = session.create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY)?;
+        let input = if crate::xr_input::enabled() {
+            match crate::xr_input::Input::new(instance, &session) {
+                Ok(input) => {
+                    log::info!("Experimental XR arm actions attached");
+                    Some(input)
+                }
+                Err(error) => {
+                    log::warn!("Experimental XR arm input unavailable: {error}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut swap_usage =
             xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::TRANSFER_SRC | xr::SwapchainUsageFlags::SAMPLED;
         let mut eye_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -307,6 +325,7 @@ impl Session {
             stream,
             local,
             head,
+            input,
             swaps,
             images,
             width,
@@ -514,6 +533,16 @@ impl Session {
         let cameras = [camera(0)?, camera(1)?];
         let head_position = anchor.head_position(pose(head.pose)).ok_or("Invalid tracked head position")?;
         let head_rotation = tracked.then(|| anchor.relative_head_rotation(pose(head.pose))).flatten();
+        let hands = self.input.as_mut().map_or([crate::GripState::Unavailable; 2], |input| {
+            input.sample(
+                &self.session,
+                &self.local,
+                frame.predicted_display_time,
+                anchor,
+                self.focused && tracked,
+            )
+        });
+        let buttons = self.input.as_ref().map_or([0; 2], |input| input.buttons);
         let mut output = Vec::new();
         for i in 0..2 {
             let index = self.swaps[i].acquire_image()? as usize;
@@ -530,6 +559,9 @@ impl Session {
             head_rotation,
             head_position,
             reference_changed,
+            hands,
+            tracking_to_world: anchor.tracking_transform(),
+            buttons,
             textures: [output.remove(0), output.remove(0)],
         }))
     }

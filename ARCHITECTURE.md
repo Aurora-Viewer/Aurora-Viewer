@@ -2142,6 +2142,32 @@ identity and the existing per-slot wire mask/cycles. `scene/ik/multiple.rs`
 combines same-bone targets by effective weight after their dependencies have
 resolved, using shaped material contacts and one capped joint influence.
 
+`arm_tracking.rs` makes our own avatar's arms follow wrist targets (an opt-in
+desktop panel, or OpenXR controllers with `AURORA_LIVE_VR_ARMS=1`). The targets
+go through the existing `ik::apply_goal` over a temporary copy after animation and
+existing IK, before joint palettes and attachments. Each chain is limited to
+shoulder, elbow and wrist: no joint translation and no body assistance. Switching
+it off removes the correction on the next frame. Authoring, previews, freezes and
+scripted contacts take precedence. It has no network or persistence path.
+
+`arm_tracking/live.rs` holds the calibration scope in a live session (own avatar,
+region, appearance and the attachment/skeleton signature). Scene reports readiness
+and tool precedence and checks the scope again after rebuilding the shaped
+skeleton; App invalidates activation and capture when the scope changes and on
+logout.
+
+`xr_input.rs` owns a session-bound action set: left/right grip spaces plus
+calibration and toggle buttons, located at the frame's predicted display time in
+LOCAL space. `Anchor::tracking_position` converts them with the exact eye-origin,
+yaw and correction transform, and `vr_control::ControllerPoses` carries per-hand
+validity, button counters, timestamp and reference identity across the existing
+render/main-thread boundary. `arm_tracking/xr.rs` keeps the neutral grip and
+wrist in LOCAL space, applies the scaled displacement there and only then maps the
+target through the current eye anchor and the inverse avatar model, so root motion
+and hand motion stay separate. Lost, stale or recentered input never reuses a
+target; a new capture is required. The actions are created only on opt-in; the
+standard VR camera and movement behaviour are unchanged.
+
 `scene/ik.rs` extends the same source protocol to named bones: analytic
 two-segment chains reuse the contact solver, longer ancestor paths use
 bounded CCD, and explicit direct mode converts a target into the bone's

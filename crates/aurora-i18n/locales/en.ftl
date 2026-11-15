@@ -14692,3 +14692,27 @@ joystick-layout-positional = Positional
 
 joystick-layout-auto = Automatic
 joystick-layout-xinput = XInput
+
+# Experimental offline arm tracking
+vr-arms-title = Experimental arm tracking
+vr-arms-help = Avatar-local metres: X forward, Y left, Z up. Normal animations continue.
+vr-arms-paused = Tracking yields to posing, animation previews and frozen poses.
+vr-arms-enable = Enable arm tracking
+vr-arms-left = Left wrist
+vr-arms-right = Right wrist
+vr-arms-reset = Reset target
+vr-arms-source-desktop = Desktop targets
+vr-arms-source-xr = OpenXR controllers
+vr-arms-xr-help = In VR: B or Y toggles tracking; A or X captures the current hands as neutral. Recalibrate after tracking loss or recentering. Normal animation continues.
+vr-arms-xr-calibrate = Calibrate neutral pose
+vr-arms-xr-scale = Motion scale
+vr-arms-xr-unavailable = VR input unavailable
+vr-arms-xr-inactive = Controller not active
+vr-arms-xr-lost = Tracking lost or invalid
+vr-arms-xr-needs-calibration = Tracked — calibrate neutral
+vr-arms-xr-ready = Tracked and calibrated
+vr-arms-xr-on = Arm tracking on
+vr-arms-xr-off = Arm tracking off
+vr-arms-xr-hint = { $state } · L: { $left } · R: { $right } · A/X: neutral · B/Y: tracking
+
+vr-arms-live-help = Your own avatar's arms follow your controllers. Activate, then capture your neutral pose (X or A). A change of avatar, appearance or region needs a new activation and capture. Local only: other people do not see it.

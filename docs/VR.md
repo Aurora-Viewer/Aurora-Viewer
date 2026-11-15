@@ -2,10 +2,43 @@
 
 Click **VR View** in the toolbar and choose **First Person**, **Avatar Mode**, or **Flycam**.
 
-Keyboard and gamepad movement work while the headset view is active. VR hand
-controllers and in-headset menus are not implemented. No viewer UI, nameplates,
+Keyboard and gamepad movement work while the headset view is active. Controller
+arm tracking is an opt-in experiment (below); in-headset menus are not implemented. No viewer UI, nameplates,
 worn HUDs, selection outlines or editing overlays appear in the headset.
 The desktop remains a left-eye mirror with an exit instruction.
+
+## Experimental controller arm tracking
+
+Your own avatar's arms can follow your Touch-style controllers. It is off by
+default and meant for people with a headset who want to try it.
+
+- **What it does.** The controllers' grip positions (not optical hand tracking)
+  become wrist targets for the existing two-link arm IK. Normal animation keeps
+  playing: only the shoulder and elbow are corrected, and the wrists and fingers
+  stay animated. Targets out of reach stop at the solver's limit; bones never stretch.
+- **Local only.** Other residents see your ordinary animations. Nothing is sent to
+  the simulator and no animation or appearance is uploaded.
+- **Turn it on.** Start the viewer with `AURORA_LIVE_VR_ARMS=1` and a connected
+  headset. The variable is read at startup because the controller actions are
+  created together with the OpenXR session. A small desktop panel opens with
+  tracking switched off.
+- **Use it.** Activate tracking in the panel, stand the way your avatar stands and
+  press **X** (left) or **A** (right) to capture your neutral pose. **Y** or **B**
+  switches tracking on and off. The arms then follow how far your hands move from
+  that pose, scaled by the panel's motion scale.
+- **When it lets go.** Tracking releases, and needs a new capture, after lost or
+  unfocused controllers, a teleport or region change, a change of appearance,
+  skeleton or joint override, pose editing or a frozen pose, logout, and sitting.
+  Animations from IK Edit, the Poser and scripted constraints take priority.
+- **Requirements.** An OpenXR runtime with Aurora's graphics binding, and Touch or
+  Touch Plus controllers. Tested on Windows with a Quest 3 through Virtual Desktop
+  (VDXR). No OpenVR or SteamVR dependency is added.
+- **Limits.** Position only; no wrist rotation, fingers or body fitting yet.
+  Animation overrides can occasionally fight the correction, and outfits with
+  unusual rigging may need a closer look. Nobody else sees the result.
+
+Offline test scenarios (desktop simulation or a headset, no grid) are listed in
+[Testing](TESTING.md) under `AURORA_DEMO_VR_ARMS`.
 
 ## Platform status
 

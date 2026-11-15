@@ -73,6 +73,7 @@ impl Graphics {
         }
         let mut extensions = xr::ExtensionSet::default();
         extensions.khr_vulkan_enable2 = true;
+        extensions.meta_touch_controller_plus = crate::xr_input::enabled() && available.meta_touch_controller_plus;
         let xr = entry.create_instance(
             &xr::ApplicationInfo {
                 application_name: "Aurora Vulkan interoperability",

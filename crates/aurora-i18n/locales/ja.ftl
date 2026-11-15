@@ -14610,3 +14610,27 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+# Experimental offline arm tracking
+vr-arms-title = 実験的な腕のトラッキング
+vr-arms-help = アバター基準のメートル：Xは前、Yは左、Zは上。通常のアニメーションは続行します。
+vr-arms-paused = ポーズ、アニメーションのプレビュー、静止ポーズが優先されます。
+vr-arms-enable = 腕のトラッキングを有効にする
+vr-arms-left = 左手首
+vr-arms-right = 右手首
+vr-arms-reset = ターゲットをリセット
+vr-arms-source-desktop = デスクトップのターゲット
+vr-arms-source-xr = OpenXRコントローラー
+vr-arms-xr-help = VR内：BまたはYで追跡のオン／オフ、AまたはXで現在の手をニュートラル位置に設定します。追跡の喪失やリセンター後は再調整してください。通常のアニメーションは続行します。
+vr-arms-xr-calibrate = ニュートラル位置を調整
+vr-arms-xr-scale = 動きの倍率
+vr-arms-xr-unavailable = VR入力を利用できません
+vr-arms-xr-inactive = コントローラーが非アクティブ
+vr-arms-xr-lost = 追跡が無効または失われました
+vr-arms-xr-needs-calibration = 追跡中 — ニュートラル調整が必要
+vr-arms-xr-ready = 追跡中・調整済み
+vr-arms-xr-on = 腕の追跡オン
+vr-arms-xr-off = 腕の追跡オフ
+vr-arms-xr-hint = { $state } · 左：{ $left } · 右：{ $right } · A/X：調整 · B/Y：追跡
+
+vr-arms-live-help = 自分のアバターの腕がコントローラーに追従します。有効にしてから、ニュートラル姿勢を記録してください（XまたはA）。アバター・外見・地域が変わったら、再度有効化と記録が必要です。この動きは自分の画面だけに反映され、他の人には見えません。
