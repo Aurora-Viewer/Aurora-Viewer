@@ -299,6 +299,9 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
+        // the conversation options (AURORA_DEMO_CONV_OPTIONS)
+        "conversation-options" => row(Page::Chat, 0, tr!("ui-options-im-tab-order")),
+        "history-fade" => row(Page::Chat, 3, tr!("ui-options-history-fade")),
         "script-errors" => row(Page::Chat, 0, tr!("ui-options-script-errors-in-chat")),
         "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
         "joystick-zoom" => row(Page::Controls, 1, tr!("joystick-zoom-mode")),

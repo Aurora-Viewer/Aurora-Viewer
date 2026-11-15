@@ -4945,6 +4945,7 @@ impl World {
             } else {
                 im.message.clone()
             };
+            self.social.offline_ims |= im.offline;
             let line = ChatLine {
                 time: SystemTime::now(),
                 from,
@@ -7950,6 +7951,44 @@ mod motion_tests {
         assert!(world.im_messages.is_empty(), "no message");
         world.apply(notice(&world, IM_TYPING_STOP));
         assert!(!world.social.is_typing(&from));
+    }
+
+    /// FSOpenIMContainerOnOfflineMessage: a message kept while we were
+    /// offline, a resident's or a group's, raises the flag the app opens
+    /// the Conversations window on; a live one does not.
+    #[test]
+    fn offline_messages_raise_the_open_conversations_flag() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(78);
+        let im = |world: &World, offline| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Writer Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message: "hello".into(),
+                offline,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        world.apply(im(&world, false));
+        assert!(!world.social.offline_ims, "a live message");
+        world.apply(im(&world, true));
+        assert!(world.social.offline_ims, "kept while we were offline");
+        world.social.offline_ims = false;
+        world.apply(NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: Uuid::from_u128(0x6E00_0077),
+            from,
+            from_name: "Writer Resident".into(),
+            message: "for the group".into(),
+            session_name: "A Group".into(),
+            offline: true,
+            timestamp: 0,
+        }));
+        assert!(world.social.offline_ims, "a group's offline message");
     }
 
     fn inventory_offer(world: &World, dialog: u8, bucket: Vec<u8>) -> NetEvent {
