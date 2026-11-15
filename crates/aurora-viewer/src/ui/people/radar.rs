@@ -587,6 +587,7 @@ fn paint_row(
                 // by the human), then the name
                 let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
                 widgets::avatar_picture(ui, p, picture, data.pics.get(&row.id), &row.name, row.muted);
+                crate::ui::avatar_marks::ring(ui, world, &row.id, picture, false);
                 let cell = cell.with_min_x(picture.right());
                 // friends in bold, blocked residents in italics
                 let mut format = egui::TextFormat {
