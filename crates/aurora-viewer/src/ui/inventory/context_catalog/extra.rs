@@ -601,7 +601,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 c.add(
                     key,
                     TEXT,
-                    "player-play-filled",
+                    if local { "player-play-filled" } else { "world-filled" },
                     label,
                     selected.iter().all(|item| !item.asset_id.is_nil()),
                     super::Command::Batch(batch),

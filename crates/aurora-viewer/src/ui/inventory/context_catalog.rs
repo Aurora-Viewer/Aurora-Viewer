@@ -563,7 +563,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     c.invoke(
                         "play-world",
                         TEXT,
-                        "player-play-filled",
+                        "world-filled",
                         aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Animation {
@@ -597,7 +597,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     c.invoke(
                         "play-sound-world",
                         TEXT,
-                        "volume",
+                        "world-filled",
                         aurora_i18n::tr!("common-play-in-world"),
                         single && !it.asset_id.is_nil(),
                         InvAction::TriggerSound(it.asset_id),

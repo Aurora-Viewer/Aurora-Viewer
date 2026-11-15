@@ -645,14 +645,15 @@ pub(super) fn preview(
                     .color(p.muted),
             );
         } else if it.asset_type == 1 {
-            // LLPreviewSound::{auditionSound,playSound} (indra/newview/llpreviewsound.cpp):
-            // audition stays local; world playback shares the inventory double-click trigger.
+            // LLPreviewSound::{playSound,auditionSound} (indra/newview/llpreviewsound.cpp,
+            // floater_preview_sound.xml): "Play Inworld" first, through the inventory
+            // double-click trigger, then the local audition.
             ui.horizontal(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
-                    actions.push(InvAction::Sound(it.asset_id));
-                }
                 if flat_button(ui, p, aurora_i18n::tr!("common-play-in-world")).clicked() {
                     actions.push(InvAction::TriggerSound(it.asset_id));
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
+                    actions.push(InvAction::Sound(it.asset_id));
                 }
             });
         } else {

@@ -3,7 +3,8 @@
 //! creator, your rights and the next owner's, the main actions) and the
 //! details pane of the wide width, which also sets the next owner's rights
 //! as the properties do (LLSidepanelItemInfo, LLFloaterProperties). The
-//! actions follow the item type (wear, open, teleport, local or world sound playback…).
+//! main action is the one a double-click does (wear, open, teleport, play a
+//! sound in world…); a sound also offers its local audition beside it.
 
 use super::super::permissions::{Permissions, Rights};
 use super::super::*;
@@ -56,7 +57,7 @@ impl Main {
             Self::TakeOff => ("hanger-2-filled", aurora_i18n::tr!("inventory-take-off")),
             Self::Open => ("folder-open-filled", aurora_i18n::tr!("common-open")),
             Self::Teleport => ("map-pin-filled", aurora_i18n::tr!("common-teleport")),
-            Self::Play => ("player-play-filled", aurora_i18n::tr!("common-play-locally")),
+            Self::Play => ("world-filled", aurora_i18n::tr!("common-play-in-world")),
             Self::Activate(true) => ("player-play-filled", aurora_i18n::tr!("gesture-activate")),
             Self::Activate(false) => ("player-stop-filled", aurora_i18n::tr!("gesture-deactivate")),
             Self::Profile => ("user-filled", aurora_i18n::tr!("inventory-profile")),
@@ -75,13 +76,15 @@ impl Main {
         let original = rules::original(inv, id);
         match self {
             Self::Wear | Self::TakeOff => context::double_click(inv, id, st, prefs, facts, actions),
+            // LLSoundBridge::performAction("sound_play") and the double-click
+            // (LLSoundBridgeAction): the sound plays in world for everyone.
             Self::Play => {
                 if let Some(asset) = original
                     .and_then(|id| inv.items.get(&id))
                     .map(|it| it.asset_id)
                     .filter(|a| !a.is_nil())
                 {
-                    actions.push(InvAction::Sound(asset));
+                    actions.push(InvAction::TriggerSound(asset));
                 }
             }
             Self::Activate(on) => {
@@ -94,20 +97,21 @@ impl Main {
     }
 }
 
-/// Use the same world trigger as inventory double-click, beside the local audition.
-fn sound_world_button(ui: &mut egui::Ui, p: &Palette, asset: Uuid, ready: bool, actions: &mut Vec<InvAction>) {
+/// The local audition beside the world playback of the main action
+/// (LLPreviewSound::auditionSound, indra/newview/llpreviewsound.cpp).
+fn sound_local_button(ui: &mut egui::Ui, p: &Palette, asset: Uuid, ready: bool, actions: &mut Vec<InvAction>) {
     if widgets::action_button_if(
         ui,
         p,
         "player-play-filled",
-        aurora_i18n::tr!("common-play-in-world"),
+        aurora_i18n::tr!("common-play-locally"),
         widgets::ActionKind::Flat,
         Vec2::new(0.0, BUTTON),
         ready && !asset.is_nil(),
     )
     .clicked()
     {
-        actions.push(InvAction::TriggerSound(asset));
+        actions.push(InvAction::Sound(asset));
     }
 }
 
@@ -391,7 +395,7 @@ pub(super) fn strip(
             }
         }
         if original.asset_type == 1 {
-            sound_world_button(ui, p, original.asset_id, st.pending.is_none(), actions);
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
         }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
@@ -623,7 +627,7 @@ pub(super) fn pane(
             }
         }
         if original.asset_type == 1 {
-            sound_world_button(ui, p, original.asset_id, st.pending.is_none(), actions);
+            sound_local_button(ui, p, original.asset_id, st.pending.is_none(), actions);
         }
         if can_add(inv, id, facts, st)
             && widgets::action_button(
