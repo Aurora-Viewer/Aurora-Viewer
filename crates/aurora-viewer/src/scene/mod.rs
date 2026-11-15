@@ -835,6 +835,12 @@ pub struct AvatarSample {
     pub animations_max: usize,
 }
 
+/// How long an object drawn in a new pose stays out of the rain's shelter
+/// map (`Scene::moves_for_shelter`): longer than the map's refresh with the
+/// shadows off (renderer.rs SHELTER_REFRESH, 1 s) and than a script's usual
+/// timer, so a rotation stepped every few seconds never lands in it.
+pub(super) const MOVED_SHELTER_HOLD: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct Scene {
     /// Aurora Weather: the lying snow's detail texture.
     pub snow_detail: snow_detail::SnowDetail,
@@ -1014,6 +1020,13 @@ pub struct Scene {
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
+    /// When objects were last drawn in a new place or turn by a move sync:
+    /// out of the rain's shelter map for a while after (`moves_for_shelter`).
+    moved_lately: HashMap<usize, Instant>,
+    /// This sync follows a shift of the render origin (a region crossing,
+    /// the GPU's recovery): every object is placed anew, none moved, so
+    /// `apply_move` records no move (`new_pose_for_shelter`).
+    origin_shifted: bool,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -1682,6 +1695,8 @@ impl Scene {
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
             mirror_objects: Default::default(),
+            moved_lately: HashMap::new(),
+            origin_shifted: false,
             selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
@@ -2320,6 +2335,8 @@ impl Scene {
         }
         self.removal_pending[i] = false;
         self.sets.forget(i);
+        // (a new object in the slot is not held out of the shelter map)
+        self.moved_lately.remove(&i);
         self.anchors.forget(i);
         self.pick.remove(i);
         self.list_index.remove(i);
@@ -2372,6 +2389,7 @@ impl Scene {
         // (our avatar is a first appearance again at the next login)
         self.loading = Default::default();
         self.last_origin = None;
+        self.moved_lately.clear();
         self.sets.clear();
         self.anchors.clear();
         self.hud_roots.clear();
@@ -2991,7 +3009,8 @@ impl Scene {
             }
         }
 
-        if self.update_origin(world) {
+        self.origin_shifted = self.update_origin(world);
+        if self.origin_shifted {
             renderer.cut_motion_history();
             self.water.clear(renderer);
         }
@@ -3010,6 +3029,17 @@ impl Scene {
         let now = self.held_at.unwrap_or_else(Instant::now);
         let n = world.objects.slots.len();
         let agent = world.agent_id;
+        // what stopped moving a while ago goes back into the rain's shelter
+        // map: synced once more (touched), which finds it still
+        if !self.moved_lately.is_empty() {
+            self.moved_lately.retain(|&idx, at| {
+                let held = now.saturating_duration_since(*at) < MOVED_SHELTER_HOLD;
+                if !held {
+                    world.objects.touch(idx);
+                }
+                held
+            });
+        }
         // objects changed since the last frame
         let mut touched = std::mem::take(&mut self.touched_tmp);
         world.objects.take_touched(&mut touched);
@@ -3447,8 +3477,14 @@ impl Scene {
     fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
         self.note_light(world, idx);
         let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
-        // (as `sync_object`: what moves is out of the rain's shelter map)
-        let physical = world.objects.get(idx).is_some_and(|o| o.update_flags & 1 != 0) || Self::linkset_moving(world, idx);
+        // (as `sync_object`: what moves is out of the rain's shelter map; a
+        // new pose drawn counts, whatever moved it: a script's llSetRot on a
+        // timer reports no motion)
+        let now = self.held_at.unwrap_or_else(Instant::now);
+        if Self::new_pose_for_shelter(m.changed, m.xf.2, m.anchor.is_some(), self.origin_shifted) {
+            self.moved_lately.insert(idx, now);
+        }
+        let physical = Self::moves_for_shelter(world, &self.moved_lately, idx, now);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
@@ -3753,15 +3789,15 @@ impl Scene {
             },
             own: hud || wearer.is_some_and(|(id, _)| id == world.agent_id),
         };
+        // FLAGS_USE_PHYSICS, or moving now (`moves_for_shelter`): the snow
+        // is laid where it stands from the ground's memory, so on what moves
+        // it slid over it
+        let moving = Self::moves_for_shelter(world, &self.moved_lately, idx, self.held_at.unwrap_or_else(Instant::now));
         let g = &mut self.gpu[idx];
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
-        // FLAGS_USE_PHYSICS, or moving now (its linkset reported with a
-        // velocity or a spin: keyframed motion, a scripted walker): the
-        // snow is laid where it stands from the ground's memory, so on what
-        // moves it slid over it
-        g.physical = o.update_flags & 1 != 0 || Self::linkset_moving(world, idx);
+        g.physical = moving;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -4357,14 +4393,37 @@ impl Scene {
         self.gpu[idx] = g;
     }
 
-    /// Whether object `idx` or a prim it is linked to (up to its root) was
-    /// last reported moving or turning.
-    fn linkset_moving(world: &World, mut idx: usize) -> bool {
+    /// Whether a move sync drew object `idx` in a new pose of its own, which
+    /// holds it out of the rain's shelter map (`MOVED_SHELTER_HOLD`): its
+    /// model matrix changed, it is no HUD and not placed by the GPU from an
+    /// anchor, and the render origin did not shift this sync. A region
+    /// crossing changes every object's matrix: counted as moves, nothing
+    /// stood in the map for 5 s, the rain fell inside every building and
+    /// the weather memory wetted (or snowed on) the floors under them.
+    pub(super) fn new_pose_for_shelter(changed: bool, hud: bool, anchored: bool, origin_shifted: bool) -> bool {
+        changed && !hud && !anchored && !origin_shifted
+    }
+
+    /// Whether object `idx` moves as far as the rain's shelter map is
+    /// concerned, it or a prim it is linked to (up to its root): physical
+    /// (FLAGS_USE_PHYSICS), drawn moving (`Object::has_motion`: a reported
+    /// velocity or spin however slow, a correction fading; the same test as
+    /// the drawing's, where a threshold of its own left a slow spin in the
+    /// map), or drawn in a new pose within `MOVED_SHELTER_HOLD` (a rotation
+    /// a script steps carries no motion). The map is drawn from what stands
+    /// still: what moves in it lays its old shape under the snow and the
+    /// rain, in the map's squares (#3642).
+    pub(super) fn moves_for_shelter(world: &World, moved_lately: &HashMap<usize, Instant>, mut idx: usize, now: Instant) -> bool {
+        let lately = |i: usize| {
+            moved_lately
+                .get(&i)
+                .is_some_and(|at| now.saturating_duration_since(*at) < MOVED_SHELTER_HOLD)
+        };
         for _ in 0..16 {
             let Some(o) = world.objects.get(idx) else {
                 return false;
             };
-            if o.velocity.length_squared() > 1e-4 || o.angular_velocity.length_squared() > 1e-4 {
+            if o.update_flags & 1 != 0 || o.has_motion() || lately(idx) {
                 return true;
             }
             let Some(parent) = world.objects.parent_of(o) else {

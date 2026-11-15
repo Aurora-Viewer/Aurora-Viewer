@@ -7046,6 +7046,11 @@ impl Backend {
         u.rain_wet_step = self.rain_wet.step;
         u.snow_cover = self.rain_wet.snow_cover;
         u.snow_cover[3] = f.rain_look.snow_detail as f32;
+        // + 8: "Snow settles" off, no lying snow drawn (env.wgsl
+        // `snow_hidden`)
+        if !f.rain_look.snow_settles {
+            u.snow_cover[2] += 8.0;
+        }
         u.snow_trail = self.snow_trail.uniform;
         // my avatar: deep snow's grid centred on it, not on the camera (an
         // orbiting camera would move it, and its cells resample what they
