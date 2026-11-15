@@ -155,9 +155,9 @@ impl Stand {
     /// Each frame while the stand is open: whether the ground lock was lost
     /// from outside. The lock sat us down and the server confirmed it; if we
     /// no longer sit (the shape editor's stand-up, a script unsit, the user
-    /// standing, a teleport), the lock is dropped and this returns true, so
-    /// that the checkbox follows what the avatar does for the rest of this
-    /// opening (`lock_shown`). The saved setting is left alone: the Legacy
+    /// standing, a teleport), the lock is dropped and this returns true,
+    /// once, for the log. From then on `lock_shown` unticks the checkbox for
+    /// the rest of this opening. The saved setting is left alone: the Legacy
     /// Viewer keeps FSPoseStandLock on, so the next opening locks again.
     /// The stand's own moves never trigger it: `set_lock` clears the
     /// confirmation, and `close` releases the lock itself. Nothing sits the
