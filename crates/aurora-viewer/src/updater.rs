@@ -503,13 +503,13 @@ impl Updater {
         if self.busy() {
             return;
         }
-        if !cfg!(windows) || release.archive.is_none() || release.checksum.is_none() {
+        if !aurora_updater::installs_here() || release.archive.is_none() || release.checksum.is_none() {
             if show {
                 self.state = State::Error(Failure::Unsupported);
                 self.open = true;
             } else {
-                // no package to install here (macOS, Linux): the notice
-                // offers the version, the window links its page
+                // no package to install here (macOS): the notice offers the
+                // version, the window links its page
                 self.quiet_download = false;
                 self.notice = Some(Notice {
                     version: release.version.clone(),
@@ -542,9 +542,17 @@ impl Updater {
                             Failure::Unsupported
                         });
                     }
+                    // a sandbox's folder or one this account may not write:
+                    // the package manager or the bundle owns the viewer
+                    if let Some(problem) = aurora_updater::install::self_update_problem(parent) {
+                        return Err(problem);
+                    }
                     Workspace::new(parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
-                        Failure::Filesystem
+                        match e.downcast_ref::<std::io::Error>().map(std::io::Error::kind) {
+                            Some(std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem) => Failure::Protected,
+                            _ => Failure::Filesystem,
+                        }
                     })
                 })
                 .await
