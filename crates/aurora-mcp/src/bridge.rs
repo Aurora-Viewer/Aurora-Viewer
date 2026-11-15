@@ -732,11 +732,7 @@ impl ViewerRequest {
             | ViewerRequest::PoserInspect { .. }
             | ViewerRequest::FloaterList
             | ViewerRequest::ObjectContents { .. }
-<<<<<<< ours
-=======
             | ViewerRequest::InventoryOffers
-            | ViewerRequest::ScriptPromptList
->>>>>>> theirs
             | ViewerRequest::ViewportCapture { .. }
             | ViewerRequest::InventoryBrowse { .. }
             | ViewerRequest::InventorySearch { .. }
