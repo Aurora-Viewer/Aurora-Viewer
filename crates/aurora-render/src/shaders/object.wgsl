@@ -1917,10 +1917,16 @@ struct StParams {
     frame_seed: u32,
     _pad: u32,
 };
-// masks[R * ST_SEEDS + seed]: a random R-subset of the S sample bits
+// masks[R * ST_SEEDS + seed]: a random R-subset of the S sample bits; after
+// the (S + 1) * ST_SEEDS subsets, the 64 x 64 tile of ranks (blue noise, a
+// permutation of 0..4095) that dithers R
 @group(3) @binding(30) var<storage, read> st_masks: array<u32>;
 @group(3) @binding(31) var<uniform> st: StParams;
 const ST_SEEDS: u32 = 2048u;
+const ST_TILE: u32 = 64u;
+// Whether the alpha passes test a fragment's alpha for a NaN (oit_stochastic.rs
+// `with_guards` turns it off for a measurement, AURORA_ST_GUARDS=0)
+const ST_GUARDS: bool = true;
 
 fn st_hash(v: u32) -> u32 {
     var x = v * 747796405u + 2891336453u;
@@ -1928,18 +1934,29 @@ fn st_hash(v: u32) -> u32 {
     return (x >> 22u) ^ x;
 }
 
-// The whole S-bit mask of a fragment of alpha `a`.
+// The whole S-bit mask of a fragment of alpha `a`: R = floor(a S + xi) of the
+// S samples, with xi in 24-bit fixed point, so that its mean over a tile is
+// exactly 1/2 and E[R] = a S.
 fn st_mask(px: vec2<u32>, tie: u32, prim: u32, a: f32) -> u32 {
-    // the primitive's own seed (and the frame's when temporal) rotates the
-    // pixel's white-noise value that dithers R
-    var seed = st_hash(st_hash(tie * 0x9e3779b9u + 0x7f4a7c15u) ^ st_hash(prim + 0x632be5abu));
+    // the primitive's own seed: it rotates the dither, so that layers stay
+    // decorrelated, and (with the frame's when temporal) picks the subset
+    let layer = st_hash(st_hash(tie * 0x9e3779b9u + 0x7f4a7c15u) ^ st_hash(prim + 0x632be5abu));
+    var seed = layer;
+    var frame = 0u;
     if ((st.flags & 1u) != 0u) {
-        seed = st_hash(seed + st.frame_seed);
+        // the subset is hashed again every frame; the dither instead advances
+        // by the golden ratio conjugate (frame_seed is frame * 0x9e3779b9,
+        // that fraction of 2^32), so that 8 frames hold 8 well spread values
+        // of xi (Enderton et al., "Stochastic Transparency", I3D 2010,
+        // section 5, stratified seeds)
+        seed = st_hash(layer + st.frame_seed);
+        frame = st.frame_seed >> 8u;
     }
-    let h = st_hash(px.x | (px.y << 16u));
-    let pv = vec2<f32>(f32(h >> 8u), f32(st_hash(h) >> 8u)) / 16777216.0;
-    let rot = vec2<f32>(f32(seed >> 8u), f32(st_hash(seed) >> 8u)) / 16777216.0;
-    let dither = fract(pv + rot).x;
+    // xi: the pixel's stratum in the blue-noise tile (section 3.1, R dithered
+    // across a tile), rotated by the primitive's own offset (Cranley-Patterson)
+    let rank = st_masks[(st.samples + 1u) * ST_SEEDS + (px.y & (ST_TILE - 1u)) * ST_TILE + (px.x & (ST_TILE - 1u))];
+    let xi24 = ((2u * rank + 1u) * 2048u + (layer >> 8u) + frame) & 0xffffffu;
+    let dither = f32(xi24) / 16777216.0;
     // the subset is hashed from the layer's seed and the pixel, whatever the
     // pixel values: two layers whose rotations met on one table index would
     // otherwise share a subset over their whole overlap and hide the back one
@@ -1964,7 +1981,7 @@ fn water_clipped(world_pos: vec3<f32>) -> bool {
 // number, which would take the pixel's total alpha, then the scene under it;
 // never over 1 (a transparency under 0).
 fn st_alpha(a: f32) -> f32 {
-    if (not_finite(a) || a < 0.004) {
+    if ((ST_GUARDS && not_finite(a)) || a < 0.004) {
         return -1.0;
     }
     return min(a, 1.0);

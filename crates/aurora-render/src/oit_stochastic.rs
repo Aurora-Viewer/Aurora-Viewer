@@ -61,8 +61,18 @@
 //! the scene module, `without_st`), their pipelines, buffers and targets
 //! come with the first use, and the targets go when the method is off or
 //! unused for a while. The masks come from a table of random S-choose-R
-//! subsets (`mask_table`), fixed for every launch; the seed is the pixel,
-//! the face's tie-break and the triangle. Needs multisampled targets of at
+//! subsets (`mask_table`), fixed for every launch; the subset's seed is the
+//! pixel, the face's tie-break and the triangle. R itself, floor(alpha S +
+//! xi), is dithered by a 64 x 64 blue-noise tile in which every stratum of
+//! xi appears once (paper section 3.1, "R could be dithered across a
+//! tile"), rotated by the primitive's own offset to keep the layers
+//! decorrelated: the error of R over a neighbourhood is high-frequency, and
+//! its mean stays alpha S. With the temporal blend the dither of a pixel
+//! advances every frame by the golden ratio conjugate (in 24-bit fixed
+//! point, so it stays exact at any frame number) instead of being drawn
+//! again: eight consecutive frames hold eight well spread values of xi
+//! (paper section 5, stratified seeds), and the sum of their R stays within
+//! 1 of 8 alpha S. Needs multisampled targets of at
 //! least 2 samples (every device has 4), and `PRIMITIVE_INDEX` for the
 //! triangle in the seed (without it the seed is per face: coplanar
 //! fragments of one face then occlude instead of blending).
@@ -72,6 +82,13 @@ use bytemuck::{Pod, Zeroable};
 
 /// Seeds per alpha level in the mask table (the paper's width, 2 047).
 pub const SEEDS: u32 = 2048;
+/// The side of the blue-noise tile that dithers R (object.wgsl `ST_TILE`).
+pub const TILE: u32 = 64;
+/// The tile's cells: the strata of xi, each once.
+const TILE_CELLS: usize = (TILE * TILE) as usize;
+/// The tile's ranks, 16 bits each, little-endian: `void_and_cluster` of the
+/// tests made it, a test compares them.
+const TILE_BYTES: &[u8; TILE_CELLS * 2] = include_bytes!("oit_stochastic_tile.bin");
 /// The most samples a stochastic pass takes (the expand map's size).
 pub const MAX_PASS_SAMPLES: u32 = 8;
 /// The temporal blend's least weight of the current frame (where the
@@ -221,6 +238,46 @@ pub(crate) fn st_object_source_with(src: &str, prim: bool) -> String {
     }
 }
 
+/// `src` (the method's object.wgsl or the resolve's source) with its
+/// `ST_GUARDS` constant set: false turns off the tests for a NaN of the
+/// alpha passes and of the resolve's samples (`AURORA_ST_GUARDS=0`, to
+/// measure what they cost; the history's test stays). Unchanged when on.
+pub(crate) fn with_guards(src: String, on: bool) -> String {
+    if on {
+        return src;
+    }
+    let off = src.replace("const ST_GUARDS: bool = true;", "const ST_GUARDS: bool = false;");
+    debug_assert_ne!(off, src, "no ST_GUARDS constant to turn off");
+    off
+}
+
+/// Whether an `AURORA_ST_GUARDS` value leaves the NaN tests on: only `0`
+/// turns them off.
+fn guards_from(value: Option<&str>) -> bool {
+    value.map(str::trim) != Some("0")
+}
+
+/// `AURORA_ST_GUARDS` read once (a measurement switch, docs/TESTING.md).
+fn guards_on() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| guards_from(std::env::var("AURORA_ST_GUARDS").ok().as_deref()))
+}
+
+/// The most samples an `AURORA_ST_SAMPLES` value allows a pass: 4 or 8;
+/// anything else, or none, leaves the most there is.
+fn samples_cap_from(value: Option<&str>) -> u32 {
+    match value.map(str::trim) {
+        Some("4") => 4,
+        _ => MAX_PASS_SAMPLES,
+    }
+}
+
+/// `AURORA_ST_SAMPLES` read once (a measurement switch, docs/TESTING.md).
+fn samples_cap() -> u32 {
+    static VALUE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| samples_cap_from(std::env::var("AURORA_ST_SAMPLES").ok().as_deref()))
+}
+
 /// The directive the method's module starts with when the triangle index
 /// is read (`enable primitive_index;`), empty otherwise.
 pub(crate) fn enable_directive(device: &wgpu::Device) -> &'static str {
@@ -241,9 +298,12 @@ pub(crate) fn enable_directive_with(prim: bool) -> &'static str {
 pub(crate) fn st_scene_source(device: &wgpu::Device) -> String {
     // (the passes of the exact blend order stay in the source, unused: without
     // the attribute a device may not know, as `blend_exact::scene_source`)
-    let object = st_object_source(
-        device,
-        &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+    let object = with_guards(
+        st_object_source(
+            device,
+            &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+        ),
+        guards_on(),
     );
     let object = if device.features().contains(crate::blend_exact::EARLY_TEST) {
         object
@@ -287,6 +347,27 @@ pub fn mask_table(samples: u32) -> Vec<u32> {
         }
     }
     table
+}
+
+/// The tile of ranks (a permutation of 0..4095, blue noise), `[y * TILE + x]`:
+/// stratum (rank + 0.5) / 4096 of xi, the value that dithers R in a pixel.
+pub fn tile_ranks() -> Vec<u32> {
+    let (pairs, _) = TILE_BYTES.as_chunks::<2>();
+    pairs.iter().map(|&b| u32::from(u16::from_le_bytes(b))).collect()
+}
+
+/// What the masks buffer holds for `samples` bits: the table of masks
+/// (`mask_table`), then the tile (`tile_ranks`), at `(samples + 1) * SEEDS`.
+fn mask_buffer(samples: u32) -> Vec<u32> {
+    let mut words = mask_table(samples);
+    words.extend(tile_ranks());
+    words
+}
+
+/// The sample counts a pass may take: the device's, up to `cap` (a count
+/// the scene itself has stays, so that the passes can share it).
+fn capped(supported: &[u32], scene: u32, cap: u32) -> Vec<u32> {
+    supported.iter().copied().filter(|&n| n <= cap || n == scene).collect()
 }
 
 /// The samples per stochastic pass for a scene of `scene` samples: the most
@@ -603,10 +684,13 @@ impl Stochastic {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit stochastic"),
-            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
-                &["oit_stochastic.wgsl"],
-                include_str!("shaders/oit_stochastic.wgsl"),
-            )),
+            source: wgpu::ShaderSource::Wgsl(
+                with_guards(
+                    crate::water_shader_source(&["oit_stochastic.wgsl"], include_str!("shaders/oit_stochastic.wgsl")).into_owned(),
+                    guards_on(),
+                )
+                .into(),
+            ),
         });
         let expand_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit stochastic expand"),
@@ -657,7 +741,7 @@ impl Stochastic {
         // own count when the targets are made
         let masks = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("oit stochastic masks"),
-            size: u64::from((MAX_PASS_SAMPLES + 1) * SEEDS * 4),
+            size: u64::from(((MAX_PASS_SAMPLES + 1) * SEEDS + TILE * TILE) * 4),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -765,7 +849,7 @@ impl Stochastic {
             self.targets = Some(made);
             queue.write_buffer(&self.expand_params, 0, bytemuck::cast_slice(&expand_map(f.samples, pass)));
             if self.mask_pass != pass {
-                queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(&mask_table(pass)));
+                queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(&mask_buffer(pass)));
                 self.mask_pass = pass;
             }
         }
@@ -1177,7 +1261,7 @@ impl Stochastic {
 impl Shared {
     /// The samples per stochastic pass for a scene of `scene` samples.
     pub fn pass_samples(&self, scene: u32) -> u32 {
-        pass_samples(scene, &self.pass_supported)
+        pass_samples(scene, &capped(&self.pass_supported, scene, samples_cap()))
     }
 
     /// The scene module for the sample mask route: `src` (the scene's WGSL
@@ -1473,6 +1557,310 @@ mod tests {
         assert!(row.iter().any(|&m| m != row[0]));
         // the same every call
         assert_eq!(mask_table(8), mask_table(8));
+    }
+
+    /// The 64 x 64 blue-noise tile by void-and-cluster (Ulichney 1993): the rank
+    /// (0..4095) of every cell, a permutation of the strata. Energies are
+    /// integers, so the result is the same on every platform.
+    fn void_and_cluster() -> Vec<u16> {
+        const W: usize = 64;
+        const N: usize = W * W;
+        const R: i32 = 6;
+        // the toroidal gaussian (sigma 1.5, cut at 4 sigma), in 16.16
+        let mut kernel = Vec::new();
+        for dy in -R..=R {
+            for dx in -R..=R {
+                let w = (-f64::from(dx * dx + dy * dy) / (2.0 * 1.5 * 1.5)).exp();
+                kernel.push((dx, dy, (w * 65536.0).round() as i64));
+            }
+        }
+        let splat = |energy: &mut Vec<i64>, i: usize, sign: i64| {
+            let (x, y) = ((i % W) as i32, (i / W) as i32);
+            for &(dx, dy, w) in &kernel {
+                let j = (y + dy).rem_euclid(W as i32) as usize * W + (x + dx).rem_euclid(W as i32) as usize;
+                energy[j] += sign * w;
+            }
+        };
+        // the first one with the highest (tightest) or lowest (largest void) energy
+        let pick = |energy: &[i64], pattern: &[bool], ones: bool, max: bool| {
+            (0..N)
+                .filter(|&i| pattern[i] == ones)
+                .reduce(|b, i| {
+                    if (max && energy[i] > energy[b]) || (!max && energy[i] < energy[b]) {
+                        i
+                    } else {
+                        b
+                    }
+                })
+                .unwrap_or(0)
+        };
+        // an initial pattern of N / 10 pseudo-random ones
+        let mut state: u64 = 0x1234_5678_9abc_def0;
+        let mut next = move || {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        };
+        let mut cells: Vec<usize> = (0..N).collect();
+        let ones = N / 10;
+        let mut pattern = vec![false; N];
+        let mut energy = vec![0i64; N];
+        for i in 0..ones {
+            let j = i + (next() % (N - i) as u64) as usize;
+            cells.swap(i, j);
+            pattern[cells[i]] = true;
+            splat(&mut energy, cells[i], 1);
+        }
+        // swap the tightest cluster to the largest void until they agree
+        loop {
+            let tight = pick(&energy, &pattern, true, true);
+            pattern[tight] = false;
+            splat(&mut energy, tight, -1);
+            let void = pick(&energy, &pattern, false, false);
+            pattern[void] = true;
+            splat(&mut energy, void, 1);
+            if void == tight {
+                break;
+            }
+        }
+        let mut rank = vec![0u16; N];
+        // ranks ones - 1 .. 0: remove the tightest cluster each time
+        let (mut p, mut e) = (pattern.clone(), energy.clone());
+        for r in (0..ones).rev() {
+            let t = pick(&e, &p, true, true);
+            rank[t] = r as u16;
+            p[t] = false;
+            splat(&mut e, t, -1);
+        }
+        // ranks ones .. N - 1: fill the largest void each time
+        for r in ones..N {
+            let v = pick(&energy, &pattern, false, false);
+            rank[v] = r as u16;
+            pattern[v] = true;
+            splat(&mut energy, v, 1);
+        }
+        rank
+    }
+
+    /// The shader's xi in 24-bit fixed point: the pixel's stratum, the
+    /// primitive's rotation and the frame's fraction of 2^24.
+    fn xi24(rank: u32, rot: u32, frame: u32) -> u32 {
+        ((2 * rank + 1) * 2048 + rot + frame) & 0xff_ffff
+    }
+
+    /// The shader's R: floor(a S + xi) in f32, at most S.
+    fn r_of(a: f32, s: u32, xi: u32) -> u32 {
+        ((a * s as f32 + xi as f32 / 16_777_216.0).floor() as u32).min(s)
+    }
+
+    /// The shader's frame fraction: `frame_seed >> 8`, `frame_seed` being
+    /// `frame * 0x9e3779b9` wrapped to 32 bits (`prepare`).
+    fn frame_fraction(frame: u32) -> u32 {
+        frame.wrapping_mul(0x9e37_79b9) >> 8
+    }
+
+    #[test]
+    fn the_committed_tile_is_the_generated_one_and_a_permutation_of_the_strata() {
+        let generated: Vec<u32> = void_and_cluster().into_iter().map(u32::from).collect();
+        assert_eq!(
+            tile_ranks(),
+            generated,
+            "oit_stochastic_tile.bin is out of date: rewrite it from void_and_cluster"
+        );
+        let mut seen = vec![false; TILE_CELLS];
+        for &r in &generated {
+            assert!(!std::mem::replace(&mut seen[r as usize], true), "rank {r} twice");
+        }
+        assert!(seen.iter().all(|&s| s));
+        // the buffer holds the masks, then the tile, where the shader reads it
+        let words = mask_buffer(8);
+        assert_eq!(words.len(), (9 * SEEDS) as usize + TILE_CELLS);
+        assert_eq!(&words[(9 * SEEDS) as usize..], &generated[..]);
+        assert!(words.len() as u32 * 4 <= (MAX_PASS_SAMPLES + 1) * SEEDS * 4 + TILE * TILE * 4);
+    }
+
+    /// The standard deviation, over the 64 aligned 8 x 8 blocks of a tile,
+    /// of the block's mean xi (0.5 when every block is balanced).
+    fn block_mean_sd(ranks: &[u32]) -> f64 {
+        let mut ss = 0.0;
+        for b in 0..64usize {
+            let (bx, by) = (b % 8 * 8, b / 8 * 8);
+            let sum: f64 = (0..64usize)
+                .map(|i| (f64::from(ranks[(by + i / 8) * 64 + bx + i % 8]) + 0.5) / 4096.0)
+                .sum();
+            ss += (sum / 64.0 - 0.5).powi(2);
+        }
+        (ss / 64.0).sqrt()
+    }
+
+    #[test]
+    fn the_tile_balances_every_8x8_block_better_than_white_noise() {
+        let tile = tile_ranks();
+        // the same strata in a white-noise order (a shuffle by `st_hash`)
+        let mut white: Vec<u32> = (0..TILE_CELLS as u32).collect();
+        let mut h = 12345;
+        for i in (1..white.len()).rev() {
+            h = st_hash(h);
+            white.swap(i, h as usize % (i + 1));
+        }
+        // measured: the tile 0.0105, a white order 0.037 (1 / sqrt(12 * 64)
+        // = 0.036 in theory)
+        let (t, w) = (block_mean_sd(&tile), block_mean_sd(&white));
+        assert!(t < 0.015, "tile {t}");
+        assert!(w > 0.025, "white {w}");
+        // the same in R, for a sweep of alpha and three rotations: the mean
+        // of R over a block against a S (measured: tile rms 0.018, max 0.078;
+        // white order rms 0.049, max 0.19)
+        let (mut st, mut sw, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        let (mut mt, mut mw) = (0.0f64, 0.0f64);
+        for ai in 1..64 {
+            let a = ai as f32 / 64.0;
+            for rot in [0, 5_000_000, 12_345_678] {
+                for b in 0..64usize {
+                    let (bx, by) = (b % 8 * 8, b / 8 * 8);
+                    let mean = |ranks: &[u32]| {
+                        let sum: u32 = (0..64usize)
+                            .map(|i| r_of(a, 8, xi24(ranks[(by + i / 8) * 64 + bx + i % 8], rot, 0)))
+                            .sum();
+                        f64::from(sum) / 64.0 - f64::from(a) * 8.0
+                    };
+                    let (et, ew) = (mean(&tile), mean(&white));
+                    st += et * et;
+                    sw += ew * ew;
+                    mt = mt.max(et.abs());
+                    mw = mw.max(ew.abs());
+                    n += 1.0;
+                }
+            }
+        }
+        let (rt, rw) = ((st / n).sqrt(), (sw / n).sqrt());
+        assert!(rt < 0.025 && mt < 0.1, "tile rms {rt} max {mt}");
+        assert!(rt < rw * 0.6 && mt < mw * 0.7, "white rms {rw} max {mw}");
+    }
+
+    #[test]
+    fn the_mean_of_r_over_the_tile_is_alpha_times_s_for_any_rotation() {
+        let tile = tile_ranks();
+        for s in [2u32, 4, 8] {
+            for ai in 0..=64 {
+                let a = ai as f32 / 64.0;
+                for rot in [0, 1, 999_999, 8_388_608, 16_777_215] {
+                    let sum: u32 = tile.iter().map(|&r| r_of(a, s, xi24(r, rot, 0))).sum();
+                    let mean = f64::from(sum) / TILE_CELLS as f64;
+                    // xi takes the 4096 strata (k + 0.5) / 4096 shifted by the
+                    // rotation: the mean is a S within one stratum
+                    assert!(
+                        (mean - f64::from(a) * f64::from(s)).abs() <= 1.0 / 4096.0 + 1e-6,
+                        "S {s} a {a} rot {rot}: {mean}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn eight_frames_of_the_stratified_dither_sum_to_eight_alpha_s() {
+        let tile = tile_ranks();
+        let (mut weyl_ss, mut hash_ss, mut weyl_max, mut hash_max, mut n) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for ai in 1..64 {
+            let a = ai as f32 / 64.0;
+            for k in (0..TILE_CELLS).step_by(37) {
+                let rot = st_hash(k as u32 * 77 + 1) >> 8;
+                for f0 in [0u32, 1000, 123_456, 0xffff_fff0] {
+                    let (mut weyl, mut hashed) = (0u32, 0u32);
+                    for f in 0..8u32 {
+                        let frame = f0.wrapping_add(f);
+                        weyl += r_of(a, 8, xi24(tile[k], rot, frame_fraction(frame)));
+                        // the old way: a fresh hash of the frame, every frame
+                        hashed += r_of(a, 8, xi24(tile[k], st_hash(rot ^ st_hash(frame).wrapping_mul(3)) >> 8, 0));
+                    }
+                    let want = f64::from(a) * 64.0;
+                    let (ew, eh) = (f64::from(weyl) - want, f64::from(hashed) - want);
+                    weyl_ss += ew * ew;
+                    hash_ss += eh * eh;
+                    weyl_max = weyl_max.max(ew.abs());
+                    hash_max = hash_max.max(eh.abs());
+                    n += 1.0;
+                }
+            }
+        }
+        let (weyl_rms, hash_rms) = ((weyl_ss / n).sqrt(), (hash_ss / n).sqrt());
+        // measured: stratified max 1.0, rms 0.37; hashed max 4, rms 1.14
+        assert!(weyl_max <= 1.0, "stratified max {weyl_max}");
+        assert!(weyl_rms < 0.5, "stratified rms {weyl_rms}");
+        assert!(
+            weyl_rms < hash_rms * 0.5 && weyl_max < hash_max,
+            "hashed rms {hash_rms} max {hash_max}"
+        );
+    }
+
+    #[test]
+    fn the_frame_fraction_stays_exact_at_any_frame_number() {
+        // frame * 0.6180339887 in 24-bit fixed point, from the integers
+        let exact = |f: u32| (((u64::from(f) * 0x9e37_79b9) & 0xffff_ffff) >> 8) as u32;
+        for f in [0, 1, 2, 7, 1 << 20, (1 << 24) + 3, 123_456_789, u32::MAX - 1, u32::MAX] {
+            assert_eq!(frame_fraction(f), exact(f), "frame {f}");
+            assert!(frame_fraction(f) < 1 << 24);
+        }
+        // one frame later is always the golden ratio conjugate further
+        // (10 368 889.6 of 2^24), to the rounding of the truncated bits
+        for f in [0u32, 5, 1 << 24, 3_000_000_000, u32::MAX] {
+            let step = frame_fraction(f.wrapping_add(1)).wrapping_sub(frame_fraction(f)) & 0xff_ffff;
+            assert!((10_368_889..=10_368_891).contains(&step), "frame {f}: {step}");
+        }
+    }
+
+    #[test]
+    fn the_samples_cap_and_the_guards_read_their_values() {
+        assert_eq!(samples_cap_from(None), 8);
+        assert_eq!(samples_cap_from(Some("8")), 8);
+        assert_eq!(samples_cap_from(Some("4")), 4);
+        assert_eq!(samples_cap_from(Some(" 4 ")), 4);
+        // anything else leaves the most there is
+        for v in ["", "2", "16", "0", "four", "-4"] {
+            assert_eq!(samples_cap_from(Some(v)), 8, "{v:?}");
+        }
+        assert!(guards_from(None));
+        assert!(guards_from(Some("1")));
+        assert!(guards_from(Some("")));
+        assert!(!guards_from(Some("0")));
+        assert!(!guards_from(Some(" 0 ")));
+    }
+
+    #[test]
+    fn the_samples_cap_limits_the_passes_but_not_the_scene() {
+        let all = [1, 2, 4, 8];
+        assert_eq!(pass_samples(1, &capped(&all, 1, 8)), 8);
+        assert_eq!(pass_samples(1, &capped(&all, 1, 4)), 4);
+        assert_eq!(pass_samples(4, &capped(&all, 4, 4)), 4);
+        // a scene above the cap keeps its own count (the passes share it)
+        assert_eq!(pass_samples(8, &capped(&all, 8, 4)), 8);
+        // a device without 4 and a cap of 4 is left with what it has
+        assert_eq!(pass_samples(1, &capped(&[1, 2, 8], 1, 4)), 2);
+    }
+
+    #[test]
+    fn the_guards_switch_changes_only_its_constant() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        for src in [object, resolve] {
+            assert_eq!(with_guards(src.clone(), true), src);
+            let off = with_guards(src.clone(), false);
+            assert!(src.contains("const ST_GUARDS: bool = true;"));
+            assert!(off.contains("const ST_GUARDS: bool = false;"));
+            assert_eq!(off.replace("const ST_GUARDS: bool = false;", "const ST_GUARDS: bool = true;"), src);
+        }
+    }
+
+    #[test]
+    fn the_shader_reads_the_tile_where_the_buffer_holds_it() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        assert!(object.contains(&format!("const ST_TILE: u32 = {TILE}u;")));
+        assert!(object.contains("const ST_SEEDS: u32 = 2048u;"));
+        assert_eq!(SEEDS, 2048);
+        assert!(object.contains("st_masks[(st.samples + 1u) * ST_SEEDS + (px.y & (ST_TILE - 1u)) * ST_TILE"));
     }
 
     /// The shader's `st_hash` (PCG) and its per-pixel, per-layer subset index.

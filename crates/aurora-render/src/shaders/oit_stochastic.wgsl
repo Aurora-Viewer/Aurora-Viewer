@@ -90,6 +90,10 @@ struct ResolveParams {
 // The largest value an Rgba16Float target holds (common.wgsl `HDR_MAX`).
 const HDR_MAX: f32 = 65504.0;
 
+// Whether the samples are tested for a NaN (oit_stochastic.rs `with_guards`
+// turns it off for a measurement, AURORA_ST_GUARDS=0); the history's test stays.
+const ST_GUARDS: bool = true;
+
 // Whether `x` is not a number. Tested on its bits (object.wgsl
 // `blend_nan`): a driver may fold `x != x` to false, and what min, max and
 // clamp make of a NaN is left to the card.
@@ -105,18 +109,18 @@ fn st_nan4(v: vec4<f32>) -> bool {
 // part of it is not a number, no part under 0 nor over what the target
 // holds (the sum of many bright layers may be infinite).
 fn st_sample(a: vec4<f32>) -> vec4<f32> {
-    return select(clamp(a, vec4<f32>(0.0), vec4<f32>(HDR_MAX)), vec4<f32>(0.0), st_nan4(a));
+    return select(clamp(a, vec4<f32>(0.0), vec4<f32>(HDR_MAX)), vec4<f32>(0.0), ST_GUARDS && st_nan4(a));
 }
 
 // A summed amount (the glow) the same way.
 fn st_amount(x: f32) -> f32 {
-    return select(clamp(x, 0.0, HDR_MAX), 0.0, st_nan(x));
+    return select(clamp(x, 0.0, HDR_MAX), 0.0, ST_GUARDS && st_nan(x));
 }
 
 // A sample of the transmittance: between nothing and all of the light, and
 // all of it where it is not a number.
 fn st_through(x: f32) -> f32 {
-    return select(clamp(x, 0.0, 1.0), 1.0, st_nan(x));
+    return select(clamp(x, 0.0, 1.0), 1.0, ST_GUARDS && st_nan(x));
 }
 
 // The uncertainty left in a colour drawn, as a part of that colour (of a
