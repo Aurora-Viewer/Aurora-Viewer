@@ -31,6 +31,12 @@
 //! in a row (body A, body B, clothing A, clothing B) are told apart. A copy
 //! that times out is still finished when its reply comes, but never worn. At
 //! most eight commands wait.
+//!
+//! A new account's first login wears its registration outfit the same way
+//! (`initial_command`, LLStartUp::loadInitialOutfit: a My Outfits folder as
+//! it is, else the Library's copied). A wear waits for the Current Outfit
+//! folder to be loaded, which the first login does not restore
+//! (callAfterCOFFetch before wearInventoryCategory).
 
 use super::*;
 use crate::slapp::{FolderAction, FolderCommand};
@@ -170,23 +176,23 @@ impl WelcomeWears {
 
 /// findDescendentCategoryIDByName under the Library: the first folder named
 /// `name`, case-insensitive, depth first in the folders' order.
-pub(super) fn library_folder(inv: &Inventory, name: &str) -> Option<Uuid> {
-    let wanted = name.to_lowercase();
-    let mut stack: Vec<Uuid> = inv.folders.get(&inv.lib_root)?.children.iter().rev().copied().collect();
-    let mut seen = std::collections::HashSet::new();
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let Some(folder) = inv.folders.get(&id) else {
-            continue;
-        };
-        if folder.info.name.to_lowercase() == wanted {
-            return Some(id);
-        }
-        stack.extend(folder.children.iter().rev());
+/// The `wear_folder` that dresses a new account: its My Outfits folder by
+/// id, else the Library's by name (copied first), replacing the outfit.
+pub(super) fn initial_command(outfit: crate::world::outfit::InitialOutfit) -> FolderCommand {
+    use crate::world::outfit::InitialOutfit;
+    let (name, id) = match outfit {
+        InitialOutfit::Mine(folder) => (None, Some(folder)),
+        InitialOutfit::Library(name) => (Some(name), None),
+    };
+    FolderCommand {
+        action: FolderAction::Wear,
+        name,
+        id,
     }
-    None
+}
+
+pub(super) fn library_folder(inv: &Inventory, name: &str) -> Option<Uuid> {
+    crate::world::appearance::descendant_named(inv, inv.lib_root, name)
 }
 
 /// wear_category's folder: the Library one of the name, else the id's.
@@ -261,13 +267,18 @@ impl App {
         };
         // one outfit change at a time: a wear sent meanwhile would be dropped
         let busy = self.appearance_ui.pending.is_some();
-        // fetch the subtree and the link targets until the job can go on
+        // fetch the subtree and the link targets until the job can go on,
+        // and the Current Outfit folder the change rewrites (not restored at
+        // a first login)
         if let Some(folder) = job_folder(&self.world.inventory, &job) {
-            for command in self
-                .appearance_ui
-                .prepare_contents(&mut self.world.inventory, self.world.agent_id, folder)
-            {
-                self.send(command);
+            let cof = crate::world::appearance::cof(&self.world.inventory);
+            for folder in std::iter::once(folder).chain(cof) {
+                for command in self
+                    .appearance_ui
+                    .prepare_contents(&mut self.world.inventory, self.world.agent_id, folder)
+                {
+                    self.send(command);
+                }
             }
         }
         let step = welcome_step(&mut self.world.inventory, &mut job, busy);
@@ -410,6 +421,13 @@ fn copy_reply(
 
 /// The agent's folder a job works on once it is in the agent's inventory:
 /// the folder to take off, or the (copied) folder to wear.
+/// The Current Outfit folder and its links' items are loaded: an outfit
+/// change plans from them (`appearance::require_complete`), and the first
+/// login does not fetch them (callAfterCOFFetch).
+fn cof_loaded(inv: &Inventory) -> bool {
+    crate::world::appearance::cof(inv).is_some_and(|cof| crate::world::appearance::complete(inv, cof))
+}
+
 fn job_folder(inv: &Inventory, job: &Job) -> Option<Uuid> {
     match job.stage {
         Stage::Find if job.command.action == FolderAction::Remove => folder_of(inv, &job.command),
@@ -435,7 +453,7 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
             if job.command.action == FolderAction::Remove {
                 // the whole subtree and its link targets must have arrived
                 // (wearable_contents is what the take-off plans from)
-                return if busy || crate::world::appearance::wearable_contents(inv, folder).is_err() {
+                return if busy || !cof_loaded(inv) || crate::world::appearance::wearable_contents(inv, folder).is_err() {
                     Step::Keep
                 } else {
                     Step::Appearance(crate::world::appearance::Action::RemoveOutfit(folder))
@@ -474,7 +492,7 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
                 log::warn!("avatar welcome pack: the folder holds nothing wearable, outfit unchanged");
                 return Step::Done;
             }
-            if busy {
+            if busy || !cof_loaded(inv) {
                 return Step::Keep;
             }
             let mode = match job.command.action {
@@ -521,7 +539,8 @@ mod tests {
     }
 
     /// Library (10) › Clothing (11) › Female body - A (12) holding a shape
-    /// (20) and a link (21); the agent's root (1) with Clothing (2).
+    /// (20) and a link (21); the agent's root (1) with Clothing (2) and the
+    /// Current Outfit folder (3).
     fn inventory() -> Inventory {
         let mut inv = Inventory {
             root: id(1),
@@ -533,6 +552,8 @@ mod tests {
         folder(&mut inv, 10, Uuid::nil(), "Library", true);
         folder(&mut inv, 2, id(1), "Clothing", false);
         inv.folders.get_mut(&id(2)).expect("clothing").info.type_default = FT_CLOTHING;
+        folder(&mut inv, 3, id(1), "Current Outfit", false);
+        inv.folders.get_mut(&id(3)).expect("cof").info.type_default = crate::world::outfit::FT_CURRENT_OUTFIT;
         folder(&mut inv, 11, id(10), "Clothing", true);
         folder(&mut inv, 12, id(11), "Female body - A", true);
         folder(&mut inv, 13, id(12), "Spare", true);
@@ -981,6 +1002,44 @@ mod tests {
         assert_eq!(wears.queue.len(), QUEUE_CAP - 1);
         wears.push(vec![named(FolderAction::Add, "A")], at(now, 2500));
         assert_eq!(wears.queue.len(), QUEUE_CAP - 1, "A's clothing is not queued without its body");
+    }
+
+    #[test]
+    fn a_wear_waits_for_the_current_outfit_folder() {
+        // a first login: the Current Outfit folder is not loaded yet
+        let mut inv = inventory();
+        inv.folders.get_mut(&id(3)).expect("cof").state = FetchState::Fetching;
+        let request = Uuid::new_v4();
+        let mut wears = copying(request, Instant::now());
+        copy_reply(&mut wears, &mut inv, request, Ok(created_reply(Vec::new())), Instant::now());
+        arrive(&mut inv);
+        assert!(matches!(wear_step(&mut wears, &mut inv), Step::Keep));
+        inv.folders.get_mut(&id(3)).expect("cof").state = FetchState::Fetched;
+        assert!(wearing(&mut wears, &mut inv));
+    }
+
+    #[test]
+    fn a_new_accounts_outfit_is_worn_from_my_outfits_or_copied_from_the_library() {
+        use crate::world::outfit::InitialOutfit;
+        let mine = initial_command(InitialOutfit::Mine(id(40)));
+        assert_eq!((mine.action, mine.name, mine.id), (FolderAction::Wear, None, Some(id(40))));
+        let library = initial_command(InitialOutfit::Library("Female body - A".into()));
+        assert_eq!(
+            (library.action, library.name.as_deref(), library.id),
+            (FolderAction::Wear, Some("Female body - A"), None)
+        );
+        // the Library one is copied first, then worn replacing the outfit
+        let mut inv = inventory();
+        let mut job = Job {
+            command: library,
+            wear: None,
+            since: Instant::now(),
+            stage: Stage::Find,
+        };
+        assert!(matches!(
+            welcome_step(&mut inv, &mut job, false),
+            Step::Send(NetCommand::EditInventory { .. })
+        ));
     }
 
     #[test]
