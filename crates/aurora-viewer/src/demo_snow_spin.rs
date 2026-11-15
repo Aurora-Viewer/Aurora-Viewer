@@ -46,13 +46,15 @@ fn plank(id: u32, at: Vec3, rot: Quat) -> ObjectUpdate {
 }
 
 /// The camera on the row at frame 61, from above and behind it (the avatar
-/// out of the way): all three seen at once.
+/// out of the way): all three seen at once; `timer`, the stepped one alone
+/// (at the row's end, under the windows docked on the right otherwise).
 pub fn view(frame: u64) -> Option<(Vec3, Vec3)> {
-    if mode().is_none() || frame != 61 {
+    let mode = mode()?;
+    if frame != 61 {
         return None;
     }
-    let mid = (place(0) + place(2)) * 0.5;
-    Some((mid + Vec3::new(0.0, -3.0, 6.5), mid))
+    let at = if mode == "timer" { place(2) } else { (place(0) + place(2)) * 0.5 };
+    Some((at + Vec3::new(0.0, -3.0, 6.5), at))
 }
 
 /// Frames between the stepped box's turns: a second, or ten (`timer`).
