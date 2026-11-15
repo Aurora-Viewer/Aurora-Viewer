@@ -327,8 +327,10 @@ impl App {
             self.inventory_ui.begin_delete(request, selection);
         }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
-        // A new folder is shown and renamed ("New folder"); the folders an
-        // Auto-sort batch makes are not: the inventory stays where it was.
+        // An Auto-sort batch is recognised by its moves and takes this request's
+        // id: its result is matched to it, and its new folders are neither
+        // shown nor renamed like a "New folder".
+        let sorter_batch = self.inventory_ui.claim_sorter_request(request, &change);
         self.inventory_ui.created_selection = change
             .operations
             .iter()
@@ -339,7 +341,7 @@ impl App {
                     None
                 }
             })
-            .filter(|_| !self.inventory_ui.sorter_sending());
+            .filter(|_| !sorter_batch);
         self.inventory_ui.message.clear();
         self.send(NetCommand::EditInventory { request, change });
     }
@@ -730,7 +732,7 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
-        self.inventory_ui.finish_sorter(result.as_ref().err().map(String::as_str));
+        self.inventory_ui.finish_sorter(request, result.as_ref().err().map(String::as_str));
         self.inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());

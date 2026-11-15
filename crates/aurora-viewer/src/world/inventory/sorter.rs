@@ -2153,8 +2153,9 @@ fn resolve_existing(inv: &Inventory, base: Uuid, path: &[String]) -> Option<Uuid
 /// What the next step of a running sort is.
 #[derive(Debug)]
 pub enum Step {
-    /// The next mutation, and how many moves of the queue it carries.
-    Change(Box<Mutation>, usize),
+    /// The next mutation, and the moves of the queue it carries (put back
+    /// at the front if the batch is refused or never sent).
+    Change(Box<Mutation>, Vec<Move>),
     /// A destination folder is loading: ask again next frame.
     Wait,
     Done,
@@ -2178,9 +2179,9 @@ pub fn step(
     // folders known in this mutation: (parent, lowercase name) → id
     let mut made: HashMap<(Uuid, String), Uuid> = HashMap::new();
     let mut fresh: HashSet<Uuid> = HashSet::new();
-    let mut taken = 0;
+    let mut sent: Vec<Move> = Vec::new();
     let base_path = [base_name.to_owned()];
-    'moves: while taken < BATCH {
+    'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
         let still_here = actions::parent(inv, next.id) == Some(next.from)
             && inv.folders.contains_key(&next.id) == next.folder
@@ -2250,25 +2251,42 @@ pub fn step(
             fresh.insert(id);
             parent = id;
         }
-        change.operations.append(&mut new_folders);
         let Some(m) = queue.pop_front() else { break };
         if parent == m.id || actions::under(inv, parent, m.id) {
+            // into itself: dropped before any folder is made for it
+            for op in &new_folders {
+                if let Operation::Folder { id, .. } = op {
+                    made.retain(|_, made_id| made_id != id);
+                    fresh.remove(id);
+                    change.refresh.retain(|r| r != id);
+                }
+            }
+            *skipped += 1;
             continue;
         }
+        // the new folders' parents are read back too, so a folder made by a
+        // batch that fails later is still found by the next run; a source is
+        // not (a folder of 100,000 items read again each batch)
+        for op in &new_folders {
+            if let Operation::Folder { parent: above, .. } = op {
+                change.refresh.push(*above);
+            }
+        }
+        change.operations.append(&mut new_folders);
         change.operations.push(Operation::Patch {
             id: m.id,
             folder: m.folder,
             body: llsd_map! { "parent_id" => parent },
         });
-        change.refresh.extend([parent, m.from]);
-        taken += 1;
+        change.refresh.push(parent);
+        sent.push(m);
     }
     if change.operations.is_empty() {
         return Step::Done;
     }
     change.refresh.sort_unstable();
     change.refresh.dedup();
-    Step::Change(Box::new(change), taken)
+    Step::Change(Box::new(change), sent)
 }
 
 #[path = "sorter_demo.rs"]

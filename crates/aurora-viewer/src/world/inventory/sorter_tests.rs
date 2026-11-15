@@ -203,7 +203,7 @@ fn a_sort_creates_each_folder_once_reuses_existing_ones_and_is_idempotent() {
     let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) else {
         panic!("a mutation")
     };
-    assert_eq!(taken, 5);
+    assert_eq!(taken.len(), 5);
     let made: Vec<_> = change
         .operations
         .iter()
@@ -237,7 +237,7 @@ fn a_large_sort_goes_in_bounded_batches() {
     let mut queue: VecDeque<Move> = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new()).moves.into();
     let mut batches = Vec::new();
     while let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) {
-        batches.push(taken);
+        batches.push(taken.len());
         actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
     }
     assert_eq!(batches, [BATCH, BATCH, 50]);

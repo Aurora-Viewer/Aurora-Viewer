@@ -14,6 +14,7 @@
 use super::*;
 use crate::world::inventory::sorter::{self, Age, CleanupPlan, Kind, Match, Move, Plan, Rule, Step};
 use std::collections::VecDeque;
+use std::time::Instant;
 
 /// Entries sent to the Trash in one delete request.
 const TRASH_BATCH: usize = 200;
@@ -116,18 +117,114 @@ struct TrashJob {
     /// Entries dropped because they changed since the confirmation.
     skipped: usize,
     total: usize,
+    /// Entries the delete requests carried, counted once each one is done.
     sent: usize,
+    /// The batch on its way: its entries, frames since it was pushed, and
+    /// whether the app took it (a delete pending).
+    in_flight: Option<(Vec<(Uuid, Uuid)>, u32, bool)>,
+    next_at: Option<Instant>,
 }
 
+/// The time between two batches of a job, after the server's reply: about
+/// 200 moves a second at most, so a 400,000-item sort neither floods the
+/// simulator nor the viewer's own inventory updates.
+const PACE: std::time::Duration = std::time::Duration::from_secs(1);
+/// A refused batch is tried again this many times, after 2, 4 and 8 s.
+const RETRIES: u32 = 3;
+/// A destination folder that does not load within this time: its move is
+/// skipped and the job goes on.
+const WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A sort or a move to Pre-Trash, sent as paced batches: one at a time,
+/// counted only once the server confirmed it.
 struct Job {
     queue: VecDeque<Move>,
     base: String,
     total: usize,
+    /// Moves the server confirmed.
     done: usize,
-    sending: usize,
     /// Entries dropped because they changed since the preview (moved,
     /// worn, deleted, now locked): never sent, reported at the end.
     skipped: usize,
+    /// Moves still refused after their retries: they stayed where they were.
+    failed: usize,
+    /// The batch on its way, and the request it was sent as.
+    in_flight: Option<InFlight>,
+    retries: u32,
+    /// No batch before this: the pace between batches, or a retry's wait.
+    next_at: Option<Instant>,
+    paused: bool,
+    started: Instant,
+    /// Since when the next move waits for its destination to load.
+    waiting_since: Option<Instant>,
+}
+
+struct InFlight {
+    moves: Vec<Move>,
+    /// The app's request id, set when it takes the batch
+    /// (claim_sorter_request); a batch it never takes goes back in the
+    /// queue.
+    request: Option<Uuid>,
+    frames: u32,
+}
+
+impl Job {
+    fn new(queue: VecDeque<Move>, base: String) -> Self {
+        Self {
+            total: queue.len(),
+            queue,
+            base,
+            done: 0,
+            skipped: 0,
+            failed: 0,
+            in_flight: None,
+            retries: 0,
+            next_at: None,
+            paused: false,
+            started: Instant::now(),
+            waiting_since: None,
+        }
+    }
+
+    /// Put a batch's moves back at the front of the queue, in order.
+    fn requeue(&mut self, moves: Vec<Move>) {
+        for m in moves.into_iter().rev() {
+            self.queue.push_front(m);
+        }
+    }
+
+    /// The server's answer to the batch on its way.
+    fn finish(&mut self, error: Option<&str>, now: Instant) -> Option<String> {
+        let batch = self.in_flight.take()?;
+        match error {
+            None => {
+                self.done += batch.moves.len();
+                self.retries = 0;
+                self.next_at = Some(now + PACE);
+                None
+            }
+            Some(error) if self.retries < RETRIES => {
+                self.retries += 1;
+                self.requeue(batch.moves);
+                self.next_at = Some(now + std::time::Duration::from_secs(1 << self.retries));
+                Some(aurora_i18n::tr!("inventory-sorter-retrying", error = error, attempt = self.retries))
+            }
+            Some(error) => {
+                // never the whole job for one refused batch: it stays put
+                self.failed += batch.moves.len();
+                self.retries = 0;
+                self.next_at = Some(now + PACE);
+                Some(error.to_owned())
+            }
+        }
+    }
+
+    /// The time left, from the pace so far.
+    fn eta(&self) -> Option<std::time::Duration> {
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let left = self.queue.len();
+        (self.done > 0 && left > 0).then(|| std::time::Duration::from_secs_f64(elapsed / self.done as f64 * left as f64))
+    }
 }
 
 const PREVIEW: usize = 0;
@@ -251,35 +348,54 @@ impl InventoryUi {
         self.sorter.open
     }
 
-    /// An Auto-sort batch is on its way (set in the frame it is pushed,
-    /// before the app submits it): its new folders are neither shown nor
-    /// renamed like a "New folder".
-    pub(crate) fn sorter_sending(&self) -> bool {
-        self.sorter.submitted || self.windows.iter().any(|w| w.state.sorter.submitted)
+    /// The app takes an inventory change: when it is a sorter's batch on
+    /// its way (recognised by its first move), that batch takes the request
+    /// id, so only its own result completes it. True for a sorter's batch:
+    /// its new folders are neither shown nor renamed like a "New folder".
+    pub(crate) fn claim_sorter_request(&mut self, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
+        fn claim(state: &mut State, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
+            let Some(batch) = state.job.as_mut().and_then(|job| job.in_flight.as_mut()) else {
+                return false;
+            };
+            let first = batch.moves.first().map(|m| m.id);
+            let ours = batch.request.is_none()
+                && change
+                    .operations
+                    .iter()
+                    .any(|op| matches!(op, aurora_net::inventory::operations::Operation::Patch { id, .. } if Some(*id) == first));
+            if ours {
+                batch.request = Some(request);
+            }
+            ours
+        }
+        claim(&mut self.sorter, request, change) || self.windows.iter_mut().any(|w| claim(&mut w.state.sorter, request, change))
     }
 
-    /// The ordinary inventory result completes the sorter's batch too.
-    pub(crate) fn finish_sorter(&mut self, error: Option<&str>) {
-        let state = &mut self.sorter;
-        if state.submitted {
+    /// The result of `request`: completes the sorter batch that took it.
+    pub(crate) fn finish_sorter(&mut self, request: Uuid, error: Option<&str>) {
+        fn finish(state: &mut State, request: Uuid, error: Option<&str>) {
+            let ours = state
+                .job
+                .as_ref()
+                .and_then(|job| job.in_flight.as_ref())
+                .is_some_and(|batch| batch.request == Some(request));
+            if !ours {
+                return;
+            }
             state.submitted = false;
             state.preview = None;
-            match (error, state.job.as_mut()) {
-                (Some(error), _) => {
-                    // the confirmed batches stay sorted; the rest stays put
-                    state.job = None;
-                    state.status = error.to_owned();
-                }
-                (None, Some(job)) => job.done += std::mem::take(&mut job.sending),
-                (None, None) => {}
+            if let Some(job) = state.job.as_mut()
+                && let Some(message) = job.finish(error, Instant::now())
+            {
+                state.status = message;
             }
         }
+        finish(&mut self.sorter, request, error);
         for window in &mut self.windows {
-            window.state.finish_sorter(error);
+            finish(&mut window.state.sorter, request, error);
         }
     }
 }
-
 /// The folder the toolbar button sorts: the selected folder, else the folder
 /// shown, else Objects, else My Inventory.
 fn default_source(inv: &Inventory, st: &InventoryUi, shown: Uuid) -> Uuid {
@@ -306,21 +422,60 @@ pub(super) fn show(
         let source = default_source(inv, st, shown);
         st.sorter.set_source(Source::Folder(source));
     }
-    let free = st.pending.is_none() && !actions.iter().any(|action| matches!(action, InvAction::Edit(_)));
+    let free = st.pending.is_none()
+        && !actions
+            .iter()
+            .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)));
+    let now = Instant::now();
     let state = &mut st.sorter;
+    // A batch the app never took (another inventory change went first in
+    // that frame): back at the front of the queue, never counted.
+    if let Some(job) = state.job.as_mut() {
+        let dropped = job.in_flight.as_mut().is_some_and(|batch| {
+            batch.frames += 1;
+            batch.request.is_none() && batch.frames > 2
+        });
+        if dropped && let Some(batch) = job.in_flight.take() {
+            job.requeue(batch.moves);
+            state.submitted = false;
+        }
+    }
     if free
         && !state.submitted
         && let Some(job) = state.job.as_mut()
+        && !job.paused
+        && job.next_at.is_none_or(|at| now >= at)
     {
         match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped) {
-            Step::Change(change, taken) => {
-                job.sending = taken;
+            Step::Change(change, moves) => {
+                job.in_flight = Some(InFlight {
+                    moves,
+                    request: None,
+                    frames: 0,
+                });
+                job.waiting_since = None;
                 state.submitted = true;
                 actions.push(InvAction::Edit(*change));
             }
-            Step::Wait => {}
+            Step::Wait => {
+                // a destination that never loads: its move is skipped
+                let since = *job.waiting_since.get_or_insert(now);
+                if now.duration_since(since) > WAIT_LIMIT {
+                    if job.queue.pop_front().is_some() {
+                        job.skipped += 1;
+                    }
+                    job.waiting_since = None;
+                }
+            }
             Step::Done => {
-                state.status = if job.skipped > 0 {
+                state.status = if job.failed > 0 {
+                    aurora_i18n::tr!(
+                        "inventory-sorter-done-failed",
+                        count = job.done,
+                        skipped = job.skipped,
+                        failed = job.failed
+                    )
+                } else if job.skipped > 0 {
                     aurora_i18n::tr!("inventory-sorter-done-skipped", count = job.done, skipped = job.skipped)
                 } else {
                     aurora_i18n::tr!("inventory-sorter-done", count = job.done)
@@ -424,6 +579,7 @@ pub(super) fn show(
     let mut open = true;
     let mut go = false;
     let mut stop = false;
+    let mut pause = false;
     let waiting = sorter::pre_trash_entries(inv);
     let waiting_in = sorter::pre_trash(inv);
     // The tabs change the body's height all the time (rule cards, preview
@@ -495,7 +651,7 @@ pub(super) fn show(
             });
         foot.show(ui, |ui| {
             crate::ui::widgets::divider(ui, p);
-            footer_row(ui, p, state, st.pending.is_none(), &mut go, &mut stop);
+            footer_row(ui, p, state, st.pending.is_none(), &mut go, &mut stop, &mut pause);
         });
     });
     // Clean up's buttons: Pre-Trash through the sort's own batches, the
@@ -507,14 +663,7 @@ pub(super) fn show(
                 let moves = plan.moves(&state.skipped);
                 if !moves.is_empty() && state.job.is_none() {
                     state.status.clear();
-                    state.job = Some(Job {
-                        total: moves.len(),
-                        queue: moves.into(),
-                        base: prefs.sorter.base_name(),
-                        done: 0,
-                        sending: 0,
-                        skipped: 0,
-                    });
+                    state.job = Some(Job::new(moves.into(), prefs.sorter.base_name()));
                 }
             }
         }
@@ -544,7 +693,11 @@ pub(super) fn show(
             start(state, prefs);
         }
     }
+    if pause && let Some(job) = state.job.as_mut() {
+        job.paused = !job.paused;
+    }
     if stop && let Some(job) = state.job.as_mut() {
+        job.paused = false;
         // the batch on its way finishes; nothing after it is sent
         job.queue.clear();
     }
@@ -822,9 +975,29 @@ fn send_trash_batch(
     actions: &mut Vec<InvAction>,
     free: bool,
 ) {
-    let free = free && st.pending_delete.is_none() && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
+    let deleting = st.pending_delete.is_some();
+    let free = free && !deleting && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
+    let now = Instant::now();
     let Some(trash) = st.sorter.trash.as_mut() else { return };
-    if !free {
+    // The batch on its way: done once the app took it and its delete is
+    // over; never taken (another change went first), back in the queue.
+    if let Some((batch, frames, taken)) = trash.in_flight.as_mut() {
+        *frames += 1;
+        *taken |= deleting;
+        if *taken && !deleting {
+            trash.sent += batch.len();
+            trash.in_flight = None;
+            trash.next_at = Some(now + PACE);
+        } else if !*taken && *frames > 2 {
+            for entry in batch.drain(..).rev() {
+                trash.queue.push_front(entry);
+            }
+            trash.in_flight = None;
+        } else {
+            return;
+        }
+    }
+    if !free || trash.next_at.is_some_and(|at| now < at) {
         return;
     }
     if trash.queue.is_empty() {
@@ -850,10 +1023,10 @@ fn send_trash_batch(
         .map(|(id, _)| *id)
         .collect();
     trash.skipped += picked.len() - batch.len();
-    trash.sent += batch.len();
     if batch.is_empty() {
         return;
     }
+    trash.in_flight = Some((picked.iter().filter(|(id, _)| batch.contains(id)).copied().collect(), 0, false));
     let change = rules::system(inv, 14)
         .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
         .and_then(|trash| rules::move_selection(inv, &batch, trash, &prefs.protected, worn));
@@ -1028,6 +1201,8 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
                 queue: ids.into(),
                 sent: 0,
                 skipped: 0,
+                in_flight: None,
+                next_at: None,
             });
         }
         Confirm::PreTrash(ids) => {
@@ -1039,6 +1214,8 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
                 queue: ids.into(),
                 sent: 0,
                 skipped: 0,
+                in_flight: None,
+                next_at: None,
             });
         }
     }
@@ -1051,14 +1228,7 @@ fn start(state: &mut State, prefs: &InventoryPreferences) {
         state.status = aurora_i18n::tr!("inventory-sorter-nothing").into();
         return;
     }
-    state.job = Some(Job {
-        queue: plan.moves.iter().cloned().collect(),
-        base: prefs.sorter.base_name(),
-        total: plan.moves.len(),
-        done: 0,
-        sending: 0,
-        skipped: 0,
-    });
+    state.job = Some(Job::new(plan.moves.iter().cloned().collect(), prefs.sorter.base_name()));
 }
 
 /// What is sorted: a folder (with Change…) or the selected entries.
@@ -1100,7 +1270,7 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
     });
 }
 
-fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: bool, go: &mut bool, stop: &mut bool) {
+fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: bool, go: &mut bool, stop: &mut bool, pause: &mut bool) {
     ui.add_space(4.0);
     if let Some(trash) = &state.trash {
         let fraction = if trash.total == 0 {
@@ -1139,18 +1309,35 @@ fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: boo
         return;
     }
     if let Some(job) = &state.job {
-        let fraction = if job.total == 0 { 1.0 } else { job.done as f32 / job.total as f32 };
-        let text = aurora_i18n::tr!("inventory-sorter-progress", done = job.done, total = job.total);
+        // confirmed moves only; the time left from the pace so far
+        let handled = job.done + job.skipped + job.failed;
+        let fraction = if job.total == 0 { 1.0 } else { handled as f32 / job.total as f32 };
+        let mut text = aurora_i18n::tr!("inventory-sorter-progress", done = job.done, total = job.total);
+        if job.paused {
+            text = aurora_i18n::tr!("inventory-sorter-paused", done = job.done, total = job.total);
+        } else if let Some(left) = job.eta() {
+            text.push_str(&format!(
+                " · {}",
+                aurora_i18n::tr!("inventory-sorter-eta", minutes = left.as_secs().div_ceil(60))
+            ));
+        }
         ui.horizontal(|ui| {
             crate::ui::widgets::progress(
                 ui,
                 p,
                 "inventory_sorter_progress",
                 fraction,
-                (ui.available_width() - 110.0).max(60.0),
+                (ui.available_width() - 220.0).max(60.0),
                 &text,
                 None,
             );
+            let (icon, label) = if job.paused {
+                ("player-play-filled", aurora_i18n::tr!("inventory-sorter-resume"))
+            } else {
+                ("player-pause-filled", aurora_i18n::tr!("inventory-sorter-pause"))
+            };
+            *pause = crate::ui::widgets::action_button(ui, p, icon, label, crate::ui::widgets::ActionKind::Flat, Vec2::new(104.0, 26.0))
+                .clicked();
             *stop = crate::ui::widgets::action_button(
                 ui,
                 p,
