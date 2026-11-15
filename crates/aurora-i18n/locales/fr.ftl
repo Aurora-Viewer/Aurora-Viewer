@@ -14455,8 +14455,6 @@ inventory-sorter-pets = Animaux
 inventory-sorter-pre-trash = Pré-corbeille
 inventory-sorter-variant-squish = Squish
 inventory-sorter-stores = Boutiques
-inventory-sorter-variants = Versions Squish et Squeeze dans leur propre dossier
-inventory-sorter-variants-hint = Les noms avec sq, squish ou squeeze vont dans un dossier Squish sous leur catégorie, à part de la version normale.
 inventory-sorter-by-store = Un dossier par boutique
 inventory-sorter-by-store-hint = Lit la boutique dans l’étiquette du créateur ([Boutique] +, *Boutique*, Boutique - …) et range sous la catégorie, par exemple Mobilier / Boutique.
 inventory-sorter-excluded = Dossiers jamais touchés
@@ -14475,7 +14473,11 @@ inventory-sorter-whole-check = J’ai vérifié l’aperçu et je veux trier tou
 inventory-sorter-rule-before = Acquis avant le
 inventory-sorter-rule-before-hint = 2020-01-01
 inventory-sorter-to-pre-trash = Pré-corbeille
-inventory-sorter-rule-pre-trash-hint = Les éléments trouvés attendent dans le dossier Pré-corbeille jusqu’à ce que vous confirmiez leur envoi à la corbeille.
+inventory-sorter-rule-pre-trash-hint = Vérifie tout le dossier trié, déjà rangé ou non, à toute profondeur. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
+inventory-sorter-rule-pre-trash-unsorted-hint = Vérifie tout le dossier trié, à toute profondeur, sauf le dossier { $folder }. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
+inventory-sorter-look-in = Chercher dans
+inventory-sorter-look-all = Partout
+inventory-sorter-look-unsorted = Partout sauf Trié
 inventory-sorter-pre-trash-waiting = { $count ->
     [one] { $count } élément attend dans la Pré-corbeille
    *[other] { $count } éléments attendent dans la Pré-corbeille

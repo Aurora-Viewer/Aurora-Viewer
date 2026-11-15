@@ -408,16 +408,15 @@ fn heads_huds_vehicles_and_pets_have_their_own_folders() {
 }
 
 #[test]
-fn squish_versions_get_their_own_folder_when_the_option_is_on() {
-    let to = |name: &str, variants: bool| match target(name, 6, 0, None, &[], variants, false) {
+fn squish_versions_always_get_their_own_folder() {
+    let to = |name: &str| match target(name, 6, 0, None, &[], false) {
         Some(Dest::Path(path)) => path.join("/"),
         other => format!("{other:?}"),
     };
-    assert_eq!(to("Kitty - Hex Dress (Reborn Squish) - FATPACK", true), "Reborn/Dresses/Squish");
-    assert_eq!(to("Reborn bra black sq", true), "Reborn/Lingerie/Squish");
-    assert_eq!(to("Lace bra Reborn - Squeeze", true), "Reborn/Lingerie/Squish");
-    assert_eq!(to("Reborn bra black sq", false), "Reborn/Lingerie");
-    assert_eq!(to("Reborn bra black", true), "Reborn/Lingerie");
+    assert_eq!(to("Kitty - Hex Dress (Reborn Squish) - FATPACK"), "Reborn/Dresses/Squish");
+    assert_eq!(to("Reborn bra black sq"), "Reborn/Lingerie/Squish");
+    assert_eq!(to("Lace bra Reborn - Squeeze"), "Reborn/Lingerie/Squish");
+    assert_eq!(to("Reborn bra black"), "Reborn/Lingerie");
 }
 
 #[test]
@@ -432,7 +431,7 @@ fn the_store_is_read_from_the_creators_tag() {
     assert_eq!(store("Reborn - Waifu Boobs"), None);
     assert_eq!(store("Velvet Sofa Modular - PG"), None);
     assert_eq!(store("Mystery box"), None);
-    let to = |name: &str| match target(name, 6, 0, None, &[], true, true) {
+    let to = |name: &str| match target(name, 6, 0, None, &[], true) {
         Some(Dest::Path(path)) => path.join("/"),
         other => format!("{other:?}"),
     };
@@ -566,4 +565,133 @@ fn the_whole_inventory_reads_system_folders_and_keeps_the_users_own_folders() {
     };
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(150)]);
+}
+
+const OLD: i64 = 1_400_000_000;
+const NEW: i64 = 1_700_000_000;
+
+fn add_folder(inv: &mut Inventory, at: u128, parent: u128, name: &str) {
+    inv.folders.insert(id(at), folder(id(at), id(parent), name, -1));
+    inv.folders.get_mut(&id(parent)).expect("parent").children.push(id(at));
+}
+
+fn add_item(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i64) {
+    inv.add_items(vec![InvItem {
+        id: id(at),
+        parent: id(parent),
+        name: name.into(),
+        asset_type: 6,
+        inv_type: 6,
+        owner: id(AGENT),
+        created_at: created,
+        ..Default::default()
+    }]);
+}
+
+fn old_rule(skip_sorted: bool) -> Preferences {
+    Preferences {
+        rules: vec![Rule {
+            before: "2020".into(),
+            pre_trash: true,
+            skip_sorted,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+fn pre_trashed(plan: &Plan) -> Vec<Uuid> {
+    let mut ids: Vec<_> = plan.moves.iter().filter(|m| m.to == Dest::PreTrash).map(|m| m.id).collect();
+    ids.sort();
+    ids
+}
+
+/// Sorted/Reborn/Skirts with an old and a new skirt, Objects/My stuff (the
+/// user's own folder) with an old item, and two delivery folders in
+/// Objects: one all old, one with a single new item.
+fn sorted_fixture() -> Inventory {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 20, 1, "Sorted");
+    add_folder(&mut inv, 21, 20, "Reborn");
+    add_folder(&mut inv, 22, 21, "Skirts");
+    add_item(&mut inv, 200, 22, "Denim skirt Reborn", OLD);
+    add_item(&mut inv, 201, 22, "Velvet skirt Reborn", NEW);
+    add_folder(&mut inv, 30, OBJECTS, "My stuff");
+    add_item(&mut inv, 300, 30, "Freebie lamp", OLD);
+    add_item(&mut inv, 301, 30, "Gift lamp", NEW);
+    add_folder(&mut inv, 40, OBJECTS, "Lumen - Hex Dress - FATPACK");
+    add_item(&mut inv, 400, 40, "Lumen - Hex Dress HUD", OLD);
+    add_item(&mut inv, 401, 40, "Lumen - Hex Dress (Reborn)", OLD);
+    add_folder(&mut inv, 50, OBJECTS, "Lumen - Wrap Skirt - FATPACK");
+    add_item(&mut inv, 500, 50, "Lumen - Wrap Skirt HUD", OLD);
+    add_item(&mut inv, 501, 50, "Lumen - Wrap Skirt (Reborn)", NEW);
+    inv.generation += 1;
+    inv
+}
+
+#[test]
+fn pre_trash_rules_reach_sorted_items_and_the_users_own_folders() {
+    let inv = sorted_fixture();
+    let plan = plan(&inv, id(OBJECTS), &old_rule(false), &HashSet::new(), &HashSet::new());
+    let trashed = pre_trashed(&plan);
+    // the old skirt already sorted, the old item of the user's folder and
+    // the delivery whose items are all old (whole)
+    assert_eq!(trashed, [id(40), id(200), id(300)]);
+    for kept in [201, 301, 400, 401, 50, 500, 501] {
+        assert!(!trashed.contains(&id(kept)), "{kept} stays");
+    }
+    // a delivery with one new item is never split: its old HUD stays in it
+    assert!(!plan.moves.iter().any(|m| m.id == id(500)));
+    // Pre-Trash comes first in the preview
+    assert!(plan.groups().first().is_some_and(|(label, _)| label.ends_with("Pre-Trash")));
+}
+
+#[test]
+fn everywhere_except_sorted_leaves_the_sorted_tree_alone() {
+    let inv = sorted_fixture();
+    let plan = plan(&inv, id(OBJECTS), &old_rule(true), &HashSet::new(), &HashSet::new());
+    let trashed = pre_trashed(&plan);
+    assert!(!trashed.contains(&id(200)), "sorted skirt stays");
+    assert!(trashed.contains(&id(300)) && trashed.contains(&id(40)));
+    // the same rule run on the Sorted folder itself takes nothing there
+    let plan = super::plan(&inv, id(22), &old_rule(true), &HashSet::new(), &HashSet::new());
+    assert!(pre_trashed(&plan).is_empty());
+    let plan = super::plan(&inv, id(22), &old_rule(false), &HashSet::new(), &HashSet::new());
+    assert_eq!(pre_trashed(&plan), [id(200)]);
+}
+
+#[test]
+fn pre_trash_never_reads_the_trash_marketplace_or_excluded_folders() {
+    let mut inv = sorted_fixture();
+    add_item(&mut inv, 110, 11, "Old thing in the trash", OLD);
+    inv.folders.insert(id(80), folder(id(80), id(1), "Marketplace Listings", 53));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(id(80));
+    add_folder(&mut inv, 81, 80, "Old listing");
+    add_item(&mut inv, 810, 81, "Old listed dress", OLD);
+    let mut prefs = old_rule(false);
+    prefs.excluded = vec![id(30)];
+    let whole = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
+    let trashed = pre_trashed(&whole);
+    for untouched in [110, 81, 810, 30, 300] {
+        assert!(!trashed.contains(&id(untouched)), "{untouched} untouched");
+    }
+    // the rest of My Inventory is read at any depth
+    assert!(trashed.contains(&id(200)) && trashed.contains(&id(40)));
+    // a locked folder and a worn item stay too
+    let protected: HashSet<Uuid> = [id(40)].into();
+    let worn: HashSet<Uuid> = [id(200)].into();
+    let trashed = pre_trashed(&plan_whole(&inv, &prefs, &protected, &worn));
+    assert!(!trashed.contains(&id(40)) && !trashed.contains(&id(200)));
+}
+
+#[test]
+fn unloaded_folders_are_listed_for_the_window_to_request() {
+    let mut inv = sorted_fixture();
+    inv.folders.get_mut(&id(21)).expect("Reborn").state = FetchState::Unknown;
+    let plan = plan(&inv, id(OBJECTS), &old_rule(false), &HashSet::new(), &HashSet::new());
+    assert!(plan.unfetched.contains(&id(21)));
+    assert!(!pre_trashed(&plan).contains(&id(200)));
+    // without a Pre-Trash rule nothing is read beyond the direct contents
+    let plan = super::plan(&inv, id(OBJECTS), &Preferences::default(), &HashSet::new(), &HashSet::new());
+    assert!(plan.unfetched.is_empty());
 }

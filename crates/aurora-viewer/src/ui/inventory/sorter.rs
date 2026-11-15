@@ -144,6 +144,13 @@ impl InventoryUi {
         self.sorter.open
     }
 
+    /// An Auto-sort batch is on its way (set in the frame it is pushed,
+    /// before the app submits it): its new folders are neither shown nor
+    /// renamed like a "New folder".
+    pub(crate) fn sorter_sending(&self) -> bool {
+        self.sorter.submitted || self.windows.iter().any(|w| w.state.sorter.submitted)
+    }
+
     /// The ordinary inventory result completes the sorter's batch too.
     pub(crate) fn finish_sorter(&mut self, error: Option<&str>) {
         let state = &mut self.sorter;
@@ -253,6 +260,15 @@ pub(super) fn show(
             Source::Entries(ids) => sorter::plan_entries(inv, ids, &prefs.sorter, &prefs.protected, worn),
             Source::Whole => sorter::plan_whole(inv, &prefs.sorter, &prefs.protected, worn),
         };
+        // A Pre-Trash rule reads the whole folder sorted at any depth (and
+        // the sort folder's tree): what is not loaded yet is asked for, and
+        // the preview fills in as it arrives (it follows the inventory's
+        // generation). Nothing waits for it.
+        for id in &plan.unfetched {
+            if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown) {
+                inv.request(*id);
+            }
+        }
         state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
     }
     if state.autostart && state.preview.is_some() {
@@ -588,13 +604,6 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     ui.add_space(10.0);
     crate::ui::widgets::switch_labeled(ui, p, &mut options.folders, aurora_i18n::tr!("inventory-sorter-folders"));
     ui.add_space(4.0);
-    crate::ui::widgets::switch_labeled(ui, p, &mut options.variants, aurora_i18n::tr!("inventory-sorter-variants"));
-    ui.label(
-        RichText::new(aurora_i18n::tr!("inventory-sorter-variants-hint"))
-            .small()
-            .color(p.muted),
-    );
-    ui.add_space(4.0);
     crate::ui::widgets::switch_labeled(ui, p, &mut options.stores, aurora_i18n::tr!("inventory-sorter-by-store"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-sorter-by-store-hint"))
@@ -743,13 +752,30 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
                     }
                     match rule.target {
                         _ if rule.pre_trash => {
+                            // where it looks: the whole folder sorted, at any
+                            // depth, with or without the sort folder's tree
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-look-in")).small().color(p.muted));
+                            let mut look = usize::from(rule.skip_sorted);
+                            if crate::ui::widgets::segmented(
+                                ui,
+                                p,
+                                &mut look,
+                                &[
+                                    (aurora_i18n::tr!("inventory-sorter-look-all"), true),
+                                    (aurora_i18n::tr!("inventory-sorter-look-unsorted"), true),
+                                ],
+                            ) {
+                                rule.skip_sorted = look == 1;
+                            }
+                            let hint = if rule.skip_sorted {
+                                aurora_i18n::tr!("inventory-sorter-rule-pre-trash-unsorted-hint", folder = base.as_str())
+                            } else {
+                                aurora_i18n::tr!("inventory-sorter-rule-pre-trash-hint").into()
+                            };
                             ui.horizontal(|ui| {
                                 crate::ui::widgets::glyph(ui, "trash-filled", p.warn, 14.0);
-                                ui.label(
-                                    RichText::new(aurora_i18n::tr!("inventory-sorter-rule-pre-trash-hint"))
-                                        .small()
-                                        .color(p.muted),
-                                );
+                                ui.add(egui::Label::new(RichText::new(hint).small().color(p.muted)).wrap());
                             });
                         }
                         Some(target) => {

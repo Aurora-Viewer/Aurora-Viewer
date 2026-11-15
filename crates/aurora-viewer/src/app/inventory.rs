@@ -327,13 +327,19 @@ impl App {
             self.inventory_ui.begin_delete(request, selection);
         }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
-        self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
-            if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
-                Some(*id)
-            } else {
-                None
-            }
-        });
+        // A new folder is shown and renamed ("New folder"); the folders an
+        // Auto-sort batch makes are not: the inventory stays where it was.
+        self.inventory_ui.created_selection = change
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .filter(|_| !self.inventory_ui.sorter_sending());
         self.inventory_ui.message.clear();
         self.send(NetCommand::EditInventory { request, change });
     }

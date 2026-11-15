@@ -14450,8 +14450,6 @@ inventory-sorter-pets = Pets
 inventory-sorter-pre-trash = Pre-Trash
 inventory-sorter-variant-squish = Squish
 inventory-sorter-stores = Stores
-inventory-sorter-variants = Squish and Squeeze versions in their own folder
-inventory-sorter-variants-hint = Names with sq, squish or squeeze go to a Squish folder below their category, apart from the regular version.
 inventory-sorter-by-store = A folder per store
 inventory-sorter-by-store-hint = Reads the store from the creator's tag ([Store] +, *Store*, Store - …) and files below the category, such as Furniture / Store.
 inventory-sorter-excluded = Folders never touched
@@ -14470,7 +14468,11 @@ inventory-sorter-whole-check = I checked the preview and want to sort my whole i
 inventory-sorter-rule-before = Acquired before
 inventory-sorter-rule-before-hint = 2020-01-01
 inventory-sorter-to-pre-trash = Pre-Trash
-inventory-sorter-rule-pre-trash-hint = Matches wait in the Pre-Trash folder until you confirm them for the Trash.
+inventory-sorter-rule-pre-trash-hint = Checks everything in the folder you sort, sorted or not, at any depth. Matches wait in Pre-Trash until you confirm.
+inventory-sorter-rule-pre-trash-unsorted-hint = Checks everything in the folder you sort, at any depth, except the { $folder } folder. Matches wait in Pre-Trash until you confirm.
+inventory-sorter-look-in = Look in
+inventory-sorter-look-all = Everywhere
+inventory-sorter-look-unsorted = Everywhere except Sorted
 inventory-sorter-pre-trash-waiting = { $count ->
     [one] 1 entry waits in Pre-Trash
    *[other] { $count } entries wait in Pre-Trash

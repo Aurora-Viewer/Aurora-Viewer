@@ -49,3 +49,13 @@ fn a_failed_batch_stops_the_sort_and_keeps_its_message() {
     assert!(st.sorter.job.is_none());
     assert_eq!(st.sorter.status, "network down");
 }
+
+#[test]
+fn a_sort_batch_on_its_way_is_not_a_new_folder_to_rename() {
+    let mut st = InventoryUi::default();
+    assert!(!st.sorter_sending());
+    st.sorter.submitted = true;
+    assert!(st.sorter_sending());
+    st.finish_sorter(None);
+    assert!(!st.sorter_sending());
+}

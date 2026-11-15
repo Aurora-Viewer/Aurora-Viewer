@@ -54,6 +54,10 @@ pub struct Rule {
     pub before: String,
     /// Send what it takes to the Pre-Trash folder, checked before the Trash.
     pub pre_trash: bool,
+    /// A Pre-Trash rule reads everything in the folder sorted, at any depth,
+    /// and the sort folder's tree; this one leaves the sort folder's tree out
+    /// ("Everywhere except Sorted").
+    pub skip_sorted: bool,
 }
 
 impl Default for Rule {
@@ -66,6 +70,7 @@ impl Default for Rule {
             target: None,
             before: String::new(),
             pre_trash: false,
+            skip_sorted: false,
         }
     }
 }
@@ -101,18 +106,27 @@ impl Rule {
     /// `created` is the item's acquired date; a folder has none, so a dated
     /// rule never takes a folder.
     pub fn matches(&self, name_words: &[String], created: Option<i64>) -> bool {
-        let wanted = words(&self.words);
-        let named = wanted.is_empty()
-            || match self.mode {
-                Match::All => wanted.iter().all(|w| name_words.contains(w)),
-                Match::Any => wanted.iter().any(|w| name_words.contains(w)),
-                Match::Phrase => has(name_words, &wanted.join(" ")),
-            };
         let dated = match self.before.trim() {
             "" => true,
             text => date_start(text).is_some_and(|limit| created.is_some_and(|c| c > 0 && c < limit)),
         };
-        named && dated
+        self.named(name_words) && dated
+    }
+
+    /// The words alone (a rule without words takes any name).
+    pub fn named(&self, name_words: &[String]) -> bool {
+        let wanted = words(&self.words);
+        wanted.is_empty()
+            || match self.mode {
+                Match::All => wanted.iter().all(|w| name_words.contains(w)),
+                Match::Any => wanted.iter().any(|w| name_words.contains(w)),
+                Match::Phrase => has(name_words, &wanted.join(" ")),
+            }
+    }
+
+    /// The date limit of a dated rule.
+    pub fn limit(&self) -> Option<i64> {
+        date_start(&self.before)
     }
 }
 
@@ -127,9 +141,6 @@ pub struct Preferences {
     /// whole: their contents are never split.
     pub folders: bool,
     pub rules: Vec<Rule>,
-    /// Squish and Squeeze versions (`sq`, `squish`, `squeeze`) get their
-    /// own folder below their category, apart from the regular one.
-    pub variants: bool,
     /// A folder per store below the category (`Furniture/North Oak`), read
     /// from the creator's tag ([`store`]).
     pub stores: bool,
@@ -143,7 +154,6 @@ impl Default for Preferences {
             base: String::new(),
             folders: true,
             rules: Vec::new(),
-            variants: true,
             stores: false,
             excluded: Vec::new(),
         }
@@ -794,16 +804,16 @@ pub enum Dest {
 /// tells where it goes: such entries stay where they are.
 #[cfg(test)]
 pub fn destination(name: &str, asset_type: i32, flags: u32, rules: &[Rule]) -> Option<Vec<String>> {
-    match target(name, asset_type, flags, None, rules, true, false)? {
+    match target(name, asset_type, flags, None, rules, false)? {
         Dest::Path(path) => Some(path),
         Dest::Folder(_) | Dest::PreTrash => None,
     }
 }
 
 /// Where `name` goes: a user rule first, then the body and the category,
-/// and a Squish folder below them for a Squish version (`variants`).
+/// and always a Squish folder below them for a Squish or Squeeze version.
 /// `created` is an item's acquired date, for the dated rules.
-pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rules: &[Rule], variants: bool, stores: bool) -> Option<Dest> {
+pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rules: &[Rule], stores: bool) -> Option<Dest> {
     if let Some(rule) = rule_for(rules, name, created) {
         return Some(match rule.target {
             _ if rule.pre_trash => Dest::PreTrash,
@@ -823,7 +833,7 @@ pub fn target(name: &str, asset_type: i32, flags: u32, created: Option<i64>, rul
         }
         path.push(store);
     }
-    if variants && found.squish && !path.is_empty() {
+    if found.squish && !path.is_empty() {
         path.push(squish_folder());
     }
     (!path.is_empty()).then_some(Dest::Path(path))
@@ -922,18 +932,24 @@ pub struct Plan {
     pub unknown: Vec<String>,
     /// Entries that cannot move: worn, links, locked or system folders.
     pub kept: usize,
+    /// Folders a Pre-Trash rule would read that are not loaded yet: the
+    /// window asks for them and the preview fills in.
+    pub unfetched: Vec<Uuid>,
 }
 
 impl Plan {
-    /// The destination folders and how many entries each receives, by path.
+    /// The destination folders and how many entries each receives, by path;
+    /// Pre-Trash first, so what would leave is seen before the rest.
     pub fn groups(&self) -> Vec<(String, usize)> {
-        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut counts: HashMap<String, (usize, bool)> = HashMap::new();
         for m in &self.moves {
-            *counts.entry(m.label.clone()).or_default() += 1;
+            let group = counts.entry(m.label.clone()).or_default();
+            group.0 += 1;
+            group.1 |= m.to == Dest::PreTrash;
         }
         let mut groups: Vec<_> = counts.into_iter().collect();
-        groups.sort_by_cached_key(|(path, _)| crate::natural_order::key(path));
-        groups
+        groups.sort_by_cached_key(|(path, (_, trash))| (!*trash, crate::natural_order::key(path)));
+        groups.into_iter().map(|(path, (count, _))| (path, count)).collect()
     }
 
     pub fn unpackers(&self) -> usize {
@@ -989,14 +1005,18 @@ pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
     sources
 }
 
-/// The plan of a whole-inventory sort (see [`whole_sources`]).
+/// The plan of a whole-inventory sort (see [`whole_sources`]). Its
+/// Pre-Trash rules read all of My Inventory, at any depth ([`pre_trash_scan`]).
 pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let mut entries = Vec::new();
     for source in whole_sources(inv, prefs) {
         let folders = prefs.folders && source != inv.root;
         entries.extend(contents(inv, source, prefs, folders));
     }
-    plan_entries(inv, &entries, prefs, protected, worn)
+    let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
+    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn);
+    plan.unfetched = scan.unfetched;
+    plan
 }
 
 /// Can `id` leave its folder for the sorted ones? The rules of a drag
@@ -1029,10 +1049,169 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
 
 /// The moves of the direct contents of `source`. A folder goes as a whole
 /// (`prefs.folders`), classified by its own name. Entries already in the
-/// folder they would go to are left out.
+/// folder they would go to are left out. The Pre-Trash rules read further:
+/// the whole of `source` at any depth, and the sort folder's tree
+/// ([`pre_trash_scan`]).
 pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let entries = contents(inv, source, prefs, prefs.folders);
-    plan_entries(inv, &entries, prefs, protected, worn)
+    let scan = pre_trash_scan(inv, prefs, source, protected, worn);
+    let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn);
+    plan.unfetched = scan.unfetched;
+    plan
+}
+
+/// A usable rule sends to Pre-Trash.
+pub fn has_pre_trash_rule(prefs: &Preferences) -> bool {
+    prefs.rules.iter().any(|r| r.pre_trash && r.usable())
+}
+
+/// What the Pre-Trash rules take beyond the direct contents of a sort.
+#[derive(Debug, Default, Clone)]
+pub struct PreTrashScan {
+    /// Items, and folders that go whole.
+    pub found: Vec<Uuid>,
+    /// Folders not loaded yet, skipped for now.
+    pub unfetched: Vec<Uuid>,
+}
+
+/// System folders a Pre-Trash rule never reads: Favorites, the Current
+/// Outfit, an outfit and My Outfits (the Trash and Marketplace Listings are
+/// [`untouchable`], the Library is not the agent's).
+const NEVER_READ: &[i32] = &[23, 46, 47, 48];
+
+/// The rules that apply to an entry: in the sort folder's tree, a Pre-Trash
+/// rule set to "Everywhere except Sorted" does not.
+fn rules_for_place(rules: &[Rule], sorted: bool) -> Vec<&Rule> {
+    rules.iter().filter(|r| !(sorted && r.pre_trash && r.skip_sorted)).collect()
+}
+
+fn first_rule<'a>(rules: &[&'a Rule], name_words: &[String], created: Option<i64>) -> Option<&'a Rule> {
+    rules
+        .iter()
+        .copied()
+        .find(|rule| rule.usable() && rule.matches(name_words, created))
+}
+
+/// What the Pre-Trash rules take, sorted or not: everything in `source` at
+/// any depth, and the sort folder's tree unless every Pre-Trash rule leaves
+/// it out. An item goes when its first usable rule is a Pre-Trash one; a
+/// product's folder (a delivery, a fatpack) is never split: it goes whole
+/// when a Pre-Trash rule names it, or when a dated one finds every item in
+/// it (at any depth) acquired before its date, and otherwise stays with all
+/// it holds. Only the folders Auto-sort made, the system folders, the
+/// folders whose name reads as no product (the user's own arrangement) and
+/// `source` itself are opened. Never read: the Trash, Marketplace Listings,
+/// the Library, Favorites, outfits, the Current Outfit, the Pre-Trash folder,
+/// excluded and locked folders; worn entries and links stay.
+pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> PreTrashScan {
+    let mut scan = PreTrashScan::default();
+    if !has_pre_trash_rule(prefs) {
+        return scan;
+    }
+    let base = child(inv, inv.root, &prefs.base_name());
+    let in_sorted = |id: Uuid| base.is_some_and(|b| id == b || actions::under(inv, id, b));
+    let mut stack = vec![source];
+    if let Some(base) = base
+        && prefs.rules.iter().any(|r| r.pre_trash && r.usable() && !r.skip_sorted)
+    {
+        stack.push(base);
+    }
+    let reserved = sorter_folder_names(prefs);
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let pre_trash_at = pre_trash(inv);
+    let closed = |id: Uuid| {
+        inv.folders
+            .get(&id)
+            .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
+            || Some(id) == pre_trash_at
+            || protected.contains(&id)
+            || untouchable(inv, id)
+            || prefs.excludes(inv, id)
+    };
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) || closed(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        if folder.state != FetchState::Fetched {
+            scan.unfetched.push(id);
+            continue;
+        }
+        let rules = rules_for_place(&prefs.rules, in_sorted(id));
+        for item in &folder.items {
+            if let Some(it) = inv.items.get(item)
+                && movable(inv, *item, protected, &holds_worn)
+                && first_rule(&rules, &words(&it.name), Some(it.created_at)).is_some_and(|r| r.pre_trash)
+            {
+                scan.found.push(*item);
+            }
+        }
+        for sub in &folder.children {
+            let Some(f) = inv.folders.get(sub) else { continue };
+            if closed(*sub) {
+                continue;
+            }
+            let name = f.info.name.trim();
+            let system = f.info.type_default != -1;
+            let made = reserved.contains(&name.to_lowercase())
+                || prefs.stores && in_sorted(*sub) && store(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
+            if !system && !made && movable(inv, *sub, protected, &holds_worn) {
+                let name_words = words(name);
+                let rules = rules_for_place(&prefs.rules, in_sorted(*sub));
+                let taken = match first_rule(&rules, &name_words, None) {
+                    Some(rule) => rule.pre_trash,
+                    // no word rule names it: a dated Pre-Trash rule takes it
+                    // whole when everything in it is old
+                    None => rules.iter().any(|r| {
+                        r.pre_trash
+                            && r.usable()
+                            && r.named(&name_words)
+                            && r.limit().is_some_and(|limit| all_before(inv, *sub, limit, &mut scan.unfetched))
+                    }),
+                };
+                if taken {
+                    scan.found.push(*sub);
+                    continue;
+                }
+            }
+            // a product's folder stays whole: its old items are not pulled out
+            let product = !system && !made && target(name, -1, 0, None, &[], false).is_some();
+            if !product {
+                stack.push(*sub);
+            }
+        }
+    }
+    scan.unfetched.sort_unstable();
+    scan.unfetched.dedup();
+    scan
+}
+
+/// Every item in `folder`, at any depth, was acquired before `limit`, and
+/// there is at least one. A folder not loaded yet answers no (and is listed
+/// in `unfetched`).
+fn all_before(inv: &Inventory, folder: Uuid, limit: i64, unfetched: &mut Vec<Uuid>) -> bool {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    let mut any = false;
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if f.state != FetchState::Fetched {
+            unfetched.push(id);
+            return false;
+        }
+        for item in &f.items {
+            match inv.items.get(item) {
+                Some(it) if it.created_at > 0 && it.created_at < limit => any = true,
+                _ => return false,
+            }
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    any
 }
 
 /// The direct contents of `source` a sort reads: its items, and its folders
@@ -1060,9 +1239,28 @@ fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -
 /// The moves of chosen entries, wherever they are: the selection a
 /// right-click sorts at once. A folder goes as a whole, by its own name.
 pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    plan_with(inv, entries.to_vec(), Vec::new(), prefs, protected, worn)
+}
+
+/// The moves of `entries`, and of `pre_trashed` (what [`pre_trash_scan`]
+/// found), which go to Pre-Trash whatever their name says.
+fn plan_with(
+    inv: &Inventory,
+    mut entries: Vec<Uuid>,
+    pre_trashed: Vec<Uuid>,
+    prefs: &Preferences,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+) -> Plan {
     let mut plan = Plan::default();
+    let forced: HashSet<Uuid> = pre_trashed.iter().copied().collect();
+    let known: HashSet<Uuid> = entries.iter().copied().collect();
+    entries.extend(pre_trashed.into_iter().filter(|id| !known.contains(id)));
     let holds_worn = actions::worn_ancestors(inv, worn);
     let base = child(inv, inv.root, &prefs.base_name());
+    // in the sort folder's tree, the "Everywhere except Sorted" rules are
+    // left out
+    let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !(r.pre_trash && r.skip_sorted)).cloned().collect();
     let mut candidates = Vec::new();
     for id in entries.iter().copied() {
         let (name, asset_type, flags, created, is_folder) = match (inv.folders.get(&id), inv.items.get(&id)) {
@@ -1072,7 +1270,8 @@ pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, prot
         };
         let Some(from) = actions::parent(inv, id) else { continue };
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) {
-            candidates.push((id, is_folder, from, name, asset_type, flags, created));
+            let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
+            candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted));
         } else {
             plan.kept += 1;
         }
@@ -1082,8 +1281,13 @@ pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, prot
     use rayon::prelude::*;
     let read: Vec<_> = candidates
         .into_par_iter()
-        .map(|(id, folder, from, name, asset_type, flags, created)| {
-            let to = target(&name, asset_type, flags, created, &prefs.rules, prefs.variants, prefs.stores);
+        .map(|(id, folder, from, name, asset_type, flags, created, sorted)| {
+            let rules = if sorted { &sorted_rules } else { &prefs.rules };
+            let to = if forced.contains(&id) {
+                Some(Dest::PreTrash)
+            } else {
+                target(&name, asset_type, flags, created, rules, prefs.stores)
+            };
             let unpacker = classify(&name, asset_type, flags).unpacker;
             (id, folder, from, name, to, unpacker)
         })
