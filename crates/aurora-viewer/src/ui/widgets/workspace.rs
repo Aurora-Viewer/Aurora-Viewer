@@ -534,6 +534,8 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",
+        // the toolbar's conversation_log command
+        "conversation_log" => "file-text-filled",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",

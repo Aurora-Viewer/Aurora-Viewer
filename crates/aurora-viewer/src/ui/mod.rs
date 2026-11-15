@@ -37,6 +37,7 @@ pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
+pub mod conversation_log;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
@@ -236,6 +237,9 @@ pub struct Panels {
     pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The conversation log (toolbar `conversation_log`, Communicate ›
+    /// Conversation log…).
+    pub conversation_log: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -308,6 +312,7 @@ impl Panels {
             quick_prefs: false,
             director: false,
             voice_controls: false,
+            conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,
