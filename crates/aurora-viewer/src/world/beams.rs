@@ -74,6 +74,12 @@ pub struct Beam {
     pub born: Instant,
     /// When its time is up: it fades out from there.
     pub until: Instant,
+    /// Order of arrival, to pick one beam per sender steadily
+    /// (`Beams::leading`).
+    pub seq: u64,
+    /// Sent again under the same id: the sender's main beam, not one of the
+    /// one-shot beams of a beam shape (lggBeamMaps::fireCurrentBeams).
+    pub resent: bool,
 }
 
 impl Beam {
@@ -109,6 +115,8 @@ pub struct Beams {
     /// Every beam shown, ours included, by effect id.
     pub shown: HashMap<Uuid, Beam>,
     pub own: Own,
+    /// The next `Beam::seq`.
+    next_seq: u64,
 }
 
 fn secs(s: f32) -> Duration {
@@ -141,7 +149,10 @@ impl Beams {
             self.shown.remove(&effect);
             return;
         }
-        let born = self.shown.get(&effect).map_or(now, |b| b.born);
+        let (born, seq, resent) = match self.shown.get(&effect) {
+            Some(b) => (b.born, b.seq, true),
+            None => (now, self.next_seq(), false),
+        };
         self.shown.insert(
             effect,
             Beam {
@@ -151,8 +162,39 @@ impl Beams {
                 color,
                 born,
                 until: now + secs(duration),
+                seq,
+                resent,
             },
         );
+    }
+
+    fn next_seq(&mut self) -> u64 {
+        self.next_seq += 1;
+        self.next_seq
+    }
+
+    /// One beam per sender, for Aurora's look: a beam shape (the Legacy
+    /// Viewer's FSBeamShape, "Phoenix" by default) sends, besides the main
+    /// beam, one short beam per dot of the shape, each under a new id, every
+    /// time the main one is sent again: dozens at once, all from the same
+    /// hand. Drawn each with its thread and its name, they stack into a
+    /// bundle of threads and pills. The main beam is the one sent again
+    /// under its id; until it is, the first to come (the main beam comes
+    /// first in the Legacy Viewer's packet, its effect made before the
+    /// dots'). The Legacy look keeps them all, as its particles do there.
+    pub fn leading(&self) -> impl Iterator<Item = (&Uuid, &Beam)> {
+        let mut best: HashMap<Uuid, (&Uuid, &Beam)> = HashMap::new();
+        for (effect, b) in &self.shown {
+            let rank = |b: &Beam| (b.resent, std::cmp::Reverse(b.seq));
+            best.entry(b.source)
+                .and_modify(|cur| {
+                    if rank(b) > rank(cur.1) {
+                        *cur = (effect, b);
+                    }
+                })
+                .or_insert((effect, b));
+        }
+        best.into_values()
     }
 
     /// LLVOAvatarSelf::idleUpdateTractorBeam, once a frame: `aim` is where
@@ -166,6 +208,7 @@ impl Beams {
             return None;
         };
         let effect = *self.own.effect.get_or_insert_with(Uuid::new_v4);
+        let seq = if self.shown.contains_key(&effect) { 0 } else { self.next_seq() };
         let beam = self.shown.entry(effect).or_insert(Beam {
             source: me,
             target: None,
@@ -173,6 +216,9 @@ impl Beams {
             color,
             born: now,
             until: now,
+            seq,
+            // our main beam, kept up every frame
+            resent: true,
         });
         beam.position = position;
         beam.color = color;
@@ -200,6 +246,7 @@ impl Beams {
     /// shown here and sent once.
     pub fn give(&mut self, me: Uuid, target: Uuid, position: DVec3, color: [u8; 4], now: Instant) -> Send {
         let effect = Uuid::new_v4();
+        let seq = self.next_seq();
         self.shown.insert(
             effect,
             Beam {
@@ -209,6 +256,8 @@ impl Beams {
                 color,
                 born: now,
                 until: now + secs(GIVE_DURATION),
+                seq,
+                resent: false,
             },
         );
         Send {
@@ -258,6 +307,49 @@ mod tests {
         assert_eq!(beams.shown.len(), 1);
         beams.forget(later + Duration::from_secs(2), known);
         assert!(beams.shown.is_empty());
+    }
+
+    #[test]
+    fn a_beam_shape_leads_with_one_beam_per_sender() {
+        let now = Instant::now();
+        let mut beams = Beams::default();
+        let known = |_: &Uuid| true;
+        let at = [10.0, 10.0, 20.0];
+        // a Legacy Viewer with a beam shape: the main beam first, then one
+        // beam per dot, each under a new id
+        beams.receive(id(100), id(1), Uuid::nil(), at, [255; 4], 0.7, now, known);
+        for dot in 0..20u128 {
+            beams.receive(
+                id(200 + dot),
+                id(1),
+                Uuid::nil(),
+                [10.0, 10.0 + dot as f64 * 0.05, 20.0],
+                [255; 4],
+                0.3,
+                now,
+                known,
+            );
+        }
+        // another avatar's plain beam
+        beams.receive(id(300), id(2), Uuid::nil(), at, [255; 4], 0.7, now, known);
+        let lead = |b: &Beams| {
+            let mut v: Vec<Uuid> = b.leading().map(|(e, _)| *e).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(beams.shown.len(), 22);
+        assert_eq!(lead(&beams), vec![id(100), id(300)], "the first to come leads");
+        // the next send: new dots come before the main beam is sent again
+        let later = now + Duration::from_millis(250);
+        for dot in 0..20u128 {
+            beams.receive(id(400 + dot), id(1), Uuid::nil(), at, [255; 4], 0.3, later, known);
+        }
+        beams.receive(id(100), id(1), Uuid::nil(), at, [255; 4], 0.7, later, known);
+        assert!(beams.shown[&id(100)].resent);
+        assert_eq!(lead(&beams), vec![id(100), id(300)], "the beam sent again leads");
+        // the main beam gone, a dot still alive leads alone
+        beams.shown.remove(&id(100));
+        assert_eq!(beams.leading().count(), 2);
     }
 
     #[test]

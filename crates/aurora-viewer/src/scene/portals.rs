@@ -90,6 +90,20 @@ impl Portals {
                     0,
                     0,
                 ],
+                // the OIT tie-break: a namespace of their own and the portal's
+                // place (not its rank among the visible ones, which changes
+                // as portals come and go)
+                identity: [
+                    aurora_render::oit_tie(
+                        *b"aurora-portal-fx",
+                        portal.center[0].to_bits()
+                            ^ portal.center[1].to_bits().rotate_left(11)
+                            ^ portal.center[2].to_bits().rotate_left(22),
+                    ),
+                    0,
+                    0,
+                    0,
+                ],
                 ..Default::default()
             };
             let slot = if let Some(&slot) = self.records.get(used) {
