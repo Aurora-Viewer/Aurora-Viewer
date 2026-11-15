@@ -1112,13 +1112,11 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
 }
 
 /// Whether a chat field's shortcut (`is_chat`) may take this binding. The
-/// field reads its own key events, so refused are: a mouse button; a key
-/// egui has no name for (it never arrives as one); the fixed Send (Enter),
-/// Close (Ctrl+W) and Find (Ctrl+F), taken before the field; and, without
-/// Ctrl or Alt, a key that types or edits text (a letter, digit, space,
-/// punctuation, Tab, Backspace, the arrows…), which the field or its
-/// suggestion lists need. Without Ctrl or Alt only the function keys and
-/// Shift+Enter remain.
+/// field reads its own key events, so refused are only what it could never
+/// see: a mouse button, a key egui has no name for (it never arrives as
+/// one), and the fixed Send (Enter), Close (Ctrl+W) and Find (Ctrl+F),
+/// taken before the field. Any other key is the user's choice, a plain
+/// letter included.
 pub fn chat_accepts(b: &Binding) -> bool {
     let Input::Key(name) = &b.input else {
         return false;
@@ -1131,16 +1129,7 @@ pub fn chat_accepts(b: &Binding) -> bool {
         egui::Key::W | egui::Key::F => b.ctrl && !b.alt && !b.shift,
         _ => false,
     };
-    if fixed {
-        return false;
-    }
-    if b.ctrl || b.alt {
-        return true;
-    }
-    let function = name
-        .strip_prefix('F')
-        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-    function || (key == egui::Key::Enter && b.shift)
+    !fixed
 }
 
 /// Keys that move or edit rather than type: the keypad sends them with
@@ -2270,18 +2259,9 @@ mod tests {
         assert!(!accepts(key(KeyCode::Enter, false, false, false)));
         assert!(!accepts(key(KeyCode::KeyW, true, false, false)));
         assert!(!accepts(key(KeyCode::KeyF, true, false, false)));
-        // what types or edits, without Ctrl or Alt: the field needs it
-        for code in [
-            KeyCode::KeyW,
-            KeyCode::Digit1,
-            KeyCode::Space,
-            KeyCode::Comma,
-            KeyCode::Tab,
-            KeyCode::Backspace,
-            KeyCode::ArrowUp,
-        ] {
-            assert!(!accepts(key(code, false, false, false)), "{code:?}");
-            assert!(!accepts(key(code, false, true, false)), "Shift+{code:?}");
+        // any other key is the user's choice, a plain letter included
+        for code in [KeyCode::KeyW, KeyCode::Digit1, KeyCode::Space, KeyCode::ArrowUp] {
+            assert!(accepts(key(code, false, false, false)), "{code:?}");
         }
     }
 

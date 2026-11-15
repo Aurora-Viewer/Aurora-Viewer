@@ -7412,8 +7412,7 @@ impl App {
             return;
         };
         // the chat fields' shortcuts are read from their key events: a
-        // binding the field could never see, or that would break typing,
-        // is refused (`chat_accepts`)
+        // binding the field could never see is refused (`chat_accepts`)
         if let Some(input) = input {
             let b = crate::keybinds::Binding::captured(input, mods);
             if crate::keybinds::is_chat(action) && !crate::keybinds::chat_accepts(&b) {
