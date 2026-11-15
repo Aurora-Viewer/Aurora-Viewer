@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub const FT_OUTFIT: i32 = 47;
 pub const FT_MY_OUTFITS: i32 = 48;
+/// The Clothing system folder (LLFolderType::FT_CLOTHING).
+pub const FT_CLOTHING: i32 = 5;
 pub fn wearables() -> &'static Vec<&'static str> {
     static TABLE: aurora_i18n::Localized<Vec<&'static str>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
