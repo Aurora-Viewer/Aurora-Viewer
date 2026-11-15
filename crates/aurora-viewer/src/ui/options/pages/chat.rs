@@ -801,6 +801,16 @@ fn notifications(cx: &mut Cx) {
                 },
             );
         });
+        // ToastGap (User Interface › 2D Overlay, "Gap between Toasts"):
+        // every stack, the Legacy toasts and Aurora's cards and friends'
+        // toasts alike
+        cx.slider_whole(
+            tr!("ui-options-toast-gap"),
+            tr!("ui-options-toast-gap-hint"),
+            &field!(toast_gap),
+            0.0..=crate::settings::TOAST_GAP_MAX,
+            " px",
+        );
         // OnlineOfflinetoNearbyChat, beside its toast as in the Legacy
         // Viewer's "Notify me when my friends log in or out"
         cx.toggle(
