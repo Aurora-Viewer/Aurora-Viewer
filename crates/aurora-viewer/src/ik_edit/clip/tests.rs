@@ -287,7 +287,9 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     let (_, hover) = frames.run_with_output(vec![egui::Event::PointerMoved(key)], &mut draw);
     assert_eq!(hover.cursor_icon, egui::CursorIcon::Grab);
     let texts = frames.hover(key, &mut draw);
-    assert!(texts.iter().any(|text| text.source.contains("Keyframe at frame 0")));
+    // the catalogue's text: the tests run in the system language
+    let tip = aurora_i18n::tr!("anim-edit-keyframe-at", frame = 0);
+    assert!(texts.iter().any(|text| text.source.contains(&tip)));
     let stable_shapes = frames.shapes(Vec::new(), &mut draw);
     let stable_baseline = stable_shapes
         .iter()

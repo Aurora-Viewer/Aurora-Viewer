@@ -446,8 +446,8 @@ fn without_shared(mut src: String) -> String {
     cut(
         &mut src,
         "    // ---- early out of a wavefront",
-        "    if (skip_pixel) {\n        return;\n    }\n",
-        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
+        "    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n",
+        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
     );
     let reads = src.matches("depth_data[sample_index + i]").count();
     assert_eq!(reads, 3, "contact shadows variant: the shared reads");
@@ -523,7 +523,10 @@ pub(crate) struct ContactShadows {
     /// This frame's samples: those of `photo` when it is not Bend's.
     samples: (i32, i32),
     pipeline_layout: wgpu::PipelineLayout,
+    /// The whole mask lit, for `Variant::Skip` only; the wavefronts write
+    /// every other pixel but the light's, which `clear_light` writes.
     clear: wgpu::ComputePipeline,
+    clear_light: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     buffer: wgpu::Buffer,
     /// Bytes between the constants of two dispatches.
@@ -545,7 +548,11 @@ struct Filter {
 }
 
 impl Filter {
-    fn new(device: &wgpu::Device) -> Self {
+    /// `skip_lit`: a tile with no shadow under it is written lit without
+    /// the filter's taps (`SKIP_LIT`, contact_shadows_filter.wgsl); off for
+    /// the AMD RX 9000 cards ([`Variant::NoShared`]), which keep the filter
+    /// without an atomic in workgroup memory, like their pass.
+    fn new(device: &wgpu::Device, skip_lit: bool) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("contact shadows filter"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows_filter.wgsl").into()),
@@ -582,19 +589,22 @@ impl Filter {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let make = |entry: &'static str| {
+        let make = |entry: &'static str, constants: &[(&str, f64)]| {
             device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some("contact shadows filter"),
                 layout: Some(&pl),
                 module: &module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 cache: None,
             })
         };
         Filter {
-            soft: make("main"),
-            copy: make("copy"),
+            soft: make("main", &[("SKIP_LIT", f64::from(skip_lit))]),
+            copy: make("copy", &[]),
             layout,
         }
     }
@@ -704,8 +714,8 @@ impl ContactShadows {
                 cache: None,
             })
         };
-        let (pipeline, clear) = (make("main"), make("clear"));
-        let filter = Filter::new(device);
+        let (pipeline, clear, clear_light) = (make("main"), make("clear"), make("clear_light"));
+        let filter = Filter::new(device, variant != Variant::NoShared);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows params"),
             size: stride * 8,
@@ -718,6 +728,7 @@ impl ContactShadows {
             samples: samples(1.0),
             pipeline_layout: pl,
             clear,
+            clear_light,
             layout,
             buffer,
             stride,
@@ -777,8 +788,11 @@ impl ContactShadows {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: RESULT_FORMAT,
-                    // copied out by the variants' test only
-                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                    // copied in and out by the variants' test only
+                    usage: wgpu::TextureUsages::STORAGE_BINDING
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 })
                 .create_view(&wgpu::TextureViewDescriptor::default())
@@ -885,10 +899,11 @@ impl ContactShadows {
 
     /// The dispatches of `write`, after the depth prepass (`more`: after
     /// the blended faces and the cards were drawn into `depth`). No barrier is
-    /// needed between them: each writes its own pixels. The target is
-    /// emptied first (0, lit): the pixel under the light's point, which no
-    /// wavefront writes, and the sky stay lit. Then the filter softens the
-    /// mask into `result`, over the same depth.
+    /// needed between them: each writes its own pixels, the sky lit (0).
+    /// The pixel under the light's point, which no wavefront writes, is set
+    /// lit first, so every pixel of the target is written each frame without
+    /// emptying it. Then the filter softens the mask into `result`, over the
+    /// same depth.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
         let (group, filter_group) = if more {
             (&t.group_more, &t.filter_group_more)
@@ -899,9 +914,14 @@ impl ContactShadows {
             label: Some("contact shadows"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&self.clear);
         pass.set_bind_group(0, group, &[0]);
-        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        if self.variant == Variant::Skip {
+            pass.set_pipeline(&self.clear);
+            pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        } else {
+            pass.set_pipeline(&self.clear_light);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
         let pipeline = match &self.photo {
             Some((s, photo)) if *s == self.samples => photo,
             _ => &self.pipeline,
@@ -1299,13 +1319,14 @@ mod tests {
         queue.submit([encoder.finish()]);
         // the sun ahead and high, its point on screen above the image
         let light = [0.2, 1.6, 0.0, 0.8];
-        let mask_at = |variant: Variant, scale: f32| -> Vec<u8> {
-            let mut cs = ContactShadows::with_variant(&device, variant);
-            let t = cs.targets(&device, &depth_view, format, w, h);
-            cs.write(&device, &queue, &t, light, 0.1, scale);
+        let extent = wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        };
+        let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let read = |texture: &wgpu::Texture| -> Vec<u8> {
             let mut encoder = device.create_command_encoder(&Default::default());
-            cs.encode(&mut encoder, &t, false);
-            let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size: crate::readback::readback_size((row * h) as u64),
@@ -1313,7 +1334,7 @@ mod tests {
                 mapped_at_creation: false,
             });
             encoder.copy_texture_to_buffer(
-                t.raw.texture().as_image_copy(),
+                texture.as_image_copy(),
                 wgpu::TexelCopyBufferInfo {
                     buffer: &buffer,
                     layout: wgpu::TexelCopyBufferLayout {
@@ -1322,11 +1343,7 @@ mod tests {
                         rows_per_image: Some(h),
                     },
                 },
-                wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
+                extent,
             );
             queue.submit([encoder.finish()]);
             buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
@@ -1336,6 +1353,43 @@ mod tests {
                 .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
                 .collect()
         };
+        // The pass's mask and the filter's result for `light`, the mask
+        // filled with `fill` first (the target is not emptied each frame:
+        // every pixel must be written whatever it held), and the result
+        // checked against the filter's without its skip of the tiles with no
+        // shadow, over the same mask.
+        let run = |variant: Variant, scale: f32, light: [f32; 4], fill: u8| -> (Vec<u8>, Vec<u8>) {
+            let mut cs = ContactShadows::with_variant(&device, variant);
+            let t = cs.targets(&device, &depth_view, format, w, h);
+            queue.write_texture(
+                t.raw.texture().as_image_copy(),
+                &vec![fill; (w * h * 4) as usize],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: Some(h),
+                },
+                extent,
+            );
+            cs.write(&device, &queue, &t, light, 0.1, scale);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cs.encode(&mut encoder, &t, false);
+            queue.submit([encoder.finish()]);
+            let (raw, result) = (read(t.raw.texture()), read(t.result.texture()));
+            let full = Filter::new(&device, false);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&full.soft);
+                pass.set_bind_group(0, &t.filter_group, &[]);
+                pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+            }
+            queue.submit([encoder.finish()]);
+            let differ = result.iter().zip(read(t.result.texture())).filter(|(a, b)| **a != *b).count();
+            assert_eq!(differ, 0, "{variant:?}: the filter's skip changed {differ} pixels");
+            (raw, result)
+        };
+        let mask_at = |variant: Variant, scale: f32| run(variant, scale, light, 0).0;
         let mask = |variant: Variant| mask_at(variant, 1.0);
         let bend = mask(Variant::Bend);
         let shadowed = bend.iter().filter(|&&v| v > 128).count();
@@ -1383,5 +1437,22 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         assert!(d.is_empty(), "NoShared photo: {} pixels differ", d.len());
+        // whatever the mask held, the pass writes every pixel, the light's
+        // own one when it falls on the screen included (only the pixels two
+        // wavefronts write, which take either, may differ between runs)
+        for light in [light, [0.2, -0.3, 0.5, 1.0], [-0.6, 0.4, 0.5, -1.0]] {
+            let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+            let mut writes = vec![0u8; (w * h) as usize];
+            written_pixels(&list, WAVE_SIZE, |x, y| {
+                if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                    writes[(y * w as i32 + x) as usize] += 1;
+                }
+            });
+            for variant in [Variant::Bend, Variant::NoShared] {
+                let (a, b) = (run(variant, 1.0, light, 0).0, run(variant, 1.0, light, 77).0);
+                let left = a.iter().zip(&b).enumerate().filter(|(i, (a, b))| a != b && writes[*i] < 2).count();
+                assert_eq!(left, 0, "{variant:?}, light {light:?}: {left} pixels keep what the mask held");
+            }
+        }
     }
 }

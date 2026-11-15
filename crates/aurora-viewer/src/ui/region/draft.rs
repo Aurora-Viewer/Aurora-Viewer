@@ -117,6 +117,36 @@ impl Changes for RegionDebug {
     }
 }
 
+impl Changes for aurora_net::open_region::OpenRegionSettings {
+    fn changes(&self, o: &Self) -> usize {
+        [
+            self.draw_distance != o.draw_distance,
+            self.force_draw_distance != o.force_draw_distance,
+            self.max_drag_distance != o.max_drag_distance,
+            self.max_prim_scale != o.max_prim_scale,
+            self.min_prim_scale != o.min_prim_scale,
+            self.max_phys_prim_scale != o.max_phys_prim_scale,
+            self.max_hollow_size != o.max_hollow_size,
+            self.min_hole_size != o.min_hole_size,
+            self.max_link_count != o.max_link_count,
+            self.max_link_count_phys != o.max_link_count_phys,
+            self.max_inventory_items_transfer != o.max_inventory_items_transfer,
+            self.terrain_detail_scale != o.terrain_detail_scale,
+            self.show_tags != o.show_tags,
+            self.max_groups != o.max_groups,
+            self.render_water != o.render_water,
+            self.allow_minimap != o.allow_minimap,
+            self.allow_physical_prims != o.allow_physical_prims,
+            self.enforce_max_build != o.enforce_max_build,
+            self.allow_parcel_windlight != o.allow_parcel_windlight,
+            self.enable_teen_mode != o.enable_teen_mode,
+        ]
+        .into_iter()
+        .filter(|c| *c)
+        .count()
+    }
+}
+
 impl Changes for TerrainSettings {
     fn changes(&self, o: &Self) -> usize {
         let scalars = [

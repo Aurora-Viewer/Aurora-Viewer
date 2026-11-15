@@ -18,6 +18,19 @@ const ACK_ENV: &str = "AURORA_UPDATE_ACK";
 pub const ROLLBACK_ENV: &str = "AURORA_UPDATE_ROLLBACK";
 /// Why the update failed, written by the helper before the rollback.
 const FAILURE: &str = "failure.txt";
+/// Written by the helper just before it starts the new viewer: a failure
+/// without it happened while installing, before any start.
+const LAUNCHING: &str = "launching";
+
+/// A failed update, told by its helper to the viewer it restored.
+pub struct FailedUpdate {
+    /// The helper's own words (`failure.txt`).
+    pub reason: String,
+    /// The new viewer was being started: it failed to start or to show a
+    /// frame. Otherwise the installation itself failed and the previous
+    /// one was never stopped from starting.
+    pub launched: bool,
+}
 /// Written by the new viewer once its startup splash is on screen: the
 /// helper's own update window can then go without a gap.
 const SPLASH_SHOWN: &str = "splash-shown";
@@ -296,9 +309,9 @@ fn sweep_finished(install: &Path) {
 /// transaction folder is then removed in the background, once the helper
 /// that restored the viewer has exited. A helper of an older version only
 /// says that it failed (`None`).
-pub fn failed_update() -> Option<String> {
+pub fn failed_update() -> Option<FailedUpdate> {
     let work = PathBuf::from(std::env::var_os(ROLLBACK_ENV)?);
-    let result = (|| -> Result<(String, Plan)> {
+    let result = (|| -> Result<(FailedUpdate, Plan)> {
         let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
         validate_work(&work, &plan)?;
         ensure!(
@@ -306,11 +319,19 @@ pub fn failed_update() -> Option<String> {
             "rollback notice for another installation"
         );
         let reason = fs::read_to_string(work.join(FAILURE))?;
-        Ok((reason.trim().chars().take(400).collect(), plan))
+        let failed = FailedUpdate {
+            reason: reason.trim().chars().take(400).collect(),
+            launched: work.join(LAUNCHING).exists(),
+        };
+        Ok((failed, plan))
     })();
     match result {
-        Ok((reason, plan)) => {
-            log::warn!("update: the previous version was restored: {reason}");
+        Ok((failed, plan)) => {
+            let when = if failed.launched { "at its start" } else { "while installing" };
+            log::warn!(
+                "update: the previous version was restored, the new one failed {when}: {}",
+                failed.reason
+            );
             std::thread::spawn(move || {
                 for _ in 0..120 {
                     if !finished(&work) {
@@ -326,7 +347,7 @@ pub fn failed_update() -> Option<String> {
                 }
                 log::warn!("update: the failed update's folder is left for the next update");
             });
-            Some(reason)
+            Some(failed)
         }
         Err(e) => {
             log::warn!("update: the previous version was restored, reason unknown ({e:#})");
@@ -389,6 +410,7 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
                 .env_remove(ROLLBACK_ENV)
                 .current_dir(&plan.install);
             hidden(&mut command);
+            fs::write(work.join(LAUNCHING), b"")?;
             let mut child = command.spawn()?;
             let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
                 stage(HelperStage::Handed)
