@@ -123,7 +123,26 @@ pub(super) struct State {
     unsaved: usize,
     /// Batches are held: a teleport runs or no region is connected.
     held: bool,
+    /// The inventory's generation last seen, and since when it has not changed.
+    seen_generation: u64,
+    quiet_since: Option<Instant>,
+    /// When the preview and Clean up's list were last made.
+    planned_at: Option<Instant>,
+    cleaned_at: Option<Instant>,
+    /// The preview waits for the inventory to settle before it is made again.
+    updating: bool,
+    /// Folders the plans would read, asked for a few at a time.
+    to_request: Vec<Uuid>,
+    /// What waits in Pre-Trash and where, at an inventory generation.
+    waiting: Option<(u64, std::sync::Arc<Vec<Uuid>>, Option<Uuid>)>,
 }
+
+/// The inventory unchanged this long before a plan is made again.
+const QUIET: std::time::Duration = std::time::Duration::from_millis(600);
+/// A plan made again at most this often while the inventory changes.
+const REPLAN: std::time::Duration = std::time::Duration::from_secs(2);
+/// Folder requests the plans keep in the inventory's queue at most.
+const REQUESTS_AT_ONCE: usize = 16;
 
 /// The Import window: the pasted text, what it holds and what is ticked.
 #[derive(Default)]
@@ -710,13 +729,33 @@ pub(super) fn show(
             loaded
         }
     };
-    if loaded
-        && !busy
-        && state
-            .preview
-            .as_ref()
-            .is_none_or(|(generation, options, _)| *generation != inv.generation || *options != prefs.sorter)
+    // The inventory changes many times a second while it loads: a plan of a
+    // large one is made again once it has been quiet for a moment, and not
+    // more than every few seconds, so the frame never stalls on it. A
+    // change of the options is followed at once.
+    if state.seen_generation != inv.generation {
+        state.seen_generation = inv.generation;
+        state.quiet_since = Some(now);
+    }
+    // folders the plans would read, asked for a few at a time beside the
+    // inventory's own loading (never thousands of requests at once)
+    while inv.queue.len() < REQUESTS_AT_ONCE
+        && let Some(id) = state.to_request.pop()
     {
+        if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Unknown) {
+            inv.request(id);
+        }
+    }
+    let options_changed = state.preview.as_ref().is_some_and(|(_, options, _)| *options != prefs.sorter);
+    let inventory_changed = state
+        .preview
+        .as_ref()
+        .is_some_and(|(generation, _, _)| *generation != inv.generation);
+    let settled = state.quiet_since.is_none_or(|q| now.duration_since(q) >= QUIET)
+        && state.planned_at.is_none_or(|at| now.duration_since(at) >= REPLAN);
+    state.updating = inventory_changed && !settled;
+    if loaded && !busy && (state.preview.is_none() || options_changed || inventory_changed && settled) {
+        state.planned_at = Some(now);
         let plan = match &source {
             Source::Folder(id) => sorter::plan(inv, *id, &prefs.sorter, &prefs.protected, worn),
             Source::Entries(ids) => sorter::plan_entries(inv, ids, &prefs.sorter, &prefs.protected, worn),
@@ -727,11 +766,7 @@ pub(super) fn show(
         // the sort folder's tree): what is not loaded yet is asked for, and
         // the preview fills in as it arrives (it follows the inventory's
         // generation). Nothing waits for it.
-        for id in &plan.unfetched {
-            if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown) {
-                inv.request(*id);
-            }
-        }
+        state.to_request.extend(plan.unfetched.iter().copied());
         state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
     }
     // Clean up's list, read on its tab only: once per inventory change (a
@@ -745,10 +780,14 @@ pub(super) fn show(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
         let day = now / 86_400;
+        let instant = Instant::now();
+        let settled = state.quiet_since.is_none_or(|q| instant.duration_since(q) >= QUIET)
+            && state.cleaned_at.is_none_or(|at| instant.duration_since(at) >= REPLAN);
         let stale = state.cleanup.as_ref().is_none_or(|(generation, choices, from, at, _)| {
-            *generation != inv.generation || *choices != prefs.sorter.cleanup || *from != cleanup_source || *at != day
+            *choices != prefs.sorter.cleanup || *from != cleanup_source || *at != day || *generation != inv.generation && settled
         });
         if stale {
+            state.cleaned_at = Some(instant);
             let plan = sorter::plan_cleanup(
                 inv,
                 &prefs.sorter,
@@ -758,11 +797,7 @@ pub(super) fn show(
                 &prefs.protected,
                 worn,
             );
-            for id in &plan.unfetched {
-                if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown) {
-                    inv.request(*id);
-                }
-            }
+            state.to_request.extend(plan.unfetched.iter().copied());
             state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
         }
     }
@@ -774,8 +809,22 @@ pub(super) fn show(
     let mut go = false;
     let mut stop = false;
     let mut pause = false;
-    let waiting = sorter::pre_trash_entries(inv);
-    let waiting_in = sorter::pre_trash(inv);
+    // what waits in Pre-Trash, read again only when the inventory changes
+    if state
+        .waiting
+        .as_ref()
+        .is_none_or(|(generation, _, _)| *generation != inv.generation)
+    {
+        state.waiting = Some((
+            inv.generation,
+            std::sync::Arc::new(sorter::pre_trash_entries(inv)),
+            sorter::pre_trash(inv),
+        ));
+    }
+    let (waiting, waiting_in) = state
+        .waiting
+        .as_ref()
+        .map_or((std::sync::Arc::default(), None), |(_, w, at)| (std::sync::Arc::clone(w), *at));
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -844,6 +893,9 @@ pub(super) fn show(
                                 .small()
                                 .color(p.warn),
                         );
+                    }
+                    if state.updating {
+                        ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-updating")).small().color(p.muted));
                     }
                     match state.preview.as_ref() {
                         _ if !loaded => {

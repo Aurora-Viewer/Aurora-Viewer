@@ -14488,6 +14488,7 @@ inventory-sorter-unlock-title = { $folder }で自動整理を許可しますか�
 inventory-sorter-unlock-text = 自分のフォルダと同じように、{ $folder }から整理フォルダへアイテムを移動します。スクリプト、HUD、他のビューアが{ $folder }内のものを前提にしている場合、見つからなくなることがあります。装着中のアイテム、リンク、有効なジェスチャー、配布フォルダは保護されたままで、フォルダ自体は移動せず、どの整理も取り消せます。
 inventory-sorter-unlock-confirm = 許可する
 inventory-sorter-unlocked-list = 許可したフォルダ：{ $folders }
+inventory-sorter-updating = インベントリが変化中です。落ち着いたらプレビューを作り直します。
 parcel-visibility-mode = 現在の区画外のコンテンツを隠す
 parcel-visibility-help = 地形、自分のアバター、ＨＵＤは残します。区画外のオブジェクト、他のアバター、その視覚効果は非表示になります。リストでこのフィルタを適用する場所を選びます。
 parcel-visibility-always = どこでも

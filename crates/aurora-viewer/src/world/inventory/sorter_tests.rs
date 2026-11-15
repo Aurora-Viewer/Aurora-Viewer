@@ -1539,3 +1539,106 @@ fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
     let text = super::share::export(&prefs, &super::share::Share::all(&prefs));
     assert!(!text.contains(&clothing.to_string()) && !text.to_lowercase().contains("unlock") && !text.contains("lost"));
 }
+
+/// A large inventory: `items` items in Objects and in `folders` folders of
+/// the user's (half of them deliveries), named like the demo's.
+fn big_inventory(items: usize, folders: usize) -> Inventory {
+    let mut inv = fixture(&[]);
+    let names = [
+        "Velvet skirt Reborn",
+        "Lace bra Legacy",
+        "Lumen - Hex Dress",
+        "[Birch Hollow] + Oak table",
+        "Mystery box",
+        "Dance 3",
+        "Old freebie",
+    ];
+    for n in 0..folders {
+        let at = 1_000_000 + n as u128;
+        let name = if n % 2 == 0 {
+            format!("Store {n} - Gown FATPACK")
+        } else {
+            format!("My things {n}")
+        };
+        add_folder(&mut inv, at, if n % 2 == 0 { OBJECTS } else { 1 }, &name);
+    }
+    let mut batch = Vec::with_capacity(items);
+    for n in 0..items {
+        let parent = if n % 3 == 0 {
+            id(OBJECTS)
+        } else {
+            id(1_000_000 + (n % folders.max(1)) as u128)
+        };
+        batch.push(InvItem {
+            id: id(10_000_000 + n as u128),
+            parent,
+            name: format!("{} {n}", names[n % names.len()]),
+            asset_type: 6,
+            inv_type: 6,
+            owner: id(AGENT),
+            created_at: if n % 5 == 0 { OLD } else { NEW },
+            ..Default::default()
+        });
+    }
+    inv.add_items(batch);
+    inv.generation += 1;
+    inv
+}
+
+/// Timings at 400,000 items (run by hand: `cargo test --workspace
+/// four_hundred_thousand -- --ignored --nocapture`).
+#[test]
+#[ignore = "a measure, about a minute in a debug build"]
+fn four_hundred_thousand_items_timings() {
+    let started = std::time::Instant::now();
+    let inv = big_inventory(400_000, 40_000);
+    eprintln!("build: {:?}", started.elapsed());
+    let none = HashSet::new();
+    let prefs = Preferences::default();
+    let t = std::time::Instant::now();
+    let whole = plan_whole(&inv, &prefs, &none, &none);
+    eprintln!("plan_whole: {:?} ({} moves)", t.elapsed(), whole.moves.len());
+    let t = std::time::Instant::now();
+    let groups = whole.grouped().len();
+    eprintln!("grouped: {:?} ({groups} groups)", t.elapsed());
+    let t = std::time::Instant::now();
+    let objects = plan(&inv, id(OBJECTS), &prefs, &none, &none);
+    eprintln!("plan(Objects): {:?} ({} moves)", t.elapsed(), objects.moves.len());
+    let t = std::time::Instant::now();
+    let cleanup = plan_cleanup(&inv, &prefs, &before_2020(), id(1), today(), &none, &none);
+    eprintln!("plan_cleanup: {:?} ({} rows)", t.elapsed(), cleanup.rows.len());
+    let mut with_rule = prefs.clone();
+    with_rule.rules.push(Rule {
+        words: "freebie".into(),
+        pre_trash: true,
+        ..Default::default()
+    });
+    let t = std::time::Instant::now();
+    let scan = pre_trash_scan(&inv, &with_rule, id(1), &none, &none);
+    eprintln!("pre_trash_scan: {:?} ({} found)", t.elapsed(), scan.found.len());
+    let mut inv = inv;
+    let mut queue: VecDeque<Move> = whole.moves.into();
+    let t = std::time::Instant::now();
+    let mut batches = 0;
+    while batches < 10
+        && let Step::Change(_, _) = step(&mut inv, &prefs.base_name(), &mut queue, &none, &none, &mut 0)
+    {
+        batches += 1;
+    }
+    eprintln!("step x{batches}: {:?}", t.elapsed());
+}
+
+/// A guard against a slow path coming back (a lookup repeated per folder
+/// made the whole-inventory plan of 400,000 items take 21 s instead of
+/// 1 s): 50,000 items in 5,000 folders plan in well under the limit.
+#[test]
+fn a_large_inventory_plans_in_linear_time() {
+    let inv = big_inventory(50_000, 5_000);
+    let none = HashSet::new();
+    let started = std::time::Instant::now();
+    let whole = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let cleanup = plan_cleanup(&inv, &Preferences::default(), &before_2020(), id(1), today(), &none, &none);
+    let elapsed = started.elapsed();
+    assert!(!whole.moves.is_empty() && !cleanup.rows.is_empty());
+    assert!(elapsed < std::time::Duration::from_secs(8), "{elapsed:?}");
+}

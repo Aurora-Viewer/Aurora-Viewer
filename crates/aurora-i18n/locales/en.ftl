@@ -14634,6 +14634,7 @@ inventory-sorter-unlock-title = Allow Auto-sort in { $folder }?
 inventory-sorter-unlock-text = Auto-sort will then move items out of { $folder } into the sort folders, like from your own folders. Some scripts, HUDs and other viewers expect things in { $folder }: they may not find them any more. Worn items, links, active gestures and delivery folders stay protected, the folder itself never moves, and every run can be undone.
 inventory-sorter-unlock-confirm = Allow it
 inventory-sorter-unlocked-list = Unlocked by you: { $folders }
+inventory-sorter-updating = Your inventory is still changing: the preview is made again once it settles.
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
 parcel-visibility-always = Everywhere

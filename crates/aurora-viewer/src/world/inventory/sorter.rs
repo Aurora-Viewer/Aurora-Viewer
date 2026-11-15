@@ -1248,10 +1248,13 @@ pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
 /// card. It is never opened: it moves whole or stays. It is a folder of the
 /// user's (not one Auto-sort made) whose name reads as a product or a store,
 /// or that holds no folder of its own.
-pub fn product_folder(inv: &Inventory, folder: Uuid, prefs: &Preferences) -> bool {
+///
+/// The sorter's folder names (`reserved`) are worked out once by the caller,
+/// for loops over thousands of folders.
+fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) -> bool {
     let Some(f) = inv.folders.get(&folder) else { return false };
     let name = f.info.name.trim();
-    if f.info.type_default != -1 || sorter_folder_names(prefs).contains(&name.to_lowercase()) {
+    if f.info.type_default != -1 || reserved.contains(&name.to_lowercase()) {
         return false;
     }
     let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
@@ -1264,22 +1267,44 @@ pub fn product_folder(inv: &Inventory, folder: Uuid, prefs: &Preferences) -> boo
 /// folder nor Pre-Trash). A product's folder at the root moves whole, never
 /// opened. No other default folder is read (see [`folder_open`]).
 pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
+    let places = Places::of(inv, prefs);
+    whole_sources_in(inv, prefs, &places)
+}
+
+fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
-    let base = child(inv, inv.root, &prefs.base_name());
-    let waiting = pre_trash(inv);
     if let Some(root) = inv.folders.get(&inv.root) {
         sources.extend(root.children.iter().copied().filter(|id| {
-            Some(*id) != base
-                && Some(*id) != waiting
+            Some(*id) != places.base
+                && Some(*id) != places.waiting
                 && folder_open(inv, *id)
                 && !prefs.excludes(inv, *id)
                 && inv
                     .folders
                     .get(id)
-                    .is_some_and(|f| f.info.type_default != -1 || !product_folder(inv, *id, prefs))
+                    .is_some_and(|f| f.info.type_default != -1 || !product_folder_in(inv, *id, &places.reserved))
         }));
     }
     sources
+}
+
+/// What every folder of a plan is compared with, worked out once: the sort
+/// folder, the Pre-Trash folder and the names of the folders Auto-sort
+/// makes (a scan over 40,000 folders must not look them up for each one).
+struct Places {
+    base: Option<Uuid>,
+    waiting: Option<Uuid>,
+    reserved: HashSet<String>,
+}
+
+impl Places {
+    fn of(inv: &Inventory, prefs: &Preferences) -> Self {
+        Self {
+            base: child(inv, inv.root, &prefs.base_name()),
+            waiting: pre_trash(inv),
+            reserved: sorter_folder_names(prefs),
+        }
+    }
 }
 
 /// The plan of a whole-inventory sort (see [`whole_sources`]). Its
@@ -1287,25 +1312,26 @@ pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
 /// ([`pre_trash_scan`]). The default and viewer folders at the root are
 /// listed as kept, so the preview names what is never touched.
 pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
-    let sources = whole_sources(inv, prefs);
+    let places = Places::of(inv, prefs);
+    let sources = whole_sources_in(inv, prefs, &places);
     let mut entries = Vec::new();
     for source in &sources {
         // the root's own folders are sources, products or hands-off: only
         // its loose items are entries
         let folders = prefs.folders && *source != inv.root;
-        entries.extend(contents(inv, *source, prefs, folders));
+        entries.extend(contents_in(inv, *source, folders, &places));
     }
+    let sources: HashSet<Uuid> = sources.into_iter().collect();
     // a product's folder at the root moves whole
     if prefs.folders
         && let Some(root) = inv.folders.get(&inv.root)
     {
-        let base = child(inv, inv.root, &prefs.base_name());
         entries.extend(root.children.iter().copied().filter(|id| {
             !sources.contains(id)
-                && Some(*id) != base
-                && Some(*id) != pre_trash(inv)
+                && Some(*id) != places.base
+                && Some(*id) != places.waiting
                 && folder_open(inv, *id)
-                && product_folder(inv, *id, prefs)
+                && product_folder_in(inv, *id, &places.reserved)
         }));
     }
     let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
@@ -1725,7 +1751,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
                 }
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && product_folder(inv, *sub, prefs);
+            let product = !system && !made && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
             }
@@ -2062,7 +2088,7 @@ pub fn plan_cleanup(
                 continue;
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && product_folder(inv, *sub, prefs);
+            let product = !system && !made && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
             }
@@ -2122,11 +2148,14 @@ fn folder_items(inv: &Inventory, folder: Uuid) -> (usize, i64) {
 /// The direct contents of `source` a sort reads: its items, and its folders
 /// when `folders`, less the sorted folders themselves.
 fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -> Vec<Uuid> {
+    contents_in(inv, source, folders, &Places::of(inv, prefs))
+}
+
+fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) -> Vec<Uuid> {
     let Some(folder) = inv.folders.get(&source) else {
         return Vec::new();
     };
-    let base = child(inv, inv.root, &prefs.base_name());
-    let reserved = sorter_folder_names(prefs);
+    let (base, reserved) = (places.base, &places.reserved);
     let mut entries: Vec<Uuid> = folder.items.clone();
     if source == inv.root {
         // My Inventory's own folders are never moved by a sort of it, but a
@@ -2137,7 +2166,7 @@ fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -
                     .children
                     .iter()
                     .copied()
-                    .filter(|id| Some(*id) != base && Some(*id) != pre_trash(inv) && product_folder(inv, *id, prefs)),
+                    .filter(|id| Some(*id) != base && Some(*id) != places.waiting && product_folder_in(inv, *id, reserved)),
             );
         }
         return entries;

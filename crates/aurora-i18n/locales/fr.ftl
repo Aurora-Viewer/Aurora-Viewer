@@ -14639,6 +14639,7 @@ inventory-sorter-unlock-title = Autoriser le tri automatique dans { $folder } ?
 inventory-sorter-unlock-text = Le tri déplacera alors des objets de { $folder } vers les dossiers de tri, comme depuis vos propres dossiers. Certains scripts, HUD et autres viewers attendent des objets dans { $folder } : ils risquent de ne plus les trouver. Les objets portés, liens, gestes actifs et dossiers de livraison restent protégés, le dossier lui-même ne bouge jamais, et chaque tri peut être annulé.
 inventory-sorter-unlock-confirm = L'autoriser
 inventory-sorter-unlocked-list = Déverrouillés par vous : { $folders }
+inventory-sorter-updating = Votre inventaire change encore : l'aperçu sera refait une fois stabilisé.
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.
 parcel-visibility-always = Partout
