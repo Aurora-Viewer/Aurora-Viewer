@@ -1034,6 +1034,54 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            "object_contents" | "task_item_permissions" | "task_item_remove" | "task_item_add" | "task_notecard_write" => {
+                let object_local_id =
+                    args.get("object_local_id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))? as u32;
+                let uuid_arg = |key: &str| -> Result<Option<Uuid>, McpError> {
+                    match args.get(key).and_then(Value::as_str) {
+                        None | Some("") => Ok(None),
+                        Some(s) => Uuid::parse_str(s)
+                            .map(Some)
+                            .map_err(|_| McpError::InvalidParams(format!("'{key}' is not a UUID"))),
+                    }
+                };
+                let str_arg = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
+                let bool_arg = |key: &str| args.get(key).and_then(Value::as_bool);
+                let request = match name {
+                    "object_contents" => ViewerRequest::ObjectContents { object_local_id },
+                    "task_item_permissions" => ViewerRequest::TaskItemPermissions {
+                        object_local_id,
+                        item_id: uuid_arg("item_id")?,
+                        name: str_arg("name"),
+                        copy: bool_arg("next_owner_copy"),
+                        modify: bool_arg("next_owner_modify"),
+                        transfer: bool_arg("next_owner_transfer"),
+                    },
+                    "task_item_remove" => ViewerRequest::TaskItemRemove {
+                        object_local_id,
+                        item_id: uuid_arg("item_id")?,
+                        name: str_arg("name"),
+                    },
+                    "task_item_add" => ViewerRequest::TaskItemAdd {
+                        object_local_id,
+                        inventory_item_id: uuid_arg("inventory_item_id")?
+                            .ok_or_else(|| McpError::InvalidParams("missing 'inventory_item_id'".into()))?,
+                        running: bool_arg("running").unwrap_or(false),
+                        replace: bool_arg("replace").unwrap_or(false),
+                    },
+                    _ => ViewerRequest::TaskNotecardWrite {
+                        object_local_id,
+                        name: req_str(args, "name")?,
+                        body: req_str(args, "body")?,
+                        replace: bool_arg("replace").unwrap_or(false),
+                    },
+                };
+                let lease = if name == "object_contents" { None } else { lease_id };
+                let resp = self.send_to_viewer(lease, request, 20_000).await?;
+                Ok(text_block(into_json(resp)))
+            }
             "lsl_inspect_object_scripts" => {
                 let object_local_id =
                     args.get("object_local_id")
@@ -1064,11 +1112,13 @@ impl McpRouter {
             "lsl_write_and_compile" => {
                 let object_local_id = args.get("object_local_id").and_then(Value::as_u64).unwrap_or(0) as u32;
                 let script_item_id = parse_opt_uuid(args, "script_item_id")?;
-                let script_name = args.get("script_name").and_then(Value::as_str).unwrap_or("New Script").to_owned();
+                let script_name = args.get("script_name").and_then(Value::as_str).unwrap_or("").trim().to_owned();
                 let source_code = req_str(args, "source_code")?;
                 let mono = args.get("mono").and_then(Value::as_bool).unwrap_or(true);
                 let compile_target = args.get("compile_target").and_then(Value::as_str).map(str::to_owned);
                 let running = args.get("running").and_then(Value::as_bool).unwrap_or(true);
+                let if_exists = args.get("if_exists").and_then(Value::as_str).map(str::to_owned);
+                let experience_id = args.get("experience_id").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1080,6 +1130,8 @@ impl McpRouter {
                             mono,
                             compile_target,
                             running,
+                            if_exists,
+                            experience_id,
                         },
                         25_000,
                     )
@@ -1260,6 +1312,7 @@ impl McpRouter {
                     .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let action = args.get("action").and_then(Value::as_str).unwrap_or("take").to_owned();
                 let folder_id = parse_opt_uuid(args, "folder_id")?;
+                let folder_name = args.get("folder_name").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1267,8 +1320,9 @@ impl McpRouter {
                             local_id,
                             action,
                             folder_id,
+                            folder_name,
                         },
-                        6000,
+                        20_000,
                     )
                     .await?;
                 Ok(text_block(into_json(resp)))
@@ -2650,6 +2704,77 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             in_compact_profile: false,
         },
         ToolDefinition {
+            name: "object_contents".into(),
+            description: "Every item in a prim's contents (scripts, notecards, objects, animations, ...) with its type, item id, and its base / owner / group / everyone / NEXT-OWNER permissions separately, scripts with `running` as the simulator answers it (null until it has), and the object's own name, owner, creator, group and permissions. Always a fresh listing, never a cache. Read-only.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "object_local_id": { "type": "integer" } },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "task_item_permissions".into(),
+            description: "Set the NEXT-OWNER copy / modify / transfer of an item in a prim's contents, and answer only once a fresh listing shows them (or a timeout error). Omitted flags stay as they are.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "item_id": { "type": "string", "description": "the item's id (object_contents lists them)" },
+                    "name": { "type": "string", "description": "or the item's exact name (refused if two items share it)" },
+                    "next_owner_copy": { "type": "boolean" },
+                    "next_owner_modify": { "type": "boolean" },
+                    "next_owner_transfer": { "type": "boolean" }
+                },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "task_item_remove".into(),
+            description: "Remove one item from a prim's contents by item id or exact name, and answer only once a fresh listing no longer shows it.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "item_id": { "type": "string", "description": "the item's id (object_contents lists them)" },
+                    "name": { "type": "string", "description": "or the item's exact name (refused if two items share it)" }
+                },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "task_item_add".into(),
+            description: "Put a copy of an item from your inventory (an object, notecard, animation, script...) into a prim's contents, and answer with its new item id once a fresh listing shows it. Refused if an item of that name is already there, unless `replace` (the old one is removed first).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "inventory_item_id": { "type": "string", "description": "the item in your inventory (inventory_search finds it)" },
+                    "running": { "type": "boolean", "default": false, "description": "a script starts running" },
+                    "replace": { "type": "boolean", "default": false }
+                },
+                "required": ["object_local_id", "inventory_item_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "task_notecard_write".into(),
+            description: "Put a notecard with this text into a prim's contents under this exact name (it is made in your Notecards folder, then dropped in), and answer with its item id once a fresh listing shows it. Refused if that name is already there, unless `replace`.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "name": { "type": "string" },
+                    "body": { "type": "string" },
+                    "replace": { "type": "boolean", "default": false }
+                },
+                "required": ["object_local_id", "name", "body"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "floater_list".into(),
             description: "List viewer panels/floaters and their open state (direct state read, no UI scraping).".into(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -2908,8 +3033,10 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "object_local_id": { "type": "integer" },
                     "script_item_id": { "type": "string" },
-                    "script_name": { "type": "string", "default": "New Script" },
+                    "script_name": { "type": "string", "description": "the script's exact name; omitted with script_item_id: it keeps its name; omitted otherwise: New Script" },
                     "source_code": { "type": "string" },
+                    "if_exists": { "type": "string", "enum": ["replace", "fail"], "default": "replace", "description": "a script of that exact name already in the prim: replace that item only, or refuse" },
+                    "experience_id": { "type": "string", "description": "compile with Use Experience ticked for this experience UUID; \"none\" for no experience; omitted: decided from the source" },
                     "mono": { "type": "boolean", "default": true, "description": "Legacy LSL Mono flag (ignored if compile_target is set)" },
                     "compile_target": {
                         "type": "string",
@@ -3077,7 +3204,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "object_take_or_derez".into(),
-            description: "Take, take a copy, delete to trash, or return an in-world object by local_id.".into(),
+            description: "Take, take a copy, delete to trash, or return an in-world object by local_id. take and take_copy answer once the new inventory item exists, with its item_id; the folder is folder_id, or folder_name (an agent-inventory folder of that exact name), else Objects (never the Library's).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3087,7 +3214,8 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                         "enum": ["take", "take_copy", "delete", "return"],
                         "default": "take"
                     },
-                    "folder_id": { "type": "string" }
+                    "folder_id": { "type": "string" },
+                    "folder_name": { "type": "string", "description": "an agent-inventory folder by exact name (refused if two share it)" }
                 },
                 "required": ["local_id"]
             }),
@@ -3686,7 +3814,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 111, "expected 111 total tools (43 Legacy + 68 Aurora-native)");
+        assert_eq!(defs.len(), 116, "expected 116 total tools (43 Legacy + 73 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
