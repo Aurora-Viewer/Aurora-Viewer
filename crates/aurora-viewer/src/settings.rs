@@ -1408,6 +1408,10 @@ pub struct Settings {
     /// The GIF button of the Conversations field and its picker
     /// (Preferences › Chat; `gif_search.rs`).
     pub gifs: crate::gif_search::Settings,
+    /// The Legacy Viewer's conversation options of Preferences › Chat: tab
+    /// order and names, moderators, "(You)", brackets, history fade, opening
+    /// on offline messages (`ui/chat/conversation_options.rs`).
+    pub conversation_options: crate::ui::chat::conversation_options::Settings,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
@@ -2540,6 +2544,7 @@ impl Default for Settings {
             chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
+            conversation_options: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
@@ -3510,6 +3515,7 @@ impl Settings {
             *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
         }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
+        self.conversation_options.sanitize();
         self.tip_toast_seconds = if self.tip_toast_seconds.is_finite() {
             self.tip_toast_seconds.clamp(1.0, 30.0)
         } else {
