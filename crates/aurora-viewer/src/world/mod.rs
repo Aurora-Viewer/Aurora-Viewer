@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
+pub mod avatar_marks;
 pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
@@ -597,6 +598,9 @@ pub struct World {
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
+    /// The residents marked with a colour this session (radar and
+    /// mini-map Mark menus, LLNetMap::sAvatarMarksMap).
+    pub avatar_marks: avatar_marks::AvatarMarks,
     /// The residents we dealt with lately (People › Recent).
     pub recent: recent::RecentPeople,
     /// Contact sets generation whose aliases the name cache has.
@@ -995,6 +999,7 @@ impl World {
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
+            avatar_marks: Default::default(),
             recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
