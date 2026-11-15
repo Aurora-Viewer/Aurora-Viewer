@@ -13267,6 +13267,25 @@ impl App {
             if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
                 self.world.set_dnd(true);
             }
+            // `pie-toasts`: ToastGap and PieMenuOpacity away from their
+            // defaults, then the pie in the middle of the window over the
+            // stacked toasts' scene
+            if crate::demo::notifs::pie_toasts() {
+                use crate::demo::notifs::{PIE_TOASTS_AT, PIE_TOASTS_GAP, PIE_TOASTS_OPACITY};
+                if self.frame_count == PIE_TOASTS_AT {
+                    self.settings.toast_gap = PIE_TOASTS_GAP;
+                    self.settings.pie_opacity_override = true;
+                    self.settings.pie_opacity = PIE_TOASTS_OPACITY;
+                    self.settings.use_pie_menu = true;
+                    ui::surface_opacity::set(wanted_opacity(&self.settings));
+                }
+                if self.frame_count == PIE_TOASTS_AT + 30 {
+                    let screen = self.egui_ctx.content_rect();
+                    let ppp = self.egui_ctx.pixels_per_point();
+                    self.cursor_pos = (screen.center().x * ppp, screen.center().y * ppp);
+                    self.open_context_menu();
+                }
+            }
             // the demo inventory, for the purchase to link its Received
             // Items (#1604)
             if self.frame_count == crate::demo::notifs::PURCHASE_AT && mode.starts_with("purchase") {
@@ -19280,6 +19299,7 @@ impl App {
                     restart,
                     presence_at,
                     classic_bars,
+                    toast_gap: crate::settings::toast_gap(self.settings.toast_gap),
                 };
                 // the cards read the world for their links' names (#898): the
                 // lists leave it while they are drawn, then come back
