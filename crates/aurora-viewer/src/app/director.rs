@@ -385,6 +385,9 @@ impl App {
             } else if self.director.finishing.is_none() {
                 self.director_record_start(renderer.size());
             }
+            // the film's first frame is the next one: this frame was laid
+            // out before the recording began (its HUDs, its transparency)
+            return;
         }
         let Some((recording, with_track)) = &self.director.recording else {
             return;
