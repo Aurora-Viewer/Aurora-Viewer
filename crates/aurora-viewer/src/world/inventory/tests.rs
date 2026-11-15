@@ -1080,6 +1080,127 @@ fn god_permission_table_keeps_ordinary_agent_rights_and_grants_only_asset_bits()
 }
 
 #[test]
+fn contents_previews_open_textures_copyable_sounds_and_animations_of_modifiable_objects() {
+    let (agent, other, group) = (id(9971), id(9972), id(9973));
+    let sound = InvItem {
+        owner: agent,
+        owner_mask: FULL,
+        asset_type: 1,
+        inv_type: 1,
+        ..Default::default()
+    };
+    let open = |item: &InvItem, member: bool, manipulate: bool| task_preview_allowed(item, agent, member, manipulate, false, 0);
+    // the owner's, and full permissions
+    assert!(open(&sound, false, false));
+    // group-owned: the owner's rights with object manipulation, the
+    // group's for another member, the everyone mask outside the group
+    let shared = InvItem {
+        owner: group,
+        group_id: group,
+        group_owned: true,
+        owner_mask: FULL,
+        group_mask: 0,
+        everyone_mask: 0,
+        ..sound.clone()
+    };
+    assert!(open(&shared, true, true));
+    assert!(!open(&shared, true, false));
+    assert!(open(
+        &InvItem {
+            group_mask: COPY,
+            ..shared.clone()
+        },
+        true,
+        false
+    ));
+    assert!(!open(&shared, false, false));
+    // someone else's: their everyone mask
+    let theirs = InvItem {
+        owner: other,
+        everyone_mask: 0,
+        ..sound.clone()
+    };
+    assert!(!open(&theirs, false, false));
+    assert!(open(
+        &InvItem {
+            everyone_mask: COPY,
+            ..theirs.clone()
+        },
+        false,
+        false
+    ));
+    // a Library item: the Library's account allows what it allows everyone
+    let library = InvItem {
+        owner: id(9974),
+        everyone_mask: COPY | TRANSFER,
+        ..sound.clone()
+    };
+    assert!(open(&library, false, false));
+    // no copy refuses; no transfer and no modify do not matter
+    assert!(!open(
+        &InvItem {
+            owner_mask: MODIFY | TRANSFER,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    assert!(open(
+        &InvItem {
+            owner_mask: COPY | MODIFY,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    assert!(open(
+        &InvItem {
+            owner_mask: COPY | TRANSFER,
+            ..sound.clone()
+        },
+        false,
+        false
+    ));
+    // a maintenance god copies anything; a lesser god level does not
+    assert!(task_preview_allowed(&theirs, agent, false, false, false, GOD_MAINTENANCE));
+    assert!(!task_preview_allowed(&theirs, agent, false, false, false, 1));
+    // a texture opens whatever its rights; an animation follows the object
+    for owner_mask in [FULL, 0, COPY, MODIFY, TRANSFER] {
+        let texture = InvItem {
+            owner: other,
+            owner_mask,
+            everyone_mask: 0,
+            asset_type: 0,
+            inv_type: 0,
+            ..Default::default()
+        };
+        assert!(open(&texture, false, false));
+        let animation = InvItem {
+            asset_type: 20,
+            inv_type: 19,
+            ..texture
+        };
+        assert!(!open(&animation, false, false));
+        assert!(task_preview_allowed(&animation, agent, false, false, true, 0));
+        assert!(task_preview_allowed(&animation, agent, false, false, false, 1));
+    }
+    // other types keep their own windows
+    for asset_type in [6, 7, 10, 21] {
+        assert!(!task_preview_allowed(
+            &InvItem {
+                asset_type,
+                ..sound.clone()
+            },
+            agent,
+            true,
+            true,
+            true,
+            GOD_MAINTENANCE
+        ));
+    }
+}
+
+#[test]
 fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_distinct() {
     let (agent, other) = (id(9961), id(9962));
     let mut script = aurora_net::build::TaskItem {
@@ -1109,4 +1230,80 @@ fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_disti
     note.owner = agent;
     assert_eq!(task_script_mask(&script, agent, false), FULL);
     assert_eq!(task_notecard_mask(&note, agent, false, false), FULL);
+}
+
+#[test]
+fn an_experience_logo_is_a_full_permission_texture_or_none() {
+    let (agent, other, group, library, asset) = (id(9981), id(9982), id(9983), id(9984), id(9985));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert!(experience_logo_allowed(&inv, Uuid::nil()), "no logo");
+    assert!(!experience_logo_allowed(&inv, asset), "not in the inventory");
+    let mut logo = |item: InvItem| {
+        inv.items.clear();
+        inv.items.insert(item.id, item);
+        experience_logo_allowed(&inv, asset)
+    };
+    // the owner's, full permissions
+    let mine = InvItem {
+        id: id(9986),
+        owner: agent,
+        asset_id: asset,
+        asset_type: 0,
+        inv_type: 0,
+        owner_mask: FULL,
+        ..Default::default()
+    };
+    assert!(logo(mine.clone()));
+    // no copy, no modify, no transfer
+    for missing in [COPY, MODIFY, TRANSFER] {
+        assert!(!logo(InvItem {
+            owner_mask: FULL & !missing,
+            ..mine.clone()
+        }));
+    }
+    // group-owned: what it allows everyone (LLViewerInventoryItem::getPermissionMask)
+    let shared = InvItem {
+        owner: group,
+        group_id: group,
+        group_owned: true,
+        group_mask: FULL,
+        everyone_mask: 0,
+        ..mine.clone()
+    };
+    assert!(!logo(shared.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..shared
+    }));
+    // someone else's: their everyone mask
+    let theirs = InvItem {
+        owner: other,
+        everyone_mask: COPY | TRANSFER,
+        ..mine.clone()
+    };
+    assert!(!logo(theirs.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..theirs
+    }));
+    // a Library texture: what the Library allows everyone
+    let lib = InvItem {
+        owner: library,
+        everyone_mask: COPY,
+        ..mine.clone()
+    };
+    assert!(!logo(lib.clone()));
+    assert!(logo(InvItem {
+        everyone_mask: FULL,
+        ..lib
+    }));
+    // only a texture
+    assert!(!logo(InvItem {
+        asset_type: 7,
+        inv_type: 7,
+        ..mine
+    }));
 }

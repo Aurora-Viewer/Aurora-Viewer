@@ -451,6 +451,12 @@ pub enum NetEvent {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
+    /// OpenRegionInfo, whole: the Region / Estate window's "Region
+    /// settings" tab (Aurora-Sim based grids).
+    OpenRegionSettings {
+        handle: RegionHandle,
+        settings: Box<crate::open_region::OpenRegionSettings>,
+    },
     /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
     /// empty on the server.
     MuteList(crate::social::MuteListSource),
@@ -971,6 +977,17 @@ pub enum NetEvent {
         change: crate::experience::ExperiencePermissionChange,
         result: Result<crate::experience::ExperiencePermission, String>,
     },
+    /// IsExperienceAdmin, with the region's UpdateExperience capability:
+    /// the agent may edit the experience.
+    ExperienceAdmin {
+        experience: Uuid,
+        admin: bool,
+    },
+    /// UpdateExperience's answer.
+    ExperienceUpdated {
+        experience: Uuid,
+        result: Result<crate::experience::ExperienceUpdate, String>,
+    },
     /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
     /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
     SitResponse {
@@ -1366,10 +1383,14 @@ pub enum NetEvent {
     /// brought, parents first, or why the read failed.
     InventoryTreeFetched {
         request: u64,
-        result: Result<Vec<crate::inventory::FolderContents>, String>,
+        result: Result<Vec<crate::inventory::FolderContents>, crate::inventory::ais::FetchError>,
     },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
+        /// The server refuses these folders even alone: over its reply limit.
+        too_big: bool,
+        /// The HTTP status the refusal carried, when one was read.
+        status: Option<u16>,
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),
@@ -1858,6 +1879,14 @@ pub enum NetCommand {
     ExperiencePermission {
         experience: Uuid,
         change: crate::experience::ExperiencePermissionChange,
+    },
+    /// IsExperienceAdmin, answered by NetEvent::ExperienceAdmin.
+    ExperienceAdmin(Uuid),
+    /// UpdateExperience: the package `update_body` built, answered by
+    /// NetEvent::ExperienceUpdated.
+    UpdateExperience {
+        experience: Uuid,
+        body: aurora_llsd::Llsd,
     },
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {

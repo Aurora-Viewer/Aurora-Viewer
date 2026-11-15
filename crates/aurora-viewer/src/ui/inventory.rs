@@ -443,6 +443,16 @@ pub struct InvDrag(pub Uuid);
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
 
+/// An object embedded in an open notecard, dragged out of its text
+/// (LLViewerTextEditor::handleHover, SOURCE_NOTECARD): the editor and the
+/// notecard that hold it, and its marker in the text.
+#[derive(Debug, Clone, Copy)]
+pub struct NotecardDrag {
+    pub editor: Uuid,
+    pub notecard: Uuid,
+    pub marker: char,
+}
+
 pub(crate) struct WorldDrag {
     pub item: Uuid,
     pub position: egui::Pos2,
@@ -1612,7 +1622,10 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
             continue;
         }
         complete &= folder.state == FetchState::Fetched;
-        if matches!(folder.state, FetchState::Unknown | FetchState::Failed) && inv.queue.len() + requests.len() < 16 {
+        if !inv.too_big.contains(&id)
+            && matches!(folder.state, FetchState::Unknown | FetchState::Failed)
+            && inv.queue.len() + requests.len() < 16
+        {
             requests.push(id);
         }
         todo.extend(folder.children.iter().copied());

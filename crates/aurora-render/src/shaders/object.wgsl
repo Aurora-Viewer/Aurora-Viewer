@@ -1655,7 +1655,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = max(col-m.emissive,vec3<f32>(0.0))*water_scene_light(in.world_pos)+m.emissive;
     }
     col = rez_apply(rec, in, m.n, col);
-    if (!hazed || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())) {
+    if (!hazed || water_fogs_source(in.world_pos)) {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
@@ -3653,7 +3653,7 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
         }
     }
     col*=select(vec3<f32>(1.0),water_scene_light(in.world_pos),in.fullbright==0u);
-    if(!is_classic_sky() || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){col=apply_fog(col,in.world_pos);}
+    if(!is_classic_sky() || water_fogs_source(in.world_pos)){col=apply_fog(col,in.world_pos);}
     return vec4<f32>(col, 1.0);
 }
 

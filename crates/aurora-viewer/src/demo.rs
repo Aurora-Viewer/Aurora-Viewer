@@ -251,6 +251,10 @@ pub mod seat_kill;
 /// (AURORA_DEMO_SET_NOTICES).
 #[path = "demo_set_notices.rs"]
 pub mod set_notices;
+/// The Wolf and the crowd changing shape every few seconds, for the
+/// progressive shape changes (AURORA_DEMO_SHAPE_MORPH).
+#[path = "demo_shape_morph.rs"]
+pub mod shape_morph;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -273,6 +277,10 @@ pub mod snow_roof;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
@@ -4407,6 +4415,31 @@ pub fn friend_location(world: &mut crate::world::World) {
     }
 }
 
+/// The capabilities of the offline demo. The `AURORA_DEMO_INVENTORY` `fetch`
+/// mode adds the inventory ones, so the background walk takes the AIS path
+/// and a cold load can be shown.
+fn caps() -> std::collections::HashMap<String, String> {
+    let mut caps: std::collections::HashMap<String, String> = [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
+        .into_iter()
+        .chain(sim_extras::caps())
+        .chain(crate::build::demo_sim::caps())
+        .chain(region::open_settings_caps())
+        .collect();
+    if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
+        for (name, url) in [
+            ("InventoryAPIv3", "demo://inventory"),
+            ("LibraryAPIv3", "demo://library"),
+            ("FetchInventoryDescendents2", "demo://fetch-inventory"),
+            ("FetchLibDescendents2", "demo://fetch-library"),
+            ("FetchInventory2", "demo://items"),
+            ("FetchLib2", "demo://lib-items"),
+        ] {
+            caps.insert(name.to_owned(), url.to_owned());
+        }
+    }
+    caps
+}
+
 pub fn events() -> Vec<NetEvent> {
     let agent = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
     let login = LoginResponse {
@@ -4433,16 +4466,11 @@ pub fn events() -> Vec<NetEvent> {
     let mut ev = vec![
         NetEvent::LoggedIn(Arc::new(login)),
         NetEvent::MainRegionChanged { handle: HANDLE },
-        // only the People API (names) is simulated, and what the
-        // scenarios of sim_extras add
+        // only the People API (names) is simulated, what the scenarios of
+        // sim_extras add, and the inventory capabilities of a `fetch` demo
         NetEvent::Capabilities {
             handle: HANDLE,
-            caps: Arc::new(
-                [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
-                    .into_iter()
-                    .chain(sim_extras::caps())
-                    .collect(),
-            ),
+            caps: Arc::new(caps()),
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
@@ -4467,6 +4495,7 @@ pub fn events() -> Vec<NetEvent> {
         })),
     ];
     ev.extend(group::simulator_features());
+    ev.extend(region::open_settings_event(HANDLE));
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
@@ -9627,23 +9656,28 @@ fn demo_day(sky: Llsd) -> Llsd {
 }
 
 /// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
-/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
-/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
-/// included; a missing or unreadable value keeps the default.
+/// scale>[,<fog r>,<fog g>,<fog b>[,<fog density>]]: the water of the demo's
+/// EEP day (with AURORA_DEMO_SKY), as a region's asset carries it,
+/// out-of-range values included; a missing or unreadable value keeps the
+/// default.
 fn demo_water_eep(v: &str) -> Llsd {
     use aurora_llsd::llsd_map;
     let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
     let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
     let scale = at(3, 2.0);
-    llsd_map! {
+    let mut water = llsd_map! {
         "type" => "water",
         "fresnel_offset" => at(0, 0.5),
         "fresnel_scale" => at(1, 0.3999),
         "blur_multiplier" => at(2, 0.04),
         "normal_scale" => arr(&[scale, scale, scale]),
         "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
+    };
+    if let Some(density) = n.get(7).copied().flatten() {
+        water.insert("water_fog_density", density);
     }
+    water
 }
 
 #[cfg(test)]
