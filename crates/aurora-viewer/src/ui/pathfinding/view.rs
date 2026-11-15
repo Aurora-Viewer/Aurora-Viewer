@@ -13,6 +13,8 @@ use egui::{RichText, Sense, Vec2};
 
 const ROW: f32 = 22.0;
 const BUTTON: Vec2 = Vec2::new(0.0, 26.0);
+/// The use filter's width.
+const FILTER_COMBO: f32 = 170.0;
 
 impl PathfindingUi {
     /// Both windows, then any question; `facts` per window (linksets,
@@ -27,7 +29,7 @@ impl PathfindingUi {
                 egui::pos2(160.0, 110.0),
                 Vec2::new(1060.0, 560.0),
             );
-            window.min_size = Vec2::new(720.0, 420.0);
+            window.min_size = Vec2::new(900.0, 420.0);
             window.show(ctx, p, &mut open, |ui| self.linksets_body(ui, p, facts[0], &mut actions));
             if !open {
                 self.linksets_open = false;
@@ -318,20 +320,43 @@ impl PathfindingUi {
 fn filters(ui: &mut egui::Ui, p: &Palette, list: &mut List) {
     let mut apply = false;
     ui.horizontal(|ui| {
-        ui.label(RichText::new(aurora_i18n::tr!("pathfinding-filter-by")).color(p.ink));
+        // the two text fields share what the labels, the dropdown and the
+        // buttons leave (100 to 180 px each): Apply and Clear never cover
+        // the dropdown, whatever the language
+        let (filter_by, name_label, description_label) = (
+            aurora_i18n::tr!("pathfinding-filter-by"),
+            aurora_i18n::tr!("pathfinding-filter-name"),
+            aurora_i18n::tr!("pathfinding-filter-description"),
+        );
+        let text_width = |text: &str| {
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), egui::TextStyle::Body.resolve(ui.style()), p.ink)
+                .size()
+                .x
+        };
+        let fixed = text_width(filter_by)
+            + text_width(name_label)
+            + text_width(description_label)
+            + FILTER_COMBO
+            + widgets::action_button_fit(ui, "filter-filled", aurora_i18n::tr!("pathfinding-filter-apply"))
+            + widgets::action_button_fit(ui, "x", aurora_i18n::tr!("pathfinding-filter-clear"))
+            + 3.0 * 6.0
+            + 9.0 * ui.spacing().item_spacing.x;
+        let field = ((ui.available_width() - fixed) / 2.0).clamp(100.0, 180.0);
+        ui.label(RichText::new(filter_by).color(p.ink));
         ui.add_space(6.0);
-        ui.label(aurora_i18n::tr!("pathfinding-filter-name"));
+        ui.label(name_label);
         let name = ui.add(
             egui::TextEdit::singleline(&mut list.filter.name)
                 .hint_text(aurora_i18n::tr!("pathfinding-filter-name-hint"))
-                .desired_width(180.0),
+                .desired_width(field),
         );
         ui.add_space(6.0);
-        ui.label(aurora_i18n::tr!("pathfinding-filter-description"));
+        ui.label(description_label);
         let description = ui.add(
             egui::TextEdit::singleline(&mut list.filter.description)
                 .hint_text(aurora_i18n::tr!("pathfinding-filter-description-hint"))
-                .desired_width(180.0),
+                .desired_width(field),
         );
         let entered = |r: &egui::Response| r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         apply |= entered(&name) || entered(&description);
@@ -342,7 +367,7 @@ fn filters(ui: &mut egui::Ui, p: &Palette, list: &mut List) {
             .map_or_else(|| aurora_i18n::text("pathfinding-filter-use"), use_label);
         egui::ComboBox::from_id_salt("pathfinding_filter_use")
             .selected_text(shown)
-            .width(180.0)
+            .width(FILTER_COMBO)
             .show_ui(ui, |ui| {
                 apply |= ui
                     .selectable_value(&mut list.filter.use_, None, aurora_i18n::tr!("pathfinding-filter-use"))
