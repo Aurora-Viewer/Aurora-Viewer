@@ -73,6 +73,10 @@ pub struct Inventory {
     /// The listing folders the Marketplace data holds in place, set by the
     /// listings every frame (`marketplace::Holds`).
     pub listing_holds: super::marketplace::Holds,
+    /// Default folders the user allowed Auto-sort into (Options; Lost and
+    /// Found's own switch), set from the preferences every frame like the
+    /// listing holds: the hands-off rule reads them (`sorter::folder_open`).
+    pub sorter_unlocked: HashSet<Uuid>,
     pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
     pub(crate) pending_parent_repairs: HashSet<Uuid>,
     pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,

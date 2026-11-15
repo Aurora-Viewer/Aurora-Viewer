@@ -1472,3 +1472,70 @@ fn four_thousand_animations_sort_in_batches_with_no_failure() {
     assert!(planned.moves.is_empty());
     assert_eq!(planned.kept_list.first().map(|(_, why)| *why), Some(Kept::Protected));
 }
+
+/// A default folder the user allowed: its contents sort like their own
+/// folders, the folder itself never moves, worn items and links stay; the
+/// never-unlockable folders stay closed whatever is in the list; the
+/// unlocks are never shared.
+#[test]
+fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
+    let (mut inv, guarded) = hands_off_fixture();
+    let clothing = guarded
+        .iter()
+        .copied()
+        .find(|g| inv.folders[g].info.type_default == 5)
+        .expect("clothing");
+    let lost = guarded
+        .iter()
+        .copied()
+        .find(|g| inv.folders[g].info.type_default == 16)
+        .expect("lost and found");
+    let none = HashSet::new();
+    let prefs = Preferences {
+        unlocked: guarded.clone(),
+        include_lost_found: true,
+        rules: vec![Rule {
+            words: "denim".into(),
+            folder: "Denim".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    inv.sorter_unlocked = prefs.unlocked_set(&inv);
+    assert!(inv.sorter_unlocked.contains(&clothing) && inv.sorter_unlocked.contains(&lost));
+    for g in &guarded {
+        let kind = inv.folders[g].info.type_default;
+        let allowed = unlockable(kind);
+        assert_eq!(source_allowed(&inv, *g), allowed, "type {kind}");
+        assert!(hands_off(&inv, *g), "the default folder itself never moves");
+    }
+    // the critical ones stay closed even when listed
+    for (kind, name) in [
+        (14, "Trash"),
+        (46, "Current outfit"),
+        (48, "My outfits"),
+        (53, "Listings"),
+        (23, "Favorites"),
+        (50, "Received"),
+    ] {
+        let found = guarded
+            .iter()
+            .any(|g| inv.folders.get(g).is_some_and(|f| f.info.type_default == kind) && folder_open(&inv, *g));
+        assert!(!found, "{name} never opens");
+    }
+    let viewer = guarded.iter().copied().find(|g| inv.folders[g].info.name == "#RLV").expect("rlv");
+    assert!(!folder_open(&inv, viewer));
+    // Clothing's loose item sorts now; worn ones would not
+    let planned = plan(&inv, clothing, &prefs, &none, &none);
+    assert!(planned.moves.iter().any(|m| m.id == id(inv.folders[&clothing].items[0].as_u128())));
+    let worn: HashSet<Uuid> = inv.folders[&clothing].items.iter().copied().collect();
+    assert!(
+        plan(&inv, clothing, &prefs, &none, &worn)
+            .moves
+            .iter()
+            .all(|m| !worn.contains(&m.id))
+    );
+    // never shared
+    let text = super::share::export(&prefs, &super::share::Share::all(&prefs));
+    assert!(!text.contains(&clothing.to_string()) && !text.to_lowercase().contains("unlock") && !text.contains("lost"));
+}
