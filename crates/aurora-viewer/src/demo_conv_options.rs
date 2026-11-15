@@ -101,6 +101,8 @@ fn line(time: SystemTime, from: &str, source: Uuid, kind: ChatKind, origin: Orig
         kind,
         source,
         origin,
+        blocked: false,
+        beyond_range: false,
     }
 }
 

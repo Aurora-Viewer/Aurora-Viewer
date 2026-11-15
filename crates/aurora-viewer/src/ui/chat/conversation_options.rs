@@ -399,6 +399,8 @@ mod tests {
             kind,
             source,
             origin,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
