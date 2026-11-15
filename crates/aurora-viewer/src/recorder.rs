@@ -257,14 +257,18 @@ pub fn find_on_path(path: &OsStr) -> Option<PathBuf> {
 }
 
 /// A command that opens no console window of its own.
+#[cfg(windows)]
 fn quiet(program: &Path) -> Command {
+    use std::os::windows::process::CommandExt;
     let mut command = Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-    }
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     command
+}
+
+/// A command as it is: only Windows opens a console window for one.
+#[cfg(not(windows))]
+fn quiet(program: &Path) -> Command {
+    Command::new(program)
 }
 
 /// An ffmpeg that answered, and the video encoders it has.
