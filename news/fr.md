@@ -27,7 +27,7 @@ Une ligne vide commence un nouveau paragraphe.
 # Actualités d'Aurora Viewer
 
 ## 2026-11-16 — Aurora 0.9.10 : le Director, la transparence dans le bon ordre et une météo qui porte plus loin
-Le Director permet de filmer dans le monde : gardez des vues de la caméra comme images clés sur une ligne de temps, rejouez-les en un seul plan fluide avec le monde seul, et enregistrez une vidéo avec votre propre ffmpeg. Le verre, les rideaux et les couches des cheveux mesh s'affichent dans leur vrai ordre à chaque pixel (Préférences › Graphismes, Ordre des surfaces transparentes). La Météo Aurora porte plus loin, avec une neige plus stable. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
+Le Director permet de filmer dans le monde : gardez des vues de la caméra comme images clés sur une ligne de temps, rejouez-les en un seul plan fluide avec le monde seul, et enregistrez une vidéo avec votre propre ffmpeg. Le verre, les rideaux et les couches des cheveux mesh s'affichent dans leur vrai ordre à chaque pixel (Préférences › Graphismes, Ordre des surfaces transparentes) ; merci à Anne Skydancer pour le choix Stochastique. La Météo Aurora porte plus loin, avec une neige plus stable. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)
 
 ## 2026-11-16 — Chat, personnes et monde

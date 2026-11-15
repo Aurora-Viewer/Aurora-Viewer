@@ -125,7 +125,8 @@ while rethinking the user interface.
       <h3>Transparency in its true order</h3>
       Glass, curtains and the layers of mesh hair show in the right order
       at every pixel, even when they cross. Choose it in Preferences ›
-      Graphics, "Order of transparent surfaces".
+      Graphics, "Order of transparent surfaces"; the Stochastic choice
+      is thanks to Anne Skydancer.
     </td>
   </tr>
   <tr>

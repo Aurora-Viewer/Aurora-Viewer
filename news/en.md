@@ -27,7 +27,7 @@ An empty line starts a new paragraph.
 # Aurora Viewer news
 
 ## 2026-11-16 — Aurora 0.9.10: the Director, transparency in its true order, and weather that reaches farther
-The Director lets you film in the world: keep camera views as keyframes on a timeline, play them back as one smooth shot with the world alone, and record a video with your own ffmpeg. Glass, curtains and the layers of mesh hair now show in their true order at every pixel (Preferences › Graphics, Order of transparent surfaces). Aurora Weather reaches farther, with steadier snow. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+The Director lets you film in the world: keep camera views as keyframes on a timeline, play them back as one smooth shot with the world alone, and record a video with your own ffmpeg. Glass, curtains and the layers of mesh hair now show in their true order at every pixel (Preferences › Graphics, Order of transparent surfaces); thanks to Anne Skydancer for the Stochastic choice. Aurora Weather reaches farther, with steadier snow. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)
 
 ## 2026-11-16 — Chat, people and the world
