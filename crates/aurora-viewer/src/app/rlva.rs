@@ -181,6 +181,9 @@ impl App {
         // Protocol replies are not user chat and must bypass chat redirection
         // and sendchannel, as RlvUtil::sendChatReply does.
         for command in std::mem::take(&mut self.world.rlva.out) {
+            if let NetCommand::ChatReply { message, channel } = &command {
+                self.rlva_selftest.runner.reply(*channel, message);
+            }
             if matches!(command, NetCommand::ChatReply { .. } | NetCommand::ImReply { .. }) {
                 self.net.send(command);
             } else {
@@ -242,6 +245,10 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_RLVA") else {
             return;
         };
+        // (the self-test's own scenario: app/rlva_selftest.rs)
+        if mode == "selftest" {
+            return;
+        }
         // Native updates may run twice before the next rendered frame.
         // A fixture's force action must be delivered only once per frame.
         if self.demo_rlva_frame == Some(self.frame_count) {

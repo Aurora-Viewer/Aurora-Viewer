@@ -97,6 +97,7 @@ pub mod region_tracker;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_debug;
 pub mod script_dialog_limit;
 pub mod search;

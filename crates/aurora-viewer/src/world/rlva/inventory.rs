@@ -1027,6 +1027,11 @@ impl World {
         self.rlva_folder_allowed_in(locks, it.parent, true, actor)
     }
 
+    /// The avatar's `#RLV` folder (RlvInventory::getSharedRootID), if it has one.
+    pub fn rlva_shared_root(&self) -> Option<Uuid> {
+        shared_root(&self.inventory)
+    }
+
     pub fn rlva_attachment_item(&self, object: Uuid) -> Option<Uuid> {
         if let Some(mut index) = self.objects.index_of_uuid(&object) {
             for _ in 0..64 {

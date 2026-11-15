@@ -12,6 +12,7 @@ use uuid::Uuid;
 /// What @version answers; About shows it too.
 pub const VERSION: &str = version::VERSION_NEW;
 
+mod boundary;
 pub mod camera;
 mod chat;
 mod collection;
@@ -46,6 +47,8 @@ mod wardrobe;
 pub mod watchdog;
 mod wear_locks;
 
+pub use boundary::Boundary;
+pub use inventory::{LAYERS, POINTS};
 pub use wear_locks::WearLocks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

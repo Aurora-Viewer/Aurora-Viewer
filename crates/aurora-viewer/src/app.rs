@@ -135,6 +135,7 @@ mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
 mod rlva;
+mod rlva_selftest;
 mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
@@ -419,6 +420,8 @@ pub struct App {
     window_icon: Option<winit::window::Icon>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
+    /// The RLVa self-test (Dev Toolbox T1, development builds only).
+    rlva_selftest: rlva_selftest::SelfTest,
     native_anchor: crate::movement::movelock::Controller,
     anchor_stands: crate::ao::anchor::StandCheck,
     /// Keep the verified standing set through an asynchronous stand-up reply.
@@ -1676,6 +1679,7 @@ impl App {
                 w
             },
             bridge_runtime: Default::default(),
+            rlva_selftest: Default::default(),
             native_anchor: Default::default(),
             anchor_stands: Default::default(),
             anchor_pose: None,
@@ -2213,21 +2217,17 @@ impl App {
                 return;
             }
         }
-        self.world.rlva_prepare_outfit(&mut cmd, actor);
-        if !self.world.rlva_prepare_attachments(&mut cmd, actor) {
-            return;
-        }
-        if !actor.is_nil() && !self.world.rlva_normalize_teleport(&mut cmd) {
-            return;
-        }
-        if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
-            self.world.rlva_filter_teleport_offer(to);
-        }
-        let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
-        if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
-            self.world
-                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            return;
+        let outcome = self.world.rlva_send_boundary(&mut cmd, actor);
+        // (the self-test reads the answer to the command it just sent)
+        self.rlva_selftest.runner.boundary(outcome, &cmd);
+        match outcome {
+            crate::world::rlva::Boundary::Send => {}
+            crate::world::rlva::Boundary::Dropped => return,
+            crate::world::rlva::Boundary::Refused => {
+                self.world
+                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                return;
+            }
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
@@ -2236,16 +2236,7 @@ impl App {
         if let NetCommand::Build(aurora_net::build::BuildCmd::Transform { handle, updates }) = &cmd {
             self.world.objects.note_sent_transforms(*handle, updates, Instant::now());
         }
-        self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
-        self.world.note_outfit_command(&cmd);
-        self.world.rlva.note_sit_command(&cmd, actor);
-        if self.world.rlva.enabled()
-            && let NetCommand::RezAttachments(items) = &mut cmd
-        {
-            for item in items {
-                item.add = true;
-            }
-        }
+        self.world.rlva_note_sent(&mut cmd, actor, Instant::now());
         self.world.rlva_filter_lure(&mut cmd);
         let cmd = if let NetCommand::Chat {
             message,
@@ -2277,7 +2268,7 @@ impl App {
                 }
             }
         }
-        if self.demo && self.bridge_demo_command(&cmd) {
+        if self.demo && (self.rlva_selftest_demo_command(&cmd) || self.bridge_demo_command(&cmd)) {
             return;
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
@@ -3469,6 +3460,11 @@ impl App {
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
+            return;
+        }
+        // (demo mode hands the answers to the app directly: the self-test's
+        // own are seen here too)
+        if self.rlva_selftest.runner.event(&mut self.world, &ev) {
             return;
         }
         if self.bridge_runtime.event(&mut self.world, &ev, Instant::now()) {
@@ -10142,9 +10138,7 @@ impl App {
         while !still && let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
-            if let Some(app_ev) = self.bridge_runtime.receive(&mut self.world, ev, Instant::now(), sent) {
-                self.on_app_event(app_ev);
-            }
+            self.receive_event(ev, sent);
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             if now.duration_since(t_ev) > Duration::from_millis(8) {
@@ -10707,6 +10701,7 @@ impl App {
         self.update_voice();
         self.update_radar();
         self.update_bridge();
+        self.update_rlva_selftest();
         self.update_region_restart();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| {
@@ -19891,6 +19886,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.rlva_selftest_window(&ctx, &p);
                 self.about_window(&ctx, &p, renderer);
                 self.sysinfo_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
