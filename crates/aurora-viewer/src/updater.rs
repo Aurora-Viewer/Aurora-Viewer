@@ -137,6 +137,9 @@ pub struct Updater {
     rx: crossbeam_channel::Receiver<Event>,
     manual: bool,
     rollback_notice: bool,
+    /// Why the update that restored this version failed, from its helper
+    /// (`install::failed_update`); none from an older helper.
+    pub rollback_reason: Option<aurora_updater::install::FailedUpdate>,
     policy_pending: bool,
     cancel: Cancel,
     prepared: Option<Workspace>,
@@ -175,7 +178,8 @@ impl Updater {
         let (tx, rx) = crossbeam_channel::unbounded();
         let test = aurora_updater::test_environment();
         let enabled = checks_enabled();
-        let rollback = std::env::var_os("AURORA_UPDATE_ROLLBACK").is_some();
+        let rollback = std::env::var_os(aurora_updater::install::ROLLBACK_ENV).is_some();
+        let rollback_reason = if rollback { aurora_updater::install::failed_update() } else { None };
         let source = test.map(|t| t.source.clone()).unwrap_or_default();
         let mut this = Self {
             state: if rollback { State::Rollback } else { State::Idle },
@@ -188,6 +192,7 @@ impl Updater {
             rx,
             manual: false,
             rollback_notice: rollback,
+            rollback_reason,
             policy_pending: false,
             cancel: Cancel::default(),
             prepared: None,
@@ -529,8 +534,13 @@ impl Updater {
                         Failure::Filesystem
                     })?;
                     let parent = path.parent().ok_or(Failure::Filesystem)?;
-                    if !Workspace::supported_install(parent) {
-                        return Err(Failure::Unsupported);
+                    if let Err(e) = Workspace::check_install(parent) {
+                        log::warn!("update: this folder cannot be updated in place: {e:#}");
+                        return Err(if aurora_updater::install::at_drive_root(parent) {
+                            Failure::DriveRoot
+                        } else {
+                            Failure::Unsupported
+                        });
                     }
                     Workspace::new(parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
@@ -562,6 +572,15 @@ impl Updater {
         let tx = self.tx.clone();
         self.state = State::Handoff;
         std::thread::spawn(move || {
+            // the user's click gave this viewer the foreground: its helper's
+            // update window (`splash/`) may take it once this one closes
+            #[cfg(windows)]
+            // SAFETY: no pointer; a refusal only leaves that window behind.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+                    windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+                );
+            }
             let result = work.handoff(&version, maintenance).map_err(|e| {
                 log::warn!("update handoff: {e:#}");
                 Failure::Startup

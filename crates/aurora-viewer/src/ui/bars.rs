@@ -39,11 +39,15 @@ pub enum AdminAction {
 
 #[derive(Default)]
 pub enum BarAction {
-    ToggleVr,
+    VrView(crate::camera::VrView),
     IkEdit,
     Poser,
     /// Build › Edit particles (Object.EditParticles).
     EditParticles,
+    /// Build › Save back to object contents (Tools.SaveToObjectInventory).
+    SaveToObjectContents,
+    /// Build › Options: the switches as the menu left them.
+    BuildOptions(crate::build::MenuOptions),
     Portals,
     CheckUpdates,
     ReportBug,
@@ -93,11 +97,18 @@ pub enum BarAction {
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
     ToggleNameTags,
+    /// The toolbar's HUDs button: Show HUDs switched.
+    ToggleHuds,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
+    /// Toolbar `face_nearest_avatar`, Me › Face nearest avatar
+    /// (Avatar.FaceNearest).
+    FaceNearestAvatar,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Release Keys (Tools.ReleaseKeys).
+    ReleaseKeys,
     /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
     AdminStatus(bool),
     Admin(AdminAction),
@@ -211,6 +222,8 @@ pub enum BarAction {
     /// particles are hidden (their own switch, World › Show more).
     RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
+    /// World › My Linden Home (LLWorldLindenHome).
+    LindenHome,
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -287,9 +300,17 @@ pub struct StatusInfo<'a> {
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
+    /// A script holds a control and no RLVa lock forbids letting it go:
+    /// Advanced › Release Keys is enabled (`app::release_keys::enabled`).
+    pub release_keys: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// World › My Linden Home is shown (GridCheck "secondlife").
+    pub linden_home: bool,
+    /// The grid has a Destination Guide (World › Destinations is shown only
+    /// then, GridFeatureCheck destination_guide).
+    pub destinations: bool,
     /// The landmark lying on the agent's parcel (hasParcelLandmark): the
     /// star is lit and World › Landmark this place greyed out.
     pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
@@ -350,6 +371,11 @@ pub struct StatusInfo<'a> {
     /// Build › Edit particles applies: an object we own is selected
     /// (Object.EnableEditParticles).
     pub edit_particles: bool,
+    /// Build › Save back to object contents applies: the selection was
+    /// rezzed from an object's contents (Tools.EnableSaveToObjectInventory).
+    pub save_to_contents: bool,
+    /// Build > Options: the selection filters and displays.
+    pub build_options: crate::build::MenuOptions,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -415,7 +441,11 @@ pub fn maturity_name(sim_access: u8) -> &'static str {
 /// opacity, over the windows' blur (`widgets::finish_bar_glass`).
 fn bar_frame(p: &Palette) -> egui::Frame {
     egui::Frame::new()
-        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha))
+        .fill(super::surface_opacity::frame_fill(
+            p,
+            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha),
+            super::surface_opacity::bars(),
+        ))
         .inner_margin(egui::Margin::symmetric(6, 0))
 }
 
@@ -936,6 +966,20 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "arrow-big-up-lines-filled", quickjump, st.quickjump, true) {
             *action = BarAction::ToggleQuickjump;
         }
+        // menu_viewer.xml: Avatar › Movement › Face nearest avatar and
+        // Avatar alignment (Avatar.FaceNearest, Avatar.AlignToggle), after
+        // Quickjump
+        if menu::item(ui, p, "user-search", aurora_i18n::tr!("toolbar-command-face-nearest")) {
+            *action = BarAction::FaceNearestAvatar;
+        }
+        let align = aurora_i18n::tr!("toolbar-command-avatar-align");
+        if menu::check(ui, p, "user-scan", align, panels.avatar_align, true) {
+            super::widgets::toggle_floater(
+                ui.ctx(),
+                super::avatar_align::window(panels.avatar_align_mini),
+                &mut panels.avatar_align,
+            );
+        }
         if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
             *action = BarAction::MovementEnhancer;
         }
@@ -1052,6 +1096,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "places",
             &mut panels.places,
         );
+        // menu_viewer.xml: Destinations, after Places (Floater.Toggle), on a
+        // grid with a guide
+        if st.destinations && menu::item(ui, p, "map-2", aurora_i18n::tr!("toolbar-command-destinations")) {
+            super::widgets::toggle_floater(ui.ctx(), super::destinations::WINDOW, &mut panels.destinations);
+        }
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
         // (About Land's floater has an id per layout: the flag alone)
@@ -1129,6 +1178,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
             *action = BarAction::OwnedLand;
+        }
+        // menu_viewer.xml: My Linden Home after Show Owned Land, Second
+        // Life grids only
+        if st.linden_home && menu::item(ui, p, "home-2-filled", aurora_i18n::tr!("linden-home-menu")) {
+            *action = BarAction::LindenHome;
         }
         menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
             flip_window(
@@ -1361,7 +1415,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
+        build_menu(
+            ui,
+            p,
+            panels,
+            action,
+            &st.ik_keys,
+            st.edit_particles,
+            st.save_to_contents,
+            st.build_options,
+        );
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1447,6 +1510,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     }
                 },
             );
+            // Advanced › Release Keys (Tools.ReleaseKeys), greyed while no
+            // script holds a control (Tools.EnableReleaseKeys); no shortcut
+            let release = aurora_i18n::tr!("ui-bars-release-keys");
+            if menu::item_if(ui, p, "keyboard-filled", release, st.release_keys) {
+                *action = BarAction::ReleaseKeys;
+            }
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
@@ -1566,7 +1635,26 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+fn build_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    panels: &mut Panels,
+    action: &mut BarAction,
+    ik_keys: &str,
+    edit_particles: bool,
+    save_to_contents: bool,
+    options: crate::build::MenuOptions,
+) {
+    if menu::check(
+        ui,
+        p,
+        "man-filled",
+        aurora_i18n::tr!("avatar-studio-title"),
+        panels.avatar_studio,
+        true,
+    ) {
+        *action = run_command(ui.ctx(), "avatar_studio", panels);
+    }
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
@@ -1599,12 +1687,94 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
     ) {
         *action = BarAction::EditParticles;
     }
+    // menu_viewer.xml: Build › Object › Save Back to Object Contents, right
+    // after Edit Particles
+    if menu::item_tip(
+        ui,
+        p,
+        "package-import",
+        aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+        save_to_contents,
+        if save_to_contents {
+            ""
+        } else {
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-tip")
+        },
+    ) {
+        *action = BarAction::SaveToObjectContents;
+    }
+    menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
+        build_options_menu(ui, p, action, options);
+    });
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
         *action = BarAction::Import;
     }
     if menu::item(ui, p, "cube-3d-sphere", aurora_i18n::tr!("blender-live-title")) {
         *action = BarAction::BlenderLive;
+    }
+}
+
+/// Build › Options of menu_viewer.xml: the selection filters, then what
+/// the selection shows. The entries stay open to set several in a row.
+fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, options: crate::build::MenuOptions) {
+    let mut o = options;
+    menu::toggle(ui, p, "user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
+    menu::toggle(
+        ui,
+        p,
+        "arrows-move",
+        aurora_i18n::tr!("build-compact-movable-only"),
+        &mut o.movable_only,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "lock-filled",
+        aurora_i18n::tr!("build-options-locked-only"),
+        &mut o.locked_only,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "copy-filled",
+        aurora_i18n::tr!("build-options-copyable-only"),
+        &mut o.copyable_only,
+    );
+    menu::toggle(ui, p, "sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
+    menu::toggle(ui, p, "focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
+    menu::toggle(
+        ui,
+        p,
+        "users-group",
+        aurora_i18n::tr!("build-options-group-owned"),
+        &mut o.group_owned,
+    );
+    menu::separator(ui, p);
+    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
+    menu::toggle(
+        ui,
+        p,
+        "eye-closed",
+        aurora_i18n::tr!("build-options-hidden-selection"),
+        &mut o.hidden_selection,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "bulb-filled",
+        aurora_i18n::tr!("build-options-light-radius"),
+        &mut o.light_radius,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "sphere",
+        aurora_i18n::tr!("build-options-probe-volumes"),
+        &mut o.probe_volumes,
+    );
+    if o != options {
+        *action = BarAction::BuildOptions(o);
     }
 }
 
@@ -2312,6 +2482,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
+        "avatar_studio" => panels.avatar_studio = !panels.avatar_studio,
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
@@ -2325,6 +2496,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
+        // Floater.Toggle destinations: the grid's Destination Guide
+        "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
@@ -2347,6 +2520,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // TogglePerAccountControl FSRenderFriendsOnly
         "RFO" => return BarAction::ToggleFriendsOnly,
         "name_tags" => return BarAction::ToggleNameTags,
+        // View › Show User Interface and World › HUDs › Show HUDs as buttons
+        "hide_interface" => return BarAction::ToggleInterface,
+        "huds" => return BarAction::ToggleHuds,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -2396,8 +2572,10 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
-        "vr_view" => return BarAction::ToggleVr,
         "immersive" => return BarAction::ToggleImmersive,
+        // Avatar.AlignToggle: the Compass in its saved layout
+        "avatar_align" => toggle(super::avatar_align::window(panels.avatar_align_mini), &mut panels.avatar_align),
+        "face_nearest_avatar" => return BarAction::FaceNearestAvatar,
         _ => {}
     }
     BarAction::None
@@ -2417,6 +2595,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
+        "avatar_studio" => panels.avatar_studio,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
@@ -2427,7 +2606,9 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "group_titles" => panels.group_titles,
         "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
+        "avatar_align" => panels.avatar_align,
         "webbrowser" => panels.web_browser,
+        "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
@@ -3153,6 +3334,10 @@ pub(crate) fn toolbar_row(
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
             !toolbar.show_name_tags
+        } else if b.command == "huds" {
+            !toolbar.show_huds
+        } else if b.command == "hide_interface" {
+            toolbar.interface_hidden
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -3171,7 +3356,9 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
+        // and the Destination Guide's on a grid without one (GridFeatureCheck)
+        let no_guide = b.command == "destinations" && !toolbar.destinations;
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_guide;
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3185,8 +3372,24 @@ pub(crate) fn toolbar_row(
                 aurora_i18n::tr!("ui-bars-immersive-hide-tags")
             }
             .to_owned()
+        } else if b.command == "huds" {
+            if active {
+                aurora_i18n::tr!("ui-bars-immersive-show-huds")
+            } else {
+                aurora_i18n::tr!("ui-bars-immersive-hide-huds")
+            }
+            .to_owned()
+        } else if b.command == "hide_interface" {
+            if active {
+                aurora_i18n::tr!("ui-bars-show-interface")
+            } else {
+                aurora_i18n::tr!("ui-bars-hide-interface")
+            }
+            .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if no_guide {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("destinations-unavailable"))
         } else if !usable {
             format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
@@ -3206,7 +3409,12 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
+            match (b.command.as_str(), active) {
+                ("name_tags", true) => "label-off",
+                ("huds", true) => "device-desktop-off",
+                ("hide_interface", true) => "eye-filled",
+                _ => &b.icon,
+            },
             super::toolbar::label(b),
             &tip,
             active,
@@ -3243,6 +3451,27 @@ pub(crate) fn toolbar_row(
             if let Some(a) = fav {
                 *action = BarAction::Favorite(a);
             }
+            continue;
+        }
+        if b.command == "vr_view" {
+            use crate::camera::VrView;
+            menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::TOP, 7.0)),
+                |ui| {
+                    for (mode, label) in [
+                        (VrView::FirstPerson, aurora_i18n::tr!("ui-options-camera-vr-view-first-person")),
+                        (VrView::Avatar, aurora_i18n::tr!("vr-mode-avatar")),
+                        (VrView::Flycam, aurora_i18n::tr!("vr-mode-flycam")),
+                    ] {
+                        if menu::item(ui, p, "", label) {
+                            *action = BarAction::VrView(mode);
+                        }
+                    }
+                },
+            );
             continue;
         }
         if b.command == "ao" {
@@ -3950,6 +4179,7 @@ mod tests {
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
+            ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
@@ -3979,6 +4209,24 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let before = (panels.appearance, panels.inventory, panels.snapshot);
+        let command = super::super::toolbar::COMMANDS
+            .iter()
+            .find(|c| c.id == "avatar_studio")
+            .expect("configurable command");
+        assert!(command.ready);
+        assert_eq!(command.key, "avatar-studio-title");
+        for active in [true, false] {
+            run_command(&ctx, command.id, &mut panels);
+            assert_eq!(command_active(command.id, &panels, false, false, false), active);
+            assert_eq!((panels.appearance, panels.inventory, panels.snapshot), before);
+        }
     }
 
     #[test]
@@ -4028,6 +4276,13 @@ mod tests {
         // World › Hide name tags' button
         assert!(super::super::toolbar::ready("name_tags"));
         assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
+        // Show User Interface and Show HUDs' buttons
+        assert!(super::super::toolbar::ready("hide_interface") && super::super::toolbar::ready("huds"));
+        assert!(matches!(
+            run_command(&ctx, "hide_interface", &mut panels),
+            BarAction::ToggleInterface
+        ));
+        assert!(matches!(run_command(&ctx, "huds", &mut panels), BarAction::ToggleHuds));
     }
 
     #[test]

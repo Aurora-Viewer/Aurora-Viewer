@@ -93,7 +93,7 @@ fn outfit_list(inv: &Inventory, id: Uuid) -> Option<Vec<CopyItem>> {
         link.name.clone_from(&item.name);
         true
     });
-    super::items::sort_links(inv, &mut links, false);
+    super::items::sort_links(inv, &mut links);
     (!links.is_empty()).then(|| {
         links
             .into_iter()

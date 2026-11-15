@@ -17,7 +17,8 @@
 //! first one pinned and its sheet open, the market's chat blocked), `sets`
 //! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
 //! pointer), `recent` (four residents met lately) and `blocked` (a resident
-//! blocked in full, one for voice and text, an object for its sounds).
+//! blocked in full, one for voice and text, an object for its sounds;
+//! `blocked-empty`: nobody blocked, the server's "emptymutelist" answer).
 
 use super::{DEMO_LOUP, HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use crate::world::radar::{ANIM_AGENT_SIT_GROUND, ANIM_AGENT_TYPE};
@@ -60,7 +61,7 @@ pub fn mode() -> Option<Mode> {
             "groups" | "groupes" => Some(Mode::Groups),
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
-            "blocked" | "bloqué" => Some(Mode::Blocked),
+            "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
             _ => Some(Mode::Rows),
         }
     })
@@ -137,6 +138,12 @@ fn contacts_name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static s
 /// The buddies of the demo's list the tabs leave out: they have their own.
 pub fn hides_buddy(id: &Uuid) -> bool {
     contacts_mode() && *id == ORION_EXAMPLE
+}
+
+/// AURORA_DEMO_PEOPLE=blocked-empty: the Blocked tab, the server answering
+/// the request with "emptymutelist" (a resident who blocks nobody).
+pub fn server_empty_mute_list() -> bool {
+    std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|value| value.split(':').next().is_some_and(|mode| mode.trim() == "blocked-empty"))
 }
 
 /// AURORA_DEMO_PEOPLE=blocked|groups: the block list (a set flag means "not

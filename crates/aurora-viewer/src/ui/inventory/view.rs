@@ -828,6 +828,9 @@ impl ViewCache {
         } else {
             HashMap::new()
         };
+        // LLItemBridge::getLabelSuffix: the translated link suffix, lowercase
+        // like the searched names.
+        let link_suffix = format!(" ({})", aurora_i18n::tr!("inventory-pill-link").to_lowercase());
         self.results = self
             .entries
             .par_iter()
@@ -953,12 +956,20 @@ impl ViewCache {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
+                // LLItemBridge::buildDisplayName includes the link suffix in search.
+                let name = || {
+                    if linked {
+                        std::borrow::Cow::Owned(format!("{}{link_suffix}", e.name))
+                    } else {
+                        std::borrow::Cow::Borrowed(e.name.as_str())
+                    }
+                };
                 match query.field {
-                    SearchField::Name => matches_text(&e.name, &query.text),
+                    SearchField::Name => matches_text(&name(), &query.text),
                     SearchField::Description => matches_text(&e.desc, &query.text),
                     SearchField::Creator => matches_text(&creator(), &query.text),
                     SearchField::Uuid => matches_text(&e.id.to_string(), &query.text),
-                    SearchField::All => matches_text(&format!("{} {} {} {}", e.name, e.desc, creator(), e.id), &query.text),
+                    SearchField::All => matches_text(&format!("{} {} {} {}", name(), e.desc, creator(), e.id), &query.text),
                 }
             })
             .map(|e| e.id)
@@ -1332,6 +1343,36 @@ mod tests {
             inv_type: 6,
             owner_mask: rules::COPY | rules::MODIFY | rules::TRANSFER,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn name_plus_link_matches_only_link_rows_in_name_and_all_search() {
+        let (mut inv, facts) = fixture();
+        let mut link = item(91, id(2), "A older", 100);
+        link.asset_type = 24;
+        link.asset_id = id(10);
+        inv.add_items(vec![link]);
+        for search_field in [SearchField::Name, SearchField::All] {
+            let prefs = InventoryPreferences {
+                search_field,
+                ..Default::default()
+            };
+            let mut view = ViewCache::default();
+            view.search(
+                &inv,
+                inv.root,
+                &format!("older+{}", aurora_i18n::tr!("inventory-pill-link").to_lowercase()),
+                &prefs,
+                &Filters::default(),
+                0,
+                None,
+                &facts,
+                facts.agent,
+                1000,
+            );
+            assert!(view.results.contains(&id(91)));
+            assert!(!view.results.contains(&id(10)));
         }
     }
 

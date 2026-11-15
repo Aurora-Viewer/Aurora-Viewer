@@ -196,6 +196,13 @@ impl LoginResponse {
 pub enum LoginError {
     #[error("network error: {0}")]
     Http(String),
+    /// The login server answered with an HTTP error status (a 500 when it
+    /// fails on its side). The Legacy Viewer shows its "server_is_down"
+    /// text for it (LLXMLRPCTransaction::Impl::setStatus,
+    /// indra/newview/llxmlrpctransaction.cpp), not the raw status; the code
+    /// stays in the text for support.
+    #[error("{}", server_error_text(*.0))]
+    Server(u16),
     #[error("{0}")]
     XmlRpc(#[from] xmlrpc::XmlRpcError),
     #[error("login refused ({reason}): {message}")]
@@ -221,6 +228,11 @@ pub enum LoginError {
     /// The login was not sent on (`NextServer::Refuse`).
     #[error("{0}")]
     Stopped(&'static str),
+}
+
+/// The user's text for an HTTP error status of the login server.
+fn server_error_text(status: u16) -> String {
+    aurora_i18n::tr!("login-server-error", status = status.to_string())
 }
 
 impl LoginError {
@@ -575,7 +587,7 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
         }
         let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         if !status.is_success() {
-            return Err(LoginError::Http(format!("HTTP {status}")));
+            return Err(LoginError::Server(status.as_u16()));
         }
         let v = xmlrpc::parse_response(&bytes)?;
         match v["login"].to_string_value().as_str() {
@@ -989,6 +1001,17 @@ mod tests {
             "{asked:?}"
         );
         assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn an_http_error_of_the_login_server_is_told_as_the_server_s_problem() {
+        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let (grid, _) = login_server(vec![("500 Internal Server Error", String::new(), String::new())]).await;
+        let failed = login(&http, &synthetic_request(&grid, &[])).await;
+        assert!(matches!(failed, Err(LoginError::Server(500))), "{failed:?}");
+        let text = failed.expect_err("an error").to_string();
+        assert!(text.contains("500"), "{text}");
+        assert!(!text.contains("Internal Server Error"), "{text}");
     }
 
     #[tokio::test]

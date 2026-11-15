@@ -40,6 +40,28 @@ pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
     if owned { item.owner_mask } else { item.everyone_mask }
 }
 
+/// Whether an object of an object's contents may be rezzed from there, by a
+/// drag onto the land or onto another object: copy for the agent, transfer
+/// for its owner. LLToolDragAndDrop::dad3dRezFromObjectOnLand and
+/// dad3dRezFromObjectOnObject (indra/newview/lltooldraganddrop.cpp), that is
+/// LLPermissions::allowCopyBy(agent, active group) and
+/// allowTransferTo(null) (indra/llinventory/llpermissions.h): the owner's
+/// mask must allow transfer, even for the agent's own item. Stricter than
+/// the Legacy Viewer's land check (LLAgent::allowOperation, which lets a
+/// member with the group power act as the owner of a group-owned item and
+/// reads the group mask for any group of the agent): only the active
+/// group's mask counts here, on land as on an object.
+pub fn task_rez_allowed(item: &aurora_net::build::TaskItem, agent: Uuid, active_group: Uuid) -> bool {
+    let copy = if !item.group_owned && item.owner_id == agent {
+        item.owner_mask
+    } else if !item.group_id.is_nil() && item.group_id == active_group {
+        item.group_mask | item.everyone_mask
+    } else {
+        item.everyone_mask
+    };
+    copy & COPY != 0 && item.owner_mask & TRANSFER != 0
+}
+
 /// Rights on a task script with the agent's group membership, following
 /// LLLiveLSLEditor::loadAsset (indra/newview/llpreviewscript.cpp).
 /// Unlike agent inventory, task scripts also use the object's group rights.
@@ -59,6 +81,24 @@ pub fn task_notecard_mask(item: &InvItem, agent: Uuid, member: bool, manipulate:
         item.owner_mask
     } else {
         item.everyone_mask | if member { item.group_mask } else { 0 }
+    }
+}
+
+/// Whether an item of an object's contents opens in a preview
+/// (indra/newview/llpanelobjectinventory.cpp): a texture always
+/// (LLTaskTextureBridge::openItem); a sound only when the agent may copy it
+/// (LLTaskSoundBridge::buildContextMenu greys Task Open out without
+/// isItemCopyable: LLAgent::allowOperation with object manipulation, the
+/// reading of [`task_notecard_mask`]); an animation only from an object the
+/// agent may modify, or for a god (LLTaskAnimationBridge::openItem: the
+/// preview gets no item otherwise, so nothing could play). Notecards and
+/// scripts keep their own rules.
+pub fn task_preview_allowed(item: &InvItem, agent: Uuid, member: bool, manipulate: bool, object_modify: bool, god_level: u8) -> bool {
+    match item.asset_type {
+        0 => true,
+        1 => with_god(task_notecard_mask(item, agent, member, manipulate), god_level) & COPY != 0,
+        20 => object_modify || god_level > 0,
+        _ => false,
     }
 }
 
@@ -93,6 +133,19 @@ pub fn held_for(inv: &Inventory, item: &InvItem, god_level: u8) -> u32 {
     with_god(held(inv, item), god_level)
 }
 
+/// Whether a texture may become an experience's logo (the profile's Edit
+/// tab): none, or a texture the agent holds with full permissions. Stricter
+/// than the Legacy Viewer, whose logo picker takes any texture: the logo is
+/// shown to everyone who opens the experience, so only a texture its
+/// creator let go entirely (copy, modify and transfer) goes there.
+pub fn experience_logo_allowed(inv: &Inventory, asset: Uuid) -> bool {
+    asset.is_nil()
+        || inv
+            .items
+            .values()
+            .any(|it| it.asset_id == asset && it.asset_type == 0 && held(inv, it) & FULL == FULL)
+}
+
 /// Whether an asset UUID met outside its inventory item (a material map)
 /// may be shown: a built-in texture, or an item of the inventory holding it
 /// with full permissions, like the UUID field of LLFloaterTexturePicker
@@ -101,6 +154,49 @@ pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
     use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
     [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
         || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
+}
+
+/// The Export permission bit (PERM_EXPORT, an OpenSim extension).
+pub const EXPORT: u32 = aurora_net::build::perm::EXPORT;
+
+/// Where an object export is asked: the grid decides which rule applies
+/// (LLGridManager::isInSecondLife, LFSimFeatureHandler::exportPolicy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportGrid {
+    SecondLife,
+    /// An OpenSim region; `export_supported` is its "ExportSupported"
+    /// simulator feature (EXPORT_ALLOWED when true, EXPORT_DENIED else).
+    OpenSim {
+        export_supported: bool,
+    },
+}
+
+/// Whether an inventory item lets its asset (a texture, a sculpt map) be
+/// written to an exported file: FSExportPermsCheck::canExportAsset
+/// (indra/newview/fsexportperms.cpp, Cinder Biscuits, LGPL 2.1). On
+/// Second Life and on an OpenSim region without export, only the item's
+/// creator may; on an OpenSim region with export, the item's Export bit.
+/// The Legacy Viewer reads the item's owner mask there; [`agent_mask`] is
+/// the same for the agent's own items and stricter for the others (their
+/// everyone mask), such as the Library's.
+pub fn asset_export_allowed(item: &InvItem, agent: Uuid, grid: ExportGrid) -> bool {
+    match grid {
+        ExportGrid::OpenSim { export_supported: true } => agent_mask(item, agent) & EXPORT != 0,
+        ExportGrid::SecondLife | ExportGrid::OpenSim { export_supported: false } => !agent.is_nil() && item.creator == agent,
+    }
+}
+
+/// Whether the agent may write a wearable's slider values to an appearance
+/// XML file (the Export XML button of the shape, physics and layer editors).
+/// Stricter than the Legacy Viewer, whose Advanced > Character > Appearance
+/// to XML (LLVOAvatar::dumpArchetypeXML, indra/newview/llvoavatar.cpp)
+/// checks nothing: it asks modify rights, like the Import button
+/// (LLPanelEditWearable `import_btn`, allowModifyBy,
+/// indra/newview/llpaneleditwearable.cpp). A no-modify shape is often a
+/// bought one; its sliders stay visible, but it is not written to a file.
+/// The file never carries a texture id.
+pub fn appearance_xml_export_allowed(item: &InvItem, agent: Uuid) -> bool {
+    agent_mask(item, agent) & MODIFY != 0
 }
 
 /// [`asset_uuid_shown`] for an agent that may be a god: a god sees every
@@ -1033,7 +1129,11 @@ pub fn request_tree(inv: &mut Inventory, root: Uuid) -> bool {
         if f.state != FetchState::Fetched {
             complete = false;
         }
-        if f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
+        // Only folders never asked for: this runs every frame while a window
+        // loads its tree, and a folder whose read failed would be asked
+        // again each frame. Failed reads come back through the background
+        // walk's retries and `Inventory::retry_failed`.
+        if !inv.too_big.contains(&id) && f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
             requests.push(id);
         }
         todo.extend(f.children.iter().copied());
