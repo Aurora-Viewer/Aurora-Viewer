@@ -170,6 +170,10 @@ pub struct BuildSettings {
     pub scale_uniform: bool,
     /// ScaleStretchTextures.
     pub scale_stretch_textures: bool,
+    /// Aurora: the stretch tool's face handles also stretch a whole linkset
+    /// on one axis, which the Legacy Viewer shows for a single prim only
+    /// (`stretch_linksets`; off by default, so a stretch looks as there).
+    pub stretch_linksets: bool,
     /// Keep the camera attached to the focused object while editing it.
     pub follow_edit_object: bool,
     /// RenderHighlightSelections.
@@ -736,6 +740,7 @@ impl Default for BuildSettings {
             edit_linked: false,
             scale_uniform: false,
             scale_stretch_textures: true,
+            stretch_linksets: false,
             follow_edit_object: false,
             show_highlight: true,
             show_hidden_selection: false,
@@ -939,6 +944,10 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
+    /// Prims the last released edit changed besides the roots: a linkset
+    /// stretched on one axis carries its own place and size per prim, so the
+    /// simulator holds an undo step for each of them (`undo`).
+    stretch_prims: Vec<ObjKey>,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
     /// Mesh-header estimates refreshed from the scene before editor input.
@@ -1008,6 +1017,7 @@ impl Default for BuildTool {
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
+            stretch_prims: Vec::new(),
             pending_link: None,
             link_triangles: HashMap::new(),
             link_properties: HashSet::new(),
@@ -1963,7 +1973,9 @@ impl BuildTool {
         self.costs_stale();
     }
 
-    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
+    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots
+    /// (LLSelectMgr::undo / redo, SEND_ONLY_ROOTS for a whole linkset), and of
+    /// the prims a one-axis linkset stretch changed beside them.
     pub fn undo(&mut self, world: &World, redo: bool) {
         let units: Vec<usize> = if self.selection_linked {
             self.highlighted(world).into_iter().map(|(i, _)| i).collect()
@@ -1971,9 +1983,29 @@ impl BuildTool {
             self.roots(world)
         };
         let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
-        for i in units {
+        for &i in &units {
             if let Some(o) = world.objects.get(i) {
                 by_region.entry(o.key.region).or_default().push(o.full_id);
+            }
+        }
+        // A linkset stretched on one axis has an undo step of its own on every
+        // prim: the roots alone would leave the children stretched, and a child
+        // turned 90 degrees cannot get its size back from the root's step.
+        if !self.selection_linked {
+            for key in &self.stretch_prims {
+                let Some(idx) = world.objects.index_of(key) else {
+                    continue;
+                };
+                if !units.contains(&root_of(world, idx)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get(idx) else {
+                    continue;
+                };
+                let ids = by_region.entry(o.key.region).or_default();
+                if !ids.contains(&o.full_id) {
+                    ids.push(o.full_id);
+                }
             }
         }
         for (handle, ids) in by_region {
@@ -2445,7 +2477,9 @@ impl BuildTool {
             self.rect_select(world, s, scene, a, b, extend);
         }
         let mut cmds = Vec::new();
-        self.manip.release(world, s, self.selection_linked, &mut cmds);
+        if let Some(prims) = self.manip.release(world, s, self.selection_linked, &mut cmds) {
+            self.stretch_prims = prims;
+        }
         self.land.mouse_up();
         for c in cmds {
             self.send(c);

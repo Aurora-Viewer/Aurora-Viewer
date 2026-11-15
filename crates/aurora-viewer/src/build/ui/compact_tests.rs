@@ -857,6 +857,49 @@ fn object_history_targets_linkset_roots_once_or_the_selected_linked_part() {
 }
 
 #[test]
+fn object_history_names_the_children_a_one_axis_linkset_stretch_changed() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let root_idx = tool.roots(&world)[0];
+    let root = world.objects.get(root_idx).unwrap();
+    let (root_key, root_id) = (root.key, root.full_id);
+    let child_idx = world
+        .objects
+        .iter()
+        .find(|(idx, object)| *idx != root_idx && !object.is_avatar())
+        .unwrap()
+        .0;
+    let child = world.objects.get_mut(child_idx).unwrap();
+    child.parent_id = root_key.local_id;
+    child.parent_region = root_key.region;
+    let (child_key, child_id) = (child.key, child.full_id);
+    // The stretch sent every prim itself: the child carries its own undo step.
+    tool.selection = vec![root_key];
+    tool.stretch_prims = vec![child_key];
+    for (key, redo) in [(egui::Key::Z, false), (egui::Key::Y, true)] {
+        tool.out.clear();
+        history_frame(&ctx, &mut world, &mut tool, &mut settings, vec![history_key(key, false, false)]);
+        let ids = match tool.out.as_slice() {
+            [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if !redo => ids,
+            [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Redo { ids, .. })] if redo => ids,
+            other => panic!("Unexpected history command: {other:?}"),
+        };
+        assert_eq!(ids, &vec![root_id, child_id]);
+    }
+    // Another selection's undo names its own roots only.
+    tool.selection.clear();
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(tool.out.is_empty());
+}
+
+#[test]
 fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_object() {
     for multiline in [false, true] {
         let (mut world, mut tool, mut settings) = fixture();

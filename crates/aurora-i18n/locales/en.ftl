@@ -9502,6 +9502,7 @@ build-compact-previous = Previous part / face (Ctrl+,)
 build-compact-next = Next part / face (Ctrl+.)
 build-compact-options = Manipulation options
 build-compact-both-sides = Stretch both sides
+build-compact-stretch-linksets = Stretch linksets on one axis
 build-compact-stretch-textures = Stretch textures
 build-compact-root-axis = Edit axis at root
 build-compact-highlight = Show highlight

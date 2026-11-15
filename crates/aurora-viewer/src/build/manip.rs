@@ -9,7 +9,8 @@
 //! size" setting (`gizmo_scale`) scales the whole manipulator, pick areas
 //! included. Objects follow the mouse locally;
 //! MultipleObjectUpdate goes out on release (stretching also every
-//! 0.1 s like LLManipScale::sendUpdates).
+//! 0.1 s like LLManipScale::sendUpdates), except a whole linkset stretched
+//! on one axis: it sends every prim once, on release.
 
 use super::draw::{Painter3d, axis_color, fade};
 use super::geom::{Cam, nearest_on_line, ray_plane, round_to, seg_distance, subdivision_level};
@@ -320,7 +321,9 @@ pub(super) struct Frame {
     pub(super) bounds: Bounds,
     pub(super) pivot: Vec3,
     pub(super) grid: Grid,
-    prims: usize,
+    /// The one-axis face handles: one prim, or a whole linkset when
+    /// `BuildSettings::stretch_linksets` asks for them.
+    faces: bool,
     /// `BuildSettings::gizmo_scale`: factor of every on-screen size.
     pub(super) size: f32,
 }
@@ -335,9 +338,11 @@ pub(super) fn frame(
 ) -> Option<Frame> {
     let bounds = bounds_of(world, sel, linked, now)?;
     let prims = highlighted_of(world, sel, linked).len();
+    let primary = sel.first().and_then(|k| world.objects.index_of(k));
+    let kind = primary.map(|i| super::select_type(world, i));
     let mut grid = super::grid_of(s, Some(&bounds), grid_ref);
     if grid.world
-        && let Some(primary) = sel.first().and_then(|k| world.objects.index_of(k))
+        && let Some(primary) = primary
     {
         match super::select_type(world, primary) {
             // LLSelectMgr::getGrid caps the HUD world grid to half a screen unit.
@@ -370,11 +375,15 @@ pub(super) fn frame(
     } else {
         bounds.center
     };
+    // LLManipScale::renderFaces shows the one-axis handles for a single
+    // object only; a whole linkset gets them when asked to
+    // (`stretch_linksets`), never what we wear or a HUD.
+    let faces = prims == 1 || (s.stretch_linksets && kind == Some(super::SelectType::World));
     Some(Frame {
         pivot,
         bounds,
         grid,
-        prims,
+        faces,
         size: s.gizmo_scale(),
     })
 }
@@ -659,18 +668,35 @@ impl Manip {
     }
 
     /// Mouse up: send the final transforms (LLManip*::handleMouseUp).
-    pub fn release(&mut self, world: &mut World, s: &BuildSettings, linked: bool, out: &mut Vec<BuildCmd>) {
-        let Some(d) = self.drag.take() else {
-            return;
-        };
+    ///
+    /// Returns the prims the edit changed besides the roots (a linkset
+    /// stretched on one axis sends each child's own place and size), or `None`
+    /// when nothing went out (no drag, or a drag that changed nothing).
+    pub fn release(&mut self, world: &mut World, s: &BuildSettings, linked: bool, out: &mut Vec<BuildCmd>) -> Option<Vec<ObjKey>> {
+        let d = self.drag.take()?;
         if !d.started || !d.changed || !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
-            return;
+            return None;
         }
         let _ = s;
         send_updates(world, &d, linked, out);
         if d.te_due {
             self.te_dirty.extend(d.textures.iter().map(|t| t.idx));
         }
+        // The simulator keeps one undo step per object: Ctrl+Z / Ctrl+Y name
+        // the children too, since the root's own step cannot give a child back
+        // its size (LLSelectMgr::undo names the roots alone with
+        // SEND_ONLY_ROOTS).
+        if !linkset_stretch(&d) {
+            return Some(Vec::new());
+        }
+        Some(
+            d.movers
+                .iter()
+                .flat_map(|m| m.children.iter())
+                .filter_map(|c| world.objects.get(c.idx))
+                .map(|o| o.key)
+                .collect(),
+        )
     }
 
     /// Prims whose texture entry the stretch changed and the simulator has
@@ -1050,7 +1076,7 @@ impl Manip {
         for c in 0..8u8 {
             handles.push((0.0, Part::Corner(c), handle_pos(b, Part::Corner(c))));
         }
-        if f.prims == 1 {
+        if f.faces {
             for i in 0..3 {
                 for pos in [true, false] {
                     handles.push((0.0, Part::Face(i, pos), handle_pos(b, Part::Face(i, pos))));
@@ -1294,7 +1320,7 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     for c in 0..8u8 {
         consider(0, Part::Corner(c));
     }
-    if f.prims == 1 {
+    if f.faces {
         for i in 0..3 {
             consider(1, Part::Face(i, true));
             consider(1, Part::Face(i, false));
@@ -1556,17 +1582,46 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
                 }
             }
         } else if (sc - m.scale).length_squared() > 1e-10 {
-            // whole linkset stretched (uniformly, corners only)
+            // The whole linkset follows the root's size: each child keeps its
+            // place in the root's frame, and each of its own axes keeps its
+            // length in that frame (LLManipScale::stretchFace's second pass,
+            // indra/newview/llmanipscale.cpp, originally LGPL 2.1). One axis
+            // needs the projection: a child turned 90 degrees grows in the
+            // axis that faces the stretch.
             let f = sc / m.scale.max(Vec3::splat(1e-6));
+            let uniform = (f.x - f.y).abs() < 1e-6 && (f.y - f.z).abs() < 1e-6;
             for c in &m.children {
-                if let Some(o) = world.objects.get_mut(c.idx) {
-                    o.position = c.local_pos * f;
-                    o.scale = d.limits.clamp3(c.scale * f);
-                    o.render.needs_records = true;
-                }
+                let Some(o) = world.objects.get_mut(c.idx) else { continue };
+                o.position = c.local_pos * f;
+                let factor = if uniform { f } else { child_factors(m.rot, c.world_rot, f) };
+                o.scale = d.limits.clamp3(c.scale * factor);
+                o.render.needs_records = true;
             }
         }
     }
+}
+
+/// Size factors of a child of a stretched linkset: the root's per-axis
+/// factors applied in the root's frame, each measured along one of the
+/// child's own axes (LLManipScale::stretchFace's second pass). A child turned
+/// 90 degrees thus grows in the child axis facing the stretch; one turned the
+/// other way takes the length of its projected axes, since a prim's size
+/// cannot follow a shear.
+fn child_factors(root_rot: Quat, child_rot: Quat, f: Vec3) -> Vec3 {
+    let rel = root_rot.inverse() * child_rot;
+    Vec3::new(
+        ((rel * Vec3::X) * f).length(),
+        ((rel * Vec3::Y) * f).length(),
+        ((rel * Vec3::Z) * f).length(),
+    )
+}
+
+/// Does this drag stretch a whole linkset on one axis? Its children then
+/// follow with sizes only the viewer computes, so every prim goes out on its
+/// own (LLSelectMgr::sendMultipleUpdate leaves SEND_ONLY_ROOTS, and
+/// LLManipScale::sendUpdates stops streaming).
+fn linkset_stretch(d: &Drag) -> bool {
+    d.mode == EditMode::Stretch && matches!(d.part, Part::Face(..)) && d.movers.iter().any(|m| !m.children.is_empty())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1765,8 +1820,11 @@ fn drag_update(
     }
     d.changed = true;
     // stretching streams updates (LLManipScale::sendUpdates, 10 per second)
+    // A linkset stretched on one axis goes out once, on release: repeating
+    // every prim ten times a second would flood the simulator's undo.
     if d.mode == EditMode::Stretch
         && !d.linked
+        && !linkset_stretch(d)
         && d.last_send
             .is_none_or(|t| now.duration_since(t).as_secs_f32() >= SCALE_UPDATE_DELAY)
     {
@@ -1995,26 +2053,46 @@ fn scale_face(d: &mut Drag, s: &BuildSettings, cam: &Cam, o: Vec3, dir: Vec3, cu
 }
 
 /// MultipleObjectUpdate for the movers (LLSelectMgr::sendMultipleUpdate):
-/// whole linksets (UPD_LINKED_SETS) unless "Edit linked", roots first.
+/// whole linksets (UPD_LINKED_SETS) unless "Edit linked", roots first. A
+/// linkset stretched on one axis sends its root and every child itself: the
+/// root's UPD_LINKED_SETS would scale the linkset uniformly and undo their
+/// own sizes.
 fn send_updates(world: &World, d: &Drag, linked: bool, out: &mut Vec<BuildCmd>) {
     let (pos, rot, scale, uniform) = match d.mode {
         EditMode::Move | EditMode::Face | EditMode::Align => (true, false, false, false),
         EditMode::Rotate => (true, true, false, false),
         EditMode::Stretch => (true, false, true, matches!(d.part, Part::Corner(_))),
     };
+    let each_prim = linkset_stretch(d);
     let mut by_region: HashMap<RegionHandle, Vec<TransformUpdate>> = HashMap::new();
     let mut ordered: Vec<&Mover> = d.movers.iter().collect();
     ordered.sort_by_key(|m| !m.root);
     for m in ordered {
-        let Some(o) = world.objects.get(m.idx) else { continue };
-        by_region.entry(m.key.region).or_default().push(TransformUpdate {
-            local_id: m.key.local_id,
-            position: pos.then_some(o.position),
-            rotation: rot.then_some(o.rotation),
-            scale: scale.then_some(o.scale),
-            linked: !linked && m.root,
-            uniform,
-        });
+        if let Some(o) = world.objects.get(m.idx) {
+            by_region.entry(m.key.region).or_default().push(TransformUpdate {
+                local_id: m.key.local_id,
+                position: pos.then_some(o.position),
+                rotation: rot.then_some(o.rotation),
+                scale: scale.then_some(o.scale),
+                linked: !linked && m.root && !each_prim,
+                uniform,
+            });
+        }
+        if !each_prim {
+            continue;
+        }
+        // the children follow with their own place and size
+        for c in &m.children {
+            let Some(o) = world.objects.get(c.idx) else { continue };
+            by_region.entry(o.key.region).or_default().push(TransformUpdate {
+                local_id: o.key.local_id,
+                position: pos.then_some(o.position),
+                rotation: rot.then_some(o.rotation),
+                scale: scale.then_some(o.scale),
+                linked: false,
+                uniform: false,
+            });
+        }
     }
     for (handle, updates) in by_region {
         out.push(BuildCmd::Transform { handle, updates });
@@ -2531,7 +2609,7 @@ mod tests {
                 scale: Vec3::splat(0.5),
                 world: true,
             },
-            prims: 1,
+            faces: true,
             size,
         };
         (piv, cam, f)
@@ -3367,5 +3445,194 @@ mod tests {
         let m = tool.ui.legacy_pending[&(id, 1)].1.clone().unwrap();
         assert_eq!(m.normal_st[..2], [2.0, 2.0]);
         assert_eq!(m.specular_st[..2], [2.0, 2.0]);
+    }
+
+    /// The root's per-axis factors applied to a child's own axes, measured in
+    /// the root's frame: a child turned 90 degrees grows in the axis facing
+    /// the stretch, never in the wrong one.
+    #[test]
+    fn linkset_children_follow_the_stretched_axis_through_their_rotation() {
+        let f = Vec3::new(2.0, 1.0, 1.0);
+        assert!(
+            child_factors(Quat::IDENTITY, Quat::IDENTITY, f).abs_diff_eq(f, 1e-5),
+            "a child aligned with its root keeps its own axes"
+        );
+        let quarter = child_factors(Quat::IDENTITY, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), f);
+        assert!(quarter.abs_diff_eq(Vec3::new(1.0, 2.0, 1.0), 1e-5), "{quarter:?}");
+        let eighth = child_factors(Quat::IDENTITY, Quat::from_rotation_z(std::f32::consts::FRAC_PI_4), f);
+        assert!(
+            (eighth.x - 2.5f32.sqrt()).abs() < 1e-5 && (eighth.y - 2.5f32.sqrt()).abs() < 1e-5,
+            "{eighth:?}"
+        );
+        assert!((eighth.z - 1.0).abs() < 1e-5);
+        // only the child's turn relative to the root counts
+        let root = Quat::from_rotation_y(0.7);
+        assert!(child_factors(root, root, f).abs_diff_eq(f, 1e-5));
+    }
+
+    /// A face stretch of a two-prim linkset: the child keeps its place in the
+    /// root's frame and grows along the stretched axis, and the root and the
+    /// child go out in one MultipleObjectUpdate, the root without
+    /// UPD_LINKED_SETS.
+    #[test]
+    fn a_face_stretch_carries_the_linkset_children_and_sends_every_prim() {
+        for quarter_turn in [false, true] {
+            let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
+            settings.snap = false;
+            settings.stretch_linksets = true;
+            let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+            let child = world.objects.index_of_uuid(&uuid::Uuid::from_u128(951)).unwrap();
+            if quarter_turn {
+                let rot = world.objects.get(root).unwrap().rotation;
+                world.objects.get_mut(child).unwrap().rotation = rot * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+            }
+            tool.click_select(&mut world, &settings, Some(root), false);
+            let now = Instant::now();
+            let bounds = bounds_of(&world, &tool.selection, false, now).unwrap();
+            let center = bounds.center;
+            let eye = center + Vec3::new(4.0, -6.0, 3.0);
+            let fov = 60f32.to_radians();
+            let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+            let cam = Cam::new(
+                eye,
+                center,
+                projection * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z),
+                fov,
+                1280.0,
+                720.0,
+                1.0,
+            );
+            let start = cam.project_px(center + Vec3::X * cam.meters_for_pixels(center, 45.0)).unwrap();
+            let mut manip = Manip::default();
+            assert!(manip.try_grab(&mut world, &settings, &cam, &tool.selection, false, EditMode::Move, start, now));
+            let mut drag = manip.drag.take().unwrap();
+            drag.mode = EditMode::Stretch;
+            drag.part = Part::Face(0, true);
+            drag.anchor = drag.bounds.center - drag.bounds.rotation * unit(0) * drag.bounds.half[0];
+            drag.factor = Vec3::new(2.0, 1.0, 1.0);
+            assert_eq!(drag.movers.len(), 1);
+            let (saved_pos, saved_scale, saved_rot) = {
+                let c = &drag.movers[0].children[0];
+                (c.local_pos, c.scale, c.world_rot)
+            };
+            let mover = drag.movers[0].clone();
+            let targets: Vec<(Vec3, Quat, Vec3)> = drag.movers.iter().map(|m| scale_target(&drag, m)).collect();
+            apply(&mut world, &drag, &targets);
+            let o = world.objects.get(mover.idx).unwrap();
+            assert!((o.scale.x - mover.scale.x * 2.0).abs() < 1e-5, "{quarter_turn}: {:?}", o.scale);
+            assert!((o.scale.y - mover.scale.y).abs() < 1e-5 && (o.scale.z - mover.scale.z).abs() < 1e-5);
+            let c = world.objects.get(mover.children[0].idx).unwrap();
+            assert!(
+                c.position.abs_diff_eq(saved_pos * Vec3::new(2.0, 1.0, 1.0), 1e-5),
+                "the child keeps its place in the root's frame: {:?}",
+                c.position
+            );
+            let factor = child_factors(mover.rot, saved_rot, Vec3::new(2.0, 1.0, 1.0));
+            assert!(c.scale.abs_diff_eq(saved_scale * factor, 1e-5), "{quarter_turn}: {:?}", c.scale);
+            if quarter_turn {
+                assert!(
+                    (c.scale.y - saved_scale.y * 2.0).abs() < 1e-5,
+                    "a turned child grows in the axis facing the stretch"
+                );
+                assert!((c.scale.x - saved_scale.x).abs() < 1e-5);
+            } else {
+                assert!((c.scale.x - saved_scale.x * 2.0).abs() < 1e-5);
+            }
+            let mut out = Vec::new();
+            send_updates(&world, &drag, false, &mut out);
+            let BuildCmd::Transform { updates, .. } = &out[0] else {
+                panic!("no transform: {out:?}");
+            };
+            assert_eq!(updates.len(), 2, "the root and its child");
+            assert_eq!(updates[0].local_id, mover.key.local_id);
+            assert!(!updates[0].linked, "UPD_LINKED_SETS would scale the linkset uniformly");
+            assert!(updates[0].scale.is_some() && updates[0].position.is_some());
+            assert_eq!(updates[1].local_id, c.key.local_id);
+            assert!(!updates[1].linked && !updates[1].uniform);
+            assert!(updates[1].scale.is_some() && updates[1].position.is_some());
+        }
+    }
+
+    /// A face stretch of a linkset records the children it changed beside the
+    /// root, and Ctrl+Z names them with the selected root: the simulator keeps
+    /// one undo step per object, and the root's step cannot give a child turned
+    /// 90 degrees back its place and size (LLSelectMgr::undo names the roots
+    /// alone, SEND_ONLY_ROOTS).
+    #[test]
+    fn a_face_stretch_release_names_the_linkset_children_for_undo() {
+        let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
+        settings.snap = false;
+        settings.stretch_linksets = true;
+        let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+        let child = world.objects.index_of_uuid(&uuid::Uuid::from_u128(951)).unwrap();
+        let (root_id, child_id) = (world.objects.get(root).unwrap().full_id, world.objects.get(child).unwrap().full_id);
+        tool.click_select(&mut world, &settings, Some(root), false);
+        let now = Instant::now();
+        let bounds = bounds_of(&world, &tool.selection, false, now).unwrap();
+        let center = bounds.center;
+        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            center,
+            projection * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let start = cam.project_px(center + Vec3::X * cam.meters_for_pixels(center, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &settings, &cam, &tool.selection, false, EditMode::Move, start, now));
+        let mut drag = manip.drag.take().unwrap();
+        drag.mode = EditMode::Stretch;
+        drag.part = Part::Face(0, true);
+        drag.factor = Vec3::new(2.0, 1.0, 1.0);
+        drag.started = true;
+        drag.changed = true;
+        let children: Vec<ObjKey> = drag
+            .movers
+            .iter()
+            .flat_map(|m| m.children.iter())
+            .map(|c| world.objects.get(c.idx).unwrap().key)
+            .collect();
+        assert_eq!(children, vec![world.objects.get(child).unwrap().key]);
+        manip.drag = Some(drag);
+        tool.manip = manip;
+        tool.out.clear();
+        tool.mouse_up(&mut world, &settings, None);
+        assert_eq!(tool.stretch_prims, children, "Ctrl+Z / Ctrl+Y must name the child too");
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Transform { updates, .. })] if updates.len() == 2));
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
+        // A selection without that linkset names its own roots alone.
+        tool.selection.clear();
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(tool.out.is_empty());
+    }
+
+    /// The one-axis handles stay for a single prim as before; a linkset gets
+    /// them only with the setting on, never on a HUD.
+    #[test]
+    fn the_face_handles_cover_a_linkset_only_when_asked() {
+        let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
+        let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+        tool.click_select(&mut world, &settings, Some(root), false);
+        let now = Instant::now();
+        let sel = tool.selection.clone();
+        settings.stretch_linksets = false;
+        assert!(!frame(&world, &settings, &sel, false, now, None).unwrap().faces);
+        settings.stretch_linksets = true;
+        assert!(frame(&world, &settings, &sel, false, now, None).unwrap().faces);
+        let world = hud_world();
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        assert!(super::super::family(&world, root).len() > 1, "a HUD linkset");
+        let sel = [world.objects.get(root).unwrap().key];
+        assert!(!frame(&world, &settings, &sel, false, now, None).unwrap().faces);
     }
 }

@@ -1896,6 +1896,17 @@ plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
 
+`AURORA_DEMO_BUILD=linkset-stretch,0,0,fx,60,0` puts a linkset of two of
+our prims in the air in front of the agent (a box and a plank turned 90 degrees
+that sticks out of it), selects
+it, turns "Stretch linksets on one axis" on and drags the +X face handle 60 px,
+held for the capture. The six face handles are on the linkset box only with
+that setting; the plank grows in the axis that faces the stretch (its own Y,
+its width), keeps its length and moves out with the box, and the box follows
+with the same factor. `AURORA_DEMO_BUILD_TAB=general+settings` shows the
+setting ticked in the construction settings. Compare a single prim
+(`stretch,object:151,fz,0,-40`): its face handles exist either way.
+
 `AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
 `AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
 0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X

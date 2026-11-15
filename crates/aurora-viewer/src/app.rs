@@ -14719,6 +14719,13 @@ impl App {
                         crate::build::demo::link_setup(&mut self.world, &mut self.build, &self.settings.build, denied);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::LinksetSetup => {
+                        crate::build::demo::linkset_setup(&mut self.world, &mut self.build, &self.settings.build);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::StretchLinksets(on) => {
+                        self.settings.build.stretch_linksets = on;
+                    }
                     crate::build::demo::Step::Link => {
                         self.build.link(&mut self.world);
                         self.flush_build();

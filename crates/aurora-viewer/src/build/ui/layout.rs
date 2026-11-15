@@ -75,6 +75,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Actions => aurora_i18n::tr!("build-layout-actions"),
         Item::Face => aurora_i18n::tr!("build-compact-select-face"),
         Item::StretchTextures => aurora_i18n::tr!("build-compact-stretch-textures"),
+        Item::StretchLinksets => aurora_i18n::tr!("build-compact-stretch-linksets"),
         Item::Linked => aurora_i18n::tr!("build-compact-linked"),
         Item::ScaleBoth => aurora_i18n::tr!("build-compact-both-sides"),
         Item::RootAxis => aurora_i18n::tr!("build-compact-root-axis"),
@@ -739,6 +740,7 @@ pub(super) fn control(
         Item::Face => tool.edit_mode == EditMode::Face,
         Item::Linked => s.edit_linked,
         Item::StretchTextures => s.scale_stretch_textures,
+        Item::StretchLinksets => s.stretch_linksets,
         Item::ScaleBoth => s.scale_uniform,
         Item::RootAxis => s.actual_root,
         Item::Highlight => s.show_highlight,
@@ -766,6 +768,7 @@ pub(super) fn control(
                 Item::Face => tool.set_edit_mode(world, s, if value { EditMode::Face } else { EditMode::Move }),
                 Item::Linked => tool.set_edit_linked(world, s, value),
                 Item::StretchTextures => s.scale_stretch_textures = value,
+                Item::StretchLinksets => s.stretch_linksets = value,
                 Item::ScaleBoth => s.scale_uniform = value,
                 Item::RootAxis => s.actual_root = value,
                 Item::Highlight => s.show_highlight = value,
@@ -1024,6 +1027,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                     if s.legacy_window {
                         for item in [
                             Item::Snap,
+                            Item::StretchLinksets,
                             Item::OwnedOnly,
                             Item::MovableOnly,
                             Item::Surrounding,
