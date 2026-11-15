@@ -1246,6 +1246,21 @@ impl Camera {
         self.free = Some(FreeCamera::from_view(self.position, self.target));
     }
 
+    /// An agent's inspection shot: the free camera put exactly at `eye`
+    /// looking at `focus`, at once (no glide). It wins over a script's or an
+    /// experience's camera (llSetCameraParams), which a third-person view
+    /// gives way to every frame. end_free hands the view back.
+    pub fn set_free_view(&mut self, eye: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
+        self.clear_flycam();
+        if self.mouselook() {
+            self.change_to_default(agent, s);
+        }
+        self.free = Some(FreeCamera::from_view(eye, focus));
+        self.position = eye;
+        self.target = focus;
+        self.anim = None;
+    }
+
     /// Back to the avatar, gliding from where the free camera was.
     pub fn end_free(&mut self, s: &CameraSettings) {
         if self.free.take().is_some() {

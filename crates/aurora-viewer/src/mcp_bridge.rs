@@ -201,6 +201,9 @@ struct PendingNotecardDrop {
 /// Main-thread state for the Model Context Protocol (MCP) bridge.
 #[derive(Default)]
 pub struct McpBridge {
+    /// The MCP camera holds the free camera (set_free_view): release and the
+    /// lease's rollback end it rather than leave the view parked.
+    camera_free: bool,
     rx: Option<mpsc::Receiver<McpRequestEnvelope>>,
     server_handle: Option<McpServerHandle>,
     status_snapshot: Option<Arc<std::sync::RwLock<Value>>>,
@@ -1405,6 +1408,9 @@ impl App {
                 };
                 match command {
                     CameraCommand::FollowAvatar | CameraCommand::Release => {
+                        if std::mem::take(&mut self.mcp_bridge.camera_free) {
+                            self.camera.end_free(&self.settings.camera);
+                        }
                         self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
                     }
                     CameraCommand::FocusObject {
@@ -1423,15 +1429,17 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.camera.set_free_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.mcp_bridge.camera_free = true;
                     }
                     CameraCommand::ManualTransform { position, focus, fov_deg } => {
-                        self.camera.set_view(
+                        self.camera.set_free_view(
                             Vec3::from_array(position),
                             Vec3::from_array(focus),
                             &mut self.world.agent,
                             &self.settings.camera,
                         );
+                        self.mcp_bridge.camera_free = true;
                         if let Some(fov) = fov_deg {
                             let rad = fov.clamp(10.0, 140.0).to_radians();
                             self.settings.camera.fov = rad;
@@ -1445,12 +1453,23 @@ impl App {
                     } => {
                         let current_dist = (self.camera.position - self.camera.target).length().max(0.5);
                         let new_dist = (current_dist + zoom_delta).max(0.5);
-                        self.camera.demo_orbit(
-                            delta_yaw_deg.to_radians(),
-                            delta_pitch_deg.to_radians(),
-                            Some(new_dist),
-                            &self.settings.camera,
-                        );
+                        if self.mcp_bridge.camera_free {
+                            // orbit the shot itself, around what it looks at
+                            let target = self.camera.target;
+                            let off = self.camera.position - target;
+                            let yaw = off.y.atan2(off.x) + delta_yaw_deg.to_radians();
+                            let pitch = (off.z / off.length().max(1e-4)).clamp(-1.0, 1.0).asin() + delta_pitch_deg.to_radians();
+                            let pitch = pitch.clamp(-1.5, 1.5);
+                            let eye = target + new_dist * Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin());
+                            self.camera.set_free_view(eye, target, &mut self.world.agent, &self.settings.camera);
+                        } else {
+                            self.camera.demo_orbit(
+                                delta_yaw_deg.to_radians(),
+                                delta_pitch_deg.to_radians(),
+                                Some(new_dist),
+                                &self.settings.camera,
+                            );
+                        }
                     }
                     CameraCommand::MeshPreview {
                         yaw_deg,
@@ -1464,7 +1483,8 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.camera.set_free_view(eye, focus, &mut self.world.agent, &self.settings.camera);
+                        self.mcp_bridge.camera_free = true;
                     }
                 }
                 let state = json!({
@@ -3448,12 +3468,18 @@ impl App {
                     focus,
                     fov,
                 } => {
-                    self.camera.set_view(
-                        Vec3::from_array(position),
-                        Vec3::from_array(focus),
-                        &mut self.world.agent,
-                        &self.settings.camera,
-                    );
+                    if std::mem::take(&mut self.mcp_bridge.camera_free) {
+                        // the shot ends: the view goes back to the avatar (or the
+                        // script's camera), not to a parked copy of it
+                        self.camera.end_free(&self.settings.camera);
+                    } else {
+                        self.camera.set_view(
+                            Vec3::from_array(position),
+                            Vec3::from_array(focus),
+                            &mut self.world.agent,
+                            &self.settings.camera,
+                        );
+                    }
                     self.settings.camera.fov = fov;
                     self.camera.fov_y = fov;
                     restored += 1;
@@ -4088,9 +4114,18 @@ impl App {
         let obj = self.world.objects.get_mut(idx).unwrap();
         let mut te = obj.te.as_deref().cloned().unwrap_or_default();
 
+        // the object's own faces (a 2-face mesh has 2, though its texture
+        // entry may carry 8)
+        let faces_here = (num_faces as usize).clamp(1, te.faces.len().max(1));
         let target_indices: Vec<usize> = match face {
-            Some(f) if f >= 0 => vec![(f as usize).min(te.faces.len().saturating_sub(1))],
-            _ => (0..te.faces.len()).collect(),
+            Some(f) if f >= 0 && (f as usize) < faces_here => vec![f as usize],
+            Some(f) if f >= 0 => {
+                return Err(McpError::InvalidParams(format!(
+                    "face {f} does not exist: this prim has {faces_here} faces (0..{})",
+                    faces_here - 1
+                )));
+            }
+            _ => (0..faces_here).collect(),
         };
 
         for &fi in &target_indices {
@@ -4189,7 +4224,8 @@ impl App {
             "ok": true,
             "local_id": local_id,
             "face": face.unwrap_or(-1),
-            "num_faces": num_faces,
+            "num_faces": faces_here,
+            "faces_set": target_indices,
             "render_material": material_asset.map(|a| a.to_string()),
             "note": material_asset.map(|_| "sent by ModifyMaterialParams: read it back with PRIM_RENDER_MATERIAL, or radar/object properties, after a moment"),
         })))

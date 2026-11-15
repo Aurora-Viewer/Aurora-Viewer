@@ -830,6 +830,10 @@ impl McpRouter {
                         )
                         .await?;
                     let _ = self.handle_camera_response(cam_resp);
+                    // the free camera is placed at once, but a frame already in
+                    // flight was drawn from the old view: let a few go by so the
+                    // picture is the one the manifest names
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
                     let frame_resp = self
                         .send_to_viewer(
