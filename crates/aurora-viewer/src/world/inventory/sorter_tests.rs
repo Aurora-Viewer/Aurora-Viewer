@@ -1520,7 +1520,7 @@ fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
     inv.sorter_unlocked = prefs.unlocked_set(&inv);
     // Lost and Found, Clothing, Calling Cards and Materials never open,
     // even listed as unlocked
-    for kind in [5, 2, 57] {
+    for kind in [5, 13, 3, 2, 57] {
         let g = guarded
             .iter()
             .copied()
