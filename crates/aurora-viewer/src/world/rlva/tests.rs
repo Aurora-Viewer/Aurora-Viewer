@@ -324,8 +324,20 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
     world.profiles.picks.insert(pick.id, pick.clone());
     assert!(world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
+    let saved_position = pick.pos_global;
     pick.pos_global.x += 1.0;
-    assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick)), Uuid::nil()));
+    let mut move_pick = NetCommand::PickUpdate(Box::new(pick));
+    world.profile_command(&move_pick); // the profile's optimistic cache runs before send_from
+    assert_eq!(world.rlva_send_boundary(&mut move_pick, Uuid::nil()), super::Boundary::Refused);
+    assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
+    let mut read_pick = NetCommand::PickInfoRequest {
+        creator: world.agent_id,
+        pick: TARGET,
+    };
+    world.profile_command(&read_pick);
+    assert_eq!(world.rlva_send_boundary(&mut read_pick, Uuid::nil()), super::Boundary::Send);
+    world.rlva_note_sent(&mut read_pick, Uuid::nil(), std::time::Instant::now());
+    assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
     let mut classified = ClassifiedInfo {
         id: TARGET,
         creator: world.agent_id,
@@ -1691,6 +1703,32 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
         r.allows_im_at("sendim", TARGET, None),
         "an unbounded exclusion also covers off-region recipients"
     );
+}
+
+/// RlvHandler::processCommand runs a force when it is received: another
+/// object's lock released before the queue runs does not let it through.
+/// One set after it still stops it (stricter than the Legacy Viewer, where
+/// the avatar takes off and the lock then lands it).
+#[test]
+fn rlva_queued_force_reads_the_rules_it_was_received_under() {
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    command(&mut w.rlva, B, "@fly=n");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=y");
+    let revision = w.rlva.revision;
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock held when it was received");
+    assert!(!w.rlva.has("fly"), "the current rules are back once the queue has run");
+    assert_eq!(w.rlva.revision, revision, "running the queue changes no rule");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=n");
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock set since");
+    command(&mut w.rlva, B, "@fly=y");
+    command(&mut w.rlva, A, "@fly=force");
+    w.rlva_pending();
+    assert!(w.agent.flying);
 }
 
 #[test]

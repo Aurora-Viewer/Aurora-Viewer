@@ -216,6 +216,14 @@ worktree, branch, `target` folder and logs.
   `--release` only to measure performance: it rebuilds everything a second
   time (about 3 GB more). For a `--release` exe of `main`, the human has
   `scripts/build-release.ps1`.
+  - One exception, which `Cargo.toml` applies on its own
+    (`[profile.test.package.aurora-viewer]`): the viewer crate's test
+    executable is built without optimisation, because it is the heaviest
+    compile of the workspace and only runs the tests. It keeps the line
+    tables of `dev`, and nothing else is built differently: the
+    dependencies, the other crates, clippy and the viewer of `cargo run`
+    keep the `dev` profile. Pass no `--profile` and no `--config profile.…`
+    yourself: another setting builds the executable a second time.
 - `new-task.ps1` frees, on its way, the `incremental/` caches of the tasks
   that have built nothing for 24 hours, and the whole `target/` of the tasks
   whose PR is merged or that have built nothing for 2 days (the code stays).
@@ -310,8 +318,10 @@ Before each significant commit, and always before the PR:
   the command of `check.ps1`, takes 1.5 to 4 minutes and 3 to 8 GB, and
   `check.ps1` reuses what it built (`cargo check` costs the same and is not
   reused). A test build (`cargo test --workspace <filter>`) rebuilds the
-  viewer's whole test executable, about 9 minutes and 11 to 17 GB: run it
-  once the code compiles and lints, not after every edit.
+  viewer's whole test executable: about 3 minutes and 13 GB the first time,
+  30 to 50 seconds and 9 to 10 GB after an edit (it is built without
+  optimisation, section 3), more memory than clippy either way. Run it once
+  the code compiles and lints, not after every edit.
 - **Tools.** "Repair / update" of `aurora-tools.cmd` installs `rg`
   (ripgrep), `fd`, `jq` and `ast-grep`; Linux and macOS take them from
   their packages ([docs/LINUX.md](docs/LINUX.md),

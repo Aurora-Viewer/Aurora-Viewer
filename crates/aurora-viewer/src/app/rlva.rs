@@ -212,11 +212,16 @@ impl App {
             .build
             .selection
             .iter()
-            .filter(|key| self.world.objects.index_of(key).is_none_or(|i| !self.world.rlva_can_edit(i)))
+            .filter(|key| {
+                self.world
+                    .objects
+                    .index_of(key)
+                    .is_none_or(|i| !crate::build::rlva_selectable(&self.world, i))
+            })
             .copied()
             .collect();
         if !invalid.is_empty() {
-            self.build.deselect(&self.world, &invalid);
+            self.build.drop_selected(&self.world, &invalid);
         }
         let locked_hud = self.world.rlva_has_locked_hud();
         if locked_hud {
@@ -269,7 +274,10 @@ impl App {
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
                 || scenario.starts_with("camera-")
-                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
+                || matches!(
+                    scenario,
+                    "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution" | "interact" | "fartouch"
+                )
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
@@ -286,6 +294,9 @@ impl App {
             let message = if scenario == "baseline" {
                 self.panels.settings = false;
                 "@clear".to_owned()
+            } else if scenario == "interact" || scenario == "fartouch" {
+                self.panels.settings = false;
+                format!("@{scenario}=n")
             } else if scenario == "camera-prefs" {
                 self.options_ui.page = ui::options::Page::Camera;
                 self.options_ui.tab = 0;

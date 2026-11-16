@@ -501,9 +501,10 @@ default), download automatically or required updates only. The automatic
 download waits for your agreement to install and restart.
 
 The viewer verifies the ZIP, keeps the former folder until the first frame is
-displayed and restores it if the start fails. Use a dedicated folder, with
-write access; folders that contain code or personal files require a manual
-installation. Settings and cache stay in the usual folders. Development and
+displayed and restores it if the start fails. It replaces only its own
+files: anything else you keep in its folder stays, and a viewer copied alone
+(onto the Desktop, for example) has only its executable replaced. The folder
+needs write access. Settings and cache stay in the usual folders. Development and
 demo builds do not check the releases. See [docs/UPDATES.md](docs/UPDATES.md)
 for the format of the packages and their policy.
 
