@@ -179,6 +179,64 @@ function Sync-BuildCache([string]$Root) {
     [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding $false))
 }
 
+# --- The Rust version of rust-toolchain.toml ------------------------------------
+# rustup installs the named version by itself at the first Cargo command. Two
+# installs of one version at the same moment break each other: they share
+# rustup's download folder, and the one that fails takes back what it wrote
+# (on a Mac of the CI, the other's whole toolchain: rustc was gone under a
+# build that had just started). Several agents share a PC, so the scripts
+# install it first, one at a time. The lock is a named mutex: the OS frees
+# it if the script dies.
+
+# The version <Repo>\rust-toolchain.toml names, or $null: a channel such as
+# "stable" is not a version.
+function Get-RustVersion([string]$Repo) {
+    $file = Join-Path $Repo 'rust-toolchain.toml'
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    if ((Get-Content -LiteralPath $file -Raw) -match '(?m)^channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"') { return $Matches[1] }
+    $null
+}
+
+# rustup has this version installed.
+function Test-RustVersion([string]$Version) {
+    [bool](@(rustup toolchain list 2>$null) -match "^$([regex]::Escape($Version))-")
+}
+
+# Installs the version <Repo> names when rustup lacks it. Nothing to do
+# without rustup or without a named version: Cargo then says what is missing.
+function Install-RustVersion([string]$Repo) {
+    $version = Get-RustVersion $Repo
+    if (-not $version -or -not (Get-Command rustup -ErrorAction SilentlyContinue)) { return }
+    if (Test-RustVersion $version) { return }
+    $lock = New-Object Threading.Mutex($false, 'Local\AuroraViewerRustInstall')
+    $held = $false
+    try {
+        try {
+            $held = $lock.WaitOne()
+        } catch {
+            # the holder died during its install: the lock is now ours
+            $e = $_.Exception
+            while ($e -and -not ($e -is [Threading.AbandonedMutexException])) { $e = $e.InnerException }
+            if (-not $e) { throw }
+            $held = $true
+        }
+        # another script may have installed it while this one waited
+        if (-not (Test-RustVersion $version)) {
+            Write-Host "Installing Rust $version (rust-toolchain.toml)…" -ForegroundColor Cyan
+            Push-Location -LiteralPath $Repo
+            try {
+                # no version argument: rustup takes the file's, with its components
+                rustup toolchain install --profile minimal --no-self-update
+            } finally {
+                Pop-Location
+            }
+        }
+    } finally {
+        if ($held) { $lock.ReleaseMutex() }
+        $lock.Dispose()
+    }
+}
+
 # --- One heavy build at a time --------------------------------------------------
 # Several agents running check.ps1 at once each take every core, and all of
 # them end up slower than one after the other. A heavy build takes one of
