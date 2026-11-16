@@ -1017,7 +1017,14 @@ fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
         && !found.squish
         && !found.waifus
         // `(Mesh)`, `[DEMO]`, `*NEW*`: a status, not a store
-        && !tag_words.iter().all(|w| VOCABULARY.store_stopwords.contains(w));
+        && !tag_words.iter().all(|w| VOCABULARY.store_stopwords.contains(w))
+        // `~ Fave Rings ~`, `[My Rings]`: a shelf's name in decoration
+        && !(enclosed
+            && tag_words.iter().all(|w| {
+                SHELF_WORDS.contains(&w.as_str())
+                    || VOCABULARY.store_stopwords.contains(w)
+                    || VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w))
+            }));
     reads.then(|| tag.to_owned())
 }
 
@@ -1443,6 +1450,14 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     let store_named = store(name).is_some();
     let tagged = store_named && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
     let named = target(name, -1, 0, None, &[], false).is_some();
+    // an unpacked delivery whatever it sells: an unpacker's marks in its
+    // name, a version tag, or its items carrying its brand (never a folder
+    // the user marks as a shelf: `My Stuff`, `Unpacked`)
+    let shelf_marked = words(name).iter().any(|w| SHELF_MARKERS.contains(&w.as_str()));
+    let delivered = !shelf_marked && (delivery_marked(name) || shares_its_name(inv, f, name));
+    if delivered {
+        return true;
+    }
     if has_folders {
         // a folder of folders is the user's own (`My Dresses`, `Reborn
         // Stuff`, `Party Outfits`) unless it reads as a store's product: a
@@ -1460,6 +1475,72 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // Shoes`, `Old Hair`, `Reborn Stuff`)
         tagged || store_named || named && names_a_product(name)
     }
+}
+
+/// An unpacker's marks in a folder's name (`Kira Boots (unpacked)`,
+/// `Kira Boots [BOXED]`, `Kira Boots - wear to unpack`), or a version tag
+/// (`Kira HUD v1.2`, `Kira Body (1.0.4)`, `Kira [6.0]`). `Unpacked` alone
+/// names the user's shelf; a bare date (`10.12.2016`) is no version.
+fn delivery_marked(name: &str) -> bool {
+    const MARKS: [&str; 10] = [
+        "(unpacked)",
+        "[unpacked]",
+        "{unpacked}",
+        "boxed",
+        "wear to unpack",
+        "touch to unpack",
+        "wear me",
+        "add me",
+        "(wear)",
+        "(add)",
+    ];
+    let lower = name.to_lowercase();
+    if words(name).len() > 1 && MARKS.iter().any(|m| lower.contains(m)) {
+        return true;
+    }
+    lower.split_whitespace().any(|token| {
+        let bracketed = token.starts_with(['(', '[', '{']) && token.ends_with([')', ']', '}']);
+        let inner = token.trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | '{' | '}'));
+        let numbers = |s: &str| {
+            !s.is_empty()
+                && s.split('.')
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        };
+        // `v4`, `v1.2`, `V0.08`; `(1.0.4)`, `[6.0]`
+        inner.strip_prefix('v').is_some_and(numbers) || bracketed && inner.contains('.') && numbers(inner)
+    })
+}
+
+/// Most of a folder's items carry a word of its own name that names no kind
+/// (`Kira Boots` holding `Kira Boots Legacy`, `Kira HUD`; `Polo by Lotus`
+/// holding `Poloshirt XS by Lotus`): a creator's delivery, its brand on
+/// everything.
+fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    const PLAIN: [&str; 14] = [
+        "the", "and", "for", "with", "demo", "demos", "copy", "box", "pack", "set", "gift", "gifts", "free", "new",
+    ];
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let own: Vec<String> = words(name)
+        .into_iter()
+        .filter(|w| {
+            w.chars().count() >= 3
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !PLAIN.contains(&w.as_str())
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !VERSION_WORDS.contains(&w.as_str())
+                && !FINISHES.contains(&w.as_str())
+                && !OCCASION_WORDS.contains(&w.as_str())
+                && !is_kind(w)
+                && !plural_kind(w)
+                && !loose_plural(w)
+        })
+        .collect();
+    if own.is_empty() || f.items.len() < 2 {
+        return false;
+    }
+    let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
+    let sharing = items.iter().filter(|n| words(n).iter().any(|w| own.contains(w))).count();
+    sharing >= 2 && sharing * 5 >= items.len() * 3
 }
 
 /// Kinds sold as one product though written as many (`Winter Boots`): an
@@ -1851,7 +1932,9 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         versions |= version;
         fatpack_seen |= fatpack;
         named_seen |= named_again;
-        if kind_only && !version {
+        // (`Kira Boots` holding `Boots`: its own pair, no shelf of them)
+        let own_pair = sub_words.len() == 1 && SOLD_AS_MANY.contains(&sub_words[0].as_str()) && words(name).contains(&sub_words[0]);
+        if kind_only && !version && !own_pair {
             if many {
                 plural += 1;
             } else {

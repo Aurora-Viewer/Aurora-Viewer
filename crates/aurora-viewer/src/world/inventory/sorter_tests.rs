@@ -3152,3 +3152,70 @@ fn stale_moves_are_skipped_a_few_batches_a_frame() {
     assert!(matches!(step, Step::Wait));
     assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
 }
+
+/// Unpacked deliveries whose product no vocabulary names stay whole: an
+/// unpacker's marks, a version tag, or their brand on every item. A shelf
+/// of other creators' things is still opened.
+#[test]
+fn unpacked_deliveries_stay_whole_whatever_they_sell() {
+    let none = HashSet::new();
+    let layouts: [(&str, &[&str]); 6] = [
+        ("Zephyr Gizmo (unpacked)", &["Zephyr Gizmo", "Zephyr Gizmo Guide"]),
+        ("Quillon Thing [BOXED]", &["Quillon Thing", "Readme"]),
+        ("Brindle Combat System v4", &["Brindle Help", "Brindle Sword", "Brindle Dodge"]),
+        ("Tinker Style (1.0.4)", &["Setup", "Clothing.zip", "Skin.zip"]),
+        (
+            "NORRIS. Track Kit PACK",
+            &["NORRIS. Track Top", "NORRIS. Track Bottom", "NORRIS FLAGSHIP"],
+        ),
+        (
+            "Rascal Polo by Lumen",
+            &["Polo XS by Lumen", "Polo M by Lumen", "Vintage Polo (wear me)"],
+        ),
+    ];
+    for (name, items) in layouts {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(
+            !(950..950 + items.len() as u128).any(|n| moved.contains(&id(n))),
+            "{name} is never opened"
+        );
+    }
+    // a shelf of other creators' things, a dated folder, `Unpacked` alone
+    let shelves: [(&str, &[&str]); 3] = [
+        ("Club Night", &["Zephyr Dance", "Quillon Spin", "Brindle Sway"]),
+        ("10.12.2016", &["Zephyr Gizmo", "Quillon Thing"]),
+        ("Unpacked", &["Zephyr Gizmo", "Quillon Thing"]),
+    ];
+    for (name, items) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+}
+
+/// Audit 41: a shelf's name in decoration is no store tag, and a pair kind
+/// inside its own product (`Kira Boots` holding `Boots`) is no shelf.
+#[test]
+fn decorated_shelves_open_and_a_product_keeps_its_own_pair() {
+    let none = HashSet::new();
+    for name in ["~ Fave Rings ~", "[My Rings]", "*Fave Poses*"] {
+        assert!(store(name).is_none(), "{name} is no store");
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Kira Boots");
+    add_folder(&mut inv, 901, 900, "Boots");
+    add_folder(&mut inv, 902, 900, "HUD");
+    add_item(&mut inv, 950, 901, "Kira Boots Legacy", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(950)) && !moved.contains(&id(901)), "Kira Boots is never opened");
+}
