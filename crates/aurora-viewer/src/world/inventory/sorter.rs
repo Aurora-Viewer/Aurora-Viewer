@@ -38,7 +38,8 @@ pub enum Match {
 }
 
 /// A user rule, tried in order before the built-in body and category rules.
-/// It takes an entry by its words, its acquired date (`before`), or both.
+/// It takes an entry by its words (dates belong to Clean up: `before` is
+/// only read so older settings still load, and never matched).
 /// Its destination is the Pre-Trash folder (`pre_trash`), one of the user's
 /// own folders (`target`) when set, otherwise `folder`, a path below the
 /// sort folder (`Home/Chairs`) created when missing.
@@ -51,8 +52,8 @@ pub struct Rule {
     pub mode: Match,
     pub folder: String,
     pub target: Option<Uuid>,
-    /// Only entries acquired before this date (`2020`, `2020-06` or
-    /// `2020-06-15`); empty for any date.
+    /// The first version's date filter, kept so older settings load; never
+    /// matched (a rule takes entries by its words only).
     pub before: String,
     /// Send what it takes to the Pre-Trash folder, checked before the Trash.
     pub pre_trash: bool,
@@ -364,9 +365,10 @@ impl Body {
     }
 }
 
-/// The category folders, in the order they are tried: the first match wins,
-/// so a "Lingerie Set" is lingerie and a "Garter" lingerie before an
-/// accessory. Sets come last.
+/// The category folders. The vocabulary's order (`vocabulary.json`) is the
+/// order they are tried: the first match wins (a "Lingerie Set" is
+/// lingerie), unless another category has a longer phrase built on the word
+/// that matched (a "Hair Bow" is an accessory). Sets come last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Category {
     Tattoos,
@@ -498,7 +500,7 @@ pub struct Classified {
 }
 
 /// The lowercase words of a name: creators separate them with anything
-/// (`.SB.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Maze`).
+/// (`.QW.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Luma`).
 pub fn words(name: &str) -> Vec<String> {
     // a word with an apostrophe is read both ways: its parts (`kat`, `s`,
     // as rules written before matched it) then the joined word (`kats`,
@@ -608,7 +610,7 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         .or_else(|| Category::of_asset(asset_type, flags));
     let body = body(&words);
     // A body skin says which body and how it looks, not what it is:
-    // `The "Ipanema Body" for eBody Reborn (Porcelain)`.
+    // `The "Harbor Body" for eBody Reborn (Porcelain)`.
     let category = category.or_else(|| {
         let skin = has(&words, "body for") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
         (body.is_some() && skin).then_some(Category::Skins)
@@ -873,14 +875,14 @@ fn variant_folder(waifus: bool, squish: bool) -> String {
 const WAIFUS: &str = "Waifus";
 
 /// The store a creator's name starts with: `[North Oak] + Table`,
-/// `*Opal&Ash* Dress`, `.VX. Apron`, `Kitoomi - Hex Dress`,
-/// `rvn // Boots`. A tag that is a body, a category or an unpacker word
+/// `*Opal&Ash* Dress`, `.QZ. Apron`, `Velmora - Hex Dress`,
+/// `zph // Boots`. A tag that is a body, a category or an unpacker word
 /// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
 /// phrase before a dash, which is a product name.
 pub fn store<'a>(name: &'a str) -> Option<String> {
     let text = name.trim();
     let first = text.chars().next()?;
-    // `uh-oh: Thigh Socks`, `VELOUR: The Body`: a store and a colon
+    // `oh-my: Thigh Socks`, `MARROW: The Body`: a store and a colon
     let tags = &VOCABULARY.store_tags;
     // `**Store** Dress`, `..::Store::.. Top`: the opening run of marks is
     // skipped before the closing one is looked for
@@ -896,7 +898,7 @@ pub fn store<'a>(name: &'a str) -> Option<String> {
             .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
             .min_by_key(|tag| tag.len())
     };
-    // each way of writing a store in turn: `(Mesh) Kitoomi - Dress` is no
+    // each way of writing a store in turn: `(Mesh) Velmora - Dress` is no
     // store in its brackets, then one before its dash after them
     [
         enclosed.map(|(t, _)| (t, true)),
@@ -921,7 +923,7 @@ fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
     let tag_words = joined_words(tag);
     let found = classify(tag, -1, 0);
-    // a body mod maker's tag (`MAZE.mods`) names its trade, not a product
+    // a body mod maker's tag (`LUMA.mods`) names its trade, not a product
     let maker = tag_words.last().is_some_and(|w| w == "mods" || w == "mod");
     let reads = (2..=32).contains(&tag.chars().count())
         && (1..=4).contains(&tag_words.len())
@@ -1220,14 +1222,27 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
     if has_folders {
         // a folder of folders is the user's own (`My Dresses`, `Reborn
         // Stuff`, `Party Outfits`) unless it reads as a store's product: a
-        // tag, or a store and what it is (`Kitoomi - Hex Dress`)
-        tagged || store_named && named
+        // tag, a store and what it is (`Velmora - Hex Dress`), or what it
+        // is with its versions inside (`Hex Dress` holding `Maitreya`,
+        // `Reborn`, `Hex Dress Legacy`, `Squish`)
+        tagged || store_named && named || named && versions_only(inv, f, name)
     } else {
         // a folder of items alone is a product when its name says what or
-        // whose it is (`Hex Dress`, `[Kitoomi] Hex`); `Stuff`, `2024` or
+        // whose it is (`Hex Dress`, `[Velmora] Hex`); `Stuff`, `2024` or
         // `Hunt Gifts` are opened
         tagged || named || store_named
     }
+}
+
+/// Every subfolder of `f` is a version of the product named `name`: a body,
+/// a Squish or Waifus variant, or the product's name again.
+fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    let product = name.to_lowercase();
+    f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
+        let sub_name = sub.info.name.trim();
+        let read = classify(sub_name, -1, 0);
+        read.body.is_some() || read.squish || read.waifus || sub_name.to_lowercase().contains(&product)
+    })
 }
 
 /// How deep a whole-inventory sort opens the user's own folders of folders
@@ -1235,10 +1250,12 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
 const OPEN_DEPTH: usize = 4;
 
 /// What a whole-inventory sort reads, in an open place only: the loose
-/// items of My Inventory, the contents of Objects, and the direct contents of
-/// each of the user's own folders at the root (not excluded, not the sort
-/// folder nor Pre-Trash). A product's folder at the root moves whole, never
-/// opened. No other default folder is read (see [`folder_open`]).
+/// items of My Inventory, the contents of Objects, and the contents of the
+/// user's own folders (not excluded, not the sort folder nor Pre-Trash),
+/// their folders of folders a few levels down. A product's folder moves
+/// whole, never opened. No other default folder is read (see
+/// [`folder_open`]).
+#[cfg(test)]
 pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
     let places = Places::of(inv, prefs);
     whole_sources_in(inv, prefs, &places)
@@ -1318,6 +1335,13 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
         let folders = prefs.folders && *source != inv.root;
         entries.extend(contents_in(inv, *source, folders, &places));
     }
+    // the sources not loaded yet are asked for as the plan arrives (the
+    // window only reads the root's folders on the frame)
+    let unread: Vec<Uuid> = sources
+        .iter()
+        .copied()
+        .filter(|id| inv.folders.get(id).is_some_and(|f| f.state != FetchState::Fetched))
+        .collect();
     let sources: HashSet<Uuid> = sources.into_iter().collect();
     // a folder opened as a source is never moved as an entry of its parent
     entries.retain(|id| !sources.contains(id));
@@ -1335,8 +1359,10 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
     }
     let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
     let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
-    // both lists of folders to load: the plan's own and the scan's
+    // every list of folders to load: the plan's own, the scan's, the
+    // sources'
     plan.unfetched.extend(scan.unfetched);
+    plan.unfetched.extend(unread);
     plan.unfetched.sort_unstable();
     plan.unfetched.dedup();
     if let Some(root) = inv.folders.get(&inv.root) {

@@ -62,21 +62,21 @@ fn path(name: &str) -> Option<String> {
 fn creator_names_find_their_body_and_category() {
     for (name, expected) in [
         ("FemAvg_Dress_Cut_Long_Reborn_F", "Reborn/Dresses"),
-        ("MAZE.mods - Soft Thighs V4.2 - eBody Reborn", "Reborn/Body add-ons"),
+        ("LUMA.mods - Soft Thighs V4.2 - eBody Reborn", "Reborn/Body add-ons"),
         (
             ". i i c i n g . // duo toned stockings - REBORN (add me)",
             "Reborn/Stockings & socks",
         ),
-        ("(Enfer Sombre*) Reborn+Maze Stockings - Lamb", "Reborn/Stockings & socks"),
-        ("VUDU TATTOO - Mother of Dragons - BoM/EVO-X [FATPACK] [REBORN]", "Reborn/Tattoos"),
-        ("18.Loki - Knife Play GACHA - Black Ribbon Garter - Reborn", "Reborn/Lingerie"),
-        ("2. Dhoma - Alyssa Lingerie Set Reborn Red RARE", "Reborn/Lingerie"),
-        ("4. Dhoma Cosette Corset Reborn+Juicy Black", "Reborn/Lingerie"),
-        ("18. Dhoma Cosette Robe Reborn+Juicy Black", "Reborn/Robes & sleepwear"),
-        ("3. N-Uno - Kristina Shirt // Reborn", "Reborn/Tops"),
+        ("(Nuit Pale*) Reborn+Luma Stockings - Lamb", "Reborn/Stockings & socks"),
+        ("KORU TATTOO - Mother of Dragons - BoM/EVO-X [FATPACK] [REBORN]", "Reborn/Tattoos"),
+        ("18.Brisk - Rope Play GACHA - Black Ribbon Garter - Reborn", "Reborn/Lingerie"),
+        ("2. Tolva - Alyssa Lingerie Set Reborn Red RARE", "Reborn/Lingerie"),
+        ("4. Tolva Cosette Corset Reborn+Juicy Black", "Reborn/Lingerie"),
+        ("18. Tolva Cosette Robe Reborn+Juicy Black", "Reborn/Robes & sleepwear"),
+        ("3. K-Duo - Kristina Shirt // Reborn", "Reborn/Tops"),
         ("REBORN - Waifu Boobs - Wear to unpack", "Reborn/Body add-ons"),
-        ("Violent Seduction - Maia - Reborn (Black)", "Reborn"),
-        (".SB. Angel Set - Reborn Pack [Unpacker]", "Reborn/Outfits & sets"),
+        ("Velvet Ruin - Maia - Reborn (Black)", "Reborn"),
+        (".QW. Angel Set - Reborn Pack [Unpacker]", "Reborn/Outfits & sets"),
         ("Velvet skirt [Legacy F]", "Legacy/Skirts"),
         ("Cargo pants - Legacy M", "Legacy Male/Pants"),
         ("Lara X Petite bikini", "Maitreya/Swimwear"),
@@ -94,7 +94,7 @@ fn ebody_reborn_is_reborn_and_weak_words_need_no_other_body() {
     assert_eq!(classify("eBODY Curvy top", 6, 0).body, Some(Body::Named("eBODY")));
     // "Juicy" alone names the Reborn add-on; beside Legacy it is a word
     assert_eq!(classify("Juicy rolls", 6, 0).body, Some(Body::Named("Reborn")));
-    assert_eq!(classify("Juicy Muse top - Legacy", 6, 0).body, Some(Body::Named("Legacy")));
+    assert_eq!(classify("Juicy Larkspur top - Legacy", 6, 0).body, Some(Body::Named("Legacy")));
     // whole words only: "Unreborn" or "stop" name nothing
     assert_eq!(classify("Unreborn stop sign", 6, 0), Classified::default());
 }
@@ -103,13 +103,13 @@ fn ebody_reborn_is_reborn_and_weak_words_need_no_other_body() {
 fn unpackers_are_recognised_and_sorted_with_their_product() {
     for name in [
         "eBODY - REBORN - Wear to unpack",
-        ".SB. Vixen Dress - Reborn Pack [Unpacker]",
-        "rvn - my body reflection - reborn version (packed)",
+        ".QW. Vixen Dress - Reborn Pack [Unpacker]",
+        "zph - my body reflection - reborn version (packed)",
     ] {
         assert!(classify(name, 6, 0).unpacker, "{name}");
     }
     assert!(!classify("Packer jacket", 6, 0).unpacker);
-    assert_eq!(path(".SB. Vixen Dress - Reborn Pack [Unpacker]").as_deref(), Some("Reborn/Dresses"));
+    assert_eq!(path(".QW. Vixen Dress - Reborn Pack [Unpacker]").as_deref(), Some("Reborn/Dresses"));
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn the_plan_keeps_worn_links_locked_and_sorted_folders_in_place() {
     // an unpacked folder moves as a whole, an already sorted name does not
     let unpacked = id(200);
     inv.folders
-        .insert(unpacked, folder(unpacked, id(OBJECTS), ".SB. Vixen Dress Reborn", -1));
+        .insert(unpacked, folder(unpacked, id(OBJECTS), ".QW. Vixen Dress Reborn", -1));
     inv.folders.insert(id(201), folder(id(201), id(OBJECTS), "Reborn", -1));
     inv.folders.get_mut(&id(OBJECTS)).expect("objects").children = vec![unpacked, id(201)];
     let worn: HashSet<Uuid> = [id(101)].into();
@@ -171,7 +171,7 @@ fn the_plan_keeps_worn_links_locked_and_sorted_folders_in_place() {
     assert_eq!(
         moved,
         [
-            (".SB. Vixen Dress Reborn", "Reborn/Dresses".to_owned()),
+            (".QW. Vixen Dress Reborn", "Reborn/Dresses".to_owned()),
             ("Velvet skirt Reborn", "Reborn/Skirts".to_owned())
         ]
     );
@@ -423,9 +423,9 @@ fn squish_versions_always_get_their_own_folder() {
 fn the_store_is_read_from_the_creators_tag() {
     assert_eq!(store("[Birch Hollow] + Tucker Round Gothic Table").as_deref(), Some("Birch Hollow"));
     assert_eq!(store("*Neverlace* Neon Heart Shelf").as_deref(), Some("Neverlace"));
-    assert_eq!(store(".VX. Vixen Dress").as_deref(), Some("VX"));
+    assert_eq!(store(".QZ. Vixen Dress").as_deref(), Some("QZ"));
     assert_eq!(store("Kitty - Hex Dress (Reborn Squish) - FATPACK").as_deref(), Some("Kitty"));
-    assert_eq!(store("rvn // Platform Boots").as_deref(), Some("rvn"));
+    assert_eq!(store("zph // Platform Boots").as_deref(), Some("zph"));
     // a body tag or a product before the dash is no store
     assert_eq!(store("[REBORN] Denim Skirt"), None);
     assert_eq!(store("Reborn - Waifu Boobs"), None);
@@ -580,13 +580,13 @@ fn add_item(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i6
 fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 80, 1, "My Dresses");
-    add_folder(&mut inv, 81, 80, "Kitoomi - Hex Dress");
-    add_item(&mut inv, 200, 81, "Kitoomi - Hex Dress Maitreya", 0);
+    add_folder(&mut inv, 81, 80, "Velmora - Hex Dress");
+    add_item(&mut inv, 200, 81, "Velmora - Hex Dress Maitreya", 0);
     add_folder(&mut inv, 82, 1, "Stuff");
     add_item(&mut inv, 201, 82, "Velvet Hair Bow", 0);
     add_folder(&mut inv, 83, 1, "Reborn Stuff");
     add_folder(&mut inv, 84, 83, "Winter");
-    add_folder(&mut inv, 85, 84, "[Kitoomi] Coat");
+    add_folder(&mut inv, 85, 84, "[Velmora] Coat");
     add_item(&mut inv, 202, 85, "Coat", 0);
     let none = HashSet::new();
     let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
@@ -596,6 +596,17 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     }
     assert!(moved.contains(&id(81)) && moved.contains(&id(85)), "products move whole");
     assert!(moved.contains(&id(201)), "a loose item of Stuff is sorted");
+    // a product of folders with no tag: its versions keep it whole
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 90, 1, "Hex Dress");
+    add_folder(&mut inv, 91, 90, "Maitreya");
+    add_folder(&mut inv, 92, 90, "Hex Dress Legacy");
+    add_item(&mut inv, 203, 90, "Hex Dress HUD", 0);
+    add_item(&mut inv, 204, 91, "Hex Dress Maitreya", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(moved.contains(&id(90)), "the product moves whole");
+    assert!(![91, 92, 203, 204].iter().any(|n| moved.contains(&id(*n))), "never opened");
     assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
 }
 
@@ -951,9 +962,9 @@ fn phrases_beat_the_word_they_extend_and_stores_are_read_every_way() {
     // another category's own words never override the first
     assert_eq!(category("Dragon Tattoo for Evo X"), Some(Tattoos));
     assert_eq!(category("Lace Dress"), Some(Dresses));
-    assert_eq!(store("**Kitoomi** Hex Dress").as_deref(), Some("Kitoomi"));
+    assert_eq!(store("**Velmora** Hex Dress").as_deref(), Some("Velmora"));
     assert_eq!(store("..::North Oak::.. Table").as_deref(), Some("North Oak"));
-    assert_eq!(store("(Mesh) Kitoomi - Hex Dress").as_deref(), Some("Kitoomi"));
+    assert_eq!(store("(Mesh) Velmora - Hex Dress").as_deref(), Some("Velmora"));
     assert_eq!(store("[Moon Hair] Ada").as_deref(), Some("Moon Hair"));
     assert_eq!(store("[Hair] Ada"), None);
 }
@@ -967,72 +978,76 @@ fn real_creator_names_find_their_folders() {
     let none = "None".to_owned();
     let cases: Vec<(&str, i32, String)> = vec![
         // folders: deliveries and boxes
-        ("Tredente // Bento Money Envelope (Packed)", -1, format!("{stores}/Tredente")),
-        ("TROLLINGAVATAR", -1, none.clone()),
-        ("TsVe 1.2.5 Box", -1, none.clone()),
+        ("Brindlewood // Bento Money Envelope (Packed)", -1, format!("{stores}/Brindlewood")),
+        ("WOBBLINGAVATAR", -1, none.clone()),
+        ("QxVe 1.2.5 Box", -1, none.clone()),
         (
-            "uh-oh: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+            "oh-my: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
             -1,
-            format!("{}/uh-oh", cat(Stockings)),
+            format!("{}/oh-my", cat(Stockings)),
         ),
-        ("UnityCore Combat System V39.812", -1, none.clone()),
-        ("{UE} What a S****y Attack Hud [boxed]", -1, format!("{}/UE", cat(Huds))),
-        ("~JJ~ The Chameleon Halo Set", -1, format!("{}/JJ", cat(Outfits))),
+        ("NimbusCore Combat System V39.812", -1, none.clone()),
+        ("{QE} What a S****y Attack Hud [boxed]", -1, format!("{}/QE", cat(Huds))),
+        ("~KK~ The Chameleon Halo Set", -1, format!("{}/KK", cat(Outfits))),
         // objects
         (
-            "[BS][GESTURES][1] AUSSIE MEAT PIE PACK (ADD+CLICK)",
+            "[ZT][GESTURES][1] COUNTRY APPLE PIE PACK (ADD+CLICK)",
             6,
-            format!("{}/BS", cat(Gestures)),
+            format!("{}/ZT", cat(Gestures)),
         ),
-        ("Kitoomi - Ryu Jeans - FATPACK", 6, format!("{}/Kitoomi", cat(Pants))),
+        ("Velmora - Ryu Jeans - FATPACK", 6, format!("{}/Velmora", cat(Pants))),
         ("LeLUTKA Otto Head 4.0", 6, cat(Heads).to_owned()),
-        ("OnlyPixel_Terminal_Office_High1", 6, format!("{stores}/OnlyPixel")),
-        ("OnlyPx_Sign_F", 6, format!("{stores}/OnlyPx")),
+        ("MossPixel_Terminal_Office_High1", 6, format!("{stores}/MossPixel")),
+        ("MossPx_Sign_F", 6, format!("{stores}/MossPx")),
         ("Object", 6, none.clone()),
-        ("[Grazed] Rebellion Jacket // Fatpack", 6, format!("{}/Grazed", cat(Jackets))),
-        ("Obsidian Homes ~ Eclipse (ADD)", 6, format!("{stores}/Obsidian Homes")),
-        ("OnlyPixel Deposit HUD", 6, cat(Huds).to_owned()),
+        ("[Thornlace] Rebellion Jacket // Fatpack", 6, format!("{}/Thornlace", cat(Jackets))),
+        ("Ashgrove Homes ~ Eclipse (ADD)", 6, format!("{stores}/Ashgrove Homes")),
+        ("MossPixel Deposit HUD", 6, cat(Huds).to_owned()),
         ("P_Scaner_Salty", 6, none.clone()),
-        ("Sera - Feelin Undone - Bom Bandages Fatpack", 6, format!("{}/Sera", cat(Tattoos))),
+        ("Nyla - Slow Unwind - Bom Bandages Fatpack", 6, format!("{}/Nyla", cat(Tattoos))),
         // a product's HUD goes with the product
-        ("[Grazed] Trauma Tee // Fatpack Hud", 6, format!("{}/Grazed", cat(Tops))),
+        ("[Thornlace] Trauma Tee // Fatpack Hud", 6, format!("{}/Thornlace", cat(Tops))),
         // LegacyM: Legacy's male body; AT, its Athletic shape
         (
-            "[Grazed] Trauma Tee // Fatpack // LegacyM+AT",
+            "[Thornlace] Trauma Tee // Fatpack // LegacyM+AT",
             6,
-            format!("Legacy Male/{}/Grazed", cat(Tops)),
+            format!("Legacy Male/{}/Thornlace", cat(Tops)),
         ),
-        ("MadPea Willy Wrappers - Glove", 6, format!("{}/MadPea Willy Wrappers", cat(Gloves))),
-        ("Emy's Birthday Invitation", 6, none.clone()),
+        (
+            "QuillFox Willy Wrappers - Glove",
+            6,
+            format!("{}/QuillFox Willy Wrappers", cat(Gloves)),
+        ),
+        ("Garden Party Invitation", 6, none.clone()),
         ("Mouth Spitter (Light Pink)", 6, none.clone()),
         // Waifus, Reborn's body mod: the mod itself is an add-on, its clothes
         // get a Waifus folder (with Squish when both)
         ("Waifu REBORN - Waifus - Addon v2.0", 6, format!("Reborn/{}", cat(BodyAddons))),
         (
-            "Reborn Feat. Axolotl - Waifu Bikini - Top Slim",
+            "Reborn Feat. Marlowe - Waifu Bikini - Top Slim",
             6,
             format!("Reborn/{}/Waifus", cat(Swimwear)),
         ),
         (
-            "Muse - Lovesick Darling - Reborn Waifus - Bra",
+            "Larkspur - Lovesick Darling - Reborn Waifus - Bra",
             6,
-            format!("Reborn/{}/Muse/Waifus", cat(Lingerie)),
+            format!("Reborn/{}/Larkspur/Waifus", cat(Lingerie)),
         ),
         (
-            "Rokins - Rihanna Top - Black - [Waifus size Squish]",
+            "Fenwick - Rihanna Top - Black - [Waifus size Squish]",
             6,
-            format!("Reborn/{}/Rokins/Waifus Squish", cat(Tops)),
+            format!("Reborn/{}/Fenwick/Waifus Squish", cat(Tops)),
         ),
         // a body skin, named by its body and tone; a body mod maker
         (
-            "VELOUR: The \"Ipanema Body\" for eBody Reborn (Porcelain)",
+            "MARROW: The \"Harbor Body\" for eBody Reborn (Porcelain)",
             6,
-            format!("Reborn/{}/VELOUR", cat(Skins)),
+            format!("Reborn/{}/MARROW", cat(Skins)),
         ),
         (
-            "MAZE.mods - Soft Thighs V4.2 - eBody Reborn",
+            "LUMA.mods - Soft Thighs V4.2 - eBody Reborn",
             6,
-            format!("Reborn/{}/MAZE.mods", cat(BodyAddons)),
+            format!("Reborn/{}/LUMA.mods", cat(BodyAddons)),
         ),
     ];
     let mut wrong = Vec::new();
@@ -1048,35 +1063,35 @@ fn real_creator_names_find_their_folders() {
 #[test]
 fn store_hints_give_a_category_to_names_that_say_nothing() {
     let hints = [StoreHint {
-        store: "obsidian homes".into(),
+        store: "ashgrove homes".into(),
         category: Category::Furniture,
         ..Default::default()
     }];
     assert_eq!(
-        sorted_as("Obsidian Homes ~ Eclipse (ADD)", 6, &hints),
-        format!("{}/Obsidian Homes", Category::Furniture.folder())
+        sorted_as("Ashgrove Homes ~ Eclipse (ADD)", 6, &hints),
+        format!("{}/Ashgrove Homes", Category::Furniture.folder())
     );
     // a name's own category wins over the hint
     let hints = [StoreHint {
-        store: "Kitoomi".into(),
+        store: "Velmora".into(),
         category: Category::Furniture,
         ..Default::default()
     }];
     assert_eq!(
-        sorted_as("Kitoomi - Ryu Jeans - FATPACK", 6, &hints),
-        format!("{}/Kitoomi", Category::Pants.folder())
+        sorted_as("Velmora - Ryu Jeans - FATPACK", 6, &hints),
+        format!("{}/Velmora", Category::Pants.folder())
     );
     // without a folder per store, the hint still files it
     assert_eq!(
         target_with(
-            "Obsidian Homes ~ Eclipse (ADD)",
+            "Ashgrove Homes ~ Eclipse (ADD)",
             6,
             0,
             None,
             &[],
             false,
             &[StoreHint {
-                store: "Obsidian Homes".into(),
+                store: "Ashgrove Homes".into(),
                 category: Category::Furniture,
                 ..Default::default()
             }]

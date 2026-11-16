@@ -14654,6 +14654,7 @@ inventory-sorter-snapshots = Snapshots
 inventory-sorter-snapshot-take = Take a snapshot now
 inventory-sorter-snapshot-restore = Put this layout back…
 inventory-sorter-snapshot-unreadable = This snapshot could not be read.
+inventory-sorter-snapshot-loading = Reading the snapshot…
 inventory-sorter-moved-by-hand = Moved by hand since
 inventory-sorter-restore-summary = Left as they are: { $new } new since the snapshot, { $trashed } in the Trash, { $gone } deleted or whose folder is gone, { $kept } worn, linked or protected. { $hand } moved by hand are listed apart.
 inventory-sorter-snapshot-other-account = This snapshot belongs to another account: it is not restored here.

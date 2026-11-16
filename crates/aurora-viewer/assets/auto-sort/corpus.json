@@ -2,52 +2,52 @@
  "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
  "cases": [
   {
-   "name": "Tredente // Bento Money Envelope (Packed)",
+   "name": "Brindlewood // Bento Money Envelope (Packed)",
    "type": -1,
-   "expect": "{stores}/Tredente",
+   "expect": "{stores}/Brindlewood",
    "why": "a delivery folder: store from the // tag"
   },
   {
-   "name": "TROLLINGAVATAR",
+   "name": "WOBBLINGAVATAR",
    "type": -1,
    "expect": null
   },
   {
-   "name": "TsVe 1.2.5 Box",
+   "name": "QxVe 1.2.5 Box",
    "type": -1,
    "expect": null
   },
   {
-   "name": "uh-oh: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+   "name": "oh-my: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
    "type": -1,
-   "expect": "{stockings}/uh-oh",
+   "expect": "{stockings}/oh-my",
    "why": "a store and a colon"
   },
   {
-   "name": "UnityCore Combat System V39.812",
+   "name": "NimbusCore Combat System V39.812",
    "type": -1,
    "expect": null
   },
   {
-   "name": "{UE} What a S****y Attack Hud [boxed]",
+   "name": "{QE} What a S****y Attack Hud [boxed]",
    "type": -1,
-   "expect": "{huds}/UE"
+   "expect": "{huds}/QE"
   },
   {
-   "name": "~JJ~ The Chameleon Halo Set",
+   "name": "~KK~ The Chameleon Halo Set",
    "type": -1,
-   "expect": "{outfits}/JJ"
+   "expect": "{outfits}/KK"
   },
   {
-   "name": "[BS][GESTURES][1] AUSSIE MEAT PIE PACK (ADD+CLICK)",
+   "name": "[ZT][GESTURES][1] COUNTRY APPLE PIE PACK (ADD+CLICK)",
    "type": 6,
-   "expect": "{gestures}/BS",
+   "expect": "{gestures}/ZT",
    "why": "a gesture pack worn as an object"
   },
   {
-   "name": "Kitoomi - Ryu Jeans - FATPACK",
+   "name": "Velmora - Ryu Jeans - FATPACK",
    "type": 6,
-   "expect": "{pants}/Kitoomi"
+   "expect": "{pants}/Velmora"
   },
   {
    "name": "LeLUTKA Otto Head 4.0",
@@ -55,15 +55,15 @@
    "expect": "{heads}"
   },
   {
-   "name": "OnlyPixel_Terminal_Office_High1",
+   "name": "MossPixel_Terminal_Office_High1",
    "type": 6,
-   "expect": "{stores}/OnlyPixel",
+   "expect": "{stores}/MossPixel",
    "why": "underscore names: a brand-like first part"
   },
   {
-   "name": "OnlyPx_Sign_F",
+   "name": "MossPx_Sign_F",
    "type": 6,
-   "expect": "{stores}/OnlyPx"
+   "expect": "{stores}/MossPx"
   },
   {
    "name": "Object",
@@ -71,17 +71,17 @@
    "expect": null
   },
   {
-   "name": "[Grazed] Rebellion Jacket // Fatpack",
+   "name": "[Thornlace] Rebellion Jacket // Fatpack",
    "type": 6,
-   "expect": "{jackets}/Grazed"
+   "expect": "{jackets}/Thornlace"
   },
   {
-   "name": "Obsidian Homes ~ Eclipse (ADD)",
+   "name": "Ashgrove Homes ~ Eclipse (ADD)",
    "type": 6,
-   "expect": "{stores}/Obsidian Homes"
+   "expect": "{stores}/Ashgrove Homes"
   },
   {
-   "name": "OnlyPixel Deposit HUD",
+   "name": "MossPixel Deposit HUD",
    "type": 6,
    "expect": "{huds}"
   },
@@ -91,29 +91,29 @@
    "expect": null
   },
   {
-   "name": "Sera - Feelin Undone - Bom Bandages Fatpack",
+   "name": "Nyla - Slow Unwind - Bom Bandages Fatpack",
    "type": 6,
-   "expect": "{tattoos}/Sera"
+   "expect": "{tattoos}/Nyla"
   },
   {
-   "name": "[Grazed] Trauma Tee // Fatpack Hud",
+   "name": "[Thornlace] Trauma Tee // Fatpack Hud",
    "type": 6,
-   "expect": "{tops}/Grazed",
+   "expect": "{tops}/Thornlace",
    "why": "a product's HUD goes with the product"
   },
   {
-   "name": "[Grazed] Trauma Tee // Fatpack // LegacyM+AT",
+   "name": "[Thornlace] Trauma Tee // Fatpack // LegacyM+AT",
    "type": 6,
-   "expect": "Legacy Male/{tops}/Grazed",
+   "expect": "Legacy Male/{tops}/Thornlace",
    "why": "LegacyM: the Legacy Male body"
   },
   {
-   "name": "MadPea Willy Wrappers - Glove",
+   "name": "QuillFox Willy Wrappers - Glove",
    "type": 6,
-   "expect": "{gloves}/MadPea Willy Wrappers"
+   "expect": "{gloves}/QuillFox Willy Wrappers"
   },
   {
-   "name": "Emy's Birthday Invitation",
+   "name": "Garden Party Invitation",
    "type": 6,
    "expect": null
   },
@@ -129,30 +129,30 @@
    "why": "the Waifus mod itself is an add-on"
   },
   {
-   "name": "Reborn Feat. Axolotl - Waifu Bikini - Top Slim",
+   "name": "Reborn Feat. Marlowe - Waifu Bikini - Top Slim",
    "type": 6,
    "expect": "Reborn/{swimwear}/Waifus"
   },
   {
-   "name": "Muse - Lovesick Darling - Reborn Waifus - Bra",
+   "name": "Larkspur - Lovesick Darling - Reborn Waifus - Bra",
    "type": 6,
-   "expect": "Reborn/{lingerie}/Muse/Waifus"
+   "expect": "Reborn/{lingerie}/Larkspur/Waifus"
   },
   {
-   "name": "Rokins - Rihanna Top - Black - [Waifus size Squish]",
+   "name": "Fenwick - Rihanna Top - Black - [Waifus size Squish]",
    "type": 6,
-   "expect": "Reborn/{tops}/Rokins/Waifus Squish"
+   "expect": "Reborn/{tops}/Fenwick/Waifus Squish"
   },
   {
-   "name": "VELOUR: The \"Ipanema Body\" for eBody Reborn (Porcelain)",
+   "name": "MARROW: The \"Harbor Body\" for eBody Reborn (Porcelain)",
    "type": 6,
-   "expect": "Reborn/{skins}/VELOUR",
+   "expect": "Reborn/{skins}/MARROW",
    "why": "a body skin named by body and tone"
   },
   {
-   "name": "MAZE.mods - Soft Thighs V4.2 - eBody Reborn",
+   "name": "LUMA.mods - Soft Thighs V4.2 - eBody Reborn",
    "type": 6,
-   "expect": "Reborn/{body-addons}/MAZE.mods",
+   "expect": "Reborn/{body-addons}/LUMA.mods",
    "why": "a body mod maker's tag"
   },
   {

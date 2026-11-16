@@ -77,7 +77,8 @@ struct Raw {
 pub struct Vocabulary {
     pub bodies: Vec<BodyWords>,
     /// In the order they are tried: the first match wins, so a "Lingerie
-    /// Set" is lingerie. Sets come last.
+    /// Set" is lingerie, unless another category has a longer phrase built
+    /// on the word that matched ("Hair Bow"). Sets come last.
     pub categories: Vec<(Category, Vec<String>)>,
     /// Skin tones creators name their body skins with (`(Porcelain)`).
     pub skin_tones: Vec<String>,

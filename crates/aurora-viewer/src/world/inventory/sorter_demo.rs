@@ -1,7 +1,7 @@
 //! `AURORA_DEMO_INVENTORY=sorter|aurora-sorter`: a large, messy inventory
 //! for Auto-sort, built like the ones residents collect over years. Store
 //! tags, body tags and products are combined the way creators write them
-//! (`.VX. Vixen Dress - Reborn Pack [Unpacker]`, `eBODY - REBORN - Wear to
+//! (`.QZ. Vixen Dress - Reborn Pack [Unpacker]`, `eBODY - REBORN - Wear to
 //! unpack`, `FemAvg_Dress_Cut_Long_Reborn_F`): the names are the grid's
 //! content the sorter reads, not interface text, so they stay in English.
 //! Every store name is made up.
@@ -17,7 +17,7 @@ const SORTED: Uuid = Uuid::from_u128(8602);
 const SORTED_REBORN: Uuid = Uuid::from_u128(8603);
 
 const STORES: &[&str] = &[
-    ".VX.",
+    ".QZ.",
     "-Velvet Lies-",
     "ZETA.mods -",
     "{Moonrise}",

@@ -3818,7 +3818,12 @@ Mutations that mix moves and metadata keep their AIS check.
 
 `inventory/operations.rs` remaps the UUIDs of the folders confirmed by AIS
 and returns their metadata, without reading back folders that are still
-empty. The model can thus receive their items immediately.
+empty. The model can thus receive their items immediately. An Auto-sort
+batch (`Mutation::confirm_each`) is read back entry by entry instead of
+re-reading its destinations: items fifty to a FetchInventory2 request,
+moved folders through `ais::read_folders`, and the reply carries the
+server's record of each entry read and the moves it did not see in place
+(`Reply::unconfirmed`).
 `session/inventory_copies.rs` sends the reliable copies and tracks their
 confirmations; the empty name is encoded with a zero length, like
 `LLTemplateMessageBuilder::addString(std::string)`.

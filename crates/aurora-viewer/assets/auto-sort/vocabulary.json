@@ -1,5 +1,5 @@
 {
-  "about": "Auto-sort's vocabulary: the words creators use in item names. Lowercase words separated by single spaces, as sorter::words reads names. Categories are tried in this order; the first match wins. Check a change with the corpus test (cargo test --workspace vocabulary) and AURORA_DEMO_INVENTORY=sorter-vocab.",
+  "about": "Auto-sort's vocabulary: the words creators use in item names. Lowercase words separated by single spaces, as sorter::words reads names. Categories are tried in this order; the first match wins, unless another category has a longer phrase built on the word that matched (hair bow beats hair). Check a change with the corpus test (cargo test --workspace vocabulary) and AURORA_DEMO_INVENTORY=sorter-vocab.",
   "bodies": [
     {
       "body": "Reborn",

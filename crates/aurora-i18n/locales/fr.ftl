@@ -14668,6 +14668,7 @@ inventory-sorter-snapshots = Instantanés
 inventory-sorter-snapshot-take = Prendre un instantané
 inventory-sorter-snapshot-restore = Remettre cette disposition…
 inventory-sorter-snapshot-unreadable = Cet instantané n'a pas pu être lu.
+inventory-sorter-snapshot-loading = Lecture de l'instantané…
 inventory-sorter-moved-by-hand = Déplacés à la main depuis
 inventory-sorter-restore-summary = Laissés tels quels : { $new } nouveaux depuis l'instantané, { $trashed } dans la corbeille, { $gone } supprimés ou dont le dossier n'existe plus, { $kept } portés, liens ou protégés. { $hand } déplacés à la main sont listés à part.
 inventory-sorter-snapshot-other-account = Cet instantané appartient à un autre compte : il n'est pas restauré ici.

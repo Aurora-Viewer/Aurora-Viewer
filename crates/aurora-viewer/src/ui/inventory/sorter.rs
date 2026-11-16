@@ -160,6 +160,18 @@ pub(super) struct State {
     undo_waiting: Option<u64>,
     /// The folders Undo waits for (gathered once at the click).
     undo_folders: Vec<Uuid>,
+    /// What is worn and locked now, for Undo and a snapshot's restore (the
+    /// Options tab is drawn without them): an entry that cannot go back is
+    /// never what Undo picks.
+    worn_now: HashSet<Uuid>,
+    protected_now: HashSet<Uuid>,
+    /// A snapshot being read off the frame (a whole inventory's layout is a
+    /// large file): its date and the file once read.
+    snapshot_loading: Option<(
+        i64,
+        std::path::PathBuf,
+        std::sync::mpsc::Receiver<std::io::Result<sorter::journal::Snapshot>>,
+    )>,
     /// Whether all a saved or whole-inventory source reads is loaded, at an
     /// inventory generation: checked again only when the inventory changes.
     source_loaded: Option<(u64, bool)>,
@@ -1364,7 +1376,7 @@ pub(super) fn show(
         }
         job.settle(inv);
     }
-    // The journal takes what the server confirmed; saved every few batches
+    // The journal takes what the server confirmed; saved every few seconds
     // with the moves still to send, so a run the viewer stops can resume.
     let mut begin = false;
     if let Some(job) = state.job.as_mut() {
@@ -1533,6 +1545,12 @@ pub(super) fn show(
         return;
     };
     let busy = state.busy();
+    if state.worn_now != *worn {
+        state.worn_now.clone_from(worn);
+    }
+    if state.protected_now != prefs.protected {
+        state.protected_now.clone_from(&prefs.protected);
+    }
     let loaded = match &source {
         Source::Folder(id) => {
             // Loading the folder is all a preview needs: its direct contents.
@@ -1563,10 +1581,14 @@ pub(super) fn show(
                 loaded
             }
         },
+        // the root's folders only on the frame: deeper ones are listed by
+        // the plan (made off the frame) and asked for as it arrives
+        Source::Whole if busy => true,
         Source::Whole => match state.source_loaded {
             Some((generation, loaded)) if generation == inv.generation => loaded,
             _ => {
-                let loaded = ask_for(inv, sorter::whole_sources(inv, &prefs.sorter));
+                let root = inv.folders.get(&inv.root).map(|f| f.children.clone()).unwrap_or_default();
+                let loaded = ask_for(inv, root);
                 state.source_loaded = Some((inv.generation, loaded));
                 loaded
             }
@@ -3286,7 +3308,9 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     ui.add_space(10.0);
     default_folders(ui, p, inv, state, options);
     ui.add_space(10.0);
-    undo_and_snapshots(ui, p, inv, state, worn_none());
+    let worn = std::mem::take(&mut state.worn_now);
+    undo_and_snapshots(ui, p, inv, state, &worn);
+    state.worn_now = worn;
     ui.add_space(10.0);
     crate::ui::widgets::section_header(ui, p, "share", aurora_i18n::tr!("inventory-share-section"));
     ui.label(
@@ -3373,13 +3397,6 @@ fn default_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut 
     }
 }
 
-/// No worn set where the Options tab has none: the preview re-checks every
-/// entry against what is worn before anything moves.
-fn worn_none() -> &'static HashSet<Uuid> {
-    static NONE: std::sync::OnceLock<HashSet<Uuid>> = std::sync::OnceLock::new();
-    NONE.get_or_init(HashSet::new)
-}
-
 /// A snapshot's or a run's date, "2026-11-15 12:30" (UTC).
 fn snapshot_date(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0).map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M").to_string())
@@ -3390,12 +3407,20 @@ fn snapshot_date(at: i64) -> String {
 fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>) {
     use crate::ui::widgets::{ActionKind, action_button};
     let size = Vec2::new(0.0, 26.0);
-    let protected = HashSet::new();
+    let protected = state.protected_now.clone();
+    let busy = state.busy();
     crate::ui::widgets::section_header(ui, p, "history", aurora_i18n::tr!("inventory-sorter-undo-section"));
     ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-undo-hint")).small().color(p.muted));
     if let Some(unfinished) = &state.unfinished {
         let label = aurora_i18n::tr!("inventory-sorter-resume-run", count = unfinished.moves.len());
-        if action_button(ui, p, "player-play-filled", &label, ActionKind::Primary, size).clicked() {
+        // (never while a run goes: it would only change the status)
+        if ui
+            .add_enabled_ui(!busy, |ui| {
+                action_button(ui, p, "player-play-filled", &label, ActionKind::Primary, size)
+            })
+            .inner
+            .clicked()
+        {
             // gone: the run was ended by another window (never read again on
             // the frame, only looked for)
             let there = state
@@ -3501,13 +3526,37 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
     for (at, path) in &state.snapshots {
         ui.horizontal(|ui| {
             ui.label(snapshot_date(*at));
-            if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-snapshot-restore")).clicked() {
+            if ui
+                .add_enabled_ui(!busy && state.snapshot_loading.is_none(), |ui| {
+                    crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-snapshot-restore"))
+                })
+                .inner
+                .clicked()
+            {
                 restore = Some((*at, path.clone()));
             }
         });
     }
+    // the file is read on a thread; the restore is planned once it is
     if let Some((at, path)) = restore {
-        match sorter::journal::load::<sorter::journal::Snapshot>(&path) {
+        let (send, read) = std::sync::mpsc::channel();
+        let file = path.clone();
+        let load = move || {
+            let _ = send.send(sorter::journal::load::<sorter::journal::Snapshot>(&file));
+        };
+        match std::thread::Builder::new().name("auto-sort snapshot".into()).spawn(load) {
+            Ok(_) => {
+                state.snapshot_loading = Some((at, path, read));
+                state.status = aurora_i18n::tr!("inventory-sorter-snapshot-loading").to_owned();
+            }
+            Err(error) => log::warn!("auto-sort: the snapshot could not be read ({error})"),
+        }
+    }
+    let arrived = state.snapshot_loading.as_ref().and_then(|(_, _, read)| read.try_recv().ok());
+    if let Some(result) = arrived
+        && let Some((at, path, _)) = state.snapshot_loading.take()
+    {
+        match result {
             Ok(snapshot) => {
                 let account = state.account.unwrap_or_default();
                 let by_runs = state.journal.with(|j| sorter::journal::moved_since(j, snapshot.at));
