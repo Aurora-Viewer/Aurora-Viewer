@@ -78,19 +78,11 @@ impl World {
     /// taken on the root prim of someone's attachment lands on its wearer.
     /// Here it stays on the attachment, like on ours.
     pub fn object_block_root(&self, id: &Uuid) -> Uuid {
-        let mut root = *id;
-        let mut idx = self.objects.index_of_uuid(id);
-        for _ in 0..64 {
-            let Some(o) = idx.and_then(|i| self.objects.get(i)) else {
-                break;
-            };
-            if o.is_avatar() {
-                break;
-            }
-            root = o.full_id;
-            idx = self.objects.parent_of(o);
-        }
-        root
+        self.objects
+            .index_of_uuid(id)
+            .map(|i| self.objects.linkset_root(i))
+            .and_then(|i| self.objects.get(i))
+            .map_or(*id, |o| o.full_id)
     }
 
     /// The linkset of `id` is blocked, on its root: what `is_muted` cannot
@@ -200,17 +192,21 @@ impl World {
     /// An IM from someone (or an object) we blocked: dropped; inventory
     /// offers are declined like closing the offer (LLOfferInfo IOR_DECLINE).
     pub(super) fn im_blocked(&mut self, im: &InstantMessage) -> bool {
-        if im.from_agent_id.is_nil() || im.from_agent_id == self.agent_id {
+        if im.from_agent_id.is_nil() {
             return false;
         }
+        // an IM from our own worn object carries our id: only the object's
+        // block applies to it, as to its chat (LLIMProcessing::
+        // processNewMessage has no exception for our own id)
+        let own = im.from_agent_id == self.agent_id;
         // object IMs carry the object id in the session id (STORM-1209)
-        let muted = self.mutes.text_muted(&im.from_agent_id, &im.from_name)
+        let muted = (!own && self.mutes.text_muted(&im.from_agent_id, &im.from_name))
             || (im.dialog == 19 && (self.mutes.is_muted_id(&im.session_id) || self.root_muted(&im.session_id, 0)));
         // inventory_offer_handler: an offer is declined on any entry, one
         // that blocks only sounds, particles or voice too (isMuted with no
         // flags); chat and IMs keep the text chat flag
         let offer = im.dialog == d::INVENTORY_OFFERED || im.dialog == d::TASK_INVENTORY_OFFERED;
-        let offer_muted = offer && self.mutes.is_muted(&im.from_agent_id, &im.from_name, 0);
+        let offer_muted = offer && !own && self.mutes.is_muted(&im.from_agent_id, &im.from_name, 0);
         if !muted && !offer_muted {
             return false;
         }
@@ -639,6 +635,34 @@ mod tests {
             assert!(w.sound_blocked(&prim, &Uuid::nil()), "sounds");
             assert_eq!(w.object_block_entry(&prim), Some(root), "the menu reads it as blocked");
         }
+    }
+
+    fn im_from(prim: Uuid, from: Uuid, dialog: u8) -> InstantMessage {
+        InstantMessage {
+            from_agent_id: from,
+            from_name: "Worn Thing".into(),
+            to_agent_id: from,
+            dialog,
+            session_id: prim,
+            message: "hello".into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn a_blocked_linkset_of_ours_sends_no_im_from_a_child_prim() {
+        let (mut w, child, root) = worn_world();
+        let agent = w.agent_id;
+        assert!(!w.im_blocked(&im_from(child, agent, 19)));
+        w.toggle_block_object(child, "Worn Thing").expect("blocked");
+        for prim in [child, root] {
+            assert!(w.im_blocked(&im_from(prim, agent, 19)), "object IM");
+        }
+        // our own IMs and offers are never blocked
+        assert!(!w.im_blocked(&im_from(Uuid::from_u128(0x5e55), agent, 0)));
     }
 
     #[test]
