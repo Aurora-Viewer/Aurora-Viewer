@@ -596,6 +596,20 @@ pub struct World {
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
+    /// The animation editor's Person B (couple mode), set by the app each
+    /// frame: when they teleport away or log off, they stay drawn as they
+    /// were, with what they wear, until couple mode ends (`hold_partner`).
+    pub couple_partner: Option<Uuid>,
+    /// Where the animation editor moved Person B on screen: a shift in the
+    /// region (metres) and a turn about their pelvis (radians). Their body
+    /// is drawn there; their animation and the simulator are untouched.
+    pub couple_place: (Vec3, f32),
+    /// Person B's skeleton model when couple mode took them: they stay
+    /// there while they walk, turn or sit in the world, `couple_place`
+    /// moving them from it.
+    couple_anchor: Option<(Uuid, glam::Mat4)>,
+    /// The partner's kills held meanwhile.
+    held_partner: Vec<(ObjKey, Uuid)>,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -1025,6 +1039,10 @@ impl World {
             frozen: false,
             god_level: 0,
             held_kills: Vec::new(),
+            couple_partner: None,
+            couple_place: (Vec3::ZERO, 0.0),
+            couple_anchor: None,
+            held_partner: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
             avatar_marks: Default::default(),
@@ -1877,6 +1895,118 @@ impl World {
             }
         }
         now
+    }
+
+    /// The kill of the couple partner's avatar is held: the animation
+    /// editor keeps posing them after they left (a teleport, a log-off),
+    /// as they were, standing still. Their consent still applies: a
+    /// withdrawal ends couple mode, which lets them go (`set_couple_partner`).
+    /// Returns the kills to apply now.
+    fn hold_partner(&mut self, handle: RegionHandle, local_ids: Vec<u32>) -> Vec<u32> {
+        let Some(partner) = self.couple_partner else { return local_ids };
+        let mut now = Vec::with_capacity(local_ids.len());
+        for id in local_ids {
+            let key = ObjKey {
+                region: handle,
+                local_id: id,
+            };
+            let held = self
+                .objects
+                .index_of(&key)
+                .filter(|idx| self.objects.get(*idx).is_some_and(|o| o.full_id == partner && o.is_avatar()));
+            match held {
+                Some(idx) => {
+                    if let Some(object) = self.objects.get_mut(idx) {
+                        object.velocity = Vec3::ZERO;
+                        object.acceleration = Vec3::ZERO;
+                        object.angular_velocity = Vec3::ZERO;
+                    }
+                    log::info!("couple partner left: kept drawn while the animation editor poses them");
+                    self.held_partner.push((key, partner));
+                }
+                None => now.push(id),
+            }
+        }
+        now
+    }
+
+    /// The region-space move of Person B's body, for a body whose skeleton
+    /// model is now `model`: back to where they stood when couple mode took
+    /// them, whatever they do in the world since, then by `couple_place`,
+    /// the turn about their pelvis. Avatar Studio's Hover Height lifts B
+    /// with the agent, so the pair keeps its spacing. None for anyone else,
+    /// or when B is drawn where the world has them.
+    pub fn couple_shift(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        let lift = if self.avatar_studio { self.avatar_studio_lift } else { 0.0 };
+        self.couple_shift_lifted(id, model, lift)
+    }
+
+    /// `couple_shift` without the Studio's display lift: where B stands
+    /// for the couple's placement note, which leaves A's lift out too.
+    pub fn couple_move(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        self.couple_shift_lifted(id, model, 0.0)
+    }
+
+    fn couple_shift_lifted(&self, id: Uuid, model: glam::Mat4, lift: f32) -> Option<glam::Mat4> {
+        if self.couple_partner != Some(id) {
+            return None;
+        }
+        let (mut offset, yaw) = self.couple_place;
+        if lift.is_finite() {
+            offset.z += lift;
+        }
+        if !offset.is_finite() || !yaw.is_finite() || model.determinant().abs() <= 1e-8 {
+            return None;
+        }
+        let base = self.couple_base(id).unwrap_or(model);
+        let pelvis = base.transform_point3(self.avatar_lib.pelvis);
+        let placed =
+            glam::Mat4::from_translation(pelvis + offset) * glam::Mat4::from_rotation_z(yaw) * glam::Mat4::from_translation(-pelvis) * base;
+        // where the body is drawn, from where the world has it now
+        let shift = placed * model.inverse();
+        (shift.is_finite() && !shift.abs_diff_eq(glam::Mat4::IDENTITY, 1e-5)).then_some(shift)
+    }
+
+    /// Person B's body as couple mode holds it, before `couple_place`: the
+    /// skeleton model they had when they became B.
+    pub fn couple_base(&self, id: Uuid) -> Option<glam::Mat4> {
+        match self.couple_anchor {
+            Some((anchored, model)) if anchored == id && self.couple_partner == Some(id) => Some(model),
+            _ => self.avatar_models.get(&id).copied(),
+        }
+    }
+
+    /// The animation editor's couple partner, each frame. A partner whose
+    /// kill was held goes once they are no longer the partner, unless their
+    /// key went to another object since (they came back).
+    pub fn set_couple_partner(&mut self, partner: Option<Uuid>) {
+        self.couple_partner = partner;
+        // B is held where they stood when they became B (their model once
+        // the scene has one)
+        match partner {
+            Some(id) if self.couple_anchor.is_none_or(|(anchored, _)| anchored != id) => {
+                self.couple_anchor = self.avatar_models.get(&id).map(|model| (id, *model));
+            }
+            None => self.couple_anchor = None,
+            _ => {}
+        }
+        if self.held_partner.is_empty() {
+            return;
+        }
+        let (keep, release): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held_partner)
+            .into_iter()
+            .partition(|(_, id)| Some(*id) == partner);
+        self.held_partner = keep;
+        for (key, id) in release {
+            if self
+                .objects
+                .index_of(&key)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.full_id == id)
+            {
+                self.kill_objects(key.region, &[key.local_id]);
+            }
+        }
     }
 
     /// `idx` is `ancestor` or hangs from it (a prim of what an avatar wears).
@@ -3318,6 +3448,7 @@ impl World {
                 None
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
+                let local_ids = self.hold_partner(handle, local_ids);
                 let local_ids = self.hold_kills(handle, local_ids);
                 self.kill_objects(handle, &local_ids);
                 None
@@ -6969,6 +7100,86 @@ mod motion_tests {
         assert!(!present(&world, 970));
         assert!(present(&world, 975));
         assert!(world.held_kills.is_empty());
+    }
+
+    #[test]
+    fn the_couple_partner_stays_where_couple_mode_took_them_while_they_walk() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(983);
+        let start = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        world.avatar_models.insert(partner, start);
+        world.set_couple_partner(Some(partner));
+        assert!(world.couple_shift(partner, start).is_none(), "drawn where they stand");
+        // they walk off and turn in the world: drawn where they were
+        let walked = glam::Mat4::from_translation(Vec3::new(14.0, 18.0, 30.0)) * glam::Mat4::from_rotation_z(1.0);
+        world.avatar_models.insert(partner, walked);
+        world.set_couple_partner(Some(partner));
+        let shift = world.couple_shift(partner, walked).expect("held back");
+        assert!((shift * walked).abs_diff_eq(start, 1e-4));
+        // a move on screen goes from the held place
+        world.couple_place = (Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let shift = world.couple_shift(partner, walked).expect("moved");
+        assert!((shift * walked).abs_diff_eq(glam::Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)) * start, 1e-4));
+        assert_eq!(world.couple_base(partner), Some(start));
+        // couple mode over: their own place again
+        world.set_couple_partner(None);
+        world.couple_place = (Vec3::ZERO, 0.0);
+        assert!(world.couple_shift(partner, walked).is_none());
+        assert_eq!(world.couple_base(partner), Some(walked));
+    }
+
+    #[test]
+    fn the_studio_hover_lifts_the_couple_partner_but_not_the_placement() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(981);
+        world.couple_partner = Some(partner);
+        let model = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        assert!(world.couple_shift(partner, model).is_none(), "nothing to move");
+        world.avatar_studio = true;
+        world.avatar_studio_lift = 0.4;
+        let shift = world.couple_shift(partner, model).expect("the hover lifts B");
+        assert!((shift.transform_point3(Vec3::ZERO) - Vec3::new(0.0, 0.0, 0.4)).length() < 1e-5);
+        assert!(world.couple_move(partner, model).is_none(), "the note leaves the lift out");
+        assert!(world.couple_shift(Uuid::from_u128(982), model).is_none(), "only the partner");
+        world.avatar_studio = false;
+        assert!(world.couple_shift(partner, model).is_none(), "no hover outside the Studio");
+    }
+
+    #[test]
+    fn the_couple_partner_stays_drawn_after_leaving_until_couple_mode_ends() {
+        let (mut world, me, handle) = fixture();
+        let mut partner = me.clone();
+        partner.full_id = Uuid::from_u128(980);
+        partner.local_id = 980;
+        partner.velocity = Vec3::new(1.0, 0.0, 0.0);
+        let mut other = partner.clone();
+        other.full_id = Uuid::from_u128(981);
+        other.local_id = 981;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![me.clone(), partner.clone(), other.clone()],
+        });
+        let present = |world: &World, id: u128| world.objects.index_of_uuid(&Uuid::from_u128(id)).is_some();
+        world.set_couple_partner(Some(partner.full_id));
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![980, 981],
+        });
+        // Person B is kept, standing still; anyone else goes
+        assert!(present(&world, 980));
+        assert!(!present(&world, 981));
+        let held = world
+            .objects
+            .index_of_uuid(&partner.full_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("held");
+        assert_eq!(held.velocity, Vec3::ZERO);
+        world.set_couple_partner(Some(partner.full_id));
+        assert!(present(&world, 980));
+        // couple mode ends: they go
+        world.set_couple_partner(None);
+        assert!(!present(&world, 980));
+        assert!(world.held_partner.is_empty());
     }
 
     #[test]

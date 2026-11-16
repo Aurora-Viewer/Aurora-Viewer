@@ -241,7 +241,10 @@ impl Editor {
                 match self.clip.tab {
                     ClipTab::Bone => self.clip_bone_ui(ui, palette, world, frame),
                     ClipTab::Tracks => self.clip_tracks_ui(ui, palette, world, frame),
-                    ClipTab::Clip => self.clip_settings_ui(ui, palette),
+                    ClipTab::Clip => {
+                        self.couple_ui(ui, palette, world);
+                        self.clip_settings_ui(ui, palette);
+                    }
                     ClipTab::Display => self.visibility_ui(ui, palette, world, frame),
                 }
             });
@@ -791,4 +794,179 @@ pub(in crate::ik_edit) fn equal_width(ui: &egui::Ui, per_row: usize, buttons: &[
     let count = per_row.max(1) as f32;
     let row = widest * count + ui.spacing().item_spacing.x * (count - 1.0);
     if row <= ui.available_width() { widest } else { 0.0 }
+}
+
+impl Editor {
+    /// Couple mode's section: who Person B is and the switch between the
+    /// two, or the nearby residents to pick B from, each with the posing
+    /// consent's state (they accept as for the poser).
+    fn couple_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World) {
+        use crate::world::poser_consent::{self, Status};
+        let size = egui::vec2(ui.available_width().min(260.0), ui.spacing().interact_size.y);
+        ui.label(egui::RichText::new(aurora_i18n::tr!("anim-couple-title")).strong());
+        if let Some(couple) = self.clip.couple.as_ref() {
+            let editing_b = couple.editing_b;
+            ui.label(aurora_i18n::tr!("anim-couple-partner", name = couple.partner_name.clone()));
+            let label = if editing_b {
+                aurora_i18n::tr!("anim-couple-edit-a")
+            } else {
+                aurora_i18n::tr!("anim-couple-edit-b")
+            };
+            if widgets::action_button(ui, palette, "exchange-filled", label, widgets::ActionKind::Flat, size).clicked() {
+                self.switch_person();
+            }
+            // Person B moved on screen, never in their animation
+            ui.label(aurora_i18n::tr!("anim-couple-move"));
+            let (mut local, turn) = self.couple_place_local(world);
+            let mut degrees = turn.to_degrees();
+            let mut changed = false;
+            egui::Grid::new("couple-move").num_columns(2).show(ui, |ui| {
+                for (key, value) in [
+                    ("anim-couple-forward", &mut local.x),
+                    ("anim-couple-left", &mut local.y),
+                    ("anim-couple-up", &mut local.z),
+                ] {
+                    ui.label(aurora_i18n::text(key));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(value)
+                                .speed(0.01)
+                                .range(-20.0..=20.0)
+                                .suffix(" m")
+                                .fixed_decimals(2),
+                        )
+                        .changed();
+                    ui.end_row();
+                }
+                ui.label(aurora_i18n::tr!("anim-couple-turn"));
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut degrees)
+                            .speed(0.5)
+                            .range(-180.0..=180.0)
+                            .suffix("°")
+                            .fixed_decimals(0),
+                    )
+                    .changed();
+                ui.end_row();
+            });
+            if changed {
+                self.set_couple_place(world, local, degrees.to_radians());
+            }
+            ui.horizontal(|ui| {
+                let half = egui::vec2((size.x - ui.spacing().item_spacing.x) / 2.0, size.y);
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "users",
+                    aurora_i18n::tr!("anim-couple-face"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .on_hover_text(aurora_i18n::tr!("anim-couple-face-tip"))
+                .clicked()
+                {
+                    self.couple_face_to_face(world);
+                }
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "restore",
+                    aurora_i18n::tr!("anim-couple-reset-place"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .clicked()
+                {
+                    self.set_couple_place(world, Vec3::ZERO, 0.0);
+                }
+            });
+            if widgets::action_button(
+                ui,
+                palette,
+                "circle-x-filled",
+                aurora_i18n::tr!("anim-couple-end"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-couple-end-tip"))
+            .clicked()
+            {
+                self.end_couple();
+            }
+            widgets::divider(ui, palette);
+            return;
+        }
+        ui.label(egui::RichText::new(aurora_i18n::tr!("anim-couple-hint")).color(palette.muted));
+        let mut peers: Vec<(Uuid, String, f32)> = world
+            .objects
+            .iter()
+            .filter(|(_, object)| object.is_avatar() && object.full_id != world.agent_id && poser_consent::nearby(world, object.full_id))
+            .map(|(_, object)| {
+                let id = object.full_id;
+                (
+                    id,
+                    poser_consent::name(world, id),
+                    poser_consent::distance(world, id).unwrap_or(f32::MAX),
+                )
+            })
+            .collect();
+        peers.sort_by(|a, b| a.2.total_cmp(&b.2));
+        if peers.is_empty() {
+            ui.label(egui::RichText::new(aurora_i18n::tr!("poser-nearby-none")).color(palette.muted));
+        } else {
+            // say why an Ask goes nowhere, as the poser's subject menu does:
+            // the request travels through the bridge, ours and theirs
+            use crate::world::bridge::QueryState;
+            let bridge = self.poser_bridge();
+            let hint = match bridge {
+                QueryState::Ready => "anim-couple-ask-needs",
+                QueryState::Starting => "poser-bridge-starting",
+                QueryState::Silent => "poser-bridge-silent",
+                QueryState::Failed => "poser-bridge-failed",
+                QueryState::Detached => "poser-bridge-needed",
+                QueryState::Off => "poser-bridge-disabled",
+            };
+            let color = if bridge == QueryState::Ready {
+                palette.muted
+            } else {
+                palette.amber
+            };
+            ui.label(egui::RichText::new(aurora_i18n::text(hint)).color(color));
+        }
+        let mut chosen = None;
+        for (id, name, distance) in peers.into_iter().take(12) {
+            ui.horizontal(|ui| {
+                let status = world.poser_consent.status(id);
+                let (icon, label, enabled) = match status {
+                    Status::Accepted => ("user-plus", aurora_i18n::tr!("anim-couple-use"), true),
+                    Status::Pending => ("clock-filled", aurora_i18n::tr!("poser-asked"), false),
+                    Status::Refused => ("circle-x-filled", aurora_i18n::tr!("poser-refused"), false),
+                    Status::NoAnswer => ("clock-filled", aurora_i18n::tr!("poser-no-answer"), false),
+                    Status::Ask => ("send-filled", aurora_i18n::tr!("poser-consent-ask"), true),
+                };
+                let button = egui::vec2(110.0, ui.spacing().interact_size.y);
+                let kind = if status == Status::Accepted {
+                    widgets::ActionKind::Primary
+                } else {
+                    widgets::ActionKind::Flat
+                };
+                if widgets::action_button_if(ui, palette, icon, label, kind, button, enabled).clicked() {
+                    match status {
+                        Status::Accepted => chosen = Some(id),
+                        Status::Ask => self.push_poser_request(poser::Request::Ask(id)),
+                        _ => {}
+                    }
+                }
+                ui.add(egui::Label::new(format!("{name} · {distance:.0} m")).truncate());
+            });
+        }
+        if let Some(id) = chosen
+            && !self.start_couple(world, couple::Partner::Avatar(id))
+            && self.clip.error.is_none()
+        {
+            self.clip.error = Some(aurora_i18n::text("anim-couple-wait").to_owned());
+        }
+        widgets::divider(ui, palette);
+    }
 }

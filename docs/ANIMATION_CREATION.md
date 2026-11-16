@@ -270,6 +270,44 @@ Encoding, preview binding, file dialogs and disk writes use background jobs.
 Grid upload and playback of the resulting inventory animation are validated
 by the human in Second Life.
 
+## Animate a couple
+
+A couple animation (a hug, a dance for two) is two animations in Second Life,
+one per avatar, started together by the furniture or the script that places
+both people. The **Couple animation** section of the Clip page animates both
+in one timeline:
+
+1. Your avatar is Person A. Pick Person B among the residents nearby: **Ask**
+   sends them the same request as the Poser's, and once they accept, **Use as
+   B** starts couple mode. Only you see the pose. Person B starts from their
+   rest pose, with your animation's range, rate and settings, and is edited
+   first.
+2. The editor works on one person at a time, with every tool. The timeline
+   lists A's lanes, then B's, each under their name: A in violet, B in amber.
+   The person set aside keeps showing their keys at the playhead; a click on
+   their name or one of their lanes edits them, as does **Edit Person A / B**
+   on the Clip page. The other person's joints show as dots in their
+   colour: a click on one edits them with that joint picked. Each person has
+   their own undo.
+3. **Move Person B** on the Clip page places B beside you on screen only:
+   forward, left and up in metres from your facing, and a turn. **Face to
+   face** stands B half a metre in front of you, facing you; **Reset place**
+   puts them back. Their animation does not change; the placement note
+   follows where you put them. Avatar Studio's Hover lifts both people.
+4. **Save .anim** and **Export .bvh** write both people in the folder you
+   choose: `<name> A`, `<name> B` and `<name> placement.txt`, which gives B's
+   position and turn from A, for the sit targets. **Prepare .anim import**
+   uploads the person being edited.
+
+A request reaches Person B only if they wear the Aurora bridge, stand in
+your region, and their posing privacy allows you (Friends by default): the
+Clip page says when your own bridge is not ready.
+
+If Person B teleports away or logs off, they stay drawn as they were and can
+still be posed until couple mode ends. If they withdraw their consent, couple
+mode ends. **End couple mode** returns to Person A alone; B's animation stays
+among the drafts.
+
 ## Offline validation
 
 `AURORA_DEMO_IK_EDIT=clip` creates head rotation and pelvis position keys at

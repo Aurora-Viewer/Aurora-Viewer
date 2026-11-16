@@ -7,6 +7,7 @@ use std::{
     collections::{BTreeSet, HashSet},
     sync::Arc,
 };
+mod couple;
 pub(super) mod document;
 pub(super) mod files;
 #[cfg(test)]
@@ -153,6 +154,10 @@ pub(super) struct State {
     tx: crossbeam_channel::Sender<files::Output>,
     rx: crossbeam_channel::Receiver<files::Output>,
     pub prepared: Vec<Prepared>,
+    /// Couple mode: Person B beside our avatar (`couple`).
+    pub(super) couple: Option<couple::Couple>,
+    /// The pair a couple save or export writes (`prepare_couple_files`).
+    couple_files: Option<files::CoupleFiles>,
     from_avatar_studio: bool,
     pub(super) return_after_upload: bool,
 }
@@ -215,6 +220,8 @@ impl Default for State {
             tx,
             rx,
             prepared: Vec::new(),
+            couple: None,
+            couple_files: None,
             from_avatar_studio: false,
             return_after_upload: false,
         }
@@ -249,30 +256,7 @@ impl State {
             return Some(tracks.clone());
         }
         let document = self.document.as_ref()?;
-        let fps = document.fps as f32;
-        let tracks: Vec<TimelineTrack> = document
-            .tracks
-            .iter()
-            .map(|track| {
-                let mut keys: Vec<_> = track
-                    .motion
-                    .rot_keys
-                    .iter()
-                    .map(|key| (key.time * fps).round() as u32)
-                    .chain(track.motion.pos_keys.iter().map(|key| (key.time * fps).round() as u32))
-                    .collect();
-                keys.sort_unstable();
-                keys.dedup();
-                TimelineTrack {
-                    bone: track.bone,
-                    name: track.motion.joint_name.clone(),
-                    enabled: track.enabled,
-                    authored: track.authored,
-                    keys,
-                }
-            })
-            .collect();
-        let tracks = Arc::new(tracks);
+        let tracks = Arc::new(couple::lanes_of(document));
         self.timeline_tracks = Some((self.revision, tracks.clone()));
         Some(tracks)
     }
@@ -447,13 +431,7 @@ impl State {
         }
         self.preview.as_ref().map_or_else(Vec::new, |p| {
             let timeline_fps = self.document.as_ref().map_or(FPS, |document| document.fps as f32);
-            let playhead = self.cursor.clamp(f64::from(p.start), f64::from(p.end));
-            let time_seconds = ((playhead - f64::from(p.start)) / f64::from(timeline_fps)) as f32;
-            vec![ik::animations::Sample {
-                animation: p.bound.clone(),
-                frame: (time_seconds * ik::animations::FPS).round() as u32,
-                time_seconds: Some(time_seconds),
-            }]
+            vec![couple::sample_at(p, timeline_fps, self.cursor)]
         })
     }
     fn tick(&mut self, jobs: &Jobs, ctx: &egui::Context, rig: Arc<Rig>, skeleton: Option<&aurora_assets::Skeleton>) -> Vec<usize> {
@@ -529,7 +507,8 @@ impl State {
         }
         if let Some((action, document)) = self.take_file_action() {
             let import_skeleton = action.needs_skeleton().then(|| skeleton.cloned().map(Arc::new)).flatten();
-            files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton);
+            let couple = self.couple_files.take();
+            files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton, couple);
         }
         if let Some(document) = &self.document {
             if !self.building && self.preview_revision != Some(self.revision) {
@@ -959,9 +938,11 @@ impl Editor {
         self.clip.active
     }
     pub fn tick_clip(&mut self, jobs: &Jobs, ctx: &egui::Context, world: &World) {
+        self.prepare_couple_files(world);
         let clear = self
             .clip
             .tick(jobs, ctx, world.avatar_lib.rig.clone(), world.avatar_lib.skeleton.as_ref());
+        self.tick_couple(world);
         if self.clip.active && !clear.is_empty() {
             let baked = self.authoring.baked(&clear);
             self.goals.retain(|g| !clear.contains(&g.bone) && !baked.contains(&g.bone));
@@ -1152,6 +1133,7 @@ impl Editor {
         if !self.clip.active {
             return;
         }
+        self.end_couple();
         self.clip.active = false;
         self.clip.playing = false;
         self.clip.capture = None;

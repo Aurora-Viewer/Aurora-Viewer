@@ -7,6 +7,44 @@ use crate::{
 };
 
 impl App {
+    /// AURORA_DEMO_COUPLE: Nova stands beside you and accepts an Ask from
+    /// the animation editor's couple section 1.5 s later, as a resident
+    /// would. `leave`: 10 s after she becomes Person B she teleports away
+    /// (her avatar is killed), and stays drawn and posable.
+    pub(super) fn couple_demo(&mut self, mode: &str) {
+        let peer = crate::demo::poser::PEER;
+        if self.frame_count == 400
+            && let Some(handle) = self.world.main_region
+        {
+            self.world.apply(aurora_net::NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![crate::demo::poser::peer()],
+            });
+        }
+        if self.world.objects.index_of_uuid(&peer).is_some() {
+            let mut consent = std::mem::take(&mut self.world.poser_consent);
+            consent.demo_accept(&self.world, peer, std::time::Duration::from_millis(1500));
+            self.world.poser_consent = consent;
+        }
+        if mode == "leave" && self.world.couple_partner == Some(peer) {
+            let since = *self.couple_demo_since.get_or_insert(Instant::now());
+            if since.elapsed() >= std::time::Duration::from_secs(10)
+                && let Some(key) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&peer)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.key)
+            {
+                log::info!("demo couple: Person B teleports away");
+                self.world.apply(aurora_net::NetEvent::ObjectsKilled {
+                    handle: key.region,
+                    local_ids: vec![key.local_id],
+                });
+                self.couple_demo_since = Some(Instant::now() + std::time::Duration::from_secs(3600));
+            }
+        }
+    }
     pub(super) fn poser_demo(&mut self, mode: &str) {
         if self.frame_count == 300
             && let Some(handle) = self.world.main_region

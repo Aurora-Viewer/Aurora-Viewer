@@ -509,6 +509,13 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
             // from us, not from the camera: the RLVa limits and the tags'
             // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
