@@ -1300,6 +1300,11 @@ openly.
 Questions and answers, and the details:
 [AI use policy](https://aurora-viewer.org/ai-policy/).
 
+## Security
+
+Found a vulnerability? Please report it privately, not in a public issue:
+[SECURITY.md](SECURITY.md) explains how, and what happens next.
+
 ## Privacy
 
 The Aurora team runs no server: the viewer talks to Linden Lab, and to other

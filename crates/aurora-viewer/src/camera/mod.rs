@@ -425,6 +425,12 @@ pub struct Camera {
     /// view is this pose and whatever camera was there (the avatar's, the
     /// free camera, the flycam) waits behind it, with the roll kept here.
     track: Option<(track::Pose, f32)>,
+    /// The camera sits at an RLVa `setcam_*distmin` / `distmax` limit this
+    /// frame, measured from `rlva_origin` (LLAgentCamera's m_fRlvMinDist,
+    /// m_fRlvMaxDist and m_posRlvRefGlobal): the zoom stops there too.
+    rlva_at_min: bool,
+    rlva_at_max: bool,
+    rlva_origin: Vec3,
 }
 
 impl Default for Camera {
@@ -519,6 +525,9 @@ impl Default for Camera {
             shake: Vec3::ZERO,
             roll: 0.0,
             track: None,
+            rlva_at_min: false,
+            rlva_at_max: false,
+            rlva_origin: Vec3::ZERO,
         }
     }
 }
@@ -1541,8 +1550,19 @@ impl Camera {
         } else {
             let (min, max) = self.zoom_limits();
             let unit = self.focus_offset_target.normalize_or(Vec3::X);
-            self.focus_offset_target = unit * free_zoom_distance(1.0 - f, min, max);
+            let offset = unit * free_zoom_distance(1.0 - f, min, max);
+            if self.allow_focus_offset(offset) {
+                self.focus_offset_target = offset;
+            }
         }
+    }
+
+    /// LLAgentCamera::allowFocusOffsetChange (RLVa): at a camera distance
+    /// limit the zoom goes no further past it, only back.
+    fn allow_focus_offset(&self, offset: Vec3) -> bool {
+        let current = (self.focus_target + self.focus_offset_target).distance(self.rlva_origin);
+        let new = (self.focus_target + offset).distance(self.rlva_origin);
+        !(self.rlva_at_max && new > current || self.rlva_at_min && new < current)
     }
 
     /// LLAgentCamera::cameraZoomIn: alt-camera distance × `fraction`, kept
@@ -1565,7 +1585,9 @@ impl Camera {
             // MAINT-3154: at most 4× the current distance at once
             new = new.max(min).min(self.max_zoom_distance().min(current * 4.0));
         }
-        self.focus_offset_target = unit * new;
+        if self.allow_focus_offset(unit * new) {
+            self.focus_offset_target = unit * new;
+        }
     }
 
     /// LLAgentCamera::cameraOrbitIn: `meters` closer; zooming into the head
@@ -1604,8 +1626,11 @@ impl Camera {
                     None => LAND_MIN_ZOOM,
                 });
             }
-            self.focus_offset_target = unit * new.min(self.max_zoom_distance());
-            self.zoom_in(1.0);
+            let offset = unit * new.min(self.max_zoom_distance());
+            if self.allow_focus_offset(offset) {
+                self.focus_offset_target = offset;
+                self.zoom_in(1.0);
+            }
         }
     }
 
@@ -1834,7 +1859,7 @@ impl Camera {
     pub fn look(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
         agent.yaw -= dx * k;
-        agent.pitch = (agent.pitch - dy * k).clamp(-1.5, 1.5);
+        agent.pitch = crate::agent::clamp_pitch(agent.pitch - dy * k);
     }
 
     /// Camera keys held this frame (LLAgentCamera::updateCamera).
@@ -2066,6 +2091,8 @@ impl Camera {
         if self.vr_mode.is_none() {
             self.follow_seated_camera(world, s, f.now);
         }
+        self.rlva_at_min = false;
+        self.rlva_at_max = false;
         if !world.rlva.enabled() {
             self.update_unrestricted(world, s, f);
             return;
@@ -2091,6 +2118,11 @@ impl Camera {
             if distance < min || distance > max {
                 let direction = offset.try_normalize().unwrap_or(-Vec3::X);
                 self.position = origin + direction * distance.clamp(min, max);
+                // The flags belong to the origin they were measured from:
+                // when both limits clamp, the last one holds the camera.
+                self.rlva_at_min = distance < min;
+                self.rlva_at_max = distance > max;
+                self.rlva_origin = origin;
             }
         }
         if let Some((min, max)) = world.rlva.camera_fov_limits(f.aspect) {
@@ -4392,6 +4424,36 @@ mod tests {
     }
 
     #[test]
+    fn mouselook_controls_send_pitch_without_tilting_the_drawn_body_or_seated_avatar() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        world.agent.yaw = 0.7;
+        world.agent.pitch = 0.6;
+        settle(&mut camera, &mut world, &settings);
+
+        let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        let expected = Quat::from_rotation_z(world.agent.yaw) * Quat::from_rotation_y(-world.agent.pitch);
+        assert!(controls.body_rotation.abs_diff_eq(expected, 1e-5));
+        assert!(
+            world
+                .agent
+                .body_rotation()
+                .abs_diff_eq(Quat::from_rotation_z(world.agent.yaw), 1e-5)
+        );
+
+        world.agent.seated = true;
+        let seated = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        assert!(seated.body_rotation.abs_diff_eq(world.agent.body_rotation(), 1e-5));
+
+        world.agent.seated = false;
+        camera.change_to_default(&mut world.agent, &settings);
+        let walking = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        assert!(walking.body_rotation.abs_diff_eq(world.agent.body_rotation(), 1e-5));
+    }
+
+    #[test]
     fn agent_update_head_rotation_is_relative_to_the_rotating_seat() {
         let settings = CameraSettings::default();
         let mut world = hover_world(true);
@@ -4555,6 +4617,103 @@ mod tests {
         let update = w.agent.controls(&crate::agent::MoveInput::default(), &cam, 128.0);
         assert!(update.camera_at.distance(pose.forward()) < 1e-4);
         assert!(update.camera_up.distance(pose.up()) < 1e-4);
+    }
+
+    fn rlva_command(w: &mut World, message: &str) {
+        w.rlva.configure(true);
+        let position = w.agent.position;
+        assert!(w.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Camera test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position,
+            region: None,
+            message: message.to_owned(),
+        }));
+    }
+
+    /// Alt camera on a point `distance` m ahead, then the RLVa `command`.
+    fn rlva_alt_camera(distance: f32, command: &str) -> (Camera, World, CameraSettings, Vec3) {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let focus = cam.position + cam.forward() * distance;
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        rlva_command(&mut w, command);
+        settle(&mut cam, &mut w, &s);
+        (cam, w, s, focus)
+    }
+
+    #[test]
+    fn rlva_focus_distance_max_does_not_store_zoom_past_it() {
+        // #3353: the wheel past @setcam_origindistmax was kept in the zoom,
+        // so the first clicks back in did not move the camera.
+        let (mut cam, mut w, mut s, focus) = rlva_alt_camera(4.0, "@setcam_origindistmax:5=n");
+        assert!((cam.position.distance(focus) - 4.0).abs() < 0.01);
+        for _ in 0..10 {
+            cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+        }
+        let at_limit = cam.position.distance(focus);
+        assert!((at_limit - 5.0).abs() < 0.01, "held at the limit: {at_limit}");
+        cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
+        settle(&mut cam, &mut w, &s);
+        let closer = cam.position.distance(focus);
+        assert!(closer < at_limit - 0.02, "one click in moves closer at once: {closer}");
+    }
+
+    #[test]
+    fn rlva_avatar_and_focus_limits_together_leave_one_way_out() {
+        // The avatar limit pulls the camera in, the focus limit pushes it
+        // back out: the zoom away from the focus point must stay allowed.
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let focus = cam.position + cam.forward() * 10.0;
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
+        let mut s = s;
+        settle(&mut cam, &mut w, &s);
+        let to_avatar = cam.position.distance(w.agent.position);
+        assert!(to_avatar > 2.0, "the avatar is ahead of the camera: {to_avatar}");
+        rlva_command(
+            &mut w,
+            &format!("@setcam_avdistmax:{:.2}=n,setcam_origindistmin:10=n", to_avatar - 1.0),
+        );
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.rlva_at_min && !cam.rlva_at_max, "held by the focus limit alone");
+        let before = cam.focus_offset_target.length();
+        cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+        assert!(cam.focus_offset_target.length() > before, "zooming out is still allowed");
+    }
+
+    #[test]
+    fn rlva_focus_distance_min_does_not_store_zoom_past_it() {
+        // #3354: the wheel past @setcam_origindistmin was kept in the zoom,
+        // the hidden camera close to the focus point while the clamp held
+        // the visible one 1 m out.
+        let (mut cam, mut w, mut s, focus) = rlva_alt_camera(4.0, "@setcam_origindistmin:1=n");
+        let mut held = None;
+        for _ in 0..30 {
+            cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+            let distance = cam.position.distance(focus);
+            assert!(distance >= 0.999, "outside the limit: {distance}");
+            if distance < 1.01 {
+                let position = *held.get_or_insert(cam.position);
+                assert!(cam.position.distance(position) < 0.01, "the camera holds still at the limit");
+            }
+        }
+        let at_limit = cam.position.distance(focus);
+        assert!(held.is_some(), "the camera reached the limit: {at_limit}");
+        cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+        settle(&mut cam, &mut w, &s);
+        let farther = cam.position.distance(focus);
+        assert!(farther > at_limit + 0.02, "one click out moves away at once: {farther}");
     }
 
     #[test]

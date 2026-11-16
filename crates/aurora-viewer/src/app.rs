@@ -129,6 +129,7 @@ mod photo_reel;
 mod physics_editor;
 mod plate_click;
 mod pointing;
+mod pose_stand;
 mod quick_prefs;
 mod region_restart;
 mod region_window;
@@ -623,6 +624,8 @@ pub struct App {
     /// Last walk-key press (for double-tap running) and the active temporary run.
     last_tap: Option<(u8, Instant)>,
     temp_run: Option<u8>,
+    /// @temprun as of the last RLVa update, to catch its changes.
+    rlva_temprun: bool,
     /// "Always run" (Ctrl+R).
     always_run: bool,
     /// The Controls window (`ui/controls.rs`), the keys its buttons and
@@ -759,6 +762,8 @@ pub struct App {
     god_kick_ask: Option<admin_status::KickAsk>,
     /// A group chat moderator's ejection or ban, asked first.
     group_chat_confirm: Option<ui::chat::moderation::Confirm>,
+    /// An `unmute` or `unblock` link, asked first (app/app_links.rs).
+    unblock_link_ask: Option<app_links::UnblockAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -929,6 +934,8 @@ pub struct App {
     grid_status: crate::grid_status::GridStatus,
     grid_status_listed: bool,
     grid_status_was_open: bool,
+    /// The toolbar's pose stand (`app/pose_stand.rs`).
+    pose_stand: crate::pose_stand::Stand,
     /// The conversation log's window (`app/conversation_log.rs`).
     conversation_log_ui: ui::conversation_log::ConversationLogUi,
     about: about::About,
@@ -1319,6 +1326,22 @@ fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
     is_synthetic && state == ElementState::Pressed
 }
 
+/// LLTool::handleAnyMouseClick gives the keyboard back to the world on press,
+/// also for a drag. A left press also puts away Aurora's typing-only chat bar.
+/// A focused editor must finish its commit before the world handles the press.
+pub(crate) fn release_world_keyboard(ctx: &egui::Context, chat: &mut ui::chat::ChatUi, button: MouseButton) -> bool {
+    let typing = ctx.text_edit_focused();
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+    if button == MouseButton::Left {
+        chat.dismiss_typing_bar(ctx);
+    }
+    typing
+}
+
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
 /// field (LLViewerWindow::handleKey). The field keeps the exact editing
@@ -1564,13 +1587,24 @@ fn sync_auto_render_scale(settings: &mut crate::settings::Settings, scale_factor
 fn show_conversation_to_type(
     ctx: &egui::Context,
     world: &mut crate::world::World,
-    chat: &mut ui::chat::ChatUi,
     conversations_open: &mut bool,
     conversation: uuid::Uuid,
 ) {
-    world.social.focus_im = Some(conversation);
-    chat.conv_focus_request = true;
+    world.focus_conversation(conversation, true);
     ui::notifications::open_conversations(ctx, conversations_open);
+}
+
+/// A conversation the user asked for (`World::focus_conversation(.., true)`)
+/// opens its window, even when it was closed or minimized: a notification
+/// card's "Reply by text", for one, is outside the Conversations window. A
+/// conversation in a window of its own is raised by the chat UI instead.
+fn open_conversations_for_focus(ctx: &egui::Context, world: &crate::world::World, chat: &ui::chat::ChatUi, conversations_open: &mut bool) {
+    if world.social.focus_im_to_type
+        && let Some(conversation) = world.social.focus_im
+        && !chat.in_own_window(conversation)
+    {
+        ui::notifications::open_conversations(ctx, conversations_open);
+    }
 }
 
 /// A conversation's toast or card clicked: acknowledges the notification and
@@ -1580,12 +1614,11 @@ fn show_conversation_to_type(
 fn open_notification_to_type(
     ctx: &egui::Context,
     world: &mut crate::world::World,
-    chat: &mut ui::chat::ChatUi,
     conversations_open: &mut bool,
     id: u64,
 ) -> Option<uuid::Uuid> {
     let conversation = world.open_from_notification(id)?;
-    show_conversation_to_type(ctx, world, chat, conversations_open, conversation);
+    show_conversation_to_type(ctx, world, conversations_open, conversation);
     Some(conversation)
 }
 
@@ -1870,6 +1903,7 @@ impl App {
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
+            rlva_temprun: false,
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
@@ -1931,6 +1965,7 @@ impl App {
             moderation_ask: None,
             god_kick_ask: None,
             group_chat_confirm: None,
+            unblock_link_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -2039,6 +2074,7 @@ impl App {
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
+            pose_stand: Default::default(),
             conversation_log_ui: Default::default(),
             about: Default::default(),
             uninstall: Default::default(),
@@ -2314,6 +2350,21 @@ impl App {
                 return;
             }
         }
+        if let NetCommand::PickInfoRequest { creator, pick } = &cmd {
+            use crate::world::profiles::PickRead;
+            match self.world.profiles.pick_read(*creator, *pick, Instant::now()) {
+                PickRead::Wait => return,
+                // The synthetic simulator withholds exactly the first reply
+                // after each explicit move. The user's Retry gets the real fixture.
+                PickRead::FirstAfterMove if self.demo && crate::demo::slow_pick_reply() => return,
+                _ => {}
+            }
+        }
+        if self.demo
+            && let NetCommand::SetAlwaysRun(run) = cmd
+        {
+            log::info!("demo: SetAlwaysRun({run}) sent");
+        }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
             self.world.region_titles.title_sent(*group, *role);
@@ -2444,6 +2495,9 @@ impl App {
             return;
         }
         if self.demo {
+            if self.demo_inventory_offer(&cmd) {
+                return;
+            }
             if let Some(demo) = &mut self.outfit_restore_demo
                 && demo.handle(&cmd, &mut self.world, Instant::now())
             {
@@ -3065,12 +3119,23 @@ impl App {
             {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
-            let events = match self.demo_fetch.as_ref() {
+            let mut events = match self.demo_fetch.as_ref() {
                 Some(source) => crate::world::inventory::demo::fetch_reply(&cmd, &self.world.inventory, source, &mut self.demo_faults)
                     .unwrap_or_else(|| crate::demo::demo_reply(&cmd)),
                 None => crate::demo::demo_reply(&cmd),
             };
+            if matches!(
+                cmd,
+                NetCommand::Call {
+                    method: aurora_net::CallMethod::StartConference { .. },
+                    ..
+                }
+            ) && crate::demo::calls::mode() == Some(crate::demo::calls::Mode::ConferenceFocus)
+            {
+                self.call_demo.delay_conference_start(&mut events, Instant::now());
+            }
             for mut ev in events {
+                crate::demo::saved_profile_picks(&self.world.profiles, self.world.agent_id, &mut ev);
                 crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
@@ -3327,6 +3392,10 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // FSFloaterPoseStand::onClose for the departing account: its AO back on
+        // before the settings are saved and the account state replaced
+        self.close_pose_stand();
+        self.panels.pose_stand = false;
         self.parcel_music.enter(false);
         self.stream_url.clear();
         self.music_fade.reset();
@@ -3405,6 +3474,7 @@ impl App {
         self.moderation_ask = None;
         self.god_kick_ask = None;
         self.group_chat_confirm = None;
+        self.unblock_link_ask = None;
         self.object_menu = Default::default();
         self.place_confirm = None;
         self.places_ui.forget_question();
@@ -4140,7 +4210,7 @@ impl App {
                     let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
                     if let Some(mut account) = self.login_form.accounts.iter().find(|account| account.key() == key).cloned() {
                         account.remember_password = false;
-                        self.login_form.accounts = crate::login_accounts::save(account);
+                        crate::login_accounts::save(&mut self.login_form.accounts, account);
                     }
                 }
                 if mfa_required {
@@ -4314,11 +4384,10 @@ impl App {
                     crate::credentials::forget(&uri, &user);
                 }
                 if !self.demo && self.settings.remember_username {
-                    self.login_form.accounts = crate::login_accounts::save(crate::login_accounts::Account::from_settings(
-                        &self.settings,
-                        self.login_form.remember_mfa,
-                        Some(l.agent_id),
-                    ));
+                    crate::login_accounts::save(
+                        &mut self.login_form.accounts,
+                        crate::login_accounts::Account::from_settings(&self.settings, self.login_form.remember_mfa, Some(l.agent_id)),
+                    );
                 }
                 if !self.demo {
                     // An explicit MFA opt-in is independent of remembering the login name/password.
@@ -4402,9 +4471,7 @@ impl App {
                 // New region must learn walk/run again (LLAgent::sendWalkRun
                 // after RegionHandshake, llviewermessage.cpp). Without this
                 // Always run stays lit in Controls while the sim walks (#3041).
-                self.send(NetCommand::SetAlwaysRun(
-                    self.always_run || self.temp_run.is_some() || self.joystick.running,
-                ));
+                self.send(NetCommand::SetAlwaysRun(self.walk_run()));
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
                     self.vr_rebase_after_travel();
@@ -5105,7 +5172,10 @@ impl App {
     /// mouse steering counts as a forward key, so a double right click runs.
     fn walk_tap(&mut self, group: u8, pressed: bool) {
         if pressed && self.in_world() {
+            // LLAgent::setTempRun: @temprun leaves the double tap a plain walk;
+            // @alwaysrun does not touch it.
             if self.temp_run.is_none()
+                && !self.world.rlva.has("temprun")
                 && let Some((last, at)) = self.last_tap
                 && last == group
                 && at.elapsed().as_secs_f32() < NUDGE_TIME
@@ -5264,7 +5334,7 @@ impl App {
             Action::FocusSelection => self.look_at_selection(false),
             Action::ZoomSelection => self.look_at_selection(true),
             Action::LookAtLastChatter => self.look_at_last_chatter(),
-            Action::Chat => self.chat_ui.focus_request = true,
+            Action::Chat => self.start_chat(),
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
             // minimized window expands (LLFloaterReg::toggleInstance)
@@ -6152,8 +6222,7 @@ impl App {
                     if !self.world.social.ims.iter().any(|s| s.other == session) {
                         self.world.social.session_mut(session);
                     }
-                    self.world.social.focus_im = Some(session);
-                    self.chat_ui.conv_focus_request = true;
+                    self.world.focus_conversation(session, true);
                     self.notif_ui.open = false;
                     ui::notifications::open_conversations(ctx, &mut self.panels.chat);
                 }
@@ -7063,6 +7132,8 @@ impl App {
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
+        // FSFloaterPoseStand::onClose(app_quitting): the AO back on
+        self.close_pose_stand();
         if self.in_world() {
             self.release_bridge();
             self.net.send(NetCommand::Logout);
@@ -7088,7 +7159,7 @@ impl App {
         }
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
-        self.script_editors.back_up();
+        self.script_editors.back_up_before_exit();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
@@ -7096,9 +7167,21 @@ impl App {
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
-        // and the settings theirs (written by the save thread), before a
-        // restarted viewer reads them
-        Settings::wait_saved(Duration::from_secs(5));
+        // and the files handed to the save threads theirs (the settings, the
+        // layout, the inventory cache…), before a restarted viewer reads
+        // them; a disk that does not answer keeps the viewer 5 s at most
+        // (#3466: a minute in the inventory cache's write)
+        crate::saves::wait(Duration::from_secs(5));
+        // an edit of the account list or a dictionary word whose write was
+        // refused, tried once more: after the save threads, whose last
+        // writes may have been refused and kept owed (save_retry.rs)
+        crate::login_accounts::save_before_exit();
+        crate::spelling::dictionaries::save_before_exit();
+        crate::world::flying_at_exit::save_before_exit();
+        crate::world::derender::save_before_exit();
+        crate::world::region_tracker::save_before_exit();
+        crate::autoreplace::save_before_exit();
+        crate::tolerant::save_before_exit();
         event_loop.exit();
     }
 
@@ -7672,7 +7755,7 @@ impl App {
             self.world.call_voice_update(status, members);
         }
         // a new call shows its conversation (started, accepted, answered by text)
-        let call = self.world.calls.active.as_ref().map(|c| c.session);
+        let call = self.world.calls.active.as_ref().map(|c| c.initial_session);
         if call.is_some() && call != self.call_shown {
             ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
         }
@@ -8082,7 +8165,9 @@ impl App {
             return false;
         }
         let (x, y) = self.cursor_pos;
-        let hud = (self.build.tool == crate::build::Tool::Edit)
+        // (under @interact a click selects no HUD: its pick is dropped like
+        // the world's, LLViewerWindow::cursorIntersect)
+        let hud = (self.build.tool == crate::build::Tool::Edit && !self.world.rlva_drops_picks())
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
         let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
@@ -8642,9 +8727,8 @@ impl App {
             return;
         }
         self.always_run = on;
-        self.send(NetCommand::SetAlwaysRun(
-            (self.always_run || self.temp_run.is_some() || self.joystick.running) && !self.vr_walk_override.active(),
-        ));
+        // an autopilot run @alwaysrun allows keeps running (`walk_run`)
+        self.send(NetCommand::SetAlwaysRun(self.walk_run()));
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
         } else {
@@ -8720,7 +8804,7 @@ impl App {
     /// Shows a conversation the user asked for with its field ready to type
     /// in (a notification's toast or card, `show_conversation_to_type`).
     fn show_conversation_to_type(&mut self, id: uuid::Uuid) {
-        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
+        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.panels.chat, id);
     }
 
     /// The Conversations window for a conversation the user asked for (Send
@@ -8769,6 +8853,43 @@ impl App {
         if chat_ui.selected == Some(group) {
             chat_ui.selected = None;
             chat_ui.show_profile = false;
+        }
+    }
+
+    /// Enter from the world (start_chat, indra/newview/llviewerinput.cpp):
+    /// `ChatUi::start_chat`; with "Conversations window only" the request
+    /// for the chat bar then goes to the window (`ChatUi::follow_bar_mode`).
+    fn start_chat(&mut self) {
+        let world = &self.world;
+        self.chat_ui.start_chat(&self.egui_ctx, self.panels.chat, |id| {
+            world.social.has_session(id) || world.groups.sessions.contains_key(id)
+        });
+    }
+
+    /// `AURORA_DEMO_BARS=windowenter|windowmin|windowreopen` (#2696): the
+    /// nearby chat docked back in the Conversations window at frame 100,
+    /// that window closed (`windowenter`) or opened on Contacts (placed at
+    /// a spot of its own for `windowreopen`), minimized or closed at 200,
+    /// Enter pressed at 300.
+    fn demo_chat_bar_window(&mut self, mode: ui::bars::demo::WindowEnter, frame: u64) {
+        use ui::bars::demo::WindowEnter;
+        let ctx = self.egui_ctx.clone();
+        match (mode, frame) {
+            (_, 300) => self.start_chat(),
+            (WindowEnter::Closed, _) => {
+                self.chat_ui.demo_dock_nearby();
+                self.panels.chat = false;
+            }
+            (_, 100) => {
+                self.chat_ui.demo_dock_nearby();
+                self.chat_ui.contacts = true;
+                ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
+                if mode == WindowEnter::Reopened {
+                    ui::widgets::place_floater(&ctx, "conversations", egui::pos2(380.0, 140.0), egui::vec2(520.0, 360.0));
+                }
+            }
+            (WindowEnter::Minimized, _) => ui::widgets::minimize_floater(&ctx, "conversations"),
+            (WindowEnter::Reopened, _) => self.panels.chat = false,
         }
     }
 
@@ -9372,7 +9493,7 @@ impl App {
             }
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.start_group_chat(id);
+                self.world.start_group_chat(id, true);
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Net(cmd) => {
@@ -10215,6 +10336,13 @@ impl App {
                 }
             }
         }
+        // AURORA_DEMO_BARS=windowenter|windowmin|windowreopen: Enter with the
+        // Conversations window closed, minimized or closed after being placed
+        if self.demo
+            && let Some((mode, frame)) = ui::bars::demo::get().window_enter_at(self.frame_count)
+        {
+            self.demo_chat_bar_window(mode, frame);
+        }
         // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
         // the demo's start has settled (it takes it back at the start)
         if self.demo
@@ -10395,6 +10523,7 @@ impl App {
         if !still {
             self.pump_network_events(t_ev);
         }
+        self.poll_inventory_offers();
         self.net_profile.events_left(self.net.events.len());
         let corrections = self.world.agent.take_corrections();
         if corrections.count > 0 {
@@ -11634,6 +11763,9 @@ impl App {
                     language: aurora_i18n::language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
+                for url in std::mem::take(&mut self.media.links) {
+                    self.on_ctx_action(crate::ui::web_view::clicked_link_action(&url));
+                }
                 self.options_ui.media_plugins = self
                     .media
                     .plugins_found()
@@ -13988,7 +14120,7 @@ impl App {
                     _ => None,
                 });
                 if let Some(id) = nova {
-                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
+                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.panels.chat, id);
                 }
             }
         }
@@ -16403,7 +16535,7 @@ impl App {
         if before.is_none() || before == Some(access) {
             return;
         }
-        let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar).clone();
+        let layout = self.dock_layout.of(&self.skin.layout, self.settings.chat_bar.hides()).clone();
         let toolbar = self.settings.toolbar.get_or_insert_default();
         let mut buttons = toolbar.buttons(&layout).to_vec();
         let has = buttons.iter().any(|b| b.command == "favorites");
@@ -17057,6 +17189,7 @@ impl App {
     /// when the grid or the name changes, forgotten as soon as the option is
     /// switched off.
     fn sync_remembered_password(&mut self) {
+        ui::login::manager::disk_answer(&self.egui_ctx, &mut self.settings, &mut self.login_form);
         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         if !self.login_form.accounts_loaded && !self.demo {
             self.login_form.accounts = crate::login_accounts::load();
@@ -17065,8 +17198,10 @@ impl App {
                 && !key.1.is_empty()
                 && !self.login_form.accounts.iter().any(|a| a.key() == key)
             {
-                self.login_form.accounts =
-                    crate::login_accounts::save(crate::login_accounts::Account::from_settings(&self.settings, false, None));
+                crate::login_accounts::save(
+                    &mut self.login_form.accounts,
+                    crate::login_accounts::Account::from_settings(&self.settings, false, None),
+                );
             }
             self.login_form.accounts_loaded = true;
             self.login_form
@@ -17161,7 +17296,7 @@ impl App {
                 crate::credentials::forget(&key.0, &key.1);
                 if let Some(mut account) = self.login_form.accounts.iter().find(|a| a.key() == key).cloned() {
                     account.remember_password = false;
-                    self.login_form.accounts = crate::login_accounts::save(account);
+                    crate::login_accounts::save(&mut self.login_form.accounts, account);
                 }
             }
             return;
@@ -17943,6 +18078,19 @@ impl App {
                 ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 self.director_world(&ctx, &p, projector);
+                if !held {
+                    self.build.draw_world_guides(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.settings.build,
+                        crate::build::Mods {
+                            shift: self.shift,
+                            ctrl: self.ctrl,
+                            alt: self.alt,
+                        },
+                    );
+                }
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 if self.demo && crate::demo::floating_text::scenario() {
@@ -18219,16 +18367,17 @@ impl App {
                     Default::default()
                 };
                 let mut demo_chat_width = demo_bars.chat_width;
-                // the chat bar shown only while it is used (#1009); also
-                // AURORA_DEMO_BARS=autohide, for this run, with either bars,
+                // when the chat bar shows (#1009, #2696); also, for this run,
+                // with either bars, AURORA_DEMO_BARS=autohide and `window…`,
                 // and `chatstart`: Enter pressed at frame 300 on a draft
-                let demo_autohide = if self.demo { ui::bars::demo::get() } else { Default::default() };
-                let autohide_chat_bar = self.settings.autohide_chat_bar || demo_autohide.autohide;
-                self.chat_ui.autohide = autohide_chat_bar;
-                if demo_autohide.chat_start && ctx.cumulative_frame_nr() == 300 {
+                let demo_chat_bar = if self.demo { ui::bars::demo::get() } else { Default::default() };
+                self.chat_ui.bar_mode = demo_chat_bar.chat_bar.unwrap_or(self.settings.chat_bar);
+                let autohide_chat_bar = self.chat_ui.bar_mode.hides();
+                if demo_chat_bar.chat_start && ctx.cumulative_frame_nr() == 300 {
                     self.chat_ui.input = "Hello!".into();
                     self.chat_ui.focus_request = true;
                 }
+                self.chat_ui.follow_bar_mode(&ctx, &mut self.panels.chat);
                 let mut mic = ui::bars::MicButton {
                     on: self.mic_on,
                     denied: self.speak_denied(),
@@ -18296,9 +18445,17 @@ impl App {
                     t.buttons = Some(buttons);
                     demo_toolbar = Some(t);
                 }
-                // AURORA_DEMO_GRID_STATUS: the Grid status button at the end
-                // of the bottom bar, for this run only
-                if self.demo && crate::demo::grid_status::mode().is_some() {
+                // AURORA_DEMO_GRID_STATUS / AURORA_DEMO_POSE_STAND: the Grid
+                // status or the Pose stand button at the end of the bottom
+                // bar, for this run only
+                let demo_command = if crate::demo::grid_status::mode().is_some() {
+                    Some("gridstatus")
+                } else {
+                    crate::demo::pose_stand::mode().map(|_| "pose_stand")
+                };
+                if self.demo
+                    && let Some(command) = demo_command
+                {
                     let layout = if classic_bars {
                         layout.clone()
                     } else {
@@ -18308,7 +18465,7 @@ impl App {
                         .take()
                         .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
                     let mut buttons = t.buttons(&layout).to_vec();
-                    if let Some(c) = ui::toolbar::COMMANDS.iter().find(|c| c.id == "gridstatus")
+                    if let Some(c) = ui::toolbar::COMMANDS.iter().find(|c| c.id == command)
                         && !buttons.iter().any(|b| b.command == c.id)
                     {
                         buttons.push(ui::skin::ToolButton {
@@ -18355,6 +18512,8 @@ impl App {
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
+                self.chat_ui.enter_last_field = self.settings.chat_enter_last_field;
                 // the chat fields' suggestions (#980); the residents around
                 // only while a nearby field lists or predicts them
                 let suggest = &mut self.chat_ui.suggest;
@@ -18833,6 +18992,7 @@ impl App {
                     }
                 };
                 let mut mini = Vec::new();
+                open_conversations_for_focus(&ctx, &self.world, &self.chat_ui, &mut self.panels.chat);
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
                 self.chat_ui.set_style(self.settings.chat_style);
@@ -19134,7 +19294,7 @@ impl App {
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
-                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
+                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group, true),
                         // LLIMModel::sendTypingState: to the resident, in
                         // the session of the two of us (agent XOR other)
                         ui::chat::ConvAction::Typing { to, typing } => a.typing.push(NetCommand::SendImDialog {
@@ -19151,7 +19311,7 @@ impl App {
                         // the inventory's Share dialog confirms, then gives
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -19318,7 +19478,7 @@ impl App {
                         }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
-                            self.world.start_group_chat(id);
+                            self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
                         ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
@@ -19526,6 +19686,7 @@ impl App {
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
                 self.group_chat_moderation_ui(&ctx, &p);
+                self.unblock_link_question(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -19794,9 +19955,7 @@ impl App {
                             .list
                             .iter()
                             .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
-                        if open_notification_to_type(&ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id).is_some()
-                            && presence
-                        {
+                        if open_notification_to_type(&ctx, &mut self.world, &mut self.panels.chat, id).is_some() && presence {
                             self.world.ui_sounds.push(UiSound::StartIm);
                         }
                         continue;
@@ -19958,6 +20117,7 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                self.pose_stand_window(&ctx, &p);
                 self.omnifilter_ui.show(
                     &ctx,
                     &p,
@@ -20155,12 +20315,12 @@ impl App {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }
                         ui::profile::ProfileAction::GroupChat(id) => {
-                            self.world.start_group_chat(id);
+                            self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first
@@ -21124,6 +21284,13 @@ impl ApplicationHandler for App {
                 crate::world::radar::ANIM_AGENT_TYPE,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
+            if crate::demo::pose_stand::mode().is_some() {
+                for (id, anim) in crate::demo::pose_stand::animations() {
+                    self.scene
+                        .anims
+                        .insert(id, Arc::new(crate::scene::anim::BoundAnim::bind(anim, &rig)));
+                }
+            }
             if crate::demo::water::mode().is_some() {
                 self.scene.anims.insert(
                     crate::demo::water::CONTACT_ANIM,
@@ -21404,6 +21571,21 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "profile" | "profil") {
                     self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 }
+            }
+            // AURORA_DEMO_SHARE=multi: dozens of Orion-like friends nearby for
+            // the inventory Share picker's multi-select (#3074)
+            if crate::demo::share::enabled() {
+                if let Some(n) = crate::demo::share::count() {
+                    log::info!("demo share: {n} Orion-like friends for multi-select");
+                }
+                for ev in crate::demo::share::events() {
+                    self.world.apply(ev);
+                }
+                crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.panels.inventory = true;
+                // a copyable landmark (8103): Give / Share, Friends or Nearby,
+                // Ctrl+A then Select
+                self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8103));
             }
             // AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy: Near you with the
             // residents of the People mock-up, alone on screen
@@ -21929,6 +22111,11 @@ impl ApplicationHandler for App {
                 let mode = scenario.split(',').next().unwrap_or_default().trim();
                 self.panels.minimap = true;
                 self.panels.world_map = mode != "mini" && !mode.starts_with("beacon");
+                if mode == "mini" && scenario.split(',').any(|word| word.trim() == "names") {
+                    for event in crate::demo::minimap_name_events(self.world.agent.position) {
+                        self.world.apply(event);
+                    }
+                }
                 self.panels.perf = false;
                 let (x, y, z) = match mode {
                     "beacon" | "beacon-click" => (160.0, 128.0, 30.0),
@@ -22134,6 +22321,11 @@ impl ApplicationHandler for App {
                 if crate::demo::applinks_actions_scene() {
                     self.panels.inventory = false;
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(440.0, 90.0), egui::vec2(800.0, 440.0));
+                }
+                if let Some((id, name, kind)) = crate::demo::applinks_blocked()
+                    && let Err(e) = self.world.block(id, &name, kind)
+                {
+                    log::warn!("app links demo: could not block first: {e}");
                 }
                 if let Some(action) = crate::demo::applinks_action(&text) {
                     self.prepare_uri_restore_demo(&action);
@@ -22628,6 +22820,11 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "offer-unsent" | "offer-sent" | "offer-uncertain") {
+                    let original = uuid::Uuid::from_u128(8109);
+                    self.panels.inventory = true;
+                    self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(vec![original], vec![crate::demo::DEMO_TESS]));
+                }
                 if matches!(view.as_str(), "calling-card" | "aurora-calling-card") {
                     // the viewer-made card naming the wolf, selected
                     self.panels.inventory = true;
@@ -23506,17 +23703,18 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            // AURORA_DEMO_MEDIA=<url> (1: a test page): a screen with media
-            // on a prim east of the start position, playing at once
+            // AURORA_DEMO_MEDIA=<url> (1: a test page, links: the
+            // secondlife:// link reproduction page): a screen with media on
+            // a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 // Mini controls: the same page, with the address hidden
                 // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
                 let mini = v == "mini";
-                let url = if v == "1" || v.is_empty() || mini {
-                    crate::demo::demo_media_page().to_string()
-                } else {
-                    v
+                let url = match v.as_str() {
+                    "1" | "" | "mini" => crate::demo::demo_media_page().to_string(),
+                    "links" => crate::demo::demo_media_links_page(),
+                    _ => v,
                 };
                 let (ev, object, face) = crate::demo::media_screen();
                 if let Some(e) = self.world.apply(ev) {
@@ -24360,20 +24558,8 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                // a press in the world takes the keyboard from the fields, also
-                // when it turns into a drag (LLTool::handleAnyMouseClick:
-                // setKeyboardFocus(NULL)); egui lets it go on a click only
-                if pressed && !over_ui && self.in_world() {
-                    let typing = self.egui_ctx.text_edit_focused();
-                    self.egui_ctx.memory_mut(|m| {
-                        if let Some(id) = m.focused() {
-                            m.surrender_focus(id);
-                        }
-                    });
-                    // the field commits first, to what it was typed for
-                    if typing {
-                        self.press_while_typing();
-                    }
+                if pressed && !over_ui && self.in_world() && release_world_keyboard(&self.egui_ctx, &mut self.chat_ui, *button) {
+                    self.press_while_typing();
                 }
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);
@@ -25246,24 +25432,43 @@ mod tests {
         use super::open_notification_to_type;
         let ctx = egui::Context::default();
         let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        let mut chat = crate::ui::chat::ChatUi::default();
         let mut open = false;
         let jane = uuid::Uuid::from_u128(0x2285);
         let id = world.notifications.push_message(jane, jane, "Jane Doe", "hello", true);
-        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, id), Some(jane));
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut open, id), Some(jane));
         assert!(open, "the Conversations window opens");
-        assert!(chat.conv_focus_request, "the conversation's field takes the keyboard");
+        assert!(world.social.focus_im_to_type, "the conversation's field takes the keyboard");
         assert_eq!(world.social.focus_im, Some(jane), "the Conversations window shows that tab");
         assert!(
             !world.notifications.list.iter().any(|n| n.id == id),
             "the click acknowledges the card"
         );
         // an offline friend is a toast that opens nothing and takes no keyboard
-        chat.conv_focus_request = false;
+        world.social.focus_im_to_type = false;
         open = false;
         let off = world.notifications.push_presence(jane, "Jane Doe is offline.", false);
-        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, off), None);
-        assert!(!open && !chat.conv_focus_request);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut open, off), None);
+        assert!(!open && !world.social.focus_im_to_type);
+    }
+
+    /// A conversation the user asked for opens the Conversations window even
+    /// when it was closed (Reply by text comes from a notification card);
+    /// a call's show-only request does not open it by itself.
+    #[test]
+    fn a_user_requested_conversation_opens_its_window_a_call_does_not() {
+        use super::open_conversations_for_focus;
+        let ctx = egui::Context::default();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let chat = crate::ui::chat::ChatUi::default();
+        let jane = uuid::Uuid::from_u128(0x2285);
+        let mut open = false;
+        world.focus_conversation(jane, true);
+        open_conversations_for_focus(&ctx, &world, &chat, &mut open);
+        assert!(open, "the conversation the user asked for opens its window");
+        open = false;
+        world.focus_conversation(jane, false);
+        open_conversations_for_focus(&ctx, &world, &chat, &mut open);
+        assert!(!open, "a call does not open the window by itself");
     }
 
     #[test]

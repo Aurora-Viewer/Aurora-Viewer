@@ -22,6 +22,8 @@ pub mod beams;
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
+#[path = "demo_pose_stand.rs"]
+pub mod pose_stand;
 #[path = "demo_poser.rs"]
 pub mod poser;
 
@@ -272,6 +274,9 @@ pub mod set_notices;
 /// progressive shape changes (AURORA_DEMO_SHAPE_MORPH).
 #[path = "demo_shape_morph.rs"]
 pub mod shape_morph;
+/// Many Orion-like friends for multi-share (#3074; AURORA_DEMO_SHARE=multi).
+#[path = "demo_share.rs"]
+pub mod share;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -937,6 +942,10 @@ fn demo_raw() -> Llsd {
             .into_iter()
             .map(|(id, given, has)| llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}),
     );
+    // AURORA_DEMO_SHARE=multi: dozens of Orion-like friends for the Share picker
+    buddies.extend(share::friends().into_iter().map(|(id, given, has)| {
+        llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}
+    }));
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         // an adult account that wants every rating (the search window's boxes);
@@ -957,6 +966,11 @@ fn demo_raw() -> Llsd {
         && let Llsd::Map(m) = &mut raw
     {
         env::library_login(m);
+    }
+    // Exercise the login clock correction on the normal LoggedIn path.
+    if std::env::var("AURORA_DEMO_EVENT_TIMES").as_deref() == Ok("grid-behind") {
+        let seconds = crate::ui::bars::clock::now_unix().saturating_sub(3600);
+        raw.insert("seconds_since_epoch", seconds.to_string());
     }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
     if let Some(limit) = people::group_limit()
@@ -2403,8 +2417,33 @@ pub fn applinks_action(text: &str) -> Option<crate::ui::context::CtxAction> {
             verb: AgentVerb::ReportAbuse,
         }),
         "inventory-show" => CtxAction::AppLink(AppLink::InventoryShow),
+        // blocked first (`applinks_blocked`): the link asks before unblocking
+        "unmute" => CtxAction::AppLink(AppLink::Agent {
+            id: DEMO_LOUP,
+            verb: AgentVerb::Unmute,
+        }),
+        "unblock" => CtxAction::AppLink(AppLink::Agent {
+            id: APPLINKS_SIGN,
+            verb: AgentVerb::Unblock(aurora_i18n::tr!("demo-places-sign").into()),
+        }),
         _ => CtxAction::AppLink(applinks_click(text)?),
     })
+}
+
+/// The sign object that says the links of `AURORA_DEMO_APPLINKS` in the
+/// chat console.
+pub const APPLINKS_SIGN: Uuid = Uuid::from_u128(0x5106);
+
+/// `AURORA_DEMO_APPLINKS=unmute|unblock`: the resident or the object the
+/// scene blocks before the link is clicked, with its kind.
+pub fn applinks_blocked() -> Option<(Uuid, String, crate::world::mutes::MuteType)> {
+    use crate::world::mutes::MuteType;
+    let mode = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    match mode.split(':').next()? {
+        "unmute" => Some((DEMO_LOUP, aurora_i18n::tr!("demo-violet-wolf").into(), MuteType::Agent)),
+        "unblock" => Some((APPLINKS_SIGN, aurora_i18n::tr!("demo-places-sign").into(), MuteType::Object)),
+        _ => None,
+    }
 }
 
 /// What the map would have taught before `slurls_scene`: the lagoon and
@@ -2549,6 +2588,104 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
 /// AURORA_DEMO_RADAR=tp: the region we are supposed to have teleported
 /// from, forty regions east, whose simulator still tells us who is there.
 pub const RADAR_LEFT_REGION: u64 = ((256000u64 + 40 * 256) << 32) | 256000;
+
+/// Local object ID, legacy first name and chosen display name in mini,names.
+const MINIMAP_RESIDENTS: [(u32, &str, &str); 2] = [(0x327701, "Luna", "Luna ✦"), (0x327702, "Orion", "Orion ✦")];
+
+fn minimap_name((local, first, display): (u32, &str, &str)) -> aurora_net::AvatarNameData {
+    aurora_net::AvatarNameData {
+        id: u(local.into()),
+        username: format!("{}.example", first.to_lowercase()),
+        display_name: display.into(),
+        legacy_first: first.into(),
+        legacy_last: "Example".into(),
+        ..Default::default()
+    }
+}
+
+/// Refreshes from either name service use the identity that populated the demo.
+fn minimap_name_for(id: &Uuid) -> Option<aurora_net::AvatarNameData> {
+    MINIMAP_RESIDENTS
+        .iter()
+        .copied()
+        .find(|(local, _, _)| u((*local).into()) == *id)
+        .map(minimap_name)
+}
+
+/// Two residents with cached display names. Only the western one has an avatar
+/// object; the eastern one is known solely through its coarse map position.
+pub fn minimap_name_events(center: Vec3) -> [NetEvent; 3] {
+    let [visible, distant] = MINIMAP_RESIDENTS.map(minimap_name);
+    let distant_id = distant.id;
+    let mut avatar = action_avatar(false);
+    avatar.local_id = MINIMAP_RESIDENTS[0].0;
+    avatar.full_id = visible.id;
+    avatar.position = center - Vec3::X * 32.0;
+    avatar.name_values = format!(
+        "FirstName STRING RW SV {}\nLastName STRING RW SV {}",
+        visible.legacy_first, visible.legacy_last
+    );
+    [
+        NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![avatar],
+        },
+        NetEvent::DisplayNames {
+            names: vec![visible, distant],
+            bad_ids: Vec::new(),
+            max_age: Some(3600),
+        },
+        NetEvent::CoarseLocations {
+            handle: HANDLE,
+            positions: vec![(distant_id, center + Vec3::X * 32.0)],
+        },
+    ]
+}
+
+#[cfg(test)]
+mod minimap_name_tests {
+    use super::*;
+    use aurora_net::NetCommand;
+
+    #[test]
+    fn mini_map_name_replies_preserve_both_seeded_residents_in_either_request_order() {
+        let (west, east) = (u(0x327701), u(0x327702));
+        let expected = [
+            (west, "Luna", "Luna ✦", "luna.example"),
+            (east, "Orion", "Orion ✦", "orion.example"),
+        ];
+        let check_names = |world: &crate::world::World| {
+            for (id, first, display, username) in expected {
+                let name = world.social.avatar_names.get(&id).expect("seeded resident");
+                assert_eq!((name.legacy_first.as_str(), name.legacy_last.as_str()), (first, "Example"));
+                assert_eq!((name.display_name.as_str(), name.username.as_str()), (display, username));
+            }
+        };
+        for display_first in [false, true] {
+            let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            for event in minimap_name_events(Vec3::ZERO) {
+                world.apply(event);
+            }
+            check_names(&world);
+            let mut commands = [
+                NetCommand::RequestNames(vec![east, west]),
+                NetCommand::RequestDisplayNames(vec![west, east]),
+            ];
+            if display_first {
+                commands.reverse();
+            }
+            for command in commands {
+                for reply in demo_reply(&command) {
+                    world.apply(reply);
+                }
+                check_names(&world);
+            }
+            for (id, first, _, _) in expected {
+                assert_eq!(world.social.names[&id], format!("{first} Example"));
+            }
+        }
+    }
+}
 
 /// AURORA_DEMO_RADAR: residents around us for the radar of the People
 /// window, at every kind of range (chat, shout, farther, unknown altitude);
@@ -2726,6 +2863,77 @@ const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0003), demo_snapshot(3)),
     (Uuid::from_u128(0x91C0_0002), demo_snapshot(2)),
 ];
+
+pub fn slow_pick_reply() -> bool {
+    std::env::var("AURORA_DEMO_PROFILE").is_ok_and(|v| v.split(':').any(|part| part == "slow-pick"))
+}
+
+/// A profile opened again in the demo keeps its saved picks. As on a grid,
+/// a read after Set Location returns the parcel at the saved coordinates.
+pub fn saved_profile_picks(profiles: &crate::world::profiles::Profiles, owner: Uuid, event: &mut NetEvent) {
+    match event {
+        NetEvent::AvatarProfile(profile) if profile.id == owner => {
+            if let Some(known) = profiles.get(&profile.id).filter(|p| !p.legacy) {
+                profile.picks.clone_from(&known.picks);
+            }
+        }
+        NetEvent::PickInfo(pick) if pick.creator == owner => {
+            if let Some(saved) = profiles.picks.get(&pick.id).filter(|p| p.creator == pick.creator) {
+                (**pick).clone_from(saved);
+                if pick.parcel.is_nil() {
+                    let (handle, _) = crate::world::place_details::remote_request_at(pick.pos_global);
+                    if let Ok(parcel) = place::parcel_id(handle)
+                        && let Some(NetEvent::ParcelInfo(info)) = place::parcel_info(parcel)
+                    {
+                        pick.parcel = parcel;
+                        pick.sim_name = info.sim_name;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod profile_pick_tests {
+    use super::*;
+
+    #[test]
+    fn saved_demo_pick_uses_the_parcel_at_its_location_and_reopens_in_its_owners_list() {
+        let owner = DEMO_AGENT;
+        let mut profiles = crate::world::profiles::Profiles::default();
+        profiles.insert(demo_profile(owner));
+        let id = Uuid::from_u128(99);
+        let saved = aurora_net::PickInfo {
+            id,
+            name: "New pick".into(),
+            desc: "Typed before reopening".into(),
+            pos_global: glam::DVec3::new(256_280.0, 256_040.0, 30.0),
+            ..Default::default()
+        };
+        profiles.pick_saved(owner, saved.clone());
+        let mut answer = demo_reply(&aurora_net::NetCommand::PickInfoRequest { creator: owner, pick: id })
+            .pop()
+            .unwrap();
+        saved_profile_picks(&profiles, owner, &mut answer);
+        let NetEvent::PickInfo(info) = answer else {
+            panic!("expected the pick")
+        };
+        assert_eq!(
+            info.parcel,
+            place::parcel_id(aurora_net::origin_to_handle(256_256, 256_000)).unwrap()
+        );
+        assert_ne!(info.parcel, land::PARCEL_UUID);
+        assert_eq!(
+            (info.pos_global, info.name.as_str(), info.desc.as_str()),
+            (saved.pos_global, "New pick", "Typed before reopening")
+        );
+        let mut profile = NetEvent::AvatarProfile(Box::new(demo_profile(owner)));
+        saved_profile_picks(&profiles, owner, &mut profile);
+        assert!(matches!(profile, NetEvent::AvatarProfile(p) if p.picks.iter().any(|(pick, name)| *pick == id && name == "New pick")));
+    }
+}
 
 fn demo_pick_name(pick: Uuid) -> &'static str {
     match pick.as_u128() & 0xF {
@@ -3006,6 +3214,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = social_menu::reply(cmd) {
         return events;
     }
+    if let Some(events) = pose_stand::reply(cmd) {
+        return events;
+    }
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
@@ -3041,6 +3252,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = share::name(id) {
+                            return (*id, first, last);
+                        }
+                        if let Some(name) = minimap_name_for(id) {
+                            return (*id, name.legacy_first, name.legacy_last);
+                        }
                         if let Some((first, last, _)) = group::member_name(id) {
                             return (*id, first.to_owned(), last.to_owned());
                         }
@@ -3063,6 +3280,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 names: ids
                     .iter()
                     .map(|id| {
+                        if let Some(name) = minimap_name_for(id) {
+                            return name;
+                        }
                         let glyphs = glyphs::resident(id);
                         let (first, last, dn) = if *id == DEMO_AGENT {
                             ("Aurora", "Demo", "")
@@ -3078,6 +3298,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
                             names[(id.as_u128() & 0xFF) as usize % names.len()]
+                        };
+                        // AURORA_DEMO_SHARE: Orion Example 001… override the cycle
+                        let owned = share::name(id);
+                        let (first, last, dn) = if let Some((ref f, ref l, ref d)) = owned {
+                            (f.as_str(), l.as_str(), d.as_str())
+                        } else {
+                            (first, last, dn)
                         };
                         let username = if last == "Resident" {
                             first.to_lowercase()
@@ -6691,6 +6918,18 @@ pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
 /// (clicks) and a text field (keyboard).
 pub fn demo_media_page() -> &'static str {
     aurora_i18n::tr!("demo-media-page")
+}
+
+/// `AURORA_DEMO_MEDIA=links`: the reproduction page of a `secondlife://`
+/// link clicked in a page shown on a prim (issue #3518), with an anchor and
+/// a script navigation for the chat bridge and for a place.
+pub fn demo_media_links_page() -> String {
+    use base64::Engine as _;
+    let region = aurora_i18n::tr!("common-aurora-demo");
+    let html = include_str!("demo_media_links.html")
+        .replace("{{REGION}}", &crate::slurl::encode(region))
+        .replace("{{REGION_NAME}}", region);
+    format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(html))
 }
 
 /// AURORA_DEMO_MEDIA: a 4 × 2.25 m screen ahead-left of the start position whose

@@ -1236,6 +1236,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resident_pay_menu_entry_is_disabled_under_rlva_pay() {
+        let id = Uuid::from_u128(77);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        let mut facts = Facts {
+            pay_blocked: true,
+            ..Default::default()
+        };
+        facts.voice = false;
+        let entries = rows(world_menu(&target, &facts, Vec3::ZERO));
+        let pay = entries
+            .iter()
+            .find(|entry| entry.label == aurora_i18n::tr!("common-pay"))
+            .expect("Pay entry");
+        assert!(!pay.enabled);
+    }
+
+    #[test]
     fn object_edit_entry_follows_edit_permission() {
         for can_edit in [false, true] {
             let mut facts = Facts::default();
