@@ -98,6 +98,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
+                point_shadows: false,
+                point_shadow_limit: 1,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -131,6 +133,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
+                point_shadows: false,
+                point_shadow_limit: 1,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -163,6 +167,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
+                point_shadows: false,
+                point_shadow_limit: 1,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 0,
@@ -197,6 +203,8 @@ impl Preset {
                 shadow_quality: 2,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
+                point_shadows: false,
+                point_shadow_limit: 1,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 2,
@@ -237,6 +245,8 @@ impl Preset {
                 shadow_quality: 4,
                 projector_shadows: true,
                 projector_shadow_limit: 2,
+                point_shadows: false,
+                point_shadow_limit: 1,
                 ssao: 2,
                 ao_method: 1,
                 gtao_quality: 3,
@@ -719,6 +729,10 @@ pub struct Values {
     pub projector_shadows: bool,
     #[serde(default = "default_projector_shadow_limit")]
     pub projector_shadow_limit: u8,
+    #[serde(default)]
+    pub point_shadows: bool,
+    #[serde(default)]
+    pub point_shadow_limit: u8,
     pub ssao: u8,
     /// 0 Legacy, 1 GTAO (`Settings::ao_method`).
     pub ao_method: u8,
@@ -875,6 +889,13 @@ impl Values {
             } else {
                 2
             },
+            // point light shadows draw nothing while off or without shadows
+            point_shadows: self.point_shadows && self.shadow_quality > 0,
+            point_shadow_limit: if self.point_shadows && self.shadow_quality > 0 {
+                self.point_shadow_limit
+            } else {
+                1
+            },
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
             glow: true,
@@ -901,6 +922,8 @@ impl Values {
             shadow_quality: s.shadow_quality,
             projector_shadows: s.projector_shadows,
             projector_shadow_limit: s.projector_shadow_limit,
+            point_shadows: s.point_shadows,
+            point_shadow_limit: s.point_shadow_limit,
             ssao: s.ssao,
             ao_method: s.ao_method,
             gtao_quality: s.gtao_quality,
@@ -940,6 +963,10 @@ impl Values {
         s.shadow_quality = self.shadow_quality;
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
+        s.point_shadows = self.point_shadows;
+        s.point_shadow_limit = self
+            .point_shadow_limit
+            .clamp(1, aurora_render::projector_shadows::MAX_POINT_SHADOWS as u8);
         s.projector_shadow_limit = self
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
@@ -1096,6 +1123,24 @@ mod tests {
         s.draw_distance = 128.0;
         assert_eq!(Preset::matching(&s), Some(Preset::Medium));
         s.ssao = 2;
+        assert_eq!(Preset::matching(&s), None);
+    }
+
+    #[test]
+    fn point_light_shadows_that_draw_nothing_keep_the_level() {
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        // turned on, three lights, turned off: the slider is greyed out at 3
+        s.point_shadow_limit = 3;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        // on without shadows draws nothing either
+        let mut low = Settings::default();
+        Preset::Low.apply(&mut low);
+        assert_eq!(low.shadow_quality, 0);
+        low.point_shadows = true;
+        assert_eq!(Preset::matching(&low), Some(Preset::Low));
+        // on with shadows is a change of its own
+        s.point_shadows = true;
         assert_eq!(Preset::matching(&s), None);
     }
 

@@ -1083,6 +1083,20 @@ impl Renderer {
         self.device.limits().max_texture_dimension_2d
     }
 
+    /// Shadow maps of the projectors and of the point lights under the
+    /// settings last applied: what the backend draws with them, so that the
+    /// scene never picks a light for a map that is not there.
+    pub fn shadow_budget(&self) -> (u8, u8) {
+        use crate::projector_shadows::{budget_split, map_resolution};
+        let max = self.max_texture_dimension();
+        budget_split(
+            map_resolution(self.settings.shadow_resolution, max),
+            self.settings.projector_shadow_limit,
+            self.settings.point_shadow_limit,
+            max,
+        )
+    }
+
     /// The window was resized: the swapchain and the render targets follow
     /// with the next frame.
     pub fn resize(&mut self, width: u32, height: u32) {
