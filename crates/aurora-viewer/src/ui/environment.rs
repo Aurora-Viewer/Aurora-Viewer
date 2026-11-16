@@ -1397,10 +1397,11 @@ mod tests {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 800.0))),
                         ..Default::default()
                     };
-                    let _ = ctx.run_ui(input, |ui| {
+                    let mut output = ctx.run_ui(input, |ui| {
                         ui.add_space(if below { 20.0 } else { 740.0 });
                         settings_list(ui, &palette, catalog, SettingsKind::Sky, Shown::Shared, salt, COMBO_W);
                     });
+                    output.textures_delta.clear();
                 }
                 let popup = ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground)).expect("open popup");
                 egui::AreaState::load(&ctx, popup.id).expect("popup area").rect()
