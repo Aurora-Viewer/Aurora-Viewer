@@ -213,6 +213,14 @@ impl Profiles {
                 return;
             }
             location.confirmed = true;
+            if let Some(saved) = self.picks.get_mut(&pick.id) {
+                // A reply for an earlier point in this same parcel cell can
+                // confirm its parcel, but cannot move the saved destination
+                // (including its height) or replay older text and pictures.
+                saved.parcel = pick.parcel;
+                saved.sim_name = pick.sim_name;
+                return;
+            }
         } else if pick.creator == owner && pick.parcel.is_nil() {
             // Some grids do not have a parcel on the first details reply.
             self.pick_locations.insert(
@@ -613,10 +621,23 @@ mod tests {
             ..confirmed
         };
         profiles.pick_received(owner, rounded.clone(), now);
-        assert_eq!(profiles.picks[&id], rounded);
+        let mut saved = profiles.picks[&id].clone();
+        assert_eq!(saved.parcel, rounded.parcel);
+        assert_eq!(saved.pos_global, requested.pos_global);
         assert!(profiles.pick_retry_in(owner, id, now).is_none());
-        profiles.pick_received(owner, stale, now); // even after the newer reply
-        assert_eq!(profiles.picks[&id], rounded);
+        saved.name = "Kept name".into();
+        saved.desc = "Kept description".into();
+        saved.snapshot = Uuid::from_u128(47);
+        profiles.pick_saved(owner, saved.clone());
+        profiles.pick_received(owner, stale, now);
+        let older = PickInfo {
+            pos_global: rounded.pos_global + glam::DVec3::new(1.0, 1.0, 600.0),
+            name: "Old name".into(),
+            desc: "Old description".into(),
+            ..rounded
+        };
+        profiles.pick_received(owner, older, now); // same parcel, earlier altitude and content
+        assert_eq!(profiles.picks[&id], saved);
         profiles.pick_deleted(owner, id);
         assert!(!profiles.pick_locations.contains_key(&id));
     }
