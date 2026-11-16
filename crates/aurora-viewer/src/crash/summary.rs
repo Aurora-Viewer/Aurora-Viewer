@@ -836,7 +836,16 @@ pub(crate) fn state_value(value: &str) -> Option<String> {
     ];
     let screens = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
     // the passes of `GpuElement::key`
-    let passes = ["shadows_depth", "effects", "terrain_sky", "objects", "water", "transparent", "post"];
+    let passes = [
+        "shadows_depth",
+        "effects",
+        "terrain_sky",
+        "objects",
+        "water",
+        "transparent",
+        "weather",
+        "post",
+    ];
     let numeric = |v: &str| {
         let digits = v.strip_prefix('-').unwrap_or(v);
         !digits.is_empty() && v.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit() || b == b'.')

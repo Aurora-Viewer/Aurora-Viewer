@@ -29,7 +29,9 @@ pub mod lsl_syntax;
 pub mod message_split;
 pub mod objcache;
 pub mod objects;
+mod offer_hosts;
 pub mod offline_im;
+pub mod open_region;
 pub mod outfits;
 mod packet_loss;
 pub mod pathfinding;
@@ -264,7 +266,7 @@ impl NetClient {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
                     // (the offline demo moves its agent every frame)
-                    NetCommand::AgentControls(_) => {}
+                    NetCommand::AgentControls(_) | NetCommand::ForceAgentUpdate => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),
                 }
             }

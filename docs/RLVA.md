@@ -110,8 +110,14 @@ script authors; the command lists below describe this branch specifically.
   responses are still sent on acceptance or an RLVa refusal. Blocked offers
   and requests use busy replies, without manufacturing a user decline.
   Invitation text is masked under recvim or showloc as appropriate.
-  standtp records the pre-sit location and returns only after a successful
-  forced sit followed by a stand.
+  standtp records the pre-sit location of a sit asked while it is held, by
+  hand or forced, and returns only after a successful sit followed by a
+  stand; a ground sit records none.
+  A landmark dropped in the world opens no portal where the teleport by that
+  landmark is refused (tplm, or unsit while seated); crossing a portal is a
+  teleport to a location, refused under tploc. The Teleport Home menu entries
+  are greyed under either tplm or tploc; the Home buttons and the teleport
+  itself give way only under both.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
   touchhud/this, interact and fartouch.
   Vendor payments obey buy; resident payments obey pay. Fartouch includes
@@ -242,7 +248,8 @@ script authors; the command lists below describe this branch specifically.
   Positive query-angle domains, exact axis cases and solar-glow component
   resets follow the native conversion helpers. Temporary overrides restore
   the user's local environment when released or disabled. Native environment
-  changes respect the lock.
+  changes respect the lock. A sky forced while no setenv lock is held gives
+  way to the user's next choice of environment, the shared one included.
 - Editing: edit, editobj, editattach and editworld at selection, local
   transforms and network writes, including material and media capabilities;
   viewtransparent and viewwireframe. viewnote/viewscript/viewtexture also
@@ -306,6 +313,13 @@ implementation, not evidence that every live comparison has passed. The
 separate tester kit provides 221 cases, eight LSL probes, read-only query
 and catalogue sweeps, textures and blank results. Keep unavailable cases and
 documented differences explicit until functional parity is certified.
+
+Development builds also carry the RLVa self-test, the Dev Toolbox tool T1
+([docs/DEV_TOOLBOX.md](DEV_TOOLBOX.md#the-rlva-self-test)): logged in, the
+human starts it and gets a pass / fail report of the rules it can check with
+its own worn test objects and, when chosen, its own prims. It complements the
+tester kit and does not replace it: it covers neither chat, messages,
+teleports nor anything that involves another resident.
 
 Before live scripts, inspect the offline viewer in both languages:
 

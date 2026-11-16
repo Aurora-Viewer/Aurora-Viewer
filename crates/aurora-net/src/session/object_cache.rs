@@ -344,6 +344,7 @@ mod tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,

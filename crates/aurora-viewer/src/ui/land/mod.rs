@@ -1045,7 +1045,12 @@ fn maturity(ui: &mut egui::Ui, p: &Palette, v: &View) {
 /// rule, like the bars' clock): (year, month, day, weekday 0 = Sunday, hour,
 /// minute, second).
 pub(crate) fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
-    let t = secs + crate::world::chat_log::format::pacific_offset_hours(secs) * 3600;
+    parts_at(secs, crate::world::chat_log::format::pacific_offset_hours(secs) * 3600)
+}
+
+/// The same parts at `offset` seconds from UTC (`clock::offset` of a zone).
+pub(crate) fn parts_at(secs: i64, offset: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
+    let t = secs + offset;
     let days = t.div_euclid(86400);
     let tod = t.rem_euclid(86400);
     let (y, m, d) = aurora_net::profile::civil_from_days(days);
