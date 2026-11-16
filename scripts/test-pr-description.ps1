@@ -105,4 +105,29 @@ foreach ($m in $labelLines.Matches) {
 }
 Assert-Pr ($labelLines.Count -ge 2) 'The label descriptions were not found.'
 
+# -BodyFile with a relative path: read from PowerShell's location, not from
+# the process's directory (Set-Location does not move that one), where a file
+# of the same name is another description
+$work = Join-Path ([IO.Path]::GetTempPath()) "pr-description-test-$([Guid]::NewGuid().ToString('N'))"
+$processDirectory = [Environment]::CurrentDirectory
+try {
+    foreach ($folder in 'here', 'elsewhere') { New-Item -ItemType Directory -Path (Join-Path $work "$folder/drafts") -Force | Out-Null }
+    [IO.File]::WriteAllText((Join-Path $work 'here/drafts/pr.md'), $good)
+    [IO.File]::WriteAllText((Join-Path $work 'elsewhere/drafts/pr.md'), $template)
+    [Environment]::CurrentDirectory = Join-Path $work 'elsewhere'
+    Push-Location (Join-Path $work 'here')
+    try {
+        & "$PSScriptRoot/check-pr-description.ps1" -BodyFile drafts/pr.md 6>$null
+        Assert-Pr ($LASTEXITCODE -eq 0) 'A relative -BodyFile must be read from the PowerShell location, not from the process directory.'
+        $refused = $null
+        try { & "$PSScriptRoot/check-pr-description.ps1" -BodyFile drafts/missing.md 6>$null } catch { $refused = $_.Exception.Message }
+        Assert-Pr ($refused -and $refused.Contains('not found') -and $refused.Contains('missing.md')) "A missing -BodyFile must be refused by name, got: $refused"
+    } finally {
+        Pop-Location
+    }
+} finally {
+    [Environment]::CurrentDirectory = $processDirectory
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host 'PR description fixtures: all passed.'

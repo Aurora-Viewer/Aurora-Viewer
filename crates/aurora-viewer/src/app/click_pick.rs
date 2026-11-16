@@ -291,6 +291,9 @@ impl App {
             // the hidden cursor is the camera's: the crosshair, never a window (#1343)
             return false;
         }
+        if self.ik_editor.manipulator_owns_pointer() {
+            return true;
+        }
         let ppp = self.egui_ctx.pixels_per_point();
         ui::widgets::pointer_over_ui(&self.egui_ctx, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp))
     }
@@ -311,6 +314,12 @@ impl App {
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
+            MouseButton::Left if pressed && self.mouse_mode == MouseMode::Steer && self.steer_by_right => {
+                // MMO-style buttons: while the right button steers, the left
+                // one walks forward (a double press runs) and clicks nothing
+                self.left_down = true;
+                self.walk_tap(0, true);
+            }
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && self.camera.mouselook() {
                     self.double_click.reset();

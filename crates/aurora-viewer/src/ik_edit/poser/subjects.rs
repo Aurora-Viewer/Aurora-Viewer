@@ -188,6 +188,13 @@ impl Editor {
             self.poser.drag_checkpoint = true;
         }
         session.pose = Arc::new(edited);
+        if self.clip.active && self.clip.document.as_ref().is_some_and(|document| document.auto_keyframe) {
+            self.clip.modified.insert(bone);
+            if !rotate {
+                self.clip.translations.insert(bone);
+            }
+            self.clip.auto_key_pending = true;
+        }
         true
     }
     /// The subject button: picture, name and kind, opening the subject menu

@@ -493,7 +493,8 @@ fn rolled_out(
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
+    // ToastGap, as between the Legacy toasts
+    ui.spacing_mut().item_spacing.y = env.toast_gap;
     let (shown, behind) = visible(&nui.center);
     // newest on top
     for peek in shown.iter().rev() {
@@ -506,6 +507,8 @@ fn rolled_out(
         let top = ui.cursor().min;
         let width = nui.center.inner_width;
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
+        // the card keeps its own row spacing; ToastGap stands between cards
+        child.spacing_mut().item_spacing.y = super::notifications::CARD_ROW_SPACING;
         if fold > 0.0 {
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
@@ -736,7 +739,7 @@ pub(super) fn history_list(
         .filter_map(|(i, e)| {
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
-            privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
+            privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();
@@ -852,7 +855,7 @@ fn presence_toasts(
         .collect();
     let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
     let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
-    let rects = presence::stack(room, env.presence_at, &only, &avoid);
+    let rects = presence::stack(room, env.presence_at, &only, &avoid, env.toast_gap);
     let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
         return;
     };
