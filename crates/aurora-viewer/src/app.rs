@@ -7071,10 +7071,16 @@ impl App {
         // and the settings theirs (written by the save thread), before a
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
-        if self.restart_into_vr {
-            restart_with_vr(self.vr_requested_mode);
-        }
         event_loop.exit();
+    }
+
+    /// Release the viewer, including its native window, before waiting for
+    /// account writes or starting the replacement VR process.
+    pub fn close(self: Box<Self>) -> Option<crate::camera::VrView> {
+        if let Some(gfx) = &self.gfx {
+            gfx.window.set_visible(false);
+        }
+        self.restart_into_vr.then_some(self.vr_requested_mode)
     }
 
     fn record_inventory_logout(&mut self) {
@@ -24495,7 +24501,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 /// Start this viewer again with `--vr`, as the process ends: the identity
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
-fn restart_with_vr(mode: crate::camera::VrView) {
+pub fn restart_with_vr(mode: crate::camera::VrView) {
     let cli = crate::cli::get();
     let Ok(exe) = std::env::current_exe() else {
         log::warn!("restart into VR: the viewer's path is unknown");

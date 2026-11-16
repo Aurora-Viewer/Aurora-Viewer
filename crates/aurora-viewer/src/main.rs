@@ -348,8 +348,12 @@ fn run_viewer() -> anyhow::Result<()> {
     settings::Settings::wait_saved(std::time::Duration::from_secs(5));
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
-    drop(app);
+    let restart_vr = app.close();
     media::private_profile::finish(std::time::Duration::from_secs(8));
+    world::tphistory::finish_writes();
     result?;
+    if let Some(mode) = restart_vr {
+        app::restart_with_vr(mode);
+    }
     Ok(())
 }
