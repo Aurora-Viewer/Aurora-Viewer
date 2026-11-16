@@ -853,13 +853,36 @@ impl Editor {
     /// Rebuild an authored frame from the rest skeleton, local pose edits and
     /// contacts, never from the displayed animation. Keep the shape so later
     /// keys do not read it as a translation.
-    fn authored_frame(&self, rig: &Rig, frame: &Frame) -> Option<Frame> {
+    ///
+    /// Outside the clip, the edits sit on the session's base (the frozen
+    /// live pose and the animation layers, `scene::ik::EditBase`): they are
+    /// solved on it, as shown, and only their change from it is kept, on the
+    /// rest skeleton, like the poser's export (`data::Session::authored`,
+    /// after FSPoserAnimator::getJointExportRotation,
+    /// indra/newview/fsposeranimator.cpp). A touched joint never brings the
+    /// base's rotation along. Inside the clip, the base is the clip itself.
+    fn authored_frame(&self, rig: &Rig, frame: &Frame, world: &World) -> Option<Frame> {
         let (shaped, scales) = authoring::local_pose(rig, frame)?;
-        let mut pose = ik::LocalPose {
-            rotations: rig.local_rot.clone(),
-            positions: shaped.positions,
+        let base = if !self.clip.active || self.clip.waiting_source() {
+            // without its base an edit cannot be told from it: nothing is recorded
+            let base = world
+                .ik_edit_base
+                .clone()
+                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len())?;
+            Some(base)
+        } else {
+            None
         };
-        pose.positions[rig.pelvis] = rig.local_pos[rig.pelvis];
+        let mut pose = match &base {
+            Some(base) => base.pose.clone(),
+            None => ik::LocalPose {
+                rotations: rig.local_rot.clone(),
+                positions: shaped.positions,
+            },
+        };
+        if base.is_none() {
+            pose.positions[rig.pelvis] = rig.local_pos[rig.pelvis];
+        }
         for joint in self.authoring.request(&self.goals, &self.disabled) {
             if joint.bone >= rig.len() || !joint.weight.is_finite() || !(0.0..=1.0).contains(&joint.weight) {
                 continue;
@@ -877,6 +900,13 @@ impl Editor {
         for goal in &self.request().goals {
             ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scales, goal);
         }
+        if let Some(base) = base {
+            for bone in 0..rig.len() {
+                pose.rotations[bone] = (rig.local_rot[bone] * base.pose.rotations[bone].inverse() * pose.rotations[bone]).normalize();
+                let rest = if bone == rig.pelvis { rig.local_pos[bone] } else { base.rest[bone] };
+                pose.positions[bone] = rest + pose.positions[bone] - base.pose.positions[bone];
+            }
+        }
         Some(Frame {
             model: frame.model,
             joints: rig
@@ -893,7 +923,7 @@ impl Editor {
         }
         let rig = &world.avatar_lib.rig;
         let mut document = Document::new();
-        let recorded = self.authored_frame(rig, frame).map_or(Err("anim-edit-invalid"), |authored| {
+        let recorded = self.authored_frame(rig, frame, world).map_or(Err("anim-edit-invalid"), |authored| {
             document.record(rig, &authored, 0, &(0..rig.len()).collect::<Vec<_>>(), &[])
         });
         if let Err(key) = recorded {
@@ -916,7 +946,7 @@ impl Editor {
         let rig = &world.avatar_lib.rig;
         let bones: Vec<_> = (0..rig.len()).collect();
         let at = self.clip.frame;
-        let authored = self.authored_frame(rig, frame);
+        let authored = self.authored_frame(rig, frame, world);
         self.clip.checkpoint();
         let Some(document) = self.clip.document.as_mut() else { return };
         let recorded = authored.map_or(Err("anim-edit-invalid"), |authored| {
@@ -937,7 +967,7 @@ impl Editor {
             let mut document = Document::new();
             let bones: Vec<_> = (0..rig.len()).collect();
             let recorded = self
-                .authored_frame(rig, frame)
+                .authored_frame(rig, frame, world)
                 .map_or(Err("anim-edit-invalid"), |authored| document.record(rig, &authored, 0, &bones, &[]));
             if let Err(key) = recorded {
                 self.clip.error = Some(aurora_i18n::text(key).to_owned());
@@ -1054,7 +1084,7 @@ impl Editor {
             Capture::Pose => (0..rig.len()).collect(),
         };
         let translations: Vec<_> = self.clip.translations.iter().copied().collect();
-        let Some(authored) = self.authored_frame(rig, frame) else {
+        let Some(authored) = self.authored_frame(rig, frame, world) else {
             self.clip.error = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };

@@ -205,7 +205,7 @@ impl App {
                 if self.world.rlva_can_name(entry.source) {
                     self.world.social.name_of(&entry.source)
                 } else {
-                    crate::world::rlva::privacy::anonymous(entry.source).display_name.clone()
+                    self.world.rlva_anonymous(entry.source).display_name.clone()
                 }
             } else if let Some(name) = self.known_object_name(&entry.source) {
                 name

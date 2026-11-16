@@ -44,6 +44,10 @@ impl ExitPrompt {
         self.open = false;
         Some(action)
     }
+    /// Quit confirmed, the viewer waiting for the logout reply to close.
+    pub fn quitting(&self) -> bool {
+        matches!(self.pending, Some((Action::Quit, _)))
+    }
     pub fn show(&self, ctx: &egui::Context, p: &Palette, can_logout: bool) -> Option<Action> {
         if !self.open {
             return None;
@@ -232,5 +236,21 @@ mod tests {
             prompt.confirm(action, now);
             assert_eq!(prompt.finish(false, now + Duration::from_secs(6)), Some(action));
         }
+    }
+
+    #[test]
+    fn quitting_only_while_a_quit_waits_for_its_reply() {
+        let now = Instant::now();
+        let mut prompt = ExitPrompt::default();
+        prompt.request();
+        assert!(!prompt.quitting());
+        prompt.confirm(Action::Logout, now);
+        assert!(!prompt.quitting(), "a logout keeps the viewer open");
+        prompt.finish(true, now);
+        prompt.request();
+        prompt.confirm(Action::Quit, now);
+        assert!(prompt.quitting());
+        prompt.finish(true, now);
+        assert!(!prompt.quitting());
     }
 }
