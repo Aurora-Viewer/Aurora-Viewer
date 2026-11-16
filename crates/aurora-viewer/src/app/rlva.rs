@@ -120,6 +120,7 @@ impl App {
             login_locked,
         );
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
+        self.world.rlva_yield_environment();
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
         // An outfit change is over once its detaches have landed too: the
