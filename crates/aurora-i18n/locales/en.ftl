@@ -15224,3 +15224,7 @@ joystick-layout-positional = Positional
 
 joystick-layout-auto = Automatic
 joystick-layout-xinput = XInput
+
+ui-features = Features
+ui-features-note = What Aurora adds that the Legacy Viewer does not have. A feature switched off disappears from the menus and windows and is no longer computed or drawn; its settings are kept for when you switch it back on.
+ui-features-weather-help = Rain, snow, wind, thunder and the northern lights, yours or a region's. Switched off: nothing falls or lies on the ground, regions set no weather for you, and the Aurora Weather window, its buttons and the weather tab of the sky editor are hidden. Skies and day cycles that carry weather keep it for others.

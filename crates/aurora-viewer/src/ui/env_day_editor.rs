@@ -425,7 +425,9 @@ impl DayEditorUi {
             self.name_row(ui, p, &mut out);
             ui.add_space(4.0);
             self.tracks_row(ui, p, &mut out);
-            self.weather_row(ui, p);
+            if !self.frame.weather_off {
+                self.weather_row(ui, p);
+            }
             self.timeline(ui, p, &mut out);
             self.track_row(ui, p, inv, &mut out);
             self.frame_row(ui, p, inv, &mut out);
@@ -450,6 +452,13 @@ impl DayEditorUi {
         }
         self.dialogs(ctx, p, &mut out);
         out
+    }
+
+    /// The weather feature is switched off (features.rs, kept by the app):
+    /// no schedule row, no marks under the timeline, and no Aurora Weather
+    /// tab in the key frame's editor.
+    pub fn set_weather_off(&mut self, off: bool) {
+        self.frame.weather_off = off;
     }
 
     /// Aurora Weather's preview from the selected key frame's sky panels
@@ -605,7 +614,7 @@ impl DayEditorUi {
         let weathered: Vec<bool> = self
             .doc
             .as_ref()
-            .filter(|_| self.track != TRACK_WATER)
+            .filter(|_| self.track != TRACK_WATER && !self.frame.weather_off)
             .map(|d| {
                 d.tracks[self.track]
                     .iter()

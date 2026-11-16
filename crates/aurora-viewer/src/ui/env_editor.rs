@@ -126,7 +126,13 @@ pub struct EnvEditorUi {
     /// Aurora Weather's preview: the sky's weather shown on this viewer
     /// while the editor is open, and whether it is made to fall now.
     pub weather_preview: Option<(crate::weather::region::SkyWeather, bool)>,
+    /// The weather feature is switched off (features.rs, kept by the app):
+    /// no Aurora Weather tab. A sky's code stays in its name as it was.
+    pub weather_off: bool,
 }
+
+/// The sky editor's Aurora Weather tab, after the Legacy Viewer's three.
+const WEATHER_TAB: usize = 3;
 
 impl EnvEditorUi {
     /// The settings were saved as `item` (onInventoryCreated / Updated):
@@ -270,17 +276,22 @@ impl EnvEditorUi {
     ) {
         let kind = self.kind.unwrap_or(SettingsKind::Sky);
         if kind == SettingsKind::Sky {
-            widgets::tabs(
-                ui,
-                p,
-                &mut self.tab,
-                &[
-                    (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
-                    (aurora_i18n::tr!("ui-environment-clouds"), true),
-                    (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
-                    (aurora_i18n::tr!("ui-weather-aurora"), true),
-                ],
-            );
+            let tabs = [
+                (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
+                (aurora_i18n::tr!("ui-environment-clouds"), true),
+                (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
+                (aurora_i18n::tr!("ui-weather-aurora"), true),
+            ];
+            // Aurora Weather is the last one: none of it with the feature
+            // off, and the tab it was left on gives way to the first
+            let count = if self.weather_off { WEATHER_TAB } else { tabs.len() };
+            if self.weather_off {
+                self.weather_preview = None;
+                if self.tab >= WEATHER_TAB {
+                    self.tab = 0;
+                }
+            }
+            widgets::tabs(ui, p, &mut self.tab, &tabs[..count]);
             ui.add_space(4.0);
         }
         egui::ScrollArea::vertical()
@@ -303,7 +314,7 @@ impl EnvEditorUi {
                     _ => match self.tab {
                         1 => self.clouds_panel(ui, p, images, out),
                         2 => self.sun_moon_panel(ui, p, images, out),
-                        3 => self.weather_panel(ui, p, out),
+                        WEATHER_TAB => self.weather_panel(ui, p, out),
                         _ => self.atmosphere_panel(ui, p, out),
                     },
                 });

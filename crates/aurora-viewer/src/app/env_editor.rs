@@ -150,6 +150,7 @@ impl App {
         }
         let access = self.env_editor_access();
         self.env_editor.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
+        self.env_editor.weather_off = !self.settings.features.on(crate::features::Feature::Weather);
         let actions = self.env_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
         if self.env_editor.open {
             self.set_env_beacons(self.env_editor.beacons);

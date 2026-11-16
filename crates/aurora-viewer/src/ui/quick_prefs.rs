@@ -265,6 +265,7 @@ impl QuickPrefsUi {
                 // (its window is drawn with that one's)
                 let mut weather_open = env.weather_open;
                 let before = settings.weather.region_weather;
+                let shown = !env.weather_off;
                 env.selector_body(
                     ui,
                     p,
@@ -273,7 +274,7 @@ impl QuickPrefsUi {
                     None,
                     LABEL_W,
                     lighting,
-                    Some((&mut weather_open, &mut settings.weather)),
+                    shown.then_some((&mut weather_open, &mut settings.weather)),
                     &mut out.env,
                 );
                 env.weather_open = weather_open;

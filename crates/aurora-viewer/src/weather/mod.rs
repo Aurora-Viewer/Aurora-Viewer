@@ -191,6 +191,27 @@ pub enum WeatherSource {
 }
 
 impl WeatherSettings {
+    /// No weather at all: what is in effect while the feature is switched
+    /// off (features.rs). Nothing falls, blows, strikes, lies or gathers,
+    /// no region sets any, and the demo variables (`AURORA_RAIN`,
+    /// `AURORA_SNOW`…) do not apply either (`touched`).
+    pub fn off() -> Self {
+        Self {
+            amount: 0.0,
+            wind_min: 0.0,
+            wind_max: 0.0,
+            thunder: false,
+            region_weather: false,
+            snow_settles: false,
+            snow_footprints: false,
+            snow_on_avatars: false,
+            snow_deep: false,
+            aurora: false,
+            touched: true,
+            ..Self::default()
+        }
+    }
+
     /// How hard it rains, 0 to 1: the menu's, or `AURORA_RAIN` until the
     /// menu is used (demo captures).
     pub fn rain(&self) -> f32 {
@@ -522,6 +543,20 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_feature_switched_off_leaves_no_weather() {
+        let off = WeatherSettings::off();
+        assert_eq!((off.rain(), off.fall()), (0.0, 0.0));
+        assert!(!off.snowing() && !off.thunder && !off.region_weather && !off.snow_on_avatars);
+        assert_eq!(off.wind_range(), (0.0, 0.0));
+        let look = off.rain_look(&Wind::default());
+        assert_eq!(look.snow, 0.0);
+        assert_eq!(look.aurora, [0.0; 4]);
+        assert!(!look.snow_settles && !look.footprints && !look.deep_snow);
+        // nor what the demo variables ask for until the window is used
+        assert!(off.touched);
+    }
 
     #[test]
     fn the_renderer_gets_both_distances_and_deep_snows_reach() {

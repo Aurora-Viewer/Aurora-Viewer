@@ -15126,3 +15126,7 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+ui-features = 機能
+ui-features-note = レガシービューアにはない、Aurora 独自の機能です。オフにした機能はメニューやウィンドウから消え、計算も描画もされません。設定は保存され、オンに戻すとそのまま使えます。
+ui-features-weather-help = 雨、雪、風、雷、オーロラ。自分の天気にも、リージョンが設定する天気にも適用されます。オフにすると、何も降らず、地面にも残らず、リージョンの天気も適用されません。Aurora の天気ウィンドウとそのボタン、空の編集の天気タブも表示されなくなります。天気を持つ空やデイサイクルは、ほかの人のためにそのまま保たれます。

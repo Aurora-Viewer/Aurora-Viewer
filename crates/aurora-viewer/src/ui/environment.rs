@@ -73,6 +73,10 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// The Aurora Weather window is open (from the Environment window).
     pub weather_open: bool,
+    /// The weather feature is switched off (features.rs, kept by the app):
+    /// no Aurora Weather button here nor in the Quick preferences, and no
+    /// window.
+    pub weather_off: bool,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
     /// Type this into an open list's search field (demo captures).
@@ -131,6 +135,7 @@ impl EnvironmentUi {
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
         .show(ctx, p, open, |ui| {
             let mut weather_open = self.weather_open;
+            let shown = !self.weather_off;
             self.selector_body(
                 ui,
                 p,
@@ -139,13 +144,17 @@ impl EnvironmentUi {
                 Some(time_of_day),
                 LABEL_W,
                 lighting,
-                Some((&mut weather_open, &mut *weather)),
+                shown.then_some((&mut weather_open, &mut *weather)),
                 &mut out,
             );
             self.weather_open = weather_open;
         });
         // Aurora Weather, its own window (opened from the Environment window
         // or the Quick preferences, drawn here for both)
+        if self.weather_off {
+            self.weather_open = false;
+            return out;
+        }
         let mut weather_open = self.weather_open;
         self.show_weather(ctx, p, weather, &mut weather_open);
         self.weather_open = weather_open;

@@ -15230,3 +15230,7 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+ui-features = Fonctionnalités
+ui-features-note = Ce qu'Aurora ajoute et que le Legacy Viewer n'a pas. Une fonctionnalité désactivée disparaît des menus et des fenêtres et n'est plus ni calculée ni dessinée ; ses réglages sont conservés pour le jour où vous la réactivez.
+ui-features-weather-help = La pluie, la neige, le vent, l'orage et l'aurore boréale, les vôtres ou ceux d'une région. Désactivée : rien ne tombe ni ne reste au sol, les régions ne choisissent plus votre météo, et la fenêtre Météo Aurora, ses boutons et l'onglet météo de l'éditeur de ciel sont masqués. Les ciels et les cycles du jour qui portent une météo la gardent pour les autres.
