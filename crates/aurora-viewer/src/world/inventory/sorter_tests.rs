@@ -671,6 +671,18 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
         "Christmas Sweater moves whole"
     );
     assert!(!moved.contains(&id(67)), "Avatar is a shelf");
+    // an occasion-named delivery with its versions, an outfit with its parts
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 50, 1, "Winter Boots");
+    add_folder(&mut inv, 51, 50, "Maitreya");
+    add_folder(&mut inv, 52, 50, "HUD");
+    add_folder(&mut inv, 53, 1, "Hex Outfit");
+    add_folder(&mut inv, 54, 53, "Top");
+    add_folder(&mut inv, 55, 53, "Pants");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(![51, 52, 54, 55].iter().any(|n| moved.contains(&id(*n))), "never opened");
+    assert!(moved.contains(&id(50)) && moved.contains(&id(53)), "they move whole");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

@@ -1451,11 +1451,18 @@ pub(super) fn show(
         // (the next batch's are checked, a few hundred at most)
         if !prefs.sorter.excluded.is_empty() {
             // a folder holding an excluded one stays too: it would carry it
+            let base = job.base_id;
             let out: Vec<usize> = (0..job.queue.len().min(sorter::BATCH * 2))
                 .filter(|&i| {
                     let m = &job.queue[i];
-                    // (into an excluded folder neither)
-                    matches!(m.to, sorter::Dest::Folder(t) if !m.restore && prefs.sorter.excludes(inv, t))
+                    // (into an excluded folder neither: a rule's, or one on
+                    // the way below the sort folder)
+                    let into_excluded = match &m.to {
+                        sorter::Dest::Folder(t) => prefs.sorter.excludes(inv, *t),
+                        sorter::Dest::Path(p) => base.is_some_and(|b| sorter::path_excluded(inv, b, p, &prefs.sorter)),
+                        sorter::Dest::PreTrash => false,
+                    };
+                    !m.restore && into_excluded
                         || !m.restore
                             && (prefs.sorter.excludes(inv, m.id)
                                 || m.folder

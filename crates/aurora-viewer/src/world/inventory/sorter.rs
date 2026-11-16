@@ -1343,9 +1343,13 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 /// folders alone keep it whole; a name saying no kind (`Velmora -
 /// Aphrodite`) needs a body or named version inside.
 fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) -> bool {
-    if !names_a_product(name) {
+    // a name that fails only for its occasion word (`Winter Boots`) is
+    // judged by what it holds, like any product's
+    let occasion = words(name).iter().any(|w| OCCASION_WORDS.contains(&w.as_str()));
+    if !names_a_product(name) && !occasion {
         return false;
     }
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
     // the product's own words (`aphrodite`, `hex`): a subfolder sharing one
     // is a version of it (`Aphrodite HUD`, `Hex HUD`), the store's name
     // aside
@@ -1361,9 +1365,11 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) || read.squish || read.waifus;
         versions |= version;
         // a fatpack's own folders
-        version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
+        // a fatpack's own folders, or an outfit's or an avatar's parts
+        // (`Top`, `Pants`, `Head`, `Shape`)
+        version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w))
     });
-    all && (versions || named)
+    all && (versions || named && !occasion)
 }
 
 /// The words of a name that are its own: not a kind, a body's name, a
@@ -1782,7 +1788,7 @@ pub fn show_in(inv: &mut Inventory, id: Uuid, folder: bool, parent: Uuid) {
 }
 
 /// The sort folder or an existing folder of `path` below it is excluded.
-fn path_excluded(inv: &Inventory, base: Uuid, path: &[String], prefs: &Preferences) -> bool {
+pub fn path_excluded(inv: &Inventory, base: Uuid, path: &[String], prefs: &Preferences) -> bool {
     let mut at = base;
     if prefs.excludes(inv, at) {
         return true;
@@ -1918,6 +1924,14 @@ pub fn restorable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_wo
 pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut plan = Plan::default();
+    let base = base_folder(inv, prefs);
+    // a run's move into a folder excluded since (a rule's, or one on the way
+    // below the sort folder) stays
+    let into_excluded = |m: &Move| match &m.to {
+        Dest::Folder(target) => prefs.excludes(inv, *target),
+        Dest::Path(path) => base.is_some_and(|base| path_excluded(inv, base, path, prefs)),
+        Dest::PreTrash => false,
+    };
     for m in moves {
         let here = actions::parent(inv, m.id) == Some(m.from);
         // a folder whose tree is still loading: kept for now, asked for
@@ -1947,7 +1961,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
         // (an Undo puts back what its run moved, whatever was excluded since;
         // a snapshot's restore leaves excluded folders out, see
         // `journal::restore_moves`)
-        if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
+        if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded) || into_excluded(m)) {
             plan.kept += 1;
             plan.kept_list.push((m.name.clone(), Kept::Excluded));
             continue;
