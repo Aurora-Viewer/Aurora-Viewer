@@ -623,6 +623,8 @@ pub struct App {
     /// Last walk-key press (for double-tap running) and the active temporary run.
     last_tap: Option<(u8, Instant)>,
     temp_run: Option<u8>,
+    /// @temprun as of the last RLVa update, to catch its changes.
+    rlva_temprun: bool,
     /// "Always run" (Ctrl+R).
     always_run: bool,
     /// The Controls window (`ui/controls.rs`), the keys its buttons and
@@ -1870,6 +1872,7 @@ impl App {
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
+            rlva_temprun: false,
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
@@ -2323,6 +2326,11 @@ impl App {
                 PickRead::FirstAfterMove if self.demo && crate::demo::slow_pick_reply() => return,
                 _ => {}
             }
+        }
+        if self.demo
+            && let NetCommand::SetAlwaysRun(run) = cmd
+        {
+            log::info!("demo: SetAlwaysRun({run}) sent");
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
@@ -4413,9 +4421,7 @@ impl App {
                 // New region must learn walk/run again (LLAgent::sendWalkRun
                 // after RegionHandshake, llviewermessage.cpp). Without this
                 // Always run stays lit in Controls while the sim walks (#3041).
-                self.send(NetCommand::SetAlwaysRun(
-                    self.always_run || self.temp_run.is_some() || self.joystick.running,
-                ));
+                self.send(NetCommand::SetAlwaysRun(self.walk_run()));
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
                     self.vr_rebase_after_travel();
@@ -5116,7 +5122,10 @@ impl App {
     /// mouse steering counts as a forward key, so a double right click runs.
     fn walk_tap(&mut self, group: u8, pressed: bool) {
         if pressed && self.in_world() {
+            // LLAgent::setTempRun: @temprun leaves the double tap a plain walk;
+            // @alwaysrun does not touch it.
             if self.temp_run.is_none()
+                && !self.world.rlva.has("temprun")
                 && let Some((last, at)) = self.last_tap
                 && last == group
                 && at.elapsed().as_secs_f32() < NUDGE_TIME
@@ -5275,7 +5284,12 @@ impl App {
             Action::FocusSelection => self.look_at_selection(false),
             Action::ZoomSelection => self.look_at_selection(true),
             Action::LookAtLastChatter => self.look_at_last_chatter(),
-            Action::Chat => self.chat_ui.focus_request = true,
+            Action::Chat => {
+                let world = &self.world;
+                self.chat_ui.start_chat(&self.egui_ctx, self.panels.chat, |id| {
+                    world.social.has_session(id) || world.groups.sessions.contains_key(id)
+                });
+            }
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
             // minimized window expands (LLFloaterReg::toggleInstance)
@@ -8653,9 +8667,8 @@ impl App {
             return;
         }
         self.always_run = on;
-        self.send(NetCommand::SetAlwaysRun(
-            (self.always_run || self.temp_run.is_some() || self.joystick.running) && !self.vr_walk_override.active(),
-        ));
+        // an autopilot run @alwaysrun allows keeps running (`walk_run`)
+        self.send(NetCommand::SetAlwaysRun(self.walk_run()));
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
         } else {
@@ -18366,6 +18379,8 @@ impl App {
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
+                self.chat_ui.enter_last_field = self.settings.chat_enter_last_field;
                 // the chat fields' suggestions (#980); the residents around
                 // only while a nearby field lists or predicts them
                 let suggest = &mut self.chat_ui.suggest;
