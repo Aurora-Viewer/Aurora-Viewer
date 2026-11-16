@@ -8836,11 +8836,18 @@ impl App {
             // (app_settings/key_bindings.xml).
             i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
-        // The movement keys alone: the seated camera keys below answer to
-        // them, not to the Controls window's buttons nor to a joystick or
-        // gamepad, which push the avatar directly (LLViewerJoystick::agentPush,
-        // LLFloaterMove) and never reach camera_move_forward_sitting & co.
-        let move_keys = i;
+        // Route only the keyboard. Controls, the joystick and mouse steering
+        // still send their own movement, even when they share a held direction.
+        let temp_run = (self.temp_run.is_some() || self.joystick.running) && !self.world.rlva.has("temprun");
+        let seated_camera = self.world.agent.is_sitting()
+            && self.in_world()
+            && !self.avatar_studio.active
+            && self.vr_camera.is_none()
+            && !self.joystick.active
+            && self.camera.free().is_none()
+            && !self.camera.mouselook()
+            && !self.camera.sit_camera_active();
+        let seated = SeatedCameraKeys::take(&mut i, &self.world.script_controls, seated_camera, self.always_run, temp_run);
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
         i.forward |= held(Action::Forward);
@@ -8935,57 +8942,9 @@ impl App {
             // the left one when the right one steers (MMO-style buttons)
             i.forward |= self.mouse_walks();
         }
-        i.run = self.temp_run.is_some() || self.joystick.running;
-        if self.world.rlva.has("temprun") {
-            i.run = false;
-        }
+        i.run = temp_run;
         if self.world.rlva.has("jump") && !self.world.agent.flying {
             i.up = false;
-        }
-        // While seated in third person, movement keys zoom and orbit the
-        // camera instead of moving the avatar or resetting the view, unless a
-        // script took the control, a sit camera is set or the avatar runs
-        // (SeatedCameraKeys::of: camera_move_forward_sitting & co). `i.run`
-        // is the Legacy Viewer's mbTempRun: a double-tap run, the joystick's
-        // run button, and nothing under RLVa @temprun.
-        // The headset owns the keys in VR, as for the camera keys below.
-        let sitting_cam = self.vr_camera.is_none() && self.world.agent.is_sitting() && !self.camera.mouselook() && self.in_world();
-        let SeatedCameraKeys {
-            zoom_in: sit_zoom_in,
-            zoom_out: sit_zoom_out,
-            orbit_cw: sit_orbit_cw,
-            orbit_ccw: sit_orbit_ccw,
-            orbit_up: sit_orbit_up,
-            orbit_down: sit_orbit_down,
-        } = if sitting_cam {
-            SeatedCameraKeys::of(
-                &move_keys,
-                &self.world.script_controls,
-                self.camera.sit_camera_active(),
-                self.always_run,
-                i.run,
-            )
-        } else {
-            SeatedCameraKeys::default()
-        };
-
-        if sit_zoom_in {
-            i.forward = false;
-        }
-        if sit_zoom_out {
-            i.back = false;
-        }
-        if sit_orbit_cw {
-            i.turn_left = false;
-        }
-        if sit_orbit_ccw {
-            i.turn_right = false;
-        }
-        if sit_orbit_up {
-            i.up = false;
-        }
-        if sit_orbit_down {
-            i.down = false;
         }
         // nudge phase: the first 0.25 s of a press makes small steps
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
@@ -9085,12 +9044,12 @@ impl App {
             let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
             let explicit = key || self.controls_held.contains(&a);
             let sitting_active = match n {
-                0 => sit_orbit_cw,
-                1 => sit_orbit_ccw,
-                2 => sit_orbit_up,
-                3 => sit_orbit_down,
-                4 => sit_zoom_in,
-                5 => sit_zoom_out,
+                0 => seated.orbit_cw,
+                1 => seated.orbit_ccw,
+                2 => seated.orbit_up,
+                3 => seated.orbit_down,
+                4 => seated.zoom_in,
+                5 => seated.zoom_out,
                 _ => false,
             };
             if self.in_world() && (explicit || sitting_active) {
@@ -24371,7 +24330,7 @@ struct SeatedCameraKeys {
 }
 
 impl SeatedCameraKeys {
-    /// What the held `keys` do while seated in third person.
+    /// Take the held keyboard directions used by the seated third-person camera.
     ///
     /// - A script that took a control outright keeps it (forwardGrabbed,
     ///   backwardGrabbed, rotateGrabbed, upGrabbed, downGrabbed: only the
@@ -24386,22 +24345,26 @@ impl SeatedCameraKeys {
     ///   even after a double-tap (the Legacy Viewer never sets mbTempRun
     ///   while Always Run is on).
     /// - E / C have no run condition.
-    fn of(
-        keys: &MoveInput,
+    fn take(
+        keys: &mut MoveInput,
         script: &aurora_net::script_controls::ScriptControls,
-        sit_camera: bool,
+        enabled: bool,
         always_run: bool,
         temp_run: bool,
     ) -> Self {
+        if !enabled {
+            return Self::default();
+        }
         let running = always_run || temp_run;
         let temp_running = temp_run && !always_run;
+        let take = |key: &mut bool, blocked: bool| !blocked && std::mem::take(key);
         Self {
-            zoom_in: keys.forward && !script.forward_grabbed() && !sit_camera && !temp_running,
-            zoom_out: keys.back && !script.backward_grabbed() && !sit_camera && !temp_running,
-            orbit_cw: keys.turn_left && !script.rotate_grabbed() && !sit_camera && !running,
-            orbit_ccw: keys.turn_right && !script.rotate_grabbed() && !sit_camera && !running,
-            orbit_up: keys.up && !script.up_grabbed() && !sit_camera,
-            orbit_down: keys.down && !script.down_grabbed() && !sit_camera,
+            zoom_in: take(&mut keys.forward, script.forward_grabbed() || temp_running),
+            zoom_out: take(&mut keys.back, script.backward_grabbed() || temp_running),
+            orbit_cw: take(&mut keys.turn_left, script.rotate_grabbed() || running),
+            orbit_ccw: take(&mut keys.turn_right, script.rotate_grabbed() || running),
+            orbit_up: take(&mut keys.up, script.up_grabbed()),
+            orbit_down: take(&mut keys.down, script.down_grabbed()),
         }
     }
 }
@@ -24598,7 +24561,7 @@ mod tests {
         }
 
         fn of(script: &ScriptControls, sit_camera: bool, always_run: bool, temp_run: bool) -> SeatedCameraKeys {
-            SeatedCameraKeys::of(&all_held(), script, sit_camera, always_run, temp_run)
+            SeatedCameraKeys::take(&mut all_held(), script, !sit_camera, always_run, temp_run)
         }
 
         fn all_to_the_camera() -> SeatedCameraKeys {
@@ -24619,11 +24582,11 @@ mod tests {
 
         #[test]
         fn a_key_not_held_stays_with_the_avatar() {
-            let keys = MoveInput {
+            let mut keys = MoveInput {
                 forward: true,
                 ..Default::default()
             };
-            let seated = SeatedCameraKeys::of(&keys, &ScriptControls::default(), false, false, false);
+            let seated = SeatedCameraKeys::take(&mut keys, &ScriptControls::default(), true, false, false);
             assert_eq!(
                 seated,
                 SeatedCameraKeys {
@@ -24677,7 +24640,34 @@ mod tests {
 
         #[test]
         fn a_sit_camera_keeps_every_key_for_the_avatar() {
-            assert_eq!(of(&ScriptControls::default(), true, false, false), SeatedCameraKeys::default());
+            let mut keys = all_held();
+            assert_eq!(
+                SeatedCameraKeys::take(&mut keys, &ScriptControls::default(), false, false, false),
+                SeatedCameraKeys::default()
+            );
+            assert!(keys.forward && keys.back && keys.turn_left && keys.turn_right && keys.up && keys.down);
+        }
+
+        #[test]
+        fn routing_key_presses_preserves_independent_avatar_input() {
+            let mut script = ScriptControls::default();
+            script.apply(true, control::YAW_POS, false);
+            let mut keys = MoveInput {
+                strafe_left: true,
+                ..all_held()
+            };
+            let seated = SeatedCameraKeys::take(&mut keys, &script, true, false, false);
+            assert!(seated.zoom_in && seated.zoom_out && seated.orbit_up && seated.orbit_down);
+            assert!(!seated.orbit_cw && !seated.orbit_ccw);
+            assert!(!keys.forward && !keys.back && !keys.up && !keys.down);
+            assert!(keys.turn_left && keys.turn_right && keys.strafe_left);
+
+            let mut stick = crate::joystick::Motion::default();
+            stick.axes[0] = 1.0;
+            stick.fall = true;
+            stick.apply_avatar(&mut keys);
+            assert!(keys.forward && keys.down);
+            assert!(!keys.back && !keys.up);
         }
 
         #[test]
