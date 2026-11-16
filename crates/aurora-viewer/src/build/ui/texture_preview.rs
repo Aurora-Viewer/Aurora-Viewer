@@ -928,7 +928,7 @@ mod tests {
             }
             let changes = tool.local_appearance_changes.len();
             let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
-            click(&ctx, tool, world, env, 3.0, positions["OK"]);
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert!(tool.out.is_empty());
             assert_eq!(tool.local_appearance_changes.len(), changes);
@@ -1284,7 +1284,7 @@ mod tests {
             click(&ctx, tool, world, env, 7.0, positions[aurora_i18n::tr!("common-none-2")]);
             let positions = frame(&ctx, tool, world, env, 8.0, vec![]);
             let sent = tool.out.len();
-            click(&ctx, tool, world, env, 9.0, positions["OK"]);
+            click(&ctx, tool, world, env, 9.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert_eq!(tool.out.len(), sent, "OK confirms the removal without resending it");
             assert!(world.objects.get(idx).unwrap().extra.light_image.is_none());
@@ -1341,7 +1341,7 @@ mod tests {
             }
             let positions = frame(&ctx, tool, world, env, 2.0, vec![]);
             let sent = tool.out.len();
-            click(&ctx, tool, world, env, 3.0, positions["OK"]);
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
             assert!(!tool.ui.picker.open);
             assert!(tool.ui.texture_edit.is_none());
             assert_eq!(tool.out.len(), sent, "OK must not resend a preview");
@@ -1428,7 +1428,7 @@ mod tests {
             let positions = frame(&ctx, tool, world, env, 13.5, vec![]);
             assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-no-live-preview")));
             tool.out.clear();
-            click(&ctx, tool, world, env, 14.0, positions["OK"]);
+            click(&ctx, tool, world, env, 14.0, positions[aurora_i18n::tr!("common-ok")]);
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(16));
             }

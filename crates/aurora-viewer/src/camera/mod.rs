@@ -947,6 +947,18 @@ impl Camera {
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
     }
 
+    /// Aim the displayed shot at the posed body surface the user clicked.
+    /// Express the eye relative to that point before applying optical zoom,
+    /// and account for the joint motion already present in the surface pick.
+    pub fn focus_own_surface(&mut self, point: Vec3, object: Option<(Uuid, FocusObject)>, joint: Option<Vec3>, s: &CameraSettings) {
+        self.focus_on_avatar = false;
+        self.fov_zoom = self.current_fov_zoom;
+        let virtual_eye = point + (self.position - point) / (1.0 + self.fov_zoom);
+        self.set_camera_pos_and_focus(virtual_eye, point, object, s);
+        self.focus_target -= self.third_person_joint_delta(s, joint);
+        self.update_focus_offset();
+    }
+
     /// `pstcampos` chat command (cmdline_apply_camera): unlockView, then
     /// setCameraPosAndFocusGlobal.
     pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
@@ -1794,6 +1806,30 @@ impl Camera {
         }
     }
 
+    /// Left-drag on our avatar with ClickOnAvatarKeepsCamera: orbit the view
+    /// without turning the agent (Legacy Viewer while stationary). Uses the
+    /// same full-window 360° scale as [`Self::drag`].
+    pub fn avatar_keep_orbit_drag(&mut self, dx: f32, dy: f32, width: f32, agent: &mut AgentState) {
+        let Some(t) = &mut self.tool else {
+            return;
+        };
+        t.accum_x += dx.abs();
+        t.accum_y += dy.abs();
+        t.outside_x |= t.accum_x >= SLOP_RANGE;
+        t.outside_y |= t.accum_y >= SLOP_RANGE;
+        if !t.outside_x && !t.outside_y {
+            return;
+        }
+        let k = TAU / width.max(1.0);
+        if self.focus_on_avatar && self.third_person() {
+            self.orbit_yaw -= dx * k;
+            self.pitch_by(dy * k);
+        } else {
+            self.orbit_around(-dx * k, agent);
+            self.orbit_over(dy * k);
+        }
+    }
+
     /// Mouselook: the mouse turns the avatar and tilts its view.
     pub fn look(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
@@ -2389,7 +2425,9 @@ impl Camera {
                 Some(p) => p,
                 None => self.third_person_camera(agent, s, f),
             },
-            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f),
+            CameraMode::ThirdPerson | CameraMode::Follow => {
+                self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f.follow_joint_offset)
+            }
         };
         if !s.disable_constraints {
             let offset = camera - self.avatar.position;
@@ -2420,7 +2458,7 @@ impl Camera {
         let frame = self.frame_rotation(agent);
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f);
+        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f.follow_joint_offset);
         let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
@@ -2480,11 +2518,11 @@ impl Camera {
 
     /// Keep camera and focus offsets unchanged while translating the shot with
     /// the selected joint's movement from its neutral position.
-    fn third_person_joint_delta(&self, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+    fn third_person_joint_delta(&self, s: &CameraSettings, joint: Option<Vec3>) -> Vec3 {
         if !self.needs_animated_joint(s) {
             return Vec3::ZERO;
         }
-        f.follow_joint_offset
+        joint
             .filter(|offset| offset.is_finite())
             .map(|offset| {
                 self.avatar.render_rotation
@@ -2522,11 +2560,15 @@ impl Camera {
             // move the eye away from its requested position.
             CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => {
-                self.focus_target + self.third_person_joint_delta(s, f)
+                self.focus_target + self.third_person_joint_delta(s, f.follow_joint_offset)
             }
             CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, f.now, false) {
                 Some(p) => p,
-                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset() + self.third_person_joint_delta(s, f),
+                None => {
+                    self.avatar.position
+                        + self.frame_rotation(agent) * s.focus_offset()
+                        + self.third_person_joint_delta(s, f.follow_joint_offset)
+                }
             },
         }
     }
@@ -3996,10 +4038,10 @@ mod tests {
         input.follow_joint_offset = Some(Vec3::ZERO);
         camera.update(&mut world, &settings, &input);
         input.follow_joint_offset = Some(Vec3::new(0.1, 0.4, -10.68));
-        let delta = camera.third_person_joint_delta(&settings, &input);
+        let delta = camera.third_person_joint_delta(&settings, input.follow_joint_offset);
         assert!(delta.length() <= FOLLOW_JOINT_MAX_OFFSET * 2.85 + 1e-4, "{delta}");
         input.follow_joint_offset = Some(Vec3::Z * 0.2);
-        let small = camera.third_person_joint_delta(&settings, &input);
+        let small = camera.third_person_joint_delta(&settings, input.follow_joint_offset);
         assert!(small.abs_diff_eq(Vec3::Z * 0.2 * 2.85, 1e-4), "a real movement is not capped");
     }
 
@@ -6756,6 +6798,100 @@ mod tests {
                 cam.drag(ToolMode::Zoom, dx, 0.0, 1280.0, &mut w.agent);
                 assert!((w.agent.yaw - expected).abs() < 1e-5, "release ends steering");
             }
+        }
+    }
+
+    #[test]
+    fn avatar_keep_orbit_drag_does_not_turn_the_avatar_while_stationary() {
+        // ClickOnAvatarKeepsCamera while still on follow: left-drag orbits
+        // (orbit_yaw) without mouse-steer turning the agent.
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        w.agent.yaw = 0.0;
+        let heading = w.agent.yaw;
+        let focus = (cam.focus_point(), cam.focus_object_id());
+        cam.begin_drag(false);
+        cam.avatar_keep_orbit_drag(2.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "inside the drag threshold");
+        cam.avatar_keep_orbit_drag(256.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "stationary keep-camera orbit must not steer");
+        assert_eq!((cam.focus_point(), cam.focus_object_id()), focus);
+        assert!(cam.orbit_yaw.abs() > 0.1, "the follow camera orbited");
+        cam.fold_orbit(&mut w.agent);
+        assert!(
+            (w.agent.yaw - (-256.0 * TAU / 1280.0)).abs() < 1e-5,
+            "movement folds the orbit into heading"
+        );
+    }
+
+    #[test]
+    fn keep_camera_click_aims_at_the_hit_without_snapping_behind() {
+        // Legacy Viewer: pickCallback always, setFocusOnAvatar only when the
+        // option is off. Keep position/lens; focus moves to the body hit.
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        let eye = cam.position;
+        let fov = cam.fov_y;
+        let hit = cam.avatar.position + Vec3::new(0.15, 0.2, 0.9);
+        let ray = (eye, (hit - eye).normalize_or(Vec3::X));
+        cam.alt_focus(hit, None, ray, &mut w.agent, &s);
+        assert!(!cam.focus_on_avatar, "keep-camera skips setFocusOnAvatar");
+        assert!((cam.focus_target - hit).length() < 1e-3, "aim at the touched spot");
+        assert!((cam.position - eye).length() < 0.05, "camera position kept");
+        assert!((cam.fov_y - fov).abs() < 1e-5, "lens kept");
+        w.agent.yaw = 0.0;
+        let heading = w.agent.yaw;
+        cam.begin_drag(false);
+        cam.avatar_keep_orbit_drag(256.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "orbit around the hit must not steer");
+        assert!((cam.focus_target - hit).length() < 1e-3, "focus stays on the hit");
+    }
+
+    #[test]
+    fn keep_camera_click_preserves_the_rendered_eye_and_posed_hit() {
+        for seated in [false, true] {
+            let mut world = hover_world(seated);
+            let settings = CameraSettings {
+                third_person_follow_joint: Some(CameraFollowJoint::Head),
+                smoothing: 0.0,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            let mut input = frame(1.0 / 60.0);
+            input.follow_joint_offset = Some(Vec3::new(0.12, -0.2, 0.35));
+            camera.update(&mut world, &settings, &input);
+            let idx = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let object = pick_focus_object(&world, idx, input.now).unwrap();
+            assert!(object.1.avatar);
+            let eye = camera.position;
+            // A previously focused close object narrowed the lens.
+            camera.current_fov_zoom = 0.5;
+            camera.fov_zoom = 0.5;
+            camera.virtual_position = camera.target + (eye - camera.target) / 1.5;
+            let lens = camera.zoomed_fov(&settings, input.aspect);
+            let hit = camera.target + camera.avatar.render_rotation * Vec3::new(0.03, 0.18, 0.22);
+            camera.focus_own_surface(hit, Some(object), input.follow_joint_offset, &settings);
+            for _ in 0..120 {
+                camera.update(&mut world, &settings, &input);
+                assert!(
+                    camera.position.abs_diff_eq(eye, 1e-3),
+                    "the eye moved after the click, seated={seated}"
+                );
+                assert!((camera.fov_y - lens).abs() < 1e-5);
+            }
+            assert!(
+                camera.target.abs_diff_eq(hit, 1e-3),
+                "the posed surface received the joint offset twice"
+            );
+            let heading = world.agent.yaw;
+            camera.begin_drag(false);
+            camera.avatar_keep_orbit_drag(150.0, 0.0, 1280.0, &mut world.agent);
+            camera.update(&mut world, &settings, &input);
+            assert_eq!(world.agent.yaw, heading);
+            assert!(camera.target.abs_diff_eq(hit, 1e-3));
+            assert!(camera.position.distance(eye) > 0.05);
         }
     }
 
