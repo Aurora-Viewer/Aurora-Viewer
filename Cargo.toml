@@ -34,8 +34,9 @@ opt-level = 3
 [profile.test.package.aurora-viewer]
 opt-level = 0
 
-# CI (clippy, tests): compiled fast rather than running fast; keeps the
-# debug assertions and overflow checks as an extra net for the tests.
+# CI (clippy, tests): the workspace's crates are compiled fast rather than
+# running fast; keeps the debug assertions and overflow checks as an extra
+# net for the tests.
 [profile.ci]
 inherits = "dev"
 opt-level = 0
@@ -44,8 +45,15 @@ debug-assertions = true
 overflow-checks = true
 incremental = false
 
+# The dependencies are optimised a little. They come from the Rust cache and
+# are rebuilt only when Cargo.lock or the Rust version changes, and the
+# viewer's interface tests spend most of their time in them (egui): on the
+# same hosted runner those tests take 158 s instead of 566 s. 1 and not 3:
+# the tests run as fast, and a cache built from nothing costs less (TASKS.md,
+# task `ci-optimised-deps`, has the measures). Without this section `ci`
+# would inherit the 3 of `dev`.
 [profile.ci.package."*"]
-opt-level = 0
+opt-level = 1
 
 # "Debug viewer" of aurora-tools.cmd (target\debugging): a console window,
 # debug assertions and overflow checks, full debug info for Aurora's own
