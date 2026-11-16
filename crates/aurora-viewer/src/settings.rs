@@ -3416,17 +3416,13 @@ impl Settings {
                 self.inventory.recent_sort.system_first = false;
             }
         }
-        // "Hide the chat bar when not in use" became the "Chat bar" choice:
-        // on is "Shown when typing", off (or absent) "Always shown". Only
-        // earlier files: an older build that saved over a newer file wrote
-        // the switch back beside the choice, which stays
-        let autohide = self.former_autohide_chat_bar.take();
-        if self.settings_version < 41 {
-            self.chat_bar = if autohide == Some(true) {
-                ChatBar::WhenTyping
-            } else {
-                ChatBar::Always
-            };
+        // Main's version 40 still saved the old switch. Builds that already
+        // offered the three modes saved only chat_bar at the same version.
+        // A missing choice takes ChatBar's default during deserialization.
+        if let Some(autohide) = self.former_autohide_chat_bar.take()
+            && self.settings_version < 41
+        {
+            self.chat_bar = if autohide { ChatBar::WhenTyping } else { ChatBar::Always };
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -5029,6 +5025,14 @@ mod tests {
             assert_eq!(off.chat_bar, ChatBar::Always, "version {version}");
             let absent = read(serde_json::json!({ "settings_version": version }));
             assert_eq!(absent.chat_bar, ChatBar::Always, "version {version}");
+        }
+        // Version 40 from the three-mode viewer already stored each choice.
+        for mode in [ChatBar::Always, ChatBar::WhenTyping, ChatBar::ConversationsOnly] {
+            let file = serde_json::json!({ "settings_version": 40, "chat_bar": mode });
+            let migrated = read(file);
+            assert_eq!(migrated.chat_bar, mode);
+            assert_eq!(migrated.settings_version, SETTINGS_VERSION);
+            assert_eq!(read(serde_json::to_value(migrated).expect("save settings")).chat_bar, mode);
         }
         // saved: the choice, without the former switch
         let saved =
