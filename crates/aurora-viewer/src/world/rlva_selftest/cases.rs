@@ -524,7 +524,47 @@ fn rules() -> Vec<Case> {
             ),
         ],
     ));
+    // LLAgent::teleportViaLandmark (llagent.cpp), the rule a landmark
+    // dropped in the world follows too, and LLWorldEnableTeleportHome
+    // (llviewermenu.cpp): asked of the rules, nothing is sent.
+    let home_entry_only = |w: &World, _: &Ctx| !w.rlva_home_entry_enabled() && w.rlva_can_teleport_home();
+    cases.push(case(
+        "A32",
+        "@tplm and @tploc: landmarks and Teleport Home (#2729)",
+        vec![
+            skip_if(|w, c| {
+                (!teleports_free(w, c) && c.foreign_rules(w)).then(|| "already refused by a restriction of another object".to_owned())
+            }),
+            Step::Now("allowed before the rules", holds(teleports_free, "already refused")),
+            Step::Say(Who::Controller, "@tplm=n"),
+            Step::Expect(
+                "a teleport by landmark refused",
+                holds(|w, _| !w.rlva_can_teleport_landmark(), "still allowed"),
+            ),
+            Step::Now(
+                "the Teleport Home entry greyed, the Home buttons left",
+                holds(home_entry_only, "the entry is not greyed, or the buttons are"),
+            ),
+            Step::Say(Who::Controller, "@tplm=y,tploc=n"),
+            Step::Expect(
+                "@tploc alone leaves the landmarks",
+                holds(|w, _| w.rlva.has("tploc") && w.rlva_can_teleport_landmark(), "landmarks refused"),
+            ),
+            Step::Now(
+                "the Teleport Home entry greyed under @tploc too",
+                holds(home_entry_only, "the entry is not greyed, or the buttons are"),
+            ),
+            Step::Say(Who::Controller, "@tplm=n"),
+            Step::Expect("no way home under both", holds(|w, _| !w.rlva_can_teleport_home(), "still allowed")),
+            Step::Say(Who::Controller, "@tplm=y,tploc=y"),
+            Step::Expect("allowed again once released", holds(teleports_free, "still refused")),
+        ],
+    ));
     cases
+}
+
+fn teleports_free(w: &World, _: &Ctx) -> bool {
+    w.rlva_can_teleport_landmark() && w.rlva_home_entry_enabled() && w.rlva_can_teleport_home()
 }
 
 fn replies() -> Vec<Case> {
