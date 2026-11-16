@@ -1463,7 +1463,10 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     let delivered = match delivery_mark(name) {
         Some(Mark::Strong) => true,
         Some(Mark::Plain) => !shelf_marked && !words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str())),
-        None => !shelf_marked && shares_its_name(inv, f, name),
+        // (a shelf word inside a product's name does not stop its brand:
+        // `Lyrium. My Little Grimoire` holding `Lyrium. My Little Grimoire
+        // Curvy`; `My Stuff`'s things never start with `my`)
+        None => (!shelf_marked || brand_first(inv, f, name)) && shares_its_name(inv, f, name),
     };
     if delivered {
         return true;
@@ -1565,6 +1568,15 @@ fn delivery_mark(name: &str) -> Option<Mark> {
     if version_tag(name) {
         return Some(Mark::Strong);
     }
+    // (`MadPea Old Milk Cans Unboxed`: the unpacker's own word after a
+    // product's name; `Unboxed Items`, `Unpacked Stuff` stay piles)
+    if let Some((last, rest)) = name_words.split_last()
+        && matches!(last.as_str(), "unboxed" | "unpacked")
+        && rest.len() >= 2
+        && names_a_product(&rest.join(" "))
+    {
+        return Some(Mark::Strong);
+    }
     name_words.iter().any(|w| w == "boxed").then_some(Mark::Plain)
 }
 
@@ -1617,10 +1629,16 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
                 && !loose_plural(w)
         })
         .collect();
-    if own.is_empty() || f.items.len() < 2 {
+    if own.is_empty() || f.items.is_empty() {
         return false;
     }
     let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
+    // (a box's folder holding just the product: `Harvester mesh BOX`
+    // holding `Harvester mesh`, two of its words at least)
+    if let [only] = items.as_slice() {
+        let item_words = words(only);
+        return own.len() >= 2 && own.iter().filter(|w| item_words.contains(w)).count() >= 2;
+    }
     // (beside a shelf word, `Group Gifts`, `Rare Gacha`, only an item whose
     // first word is the folder's own: a creator puts the brand first)
     let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
@@ -1638,6 +1656,21 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
     // (two in five: a delivery's notecards, landmarks and add-ons carry
     // other names; a shelf's things come from many creators)
     sharing >= 2 && sharing * 5 >= items.len() * 2
+}
+
+/// Most of a folder's items start with the folder's own first word, a
+/// brand's place (`Lyrium. My Little Grimoire` holding `Lyrium. My Little
+/// Grimoire - Curvy`).
+fn brand_first(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    let Some(first) = words(name).into_iter().next() else {
+        return false;
+    };
+    if first.chars().count() < 3 || SHELF_MARKERS.contains(&first.as_str()) || SHELF_WORDS.contains(&first.as_str()) {
+        return false;
+    }
+    let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
+    let starting = items.iter().filter(|n| words(n).first() == Some(&first)).count();
+    starting >= 2 && starting * 5 >= items.len() * 3
 }
 
 /// Kinds sold as one product though written as many (`Winter Boots`): an

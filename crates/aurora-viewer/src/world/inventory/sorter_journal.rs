@@ -525,14 +525,10 @@ pub fn share_path(desktop: Option<PathBuf>, documents: Option<PathBuf>, here: Pa
 /// Write a layout to share as plain JSON (anyone can open it), through a
 /// temporary file.
 pub fn save_shared(path: &Path, snapshot: &Snapshot) -> std::io::Result<()> {
-    use std::io::Write;
-    let temporary = path.with_extension("tmp");
-    {
-        let mut file = std::io::BufWriter::new(std::fs::File::create(&temporary)?);
-        serde_json::to_writer(&mut file, snapshot).map_err(std::io::Error::other)?;
-        file.flush()?;
-    }
-    std::fs::rename(&temporary, path)
+    // (the viewer's own safe writer: it waits for a file an antivirus or an
+    // indexer holds, never loses the save)
+    let bytes = serde_json::to_vec(snapshot).map_err(std::io::Error::other)?;
+    crate::atomic_file::write(path, &bytes)
 }
 
 /// The folder of Auto-sort's files for one account.
@@ -543,18 +539,14 @@ pub fn folder(account: &Path) -> PathBuf {
 /// Write `value` as gzip-compressed JSON, through a temporary file so a
 /// crash never leaves half a file.
 pub fn save<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let temporary = path.with_extension("tmp");
-    {
-        let file = std::fs::File::create(&temporary)?;
-        let mut gz = flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::fast());
-        serde_json::to_writer(&mut gz, value).map_err(std::io::Error::other)?;
-        gz.finish()?.flush()?;
-    }
-    std::fs::rename(&temporary, path)
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    serde_json::to_writer(&mut gz, value).map_err(std::io::Error::other)?;
+    // (the viewer's own safe writer: it waits for a file an antivirus or an
+    // indexer holds, and is on the disk before it replaces the old one)
+    crate::atomic_file::write(path, &gz.finish()?)
 }
 
 /// Read a file written by [`save`]; a missing or unreadable one is None

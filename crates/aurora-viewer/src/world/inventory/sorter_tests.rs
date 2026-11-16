@@ -3289,3 +3289,42 @@ fn a_shelf_word_shelf_shares_no_brand() {
     add_item(&mut inv, 952, 900, "Lumen Group Gift Boots", 0);
     assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)));
 }
+
+/// Real layouts: a brand-first folder with `My` in its product's name, a
+/// box's folder holding just the product, and `<product> Unboxed` stay
+/// whole; `My Stuff` and `Unboxed Items` stay piles.
+#[test]
+fn brand_first_box_folders_and_unboxed_products_stay_whole() {
+    let none = HashSet::new();
+    let layouts: [(&str, &[&str]); 3] = [
+        (
+            "Zorin. My Little Book",
+            &["Zorin. My Little Book - Curvy", "Zorin. My Little Book", "Zorin Mainstore"],
+        ),
+        ("Quarry mesh BOX", &["Quarry mesh"]),
+        (
+            "Brindle Old Milk Cans Unboxed",
+            &["Brindle Old Milk Can", "Brindle Old Milk Can - rusty"],
+        ),
+    ];
+    for (name, items) in layouts {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(
+            !(950..950 + items.len() as u128).any(|n| moved.contains(&id(n))),
+            "{name} is never opened"
+        );
+    }
+    for name in ["My Stuff", "Unboxed Items"] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        add_item(&mut inv, 950, 900, "Zephyr Gizmo", 0);
+        add_item(&mut inv, 951, 900, "Quillon Thing", 0);
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+}
