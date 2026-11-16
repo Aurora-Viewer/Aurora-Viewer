@@ -14635,6 +14635,7 @@ inventory-sorter-kept-excluded = Stays: in an excluded folder
 inventory-sorter-kept-own = Stays: My folders and the folders holding one, never moved whole
 inventory-sorter-kept-protected = Stays: system and protected folders
 inventory-sorter-kept-loading = Stays for now: folders still loading (they move once loaded)
+inventory-sorter-kept-unreadable = Stays: a folder inside could not be read, so it never moves whole
 inventory-sorter-done-skipped = { $count } sorted; { $skipped ->
         [one] { $skipped } skipped because it changed since the preview.
        *[other] { $skipped } skipped because they changed since the preview.
@@ -14669,6 +14670,10 @@ inventory-sorter-share-layout-hint = Saves the names of your folders and items, 
 inventory-sorter-share-layout-loading = Reading your whole inventory first…
 inventory-sorter-share-layout-saving = Saving…
 inventory-sorter-share-layout-saved = Saved to { $path }
+inventory-sorter-share-layout-unread = { $count ->
+        [one] { $count } folder could not be read: it is marked as unknown in the file.
+       *[other] { $count } folders could not be read: they are marked as unknown in the file.
+    }
 inventory-sorter-share-layout-show = Show in folder
 inventory-sorter-share-layout-failed = The layout could not be saved: { $error }
 inventory-sorter-snapshot-restore = Put this layout back…

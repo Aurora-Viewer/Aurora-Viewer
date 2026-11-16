@@ -311,6 +311,11 @@ pub struct Snapshot {
     pub account: Uuid,
     pub folders: Vec<(Uuid, Uuid, String, i32)>,
     pub items: Vec<(Uuid, Uuid, String)>,
+    /// A layout to share: the folders whose contents were never read (the
+    /// server failed to give them, or the wait ran out): unknown, never
+    /// empty.
+    #[serde(default)]
+    pub unread: Vec<Uuid>,
 }
 
 impl Snapshot {
@@ -335,6 +340,7 @@ impl Snapshot {
             account,
             folders,
             items,
+            unread: Vec::new(),
         }
     }
 }
@@ -372,11 +378,17 @@ impl Snapshot {
             .collect();
         items.sort_by_key(|it| it.id);
         let items = items.iter().map(|it| (number(it.id), number(it.parent), it.name.clone())).collect();
+        let unread = kept
+            .iter()
+            .filter(|f| f.state != super::super::FetchState::Fetched)
+            .map(|f| number(f.info.id))
+            .collect();
         Self {
             at,
             account: Uuid::nil(),
             folders,
             items,
+            unread,
         }
     }
 }

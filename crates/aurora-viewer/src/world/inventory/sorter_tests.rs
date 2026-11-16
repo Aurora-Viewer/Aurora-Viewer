@@ -3328,3 +3328,43 @@ fn brand_first_box_folders_and_unboxed_products_stay_whole() {
         assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
     }
 }
+
+/// A folder the server failed to give is unknown, never empty: a folder
+/// holding one never moves whole, by a plan or a run, and Clean up never
+/// takes it as empty.
+#[test]
+fn a_folder_that_failed_to_load_is_unknown_never_empty() {
+    let none = HashSet::new();
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Zephyr Gizmo (unpacked)");
+    add_folder(&mut inv, 901, 900, "failed");
+    inv.folders.get_mut(&id(901)).expect("folder").state = FetchState::Failed;
+    add_item(&mut inv, 950, 900, "Zephyr Gizmo", 0);
+    // chosen by hand: kept, said so
+    let plan = plan_entries(&inv, &[id(900)], &Preferences::default(), &none, &none);
+    assert!(plan.moves.is_empty());
+    assert_eq!(plan.kept_list.iter().filter(|(_, k)| *k == Kept::Unreadable).count(), 1);
+    // a run's move of it is skipped, never sent
+    let mut queue: VecDeque<Move> = VecDeque::from([Move {
+        id: id(900),
+        folder: true,
+        name: "Zephyr Gizmo (unpacked)".into(),
+        from: id(1),
+        to: Dest::Path(vec!["Stuff".into()]),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+        from_trash: false,
+        snapshot: false,
+    }]);
+    let mut skipped = 0;
+    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| false);
+    assert!(!matches!(step, Step::Change(..)) && skipped == 1);
+    // Clean up's empty folders never take it
+    let cleanup = Cleanup {
+        empty_folders: true,
+        ..before_2020()
+    };
+    let plan = plan_cleanup(&inv, &Preferences::default(), &cleanup, inv.root, today(), &none, &none);
+    assert!(!plan.rows.iter().any(|r| r.id == id(901) || r.id == id(900)));
+}

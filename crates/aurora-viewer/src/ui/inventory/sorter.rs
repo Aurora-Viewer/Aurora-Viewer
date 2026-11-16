@@ -88,8 +88,9 @@ enum Share {
     /// The whole inventory is read first (since when).
     Loading(Instant),
     /// Written on another thread.
-    Saving(std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>),
-    Saved(std::path::PathBuf),
+    Saving(std::sync::mpsc::Receiver<Result<(std::path::PathBuf, usize), String>>),
+    /// Its path, and how many folders could not be read.
+    Saved(std::path::PathBuf, usize),
     Failed(String),
 }
 
@@ -3616,7 +3617,16 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
     match state.shared.as_ref() {
         Some(Share::Loading(since)) => {
             let loaded = crate::world::inventory::actions::request_tree(inv, inv.root);
-            if !loaded && since.elapsed() < SHARE_LOAD_LIMIT {
+            // (done too once nothing more can come: no folder on its way,
+            // and the rest failed or too large for the server to give)
+            let settled = || {
+                !inv.folders.values().any(|f| {
+                    !f.library
+                        && (f.state == crate::world::inventory::FetchState::Fetching
+                            || f.state == crate::world::inventory::FetchState::Unknown && !inv.too_big.contains(&f.info.id))
+                })
+            };
+            if !loaded && !settled() && since.elapsed() < SHARE_LOAD_LIMIT {
                 return;
             }
             let at = unix_now();
@@ -3635,8 +3645,9 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
             );
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
+                let unread = snapshot.unread.len();
                 let result = sorter::journal::save_shared(&path, &snapshot)
-                    .map(|()| path)
+                    .map(|()| (path, unread))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(result);
             });
@@ -3651,7 +3662,7 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
             };
             if let Some(result) = result {
                 state.shared = Some(match result {
-                    Ok(path) => Share::Saved(path),
+                    Ok((path, unread)) => Share::Saved(path, unread),
                     Err(e) => {
                         log::warn!("auto-sort: the layout to share could not be saved: {e}");
                         Share::Failed(e)
@@ -3707,7 +3718,7 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
                     .color(p.muted),
             );
         }
-        Some(Share::Saved(path)) => {
+        Some(Share::Saved(path, unread)) => {
             ui.label(
                 RichText::new(aurora_i18n::tr!(
                     "inventory-sorter-share-layout-saved",
@@ -3715,6 +3726,13 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
                 ))
                 .small(),
             );
+            if *unread > 0 {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-unread", count = *unread))
+                        .small()
+                        .color(p.muted),
+                );
+            }
             if action_button(
                 ui,
                 p,

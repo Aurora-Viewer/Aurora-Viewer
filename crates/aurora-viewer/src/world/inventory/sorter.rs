@@ -1146,6 +1146,27 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
 /// whole once they are, so they are asked for. One the server failed to
 /// give is not listed: it keeps its parent where it is (`holds_closed`)
 /// and is never asked for again in a loop.
+/// A folder at or below `id` the server failed to give (its contents are
+/// unknown, never taken as empty): a folder holding one never moves whole,
+/// it may carry what no one has seen (something worn, a locked folder).
+pub fn failed_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(folder) = stack.pop() {
+        if !seen.insert(folder) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&folder) else { continue };
+        if f.state == FetchState::Failed {
+            return true;
+        }
+        if f.state == FetchState::Fetched {
+            stack.extend(f.children.iter().copied().filter(|c| !excluded.contains(c)));
+        }
+    }
+    false
+}
+
 pub fn unloaded_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> Vec<Uuid> {
     let mut out = Vec::new();
     let mut stack = vec![id];
@@ -2893,6 +2914,9 @@ pub enum Kept {
     /// A folder whose subfolders are not loaded yet: it moves whole once
     /// they are (the preview asks for them).
     Loading,
+    /// A folder holding one the server failed to give: its contents are
+    /// unknown, so it never moves whole.
+    Unreadable,
 }
 
 impl Kept {
@@ -2905,6 +2929,7 @@ impl Kept {
             Kept::Own => aurora_i18n::tr!("inventory-sorter-kept-own"),
             Kept::Protected => aurora_i18n::tr!("inventory-sorter-kept-protected"),
             Kept::Loading => aurora_i18n::tr!("inventory-sorter-kept-loading"),
+            Kept::Unreadable => aurora_i18n::tr!("inventory-sorter-kept-unreadable"),
         }
     }
 }
@@ -3655,6 +3680,11 @@ fn plan_with(
                 plan.kept_list.push((name, Kept::Loading));
                 continue;
             }
+            if failed_below(inv, id, &prefs.excluded) {
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Unreadable));
+                continue;
+            }
         }
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) && !holds_closed(inv, id, &prefs.excluded) {
             let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
@@ -3848,6 +3878,12 @@ pub fn step_with(
                     return Step::Loading;
                 }
                 break 'moves;
+            }
+            // (a folder inside that could not be read: it never moves whole)
+            if failed_below(inv, next.id, &[]) {
+                queue.pop_front();
+                *skipped += 1;
+                continue;
             }
         }
         let still_here = actions::parent(inv, next.id) == Some(next.from)

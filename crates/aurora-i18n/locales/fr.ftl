@@ -14640,6 +14640,7 @@ inventory-sorter-kept-excluded = Restent : dans un dossier exclu
 inventory-sorter-kept-own = Restent : Mes dossiers et ceux qui en contiennent, jamais déplacés en entier
 inventory-sorter-kept-protected = Restent : dossiers système et protégés
 inventory-sorter-kept-loading = Restent pour l'instant : dossiers encore en chargement (ils bougent une fois chargés)
+inventory-sorter-kept-unreadable = Restent : un dossier à l’intérieur n’a pas pu être lu, il n’est donc jamais déplacé en entier
 inventory-sorter-done-skipped = { $count ->
         [one] { $count } trié
        *[other] { $count } triés
@@ -14683,6 +14684,10 @@ inventory-sorter-share-layout-hint = Enregistre le nom de vos dossiers et objets
 inventory-sorter-share-layout-loading = Lecture de tout votre inventaire d’abord…
 inventory-sorter-share-layout-saving = Enregistrement…
 inventory-sorter-share-layout-saved = Enregistré dans { $path }
+inventory-sorter-share-layout-unread = { $count ->
+        [one] { $count } dossier n’a pas pu être lu : il est marqué comme inconnu dans le fichier.
+       *[other] { $count } dossiers n’ont pas pu être lus : ils sont marqués comme inconnus dans le fichier.
+    }
 inventory-sorter-share-layout-show = Afficher dans le dossier
 inventory-sorter-share-layout-failed = L’organisation n’a pas pu être enregistrée : { $error }
 inventory-sorter-snapshot-restore = Remettre cette disposition…

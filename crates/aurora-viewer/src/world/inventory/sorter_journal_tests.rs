@@ -657,4 +657,9 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
         "numbers, never inventory ids"
     );
     assert!(!shared.items.iter().any(|(i, _, _)| real.contains(i)));
+    // a folder never read is marked unknown, never written as empty
+    assert!(shared.unread.is_empty());
+    inv.folders.get_mut(&id(30)).expect("folder").state = FetchState::Failed;
+    let shared = Snapshot::take_to_share(&inv, 1);
+    assert_eq!(shared.unread.len(), 1);
 }
