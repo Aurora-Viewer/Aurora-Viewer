@@ -1532,10 +1532,9 @@ pub(super) fn show(
                 // after all, not seen yet: journaled too (Undo leaves an
                 // entry still where it was), never lost from Undo
                 let mut last = placed(inv, std::mem::take(&mut job.confirmed));
-                let unsure = job.unsure_entries();
-                // not seen at their place: counted as skipped (never done)
-                job.skipped += unsure.iter().filter(|e| !last.iter().any(|l| l.id == e.id)).count();
-                last.extend(unsure);
+                // (a move still unsure at the end comes from a batch counted
+                // as failed already)
+                last.extend(job.unsure_entries());
                 state.journal.record_in(run, last);
                 state.job = None;
                 // only a run that moved something (or a resume) ends the run

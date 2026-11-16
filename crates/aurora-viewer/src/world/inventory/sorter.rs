@@ -1342,7 +1342,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
         // the product's name again, word for word (`Hex Dress Legacy`)
-        has(&sub_words, &product.join(" "))
+        (sub_words.starts_with(&product) || sub_words.ends_with(&product))
             || read.body.is_some()
             || read.squish
             || read.waifus
@@ -2889,7 +2889,6 @@ pub fn step(
                 name: part,
                 type_default: -1,
             });
-            change.refresh.push(id);
             made.insert(key, id);
             fresh.insert(id);
             parent = id;
@@ -2932,7 +2931,6 @@ pub fn step(
                 if let Operation::Folder { id, .. } = op {
                     made.retain(|_, made_id| made_id != id);
                     fresh.remove(id);
-                    change.refresh.retain(|r| r != id);
                 }
             }
             *skipped += 1;
@@ -2941,9 +2939,12 @@ pub fn step(
         // the new folders' parents are read back too, so a folder made by a
         // batch that fails later is still found by the next run; a source is
         // not (a folder of 100,000 items read again each batch)
+        // (a new folder is listed only once its move joins the batch: one
+        // the batch ends before is never made)
         for op in &new_folders {
-            if let Operation::Folder { parent: above, .. } = op {
+            if let Operation::Folder { id, parent: above, .. } = op {
                 change.refresh.push(*above);
+                change.refresh.push(*id);
             }
         }
         change.operations.append(&mut new_folders);
