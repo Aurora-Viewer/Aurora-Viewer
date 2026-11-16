@@ -360,6 +360,14 @@ pub trait SyncState {
     /// through the sync (what moves by itself below it is listed on its
     /// own).
     fn anchored(&self, idx: usize) -> bool;
+    /// Released by the parcel isolation or the skyboxes rule
+    /// (`World::object_shown`): a mover kept out of the world lists nothing
+    /// while it is, neither itself nor what follows it. Its anchors went
+    /// with its release, so a hidden avatar listed its whole worn tree for
+    /// a full sync at each frame, each prim only to be released again: a
+    /// sky full of hidden avatars filled the sync's time. It shows again
+    /// through `Scene::resync_subtrees`.
+    fn released(&self, idx: usize) -> bool;
     /// Must be synced: changed, or its last sync could not finish.
     fn needs_sync(&self, idx: usize, o: &Object) -> bool;
     /// Pending geometry: what the object waits for, if anything.
@@ -714,7 +722,10 @@ impl SyncSets {
             let idx = self.own_moving.items[i];
             match objects.get(idx) {
                 Some(o) if moves_by_itself(o, agent, state.rigged(idx)) => {
-                    self.push_followers(objects, idx, &mut list, state);
+                    // (kept in the set: the parcel crossings read it)
+                    if !state.released(idx) {
+                        self.push_followers(objects, idx, &mut list, state);
+                    }
                     i += 1;
                 }
                 // stopped, or removed: swap-removed, the next one takes its place
@@ -1022,6 +1033,7 @@ mod tests {
     struct State {
         rigged: HashSet<usize>,
         hud: HashSet<usize>,
+        released: HashSet<usize>,
         anchored: HashSet<usize>,
         extra: HashSet<usize>,
         pending: Vec<(usize, bool)>,
@@ -1042,6 +1054,9 @@ mod tests {
         }
         fn anchored(&self, idx: usize) -> bool {
             self.anchored.contains(&idx)
+        }
+        fn released(&self, idx: usize) -> bool {
+            self.released.contains(&idx)
         }
         fn needs_sync(&self, idx: usize, o: &Object) -> bool {
             o.render.needs_records || o.shape_dirty || o.material_dirty || self.extra.contains(&idx)
@@ -1423,6 +1438,27 @@ mod tests {
         assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child]);
         state.anchored.insert(att_child);
         assert_eq!(f.quiet_frame(&all, &state), vec![avatar]);
+    }
+
+    /// A hidden avatar (a skybox's, a parcel's) and what it wears are not
+    /// listed at each frame while it is released; an update still reaches
+    /// what changed, and once shown it moves again with its followers.
+    #[test]
+    fn a_released_avatar_and_what_it_wears_are_not_listed() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let att = f.add(9001, 9000, false);
+        let att_child = f.add(9002, 9001, false);
+        let all = [avatar, att, att_child];
+        f.frame(&state);
+        // released: its anchors are gone with it
+        state.released.extend(all);
+        assert_eq!(f.quiet_frame(&all, &state), Vec::<usize>::new());
+        assert_eq!(f.quiet_frame(&all, &state), Vec::<usize>::new());
+        // shown again: it and its worn tree follow it once more
+        state.released.clear();
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child]);
     }
 
     /// A rigged root moves by itself and its plain prims are anchored: an
