@@ -192,10 +192,45 @@ impl BackgroundFetch {
         // already known to the model.
         let mut retries = std::mem::take(&mut self.retries);
         let mut waiting = Vec::new();
-        for retry in retries.drain(..) {
-            if retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
+        for mut retry in retries.drain(..) {
+            let targets = if retry.children.is_empty() {
+                vec![retry.folder]
+            } else {
+                retry.children.clone()
+            };
+            let mut unresolved = Vec::new();
+            let mut externally_active = false;
+            for id in targets {
+                match inv.folders.get(&id).map(|folder| folder.state) {
+                    Some(FetchState::Fetched) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::Recursive));
+                    }
+                    None => {
+                        inv.retrying_folders.remove(&id);
+                    }
+                    _ if inv.too_big.contains(&id) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::ContentRecursive));
+                    }
+                    state => {
+                        externally_active |= state == Some(FetchState::Fetching);
+                        unresolved.push(id);
+                    }
+                }
+            }
+            if unresolved.is_empty() {
+                continue;
+            }
+            if !retry.children.is_empty() {
+                retry.children = unresolved.clone();
+            }
+            if externally_active || retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
                 waiting.push(retry);
             } else {
+                for id in unresolved {
+                    inv.retrying_folders.remove(&id);
+                }
                 self.send(
                     inv,
                     agent,
@@ -246,6 +281,9 @@ impl BackgroundFetch {
     }
 
     fn step(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {
+        if inv.retrying_folders.contains(&id) {
+            return;
+        }
         let Some(folder) = inv.folders.get(&id) else {
             return;
         };
@@ -285,6 +323,7 @@ impl BackgroundFetch {
                         continue;
                     };
                     match c.state {
+                        _ if inv.retrying_folders.contains(child) => {}
                         _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
                         FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
                         FetchState::Unknown | FetchState::Failed => done = false,
@@ -431,6 +470,7 @@ impl BackgroundFetch {
                         && f.state == FetchState::Fetching
                     {
                         f.state = FetchState::Unknown;
+                        inv.retrying_folders.insert(*id);
                     }
                 }
                 let delay = BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize];

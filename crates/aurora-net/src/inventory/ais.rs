@@ -300,6 +300,7 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
+                log::warn!("AIS read exhausted {attempt} attempts waiting for response headers");
                 return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Err(error)) => {
@@ -307,10 +308,11 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     t.finish(0, 0, false);
                 }
                 if attempt <= RETRY_ATTEMPTS {
-                    log::debug!("AIS inventory read failed ({error}); retry {attempt}");
+                    log::debug!("AIS inventory read failed ({}); retry {attempt}", error.without_url());
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
+                log::warn!("AIS read exhausted {attempt} attempts during transport: {}", error.without_url());
                 return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Ok(response)) => response,
@@ -338,6 +340,7 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
+                log::warn!("AIS read exhausted {attempt} attempts waiting for a response body (status {status})");
                 return Err(FetchError::new(FetchFailure::Transient, Some(status)));
             }
             Ok(Err(error)) => {
@@ -345,22 +348,31 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
                     t.finish(status, 0, false);
                 }
                 if attempt <= RETRY_ATTEMPTS {
-                    log::debug!("AIS inventory reply failed ({error}); retry {attempt}");
+                    log::debug!("AIS inventory reply failed ({}); retry {attempt}", error.without_url());
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
+                log::warn!(
+                    "AIS read exhausted {attempt} attempts reading a response body (status {status}): {}",
+                    error.without_url()
+                );
                 return Err(FetchError::new(FetchFailure::Transient, Some(status)));
             }
             Ok(Ok(body)) => body,
         };
         let bytes = body.len();
+        let parsed = if body.is_empty() {
+            Ok(Llsd::Undef)
+        } else {
+            aurora_llsd::from_xml(&body).map_err(|_| {
+                log::warn!("AIS response contains malformed LLSD (status {status}, {bytes} bytes)");
+                FetchError::new(FetchFailure::Fatal, Some(status))
+            })
+        };
         if let Some(t) = timed {
-            t.finish(status, bytes, true);
+            t.finish(status, bytes, parsed.is_ok());
         }
-        if body.is_empty() {
-            return Ok(Llsd::Undef);
-        }
-        return aurora_llsd::from_xml(&body).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(status)));
+        return parsed;
     }
 }
 
@@ -432,8 +444,17 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
             let http = http.clone();
             let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let read = crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory).await;
-                (id, read.map(|doc| parse_item_reply(&doc, id, owner).ok()))
+                let read = get(&http, url).await;
+                (
+                    id,
+                    read.map(|doc| match parse_item_reply(&doc, id, owner) {
+                        Ok(item) => Some(item),
+                        Err(reason) => {
+                            log::warn!("AIS item {id} response could not be parsed: {reason}");
+                            None
+                        }
+                    }),
+                )
             });
         }
         let mut answered = HashSet::new();
@@ -442,8 +463,14 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
             answered.insert(id);
             match read {
                 Ok(Some(item)) => reads.items.push(item),
-                Err(crate::caps::CapsError::Status(404 | 410)) => reads.missing.push(id),
-                Ok(None) | Err(_) => reads.failed.push(id),
+                Err(FetchError {
+                    status: Some(404 | 410), ..
+                }) => reads.missing.push(id),
+                Ok(None) => reads.failed.push(id),
+                Err(error) => {
+                    log::warn!("AIS item {id} read failed: {error}");
+                    reads.failed.push(id);
+                }
             }
         }
         // a panicked read task answers nothing: failed, asked again
@@ -459,6 +486,80 @@ mod tests {
     use aurora_llsd::{Llsd, llsd_map};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
+
+    async fn read_test_headers(socket: &mut tokio::net::TcpStream) {
+        let mut bytes = Vec::new();
+        while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+            let mut buffer = [0; 2048];
+            let n = socket.read(&mut buffer).await.unwrap();
+            assert!(n > 0, "the test client must send complete HTTP headers");
+            bytes.extend_from_slice(&buffer[..n]);
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_item_read_retries_a_service_failure_before_reporting_it_failed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                read_test_headers(&mut socket).await;
+                let (status, body) = if attempt == 0 {
+                    ("503 Service Unavailable", Vec::new())
+                } else {
+                    ("200 OK", aurora_llsd::to_xml(&record(3, false, 6, false)))
+                };
+                socket
+                    .write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())
+                    .await
+                    .unwrap();
+                socket.write_all(&body).await.unwrap();
+                crate::test_http::finish(socket);
+            }
+        });
+        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3)]).await;
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
+        assert!(reads.failed.is_empty());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_item_read_recovers_after_a_body_deadline() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stalled, _) = listener.accept().await.unwrap();
+            read_test_headers(&mut stalled).await;
+            stalled
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\n\r\n<incomplete")
+                .await
+                .unwrap();
+            let (mut recovered, _) = listener.accept().await.unwrap();
+            read_test_headers(&mut recovered).await;
+            let body = aurora_llsd::to_xml(&record(3, false, 6, false));
+            recovered
+                .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())
+                .await
+                .unwrap();
+            recovered.write_all(&body).await.unwrap();
+            crate::test_http::finish(recovered);
+            drop(stalled);
+        });
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let reads = tokio::time::timeout(std::time::Duration::from_secs(10), read_items(&http, &url, id(2), &[id(3)]))
+            .await
+            .unwrap();
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
+        assert!(reads.failed.is_empty());
+        server.await.unwrap();
+    }
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -913,8 +1014,8 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let server = tokio::spawn(async move {
-            for _ in 0..3 {
-                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+            for _ in 0..3 + RETRY_ATTEMPTS {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept())
                     .await
                     .expect("request timeout")
                     .expect("request");

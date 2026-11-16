@@ -10199,10 +10199,26 @@ impl App {
         }
         self.sync_chat_log();
         while !still && let Ok((sent, ev)) = self.net.events.try_recv() {
+            let known_candidates: Vec<_> = match &ev {
+                NetEvent::InventoryContents(contents) | NetEvent::InventoryTreeFetched { result: Ok(contents), .. } => {
+                    contents.iter().flat_map(|folder| folder.items.iter().map(|item| item.id)).collect()
+                }
+                _ => Vec::new(),
+            };
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             if let Some(app_ev) = self.bridge_runtime.receive(&mut self.world, ev, Instant::now(), sent) {
                 self.on_app_event(app_ev);
+            }
+            let known: Vec<_> = known_candidates
+                .into_iter()
+                .filter(|id| self.world.inventory.items.contains_key(id))
+                .collect();
+            if !known.is_empty() {
+                self.net.send(NetCommand::InventoryItemsKnown {
+                    items: known,
+                    owner: self.world.agent_id,
+                });
             }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);

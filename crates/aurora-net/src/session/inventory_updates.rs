@@ -416,6 +416,7 @@ mod tests {
             rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: Default::default(),

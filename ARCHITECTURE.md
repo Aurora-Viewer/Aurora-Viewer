@@ -1,5 +1,14 @@
 # Aurora Viewer architecture
 
+Inventory read recovery is owned jointly by the model and the session. The
+model's `retrying_folders` prevents UI producers from bypassing background
+cooldowns; delayed retries reconcile each target before reading it again.
+`session/inventory_reads.rs` coalesces AIS item reads and bounds their active
+work per session. After folder-version validation, the app acknowledges known
+originals with `InventoryItemsKnown`, canceling redundant ordinary reads while
+retaining attachment metadata repair. Request generations isolate late
+cancelation and superseded capability results. See `docs/INVENTORY_RECOVERY.md`.
+
 Static local mesh assemblies are baked by `imports/local/scene.rs` on the
 import worker, preserving every instance transform and face slot across LODs.
 Their render-only asset uses `import_mesh::encode::local_asset` (45 faces);

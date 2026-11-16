@@ -400,7 +400,7 @@ pub fn prepare_contents(inv: &mut Inventory, agent: Uuid, folder: Uuid) -> Vec<N
             }
         }
         if inv.queue.len() < 16 {
-            inv.request(id);
+            inv.retry(id);
         }
     }
     if missing.is_empty() {
@@ -2265,7 +2265,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_item_reads_are_retried_then_count_as_broken() {
+    fn failed_item_reads_exhaust_their_budget_without_declaring_a_broken_link() {
         let mut inv = fixture();
         let id = Uuid::from_u128(723);
         inv.items.remove(&id);
@@ -2276,9 +2276,12 @@ mod tests {
             assert!(!complete(&inv, Uuid::from_u128(704)));
         }
         inv.items_failed(&[id]);
-        assert!(inv.broken(&id));
+        assert!(!inv.broken(&id));
         assert!(inv.take_item_retries().is_empty());
-        assert!(complete(&inv, Uuid::from_u128(704)));
+        assert!(
+            !complete(&inv, Uuid::from_u128(704)),
+            "temporary unavailability must not silently remove an outfit original"
+        );
     }
 
     #[test]

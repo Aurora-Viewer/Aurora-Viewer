@@ -17,6 +17,7 @@ mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_reads;
 mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
@@ -364,6 +365,7 @@ struct Session<'a> {
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
+    inventory_reads: Option<inventory_reads::Reader>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -555,6 +557,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
+        inventory_reads: None,
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -2384,6 +2387,11 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
+            NetCommand::InventoryItemsKnown { items, owner } => {
+                if let Some(reader) = &self.inventory_reads {
+                    reader.known(owner, &items);
+                }
+            }
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
             NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
             NetCommand::FetchInventoryOrphans { request } => {
@@ -3753,14 +3761,10 @@ impl Session<'_> {
         if owner == self.agent_id()
             && let Some(cap) = self.main_cap("InventoryAPIv3")
         {
-            let http = self.sh.caps_http.clone();
-            let events = self.sh.events.clone();
-            tokio::spawn(async move {
-                for chunk in items.chunks(16) {
-                    let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
-                    send_item_reads(&events, reads, attachment);
-                }
-            });
+            let reader = self
+                .inventory_reads
+                .get_or_insert_with(|| inventory_reads::Reader::new(self.sh.caps_http.clone(), self.sh.events.clone()));
+            reader.enqueue(owner, items, cap, attachment);
             return;
         }
         let Some(url) = self.main_cap("FetchInventory2") else {
@@ -6807,6 +6811,7 @@ mod event_queue_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7161,6 +7166,7 @@ mod script_dialog_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
