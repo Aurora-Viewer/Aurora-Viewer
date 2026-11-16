@@ -1145,7 +1145,7 @@ fn binding_cell(
     }
     let others: Vec<&str> = b
         .as_ref()
-        .map(|b| kb.users(b).into_iter().filter(|x| *x != a).map(crate::keybinds::label).collect())
+        .map(|b| kb.rivals(a, b).into_iter().map(crate::keybinds::label).collect())
         .unwrap_or_default();
     let tip = if capturing {
         aurora_i18n::tr!("ui-options-key-combination-ctrl-shift-alt-or-mouse-button-wheel").to_owned()

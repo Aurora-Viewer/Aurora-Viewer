@@ -158,21 +158,15 @@ impl HoverHeight {
                 }
             };
             let _ = loaded_tx.send(saved);
-            while let Ok(mut saved) = writes.recv() {
-                while let Ok(newer) = writes.try_recv() {
-                    saved = newer;
+            // a refused write is tried again, and once more when the
+            // storage goes (save_retry)
+            crate::save_retry::write_latest("hover height", &writes, |saved| {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
                 }
-                let save = || -> std::io::Result<()> {
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    let json = serde_json::to_vec(&saved).map_err(std::io::Error::other)?;
-                    crate::atomic_file::write(&path, &json)
-                };
-                if let Err(error) = save() {
-                    log::warn!("Cannot save hover height: {error}");
-                }
-            }
+                let json = serde_json::to_vec(saved).map_err(std::io::Error::other)?;
+                crate::atomic_file::write(&path, &json)
+            });
         });
         match worker {
             Ok(worker) => Self {

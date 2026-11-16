@@ -708,7 +708,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
     if !destination(inv, to) || ids.iter().any(|id| parent(inv, *id) != Some(to)) {
         return Err(aurora_i18n::tr!("world-inventory-actions-select-items-from-the-same-folder").into());
     }
-    let mut change = create_folder(to, aurora_i18n::tr!("common-new-folder"))?;
+    let mut change = create_folder(to, crate::text_validation::default_name("common-new-folder"))?;
     let new = match &change.operations[0] {
         Operation::Folder { id, .. } => *id,
         _ => return Err(aurora_i18n::tr!("common-folder-not-found").into()),
@@ -1096,6 +1096,15 @@ pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>,
     }
     if bucket.len() == 17 && inv.folders.contains_key(&id) {
         return Err(aurora_i18n::tr!("world-inventory-actions-the-folder-is-empty").into());
+    }
+    Ok(bucket)
+}
+
+/// Rebuild the confirmed gift from current permissions before each send.
+pub fn offer_for_residents(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>, recipient_count: usize) -> Result<Vec<u8>, String> {
+    let bucket = offer(inv, id, worn)?;
+    if recipient_count > 1 && offer_has_no_copy(inv, &bucket) {
+        return Err(aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").into());
     }
     Ok(bucket)
 }

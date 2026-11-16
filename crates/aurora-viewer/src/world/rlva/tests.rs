@@ -63,9 +63,11 @@ fn rlva_vendor_payments_follow_buy_while_resident_payments_follow_pay() {
         message: String::new(),
     };
     command(&mut world.rlva, A, "@pay=n");
+    assert!(!world.rlva_can_pay());
     assert!(world.rlva_allows_command(&object, Uuid::nil()));
     assert!(!world.rlva_allows_command(&resident, Uuid::nil()));
     command(&mut world.rlva, A, "@pay=y,buy=n");
+    assert!(world.rlva_can_pay());
     assert!(!world.rlva_allows_command(&object, Uuid::nil()));
     assert!(world.rlva_allows_command(&resident, Uuid::nil()));
 }
@@ -324,8 +326,20 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
     world.profiles.picks.insert(pick.id, pick.clone());
     assert!(world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
+    let saved_position = pick.pos_global;
     pick.pos_global.x += 1.0;
-    assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick)), Uuid::nil()));
+    let mut move_pick = NetCommand::PickUpdate(Box::new(pick));
+    world.profile_command(&move_pick); // the profile's optimistic cache runs before send_from
+    assert_eq!(world.rlva_send_boundary(&mut move_pick, Uuid::nil()), super::Boundary::Refused);
+    assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
+    let mut read_pick = NetCommand::PickInfoRequest {
+        creator: world.agent_id,
+        pick: TARGET,
+    };
+    world.profile_command(&read_pick);
+    assert_eq!(world.rlva_send_boundary(&mut read_pick, Uuid::nil()), super::Boundary::Send);
+    world.rlva_note_sent(&mut read_pick, Uuid::nil(), std::time::Instant::now());
+    assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
     let mut classified = ClassifiedInfo {
         id: TARGET,
         creator: world.agent_id,
@@ -1693,6 +1707,47 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
     );
 }
 
+/// RlvHandler::processCommand runs a force when it is received: another
+/// object's lock released before the queue runs does not let it through.
+/// One set after it still stops it (stricter than the Legacy Viewer, where
+/// the avatar takes off and the lock then lands it).
+#[test]
+fn rlva_queued_force_reads_the_rules_it_was_received_under() {
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    command(&mut w.rlva, B, "@fly=n");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=y");
+    let revision = w.rlva.revision;
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock held when it was received");
+    assert!(!w.rlva.has("fly"), "the current rules are back once the queue has run");
+    assert_eq!(w.rlva.revision, revision, "running the queue changes no rule");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=n");
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock set since");
+    command(&mut w.rlva, B, "@fly=y");
+    command(&mut w.rlva, A, "@fly=force");
+    w.rlva_pending();
+    assert!(w.agent.flying);
+}
+
+#[test]
+fn run_restrictions_each_leave_the_other_kind_of_run() {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    let run = NetCommand::SetAlwaysRun(true);
+    let walk = NetCommand::SetAlwaysRun(false);
+    command(&mut world.rlva, A, "@alwaysrun=n");
+    assert!(world.rlva_allows_command(&run, Uuid::nil()), "@alwaysrun leaves the double tap");
+    command(&mut world.rlva, A, "@alwaysrun=y,temprun=n");
+    assert!(world.rlva_allows_command(&run, Uuid::nil()), "@temprun leaves Always run");
+    command(&mut world.rlva, A, "@alwaysrun=n");
+    assert!(!world.rlva_allows_command(&run, Uuid::nil()), "both leave nothing that may run");
+    assert!(world.rlva_allows_command(&walk, Uuid::nil()));
+}
+
 #[test]
 fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() {
     let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1800,7 +1855,14 @@ fn rlva_teleport_home_landmarks_and_bare_tplocal_follow_the_legacy_rules() {
 fn rlva_render_aliases_release_without_mutating_saved_settings_and_touch_measures_the_surface() {
     let mut r = enabled();
     command(&mut r, A, "@camtextures=n,camavdist:4=n,showselfhead=n");
-    assert_eq!(r.camera_texture(), Some(aurora_prim::te::DEFAULT_TEXTURE));
+    // Empty @camtextures / @setcam_textures is IMG_DEFAULT, the flat grey
+    // (rlvhelper.cpp), not the plywood texture.
+    assert_eq!(r.camera_texture(), Some(aurora_prim::te::IMG_DEFAULT));
+    let expected = aurora_prim::te::IMG_DEFAULT.to_string();
+    assert_eq!(
+        r.camera_reply(&Command::parse("getcam_textures=123").unwrap(), 1.0, 1.0).as_deref(),
+        Some(expected.as_str())
+    );
     assert_eq!(r.silhouette_distance(), Some(4.0));
     command(&mut r, A, "@camtextures=y,camavdist:4=y");
     assert_eq!(r.camera_texture(), None);
@@ -4094,4 +4156,25 @@ fn rlva_forced_wear_is_asked_again_once_its_object_came_and_left() {
         !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
         "the same object is asked for again"
     );
+}
+
+#[test]
+fn inventory_offer_receipts_preserve_the_share_restriction_and_its_resident_exception() {
+    use aurora_net::NetCommand;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    let (receipt, _) = crossbeam_channel::unbounded();
+    let offer = |to| NetCommand::OfferInventory {
+        session: Uuid::nil(),
+        to,
+        id: Uuid::nil(),
+        message: String::new(),
+        bucket: vec![],
+        receipt: receipt.clone(),
+    };
+    command(&mut world.rlva, A, "@share=n");
+    assert!(!world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
+    command(&mut world.rlva, A, &format!("@share:{TARGET}=add"));
+    assert!(world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
+    assert!(!world.rlva_allows_command(&offer(B), Uuid::nil()));
 }

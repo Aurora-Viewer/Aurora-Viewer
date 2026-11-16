@@ -22,13 +22,21 @@ pub(super) fn ban_duration(time: i32, now: i64) -> String {
     if s >= 7200 {
         aurora_i18n::tr!("status-hrs", value0 = format!("{}", s / 3600))
     } else if s >= 3600 {
-        "1 hr.".into()
-    } else if s >= 120 {
-        format!("{} min", s / 60)
-    } else if s >= 60 {
-        "1 min".into()
+        aurora_i18n::tr!("land-access-one-hour").into()
     } else {
-        format!("{s} s")
+        minutes_left(s)
+    }
+}
+
+/// "10 min", "1 min" or "30 s" (the floater's Minutes, Minute and Seconds),
+/// in the language's words: 10分, 1分, 30秒 in Japanese.
+fn minutes_left(s: i64) -> String {
+    if s >= 120 {
+        aurora_i18n::tr!("land-access-minutes", minutes = (s / 60).to_string())
+    } else if s >= 60 {
+        aurora_i18n::tr!("land-access-one-minute").into()
+    } else {
+        aurora_i18n::tr!("land-access-seconds", seconds = s.to_string())
     }
 }
 
@@ -37,14 +45,7 @@ pub(super) fn access_prefix(time: i32, now: i64) -> String {
     if time == 0 {
         return String::new();
     }
-    let s = (time as i64 - now).max(0);
-    let left = if s >= 120 {
-        format!("{} min", s / 60)
-    } else if s >= 60 {
-        "1 min".into()
-    } else {
-        format!("{s} s")
-    };
+    let left = minutes_left((time as i64 - now).max(0));
     aurora_i18n::tr!("status-left-remaining", left = left.to_string())
 }
 
@@ -580,12 +581,18 @@ mod tests {
     #[test]
     fn durations_like_the_floater() {
         assert_eq!(ban_duration(0, 0), aurora_i18n::tr!("common-always"));
-        assert_eq!(ban_duration(3 * 3600 + 5, 0), "3 hrs.");
-        assert_eq!(ban_duration(3700, 0), "1 hr.");
-        assert_eq!(ban_duration(600, 0), "10 min");
-        assert_eq!(ban_duration(30, 0), "30 s");
-        assert_eq!(ban_duration(10, 100), "0 s");
-        assert_eq!(access_prefix(300, 0), aurora_i18n::tr!("status-left-remaining", left = "5 min"));
+        // (the catalogue's text: "3 hrs." in English and French)
+        assert_eq!(ban_duration(3 * 3600 + 5, 0), aurora_i18n::tr!("status-hrs", value0 = "3"));
+        assert_eq!(ban_duration(3700, 0), aurora_i18n::tr!("land-access-one-hour"));
+        assert_eq!(ban_duration(600, 0), aurora_i18n::tr!("land-access-minutes", minutes = "10"));
+        assert_eq!(ban_duration(90, 0), aurora_i18n::tr!("land-access-one-minute"));
+        assert_eq!(ban_duration(30, 0), aurora_i18n::tr!("land-access-seconds", seconds = "30"));
+        assert_eq!(ban_duration(10, 100), aurora_i18n::tr!("land-access-seconds", seconds = "0"));
+        let five = aurora_i18n::tr!("land-access-minutes", minutes = "5");
+        assert_eq!(access_prefix(300, 0), aurora_i18n::tr!("status-left-remaining", left = five));
+        // English keeps the French skin's words (LLPanelLandAccess)
+        assert_eq!(aurora_i18n::tr_in!("en", "land-access-minutes", minutes = "10"), "10 min");
+        assert_eq!(aurora_i18n::tr_in!("ja", "land-access-minutes", minutes = "10"), "10分");
     }
 
     #[test]

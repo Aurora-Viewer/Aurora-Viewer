@@ -435,6 +435,7 @@ fn the_file_saves_after_a_pause_and_loads_on_start() {
     e.update(Instant::now());
     assert!(!path.exists(), "not before the pause");
     e.save_before_exit();
+    assert!(crate::saves::wait_for(&path, Duration::from_secs(10)));
     let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
     assert_eq!(sets[0].rules.len(), 2);
     let mut again = Engine::default();
@@ -469,6 +470,7 @@ fn saves_land_in_the_order_they_were_asked() {
         e.save();
     }
     e.save_before_exit();
+    assert!(crate::saves::wait_for(&path, Duration::from_secs(10)));
     let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
     assert!(sets[0].rules.iter().any(|r| r.name == "rule 19"), "the newest rules are on disk");
     let _ = std::fs::remove_dir_all(&dir);
@@ -531,6 +533,7 @@ fn the_last_save_before_exit_waits_for_the_writes_under_way() {
     e.add_rule("later");
     // no pause, no update: the exit alone must leave both on disk
     e.save_before_exit();
+    assert!(crate::saves::wait_for(&path, Duration::from_secs(10)));
     assert_eq!(e.in_flight, 0);
     let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
     assert!(sets[0].rules.iter().any(|r| r.name == "later"));

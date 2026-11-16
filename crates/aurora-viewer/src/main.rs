@@ -87,9 +87,12 @@ mod open_path;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
+mod pose_stand;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
+mod save_retry;
+mod saves;
 mod scene;
 mod screen_rate;
 mod settings;
@@ -420,12 +423,17 @@ fn run_viewer() -> anyhow::Result<()> {
     // the pipelines compiled since the last save (made after the start:
     // another anti-aliasing, the photo passes…)
     aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
-    // a save asked on a way out other than `shutdown` (settings/saver.rs)
-    settings::Settings::wait_saved(std::time::Duration::from_secs(5));
+    // a save asked on a way out other than `shutdown` (saves.rs)
+    saves::wait(std::time::Duration::from_secs(5));
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
+    let restart_vr = app.requested_vr_restart();
     drop(app);
     media::private_profile::finish(std::time::Duration::from_secs(8));
+    world::tphistory::finish_writes();
     result?;
+    if let Some(mode) = restart_vr {
+        app::restart_with_vr(mode);
+    }
     Ok(())
 }
