@@ -149,6 +149,7 @@ impl RowHeights {
 /// found missing with the folder's version and item count at the time.
 struct Prepared {
     generation: u64,
+    filtering_contents: bool,
     /// The inventory's item count: when items go away, an original once
     /// there may be missing in a folder that did not change.
     items: usize,
@@ -422,17 +423,43 @@ impl AppearanceUi {
         for id in inv.take_item_retries() {
             self.requested_items.remove(&id);
         }
-        let changed = self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
+        let filtering_contents = self.tab < 2 && !self.search.trim().is_empty();
+        let scope_changed = self.prepared.as_ref().is_none_or(|p| p.filtering_contents != filtering_contents);
+        let changed = scope_changed || self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
         if changed {
             let folders = model::prepare_folders(inv);
+            let mut nested = HashSet::new();
+            if filtering_contents {
+                for &id in &folders {
+                    if inv
+                        .folders
+                        .get(&id)
+                        .is_some_and(|f| f.info.type_default == model::FT_OUTFIT && !f.children.is_empty())
+                    {
+                        nested.extend(crate::world::outfit_folders::contents_folders(inv, id).skip(1).map(|f| f.info.id));
+                    }
+                }
+                // Newly discovered descendants are queued once. A failed read can be retried
+                // when the user starts another search or refreshes the inventory.
+                use crate::world::inventory::FetchState;
+                for id in &nested {
+                    if inv
+                        .folders
+                        .get(id)
+                        .is_some_and(|f| f.state == FetchState::Unknown || (scope_changed && f.state == FetchState::Failed))
+                    {
+                        inv.request(*id);
+                    }
+                }
+            }
             let mut known = self
                 .prepared
                 .take()
                 .filter(|p| inv.items.len() >= p.items)
                 .map(|p| p.missing)
                 .unwrap_or_default();
-            let mut missing = HashMap::with_capacity(folders.len());
-            for id in &folders {
+            let mut missing = HashMap::with_capacity(folders.len() + nested.len());
+            for id in folders.iter().chain(&nested) {
                 let key = inv.folders.get(id).map_or((0, 0), |f| (f.info.version, f.items.len()));
                 let targets = match known.remove(id) {
                     Some((was, targets)) if was == key => targets,
@@ -442,6 +469,7 @@ impl AppearanceUi {
             }
             self.prepared = Some(Prepared {
                 generation: inv.generation,
+                filtering_contents,
                 items: inv.items.len(),
                 folders,
                 missing,
@@ -3792,6 +3820,63 @@ mod tests {
                 _ => Vec::new(),
             })
             .collect()
+    }
+
+    #[test]
+    fn outfit_filter_fetches_cold_subfolders_and_matches_the_original() {
+        use crate::world::inventory::FetchState;
+        use aurora_net::inventory::FolderContents;
+        let mut world = wardrobe(0);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let outfit = Uuid::from_u128(704);
+        let child = Uuid::from_u128(9001);
+        let target = Uuid::from_u128(9002);
+        let mut folder = inv.folders[&outfit].info.clone();
+        folder.id = child;
+        folder.parent = outfit;
+        folder.type_default = -1;
+        inv.server_updated(vec![folder], vec![]);
+        let mut st = AppearanceUi::default();
+        let worn = HashSet::new();
+        st.prepare(inv, agent, &worn);
+        assert!(!inv.queue.contains(&(child, false)), "no search: no subtree read");
+        st.search = "renamed boots".into();
+        st.prepare(inv, agent, &worn);
+        assert!(inv.queue.contains(&(child, false)));
+        inv.queue.clear();
+        st.prepare(inv, agent, &worn);
+        assert!(inv.queue.is_empty(), "an idle frame does not repeat the request");
+
+        let mut link = inv.items[&inv.folders[&outfit].items[0]].clone();
+        link.id = Uuid::from_u128(9003);
+        link.parent = child;
+        link.asset_type = 24;
+        link.asset_id = target;
+        link.inv_type = -1;
+        link.name = "Original link name".into();
+        inv.apply(vec![FolderContents {
+            folder_id: child,
+            owner_id: agent,
+            version: 1,
+            folders: vec![],
+            items: vec![link],
+        }]);
+        assert_eq!(fetched(&st.prepare(inv, agent, &worn)), HashSet::from([target]));
+        assert!(fetched(&st.prepare(inv, agent, &worn)).is_empty());
+        assert!(st.shown_outfits(inv).is_empty(), "the target is still missing");
+
+        let mut original = inv.items[&Uuid::from_u128(719)].clone();
+        original.id = target;
+        original.name = "Renamed boots".into();
+        inv.add_items(vec![original]);
+        assert_eq!(st.shown_outfits(inv), vec![outfit]);
+        st.search = "original link name".into();
+        assert!(st.shown_outfits(inv).is_empty(), "Appearance displays the original's current name");
+        inv.folders.get_mut(&child).expect("child").state = FetchState::Failed;
+        inv.generation += 1;
+        st.prepare(inv, agent, &worn);
+        assert!(!inv.queue.contains(&(child, false)), "a failed subtree is not polled");
     }
 
     /// A wardrobe of thousands of outfits used to have all its links walked
