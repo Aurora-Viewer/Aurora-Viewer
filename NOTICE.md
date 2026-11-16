@@ -130,6 +130,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | "Light Rain" by Jeffreys2 (https://freesound.org/people/Jeffreys2/sounds/137022/) and "Rain Indoor Cabin (loop)" by PhilllChabbb (https://freesound.org/people/PhilllChabbb/sounds/232731/), cut, levelled and looped (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/rain-light.ogg`, `assets/rain/rain-roof.ogg` | CC0 1.0 |
 | "Three mighty thunders in row" by Nimlos (https://freesound.org/people/Nimlos/sounds/522025/), cut into five clips and cleaned (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/thunder-*.ogg` | CC0 1.0 |
 | "Snow 004" from ambientCG (https://ambientcg.com/view?id=Snow004), downscaled and packed (built into the executable; changes in [README.md](assets/snow/README.md)) | `assets/snow/snow-normal-height.png`, `assets/snow/snow-color-roughness.png` | CC0 1.0 |
+| "Oiiaioooooiai Cat" by Zhuier (https://sketchfab.com/3d-models/oiiaioooooiai-cat-30d27bf7fb224849b76e208a6eccdb36); changed: texture reduced to 1024 x 1024 and packed with the model into one GLB (built into the executable; changes in [README.md](assets/models/README.md)) | `assets/models/spinning-cat.glb` | CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/) |
 
 Fonts keep their own license (the OFL allows bundling them with software under
 any license). The license texts of the fonts are next to them.
