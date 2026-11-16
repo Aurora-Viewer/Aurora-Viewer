@@ -2772,6 +2772,26 @@ fn a_voice_conference_takes_focus_once_and_keeps_its_draft_after_switching_chats
 }
 
 #[test]
+fn conference_ack_keeps_the_picker_in_its_own_window() {
+    let ctx = egui::Context::default();
+    let unrelated = Uuid::from_u128(17);
+    for (before, after) in [
+        (None, None),
+        (Some(None), Some(None)),
+        (Some(Some(None)), Some(Some(None))),
+        (Some(Some(Some(unrelated))), Some(Some(Some(unrelated)))),
+        (Some(Some(Some(JANE))), Some(Some(Some(BOB)))),
+    ] {
+        let mut st = ChatUi {
+            picker_window: before,
+            ..Default::default()
+        };
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert_eq!(st.picker_window, after);
+    }
+}
+
+#[test]
 fn conference_ack_keeps_the_active_search_or_filter_editor() {
     use super::super::find;
 

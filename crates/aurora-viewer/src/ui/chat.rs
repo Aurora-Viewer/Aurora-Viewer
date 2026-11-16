@@ -465,8 +465,8 @@ impl ChatUi {
         if self.selection.0 == old {
             self.selection.0 = new;
         }
-        if self.picker_window == Some(old) {
-            self.picker_window = Some(new);
+        if self.picker_window == Some(Some(old)) {
+            self.picker_window = Some(Some(new));
         }
         self.popped.rekey(from, to);
         if let Some(draft) = self.drafts.remove(&old) {
