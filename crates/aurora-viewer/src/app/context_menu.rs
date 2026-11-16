@@ -1000,15 +1000,15 @@ impl App {
             CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.start_group_chat(id);
+                self.world.start_group_chat(id, true);
                 self.show_conversations();
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
             CtxAction::NewContactSet(ids) => self.contacts_ui.ask_new_set_for(ids),
             CtxAction::MarkAvatars(ids, rgb) => self.world.avatar_marks.set(&ids, rgb),
-            CtxAction::MarkCustom(ids) => {
-                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last));
+            CtxAction::MarkCustom { ids, source } => {
+                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last, source));
             }
             CtxAction::ClearMarks(ids) => self.world.avatar_marks.clear(&ids),
             CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),

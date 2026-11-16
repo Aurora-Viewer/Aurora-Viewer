@@ -3844,6 +3844,16 @@ impl Settings {
     }
 }
 
+/// How the minimap displays avatar names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MiniAvatarNameFormat {
+    Display,
+    Legacy,
+    #[default]
+    DisplayAndLegacy,
+    LegacyAndDisplay,
+}
+
 /// Mini-map (LLNetMap) and world map (LLFloaterWorldMap) options, with the
 /// Firestorm defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3851,6 +3861,8 @@ impl Settings {
 pub struct MapSettings {
     /// MiniMapScale: pixels per region, 32..4096.
     pub mini_scale: f32,
+    /// Avatar name format in minimap tooltips and avatar menus.
+    pub mini_avatar_name_format: MiniAvatarNameFormat,
     /// MiniMapRotate: camera direction at the top (else north).
     pub mini_rotate: bool,
     /// MiniMapObjects.
@@ -3898,6 +3910,7 @@ impl Default for MapSettings {
     fn default() -> Self {
         MapSettings {
             mini_scale: 128.0,
+            mini_avatar_name_format: MiniAvatarNameFormat::DisplayAndLegacy,
             // forced to north-up at the first login (llnetmap.cpp)
             mini_rotate: false,
             mini_objects: true,

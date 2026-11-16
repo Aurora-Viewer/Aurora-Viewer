@@ -3815,6 +3815,10 @@ ui-context-send-im = Send IM
 ui-contacts-send-im = Send IM...
 ui-inventory-dialogs-give-to = Give to
 ui-inventory-dialogs-give = Give
+ui-inventory-dialogs-give-to-many = { $name } + { $count ->
+    [one] { $number } person
+   *[other] { $number } people
+}
 ui-inventory-dialogs-and-more = { $count ->
     [one] and { $number } more
    *[other] and { $number } more
@@ -4802,6 +4806,7 @@ ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading an
 ui-inventory-dialogs-no-copy = no copy
 ui-inventory-dialogs-no-transfer = no transfer
 ui-inventory-dialogs-left-out = left out
+ui-inventory-dialogs-no-copy-one-resident = A no-copy item can only be given to one resident at a time.
 ui-inventory-dialogs-not-given = { $count ->
     [one] { $number } item can't be given and will be left out.
    *[other] { $number } items can't be given and will be left out.

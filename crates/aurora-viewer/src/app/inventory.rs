@@ -377,13 +377,6 @@ impl App {
     }
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
-        if let InvAction::Share { resident, .. } = &action
-            && !self.world.rlva.allows("share", &resident.to_string())
-        {
-            self.world
-                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            return;
-        }
         match action {
             InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
@@ -636,30 +629,42 @@ impl App {
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
-            InvAction::Share { items, resident } => {
-                if resident == self.world.agent_id || resident.is_nil() {
-                    return;
-                }
-                let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
-                for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &worn) {
-                        Ok(bucket) => {
-                            let command =
-                                self.world
-                                    .inventory
-                                    .begin_offer(self.world.login.as_ref().map(|l| l.session_id), resident, id, bucket);
-                            match command {
-                                Ok(command) => {
-                                    if matches!(command, NetCommand::CheckInventoryOffer { .. }) {
-                                        self.offer_feedback(crate::world::inventory::outgoing::Feedback::Checking);
-                                    }
-                                    self.send(command);
-                                }
-                                Err(reason) => self.offer_feedback(reason),
-                            }
-                        }
-                        Err(reason) => self.inventory_ui.message = reason,
+            InvAction::Share { items, residents } => {
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let roots = rules::roots(&self.world.inventory, &items);
+                let mut blocked = false;
+                for &resident in &residents {
+                    if resident == self.world.agent_id || resident.is_nil() {
+                        continue;
                     }
+                    if !self.world.rlva.allows("share", &resident.to_string()) {
+                        blocked = true;
+                        continue;
+                    }
+                    for &id in &roots {
+                        match rules::offer_for_residents(&self.world.inventory, id, &worn, residents.len()) {
+                            Ok(bucket) => {
+                                let command =
+                                    self.world
+                                        .inventory
+                                        .begin_offer(self.world.login.as_ref().map(|l| l.session_id), resident, id, bucket);
+                                match command {
+                                    Ok(command) => {
+                                        if matches!(command, NetCommand::CheckInventoryOffer { .. }) {
+                                            self.offer_feedback(crate::world::inventory::outgoing::Feedback::Checking);
+                                        }
+                                        self.send(command);
+                                    }
+                                    Err(reason) => self.offer_feedback(reason),
+                                }
+                            }
+                            Err(reason) => self.inventory_ui.message = reason,
+                        }
+                    }
+                }
+                if blocked {
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                 }
             }
             InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),

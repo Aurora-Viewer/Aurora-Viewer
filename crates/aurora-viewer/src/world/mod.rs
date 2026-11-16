@@ -2955,6 +2955,7 @@ impl World {
                 let root = self.inventory.root;
                 self.inventory.request(root);
                 self.map.set_home_from_login(l.raw["home"].as_str());
+                crate::ui::bars::clock::set_grid_time(&l.raw["seconds_since_epoch"].to_string_value());
                 self.login = Some(l.clone());
                 Some(NetEvent::LoggedIn(l))
             }
@@ -3404,15 +3405,8 @@ impl World {
             | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
-                match &ev {
-                    NetEvent::SessionStarted {
-                        temp_session,
-                        session,
-                        success,
-                        ..
-                    } => self.call_session_started(*temp_session, *session, *success),
-                    NetEvent::SessionClosed { session, .. } => self.call_session_closed(*session),
-                    _ => {}
+                if let NetEvent::SessionClosed { session, .. } = &ev {
+                    self.call_session_closed(*session);
                 }
                 self.on_group_event(ev)
             }
@@ -5968,6 +5962,16 @@ impl World {
         }
     }
 
+    /// Show `conversation` in the Conversations window. `to_type` gives its
+    /// field the keyboard too, as FSFloaterIM::show → setFocus(true) →
+    /// focusFirstItem (indra/newview/fsfloaterim.cpp) does for a conversation
+    /// the user asked for; a call shows it alone, leaving the keyboard where
+    /// it was.
+    pub fn focus_conversation(&mut self, conversation: Uuid, to_type: bool) {
+        self.social.focus_im = Some(conversation);
+        self.social.focus_im_to_type = to_type;
+    }
+
     /// A friend's or a message's card clicked: it is acknowledged (gone from
     /// the bell, the conversation read) and the conversation to show is
     /// returned — the friend's IM (LLAvatarActions::startIM) or the session
@@ -5987,7 +5991,8 @@ impl World {
             s.unread = 0;
         }
         self.acknowledge_read_messages();
-        self.social.focus_im = Some(session);
+        // a click on the toast or the card: ready to type in
+        self.focus_conversation(session, true);
         Some(session)
     }
 

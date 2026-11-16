@@ -659,6 +659,27 @@ fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
 }
 
 #[test]
+fn a_multi_resident_gift_rechecks_permissions_when_it_is_sent() {
+    let mut inv = fixture();
+    let worn = HashSet::new();
+    let item = id(8100);
+    assert!(offer_for_residents(&inv, item, &worn, 2).is_ok());
+    let first_mask = inv.items[&item].owner_mask;
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask & !COPY;
+    assert!(offer_for_residents(&inv, item, &worn, 2).is_err());
+    assert!(offer_for_residents(&inv, item, &worn, 1).is_ok());
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask & !TRANSFER;
+    for count in [1, 2] {
+        assert!(offer_for_residents(&inv, item, &worn, count).is_err());
+        assert!(offer_for_residents(&inv, id(8000), &worn, count).is_err());
+    }
+    inv.items.get_mut(&item).expect("gift").owner_mask = first_mask;
+    inv.remove(&[id(8110), id(8113)]);
+    assert!(offer_for_residents(&inv, id(8000), &worn, 1).is_ok());
+    assert!(offer_for_residents(&inv, id(8000), &worn, 2).is_err());
+}
+
+#[test]
 fn folder_wear_filters_documents_and_preserves_the_required_body() {
     use crate::world::appearance::{self, Action, WearMode};
     let inv = fixture();

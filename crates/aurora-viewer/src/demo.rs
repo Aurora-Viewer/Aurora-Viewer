@@ -272,6 +272,9 @@ pub mod set_notices;
 /// progressive shape changes (AURORA_DEMO_SHAPE_MORPH).
 #[path = "demo_shape_morph.rs"]
 pub mod shape_morph;
+/// Many Orion-like friends for multi-share (#3074; AURORA_DEMO_SHARE=multi).
+#[path = "demo_share.rs"]
+pub mod share;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -937,6 +940,10 @@ fn demo_raw() -> Llsd {
             .into_iter()
             .map(|(id, given, has)| llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}),
     );
+    // AURORA_DEMO_SHARE=multi: dozens of Orion-like friends for the Share picker
+    buddies.extend(share::friends().into_iter().map(|(id, given, has)| {
+        llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}
+    }));
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         // an adult account that wants every rating (the search window's boxes);
@@ -957,6 +964,11 @@ fn demo_raw() -> Llsd {
         && let Llsd::Map(m) = &mut raw
     {
         env::library_login(m);
+    }
+    // Exercise the login clock correction on the normal LoggedIn path.
+    if std::env::var("AURORA_DEMO_EVENT_TIMES").as_deref() == Ok("grid-behind") {
+        let seconds = crate::ui::bars::clock::now_unix().saturating_sub(3600);
+        raw.insert("seconds_since_epoch", seconds.to_string());
     }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
     if let Some(limit) = people::group_limit()
@@ -2550,6 +2562,104 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
 /// from, forty regions east, whose simulator still tells us who is there.
 pub const RADAR_LEFT_REGION: u64 = ((256000u64 + 40 * 256) << 32) | 256000;
 
+/// Local object ID, legacy first name and chosen display name in mini,names.
+const MINIMAP_RESIDENTS: [(u32, &str, &str); 2] = [(0x327701, "Luna", "Luna ✦"), (0x327702, "Orion", "Orion ✦")];
+
+fn minimap_name((local, first, display): (u32, &str, &str)) -> aurora_net::AvatarNameData {
+    aurora_net::AvatarNameData {
+        id: u(local.into()),
+        username: format!("{}.example", first.to_lowercase()),
+        display_name: display.into(),
+        legacy_first: first.into(),
+        legacy_last: "Example".into(),
+        ..Default::default()
+    }
+}
+
+/// Refreshes from either name service use the identity that populated the demo.
+fn minimap_name_for(id: &Uuid) -> Option<aurora_net::AvatarNameData> {
+    MINIMAP_RESIDENTS
+        .iter()
+        .copied()
+        .find(|(local, _, _)| u((*local).into()) == *id)
+        .map(minimap_name)
+}
+
+/// Two residents with cached display names. Only the western one has an avatar
+/// object; the eastern one is known solely through its coarse map position.
+pub fn minimap_name_events(center: Vec3) -> [NetEvent; 3] {
+    let [visible, distant] = MINIMAP_RESIDENTS.map(minimap_name);
+    let distant_id = distant.id;
+    let mut avatar = action_avatar(false);
+    avatar.local_id = MINIMAP_RESIDENTS[0].0;
+    avatar.full_id = visible.id;
+    avatar.position = center - Vec3::X * 32.0;
+    avatar.name_values = format!(
+        "FirstName STRING RW SV {}\nLastName STRING RW SV {}",
+        visible.legacy_first, visible.legacy_last
+    );
+    [
+        NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![avatar],
+        },
+        NetEvent::DisplayNames {
+            names: vec![visible, distant],
+            bad_ids: Vec::new(),
+            max_age: Some(3600),
+        },
+        NetEvent::CoarseLocations {
+            handle: HANDLE,
+            positions: vec![(distant_id, center + Vec3::X * 32.0)],
+        },
+    ]
+}
+
+#[cfg(test)]
+mod minimap_name_tests {
+    use super::*;
+    use aurora_net::NetCommand;
+
+    #[test]
+    fn mini_map_name_replies_preserve_both_seeded_residents_in_either_request_order() {
+        let (west, east) = (u(0x327701), u(0x327702));
+        let expected = [
+            (west, "Luna", "Luna ✦", "luna.example"),
+            (east, "Orion", "Orion ✦", "orion.example"),
+        ];
+        let check_names = |world: &crate::world::World| {
+            for (id, first, display, username) in expected {
+                let name = world.social.avatar_names.get(&id).expect("seeded resident");
+                assert_eq!((name.legacy_first.as_str(), name.legacy_last.as_str()), (first, "Example"));
+                assert_eq!((name.display_name.as_str(), name.username.as_str()), (display, username));
+            }
+        };
+        for display_first in [false, true] {
+            let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            for event in minimap_name_events(Vec3::ZERO) {
+                world.apply(event);
+            }
+            check_names(&world);
+            let mut commands = [
+                NetCommand::RequestNames(vec![east, west]),
+                NetCommand::RequestDisplayNames(vec![west, east]),
+            ];
+            if display_first {
+                commands.reverse();
+            }
+            for command in commands {
+                for reply in demo_reply(&command) {
+                    world.apply(reply);
+                }
+                check_names(&world);
+            }
+            for (id, first, _, _) in expected {
+                assert_eq!(world.social.names[&id], format!("{first} Example"));
+            }
+        }
+    }
+}
+
 /// AURORA_DEMO_RADAR: residents around us for the radar of the People
 /// window, at every kind of range (chat, shout, farther, unknown altitude);
 /// with `left_behind`, three more in `RADAR_LEFT_REGION`.
@@ -3112,6 +3222,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = share::name(id) {
+                            return (*id, first, last);
+                        }
+                        if let Some(name) = minimap_name_for(id) {
+                            return (*id, name.legacy_first, name.legacy_last);
+                        }
                         if let Some((first, last, _)) = group::member_name(id) {
                             return (*id, first.to_owned(), last.to_owned());
                         }
@@ -3134,6 +3250,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 names: ids
                     .iter()
                     .map(|id| {
+                        if let Some(name) = minimap_name_for(id) {
+                            return name;
+                        }
                         let glyphs = glyphs::resident(id);
                         let (first, last, dn) = if *id == DEMO_AGENT {
                             ("Aurora", "Demo", "")
@@ -3149,6 +3268,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
                             names[(id.as_u128() & 0xFF) as usize % names.len()]
+                        };
+                        // AURORA_DEMO_SHARE: Orion Example 001… override the cycle
+                        let owned = share::name(id);
+                        let (first, last, dn) = if let Some((ref f, ref l, ref d)) = owned {
+                            (f.as_str(), l.as_str(), d.as_str())
+                        } else {
+                            (first, last, dn)
                         };
                         let username = if last == "Resident" {
                             first.to_lowercase()
