@@ -910,6 +910,8 @@ pub struct App {
     bumps_ui: ui::bumps::BumpsUi,
     /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
     voice_controls_ui: ui::voice_controls::VoiceControlsUi,
+    /// The Omnifilter Rules Editor (`ui/omnifilter.rs`).
+    omnifilter_ui: ui::omnifilter::OmnifilterUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
@@ -1574,6 +1576,12 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        // AURORA_DEMO_OMNIFILTER: on, on the demo's rules, for this run
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && let Some(omnifilter) = crate::demo::omnifilter::settings()
+        {
+            settings.omnifilter = omnifilter;
+        }
         external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
@@ -1696,6 +1704,11 @@ impl App {
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
+                // OmnifilterEngine::init (the demo's rules are its own)
+                match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
+                    Some(sets) => w.omnifilter = crate::omnifilter::Engine::with_sets(sets),
+                    None => w.omnifilter.load(crate::omnifilter::user_file()),
+                }
                 w
             },
             bridge_runtime: Default::default(),
@@ -1978,6 +1991,7 @@ impl App {
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
             voice_controls_ui: Default::default(),
+            omnifilter_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
@@ -3293,6 +3307,7 @@ impl App {
         self.settings.save();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        self.world.omnifilter.save_before_exit();
         for entry in &self.imports.entries {
             if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
                 draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -3337,7 +3352,19 @@ impl App {
         self.portal_journey = None;
         self.portal_ask = None;
         self.portal_demo_peer = None;
+        // its teleport belongs to the session that held it
+        self.suitcase_ask = None;
         self.follow_recovery = None;
+        // a question left open belongs to its session: a yes in the next one
+        // would act on another session's objects
+        self.delete_confirm = None;
+        self.moderation_ask = None;
+        self.god_kick_ask = None;
+        self.group_chat_confirm = None;
+        self.object_menu = Default::default();
+        self.place_confirm = None;
+        self.places_ui.forget_question();
+        self.url_confirm = None;
         self.inventory_ui = Default::default();
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account
@@ -6936,6 +6963,8 @@ impl App {
         }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        // a rule changed just before closing is kept, as at a logout
+        self.world.omnifilter.save_before_exit();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();
@@ -8937,8 +8966,11 @@ impl App {
             self.world.agent.record_jump_input(now);
         }
         // agent_jump (indra/newview/llviewerinput.cpp) takes off through
-        // LLAgent::setFlying, which refuses where LLAgent::canFly says no
+        // LLAgent::setFlying, which refuses where LLAgent::canFly says no.
+        // upGrabbed (llTakeControls CONTROL_UP, pass_on false) still sends
+        // the hold to the script but must not start automatic fly.
         if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
+            && !self.world.script_controls.up_grabbed()
             && self.movement_runtime.native_fly_allowed()
             && !self.world.agent.flying
             && !self.world.agent.seated
@@ -10324,6 +10356,7 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        self.world.omnifilter_frame(self.settings.omnifilter, Instant::now());
         if self.in_world() {
             self.sync_friends_only();
             self.step_gestures();
@@ -10539,7 +10572,9 @@ impl App {
             self.camera.vr_body_offset(self.vr_body_follow.offset());
         }
         self.apply_local_imports(&mut gfx.renderer);
-        self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
+        self.wearable_ui
+            .preview
+            .apply(&mut self.world, &mut self.scene, &mut gfx.renderer, Some(&self.egui_ctx));
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
             self.send(command);
         }
@@ -13523,6 +13558,17 @@ impl App {
             && let Some(handle) = self.world.main_region
         {
             for event in crate::demo::sim_version::events(self.frame_count, handle) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::omnifilter::on() {
+            if self.frame_count == crate::demo::omnifilter::OPEN {
+                ui::widgets::open_floater(&self.egui_ctx, ui::omnifilter::WINDOW, &mut self.panels.omnifilter);
+            }
+            let agent = self.world.agent_id;
+            for event in crate::demo::omnifilter::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -19583,6 +19629,14 @@ impl App {
                         self.open_web_link(u, None);
                     }
                 }
+                // an Omnifilter rule's "Gotopage" (callback_load_url ->
+                // LLWeb::loadURL): web links only, through the same link
+                // checks and browser routing as a click on "Go to page"
+                for u in self.world.take_omnifilter_urls() {
+                    if u.starts_with("https://") || u.starts_with("http://") {
+                        self.open_web_link(u, None);
+                    }
+                }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
@@ -19719,6 +19773,13 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                self.omnifilter_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world.omnifilter,
+                    &mut self.settings,
+                    &mut self.panels.omnifilter,
+                );
                 self.conversation_log_window(&ctx, &p);
                 self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
@@ -20535,8 +20596,14 @@ impl ApplicationHandler for App {
             }
         };
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
+        // The native Window menu makes Cmd+M minimize and Ctrl+Cmd+F enter
+        // full screen before the viewer's own shortcuts see them
+        // (mac_window_menu.rs).
         #[cfg(target_os = "macos")]
-        crate::mac_quit::route_quit_to_close();
+        {
+            crate::mac_quit::route_quit_to_close();
+            crate::mac_window_menu::install();
+        }
         sync_auto_render_scale(&mut self.settings, window.scale_factor());
         let created = self.open_renderer(&window);
         let renderer = match created {
