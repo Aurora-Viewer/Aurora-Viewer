@@ -64,6 +64,8 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -581,12 +583,14 @@ fn the_head_acts() {
             (aurora_i18n::tr!("ui-chat-give-from-inventory"), "give"),
             (aurora_i18n::tr!("ui-call-add-people"), "add"),
             (aurora_i18n::tr!("common-block"), "block"),
+            (aurora_i18n::tr!("ui-chat-send-system-info"), "sysinfo"),
         ] {
             h.press(control_id("head-dots-filled"));
             h.press_text(row);
             let actions = h.take();
             let ok = match wanted {
                 "teleport" => has(&actions, |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
+                "sysinfo" => has(&actions, |a| matches!(a, ConvAction::SendSysinfo(id) if *id == BOB)),
                 "give" => has(&actions, |a| matches!(a, ConvAction::OpenInventory)),
                 "add" => has(&actions, |a| matches!(a, ConvAction::PickPeople(id) if *id == BOB)),
                 _ => has(&actions, |a| matches!(a, ConvAction::ToggleBlock(id) if *id == BOB)),
@@ -2152,7 +2156,11 @@ fn invitations_are_answered() {
 fn a_group_chat_snoozes_from_its_head_and_its_menu() {
     for style in ALL {
         let mut h = H::new(style);
-        h.world.groups.sessions.entry(GROUP).or_default().group = true;
+        let session = h.world.groups.sessions.entry(GROUP).or_default();
+        session.group = true;
+        // A name of its own: the unnamed fallback (Japanese 会話) is also the
+        // window's title and a section head.
+        session.name = "Builders".to_owned();
         let button = if style.workspace() {
             control_id("head-alarm-snooze-filled")
         } else {

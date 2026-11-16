@@ -158,6 +158,8 @@ struct SurfaceKey {
     hover: f32,
     pixels_per_point: f32,
     skin: u64,
+    /// ChatBubbleOpacity, against the plate's usual look at its default.
+    opacity: f32,
 }
 
 /// What the rings, discs and bars on a plate are built from.
@@ -202,6 +204,8 @@ struct Face {
     metrics: Metrics,
     layout: Layout,
     name: Arc<Galley>,
+    /// The distance after the name, in a smaller size.
+    name_tail: Option<Arc<Galley>>,
     subs: [Option<Line>; 2],
     badges: Badges,
     dot: Option<Presence>,
@@ -224,20 +228,39 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
 fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     let p = env.p;
     let m = Metrics::of(level, SCALE);
+    let colors = crate::ui::colors::get();
+    // FSTagShowDistanceColors: unless a contact set or the relation colors
+    // the name (the Legacy Viewer's special_color_override)
+    let band = c.distance.map(|d| crate::ui::colors::range_color(p, Some(d.meters)));
+    let by_distance = band.filter(|_| {
+        c.distance.is_some_and(|d| d.color_name)
+            && c.appearance.nameplate_name.is_none()
+            && (!colors.relation_names || c.role == Role::Resident)
+    });
     let color = c
         .appearance
         .nameplate_name
         .map(crate::ui::colors::set_color)
-        .unwrap_or_else(|| c.role.name_color(p, &crate::ui::colors::get()));
-    let color = surface_tint(env, c).map(|bg| readable_name(color, bg, p.ink)).unwrap_or(color);
+        .or(by_distance)
+        .unwrap_or_else(|| c.role.name_color(p, &colors));
+    let readable = |color: Color32| surface_tint(env, c).map(|bg| readable_name(color, bg, p.ink)).unwrap_or(color);
+    let color = readable(color);
     let mut format = match level {
         // the far pill's name is a regular weight
         Level::Far => TextFormat::simple(FontId::proportional(m.name_pt), color),
         _ => crate::ui::fonts::semibold_format(&env.semibold, m.name_pt, color),
     };
     format.italics = c.role == Role::Blocked;
-    let name = line(env, &c.name, format, m.max_text);
     let small = |color: Color32| TextFormat::simple(FontId::proportional(m.sub_pt), color);
+    // FSTagShowDistance: after the name on every level (the Legacy Viewer's
+    // tag gives it a line of its own), and never the part that gets elided
+    let name_tail = c
+        .distance
+        .filter(|d| d.shown)
+        .zip(band)
+        .map(|(d, band)| line(env, &format!(" · {}", d.text()), small(readable(band)), m.max_text * 0.6));
+    let room = m.max_text - name_tail.as_ref().map_or(0.0, |t| t.size().x);
+    let name = line(env, &c.name, format, room);
     let detail_color = |d: &super::Detail| if d.alert { p.amber } else { p.muted };
     let subs = super::sub_lines(level, c).map(|sub| {
         Some(match sub? {
@@ -257,7 +280,9 @@ fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
         Vec2::new(l.0.size().x + tail.x, l.0.size().y.max(tail.y))
     };
     let text = TextSize {
-        name: name.size(),
+        name: name_tail.as_ref().map_or(name.size(), |t| {
+            Vec2::new(name.size().x + t.size().x, name.size().y.max(t.size().y))
+        }),
         subs: [subs[0].as_ref().map(size), subs[1].as_ref().map(size)],
     };
     let badges = super::badges(level, c);
@@ -281,6 +306,7 @@ fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
         metrics: m,
         layout: super::layout_with(level, &m, &text, badges.len(), lead),
         name,
+        name_tail,
         subs,
         badges,
         dot: super::status_dot(level, c),
@@ -442,11 +468,17 @@ fn marker_slot(level: Level, c: &Content, face: &Face, rect: Rect) -> Option<Rec
 fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &Content, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
     let s = SCALE;
+    let (tag_tint, tag_blur) =
+        crate::ui::surface_opacity::relative(crate::ui::surface_opacity::name_tags(), crate::ui::surface_opacity::NAME_TAGS);
     if st.glass > 0.0 {
         // inside the antialiased edge of the surface, which hides the blur's own
         let radius = rect.height() * 0.5 - 0.5;
-        env.painter
-            .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
+        env.painter.add(aurora_render::glass_region(
+            rect.shrink(0.5),
+            radius,
+            st.glass * alpha * tag_blur,
+            GLASS_SHADE,
+        ));
     }
     let key = SurfaceKey {
         tint: surface_tint(env, c).unwrap_or(env.tint),
@@ -458,6 +490,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
         hover: st.hover,
         pixels_per_point: env.pixels_per_point,
         skin: env.skin,
+        opacity: tag_tint,
     };
     let surface = Built::of(cache, key, |key| {
         let shadow = Glow {
@@ -466,7 +499,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
             spread: 0.0,
             color: p.navy.gamma_multiply(0.35),
         };
-        let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
+        let opacity = (lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass) * key.opacity).min(1.0);
         let plain = key
             .border
             .unwrap_or_else(|| p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover));
@@ -740,6 +773,10 @@ fn contents(
         painter.add(shape);
     };
     text(&face.name, l.name);
+    if let Some(tail) = &face.name_tail {
+        // on the name's baseline, near enough: their bottoms level
+        text(tail, l.name + Vec2::new(face.name.size().x, face.name.size().y - tail.size().y));
+    }
     for (sub, pos) in face.subs.iter().zip(l.subs) {
         if let (Some((galley, tail)), Some(pos)) = (sub, pos) {
             text(galley, pos);

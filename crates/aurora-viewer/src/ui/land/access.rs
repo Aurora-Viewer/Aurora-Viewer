@@ -580,7 +580,8 @@ mod tests {
     #[test]
     fn durations_like_the_floater() {
         assert_eq!(ban_duration(0, 0), aurora_i18n::tr!("common-always"));
-        assert_eq!(ban_duration(3 * 3600 + 5, 0), "3 hrs.");
+        // (the catalogue's text: "3 hrs." in English and French)
+        assert_eq!(ban_duration(3 * 3600 + 5, 0), aurora_i18n::tr!("status-hrs", value0 = "3"));
         assert_eq!(ban_duration(3700, 0), "1 hr.");
         assert_eq!(ban_duration(600, 0), "10 min");
         assert_eq!(ban_duration(30, 0), "30 s");

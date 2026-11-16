@@ -4,6 +4,16 @@
 $RepoUrl = 'https://github.com/Aurora-Viewer/Aurora-Viewer'
 $FirestormUrl = 'https://github.com/FirestormViewer/phoenix-firestorm'
 
+# The command-line tools the agents search with (AGENTS.md section 5,
+# "Tools"): winget package, program that must answer, name shown. Optional:
+# nothing else depends on them, and the agents work without them.
+$SearchTools = @(
+    @{ Id = 'BurntSushi.ripgrep.MSVC'; Exe = 'rg'; Name = 'ripgrep (rg)' }
+    @{ Id = 'sharkdp.fd'; Exe = 'fd'; Name = 'fd' }
+    @{ Id = 'jqlang.jq'; Exe = 'jq'; Name = 'jq' }
+    @{ Id = 'ast-grep.ast-grep'; Exe = 'ast-grep'; Name = 'ast-grep' }
+)
+
 function Get-Paths([string]$Root) {
     [pscustomobject]@{
         Root = $Root
@@ -26,6 +36,16 @@ function Get-CommonScript($P) {
     foreach ($c in (Join-Path (Split-Path $PSScriptRoot -Parent) 'common.ps1'), (Join-Path $P.Repo 'scripts\common.ps1')) {
         if (Test-Path $c) { return $c }
     }
+}
+
+# The program of a search tool: in PATH, or just installed by winget (its
+# folder then reaches the PATH of the windows opened afterwards only).
+function Find-SearchTool($Tool) {
+    $cmd = Get-Command $Tool.Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    if (-not $env:LOCALAPPDATA) { return }
+    Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\$($Tool.Id)_*" -Recurse -Filter "$($Tool.Exe).exe" -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
 }
 
 function Get-MsvcName {
@@ -110,6 +130,17 @@ function Get-Checks($P, [switch]$Offline) {
         }
     }
 
+    # search tools of the agents: one row, the missing ones named
+    $all = @($SearchTools | ForEach-Object { $_.Exe }) -join ', '
+    $missing = @($SearchTools | Where-Object { -not (Find-SearchTool $_) } | ForEach-Object { $_.Exe })
+    if (-not $missing) {
+        & $add (New-Check search 'Search tools of the agents' $all ok 'nothing to do')
+    } elseif ($missing.Count -eq $SearchTools.Count) {
+        & $add (New-Check search 'Search tools of the agents' $null todo "installed with winget (for your account): $all")
+    } else {
+        & $add (New-Check search 'Search tools of the agents' "missing: $($missing -join ', ')" stale 'installed with winget (for your account)')
+    }
+
     $login = $null
     if ($gh) {
         gh auth status *> $null
@@ -150,6 +181,18 @@ function Install-Tool([string]$Id, [string]$What, [string[]]$Extra = @()) {
     winget install --id $Id --exact --source winget --accept-package-agreements --accept-source-agreements @Extra
     if ($LASTEXITCODE -ne 0) { throw "installing $What (code $LASTEXITCODE)." }
     Update-SessionPath
+}
+
+# ripgrep, fd, jq and ast-grep, for the searches of the agents. Optional: one
+# that does not install is reported and stops nothing (the agents then keep
+# their own search tools, and the hook of .claude/hooks leaves grep alone).
+function Install-SearchTools {
+    foreach ($t in $SearchTools) {
+        if (Find-SearchTool $t) { continue }
+        try { Install-Tool $t.Id $t.Name } catch { Write-Color "  $($t.Name) not installed ($($_.Exception.Message)): the agents work without it." warn }
+    }
+    $found = @($SearchTools | Where-Object { Find-SearchTool $_ } | ForEach-Object { $_.Exe })
+    if ($found) { Write-Color "  In place: $($found -join ', '). An agent or a terminal opened before finds them once reopened." success }
 }
 
 # Installs what is missing and updates what is behind; throws on failure.
@@ -230,6 +273,9 @@ function Invoke-Repair($P) {
     }
     Sync-BuildCache $P.Root
     if (Find-Sccache) { Write-Color "  Shared by the tasks: $(Join-Path $P.Root '.sccache')." success }
+
+    Write-Title 'Search tools of the agents (rg, fd, jq, ast-grep)'
+    Install-SearchTools
 
     Write-Title 'GitHub'
     gh auth status *> $null

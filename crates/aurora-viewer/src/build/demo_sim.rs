@@ -18,7 +18,7 @@ const PERM_ALL: u32 = 0x7fff_ffff;
 pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
-    running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    running: HashMap<(Uuid, Uuid), (bool, aurora_net::scripts::CompileTarget)>,
     pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
     /// The reports of transform edits held for a round trip
@@ -94,19 +94,38 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
     }
 }
 
+/// The demo region makes new contents items like a Second Life region
+/// (CreateTaskInventoryItem); `AURORA_DEMO_CONTENTS_CAP=0` withdraws the
+/// capability, for the RezScript fallback and a disabled "New notecard".
+pub fn caps() -> Vec<(String, String)> {
+    if std::env::var("AURORA_DEMO_CONTENTS_CAP").is_ok_and(|v| v.trim() == "0") {
+        return Vec::new();
+    }
+    vec![(
+        super::contents::CREATE_TASK_ITEM_CAP.to_owned(),
+        "demo://create-task-item".to_owned(),
+    )]
+}
+
 fn script_copy_demo() -> bool {
     std::env::var("AURORA_DEMO_REPLACE_PRIM").is_ok_and(|mode| mode == "script")
 }
 
 impl DemoSim {
-    pub fn save_script(&mut self, target: aurora_net::scripts::ScriptTarget, asset: Uuid, running: bool, mono: bool) {
+    pub fn save_script(
+        &mut self,
+        target: aurora_net::scripts::ScriptTarget,
+        asset: Uuid,
+        running: bool,
+        compile: aurora_net::scripts::CompileTarget,
+    ) {
         if let Some(entry) = self.contents.get_mut(&target.object)
             && let Some(item) = entry.1.iter_mut().find(|i| i.item_id == target.item)
         {
             item.asset_id = asset;
             entry.0 = entry.0.wrapping_add(1);
         }
-        self.running.insert((target.object, target.item), (running, mono));
+        self.running.insert((target.object, target.item), (running, compile));
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
@@ -138,10 +157,12 @@ impl DemoSim {
                 .map(|o| o.owner_id)
                 .filter(|owner| !owner.is_nil())
                 .unwrap_or(crate::demo::DEMO_AGENT);
+            // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
+            let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
             ObjectProps {
                 object_id: id,
                 full: true,
-                creator_id: DEMO_CREATOR,
+                creator_id,
                 owner_id,
                 group_id: group.unwrap_or_else(|| {
                     if owner_id == crate::demo::DEMO_AGENT {
@@ -690,10 +711,47 @@ impl DemoSim {
                 entry.0 = entry.0.wrapping_add(1);
                 let serial = entry.0;
                 if let BuildCmd::RezScript { enabled, .. } = c {
-                    self.running.insert((id, script_id), (*enabled, true));
+                    self.running
+                        .insert((id, script_id), (*enabled, aurora_net::scripts::CompileTarget::Mono));
                 }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
+            }
+            // CreateTaskInventoryItem: the region writes the new item, a
+            // running Mono or Luau script or an empty notecard
+            BuildCmd::CreateTaskItem { item, tag, .. } => {
+                let id = item.parent_id;
+                if world.objects.index_of_uuid(&id).is_none() {
+                    return vec![NetEvent::CapReply {
+                        tag: *tag,
+                        result: Ok(llsd_map! { "success" => false, "message" => "Object not found" }),
+                    }];
+                }
+                let mut it = (**item).clone();
+                it.item_id = Uuid::new_v4();
+                it.asset_id = Uuid::new_v4();
+                let item_id = it.item_id;
+                let lua = aurora_net::scripts::is_slua_item(it.flags);
+                let script = it.asset_type == super::contents::AT_LSL_TEXT;
+                let entry = self.contents_of(id);
+                entry.1.push(it);
+                entry.0 = entry.0.wrapping_add(1);
+                let serial = entry.0;
+                if script {
+                    let vm = if lua {
+                        aurora_net::scripts::CompileTarget::Luau
+                    } else {
+                        aurora_net::scripts::CompileTarget::Mono
+                    };
+                    self.running.insert((id, item_id), (true, vm));
+                }
+                self.props_of(world, id).inventory_serial = serial;
+                let mut events = self.reply_props(world, &[id]);
+                events.push(NetEvent::CapReply {
+                    tag: *tag,
+                    result: Ok(llsd_map! { "success" => true, "item_id" => item_id }),
+                });
+                events
             }
             BuildCmd::RemoveTaskInventory { handle, local_id, item_id } => {
                 let ids = Self::uuids(world, *handle, &[*local_id]);
@@ -714,24 +772,30 @@ impl DemoSim {
                 if script_copy_demo() {
                     self.pending_running.insert((*object_id, *item_id), *running);
                 } else {
-                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                    self.running
+                        .entry((*object_id, *item_id))
+                        .or_insert((true, aurora_net::scripts::CompileTarget::Mono))
+                        .0 = *running;
                 }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
                 let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
-                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                let (running, compile) = self
+                    .running
+                    .get(&(*object_id, *item_id))
+                    .copied()
+                    .unwrap_or((initial, aurora_net::scripts::CompileTarget::Mono));
                 // First reply observes the previous state; the next query
                 // confirms the asynchronous script-engine operation.
                 if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
-                    self.running.insert((*object_id, *item_id), (next, mono));
+                    self.running.insert((*object_id, *item_id), (next, compile));
                 }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,
                     running,
-                    mono: Some(mono),
-                    luau: aurora_net::scripts::Luau::Off,
+                    compile: Some(compile),
                 }]
             }
             // the hover tips' parcel under the pointer

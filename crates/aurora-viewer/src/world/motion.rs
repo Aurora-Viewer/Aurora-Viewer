@@ -16,9 +16,11 @@
 //!
 //! When a report puts an object elsewhere than where it was drawn, the gap
 //! is not shown at once: it fades with the Legacy Viewer's half-life of
-//! 0.06 s ([`Correction`]), for avatars and for objects at rest. An object
-//! the report sets moving jumps there, as in LLViewerObject::updateDrawable
-//! (a looping keyframed motion restarts at its first frame, #2328).
+//! 0.06 s ([`Correction`]), for avatars and for objects at rest, the prims
+//! below a HUD linkset's root included (#3369); the root itself shows the
+//! report at once. An object the report sets moving jumps there, as in
+//! LLViewerObject::updateDrawable (a looping keyframed motion restarts at
+//! its first frame, #2328).
 //!
 //! The root an avatar sits on goes further ([`damp`]): its drawn pose
 //! follows its reported motion with that half-life every frame, moving or
@@ -68,7 +70,8 @@ pub fn clock_rate(time_dilation: f32, silent: f32) -> f32 {
     dilation * phase
 }
 
-/// What a report said of an object's motion.
+/// Base pose and reported velocities of an object's motion. The pose can
+/// include a client-side turn retained across earlier reports.
 #[derive(Debug, Clone, Copy)]
 pub struct Reported {
     pub position: Vec3,
@@ -133,6 +136,7 @@ pub struct Correction {
 impl Correction {
     /// From where the object was `drawn` to where the report puts it now.
     /// None when there is nothing to fade, or too much.
+    #[cfg(test)]
     pub fn between(drawn: (Vec3, Quat), reported: (Vec3, Quat), now: Instant) -> Option<Correction> {
         Self::toward(drawn, reported, reported, now)
     }

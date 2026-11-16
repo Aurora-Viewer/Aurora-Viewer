@@ -336,9 +336,17 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     return col * gain * extinction * glare;
 }
 
-// Textured (or analytic) disc of a heavenly body; rgb premultiplied, a coverage.
-fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4<f32> {
+// Texel of a heavenly body's texture in direction `dir`, as stored: rgb in the
+// texture's sRGB, not premultiplied, a its alpha (0 outside the quad).
+// `radius` is LLHeavenBody's disc radius (SUN_DISK_RADIUS 0.5, the moon 0.9
+// of it). LLVOSky::updateHeavenlyBodyGeometry lays the quad at
+// HEAVENLY_BODY_DIST with half sides HEAVENLY_BODY_DIST x 0.1 x radius x
+// scale, wider and taller towards the horizon: as tangents, 0.1 x radius x
+// scale x (1 + 0.3 (1 - z)) across and (1 + 0.2 (1 - z)) up.
+fn body_disc(dir: vec3<f32>, body: vec3<f32>, radius: f32, scale: f32, slot: u32) -> vec4<f32> {
     let b = normalize(body);
+    let low = 1.0 - b.z;
+    let half_size = vec2<f32>(1.0 + low * 0.3, 1.0 + low * 0.2) * (0.1 * radius * scale);
     let mu = dot(dir, b);
     if (mu < 0.0) {
         return vec4<f32>(0.0);
@@ -354,8 +362,7 @@ fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4
     if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
         return vec4<f32>(0.0);
     }
-    let t = sample_tex_level(slot, uv, 0.0);
-    return vec4<f32>(srgb_to_linear(t.rgb) * t.a, t.a);
+    return sample_tex_level(slot, uv, 0.0);
 }
 
 // Rainbow and 22° halo, port of skyF.glsl's rainbow() and halo22() (Second
@@ -415,23 +422,43 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     // skyF.glsl: added to the haze color before its x 2, under the clouds
     let haze = a.color + sky_rainbow(a.light_dot) + sky_halo(a.light_dot);
     var c = clamp(haze * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
+    // Sun then moon over the haze, under the clouds, like
+    // LLDrawPoolWLSky::renderHeavenlyBodies (lldrawpoolwlsky.cpp): plain alpha
+    // blending (BT_ALPHA) of the texel as stored, in the same space as the
+    // haze, so softenLightF's srgb_to_linear x sky_hdr_scale below applies to
+    // both. sunDiscF.glsl draws the texel as it is; moonF.glsl scales its rgb
+    // by the moon brightness, fades its alpha near the horizon and discards
+    // alpha <= 2/255. Premultiplying in linear and adding the sun x 6 (moon at
+    // 90 % opacity) blew soft halos out to a white disc with stepped rings and
+    // a visible quad (#2782).
+    var hidden = 0.0;
+    let sd = normalize(frame.sky_sun.xyz);
+    if (frame.tex_slots.y != 0u) {
+        let s = body_disc(d, sd, 0.5, frame.sky_sun.w, frame.tex_slots.y);
+        c = mix(c, s.rgb, s.a);
+        // the Legacy Viewer's sun quad writes depth and hides every star
+        // behind it, even where it is clear: here only as much as it covers
+        hidden = s.a;
+    }
+    if (frame.tex_slots.z != 0u) {
+        let md = normalize(frame.sky_moon.xyz);
+        let m = body_disc(d, md, 0.45, frame.sky_moon.w, frame.tex_slots.z);
+        if (m.a > 2.0 / 255.0) {
+            let fade = select(1.0, clamp(md.z * md.z * 4.0, 0.0, 1.0), md.z > 0.0);
+            c = mix(c, m.rgb * frame.sky_misc.z, m.a * fade);
+            // SL-14113: the moon's kept texels write depth, the stars behind
+            // them are hidden
+            hidden = 1.0;
+        }
+    }
     let clouds = sky_clouds(d);
     c = mix(c, clouds.rgb, clouds.a);
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
     let cover = 1.0 - clouds.a;
-    // stars and Milky Way (above), and the aurora, behind the clouds
-    col += (sky_stars(d, col, foot) + aurora_sky(d)) * cover;
-    // moon
-    if (frame.tex_slots.z != 0u) {
-        let m = body_disc(d, frame.sky_moon.xyz, 0.035 * frame.sky_moon.w, frame.tex_slots.z);
-        col = col * (1.0 - m.a * 0.9 * cover) + m.rgb * frame.sky_misc.z * 2.0 * cover;
-    }
-    // sun
-    let sd = normalize(frame.sky_sun.xyz);
-    if (frame.tex_slots.y != 0u) {
-        let s = body_disc(d, sd, 0.025 * frame.sky_sun.w, frame.tex_slots.y);
-        col += s.rgb * 6.0 * cover;
-    } else {
+    // stars and Milky Way (above) behind the clouds and the sun and moon; the
+    // aurora, in the atmosphere, behind the clouds only
+    col += (sky_stars(d, col, foot) * (1.0 - hidden) + aurora_sky(d)) * cover;
+    if (frame.tex_slots.y == 0u) {
         let mu = dot(d, sd);
         let disk = smoothstep(0.99955, 0.9997, mu) * clamp(sd.z * 10.0 + 1.0, 0.0, 1.0);
         col += frame.sun_color.rgb * disk * 6.0 * cover;
@@ -890,12 +917,12 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     }
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustics(in.world_pos,n), a);
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh, a);
         var color=hazed*water_scene_light(in.world_pos);
-        if(camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){color=apply_fog(color,in.world_pos);}
+        if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
-    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustics(in.world_pos,n);
+    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh;
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
@@ -927,13 +954,13 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
         color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
             + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
-        if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * sh, a);
+        if (water_fogs_source(in.world_pos)) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
     } else {
         color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
-        color += material.color.rgb * water_caustics(in.world_pos, n);
+        color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
         color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
     }
     color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
@@ -1122,9 +1149,10 @@ fn analytic_wave(p: vec2<f32>, t: f32) -> vec3<f32> {
 }
 
 // Reuse opaque depth/color: no second scene render or GPU/CPU synchronization.
+// The water fog a point of the scene copy already holds (apply_fog).
 fn water_source_fog(source:vec3<f32>)->WaterFog {
-    if(!water_fx_on(256u) && !camera_underwater()){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
-    return water_fog_view(source-frame.camera_pos.xyz,frame.water_normal.w);
+    if(!water_fogs_source(source)){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+    return water_fog_view(source-frame.camera_pos.xyz,water_source_density());
 }
 
 // Rays cover the same 200 m at every quality, with finer steps at high quality.
@@ -1309,6 +1337,10 @@ fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f3
     return clamp(nl * (f * g * d / (4.0 * nl * nv)), vec3<f32>(0.0), vec3<f32>(10.0));
 }
 
+// The sun glint under which its shadow is not looked up (water_pixel):
+// 1 / 255 / 1000 of the white the surface is capped at.
+const WATER_GLINT_FLOOR: f32 = 0.0000039;
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1349,13 +1381,19 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
     let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
-    let wake=water_wake_sample(in.world_pos.xy,in.level);
+    // The terrain and the water's own level under this point, and the swell
+    // at it: read once, for the wake, the normal and the foam below.
+    var bed=vec2<f32>(0.0);
+    if((water_fx.counts.z&31u)!=0u){bed=water_fx_bed(in.world_pos.xy);}
+    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0);
+    if((water_fx.counts.z&9u)!=0u){swell=water_swell(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w);}
+    let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
     let furrow=1.0-smoothstep(0.003,0.035,-wake.z)*0.7;
     if(water_fx_on(1u)) {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
-        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
-    } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
+    } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x)); }
     // waterF.glsl: the reflection follows the waves scaled by the EEP normal
     // scale (wave_ibl), the sun glint the unscaled waves flattened with
     // distance (enhanced water off). With a normal scale of 0, wave_ibl is
@@ -1387,6 +1425,60 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         return vec4<f32>(water_underside(in.world_pos,in.level,view_vec,n),1.0);
     }
 
+    let d0 = scene_depth_at(uv);
+    // The foam of enhanced water, how much of it: here, while the terrain
+    // and the swell it shares with the normal are at hand (kept any longer,
+    // they weigh on the whole shader, the plain water included), and before
+    // the sun's shadow, looked up only where the glint or the foam shows it.
+    var foam = 0.0;
+    if((water_fx.counts.z &14u)!=0u) {
+        let p=in.world_pos.xy;let depth=max(in.level-bed.x,0.0);
+        // Shore depth always comes from terrain, never an avatar or submerged
+        // mesh in the opaque depth. Contact refinement is masked below.
+        foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
+        if(water_fx_on(2u) && depth<2.0) {
+            // Travel along the depth gradient: the front approaches every coast orientation.
+            let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
+            let breaker=pow(max(sin(phase),0.0),4.0);
+            let runup=0.12+0.28*sin(frame.camera_pos.w*0.6+water_fx_noise(p*0.15));
+            let front=exp(-pow((depth-0.18-runup)*5.0,2.0));
+            foam=max(foam,front*breaker*0.95);
+            foam=max(foam,breaker*exp(-pow((depth-0.7)*2.8,2.0))*0.65);
+        }
+        if(water_fx_on(4u) && d0>0.0) {
+            // the obstacles' field is read only where something stands
+            // behind the surface
+            let contact=water_fx_sample(p).w;
+            if(contact>0.02) {
+                let hit=world_from_depth(uv,d0);
+                let ground=water_fx_bed(hit.xy).x;
+                let clearance=in.level-hit.z;
+                // The visible intersection refines the proxy to the actual mesh silhouette.
+                let obstacle=smoothstep(0.18,0.55,hit.z-ground);
+                foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*contact;
+            }
+        }
+        // crests: the wind patches are worked out only where the swell
+        // folds enough to whiten (the first smoothstep is 0 under 0.08)
+        if(water_fx_on(8u) && swell.compression>0.08) {
+            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
+            foam+=smoothstep(0.08,0.2,swell.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
+        }
+        // Fine breaking filaments already have a narrow, resolved footprint.
+        // Applying the coarse accumulation threshold twice erased slow swimmers.
+        // The torn pattern is the costly part: one for both, and none where
+        // neither the field (under 0.08) nor a wake has foam to tear.
+        var wake_foam=0.0;
+        if(water_fx_on(4u)){wake_foam=smoothstep(0.018,0.18,wake.w);}
+        if(foam>=0.08 || wake_foam>0.0) {
+            let pattern=water_foam_pattern(p,footprint);
+            foam=water_foam_coverage(foam,pattern)+wake_foam*water_foam_coverage(1.0,pattern)*0.55;
+        } else {
+            foam=0.0;
+        }
+        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+    }
+
     // fresnel (calculateFresnelFactors)
     let fs = frame.water_params.y;
     let fo = frame.water_params.z;
@@ -1402,7 +1494,6 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var distortion=waver.xy*ref_scale/max(dmod,1.0)*2.0;
     if(water_fx_on(1u) || water_fx_on(16u)){distortion=n.xy*0.08/max(dmod,1.0);}
     var distort2=clamp(uv+distortion,vec2<f32>(0.0),vec2<f32>(0.999));
-    let d0 = scene_depth_at(uv);
     let surf_dist = dist;
     var refr_dist = 1e5;
     if (d0 > 0.0) {
@@ -1427,13 +1518,20 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     }
     var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
     // Fog of the water volume between the surface and the refracted point.
-    let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
     if (water_fx_on(256u)) {
         let source_fog=water_source_fog(ref_pos);
         fb=max(fb-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
         let volume=water_fog_segment(ref_pos-in.world_pos,frame.water_normal.w,0.0,max(in.level-ref_pos.z,0.0));
         fb=fb*volume.transmission+volume.color;
-    } else { fb = fb * wf.transmission + wf.color; }
+    } else if (d1 <= 0.0) {
+        // Legacy fog: what lies under the water holds its own already, each
+        // layer by its own depth (water_fogs_source; waterF.glsl adds none
+        // to its screen copy). Only where nothing was drawn behind the
+        // surface (the void, the sky under the horizon) does the water take
+        // its fog here, to its far end.
+        let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
+        fb = fb * wf.transmission + wf.color;
+    }
 
     // reflection: planar texture, screen-space rays, or the sky
     var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
@@ -1447,24 +1545,29 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         r = reflect(view_vec, normalize(wave_ibl));
         sky_dir = r;
     }
-    var radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
-    if (probes_on()) {
-        // without a planar reflection the water reflects its probes
-        // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
-        // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
-        // at lod 0 whitened the surface
-        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
-        let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
-        if (s.w > 0.0) {
-            radiance = s.rgb;
-        }
-    }
+    var radiance = vec3<f32>(0.0);
     if (frame.misc.z > 0.5) {
+        // the planar reflection stands for the sky and the probes: neither
+        // is read under it
         let ruv = clamp(uv + n.xy * 0.035 / max(dmod * 0.25, 1.0), vec2<f32>(0.001), vec2<f32>(0.999));
         radiance = textureSampleLevel(water_refl_tex, lin_clamp, ruv, 0.0).rgb;
-    } else if (frame.misc.y > 0.5) {
-        let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, select(40,16 + i32(water_fx.counts.w) * 12,water_fx.counts.z!=0u));
-        radiance = mix(radiance, hit.rgb, hit.a);
+    } else {
+        radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
+        if (probes_on()) {
+            // without a planar reflection the water reflects its probes
+            // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
+            // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
+            // at lod 0 whitened the surface
+            let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+            let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
+            if (s.w > 0.0) {
+                radiance = s.rgb;
+            }
+        }
+        if (frame.misc.y > 0.5) {
+            let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, select(40,16 + i32(water_fx.counts.w) * 12,water_fx.counts.z!=0u));
+            radiance = mix(radiance, hit.rgb, hit.a);
+        }
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
     if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
@@ -1477,7 +1580,6 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let gn = select(n, legacy_glint_n, legacy_water);
-    let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
     // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
     // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
     // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
@@ -1493,7 +1595,16 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
     // probe ambiance, then x sky_sunlight_scale (1.5)
     let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
-    let punctual = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * shadow * atm.atten;
+    let glint_lit = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * atm.atten;
+    // The sun's shadow, the costliest lookup of the surface, only where
+    // something shows it: the glint, a narrow lobe that is next to nothing
+    // over most of the water (under WATER_GLINT_FLOOR, a thousandth of the
+    // smallest step an 8-bit image can show), or the foam.
+    var shadow = 1.0;
+    if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR) {
+        shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
+    }
+    let punctual = glint_lit * shadow;
 
     var reflectance = min(1.0,df2.x);
     var glint = punctual;
@@ -1504,39 +1615,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     }
     var color = mix(fb, radiance, reflectance) + glint;
     color = mix(fb, color, min(1.0, fade * 60.0));
-    if((water_fx.counts.z &14u)!=0u) {
-        let p=in.world_pos.xy;let bed=water_fx_bed(p);let depth=max(in.level-bed.x,0.0);
-        let field=water_fx_sample(p);
-        // Shore depth always comes from terrain, never an avatar or submerged
-        // mesh in the opaque depth. Contact refinement is masked below.
-        var foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
-        if(water_fx_on(2u) && depth<2.0) {
-            // Travel along the depth gradient: the front approaches every coast orientation.
-            let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
-            let breaker=pow(max(sin(phase),0.0),4.0);
-            let runup=0.12+0.28*sin(frame.camera_pos.w*0.6+water_fx_noise(p*0.15));
-            let front=exp(-pow((depth-0.18-runup)*5.0,2.0));
-            foam=max(foam,front*breaker*0.95);
-            foam=max(foam,breaker*exp(-pow((depth-0.7)*2.8,2.0))*0.65);
-        }
-        if(water_fx_on(4u) && d0>0.0 && field.w>0.02) {
-            let hit=world_from_depth(uv,d0);
-            let ground=water_fx_bed(hit.xy).x;
-            let clearance=in.level-hit.z;
-            // The visible intersection refines the proxy to the actual mesh silhouette.
-            let obstacle=smoothstep(0.18,0.55,hit.z-ground);
-            foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*field.w;
-        }
-        if(water_fx_on(8u)) {
-            let wave=water_swell(p,frame.camera_pos.w,water_fx.counts.w);
-            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
-            foam+=smoothstep(0.08,0.2,wave.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
-        }
-        foam=water_foam_coverage(p,foam,footprint);
-        // Fine breaking filaments already have a narrow, resolved footprint.
-        // Applying the coarse accumulation threshold twice erased slow swimmers.
-        if(water_fx_on(4u)){foam+=smoothstep(0.018,0.18,wake.w)*water_foam_coverage(p,1.0,footprint)*0.55;}
-        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+    if(foam>0.0) {
         let nl=max(frame.sun_dir.z,0.0);
         var foam_light=(frame.sky_horizon.rgb*0.3+frame.sun_color.rgb*nl*shadow/PI)*0.75;
         if(is_classic_sky()) {
@@ -2038,14 +2117,22 @@ fn rain_path_up(i: i32, slope: f32) -> f32 {
 // surface there, or higher where cover upwind keeps it off (a surface `top`
 // high, `dz` up the path, shelters everything below `top - dz` here).
 fn rain_reached_height(xy: vec2<f32>, near_z: f32) -> f32 {
-    var top = rain_surface_height(xy, near_z);
+    let here = rain_surface_height(xy, near_z);
+    var top = here;
     let s = rain_slant();
     if (top < -1e8 || dot(s, s) < 0.0025) { return top; }
     let slope = length(s);
     for (var i = 0; i < rain_path_points(); i++) {
         let dz = rain_path_up(i, slope);
         let up = rain_surface_height(xy - s * dz, near_z);
-        if (up > -1e8) { top = max(top, up - dz); }
+        // cover is what stands up out of the ground along the path (a wall,
+        // a building, a tree), rising faster than 35° from here: ground that
+        // only climbs toward the wind (a hillside, a ramp, a kerb) takes the
+        // snow, as snow drifts into a lee. Counted as cover, the slow snow's
+        // shallow path left every slope facing away from the wind bare, in
+        // stripes along it (the map's texels a stair on it), and the square
+        // the map covers bare while all beyond it lay white
+        if (up > -1e8 && up - here > 0.7 * RAIN_PATH_OUT[i] + 0.1) { top = max(top, up - dz); }
     }
     return top;
 }
@@ -2491,6 +2578,26 @@ fn rain_debug_color(world: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(vec3<f32>(0.0, open, 1.0 - open) * (0.3 + 0.7 * s.y) * 0.6, 0.6);
 }
 
+// Why the snow lies or not at `world` (facing `n`), for AURORA_RAIN_DEBUG=snow:
+// white, deep snow's own surface; red, none in the memory there (beyond it,
+// or none has built up); yellow, too steep by the surface's facing; blue,
+// off the surface the shelter map has there (under cover, or above it: what
+// stands there is not in the map), purple the same beyond the near map, by
+// the height the memory keeps; green, lying (brighter, deeper; darker
+// beyond the near map).
+fn snow_debug_color(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    if (on_deep_snow(world)) { return vec4<f32>(0.6, 0.6, 0.6, 0.6); }
+    let raw = snow_memory_depth(world.xy);
+    if (raw <= 0.002) { return vec4<f32>(0.6, 0.0, 0.0, 0.6); }
+    if (smoothstep(0.55, 0.85, n.z) < 0.5) { return vec4<f32>(0.6, 0.5, 0.0, 0.6); }
+    let near = rain_shelter_texel(world.xy, world.z).z > 0.5;
+    let lying = snow_lying(world + n * 0.05);
+    if (lying < 0.5 * raw) {
+        return select(vec4<f32>(0.35, 0.0, 0.5, 0.6), vec4<f32>(0.0, 0.15, 0.6, 0.6), near);
+    }
+    return vec4<f32>(0.0, (0.25 + 0.35 * raw) * select(0.6, 1.0, near), 0.0, 0.6);
+}
+
 fn rain_wet_memory(world: vec3<f32>) -> f32 {
     let extent = frame.rain_wet.z;
     if (extent <= 0.0) { return -1.0; }
@@ -2765,7 +2872,7 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     // edge, never in the map's squares
     let st = rain_shelter_texel(world.xy, world.z);
     if (st.z < 0.5) {
-        let surface = textureLoad(rain_wetness, i, 0).x;
+        let surface = snow_known_surface(world.xy, i);
         if (surface < -1e8) { return depth; }
         return depth * snow_gate(world.z - surface);
     }
@@ -2779,8 +2886,9 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     for (var k = 0; k < 16; k++) {
         var h = rain_shelter_height_at(s0 + vec2<i32>(k % 4 - 1, k / 4 - 1));
         if (h < -1e8) {
-            // beyond the map's reach: the height the memory keeps there
-            h = textureLoad(rain_wetness, i, 0).x;
+            // beyond the map's reach, or nothing drawn there (bare land):
+            // the height the memory keeps there, else the terrain's
+            h = snow_known_surface(world.xy, i);
             if (h < -1e8) { return depth; }
         }
         hs[k] = h;
@@ -2831,6 +2939,17 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     return depth * clamp(taken / counted, 0.0, 1.0) * open;
 }
 
+// The surface the snow lies on at `xy` where the shelter map has none: the
+// height the memory keeps in its cell `i`, else the terrain's (-1e9: none
+// known). Without the terrain, a cell the memory had not seen yet (all of
+// them, just after the snow-fill button) laid the ground's snow on whatever
+// stood there, avatars too.
+fn snow_known_surface(xy: vec2<f32>, i: vec2<i32>) -> f32 {
+    let kept = textureLoad(rain_wetness, i, 0).x;
+    if (kept > -1e8) { return kept; }
+    return rain_terrain(xy);
+}
+
 // How much snow a point `at` metres above the topmost surface the snow
 // lands on takes: all of it on that surface, none well below it (under
 // cover) nor well above it (what stands there and is not in the map).
@@ -2855,6 +2974,12 @@ fn snow_noise(p: vec2<f32>) -> f32 {
 // Deep snow (experimental, frame.snow_cover.z bit 4).
 fn snow_deep() -> bool {
     return (u32(frame.snow_cover.z + 0.5) & 4u) != 0u;
+}
+
+// "Snow settles" off (frame.snow_cover.z bit 8): no lying snow drawn,
+// whatever falls (the memory keeps it).
+fn snow_hidden() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 8u) != 0u;
 }
 
 // Deep snow's layer under a full cover (m).
@@ -2895,14 +3020,18 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // made from the depth under the snow: what it buries would darken it
     screen_surface = false;
     contact_surface = false;
-    // "Snow settles" off (in snow, rain_look.x): none drawn
-    if (snowing() && frame.rain_look.x < 0.5) { return vec4<f32>(0.0); }
+    // "Snow settles" off: none drawn, whatever falls (it was read from the
+    // puddles' switch, rain_look.x, which is the snow's only while it
+    // snows: in rain or clear weather the snow melting away showed)
+    if (snow_hidden()) { return vec4<f32>(0.0); }
     let depth = snow_lying(lies_at + n * 0.05);
     if (depth <= 0.002) { return vec4<f32>(0.0); }
     let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
-    // its distance in snow (rain_look.y); twice the puddles' while melting
-    let far = select(frame.rain_look.y * 2.0, frame.rain_look.y, snowing());
+    // the snow's own distance, while it snows and while it melts after (it
+    // was twice the puddles' then: past the memory, the snow stopped in a
+    // line; and it jumped when the snow turned to rain)
+    let far = frame.snow_far.x;
     let slope = smoothstep(0.55, 0.85, n.z);
     let lying = depth * slope;
     if (lying <= 0.002) { return vec4<f32>(0.0); }
@@ -3101,6 +3230,7 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
+    if (rain_debug > 1.5) { return snow_debug_color(world, rain_depth_normal(uv, world)); }
     if (rain_debug > 0.5) { return rain_debug_color(world); }
     if (on_deep_snow(world)) { discard; }
     let n = rain_depth_normal(uv, world);
@@ -3173,10 +3303,19 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
-    if (rain_debug > 0.5) { return rain_debug_color(world); }
-    if (on_deep_snow(world)) { discard; }
     let g = textureLoad(rain_gbuf, vec2<i32>(in.clip.xy), 0);
     let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
+    if (rain_debug > 1.5) {
+        // the facing the snow is judged by below, the G-buffer's where it has one
+        var dn = rain_depth_normal(uv, world);
+        if (!cleared) {
+            dn = rain_oct_decode(g.xy);
+            if (dot(dn, frame.camera_pos.xyz - world) < 0.0) { dn = -dn; }
+        }
+        return snow_debug_color(world, dn);
+    }
+    if (rain_debug > 0.5) { return rain_debug_color(world); }
+    if (on_deep_snow(world)) { discard; }
     var out: vec4<f32>;
     if (cleared) {
         let flat_n = rain_depth_normal(uv, world);
@@ -3591,30 +3730,107 @@ struct SnowMeshOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) n: vec3<f32>,
-    @location(2) valid: f32,
+    // whether its triangle is drawn: one value a triangle, its first
+    // vertex's (the only one that judges it: `vs_snow_mesh`)
+    @location(2) @interpolate(flat) valid: f32,
     // the height of the surface under the snow (a triangle across a jump
     // of it is dropped; one down a footprint's or an edge's slope is not)
     @location(3) base: f32,
+    // the facing of the ground under it (at each vertex, the same for every
+    // triangle that shares it): the snow lies by it as the flat snow does
+    @location(4) ground: vec3<f32>,
 };
 
-// The grid at this Weather quality: x cells a side, y how far it reaches
-// from the camera (m). Its cells are fine near the camera (a few
-// centimetres: footprints) and grow outward (`snow_mesh_warp`).
-fn snow_mesh_grid() -> vec2<f32> {
-    let q = rain_quality();
-    if (q <= 0) { return vec2<f32>(128.0, 10.0); }
-    if (q == 1) { return vec2<f32>(192.0, 13.0); }
-    return vec2<f32>(256.0, 15.0);
+// The grid of this frame (renderer.rs `DeepSnowMesh`, the draw's own, in
+// frame.snow_trail_step.zw): x cells a side of each of its levels, y how far
+// it reaches from my avatar (m), z how many levels. Its levels are nested
+// squares (`vs_snow_mesh`): the finest SNOW_MESH_FIRST m across, a few
+// centimetres a cell (footprints), each next one twice as coarse.
+fn snow_mesh_grid() -> vec3<f32> {
+    let packed = u32(frame.snow_trail_step.w + 0.5);
+    return vec3<f32>(f32(max(packed / 16u, 2u)), frame.snow_trail_step.z, f32(max(packed % 16u, 1u)));
 }
 
-// How much of the grid's spacing is even (the rest grows with the cube):
-// cells a quarter as wide at the centre as on average, two and a half
-// times at the edge.
-const SNOW_MESH_EVEN: f32 = 0.25;
+// The finest level's side (m): 4 cm cells at High (renderer.rs
+// `SNOW_MESH_FIRST`, the same).
+const SNOW_MESH_FIRST: f32 = 5.12;
 
-// A grid line (-1..1) to its place (-1..1).
-fn snow_mesh_warp(u: vec2<f32>) -> vec2<f32> {
-    return SNOW_MESH_EVEN * u + (1.0 - SNOW_MESH_EVEN) * u * u * u;
+// Deep snow thins to nothing toward its reach, from this share of it to
+// SNOW_MESH_EDGE_END (renderer.rs, the same: no level reaches past it).
+const SNOW_MESH_EDGE_FROM: f32 = 0.85;
+const SNOW_MESH_EDGE_END: f32 = 0.98;
+
+// How much of deep snow's reach still shows at `xy`: none past
+// SNOW_MESH_EDGE_END of it, no step at its edge.
+fn snow_mesh_edge(xy: vec2<f32>, me: vec2<f32>, reach: f32) -> f32 {
+    return 1.0 - smoothstep(SNOW_MESH_EDGE_FROM, SNOW_MESH_EDGE_END, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+}
+
+// How much of a level, from my avatar out, keeps its own vertices: past it
+// they slide onto the next level's (every other one), whole by its outer
+// part (`snow_mesh_morph`).
+const SNOW_MESH_MORPH_FROM: f32 = 0.7;
+const SNOW_MESH_MORPH_TO: f32 = 0.9;
+
+// A vertex of a level (`g`: on the world's grid of its cells `s` m wide),
+// as drawn: its odd lines slid toward the even ones (the next level's),
+// the farther from `me` the more, wholly on them by its outer part. The
+// last level slides onto nothing.
+fn snow_mesh_morph(g: vec2<f32>, s: f32, half: f32, me: vec2<f32>, last: bool) -> vec2<f32> {
+    if (last) { return g * s; }
+    let d = abs(g * s - me);
+    let k = smoothstep(SNOW_MESH_MORPH_FROM, SNOW_MESH_MORPH_TO, max(d.x, d.y) / half);
+    let odd = g - 2.0 * floor(g * 0.5);
+    return (g - odd * k) * s;
+}
+
+// The surface deep snow stands on at `xy` (-1e9: none): on smooth ground
+// blended between the four nearest texels' centres of the shelter map, so
+// a slope is followed, not a stair of flat treads a texel wide (31 cm on a
+// 256 px map), the ground showing through the snow in rows along their
+// edges; at a jump (a ledge, a kerb, 20 cm and more) the texel's own, the
+// step kept sharp (as `snow_lying` does for the snow drawn flat).
+fn snow_mesh_surface(xy: vec2<f32>, near_z: f32) -> f32 {
+    let st = rain_shelter_texel(xy, near_z);
+    if (st.z < 0.5) { return -1e9; }
+    let sp = st.xy - vec2<f32>(0.5);
+    let s0 = vec2<i32>(floor(sp));
+    let f = fract(sp);
+    let a = rain_shelter_height_at(s0);
+    let b = rain_shelter_height_at(s0 + vec2<i32>(1, 0));
+    let c = rain_shelter_height_at(s0 + vec2<i32>(0, 1));
+    let d = rain_shelter_height_at(s0 + vec2<i32>(1, 1));
+    let lo = min(min(a, b), min(c, d));
+    let hi = max(max(a, b), max(c, d));
+    if (lo < -1e8 || hi - lo > 0.2) { return rain_surface_height(xy, near_z); }
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The facing of the ground deep snow stands on at `xy` (level where it is
+// not known): from the surface 30 cm to either side, a jump (a kerb, a
+// ledge) left out, as the flat snow sees the ground's own facing there.
+fn snow_mesh_ground(xy: vec2<f32>) -> vec3<f32> {
+    let z = frame.camera_pos.z;
+    let c = snow_mesh_surface(xy, z);
+    let e = snow_mesh_surface(xy + vec2<f32>(0.3, 0.0), z);
+    let w = snow_mesh_surface(xy - vec2<f32>(0.3, 0.0), z);
+    let n = snow_mesh_surface(xy + vec2<f32>(0.0, 0.3), z);
+    let s = snow_mesh_surface(xy - vec2<f32>(0.0, 0.3), z);
+    if (c < -1e8) { return vec3<f32>(0.0, 0.0, 1.0); }
+    // each side's slope, the one nearer to level where the other jumps
+    let sx = snow_mesh_side(c - w, e - c, w < -1e8, e < -1e8);
+    let sy = snow_mesh_side(c - s, n - c, s < -1e8, n < -1e8);
+    return normalize(vec3<f32>(-sx, -sy, 0.3));
+}
+
+// The rise over 30 cm along one axis from its two sides' rises: their mean
+// on a smooth slope, the gentler where one side is a jump or unknown.
+fn snow_mesh_side(back: f32, ahead: f32, back_none: bool, ahead_none: bool) -> f32 {
+    if (back_none && ahead_none) { return 0.0; }
+    if (back_none) { return ahead; }
+    if (ahead_none) { return back; }
+    if (abs(back - ahead) > 0.1) { return select(ahead, back, abs(back) < abs(ahead)); }
+    return 0.5 * (back + ahead);
 }
 
 // How deep the snow lies at `xy` in the memory (0..1, no gating: the grid
@@ -3643,7 +3859,7 @@ fn snow_mesh_top(xy: vec2<f32>, fade: f32) -> vec3<f32> {
 // The same with the footprints read as a cell of `blur` m sees them (five
 // taps): a coarse cell takes their mean, not one sharp sample (spikes).
 fn snow_mesh_top_soft(xy: vec2<f32>, fade: f32, blur: f32) -> vec3<f32> {
-    let surface = rain_surface_height(xy, frame.camera_pos.z);
+    let surface = snow_mesh_surface(xy, frame.camera_pos.z);
     if (surface < -1e8 || surface < frame.params.y) { return vec3<f32>(-1e9, 0.0, 0.0); }
     let lying = snow_memory_depth(xy) * fade;
     // as `snow_surface`, without its lumps: the vertex stage cannot read
@@ -3673,44 +3889,74 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let g = snow_mesh_grid();
     let n = u32(g.x);
     let reach = g.y;
+    let levels = u32(g.z);
     let corners = array<vec2<u32>, 6>(
         vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
         vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
     let quad = vertex / 6u;
-    let cell_ij = vec2<u32>(quad % n, quad / n);
-    let ij = cell_ij + corners[vertex % 6u];
-    let u = vec2<f32>(ij) / f32(n) * 2.0 - vec2<f32>(1.0);
-    // centred on my avatar (not the camera: orbiting it leaves the grid
-    // still), snapped to the finest cell: it does not swim as I walk
-    // (farther, its big cells move a fine cell at a time)
+    let level = min(quad / (n * n), levels - 1u);
+    let local = quad % (n * n);
+    let cell_ij = vec2<u32>(local % n, local / n);
+    // Nested squares around my avatar (not the camera: orbiting leaves
+    // them still), each `n` cells a side, each level's cells twice its
+    // finer one's. Each is centred on me snapped to twice its own cell, so
+    // its vertices lie on the world's grid of its cells and the finer
+    // square inside it covers whole cells of it: as I walk, a vertex never
+    // slides over the ground (one warped grid moved its coarse cells a fine
+    // cell at a time, and they changed shape: the snow's outline popped)
     let cam = frame.camera_pos.xyz;
-    let fine = reach * SNOW_MESH_EVEN * 2.0 / f32(n);
     var me = frame.snow_trail_step.xy;
     if (all(me == vec2<f32>(0.0))) { me = cam.xy; }
-    let centre = floor(me / fine) * fine;
-    let xy = centre + snow_mesh_warp(u) * reach;
-    // its spacing here (for the facing)
-    let cell = max(reach * (SNOW_MESH_EVEN + 3.0 * (1.0 - SNOW_MESH_EVEN) * max(u.x * u.x, u.y * u.y)) * 2.0 / f32(n), fine);
-    // thinning to nothing over its outer part: no step at its edge
-    let fade = 1.0 - smoothstep(0.85, 0.98, max(abs(u.x), abs(u.y)));
-    let c = snow_mesh_top_soft(xy, fade, cell);
-    // the triangle's three corners (the same for each of its vertices,
-    // whatever the camera): dropped where the surface under it jumps more
-    // than 10 cm across it (a ledge, a roof's edge), not drawn up as a wall
-    let first = (vertex % 6u) / 3u * 3u;
-    var lowest = 1e9;
-    var highest = -1e9;
-    for (var k = 0u; k < 3u; k++) {
-        let cu = vec2<f32>(cell_ij + corners[first + k]) / f32(n) * 2.0 - vec2<f32>(1.0);
-        let b = rain_surface_height(centre + snow_mesh_warp(cu) * reach, cam.z);
-        lowest = min(lowest, b);
-        highest = max(highest, b);
-    }
-    let across = lowest > -1e8 && highest - lowest < 0.1;
+    let s = SNOW_MESH_FIRST / f32(n) * f32(1u << level);
+    let half = f32(n / 2u) * s;
+    let origin = floor(me / (2.0 * s)) * 2.0 - vec2<f32>(f32(n / 2u));
+    let last = level + 1u == levels;
     var out: SnowMeshOut;
     out.valid = 0.0;
     out.n = vec3<f32>(0.0, 0.0, 1.0);
+    out.ground = vec3<f32>(0.0, 0.0, 1.0);
+    out.base = -1e9;
+    // the finer square's cells (drawn by it), and the cells past the
+    // reach: nothing (a triangle of one point)
+    let lo = (origin + vec2<f32>(cell_ij)) * s;
+    var skip = max(abs(lo.x + 0.5 * s - me.x), abs(lo.y + 0.5 * s - me.y)) - 0.5 * s > reach;
+    if (level > 0u) {
+        let fine = 0.5 * s;
+        let hole = floor(me / (2.0 * fine)) * 2.0 * fine - vec2<f32>(f32(n / 2u)) * fine;
+        let inside = lo - hole;
+        let span = f32(n) * fine;
+        skip = skip || (all(inside >= vec2<f32>(-0.001)) && all(inside + vec2<f32>(s) <= vec2<f32>(span + 0.001)));
+    }
+    if (skip) {
+        out.world = cam;
+        out.clip = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return out;
+    }
+    let gv = origin + vec2<f32>(cell_ij + corners[vertex % 6u]);
+    let xy = snow_mesh_morph(gv, s, half, me, last);
+    // thinning to nothing toward the reach: no step at its edge
+    let edge = snow_mesh_edge(xy, me, reach);
+    // and as the flat snow, thinning on a slope, gone past about 55°: it
+    // sinks into the ground there, its height with it, rather than end in
+    // a slab cut along its triangles (teeth, and slivers along their edges)
+    let ground = snow_mesh_ground(xy);
+    let fade = edge * smoothstep(0.55, 0.85, ground.z);
+    let cell = s;
+    let c = snow_mesh_top_soft(xy, fade, cell);
     out.base = c.x;
+    // judged on level ground, the deep snow stood whole on a slope the
+    // flat snow only dusted (two layouts of the same snow)
+    out.ground = ground;
+    // whether the triangle is drawn, judged once, by its first vertex (the
+    // value the fragments take, `valid` being flat): one value for the
+    // whole triangle (where its vertices differed, a sliver of it was drawn
+    // along its other edge, spikes), and the other two vertices spared the
+    // work (it read about two thirds of each vertex's shelter map taps)
+    let first = (vertex % 6u) / 3u * 3u;
+    var whole = false;
+    if (vertex % 6u == first) {
+        whole = snow_mesh_triangle_whole(origin, cell_ij, first, s, half, me, last, reach, ground);
+    }
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
         out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
@@ -3724,18 +3970,27 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     // wide out from the camera, must not be across a jump either)
     let away = array<f32, 4>(0.06, 0.15, 0.3, cell);
     let keep_at = array<f32, 4>(0.0, 0.5, 0.85, 0.0);
+    // a step, not a slope: the two sides of a slope rise and fall alike
+    // (their sum is twice the middle), a kerb's or a ledge's does not
+    // (10 cm whatever the distance flattened the snow on every hill out
+    // from its coarse cells)
     var keep = 1.0;
-    for (var k = 0; k < 4; k++) {
+    for (var axis = 0; axis < 2; axis++) {
         for (var r = 0; r < 4; r++) {
-            let t = snow_mesh_top(xy + dirs[k] * away[r], fade);
-            if (t.x < -1e8 || abs(t.x - c.x) > 0.1) { keep = min(keep, keep_at[r]); }
+            let a = snow_mesh_top(xy + dirs[axis * 2] * away[r], fade);
+            let b = snow_mesh_top(xy + dirs[axis * 2 + 1] * away[r], fade);
+            let bent = abs(a.x + b.x - 2.0 * c.x);
+            let rise = max(abs(a.x - c.x), abs(b.x - c.x));
+            if (a.x < -1e8 || b.x < -1e8 || bent > 0.1 || rise > 0.1 + 0.7 * away[r]) {
+                keep = min(keep, keep_at[r]);
+            }
         }
     }
     // the facing, from the neighbours one cell away
     var h: array<f32, 4>;
     for (var k = 0; k < 4; k++) {
         let t = snow_mesh_top(xy + dirs[k] * cell, fade);
-        h[k] = select(t.x + t.y, c.x + c.y, t.x < -1e8 || abs(t.x - c.x) > 0.12);
+        h[k] = select(t.x + t.y, c.x + c.y, t.x < -1e8 || abs(t.x - c.x) > 0.12 + 0.7 * cell);
     }
     let top = c.x + c.y * keep;
     let nrm = normalize(vec3<f32>(h[1] - h[0], h[3] - h[2], 2.0 * cell));
@@ -3743,8 +3998,51 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     out.world = vec3<f32>(xy, top + 0.008);
     out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
     out.n = nrm;
-    out.valid = select(0.0, 1.0, across && c.z > SNOW_MESH_SOLID);
+    out.valid = select(0.0, 1.0, whole);
     return out;
+}
+
+// Whether a triangle of deep snow's grid is drawn: its corners `first` to
+// `first + 2` of `vs_snow_mesh`'s cell `cell_ij` (the first one's ground
+// facing given). Dropped where the surface under it jumps more than 10 cm
+// across it (a ledge, a roof's edge), not drawn up as a wall; drawn where
+// the snow lies whole at all three corners.
+fn snow_mesh_triangle_whole(origin: vec2<f32>, cell_ij: vec2<u32>, first: u32, s: f32, half: f32, me: vec2<f32>, last: bool, reach: f32, first_ground: vec3<f32>) -> bool {
+    let corners = array<vec2<u32>, 6>(
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
+    let z = frame.camera_pos.z;
+    var lowest = 1e9;
+    var highest = -1e9;
+    var at: array<vec2<f32>, 3>;
+    var hb: array<f32, 3>;
+    for (var k = 0u; k < 3u; k++) {
+        at[k] = snow_mesh_morph(origin + vec2<f32>(cell_ij + corners[first + k]), s, half, me, last);
+        hb[k] = snow_mesh_surface(at[k], z);
+        lowest = min(lowest, hb[k]);
+        highest = max(highest, hb[k]);
+    }
+    // not too steep for snow to stay (35°, or 10 cm across a cell of a few
+    // centimetres), and no step inside it: each edge's middle on the line
+    // between its ends. A fixed 10 cm across it dropped the outer, coarse
+    // cells on any hill (they came back as I came nearer, finer)
+    // (and none of them under the water, where `snow_mesh_top_soft` puts
+    // no snow: that vertex would stand at the camera's height)
+    if (lowest < -1e8 || lowest < frame.params.y || highest - lowest > max(0.1, 0.7 * s * 1.4142)) { return false; }
+    for (var k = 0u; k < 3u; k++) {
+        let j = (k + 1u) % 3u;
+        let mid = snow_mesh_surface((at[k] + at[j]) * 0.5, z);
+        if (mid < -1e8 || abs(mid - 0.5 * (hb[k] + hb[j])) > 0.1) { return false; }
+    }
+    // the snow whole at each corner, as the flat snow lies there (by the
+    // facing of the ground; the first corner's is the vertex's own)
+    for (var k = 0u; k < 3u; k++) {
+        var facing = first_ground;
+        if (k > 0u) { facing = snow_mesh_ground(at[k]); }
+        let lies = snow_memory_depth(at[k]) * snow_mesh_edge(at[k], me, reach) * smoothstep(0.55, 0.85, facing.z);
+        if (lies <= SNOW_MESH_SOLID) { return false; }
+    }
+    return true;
 }
 
 // How deep the snow lies (0..1) before deep snow's surface stands: where
@@ -3767,12 +4065,12 @@ fn on_deep_snow(world: vec3<f32>) -> bool {
     var me = frame.snow_trail_step.xy;
     if (all(me == vec2<f32>(0.0))) { me = frame.camera_pos.xy; }
     let d = abs(world.xy - me);
-    if (max(d.x, d.y) > snow_mesh_grid().y * 0.85) { return false; }
-    let surface = rain_surface_height(world.xy, frame.camera_pos.z);
+    if (max(d.x, d.y) > snow_mesh_grid().y * SNOW_MESH_EDGE_FROM) { return false; }
+    let surface = snow_mesh_surface(world.xy, frame.camera_pos.z);
     if (surface < -1e8) { return false; }
     // 8 mm at least: the surface's lift over what it lies on
     let up = world.z - surface;
-    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) > SNOW_MESH_SOLID;
+    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) * smoothstep(0.55, 0.85, snow_mesh_ground(world.xy).z) > SNOW_MESH_SOLID;
 }
 
 @fragment
@@ -3780,7 +4078,7 @@ fn fs_snow_mesh(in: SnowMeshOut) -> @location(0) vec4<f32> {
     // (a triangle across a jump of the surface under it: its corners said so)
     if (in.valid < 0.999) { discard; }
     // where it lies by the level ground under it, lit by its own surface
-    let c = snow_cover_lit(in.clip.xy, in.world, vec3<f32>(in.world.xy, in.base), vec3<f32>(0.0, 0.0, 1.0), normalize(in.n));
+    let c = snow_cover_lit(in.clip.xy, in.world, vec3<f32>(in.world.xy, in.base), normalize(in.ground), normalize(in.n));
     // opaque or not drawn at all (what it writes in the depth hides the
     // ground): where it is not whole (far, at the distance's fade), the
     // ground's own snow shows instead
