@@ -1,7 +1,7 @@
 //! Friends, name cache and instant-message sessions.
 
 use super::ChatLine;
-use super::names::AvatarNames;
+use super::names::{AvatarNames, NameScope};
 use super::transcripts::{LineClock, SessionLog};
 use aurora_llsd::Llsd;
 use std::collections::{HashMap, VecDeque};
@@ -120,10 +120,16 @@ impl Social {
         self.friends.iter().find(|f| f.id == *id).is_none_or(|f| f.online)
     }
 
-    /// Complete name ("Jane Doe (janedoe)"), else the legacy name.
+    /// Complete name ("Jane Doe (janedoe)"), else the legacy name, of
+    /// someone met in the world (`NameScope::World`).
     pub fn name_of(&self, id: &Uuid) -> String {
+        self.name_in(NameScope::World, id)
+    }
+
+    /// `name_of` for a name shown in `scope`.
+    pub fn name_in(&self, scope: NameScope, id: &Uuid) -> String {
         self.avatar_names
-            .complete(id)
+            .complete_in(scope, id)
             .or_else(|| self.names.get(id).cloned())
             .unwrap_or_else(|| "…".into())
     }
@@ -131,9 +137,14 @@ impl Social {
     /// The display name alone (LLAvatarName::getDisplayName), for the rows
     /// that show the username elsewhere or not at all.
     pub fn display_name_of(&self, id: &Uuid) -> String {
+        self.display_name_in(NameScope::World, id)
+    }
+
+    /// `display_name_of` for a name shown in `scope`.
+    pub fn display_name_in(&self, scope: NameScope, id: &Uuid) -> String {
         let names = &self.avatar_names;
         names
-            .get(id)
+            .get_in(scope, id)
             .map(|n| n.display(&names.options))
             .or_else(|| self.names.get(id).cloned())
             .unwrap_or_else(|| "…".into())

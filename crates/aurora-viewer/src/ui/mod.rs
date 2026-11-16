@@ -99,6 +99,7 @@ pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
 pub mod parcel_icons;
@@ -123,6 +124,7 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
@@ -135,6 +137,7 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
 pub mod stand_fly;
 pub mod stream_title;
@@ -240,6 +243,8 @@ pub struct Panels {
     pub voice_controls: bool,
     /// The pose stand (toolbar `pose_stand`).
     pub pose_stand: bool,
+    /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
+    pub omnifilter: bool,
     /// The conversation log (toolbar `conversation_log`, Communicate ›
     /// Conversation log…).
     pub conversation_log: bool,
@@ -316,6 +321,7 @@ impl Panels {
             director: false,
             voice_controls: false,
             pose_stand: false,
+            omnifilter: false,
             conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,

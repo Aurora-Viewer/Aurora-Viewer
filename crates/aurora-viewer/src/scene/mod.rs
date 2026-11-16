@@ -70,6 +70,7 @@ pub mod snow_trail;
 pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
+pub mod spinning_cat;
 pub mod still_check;
 pub mod surface_area;
 mod sync_check;
@@ -876,6 +877,8 @@ pub struct Scene {
     water_effects: water_effects::Effects,
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
+    /// The easter egg's cat and its circle (`crate::oiia`).
+    pub spinning_cat: spinning_cat::SpinningCat,
     pub portals: portals::Portals,
     pub particles: particles::ParticleManager,
     /// Bundled swimming fallback for our own rendering only. Its private ID
@@ -1616,6 +1619,7 @@ impl Scene {
             water: water::WaterGpu::default(),
             water_effects: Default::default(),
             banlines: banlines::BanLines::default(),
+            spinning_cat: Default::default(),
             portals: portals::Portals::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
@@ -2365,6 +2369,7 @@ impl Scene {
         self.water.clear(renderer);
         self.studio_stage.clear(renderer);
         self.banlines.clear(renderer);
+        self.spinning_cat.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
         self.build_hologram.clear(renderer);
@@ -5467,6 +5472,7 @@ impl Scene {
             [
                 (self.banlines.cmds.as_slice(), false, false),
                 (self.portals.cmds.as_slice(), true, true),
+                (self.spinning_cat.cmds.as_slice(), true, true),
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
@@ -6247,6 +6253,11 @@ impl Scene {
                 ))
             }
         }
+    }
+
+    /// The cached rest skeleton of `owner`, as last built by `skeleton_of`.
+    pub(crate) fn skeleton_base(&self, owner: &Uuid) -> Option<Arc<anim::SkeletonBase>> {
+        self.skeletons.get(owner).map(|skeleton| skeleton.base.clone())
     }
 
     /// Rest skeleton of an avatar (or animesh) and the vertical offset of

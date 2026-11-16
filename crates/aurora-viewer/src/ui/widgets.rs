@@ -148,7 +148,7 @@ pub(crate) fn two_lines_gap(ui: &egui::Ui, top: &egui::FontId, bottom: &egui::Fo
     ui.fonts_mut(|f| (f.row_height(top) + f.row_height(bottom)) / 2.0 + 1.0).max(base)
 }
 
-fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
+pub(crate) fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
     let text = text.into();
     if !super::bidi::has_rtl(text.text()) {
         return text.into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body);
@@ -740,7 +740,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -1245,7 +1246,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -1256,10 +1258,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1334,16 +1338,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1355,13 +1369,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1372,15 +1387,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
@@ -3334,18 +3348,82 @@ pub fn rail_row(
     on: bool,
     depth: usize,
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    rail_tree_row(ui, ui.next_auto_id(), p, icon, tint, label, count, on, depth, None).0
+}
+
+/// Width the disclosure caret of `rail_tree_row` adds before the icon.
+const RAIL_CARET_ROOM: f32 = 18.0;
+/// Size of that caret, the one of the Inventory sidebar.
+const RAIL_CARET: f32 = 13.0;
+
+/// `rail_row` for a folder of a tree (the Places rail): when `open` is
+/// `Some`, the folder has sub-folders and a `disclosure_caret` comes before
+/// its icon, as in the Inventory sidebar. The caret is its own click target,
+/// returned beside the row: a click on it folds or unfolds, a click on the
+/// rest of the row chooses the folder.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_tree_row(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+    open: Option<bool>,
+) -> (egui::Response, Option<egui::Response>) {
+    let size = Vec2::new(ui.available_width(), 28.0);
+    let (_, bounds) = ui.allocate_space(size);
+    let mut resp = ui.interact(bounds, id, Sense::click());
+    resp.set_intrinsic_size(size);
+    let rect = ui.layout().align_size_within_rect(size, bounds);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    // Even the deepest branch keeps its caret, icon and some of its name
+    // inside the rail, clear of the count (up to 40 points wide + margin).
+    let count_room = if count.is_some() { 50.0 } else { 0.0 };
+    let caret_room = if open.is_some() { RAIL_CARET_ROOM } else { 0.0 };
+    let max_indent = (rect.width() - 10.0 - caret_room - 25.0 - 32.0 - count_room).max(0.0);
+    let x = rect.left() + 10.0 + (depth as f32 * 14.0).min(max_indent);
+    let caret_center = egui::pos2(x + 8.0, rect.center().y);
+    // Registered after the row, so it is the one a click on the caret reaches.
+    let caret = open.map(|open| {
+        let caret = ui.interact(
+            egui::Rect::from_center_size(caret_center, Vec2::splat(RAIL_CARET + 6.0)),
+            resp.id.with("rail_caret"),
+            Sense::click(),
+        );
+        caret.widget_info(|| egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, ui.is_enabled(), label));
+        ui.ctx().accesskit_node_builder(caret.id, |node| node.set_expanded(open));
+        caret
+    });
+    if resp.gained_focus() || caret.as_ref().is_some_and(|c| c.gained_focus()) {
+        resp.scroll_to_me(None);
+    }
     if !ui.is_rect_visible(rect) {
-        return resp;
+        return (resp, caret);
     }
     let radius = ui.visuals().window_corner_radius;
     if on {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
+    } else if resp.hovered() || resp.has_focus() || caret.as_ref().is_some_and(|c| c.hovered()) {
         ui.painter().rect_filled(rect, radius, p.raised);
     }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    let x = match (open, &caret) {
+        (Some(open), Some(c)) => {
+            let color = if c.hovered() || c.has_focus() {
+                p.ink
+            } else if on {
+                p.violet_pale
+            } else {
+                p.muted_dim
+            };
+            paint_glyph(ui.painter(), disclosure_caret(open), caret_center, RAIL_CARET, color);
+            x + RAIL_CARET_ROOM
+        }
+        _ => x,
+    };
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -3374,7 +3452,7 @@ pub fn rail_row(
         let w = g.size().x;
         paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
     }
-    resp
+    (resp, caret)
 }
 
 /// The margin that puts the capitals of a text field in `font` in the middle

@@ -24,6 +24,16 @@ overflow-checks = false
 [profile.dev.package."*"]
 opt-level = 3
 
+# The one exception to the single profile: the viewer crate's own test
+# executable, the heaviest compile of the workspace, is built without
+# optimisation. It only runs the tests, and the CI builds them unoptimised
+# too. Its debug info stays the one of `dev` (line tables), so a failing test
+# keeps files and lines in its backtrace. Cargo builds nothing else
+# differently: the dependencies, the other crates and the viewer of
+# `cargo run` keep the profile above.
+[profile.test.package.aurora-viewer]
+opt-level = 0
+
 # CI (clippy, tests): compiled fast rather than running fast; keeps the
 # debug assertions and overflow checks as an extra net for the tests.
 [profile.ci]
