@@ -12,9 +12,10 @@
 //!   viewport first, so that scrolling meets measured rows.
 //! - When a row above the viewport changes height, what is in sight must
 //!   not move: the frame draws with the old scroll origin and the offset is
-//!   corrected for the next one (`show` returns that correction). At the
-//!   end of the conversation the rows stand against the bottom in the same
-//!   frame: the scroll area follows the end only a frame later, and a
+//!   corrected for the next one (`show` scrolls the area by it, before the
+//!   area applies the frame's wheel). At the end of the conversation the
+//!   rows stand against the bottom in the same frame: the scroll area
+//!   follows the end only a frame later, and a
 //!   resize, which wraps every row again, made the messages jump for one
 //!   frame at each line a row gained or lost (the human's report of
 //!   2026-10-16).
@@ -24,13 +25,39 @@
 use crate::world::ChatLine;
 use crate::world::chat_log::format::Slt;
 use crate::world::transcripts::LineClock;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Space between two rows (the item spacing of the conversation).
 const GAP: f32 = 2.0;
 /// Time spent per frame measuring rows out of sight.
 const MEASURE_BUDGET: Duration = Duration::from_micros(300);
+
+#[cfg(test)]
+thread_local! {
+    /// Rows measured out of sight per frame in place of the time budget:
+    /// how many rows a frame measures must not depend on the test machine's
+    /// speed (a Mac mini measured 3 where a PC measured all of them, and a
+    /// test failed on it alone).
+    static ROWS_PER_FRAME: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// The rows out of sight a frame measures on this thread: `n` each, or
+/// the time budget again with `None`.
+#[cfg(test)]
+pub fn measure_rows_per_frame(n: Option<usize>) {
+    ROWS_PER_FRAME.with(|r| r.set(n));
+}
+
+/// The frame measured enough rows out of sight: `rows` since `started`.
+fn budget_spent(started: Instant, rows: usize) -> bool {
+    #[cfg(test)]
+    if let Some(n) = ROWS_PER_FRAME.with(|r| r.get()) {
+        return rows >= n;
+    }
+    let _ = rows;
+    started.elapsed() > MEASURE_BUDGET
+}
 
 /// What precedes a line's text: the day when it changes, the sender's
 /// header when the sender or the moment does. `tail`: the last line of its
@@ -83,6 +110,9 @@ pub struct Row {
     pub look: Look,
     /// It matches the find bar's text.
     pub hit: bool,
+    /// The "n messages hidden" row standing for a folded run of a blocked
+    /// resident's lines, this one first; 0 for a line drawn as itself.
+    pub folded: usize,
     /// Top, from the top of the content.
     y: f32,
     h: f32,
@@ -101,6 +131,58 @@ pub struct Source<'a> {
     /// The number of the first line unread when the conversation was
     /// opened, which carries the "New" marker.
     pub first_unread: Option<u64>,
+    /// How a blocked resident's lines show.
+    pub blocked: Blocked<'a>,
+}
+
+/// How the nearby chat shows a blocked resident's lines
+/// (`settings::BlockedChat`), and the folded runs opened by a click, by
+/// the number of their first line.
+#[derive(Debug, Clone, Copy)]
+pub struct Blocked<'a> {
+    pub mode: crate::settings::BlockedChat,
+    pub opened: &'a BTreeSet<u64>,
+}
+
+static NONE_OPENED: BTreeSet<u64> = BTreeSet::new();
+
+impl Default for Blocked<'_> {
+    fn default() -> Self {
+        Blocked {
+            mode: crate::settings::BlockedChat::Hidden,
+            opened: &NONE_OPENED,
+        }
+    }
+}
+
+/// The lines a conversation shows, with the size of the folded run each
+/// one stands for (0: drawn as itself). FSFloaterNearbyChat keeps a
+/// blocked resident's lines in a history of their own, shown in place of
+/// the other with FSShowMutedChatHistory; Aurora keeps them in the one
+/// history: left out (hidden), greyed, or folded by runs of consecutive
+/// blocked lines into one row until it is opened. A search never finds
+/// what a fold hides.
+pub fn blocked_rows(lines: &VecDeque<ChatLine>, first: u64, blocked: Blocked, searching: bool) -> Vec<(usize, usize)> {
+    use crate::settings::BlockedChat;
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].blocked {
+            rows.push((i, 0));
+            i += 1;
+            continue;
+        }
+        let end = (i..lines.len()).find(|&k| !lines[k].blocked).unwrap_or(lines.len());
+        match blocked.mode {
+            BlockedChat::Hidden => {}
+            BlockedChat::Greyed => rows.extend((i..end).map(|k| (k, 0))),
+            BlockedChat::Collapsed if blocked.opened.contains(&(first + i as u64)) => rows.extend((i..end).map(|k| (k, 0))),
+            BlockedChat::Collapsed if !searching => rows.push((i, end - i)),
+            BlockedChat::Collapsed => {}
+        }
+        i = end;
+    }
+    rows
 }
 
 #[derive(Default)]
@@ -115,6 +197,8 @@ pub struct View {
     find: String,
     layout: Layout,
     first_unread: Option<u64>,
+    /// The blocked lines' mode and how many folds were opened.
+    blocked: (crate::settings::BlockedChat, usize),
     today: (i64, i64, i64),
     rows: Vec<Row>,
     /// Measured height and look of the lines, by number, for this width
@@ -299,6 +383,10 @@ impl View {
         self.rows.get(i)
     }
 
+    pub fn is_filtered(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
     /// Bring a row in sight at the next `show`.
     pub fn scroll_to(&mut self, row: usize) {
         self.scroll_to = Some(row);
@@ -361,8 +449,12 @@ impl View {
         let today_key = (today.year, today.month, today.day);
         // heights hold for a width and for the texts that change the looks
         // (the filter) or split the labels (the find highlight)
-        let layout_changed =
-            self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find || self.layout != s.layout;
+        let layout_changed = self.token != s.clock.token
+            || self.width != width
+            || self.filter != s.filter
+            || self.find != s.find
+            || self.layout != s.layout
+            || self.blocked != (s.blocked.mode, s.blocked.opened.len());
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -388,6 +480,7 @@ impl View {
         s.filter.clone_into(&mut self.filter);
         s.find.clone_into(&mut self.find);
         self.layout = s.layout;
+        self.blocked = (s.blocked.mode, s.blocked.opened.len());
         self.first_unread = s.first_unread;
         self.today = today_key;
 
@@ -396,11 +489,25 @@ impl View {
         self.hits.clear();
         self.unmeasured = 0;
         let mut grouping = Grouping::with(today, s.layout);
-        let shown: Vec<usize> = (0..s.lines.len())
-            .filter(|&i| s.filter.is_empty() || matches(&s.lines[i], s.filter))
+        let (shown, folds): (Vec<usize>, Vec<usize>) = blocked_rows(s.lines, first, s.blocked, !s.filter.is_empty())
+            .into_iter()
+            .filter(|&(i, _)| s.filter.is_empty() || matches(&s.lines[i], s.filter))
+            .unzip();
+        let mut looks: Vec<Look> = shown
+            .iter()
+            .zip(&folds)
+            .map(|(&i, &folded)| {
+                let mut look = grouping.look(&s.lines[i]);
+                if folded > 0 {
+                    // a fold stands alone, as a notice: no head, and the
+                    // line after it opens its own
+                    look.header = false;
+                    grouping.prev = None;
+                }
+                look
+            })
             .collect();
-        let mut looks: Vec<Look> = shown.iter().map(|&i| grouping.look(&s.lines[i])).collect();
-        mark_tails(&mut looks, |k| s.lines[shown[k]].kind.is_notice());
+        mark_tails(&mut looks, |k| folds[k] > 0 || s.lines[shown[k]].kind.is_notice());
         if let Some(look) = looks.first_mut() {
             look.first = true;
         }
@@ -412,7 +519,7 @@ impl View {
             looks[k].new = true;
         }
         let mut y = 0.0;
-        for (&i, look) in shown.iter().zip(looks) {
+        for ((&i, look), folded) in shown.iter().zip(looks).zip(folds) {
             let line = &s.lines[i];
             let seq = first + i as u64;
             let (h, measured) = match self.heights.get(&seq) {
@@ -423,7 +530,7 @@ impl View {
                 ),
             };
             self.unmeasured += usize::from(!measured);
-            let hit = !s.find.is_empty() && matches(line, s.find);
+            let hit = folded == 0 && !s.find.is_empty() && matches(line, s.find);
             if hit {
                 self.hits.push(self.rows.len());
             }
@@ -431,6 +538,7 @@ impl View {
                 line: i,
                 look,
                 hit,
+                folded,
                 y,
                 h,
                 measured,
@@ -502,19 +610,19 @@ impl View {
     /// visible part is `viewport` (content coordinates). `draw` draws one
     /// row in the Ui it is given (`painted` false: measuring only).
     ///
-    /// Returns how much the scroll offset must grow so that the next frame
-    /// shows the same rows at the same place (0 at the end of the
-    /// conversation, which the scroll area follows by itself), and the
-    /// response of the content under the rows: it takes the clicks and the
-    /// drags (a text selection, `select.rs`), which then never move the
-    /// window.
+    /// The scroll area moves itself in the same frame so that the next one
+    /// shows the same rows at the same place, or the end at the end of the
+    /// conversation: it must not animate its scrolls (`animated(false)`),
+    /// which would put that off to the next frame. Returns the response of
+    /// the content under the rows: it takes the clicks and the drags (a
+    /// text selection, `select.rs`), which then never move the window.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         viewport: egui::Rect,
         first: u64,
         draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool),
-    ) -> (f32, egui::Response) {
+    ) -> egui::Response {
         let width = self.width;
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom), a frame late: the rows are placed
@@ -570,7 +678,7 @@ impl View {
                 let delta = self.measure(ui, first, i, draw);
                 note(i, delta);
             }
-            let (mut up, mut down) = (top, bottom);
+            let (mut up, mut down, mut rows) = (top, bottom, 0);
             while self.unmeasured > 0 && (up > 0 || down < self.rows.len()) {
                 let mut measured = false;
                 if up > 0 {
@@ -585,8 +693,11 @@ impl View {
                     note(down, delta);
                     down += 1;
                 }
-                if measured && started.elapsed() > MEASURE_BUDGET {
-                    break;
+                if measured {
+                    rows += 1;
+                    if budget_spent(started, rows) {
+                        break;
+                    }
                 }
             }
             if dirty_from != usize::MAX {
@@ -622,17 +733,8 @@ impl View {
         if !ui.is_sizing_pass() {
             self.lift = lift;
         }
+        let grown = height - self.shown_height;
         self.shown_height = height;
-        // (not a window's sizing pass: it scrolls an area of its own, at its
-        // top)
-        if !ui.is_sizing_pass() {
-            if anchored {
-                (self.below, self.left_end) = (0.0, None);
-            } else {
-                self.below = (height - viewport.bottom()).max(0.0);
-                self.left_end.get_or_insert(first + self.len as u64);
-            }
-        }
         // Moving the New marker or measuring an earlier row must not move
         // the menu's target. Keep a surviving visible row at its old screen
         // position; never retain the transcript itself after eviction.
@@ -647,6 +749,18 @@ impl View {
                     .map(|r| r.y + lift - y - viewport.top())
             })
             .unwrap_or(shift_above);
+        // (not a window's sizing pass: it scrolls an area of its own, at its
+        // top)
+        if !ui.is_sizing_pass() {
+            if anchored {
+                (self.below, self.left_end) = (0.0, None);
+            } else {
+                // where the viewport stands once corrected: rows still
+                // measured above it would otherwise count as distance
+                self.below = (height - viewport.bottom() - correction).max(0.0);
+                self.left_end.get_or_insert(first + self.len as u64);
+            }
+        }
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
@@ -702,12 +816,32 @@ impl View {
             self.positions = positions;
             self.resume_following = false;
         }
-        (if at_end { 0.0 } else { correction }, content)
+        // The offset moves before the scroll area applies this frame's
+        // wheel, which it then measures from the right place. Left to the
+        // next frame (or, at the end, to the area following the end), the
+        // wheel was clamped to the shrunken content first: rows measured
+        // above the end lost their too-tall estimates, 90 points a frame
+        // on a slow machine, and a 250-point wheel kept only 5 of them.
+        // (at the end: by what the content gained or lost, not to an
+        // offset taken from `viewport`, which egui's spring back from
+        // past the end may already have moved)
+        // (with a row to bring in sight, its scroll is measured from the
+        // rows as drawn, the correction included)
+        let to = if anchored { grown } else { correction };
+        if to.abs() > 0.001 {
+            ui.scroll_with_delta_animation(egui::vec2(0.0, -to), egui::style::ScrollAnimation::none());
+        }
+        content
     }
 
     /// The lines shown, in order: their index in the conversation.
     pub fn lines(&self) -> impl Iterator<Item = usize> + '_ {
         self.rows.iter().map(|r| r.line)
+    }
+
+    /// The lines whose text is shown, for a copy: never what a fold hides.
+    pub fn shown_lines(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rows.iter().filter(|r| r.folded == 0).map(|r| r.line)
     }
 }
 
@@ -726,7 +860,90 @@ mod tests {
             kind: ChatKind::Im,
             source: uuid::Uuid::from_u128(from.len() as u128),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
+    }
+
+    /// Nova, Violet three times, Nova, Violet, Nova (Violet blocked).
+    fn with_blocked() -> VecDeque<ChatLine> {
+        let mut lines = VecDeque::new();
+        for (n, from) in ["Nova", "Violet", "Violet", "Violet", "Nova", "Violet", "Nova"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut l = line(from, &format!("line {n}"), n as u64);
+            l.blocked = from == "Violet";
+            lines.push_back(l);
+        }
+        lines
+    }
+
+    #[test]
+    fn hidden_blocked_lines_leave_no_row() {
+        let rows = blocked_rows(&with_blocked(), 10, Blocked::default(), false);
+        assert_eq!(rows, [(0, 0), (4, 0), (6, 0)]);
+    }
+
+    #[test]
+    fn greyed_blocked_lines_are_rows_of_their_own() {
+        let none = BTreeSet::new();
+        let greyed = Blocked {
+            mode: crate::settings::BlockedChat::Greyed,
+            opened: &none,
+        };
+        let rows = blocked_rows(&with_blocked(), 10, greyed, false);
+        assert_eq!(rows, (0..7).map(|i| (i, 0)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn collapsed_blocked_lines_fold_by_run_until_opened() {
+        let lines = with_blocked();
+        let mut opened = BTreeSet::new();
+        let folded = |opened: &BTreeSet<u64>, searching| {
+            let blocked = Blocked {
+                mode: crate::settings::BlockedChat::Collapsed,
+                opened,
+            };
+            blocked_rows(&lines, 10, blocked, searching)
+        };
+        // one row for each run of consecutive lines, with its count
+        assert_eq!(folded(&opened, false), [(0, 0), (1, 3), (4, 0), (5, 1), (6, 0)]);
+        // a search never finds what a fold hides
+        assert_eq!(folded(&opened, true), [(0, 0), (4, 0), (6, 0)]);
+        // Show opens that run alone, its lines then drawn (greyed)
+        opened.insert(11);
+        assert_eq!(folded(&opened, false), [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1), (6, 0)]);
+    }
+
+    #[test]
+    fn a_fold_stands_alone_and_its_text_is_never_copied() {
+        let lines = with_blocked();
+        let clock = LineClock::default();
+        let none = BTreeSet::new();
+        let mut view = View::default();
+        view.sync(
+            &Source {
+                lines: &lines,
+                clock,
+                filter: "",
+                find: "line 2",
+                layout: Layout::Aurora,
+                first_unread: None,
+                blocked: Blocked {
+                    mode: crate::settings::BlockedChat::Collapsed,
+                    opened: &none,
+                },
+            },
+            300.0,
+        );
+        let folds: Vec<usize> = view.rows.iter().map(|r| r.folded).collect();
+        assert_eq!(folds, [0, 3, 0, 1, 0]);
+        // no head on the fold, and Nova's line after it opens hers again
+        assert!(!view.rows[1].look.header && view.rows[2].look.header);
+        // the find bar's text is in the fold: no hit
+        assert!(view.hits.is_empty());
+        assert_eq!(view.shown_lines().collect::<Vec<_>>(), [0, 4, 6]);
     }
 
     #[test]
@@ -847,6 +1064,7 @@ mod tests {
                     find: "",
                     layout: Layout::Aurora,
                     first_unread,
+                    blocked: Blocked::default(),
                 },
                 300.0,
             );
@@ -893,6 +1111,7 @@ mod tests {
                     find,
                     layout: Layout::Classic,
                     first_unread: None,
+                    blocked: Blocked::default(),
                 },
                 300.0,
             )
@@ -961,8 +1180,9 @@ mod tests {
             let mut last = None;
             frames.run(Vec::new(), |ui| {
                 ui.set_max_width(width);
-                let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "resize")
+                crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "resize")
                     .stick_to_bottom(true)
+                    .animated(false)
                     .auto_shrink([false, false])
                     .max_height(300.0)
                     .min_scrolled_height(300.0)
@@ -974,9 +1194,10 @@ mod tests {
                             find: "",
                             layout: Layout::Aurora,
                             first_unread: None,
+                            blocked: Blocked::default(),
                         };
                         view.sync(&source, width);
-                        let (shift, _) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                        view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                             // a message in sight wraps on two lines when narrow
                             let narrow = ui.max_rect().width() < 350.0;
                             let h = if row.line == 37 && narrow { 40.0 } else { 20.0 };
@@ -985,12 +1206,7 @@ mod tests {
                                 last = Some(rect.bottom());
                             }
                         });
-                        shift
                     });
-                if out.inner != 0.0 {
-                    let offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
-                    crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
-                }
             });
             bottoms.push(last.expect("the last message is drawn"));
         }
@@ -1012,6 +1228,7 @@ mod tests {
                 ui.set_max_width(400.0);
                 let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "latest")
                     .stick_to_bottom(true)
+                    .animated(false)
                     .auto_shrink([false, false])
                     .max_height(300.0)
                     .min_scrolled_height(300.0)
@@ -1023,18 +1240,17 @@ mod tests {
                             find: "",
                             layout: Layout::Aurora,
                             first_unread: None,
+                            blocked: Blocked::default(),
                         };
                         view.sync(&source, 400.0);
                         view.show(ui, viewport, clock.first, &mut |ui, _, _| {
                             ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), 20.0), egui::Sense::hover());
-                        })
-                        .0
+                        });
                     });
-                let mut offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
                 if jump {
-                    offset.y = out.content_size.y;
+                    let offset = egui::vec2(out.state.unclamped_offset().x, out.content_size.y);
+                    crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
                 }
-                crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
             });
         };
         for _ in 0..3 {

@@ -535,20 +535,57 @@ pub struct Sources<'a> {
     pub agent: Vec3,
 }
 
-/// The tip of `subject`, or None when it shows none (an object that is not
-/// interactive without "on all objects", land without "on land", a parcel
-/// not known yet).
+/// The tip of `subject`, or None when it shows none (a subject its
+/// switches leave out, an object that is not interactive without "on all
+/// objects", a parcel not known yet).
 pub fn build(world: &mut World, subject: Subject, s: &Sources, settings: &HoverTips) -> Option<Tip> {
+    if !subject_enabled(subject, settings) {
+        return None;
+    }
     match subject {
         Subject::Object { idx, root, root_id } => object_tip(world, idx, root, root_id, s, settings),
         Subject::Avatar { idx, id } => Some(avatar_tip(world, idx, id, s, settings)),
         Subject::Land { handle, local, origin } => {
-            if !settings.land {
-                return None;
-            }
             let parcel = s.parcels.at(handle, local, origin)?.clone();
             Some(land_tip(world, &parcel, s.point))
         }
+    }
+}
+
+/// Some tip can show: the main switch (ShowHoverTips), or avatars alone.
+pub fn any_enabled(settings: &HoverTips) -> bool {
+    settings.enabled || settings.avatars
+}
+
+/// Whether the switches let this kind of subject have a tip: avatars with
+/// the main switch or "Avatars even when off", objects and land with the
+/// main switch only (land with "on land" too). "On all objects" is the
+/// object builder's.
+pub fn subject_enabled(subject: Subject, settings: &HoverTips) -> bool {
+    match subject {
+        Subject::Avatar { .. } => any_enabled(settings),
+        Subject::Object { .. } => settings.enabled,
+        Subject::Land { .. } => settings.enabled && settings.land,
+    }
+}
+
+/// Whether RLVa leaves `subject`, hovered at the world point `point`, a tip.
+/// LLToolPie::handleToolTip (indra/newview/lltoolpie.cpp) shows none at all
+/// under @interact, the land's included, and none on what the user may not
+/// interact with (RlvActions::canInteract: out of @fartouch's reach);
+/// handleTooltipObject shows none on an avatar whose name @shownames hides
+/// (its plain-text fallback is commented out there).
+pub fn rlva_allows(world: &World, subject: Subject, point: Vec3) -> bool {
+    if !world.rlva.enabled() {
+        return true;
+    }
+    if world.rlva.has("interact") {
+        return false;
+    }
+    match subject {
+        Subject::Object { idx, .. } => world.rlva_can_interact_at(idx, Some(point)),
+        Subject::Avatar { idx, id } => world.rlva_can_interact_at(idx, Some(point)) && world.rlva_can_name(id),
+        Subject::Land { .. } => true,
     }
 }
 
@@ -565,6 +602,7 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
         .and_then(|p| world.objects.get(p))
         .map_or(0, |p| p.update_flags);
     let (local_id, prim_id, region) = (prim.key.local_id, prim.full_id, root_o.key.region);
+    let prim_region = prim.key.region;
     let title = props
         .map(|p| p.name.trim())
         .filter(|n| !n.is_empty())
@@ -587,7 +625,13 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
         (!id.is_nil()).then_some((id, group))
     });
     let owner = owner.map(|(id, group)| {
-        let name = owner_name(world, id, group).unwrap_or_else(|| aurora_i18n::tr!("common-loading").to_owned());
+        // handleTooltipObject: under @shownames a resident owning the
+        // object is a stand-in, whoever it is (no exception counts there)
+        let name = if !group && world.rlva.has("shownames") {
+            world.rlva_anonymous(id).display_name.clone()
+        } else {
+            owner_name(world, id, group).unwrap_or_else(|| aurora_i18n::tr!("common-loading").to_owned())
+        };
         (name, group)
     });
     let sale = props
@@ -608,19 +652,29 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
             flags.push(f);
         }
     }
+    // the buttons the menu would grey out are not offered: Buy and Pay
+    // under @buy (enable_buy_object, enable_pay_object), Touch where RLVa
+    // refuses it at the hovered point (enable_object_touch,
+    // indra/newview/llviewermenu.cpp)
+    let may_buy = !world.rlva.has("buy");
     let mut actions = Vec::new();
-    if sale.is_some() {
+    if sale.is_some() && may_buy {
         actions.push(TipAction::Buy(prim_id));
     }
-    if (prim_flags | parent_flags | root_flags) & flag::TAKES_MONEY != 0 {
+    if (prim_flags | parent_flags | root_flags) & flag::TAKES_MONEY != 0 && may_buy {
         actions.push(TipAction::Pay(prim_id));
     }
-    if (prim_flags | parent_flags) & flag::HANDLE_TOUCH != 0 {
+    if (prim_flags | parent_flags) & flag::HANDLE_TOUCH != 0 && world.rlva_can_touch_at(prim_region, local_id, Some(s.point)) {
         actions.push(TipAction::Touch(local_id));
     }
     let prims = crate::build::family(world, root).len();
     let position = crate::scene::Scene::object_transform(world, root, Instant::now(), 0).map(|xf| xf.0);
-    let region_pos = world.region_offset(region).zip(position).map(|(offset, p)| p - offset);
+    // handleTooltipObject: no position line under @showloc (the distance stays)
+    let region_pos = world
+        .region_offset(region)
+        .zip(position)
+        .map(|(offset, p)| p - offset)
+        .filter(|_| !world.rlva.has("showloc"));
     let distance = position.map(|p| p.distance(s.agent));
     let impact = s.land_impact;
     let mut rows = Vec::new();
@@ -757,8 +811,9 @@ fn avatar_tip(world: &mut World, idx: usize, id: Uuid, s: &Sources, settings: &H
         .as_ref()
         .filter(|n| !n.is_default && !n.username.is_empty() && n.username != title)
         .map(|n| n.username.clone());
-    let group_title = settings
-        .group_titles
+    // handleTooltipObject: no group title while @shownames is set, even
+    // above a name an exception leaves readable
+    let group_title = (settings.group_titles && !world.rlva.has("shownames"))
         .then(|| world.objects.get(idx).and_then(|o| o.group_title()))
         .flatten()
         .filter(|t| !t.trim().is_empty());
@@ -770,11 +825,15 @@ fn avatar_tip(world: &mut World, idx: usize, id: Uuid, s: &Sources, settings: &H
         .map_or(s.point, |xf| xf.0);
     let distance = position.distance(s.agent);
     let ours = id == world.agent_id;
-    let actions = if ours {
-        Vec::new()
-    } else {
-        vec![TipAction::Im(id), TipAction::PayResident(id)]
-    };
+    // the buttons the avatar's menu would grey out are not offered
+    // (RlvActions::canStartIM, canPayAvatar)
+    let mut actions = Vec::new();
+    if !ours && world.rlva_can_start_im(id) {
+        actions.push(TipAction::Im(id));
+    }
+    if !ours && crate::ui::context::can_pay_resident(world) {
+        actions.push(TipAction::PayResident(id));
+    }
     // getCompleteName, with the group title above it (FSShowGroupTitleInTooltip)
     let complete = known.as_ref().map(|n| n.complete(&names.options)).unwrap_or_else(|| title.clone());
     let legacy = match &group_title {

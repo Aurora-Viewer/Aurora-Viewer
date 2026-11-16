@@ -99,14 +99,40 @@ impl Rlva {
         self.rules_for("setcam", Uuid::nil()).next().map(|(id, _)| id)
     }
 
+    /// Something holds the camera (@setcam) or bounds it (where it may be,
+    /// what it looks at, how wide): a view of the viewer's own making (the
+    /// Avatar Studio's, the Director's track) is not allowed to replace it.
+    pub fn camera_restricted(&self) -> bool {
+        self.camera_owner().is_some()
+            || [
+                "setcam_unlock",
+                "setcam_avdistmin",
+                "setcam_avdistmax",
+                "setcam_origindistmin",
+                "setcam_origindistmax",
+                "setcam_eyeoffset",
+                "setcam_focusoffset",
+                "setcam_mouselook",
+                "setcam_fovmin",
+                "setcam_fovmax",
+            ]
+            .iter()
+            .any(|name| self.has(name))
+    }
+
     pub fn camera_value(&self, name: &str) -> Option<&str> {
         if !self.enabled() {
             return None;
         }
-        self.rules_for(name, Uuid::nil())
-            .find(|(id, _)| self.camera_owner().is_none_or(|owner| owner == *id))
+        self.camera_rule(name)
             .map(|(_, v)| v)
             .or_else(|| self.camera_values.get(name).map(String::as_str))
+    }
+
+    /// The rule behind `camera_value`, with the object that issued it.
+    pub(super) fn camera_rule(&self, name: &str) -> Option<(Uuid, &str)> {
+        self.rules_for(name, Uuid::nil())
+            .find(|(id, _)| self.camera_owner().is_none_or(|owner| owner == *id))
     }
 
     pub fn camera_limit(&self, name: &str, default: f32, minimum: bool) -> f32 {
@@ -114,12 +140,18 @@ impl Rlva {
     }
 
     fn camera_number(&self, name: &str, minimum: bool) -> Option<f32> {
-        self.rules
+        self.camera_winner(name, minimum).map(|(value, _)| value)
+    }
+
+    /// The limit that applies and the object that set it.
+    pub(super) fn camera_winner(&self, name: &str, largest: bool) -> Option<(f32, Uuid)> {
+        let values = self
+            .rules
             .iter()
             .filter(|(id, _)| self.enabled() && self.camera_owner().is_none_or(|owner| **id == owner))
-            .flat_map(|(_, rules)| rules.iter())
-            .filter(|r| super::canonical(&r.behaviour) == name)
-            .filter_map(|r| {
+            .flat_map(|(id, rules)| rules.iter().map(move |r| (*id, r)))
+            .filter(|(_, r)| super::canonical(&r.behaviour) == name)
+            .filter_map(|(id, r)| {
                 let value = if r.behaviour.starts_with("camzoom") && r.option.is_empty() {
                     Some(1.0)
                 } else {
@@ -127,20 +159,37 @@ impl Rlva {
                 };
                 value.map(|v| {
                     if r.behaviour.starts_with("camzoom") {
-                        std::f32::consts::FRAC_PI_3 / v
+                        (std::f32::consts::FRAC_PI_3 / v, id)
                     } else {
-                        v
+                        (v, id)
                     }
                 })
-            })
-            .reduce(if minimum { f32::max } else { f32::min })
+            });
+        super::modifiers::best(values, largest)
     }
 
     /// RlvReplyCamMinMaxModifierHandler returns an empty reply for an
     /// inactive modifier, even when normal camera limits have defaults.
+    /// An option these queries do not take fails them, and a failed query
+    /// still answers, with nothing, so that the script does not wait
+    /// (RlvCommandHandlerBaseImpl<RLV_TYPE_REPLY>::processCommand,
+    /// rlvhandler.cpp).
     pub fn camera_reply(&self, command: &Command, distance: f32, fov: f32) -> Option<String> {
-        if !command.option.is_empty() || !matches!(command.param, Param::Reply(_)) {
+        if !matches!(command.param, Param::Reply(_)) {
             return None;
+        }
+        if !command.option.is_empty() {
+            return matches!(
+                command.behaviour.as_str(),
+                "getcam_avdist"
+                    | "getcam_avdistmin"
+                    | "getcam_avdistmax"
+                    | "getcam_fov"
+                    | "getcam_fovmin"
+                    | "getcam_fovmax"
+                    | "getcam_textures"
+            )
+            .then(String::new);
         }
         if command.behaviour == "getcam_textures" {
             return Some(self.camera_texture().map(|id| id.to_string()).unwrap_or_default());

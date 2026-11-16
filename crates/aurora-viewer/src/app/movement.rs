@@ -89,7 +89,7 @@ impl App {
                     prefs.fly_assist = false;
                     prefs.swimming = false;
                 }
-                "passage-blocked" | "passage-reached" | "passage-pending" => {
+                "passage-blocked" | "passage-reached" | "passage-pending" | "passage-refused" => {
                     prefs.running = false;
                     prefs.fly_assist = false;
                     prefs.swimming = false;
@@ -103,7 +103,9 @@ impl App {
                 }
                 _ => {}
             }
-            if mode.starts_with("passage-") {
+            if mode == "passage-refused" {
+                self.passage_refused_demo();
+            } else if mode.starts_with("passage-") {
                 // Synthetic outcome only: the offline demo has no Havok.
                 // Exercise the same feedback formatter used for LSL status.
                 self.movement_runtime.passage_feedback.start(123, now);
@@ -384,6 +386,7 @@ impl App {
             self.movement_runtime.cancel_water_gesture();
         }
         let was_water_walking = self.movement_runtime.water_walk.active();
+        self.vr_walk_override.apply_frame(&mut frame);
         let step = self.movement_runtime.update(&prefs, &frame, &input, now);
         let set = self.ao_catalog.selected(selected);
         let mut loaded = |state| {
@@ -543,7 +546,12 @@ impl App {
         let destination = self
             .scene
             .movement_exit(&self.world, self.world.agent.position, direction, self.movement_height());
-        if let Some(position) = destination
+        if let Some((position, wall)) = destination
+            && let Err(refusal) = self.passage_rights(wall, position)
+        {
+            self.movement_ui.message = refusal.message();
+            self.open_movement();
+        } else if let Some((position, _)) = destination
             && self.bridge_runtime.available()
             && let Some(motion) = self.movement_runtime.start_passage(position - self.world.agent.position, now)
         {

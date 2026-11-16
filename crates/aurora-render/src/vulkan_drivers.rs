@@ -93,6 +93,18 @@ pub fn allow_again() -> bool {
     }
 }
 
+/// Whether this process previously disabled Dozen and may retry with it.
+pub fn was_disabled() -> bool {
+    #[cfg(windows)]
+    {
+        DISABLED.load(Ordering::Relaxed)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

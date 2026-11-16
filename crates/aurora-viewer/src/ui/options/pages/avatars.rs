@@ -64,6 +64,24 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     " m",
                 );
                 cx.toggle(
+                    tr!("ui-options-contact-markers"),
+                    tr!("ui-options-contact-markers-help"),
+                    &field!(contact_markers),
+                );
+                let off = !cx.s.contact_markers;
+                cx.subs(off, |cx| {
+                    use crate::settings::MarkerAnchor;
+                    cx.combo(
+                        tr!("ui-options-contact-marker-anchor"),
+                        tr!("ui-options-contact-marker-anchor-help"),
+                        &field!(contact_marker_anchor),
+                        &[
+                            (MarkerAnchor::AboveName, tr!("ui-options-contact-marker-anchor-above")),
+                            (MarkerAnchor::Body, tr!("ui-options-contact-marker-anchor-body")),
+                        ],
+                    );
+                });
+                cx.toggle(
                     tr!("ui-options-complexity-in-name-tags"),
                     tr!("ui-options-below-the-name-from-green-to-red-based-on"),
                     &field!(tag_complexity),
@@ -81,6 +99,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(tag_complexity_own),
                     );
                 });
+                // FSTagShowDistance, FSTagShowDistanceColors (panel_preferences_colors.xml)
+                cx.toggle(
+                    tr!("ui-options-distance-in-name-tags"),
+                    tr!("ui-options-distance-in-name-tags-help"),
+                    &field!(tag_distance),
+                );
+                cx.toggle(
+                    tr!("ui-options-names-by-distance"),
+                    tr!("ui-options-names-by-distance-help"),
+                    &field!(tag_distance_colors),
+                );
             });
             // the plates' settings mean nothing to the classic name tags
             cx.group(tr!("ui-options-aurora-avatar-plates"), |cx| {
@@ -295,7 +324,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     );
                 });
             });
-            // PlayTypingAnim and FSTypeDuringEmote (panel_preferences_chat.xml)
+            // PlayTypingAnim, FSTypeDuringEmote and PlayChatAnim
+            // (panel_preferences_chat.xml)
             cx.group(tr!("ui-options-typing-and-voice"), |cx| {
                 cx.toggle(
                     tr!("ui-options-play-typing-anim"),
@@ -310,10 +340,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(type_during_emote),
                     );
                 });
+                cx.toggle(
+                    tr!("ui-options-play-chat-anim"),
+                    tr!("ui-options-play-chat-anim-hint"),
+                    &field!(play_chat_anim),
+                );
                 cx.toggle(tr!("voice-lip-sync"), "", &field!(audio.lip_sync));
             });
             // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer
             cx.group(tr!("ui-options-appearance-editing"), |cx| {
+                cx.toggle(
+                    tr!("appearance-editor-camera"),
+                    tr!("ui-options-appearance-camera-hint"),
+                    &field!(appearance_camera_movement),
+                );
                 cx.toggle(
                     tr!("ui-options-customize-animation"),
                     tr!("ui-options-customize-animation-hint"),

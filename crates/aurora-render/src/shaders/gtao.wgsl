@@ -55,7 +55,7 @@
 //    the accumulation (`AURORA_GTAO_TEMPORAL=0`) the noise stays the same
 //    every frame, so the result does not flicker, and the blur alone removes
 //    its pattern, leaving a fine grain in the penumbra;
-// 5. at half resolution (low quality, or a scene of 2560 x 1440 and more),
+// 5. at half resolution (low quality, or a scene of 1920 x 1009 and more),
 //    `upsample` (and `upsample_il` for the light) takes the result to the
 //    scene's size: the four nearest half-resolution texels, weighted
 //    bilinearly and by how close their depth is to the pixel's, so the
@@ -337,9 +337,11 @@ fn calculate_normal(edges: vec4<f32>, c: vec3<f32>, l: vec3<f32>, r: vec3<f32>, 
     return normalize(n);
 }
 
-// The octahedral normal of the G-buffer (ssr.wgsl).
+// The octahedral normal of the G-buffer (ssr.wgsl). The prepass adds 2 to x
+// on the faces FSR must not trust (NORMAL_COMPOSITION, common.wgsl): taken
+// off here.
 fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
-    let e = e_in * 2.0 - vec2<f32>(1.0);
+    let e = vec2<f32>(e_in.x - select(0.0, 2.0, e_in.x > 1.5), e_in.y) * 2.0 - vec2<f32>(1.0);
     var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
     if (n.z < 0.0) {
         let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));

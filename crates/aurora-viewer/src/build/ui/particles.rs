@@ -188,6 +188,7 @@ impl ParticleEditor {
                 true,
             )
             .on_hover_text(aurora_i18n::tr!("particle-editor-texture-tip"));
+            self.picker.drop_target_copy_transfer(ui, texture.rect, !self.busy);
             if texture.clicked() {
                 self.picker
                     .open_with_defaults(aurora_i18n::tr!("particle-editor-texture"), v.texture, None, true);

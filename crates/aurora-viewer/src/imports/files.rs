@@ -11,6 +11,7 @@ use std::{fs::File, io::Read, path::Path};
 
 mod folder;
 mod lods;
+pub(super) mod texture_names;
 pub(super) use folder::load as load_folder;
 
 enum Selection {
@@ -306,11 +307,14 @@ pub(super) fn load(
         }
         "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" => Source::Texture(Arc::new(import_texture::decode(&data)?)),
         "wav" => Source::Sound(Arc::new(import_sound::decode_wav(&data, sound::SOURCE_LIMIT)?)),
-        "anim" => Source::Animation {
-            animation: Arc::new(aurora_assets::parse_animation_upload(&data)?),
-            bytes: Arc::new(data),
-            bvh: None,
-        },
+        "anim" => {
+            let (animation, bytes) = aurora_assets::prepare_animation_upload(&data)?;
+            Source::Animation {
+                animation: Arc::new(animation),
+                bytes: Arc::new(bytes),
+                bvh: None,
+            }
+        }
         "bvh" => {
             let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
             let bvh = import_animation::parse_bvh(&data, &skeleton)?;
@@ -362,7 +366,8 @@ pub(super) fn load(
                                         path: None,
                                         key: Uuid::from_bytes(id),
                                         empty_alpha: import_texture::empty_alpha(&pixels),
-                                        name: format!("{}_{}", path.file_stem().unwrap_or_default().to_string_lossy(), index + 1),
+                                        // Named per slot below.
+                                        name: String::new(),
                                         pixels,
                                         asset: None,
                                     };
@@ -372,6 +377,7 @@ pub(super) fn load(
                             }
                         };
                         let mut image = image;
+                        image.name = texture_names::texture_name(&texture_names::image_label(&doc, index), texture_names::SLOT_TYPES[slot]);
                         if choice == Choice::Local {
                             let mut hash = Sha256::new();
                             hash.update(path.as_os_str().to_string_lossy().as_bytes());
@@ -408,10 +414,12 @@ pub(super) fn load(
                     occlusion.as_ref(),
                     material.occlusion.is_some(),
                 )? {
+                    // An occlusion map alone keeps the Legacy Viewer's default
+                    // metallic-roughness name (MATERIAL_METALLIC_DEFAULT_NAME).
                     let name = images[2]
                         .as_ref()
                         .map(|i| i.name.clone())
-                        .unwrap_or_else(|| format!("{}_ORM", path.file_stem().unwrap_or_default().to_string_lossy()));
+                        .unwrap_or_else(|| texture_names::SLOT_TYPES[2].to_owned());
                     images[2] = Some(local_image(packed, name));
                 }
                 if choice == Choice::Local {
@@ -523,9 +531,13 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
+        // Some loaders already know source dependencies that are not retained
+        // on decoded image data (notably glTF material map URIs). Keep those
+        // watches when the entry is made local.
+        let mut paths = entry.watch.take().map_or_else(|| vec![entry.path.clone()], |watch| watch.paths);
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths.extend(mesh_dependencies(&entry.path, &draft.scene));
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -543,10 +555,12 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
                         .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
                 );
             }
-            paths.sort();
-            paths.dedup();
-            entry.watch = Some(super::local::Watch::new(paths));
+        } else if let Some(Source::Material { images, .. }) = &entry.source {
+            paths.extend(images.iter().flatten().filter_map(|image| image.path.clone()));
         }
+        paths.sort();
+        paths.dedup();
+        entry.watch = Some(super::local::Watch::new(paths));
     }
 }
 
@@ -572,7 +586,7 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
             if bvh.is_some() {
                 import_animation::encode(animation)
             } else {
-                Ok(bytes.as_ref().clone())
+                aurora_assets::rewrite_animation_upload(bytes, animation)
             }
         }
         Source::Material { value, .. } => value.encode_asset(),
@@ -1124,6 +1138,37 @@ mod tests {
         );
     }
     #[test]
+    fn local_textures_and_materials_watch_their_source_files() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+
+        let entry = &entries[0];
+        assert!(entry.local);
+        assert!(entry.local_live);
+        let watch = entry.watch.as_ref().expect("local texture file watch");
+        assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
+        let before = watch.stamp.clone();
+
+        image::save_buffer(&path, &[180u8; 16 * 16 * 4], 16, 16, image::ColorType::Rgba8).expect("change source image");
+        assert_ne!(before, super::super::local::stamp(&watch.paths));
+
+        let material_path = files.0.join("material-demo.gltf");
+        let mut materials = files.load("material-demo.gltf", Choice::Local);
+        localize(&mut materials, &Preferences::default());
+        let entry = &materials[0];
+        assert!(matches!(entry.source, Some(Source::Material { .. })));
+        let watch = entry.watch.as_ref().expect("local material file watch");
+        assert!(watch.paths.contains(&material_path));
+        let map_path = files.0.join("texture-demo.png").canonicalize().expect("map path");
+        assert!(
+            watch.paths.contains(&map_path),
+            "watched paths: {:?}; expected map: {map_path:?}",
+            watch.paths
+        );
+    }
+    #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
         let files = Files::new();
         let mut wav = std::fs::read(files.0.join("sound-demo.wav")).expect("WAV fixture");
@@ -1187,6 +1232,30 @@ mod tests {
             encode(native.source.as_ref().expect("animation"), native.options, native.sound.options).expect("encode"),
             read(&native.path).expect("bytes")
         );
+        let Some(Source::Animation { bytes, animation, bvh }) = native.source.as_ref() else {
+            panic!("native animation")
+        };
+        let mut edited = animation.as_ref().clone();
+        edited.base_priority = 6;
+        edited.looping = false;
+        let edited_source = Source::Animation {
+            bytes: bytes.clone(),
+            animation: Arc::new(edited),
+            bvh: *bvh,
+        };
+        let uploaded = encode(&edited_source, native.options, native.sound.options).expect("encode edited animation");
+        let uploaded_animation = aurora_assets::parse_animation_upload(&uploaded).expect("parse edited upload");
+        assert_eq!(uploaded_animation.base_priority, 6);
+        assert!(!uploaded_animation.looping);
+        let mut motion = animation.joints.clone();
+        for (joint, priority) in motion
+            .iter_mut()
+            .zip(aurora_assets::native_joint_priorities(bytes, 6).expect("joint priorities"))
+        {
+            joint.priority = priority;
+        }
+        assert!(motion.iter().all(|joint| joint.priority == 6), "the joints follow the priority");
+        assert_eq!(uploaded_animation.joints, motion, "editing upload options preserves the motion");
         assert!(
             load(
                 &files.0.join("animation-demo.bvh"),
