@@ -85,7 +85,7 @@ fn exception_source(world: &World, option: &str, want_groups: &mut Vec<Uuid>) ->
         return world.rlva_filter_text(&item.name).into_owned();
     }
     if !world.rlva_can_name(id) {
-        return crate::world::rlva::privacy::anonymous(id).display_name.clone();
+        return world.rlva_anonymous(id).display_name.clone();
     }
     if let Some(name) = world.social.avatar_names.complete(&id).or_else(|| world.avatar_name(&id)) {
         return name;

@@ -184,8 +184,9 @@ jobs:
         # every failure of the run at once: the Apple GPU is reached here only
         run: |
           cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
-      # the offline demo past its loading fade, then quit: a missing image
-      # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails.
+      # the offline demo past its loading fade, then quit: a missing image,
+      # a non-zero exit or a wgpu error in its log (a pipeline Metal
+      # refused, a GPU fault) fails.
       # The build takes about 5 minutes and the frames a few seconds: a
       # viewer that never quits fails here instead of holding the merge
       # queue for an hour. On the way, frame 300 is held 10 s as a GPU that
@@ -217,6 +218,14 @@ jobs:
           log="$HOME/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-ci-macos.log"
           if ! grep -q "notice shown" "$log" || ! grep -q "the graphics card answered again" "$log"; then
             echo "::error::the GPU stall and its notice did not happen as expected (see the demo log)"
+            exit 1
+          fi
+          # A module Metal refuses still leaves an image, the interface over
+          # a black world (#3751, from 0.9.10-beta.20261114.2 to the fix):
+          # a clean run writes no wgpu error at all
+          if grep -q "wgpu error" "$log"; then
+            grep -A8 "wgpu error" "$log" | head -60
+            echo "::error::wgpu errors in the demo log (a shader or a pipeline Metal refused?)"
             exit 1
           fi
       - name: Demo image and log

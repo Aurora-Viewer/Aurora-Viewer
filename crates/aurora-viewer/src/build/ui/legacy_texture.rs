@@ -104,6 +104,13 @@ fn compact_glow(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
     });
 }
 
+/// Keep the numeric field and its step buttons within the clipped Legacy pane.
+fn property_widths(ui: &egui::Ui, desired_field: f32) -> (f32, f32) {
+    let content = (ui.available_width() - ui.spacing().item_spacing.x).max(0.0);
+    let field = desired_field.min((content - 48.0).max(29.0)).min(content);
+    (content - field, field)
+}
+
 fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env, sel: &[Sel]) {
     let bp: Vec<_> = sel
         .iter()
@@ -192,7 +199,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let options_x = map_w + 4.0 + tint_w;
     let options_w = canvas.width() - options_x;
     let head_h = 22.0 * scale;
-    let glow_w = 96.0 * scale;
+    let glow_w = (96.0 * scale).min((options_w - 40.0).max(0.0));
     let mut bright = child(
         ui,
         canvas,
@@ -231,8 +238,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         (canvas_h - props_y).max(40.0),
         "legacy-bp-properties",
     );
-    let field_w = 70.0 * scale;
-    let label_width = (properties.available_width() - field_w).max(48.0);
+    let (label_width, field_w) = property_widths(&properties, 70.0 * scale);
     let (alpha, alpha_mixed) = same(sel.iter().map(|x| x.te.color[3]));
     let mut value = (1.0 - alpha.unwrap_or(1.0)) * 100.0;
     row(
@@ -470,8 +476,7 @@ pub(super) fn pbr_surface(
         tool.edit_gltf(world, sel, |o| o.double_sided = Some(value));
     }
     let mut alpha = mat.base_color_factor[3];
-    let field_width = (58.0 * scale).max(50.0);
-    let label_width = (params.available_width() - field_width - 3.0).max(48.0);
+    let (label_width, field_width) = property_widths(&params, 58.0 * scale);
     params.add_enabled_ui(editable, |ui| {
         row(ui, p, aurora_i18n::tr!("common-alpha"), label_width, |ui| {
             if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, field_width, false).commit {
@@ -593,5 +598,24 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
         .clicked()
     {
         tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    #[test]
+    fn large_texture_values_and_step_buttons_fit_the_legacy_column() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.set_width(140.0);
+            ui.spacing_mut().item_spacing.x = 3.0;
+            for desired in [58.0, 70.0, 58.0 * 1.75, 70.0 * 2.0] {
+                let (label, field) = super::property_widths(ui, desired);
+                assert!(label >= 48.0);
+                assert!(field >= 29.0);
+                assert!(label + 3.0 + field <= 140.0);
+            }
+        });
+        output.textures_delta.clear();
     }
 }

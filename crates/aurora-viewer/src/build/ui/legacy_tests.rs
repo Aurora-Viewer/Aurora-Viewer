@@ -488,8 +488,15 @@ fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
 
 fn scroll_shape(inspector: &mut Inspector, delta: f32) {
     let (window, _) = inspector.show(vec![]);
+    // A wheel over a number field steps that field. The reserved scrollbar
+    // strip is beside the columns, and it stays clear while the content moves.
+    let at = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-scroll")))
+        .map(|content| egui::pos2(content.right() + 4.0, content.center().y))
+        .unwrap_or(egui::pos2(window.right() - 16.0, window.bottom() - 80.0));
     inspector.show(vec![
-        egui::Event::PointerMoved(egui::pos2(window.center().x, window.bottom() - 80.0)),
+        egui::Event::PointerMoved(at),
         egui::Event::MouseWheel {
             phase: egui::TouchPhase::Move,
             source: egui::MouseWheelSource::Wheel,

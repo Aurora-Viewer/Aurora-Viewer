@@ -2,11 +2,12 @@
 //! Legacy Viewer's eight tabs in their order (floater_region_info.xml:
 //! Region, Debug, Terrain, Estate, Covenant, Experiences, Access,
 //! Environment; LLFloaterRegionInfo in newview/llfloaterregioninfo.cpp,
-//! originally LGPL 2.1), each showing the settings of its panel with the
+//! originally LGPL 2.1), plus "Region settings" after Region where the
+//! region offers DispatchOpenRegionSettings, each showing the settings of its panel with the
 //! controls, rules and messages Aurora's window uses: one data model, one
 //! set of requests, two layouts.
 
-use super::{RegionUi, View, estate_wide, interventions, manage, overview, people};
+use super::{RegionUi, View, estate_wide, interventions, manage, opensim, overview, people};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use crate::world::World;
@@ -24,6 +25,8 @@ pub(super) const MIN_SIZE: Vec2 = Vec2::new(640.0, 470.0);
 pub enum Tab {
     #[default]
     Region,
+    /// Aurora-Sim based grids only (LLPanelRegionOpenSettingsInfo).
+    OpenSettings,
     Debug,
     Terrain,
     Estate,
@@ -34,8 +37,9 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub(super) const ALL: [Tab; 8] = [
+    pub(super) const ALL: [Tab; 9] = [
         Tab::Region,
+        Tab::OpenSettings,
         Tab::Debug,
         Tab::Terrain,
         Tab::Estate,
@@ -48,6 +52,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Tab::Region => aurora_i18n::tr!("region-classic-region"),
+            Tab::OpenSettings => opensim::label(),
             Tab::Debug => aurora_i18n::tr!("region-classic-debug"),
             Tab::Terrain => aurora_i18n::tr!("region-classic-terrain"),
             Tab::Estate => aurora_i18n::tr!("region-classic-estate"),
@@ -61,6 +66,7 @@ impl Tab {
     fn icon(self) -> &'static str {
         match self {
             Tab::Region => "shield-filled",
+            Tab::OpenSettings => opensim::ICON,
             Tab::Debug => "code",
             Tab::Terrain => "mountain-filled",
             Tab::Estate => "door-enter",
@@ -84,6 +90,7 @@ impl Tab {
             Some(5) => Tab::Environment,
             Some(6) => Tab::Experiences,
             Some(7) => Tab::Covenant,
+            Some(8) => Tab::OpenSettings,
             _ => Tab::Region,
         }
     }
@@ -103,10 +110,14 @@ pub(super) fn body(
     images: &HashMap<Uuid, egui::TextureHandle>,
 ) {
     let height = ui.available_height();
+    let open_settings = opensim::available(world, v);
+    if s.classic_tab == Tab::OpenSettings && !open_settings {
+        s.classic_tab = Tab::Region;
+    }
     ui.horizontal_top(|ui| {
         ui.allocate_ui_with_layout(Vec2::new(150.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(150.0);
-            for tab in Tab::ALL {
+            for tab in Tab::ALL.into_iter().filter(|t| *t != Tab::OpenSettings || open_settings) {
                 if widgets::navigation(ui, p, tab.icon(), tab.label(), s.classic_tab == tab).clicked() {
                     s.classic_tab = tab;
                 }
@@ -145,6 +156,7 @@ fn panel(
         // LLPanelRegionGeneralInfo: the rules, the telehub; its teleports
         // home and message are with the other interventions on Debug
         Tab::Region => manage::rules(ui, p, s, v, world),
+        Tab::OpenSettings => opensim::section(ui, p, s, v, world),
         // LLPanelRegionDebugInfo: the switches, Top lists, return, restart
         Tab::Debug => {
             manage::scripts(ui, p, s, v, world);
@@ -170,6 +182,7 @@ mod tests {
         assert_eq!(Tab::of_section(Some(4), false), Tab::Debug);
         assert_eq!(Tab::of_section(None, true), Tab::Access);
         assert_eq!(Tab::of_section(None, false), Tab::Region);
-        assert_eq!(Tab::ALL.len(), 8);
+        assert_eq!(Tab::of_section(Some(8), false), Tab::OpenSettings);
+        assert_eq!(Tab::ALL.len(), 9);
     }
 }
