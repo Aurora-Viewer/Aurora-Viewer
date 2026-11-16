@@ -63,6 +63,7 @@ pub mod lsl_syntax;
 pub mod lslbridge;
 pub mod marketplace;
 pub mod maturity;
+pub mod mirror;
 pub mod motion;
 pub mod mutes;
 pub mod names;
@@ -610,6 +611,8 @@ pub struct World {
     couple_anchor: Option<(Uuid, glam::Mat4)>,
     /// The partner's kills held meanwhile.
     held_partner: Vec<(ObjKey, Uuid)>,
+    /// The stand-in Person B, a mirror of our avatar (mirror.rs).
+    mirror: Option<mirror::Mirror>,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -1046,6 +1049,7 @@ impl World {
             couple_place: (Vec3::ZERO, 0.0),
             couple_anchor: None,
             held_partner: Vec::new(),
+            mirror: None,
             social: social::Social::default(),
             contact_sets: Default::default(),
             avatar_marks: Default::default(),
@@ -2682,6 +2686,7 @@ impl World {
 
     /// Visual parameter values (shape) of an avatar's last appearance.
     pub fn visual_params(&self, avatar: &Uuid) -> Option<&[u8]> {
+        let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id
             && let Some(values) = &self.shape_preview
         {
@@ -2726,6 +2731,7 @@ impl World {
 
     /// Hover height of an avatar's last appearance (m).
     pub fn appearance_hover(&self, avatar: &Uuid) -> f32 {
+        let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id {
             return if self.hover_height_available() {
                 self.hover_height.effective()
@@ -2755,13 +2761,18 @@ impl World {
 
     /// COF version of the last appearance received for an avatar.
     pub fn appearance_cof_version(&self, avatar: &Uuid) -> i32 {
-        self.appearances.get(avatar).map(|(a, _)| a.cof_version).unwrap_or(-1)
+        self.appearances
+            .get(&self.appearance_of(avatar))
+            .map(|(a, _)| a.cof_version)
+            .unwrap_or(-1)
     }
 
     /// Worn objects the simulator listed in the avatar's last appearance
     /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
     pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
-        self.appearances.get(avatar).map_or(0, |(a, _)| a.attachments.len())
+        self.appearances
+            .get(&self.appearance_of(avatar))
+            .map_or(0, |(a, _)| a.attachments.len())
     }
 
     /// Inventory items attached to our avatar (AttachItemID name-values).
@@ -2928,6 +2939,7 @@ impl World {
     }
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
+        let avatar = &self.appearance_of(avatar);
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + self.shape_tweens.generation(avatar)
@@ -2978,6 +2990,9 @@ impl World {
     /// Baked texture id for an avatar (by object index) and TE slot.
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
+        if self.is_mirror(&o.full_id) {
+            return self.bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
+        }
         if o.full_id == self.agent_id
             && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
         {
@@ -2988,6 +3003,9 @@ impl World {
 
     pub fn server_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
+        if self.is_mirror(&o.full_id) {
+            return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
+        }
         if let Some((a, _)) = self.appearances.get(&o.full_id)
             && let Some(te) = &a.texture_entry
         {
@@ -2997,6 +3015,7 @@ impl World {
     }
 
     pub fn bake_source(&self, avatar: Uuid, bake: &str, tex: Uuid) -> TexSource {
+        let avatar = self.appearance_of(&avatar);
         match self.login.as_ref().map(|l| l.agent_appearance_service.as_str()) {
             Some(base) if !base.is_empty() => {
                 let base = if base.ends_with('/') { base.to_owned() } else { format!("{base}/") };

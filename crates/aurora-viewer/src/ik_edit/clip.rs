@@ -158,6 +158,8 @@ pub(super) struct State {
     pub(super) couple: Option<couple::Couple>,
     /// The pair a couple save or export writes (`prepare_couple_files`).
     couple_files: Option<files::CoupleFiles>,
+    /// "Mirror yourself" pressed, waiting for the mirror to show.
+    pub(super) mirror_wanted: Option<std::time::Instant>,
     from_avatar_studio: bool,
     pub(super) return_after_upload: bool,
 }
@@ -222,6 +224,7 @@ impl Default for State {
             prepared: Vec::new(),
             couple: None,
             couple_files: None,
+            mirror_wanted: None,
             from_avatar_studio: false,
             return_after_upload: false,
         }

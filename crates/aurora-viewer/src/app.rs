@@ -11307,6 +11307,14 @@ impl App {
             self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             let partner = self.ik_editor.couple_partner();
             self.world.set_couple_partner(partner);
+            // the stand-in Person B, a mirror of us: made when asked, taken
+            // as B once the scene has posed it, gone with couple mode
+            if self.ik_editor.mirror_wanted() {
+                let mirror = self.world.spawn_mirror();
+                self.ik_editor.start_mirror_couple(&self.world, mirror);
+            } else if self.world.mirror().is_some_and(|mirror| Some(mirror) != partner) {
+                self.world.remove_mirror();
+            }
             self.world.couple_place = self.ik_editor.couple_place();
             self.scene.ik_edit = self.ik_editor.request();
             self.scene.ik_edit_others.clear();

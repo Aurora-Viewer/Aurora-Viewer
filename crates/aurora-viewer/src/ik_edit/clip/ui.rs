@@ -898,10 +898,32 @@ impl Editor {
             return;
         }
         ui.label(egui::RichText::new(aurora_i18n::tr!("anim-couple-hint")).color(palette.muted));
+        // no one around, or to try a pose first: a mirror of yourself
+        let waiting = self.clip.mirror_wanted.is_some();
+        if widgets::action_button_if(
+            ui,
+            palette,
+            "flip-horizontal",
+            aurora_i18n::tr!("anim-couple-mirror"),
+            widgets::ActionKind::Flat,
+            egui::vec2(ui.available_width().min(260.0), ui.spacing().interact_size.y),
+            !waiting,
+        )
+        .on_hover_text(aurora_i18n::tr!("anim-couple-mirror-tip"))
+        .clicked()
+        {
+            self.clip.mirror_wanted = Some(std::time::Instant::now());
+            self.clip.error = None;
+        }
         let mut peers: Vec<(Uuid, String, f32)> = world
             .objects
             .iter()
-            .filter(|(_, object)| object.is_avatar() && object.full_id != world.agent_id && poser_consent::nearby(world, object.full_id))
+            .filter(|(_, object)| {
+                object.is_avatar()
+                    && object.full_id != world.agent_id
+                    && !world.is_mirror(&object.full_id)
+                    && poser_consent::nearby(world, object.full_id)
+            })
             .map(|(_, object)| {
                 let id = object.full_id;
                 (

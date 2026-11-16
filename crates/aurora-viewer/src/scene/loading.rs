@@ -525,8 +525,9 @@ impl Scene {
             }
             let own = id == world.agent_id;
             let worn = world.objects.children_of(&o.key).len();
-            // (ours is not compared with the simulator's list: `!isSelf()`)
-            let announced = if own { 0 } else { world.announced_attachments(&id) };
+            // (ours is not compared with the simulator's list: `!isSelf()`,
+            // nor the animation editor's mirror of us, which has no HUDs)
+            let announced = if own || world.is_mirror(&id) { 0 } else { world.announced_attachments(&id) };
             // its missing bakes rank with the meshes it wears (`wait_px`),
             // the textures on what it wears just behind them: the geometry
             // is what it waits for, the textures only shorten the delay

@@ -10,7 +10,8 @@ impl App {
     /// AURORA_DEMO_COUPLE: Nova stands beside you and accepts an Ask from
     /// the animation editor's couple section 1.5 s later, as a resident
     /// would. `leave`: 10 s after she becomes Person B she teleports away
-    /// (her avatar is killed), and stays drawn and posable.
+    /// (her avatar is killed), and stays drawn and posable. `clip`,
+    /// `hover` and `mirror` script the screenshots (below).
     pub(super) fn couple_demo(&mut self, mode: &str) {
         let peer = crate::demo::poser::PEER;
         if self.frame_count == 400
@@ -29,16 +30,26 @@ impl App {
         // the scripted modes, for screenshots (with
         // AURORA_DEMO_AVATAR_STUDIO=animation-editor, which opens the
         // editor at frame 800): Nova is asked and becomes Person B
-        let scripted = matches!(mode, "clip" | "hover");
-        if scripted && self.frame_count >= 860 && self.frame_count % 30 == 0 && self.world.couple_partner.is_none() {
-            let world = &self.world;
-            if self.ik_editor.demo_couple_step(world, peer) {
+        // (`mirror`: a mirror of you is Person B instead)
+        let scripted = matches!(mode, "clip" | "hover" | "mirror");
+        if scripted && self.frame_count >= 860 && self.frame_count.is_multiple_of(30) && self.world.couple_partner.is_none() {
+            if mode == "mirror" {
+                self.ik_editor.demo_mirror_step();
+            } else if self.ik_editor.demo_couple_step(&self.world, peer) {
                 log::info!("demo couple: Nova is Person B (frame {})", self.frame_count);
-                if mode == "hover" {
-                    self.avatar_studio.hover_height = 0.1;
-                    self.avatar_studio.partner_hover_height = Some(0.3);
-                    self.avatar_studio.hover_partner = true;
-                }
+            }
+        }
+        // once the world has B (the Studio drops B's hover until then): a
+        // side view, so that face to face B is not hidden behind you, and
+        // in `hover` B's own hover chosen in the menu
+        let b = if mode == "mirror" { self.world.mirror() } else { Some(peer) };
+        if scripted && b.is_some() && self.world.couple_partner == b && self.couple_demo_since.is_none() {
+            self.couple_demo_since = Some(Instant::now());
+            self.avatar_studio.yaw = (self.avatar_studio.facing + std::f32::consts::FRAC_PI_2).rem_euclid(std::f32::consts::TAU);
+            if mode == "hover" {
+                self.avatar_studio.hover_height = 0.1;
+                self.avatar_studio.partner_hover_height = Some(0.3);
+                self.avatar_studio.hover_partner = true;
             }
         }
         if mode == "leave" && self.world.couple_partner == Some(peer) {

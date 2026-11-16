@@ -231,6 +231,8 @@ pub(crate) fn studio_roots(world: &crate::world::World) -> Vec<Uuid> {
     let mut roots = vec![world.agent_id];
     // the animation editor's couple partner stands on the stage with us
     roots.extend(world.couple_partner);
+    // and the mirror of us that is becoming Person B
+    roots.extend(world.mirror());
     if let Some((_, seat)) = studio_seat(world) {
         roots.push(seat);
         roots.extend(
@@ -252,7 +254,7 @@ pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
         let Some((root_index, root)) = root_including_huds(world, index, true) else {
             return false;
         };
-        if root == world.agent_id || Some(root) == world.couple_partner {
+        if root == world.agent_id || Some(root) == world.couple_partner || world.is_mirror(&root) {
             return true;
         }
         let Some((_, seat)) = studio_seat(world) else {

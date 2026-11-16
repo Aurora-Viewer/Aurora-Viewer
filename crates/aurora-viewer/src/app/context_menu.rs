@@ -125,6 +125,14 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // the animation editor's mirror of us is no one: no menu on it nor
+        // on what it wears
+        if picked
+            .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
+            .is_some_and(|id| self.world.is_mirror(&id))
+        {
+            return;
+        }
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())

@@ -91,6 +91,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "focus-2",
     "focus-centered",
     "fingerprint",
+    "flip-horizontal",
     "gavel",
     "gif",
     "grid-3x3",

@@ -36,12 +36,15 @@ pub(in crate::ik_edit) struct Person {
 pub(in crate::ik_edit) enum Partner {
     /// A resident nearby who accepted to be posed (`poser_consent`).
     Avatar(Uuid),
+    /// A mirror of our own avatar (`World::spawn_mirror`), to animate a
+    /// couple alone: no one to ask.
+    Mirror(Uuid),
 }
 
 impl Partner {
     pub(in crate::ik_edit) fn id(self) -> Uuid {
         match self {
-            Self::Avatar(id) => id,
+            Self::Avatar(id) | Self::Mirror(id) => id,
         }
     }
 }
@@ -222,8 +225,10 @@ impl Editor {
     /// Start couple mode with `partner` as Person B. B starts from their
     /// rest pose, with A's range, rate and settings, and is edited first.
     pub(in crate::ik_edit) fn start_couple(&mut self, world: &World, partner: Partner) -> bool {
-        let Partner::Avatar(id) = partner;
-        let partner_name = crate::world::poser_consent::name(world, id);
+        let partner_name = match partner {
+            Partner::Avatar(id) => crate::world::poser_consent::name(world, id),
+            Partner::Mirror(_) => aurora_i18n::text("anim-couple-mirror-name").to_owned(),
+        };
         if !self.clip.active || self.clip.couple.is_some() || !self.clip.can_switch_person() {
             return false;
         }
@@ -293,6 +298,41 @@ impl Editor {
             }
             _ => false,
         }
+    }
+    /// AURORA_DEMO_COUPLE=mirror: press "Mirror yourself" once the editor
+    /// is open. True once asked.
+    pub fn demo_mirror_step(&mut self) -> bool {
+        if !self.clip.active || self.clip.couple.is_some() {
+            return false;
+        }
+        self.clip.mirror_wanted.get_or_insert_with(std::time::Instant::now);
+        true
+    }
+    /// "Mirror yourself" was pressed: the app makes the mirror
+    /// (`World::spawn_mirror`) and hands it over with `start_mirror_couple`.
+    pub fn mirror_wanted(&self) -> bool {
+        self.clip.mirror_wanted.is_some() && self.clip.active && self.clip.couple.is_none()
+    }
+    /// Take the mirror `id` as Person B, once the scene has posed it (its
+    /// first frame). A mirror that never shows (or none, while our avatar
+    /// is not in the world) gives up after a few
+    /// seconds, with a message. True once couple mode runs.
+    pub fn start_mirror_couple(&mut self, world: &World, id: Option<Uuid>) -> bool {
+        let Some(since) = self.clip.mirror_wanted else { return false };
+        if let Some(id) = id
+            && self.start_couple(world, Partner::Mirror(id))
+        {
+            self.clip.mirror_wanted = None;
+            self.clip.tab = ClipTab::Clip;
+            return true;
+        }
+        if since.elapsed() > std::time::Duration::from_secs(5) {
+            self.clip.mirror_wanted = None;
+            if self.clip.error.is_none() {
+                self.clip.error = Some(aurora_i18n::text("anim-couple-wait").to_owned());
+            }
+        }
+        false
     }
     /// Leave couple mode: A is edited alone again, B's animation stays
     /// among the drafts.
@@ -479,20 +519,27 @@ impl Editor {
             self.clip.couple = None;
             return;
         }
-        let Partner::Avatar(id) = couple.partner;
+        let partner = couple.partner;
         let pending_switch = couple.pending_switch;
-        if !world.poser_consent.can_pose(world, id) {
+        let present = match partner {
+            Partner::Avatar(id) => world.poser_consent.can_pose(world, id),
+            Partner::Mirror(id) => world.is_mirror(&id) && world.objects.index_of_uuid(&id).is_some(),
+        };
+        if !present {
             self.end_couple();
             self.clip.error = Some(aurora_i18n::text("anim-couple-partner-left").to_owned());
             return;
         }
         // a name still loading when B was chosen shows once it arrives
-        let name = crate::world::poser_consent::name(world, id);
-        if let Some(couple) = self.clip.couple.as_mut()
-            && couple.partner_name != name
-        {
-            couple.partner_name = name;
+        if let Partner::Avatar(id) = partner {
+            let name = crate::world::poser_consent::name(world, id);
+            if let Some(couple) = self.clip.couple.as_mut()
+                && couple.partner_name != name
+            {
+                couple.partner_name = name;
+            }
         }
+        self.sync_couple_timing(&world.avatar_lib.rig);
         if pending_switch && self.clip.can_switch_person() {
             if let Some(couple) = self.clip.couple.as_mut() {
                 couple.pending_switch = false;
@@ -500,6 +547,54 @@ impl Editor {
             self.swap_person();
             self.select_after_switch(world);
         }
+    }
+    /// The two animations play together: the range, frame rate, loop and
+    /// ease set on the edited person carry over to the one set aside (their
+    /// keys stay), whose preview is rebuilt at once so they keep in step.
+    fn sync_couple_timing(&mut self, rig: &Rig) {
+        let Some(edited) = self.clip.document.clone() else { return };
+        let Some(couple) = self.clip.couple.as_mut() else { return };
+        let Some(other) = couple.other.document.as_ref() else { return };
+        let timing = |d: &Document| {
+            (
+                d.fps,
+                d.start,
+                d.end,
+                d.meta.looping,
+                d.meta.loop_in,
+                d.meta.loop_out,
+                d.meta.ease_in,
+                d.meta.ease_out,
+            )
+        };
+        if timing(&edited) == timing(other) {
+            return;
+        }
+        let mut document = (**other).clone();
+        document.set_fps(edited.fps);
+        document.range(edited.start, edited.end);
+        document.meta.looping = edited.meta.looping;
+        document.meta.loop_in = edited.meta.loop_in;
+        document.meta.loop_out = edited.meta.loop_out;
+        document.meta.ease_in = edited.meta.ease_in;
+        document.meta.ease_out = edited.meta.ease_out;
+        document.timing();
+        let person = &mut couple.other;
+        match document.preview() {
+            Ok(animation) => {
+                let revision = person.preview.as_ref().map_or(0, |preview| preview.revision);
+                person.preview = Some(Preview {
+                    revision,
+                    start: document.start,
+                    end: document.end,
+                    bound: Arc::new(BoundAnim::bind(animation, rig)),
+                });
+            }
+            // nothing to play (no track yet): nothing stale either
+            Err(_) => person.preview = None,
+        }
+        person.lanes = None;
+        person.document = Some(Arc::new(document));
     }
     /// Swap the edited person's whole state with the one set aside.
     fn swap_person(&mut self) {
@@ -611,6 +706,30 @@ mod tests {
             place: (Vec3::ZERO, 0.0),
         });
         editor
+    }
+
+    #[test]
+    fn range_rate_loop_and_ease_carry_over_to_the_person_set_aside() {
+        let lib = AvatarLibrary::load();
+        let mut editor = couple_editor(&lib);
+        let document = Arc::make_mut(editor.clip.document.as_mut().expect("A"));
+        document.set_fps(24);
+        document.range(6, 54);
+        document.meta.looping = true;
+        document.meta.loop_in = 0.5;
+        document.meta.loop_out = 1.5;
+        document.meta.ease_in = 0.25;
+        document.timing();
+        let a = editor.clip.document.clone().expect("A");
+        editor.sync_couple_timing(&lib.rig);
+        let couple = editor.clip.couple.as_ref().expect("couple");
+        let b = couple.other.document.as_ref().expect("B");
+        assert_eq!((b.fps, b.start, b.end), (a.fps, a.start, a.end));
+        assert!(b.meta.looping);
+        assert_eq!((b.meta.loop_in, b.meta.loop_out, b.meta.ease_in), (0.5, 1.5, a.meta.ease_in));
+        assert_eq!(b.name, "Hug B", "B keeps their own animation");
+        let preview = couple.other.preview.as_ref().expect("B's preview");
+        assert_eq!((preview.start, preview.end), (a.start, a.end), "B plays the new range at once");
     }
 
     #[test]

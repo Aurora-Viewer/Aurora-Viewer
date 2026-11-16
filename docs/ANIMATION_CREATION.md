@@ -279,9 +279,12 @@ in one timeline:
 
 1. Your avatar is Person A. Pick Person B among the residents nearby: **Ask**
    sends them the same request as the Poser's, and once they accept, **Use as
-   B** starts couple mode. Only you see the pose. Person B starts from their
-   rest pose, with your animation's range, rate and settings, and is edited
-   first.
+   B** starts couple mode. Only you see the pose. Alone, **Mirror yourself**
+   takes a copy of your own avatar as Person B, with what you wear (not your
+   HUDs): only you see it, and it goes when couple mode ends. Person B starts
+   from their rest pose, with your animation's range, rate and settings, and
+   is edited first. The range, rate, loop and ease you set on one person
+   carry over to the other.
 2. The editor works on one person at a time, with every tool. The timeline
    lists A's lanes, then B's, each under their name: A in violet, B in amber.
    The person set aside keeps showing their keys at the playhead; a click on

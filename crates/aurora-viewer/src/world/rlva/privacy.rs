@@ -476,7 +476,7 @@ impl World {
     /// (RlvUtil::isNearbyAgent over LLWorld::getAvatars, rlvcommon.cpp):
     /// the loaded ones and the coarse locations, whatever their distance.
     fn rlva_nearby_avatars(&self) -> std::collections::HashSet<Uuid> {
-        let loaded = self.objects.avatars().map(|(_, o)| o.full_id);
+        let loaded = self.objects.avatars().map(|(_, o)| o.full_id).filter(|id| !self.is_mirror(id));
         let coarse = self.coarse.values().flatten().map(|(id, _)| *id);
         loaded.chain(coarse).filter(|id| !id.is_nil() && *id != self.agent_id).collect()
     }
