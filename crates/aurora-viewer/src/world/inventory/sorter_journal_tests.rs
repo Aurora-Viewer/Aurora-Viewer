@@ -600,3 +600,61 @@ fn a_shared_layout_goes_to_the_desktop_then_documents_then_here() {
     );
     assert_eq!(share_path(None, None, here.clone(), "2026-11-16 21-40"), here.join(name));
 }
+
+/// The layout to share carries no account and no inventory id, and nothing
+/// of the Trash or the calling cards.
+#[test]
+fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
+    let id = |n: u128| Uuid::from_u128(n + 1000);
+    let mut inv = Inventory {
+        root: id(1),
+        ..Default::default()
+    };
+    for (n, parent, name, kind) in [
+        (1, 0, "My Inventory", 8),
+        (14, 1, "Trash", 14),
+        (2, 1, "Calling Cards", 2),
+        (30, 1, "Shoes", -1),
+    ] {
+        inv.folders.insert(
+            id(n),
+            Folder {
+                info: InvFolder {
+                    id: id(n),
+                    parent: id(parent),
+                    name: name.into(),
+                    type_default: kind,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    inv.add_items(
+        [(900, 14, "Deleted Thing", 6), (901, 2, "A Resident", 2), (902, 30, "Kira Boots", 6)]
+            .into_iter()
+            .map(|(n, parent, name, kind)| InvItem {
+                id: id(n),
+                parent: id(parent),
+                name: name.into(),
+                asset_type: kind,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let shared = Snapshot::take_to_share(&inv, 1);
+    assert!(shared.account.is_nil());
+    let names: Vec<&str> = shared.items.iter().map(|(_, _, n)| n.as_str()).collect();
+    assert_eq!(names, ["Kira Boots"]);
+    assert!(!shared.folders.iter().any(|(_, _, n, _)| n == "Trash" || n == "Calling Cards"));
+    let real: HashSet<Uuid> = [1, 30, 902].into_iter().map(id).collect();
+    // (the numbers start at 1, the ids here at 1001)
+    assert!(
+        !shared.folders.iter().any(|(f, _, _, _)| real.contains(f)),
+        "numbers, never inventory ids"
+    );
+    assert!(!shared.items.iter().any(|(i, _, _)| real.contains(i)));
+}

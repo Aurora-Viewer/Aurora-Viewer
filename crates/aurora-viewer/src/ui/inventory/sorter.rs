@@ -3620,7 +3620,8 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
                 return;
             }
             let at = unix_now();
-            let snapshot = sorter::journal::Snapshot::take(inv, at, agent);
+            let snapshot = sorter::journal::Snapshot::take_to_share(inv, at);
+            let _ = agent;
             let when = chrono::DateTime::from_timestamp(at, 0).map_or_else(
                 || at.to_string(),
                 |t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H-%M").to_string(),
@@ -3642,7 +3643,13 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
             state.shared = Some(Share::Saving(rx));
         }
         Some(Share::Saving(rx)) => {
-            if let Ok(result) = rx.try_recv() {
+            // (a writer that died is a failure, never a wait forever)
+            let result = match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("the writer stopped".to_owned())),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
                 state.shared = Some(match result {
                     Ok(path) => Share::Saved(path),
                     Err(e) => {

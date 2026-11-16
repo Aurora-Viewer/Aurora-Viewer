@@ -339,6 +339,43 @@ impl Snapshot {
     }
 }
 
+impl Snapshot {
+    /// The layout to share (`Save my inventory layout to share`): no
+    /// account, every folder and item numbered in place of its inventory
+    /// id, and nothing of the Trash, Lost and Found or Calling Cards (other
+    /// residents' names); calling cards elsewhere are left out too.
+    pub fn take_to_share(inv: &Inventory, at: i64) -> Self {
+        const LEFT_OUT: [i32; 3] = [14, 16, 2];
+        let hidden = |id: Uuid| {
+            actions::ancestors(inv, id).any(|a| {
+                inv.folders
+                    .get(&a)
+                    .is_some_and(|f| f.library || LEFT_OUT.contains(&f.info.type_default))
+            })
+        };
+        let mut numbers: HashMap<Uuid, Uuid> = HashMap::new();
+        let mut number = |id: Uuid| {
+            let next = numbers.len() as u128 + 1;
+            *numbers.entry(id).or_insert_with(|| Uuid::from_u128(next))
+        };
+        let mut kept: Vec<&super::super::Folder> = inv.folders.values().filter(|f| !hidden(f.info.id)).collect();
+        kept.sort_by_key(|f| f.info.id);
+        let folders = kept
+            .iter()
+            .map(|f| (number(f.info.id), number(f.info.parent), f.info.name.clone(), f.info.type_default))
+            .collect();
+        let mut items: Vec<_> = inv.items.values().filter(|it| it.asset_type != 2 && !hidden(it.parent)).collect();
+        items.sort_by_key(|it| it.id);
+        let items = items.iter().map(|it| (number(it.id), number(it.parent), it.name.clone())).collect();
+        Self {
+            at,
+            account: Uuid::nil(),
+            folders,
+            items,
+        }
+    }
+}
+
 /// What a layout restore leaves alone, for the preview's summary. A
 /// restore never stops on any of these: it skips and counts them.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

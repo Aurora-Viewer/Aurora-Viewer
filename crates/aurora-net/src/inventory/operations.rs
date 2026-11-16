@@ -9,6 +9,10 @@ use aurora_llsd::{Llsd, llsd_map};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// How long a batch's read-back may take, well under the viewer's own wait
+/// for its answer (Auto-sort's two minutes).
+const READ_BACK_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Debug, Clone)]
 pub struct CopyItem {
     pub item: Uuid,
@@ -720,12 +724,28 @@ where
         // shown there again, never left where it was only sent)
         let mut item_records: HashMap<Uuid, super::InvItem> = HashMap::new();
         let mut folder_records: HashMap<Uuid, super::InvFolder> = HashMap::new();
+        // (the whole read-back ends well before the viewer gives the batch
+        // up, so its answer always settles the batch; what is not read by
+        // then is answered as unconfirmed)
+        let deadline = tokio::time::Instant::now() + READ_BACK_LIMIT;
+        // (an item a FetchInventory2 answer leaves out twice is given up:
+        // deleted meanwhile, or not readable there; never retried for half
+        // a minute)
+        let mut omitted: HashMap<Uuid, u32> = HashMap::new();
+        let mut given_up: Vec<Uuid> = Vec::new();
         for attempt in 0..=5u32 {
-            let read_items = match change.confirm_with.as_deref() {
-                Some(fetch) => read_items_in_bulk(http, fetch, owner, &items).await,
-                None => super::ais::read_items(http, cap, owner, &items).await,
+            let reads = async {
+                let read_items = match change.confirm_with.as_deref() {
+                    Some(fetch) => read_items_in_bulk(http, fetch, owner, &items).await,
+                    None => super::ais::read_items(http, cap, owner, &items).await,
+                };
+                let read_folders = super::ais::read_folders(http, cap, &moved).await;
+                (read_items, read_folders)
             };
-            let read_folders = super::ais::read_folders(http, cap, &moved).await;
+            let Ok((read_items, read_folders)) = tokio::time::timeout_at(deadline, reads).await else {
+                log::warn!("inventory: the read-back of a move ran out of time");
+                break;
+            };
             // a read the server did not answer (busy, throttled): the next
             // attempt waits longer, never hammering it
             let refused = !read_items.failed.is_empty() || read_folders.len() < moved.len();
@@ -737,16 +757,26 @@ where
             for f in read_folders {
                 folder_records.insert(f.id, f);
             }
+            if change.confirm_with.is_some() {
+                for id in &read_items.failed {
+                    *omitted.entry(*id).or_default() += 1;
+                }
+            }
             // only what is not placed yet is read again
             items.retain(|id| !gone.contains(id) && item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));
             moved.retain(|id| folder_records.get(id).is_none_or(|f| Some(&f.parent) != wanted.get(id)));
+            given_up.extend(items.iter().copied().filter(|id| omitted.get(id).is_some_and(|n| *n >= 2)));
+            items.retain(|id| omitted.get(id).is_none_or(|n| *n < 2));
             if items.is_empty() && moved.is_empty() || attempt == 5 {
                 break;
             }
             // a move can show a moment after its request: read again, never
             // write again
-            let pause = if refused { 1000 } else { 200 };
-            tokio::time::sleep(std::time::Duration::from_millis(pause << attempt.min(3))).await;
+            let pause = std::time::Duration::from_millis(if refused { 1000 } else { 200 } << attempt.min(3));
+            if tokio::time::Instant::now() + pause >= deadline {
+                break;
+            }
+            tokio::time::sleep(pause).await;
         }
         return Ok(Reply {
             contents: Vec::new(),
@@ -758,7 +788,7 @@ where
             created,
             moved_items: item_records.into_values().collect(),
             moved_folders: folder_records.into_values().collect(),
-            unconfirmed: items.into_iter().chain(moved).collect(),
+            unconfirmed: items.into_iter().chain(moved).chain(given_up).collect(),
         });
     }
     let mut contents = Vec::new();

@@ -1460,7 +1460,11 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     let shelf_marked = name_words
         .iter()
         .any(|w| SHELF_MARKERS.contains(&w.as_str()) && !(w.chars().count() == 1 && name_words.len() > 2));
-    let delivered = delivery_marked(name) || !shelf_marked && shares_its_name(inv, f, name);
+    let delivered = match delivery_mark(name) {
+        Some(Mark::Strong) => true,
+        Some(Mark::Plain) => !shelf_marked,
+        None => !shelf_marked && shares_its_name(inv, f, name),
+    };
     if delivered {
         return true;
     }
@@ -1483,41 +1487,81 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     }
 }
 
-/// An unpacker's marks in a folder's name (`Kira Boots (unpacked)`,
-/// `Kira Boots [BOXED]`, `Kira Boots - wear to unpack`), or a version tag
-/// (`Kira HUD v1.2`, `Kira Body (1.0.4)`, `Kira [6.0]`). `Unpacked` alone
-/// names the user's shelf; a bare date (`10.12.2016`) is no version.
-fn delivery_marked(name: &str) -> bool {
-    const MARKS: [&str; 12] = [
-        "(box)",
-        "[box]",
-        "(unpacked)",
-        "[unpacked]",
-        "{unpacked}",
-        "boxed",
-        "unpack",
-        "unpacker",
-        "wear me",
-        "add me",
-        "(wear)",
-        "(add)",
+/// How a name shows an unpacker: `Strong` marks (a bracketed `(unpacked)`,
+/// `[BOXED]`, `{Unpacker}`, `wear to unpack`, `add me`, a version tag)
+/// win over a shelf word in a long product name; a plain `Boxed` does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Strong,
+    Plain,
+}
+
+fn delivery_mark(name: &str) -> Option<Mark> {
+    const BRACKETED: [&str; 7] = ["unpacked", "unpacker", "boxed", "box", "wear", "add", "unpack"];
+    const PHRASES: [&[&str]; 6] = [
+        &["to", "unpack"],
+        &["auto", "unpack"],
+        &["wear", "me"],
+        &["add", "me"],
+        &["touch", "me"],
+        &["unpacker"],
     ];
-    let lower = name.to_lowercase();
-    if words(name).len() > 1 && MARKS.iter().any(|m| lower.contains(m)) {
-        return true;
+    let name_words = words(name);
+    if name_words.len() < 2 {
+        return None;
     }
-    lower.split_whitespace().any(|token| {
+    // what brackets hold: `(unpacked)`, `[BOXED]`, `{Unpacker/backup}`
+    let mut inside = Vec::new();
+    let mut depth = 0usize;
+    let mut segment = String::new();
+    for c in name.chars() {
+        match c {
+            '(' | '[' | '{' => {
+                depth += 1;
+                segment.clear();
+            }
+            ')' | ']' | '}' if depth > 0 => {
+                depth -= 1;
+                inside.push(std::mem::take(&mut segment));
+            }
+            _ if depth > 0 => segment.push(c),
+            _ => {}
+        }
+    }
+    if inside.iter().any(|s| words(s).iter().any(|w| BRACKETED.contains(&w.as_str()))) {
+        return Some(Mark::Strong);
+    }
+    if PHRASES.iter().any(|phrase| {
+        name_words
+            .windows(phrase.len())
+            .any(|w| w.iter().map(String::as_str).eq(phrase.iter().copied()))
+    }) {
+        return Some(Mark::Strong);
+    }
+    if version_tag(name) {
+        return Some(Mark::Strong);
+    }
+    name_words.iter().any(|w| w == "boxed").then_some(Mark::Plain)
+}
+
+/// A version tag: `v4`, `v1.2`, `V0.08`, `v.4`; `(1.0.4)`, `[6.0]`. Never a
+/// date, bracketed or not (`10.12.2016`, `(12.2023)`, `[24.12]`).
+fn version_tag(name: &str) -> bool {
+    name.to_lowercase().split_whitespace().any(|token| {
         let bracketed = token.starts_with(['(', '[', '{']) && token.ends_with([')', ']', '}']);
         let inner = token.trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | '{' | '}'));
-        let numbers = |s: &str| {
-            !s.is_empty()
-                && s.split('.')
-                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        let parts = |s: &str| -> Option<Vec<usize>> {
+            let lens: Option<Vec<usize>> = s
+                .split('.')
+                .map(|part| (!part.is_empty() && part.chars().all(|c| c.is_ascii_digit())).then_some(part.len()))
+                .collect();
+            lens.filter(|l| !l.is_empty())
         };
-        // `v4`, `v1.2`, `V0.08`; `(1.0.4)`, `[6.0]`
-        // (`v.4` too)
-        inner.strip_prefix('v').is_some_and(|rest| numbers(rest.trim_start_matches('.')))
-            || bracketed && inner.contains('.') && numbers(inner)
+        // (a year, or two-digit parts only, is a date)
+        let date = |lens: &[usize]| lens.contains(&4) || lens.len() >= 2 && lens.iter().all(|l| *l == 2);
+        let versioned = |s: &str| parts(s).is_some_and(|lens| lens.len() <= 4 && !date(&lens));
+        inner.strip_prefix('v').is_some_and(|rest| versioned(rest.trim_start_matches('.')))
+            || bracketed && inner.contains('.') && versioned(inner)
     })
 }
 
@@ -1540,6 +1584,10 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
                 && !VERSION_WORDS.contains(&w.as_str())
                 && !FINISHES.contains(&w.as_str())
                 && !OCCASION_WORDS.contains(&w.as_str())
+                // (a body's name on every item is the user's shelf of it:
+                // `Lara` holding `Hex Dress Lara`, `Kira Top Lara X`)
+                && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().chain(b.weak.iter()).any(|s| s == w))
+                && !VOCABULARY.variants.squish.iter().chain(VOCABULARY.variants.waifus.iter()).any(|s| s == w)
                 && !is_kind(w)
                 && !plural_kind(w)
                 && !loose_plural(w)

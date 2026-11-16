@@ -3222,3 +3222,30 @@ fn decorated_shelves_open_and_a_product_keeps_its_own_pair() {
     let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
     assert!(!moved.contains(&id(950)) && !moved.contains(&id(901)), "Kira Boots is never opened");
 }
+
+/// Audit 42: a body's shelf, `Unpacked Stuff`, `Unboxed Items`, `Swimwear
+/// Men` and a bracketed date are shelves, never one delivery.
+#[test]
+fn body_shelves_unpacked_stuff_and_dates_are_shelves() {
+    let shelves: [(&str, &[&str]); 6] = [
+        (
+            "Maitreya Clothes",
+            &["Hex Dress Maitreya", "Kira Top Lara X Maitreya", "Jeans Maitreya"],
+        ),
+        ("Unpacked Stuff", &["Zephyr Gizmo", "Quillon Thing"]),
+        ("Unboxed Items", &["Zephyr Gizmo", "Quillon Thing"]),
+        ("Swimwear Men", &["Zephyr Trunks", "Quillon Shorts"]),
+        ("Christmas (12.2023)", &["Zephyr Gizmo", "Quillon Thing"]),
+        ("Hunt [10.12.2016]", &["Zephyr Gizmo", "Quillon Thing"]),
+    ];
+    for (name, items) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+    assert!(version_tag("Kira HUD [6.0]") && version_tag("Kira (1.0.4)") && version_tag("Kira v.4"));
+    assert!(!version_tag("Hunt (10.12.2016)") && !version_tag("Gifts [24.12]") && !version_tag("Fair (12.2023)"));
+}
