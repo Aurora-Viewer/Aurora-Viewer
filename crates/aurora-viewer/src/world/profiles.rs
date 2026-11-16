@@ -9,7 +9,25 @@ use aurora_llsd::Llsd;
 use aurora_net::profile::{civil_from_days, days_from_civil, flags};
 use aurora_net::{AvatarProfile, ClassifiedInfo, ParcelSummary, PickInfo};
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+/// LLUDP does not correlate pick replies with individual requests. Keep the
+/// location we last set until its owner and horizontal parcel cell agree.
+struct PickLocation {
+    owner: Uuid,
+    position: glam::DVec3,
+    requested: Option<Instant>,
+    confirmed: bool,
+}
+
+const PICK_RETRY_AFTER: Duration = Duration::from_secs(3);
+
+pub enum PickRead {
+    Send,
+    FirstAfterMove,
+    Wait,
+}
 
 #[derive(Default)]
 pub struct Profiles {
@@ -23,6 +41,7 @@ pub struct Profiles {
     groups_reset: HashSet<Uuid>,
     /// Pick details (PickInfoReply), by pick id.
     pub picks: HashMap<Uuid, PickInfo>,
+    pick_locations: HashMap<Uuid, PickLocation>,
     /// Classifieds of each avatar (AvatarClassifiedReply).
     pub classified_lists: HashMap<Uuid, Vec<(Uuid, String)>>,
     pub classifieds: HashMap<Uuid, ClassifiedInfo>,
@@ -50,6 +69,8 @@ impl Profiles {
         if !id.is_nil() {
             self.requested.remove(&id);
             self.pending.insert(id);
+            // A newly opened profile may have been edited by another viewer.
+            self.pick_locations.retain(|_, p| p.owner != id || !p.confirmed);
         }
     }
 
@@ -127,6 +148,17 @@ impl Profiles {
     /// One of our picks saved (or created): its name in our profile too.
     pub fn pick_saved(&mut self, owner: Uuid, mut pick: PickInfo) {
         pick.creator = owner;
+        if pick.parcel.is_nil() {
+            self.pick_locations.insert(
+                pick.id,
+                PickLocation {
+                    owner,
+                    position: pick.pos_global,
+                    requested: None,
+                    confirmed: false,
+                },
+            );
+        }
         if let Some(old) = self.picks.get(&pick.id)
             && old.parcel == pick.parcel
             && old.pos_global == pick.pos_global
@@ -142,7 +174,62 @@ impl Profiles {
         self.picks.insert(pick.id, pick);
     }
 
+    /// No automatic retries. A duplicate request from a reopened window or a
+    /// second click must wait for the same cooldown as the visible Retry.
+    pub fn pick_read(&mut self, owner: Uuid, id: Uuid, now: Instant) -> PickRead {
+        let Some(location) = self.pick_locations.get_mut(&id) else {
+            return PickRead::Send;
+        };
+        if location.owner != owner {
+            return PickRead::Wait;
+        }
+        if location.confirmed {
+            return PickRead::Send;
+        }
+        if location
+            .requested
+            .is_some_and(|at| now.saturating_duration_since(at) < PICK_RETRY_AFTER)
+        {
+            return PickRead::Wait;
+        }
+        match location.requested.replace(now) {
+            None => PickRead::FirstAfterMove,
+            Some(_) => PickRead::Send,
+        }
+    }
+
+    /// When Retry can be shown for this owner's unresolved pick.
+    pub fn pick_retry_in(&self, owner: Uuid, id: Uuid, now: Instant) -> Option<Duration> {
+        let location = self.pick_locations.get(&id).filter(|p| p.owner == owner && !p.confirmed)?;
+        Some(location.requested.map_or(Duration::ZERO, |at| {
+            PICK_RETRY_AFTER.saturating_sub(now.saturating_duration_since(at))
+        }))
+    }
+
+    pub fn pick_received(&mut self, owner: Uuid, pick: PickInfo, now: Instant) {
+        if let Some(location) = self.pick_locations.get_mut(&pick.id) {
+            let cell = |p: glam::DVec3| (p.truncate() / f64::from(super::land::GRID_STEP)).floor();
+            if pick.creator != location.owner || pick.parcel.is_nil() || cell(pick.pos_global) != cell(location.position) {
+                return;
+            }
+            location.confirmed = true;
+        } else if pick.creator == owner && pick.parcel.is_nil() {
+            // Some grids do not have a parcel on the first details reply.
+            self.pick_locations.insert(
+                pick.id,
+                PickLocation {
+                    owner,
+                    position: pick.pos_global,
+                    requested: Some(now),
+                    confirmed: false,
+                },
+            );
+        }
+        self.picks.insert(pick.id, pick);
+    }
+
     pub fn pick_deleted(&mut self, owner: Uuid, id: Uuid) {
+        self.pick_locations.remove(&id);
         if let Some(p) = self.map.get_mut(&owner) {
             p.picks.retain(|(pid, _)| *pid != id);
         }
@@ -476,6 +563,62 @@ mod tests {
 
     fn date(y: i64, m: u32, d: u32) -> f64 {
         (days_from_civil(y, m, d) * 86_400) as f64
+    }
+
+    #[test]
+    fn only_the_requested_pick_owner_and_land_cell_confirm_a_move() {
+        let owner = Uuid::from_u128(41);
+        let id = Uuid::from_u128(42);
+        let now = Instant::now();
+        let mut profiles = Profiles::default();
+        let requested = PickInfo {
+            id,
+            creator: owner,
+            pos_global: glam::DVec3::new(256_008.0, 256_012.0, 30.0),
+            ..Default::default()
+        };
+        profiles.pick_saved(owner, requested.clone());
+        assert!(matches!(profiles.pick_read(owner, id, now), PickRead::FirstAfterMove));
+        assert!(matches!(profiles.pick_read(owner, id, now), PickRead::Wait));
+        assert!(matches!(profiles.pick_read(owner, id, now + PICK_RETRY_AFTER), PickRead::Send));
+        assert!(matches!(profiles.pick_read(owner, id, now + PICK_RETRY_AFTER), PickRead::Wait));
+        let confirmed = PickInfo {
+            parcel: Uuid::from_u128(43),
+            ..requested.clone()
+        };
+        let stale = PickInfo {
+            pos_global: requested.pos_global - glam::DVec3::X,
+            ..confirmed.clone()
+        };
+        profiles.refresh(owner); // reopening keeps the location that has not been confirmed
+        for wrong in [
+            stale.clone(),
+            PickInfo {
+                creator: Uuid::from_u128(45),
+                ..confirmed.clone()
+            },
+            requested.clone(),
+        ] {
+            profiles.pick_received(owner, wrong, now);
+            assert!(profiles.picks[&id].parcel.is_nil());
+        }
+        let unrelated = PickInfo {
+            id: Uuid::from_u128(44),
+            ..confirmed.clone()
+        };
+        profiles.pick_received(owner, unrelated, now);
+        assert!(profiles.picks[&id].parcel.is_nil());
+        let rounded = PickInfo {
+            pos_global: requested.pos_global + glam::DVec3::new(0.01, 0.02, 0.3),
+            ..confirmed
+        };
+        profiles.pick_received(owner, rounded.clone(), now);
+        assert_eq!(profiles.picks[&id], rounded);
+        assert!(profiles.pick_retry_in(owner, id, now).is_none());
+        profiles.pick_received(owner, stale, now); // even after the newer reply
+        assert_eq!(profiles.picks[&id], rounded);
+        profiles.pick_deleted(owner, id);
+        assert!(!profiles.pick_locations.contains_key(&id));
     }
 
     #[test]

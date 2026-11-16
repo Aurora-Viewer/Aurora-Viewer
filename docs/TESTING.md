@@ -10005,6 +10005,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In `self:edit:2`, change a pick's description, save it and reopen the
   profile. Its previous place stays. Set Location, save and change the text
   again. The demo returns the parcel at the new position in both styles.
+  With `self:edit:2:slow-pick` the synthetic simulator withholds the first
+  reply after creating or moving a pick. Type more text while the parcel is
+  pending: Save and Done wait and the closing prompt still offers Ignore or
+  Cancel. After three seconds click Retry. The text stays in the editor until
+  Save is clicked again; closing and reopening then shows the saved change.
 
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,

@@ -219,7 +219,22 @@ struct Window {
     demo_photo: Option<(PictureSlot, bool)>,
 }
 
+enum CloseChoice {
+    Save,
+    Ignore,
+    Cancel,
+}
+
 impl Window {
+    fn answer_close(&mut self, choice: CloseChoice, actions: &mut Vec<ProfileAction>) {
+        match choice {
+            CloseChoice::Save if !save_all(self, actions) => return,
+            CloseChoice::Save | CloseChoice::Ignore => self.open = false,
+            CloseChoice::Cancel => {}
+        }
+        self.confirm_close = false;
+    }
+
     fn new(id: Uuid) -> Window {
         Window {
             id,
@@ -255,12 +270,15 @@ impl Window {
 
     /// A new pick or an explicit relocation asks the simulator for the parcel
     /// it chose for those coordinates. A content-only save keeps that parcel.
-    fn save_pick(&mut self, actions: &mut Vec<ProfileAction>) {
+    fn save_pick(&mut self, actions: &mut Vec<ProfileAction>) -> bool {
+        if self.pick_save_waits() {
+            return false;
+        }
         let Some((edit, base)) = &mut self.pick_edit else {
-            return;
+            return true;
         };
         if edit == base {
-            return;
+            return true;
         }
         let refresh = edit.id.is_nil() || edit.location.is_some();
         let pick = pick_of(edit);
@@ -281,6 +299,38 @@ impl Window {
                 actions,
             );
         }
+        true
+    }
+
+    fn pick_save_waits(&self) -> bool {
+        self.pick_edit
+            .as_ref()
+            .is_some_and(|(e, base)| e != base && !e.id.is_nil() && e.location.is_none() && e.parcel.is_nil())
+    }
+
+    fn pick_wait_notice(&self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<ProfileAction>) {
+        if self.id != world.agent_id || (self.tab != TAB_PICKS && !self.pick_save_waits()) {
+            return;
+        }
+        let Some(id) = self.pick_edit.as_ref().map(|(e, _)| e.id).or(self.pick_sel) else {
+            return;
+        };
+        let Some(wait) = world.profiles.pick_retry_in(self.id, id, std::time::Instant::now()) else {
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(aurora_i18n::tr!("voice-waiting-for-parcel"));
+            if wait.is_zero() {
+                if flat_button(ui, p, aurora_i18n::tr!("script-retry")).clicked() {
+                    actions.push(ProfileAction::Net(NetCommand::PickInfoRequest {
+                        creator: self.id,
+                        pick: id,
+                    }));
+                }
+            } else {
+                ui.ctx().request_repaint_after(wait);
+            }
+        });
     }
 
     /// Both styles edit a copy of the server's pick. A reply can resolve the
@@ -613,6 +663,19 @@ impl ProfileUi {
             if !world.rlva_shows_name(w.scope, w.id) {
                 continue;
             }
+            // Done and the close confirmation also work from other tabs. Merge
+            // the parcel into an existing draft before either style draws its buttons.
+            if w.id == world.agent_id
+                && w.pick_save_waits()
+                && let Some((edit, _)) = &w.pick_edit
+                && let Some(info) = world
+                    .profiles
+                    .picks
+                    .get(&edit.id)
+                    .filter(|p| p.creator == w.id && !p.parcel.is_nil())
+            {
+                w.follow_pick(info);
+            }
             if !classic {
                 let profile = world.profiles.get(&w.id);
                 if let Some(pr) = profile {
@@ -675,6 +738,7 @@ impl ProfileUi {
             floater.min_size = Vec2::new(500.0, 580.0);
             let own = w.id == world.agent_id;
             let shown = floater.show(ctx, p, &mut open, |ui| {
+                w.pick_wait_notice(ui, p, world, &mut actions);
                 if w.confirm_close {
                     unsaved_bar(ui, p, w, &mut actions);
                     ui.add_space(4.0);
@@ -901,14 +965,17 @@ fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                        w.confirm_close = false;
+                        w.answer_close(CloseChoice::Cancel, actions);
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("common-ignore")).clicked() {
-                        w.open = false;
+                        w.answer_close(CloseChoice::Ignore, actions);
                     }
-                    if flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked() {
-                        save_all(w, actions);
-                        w.open = false;
+                    if ui
+                        .add_enabled_ui(!w.pick_save_waits(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
+                        .inner
+                        .clicked()
+                    {
+                        w.answer_close(CloseChoice::Save, actions);
                     }
                 });
             });
@@ -937,7 +1004,10 @@ fn close_or_confirm(w: &mut Window, open: bool) {
     }
 }
 
-fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
+fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) -> bool {
+    if !w.save_pick(actions) {
+        return false;
+    }
     for (edit, key) in [
         (&mut w.about, "sl_about_text"),
         (&mut w.fl_about, "fl_about_text"),
@@ -950,7 +1020,6 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             actions.push(ProfileAction::Save { target: w.id, data });
         }
     }
-    w.save_pick(actions);
     if let Some((e, base)) = &mut w.classified_edit
         && e != base
     {
@@ -964,6 +1033,7 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             actions.push(ProfileAction::Net(NetCommand::ClassifiedUpdate(Box::new(classified_of(e)))));
         }
     }
+    true
 }
 
 /// The classified sent for an edit (LLPanelProfileClassified::sendUpdate): a
@@ -1894,7 +1964,7 @@ fn picks_tab(
         });
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
-            let can_add = pr.picks.len() < picks_limit(world) && !creating && !world.rlva.has("showloc");
+            let can_add = pr.picks.len() < picks_limit(world) && !creating && !w.pick_save_waits() && !world.rlva.has("showloc");
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
@@ -1948,7 +2018,9 @@ fn picks_tab(
     ui.horizontal_top(|ui| {
         let before = w.pick_sel;
         side_list(ui, p, &items, &mut w.pick_sel, height, "picks");
-        if before != w.pick_sel {
+        if before != w.pick_sel && w.pick_save_waits() {
+            w.pick_sel = before;
+        } else if before != w.pick_sel {
             // another pick: an unsaved new one is dropped
             w.pick_edit = None;
             w.confirm_delete = false;
@@ -2130,6 +2202,7 @@ fn pick_detail(
         }
     });
     let mut save = false;
+    let waiting = w.pick_save_waits();
     if own && let Some((e, base)) = w.pick_edit.as_mut() {
         widgets::divider(ui, p);
         ui.horizontal(|ui| {
@@ -2140,7 +2213,7 @@ fn pick_detail(
             } else {
                 let dirty = e != base;
                 if ui
-                    .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
+                    .add_enabled(dirty && !waiting, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
                     .clicked()
                 {
                     save = true;
@@ -2683,11 +2756,21 @@ mod tests {
 
         let (edit, _) = w.pick_edit.as_mut().unwrap();
         edit.desc = "New description".into();
-        info.pos_global = edit.pos + DVec3::new(0.0, 0.0, 0.001);
+        let expected = edit.pos;
+        actions.clear();
+        assert!(!save_all(&mut w, &mut actions)); // Done or Save while waiting
+        close_or_confirm(&mut w, false);
+        w.answer_close(CloseChoice::Save, &mut actions);
+        assert!(w.open && w.confirm_close && has_unsaved(&w) && actions.is_empty());
+        w.answer_close(CloseChoice::Cancel, &mut actions);
+        assert!(w.open && !w.confirm_close && w.pick_save_waits());
+        info.pos_global = expected + DVec3::new(0.0, 0.0, 0.001);
         info.parcel = Uuid::from_u128(43);
         w.follow_pick(&info);
-        actions.clear();
-        save_all(&mut w, &mut actions);
+        assert!(actions.is_empty() && has_unsaved(&w)); // receiving is never saving
+        close_or_confirm(&mut w, false);
+        w.answer_close(CloseChoice::Save, &mut actions);
+        assert!(!w.open && !w.confirm_close);
         assert!(matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick))]
             if pick.parcel == info.parcel && pick.pos_global == info.pos_global && pick.desc == "New description"));
 
@@ -2699,6 +2782,18 @@ mod tests {
         let (edit, base) = w.pick_edit.as_ref().unwrap();
         assert!(edit.parcel.is_nil() && edit.location.is_some());
         assert_eq!(base.parcel, info.parcel);
+        let mut blocked = Window::new(owner);
+        let mut draft = PickEdit {
+            id: info.id,
+            ..Default::default()
+        };
+        blocked.pick_edit = Some((draft.clone(), draft.clone()));
+        draft.desc = "Discard this".into();
+        blocked.pick_edit.as_mut().unwrap().0 = draft;
+        close_or_confirm(&mut blocked, false);
+        actions.clear();
+        blocked.answer_close(CloseChoice::Ignore, &mut actions);
+        assert!(!blocked.open && !blocked.confirm_close && actions.is_empty());
     }
 
     #[test]

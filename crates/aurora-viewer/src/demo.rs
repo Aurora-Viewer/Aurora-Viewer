@@ -2727,6 +2727,10 @@ const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0002), demo_snapshot(2)),
 ];
 
+pub fn slow_pick_reply() -> bool {
+    std::env::var("AURORA_DEMO_PROFILE").is_ok_and(|v| v.split(':').any(|part| part == "slow-pick"))
+}
+
 /// A profile opened again in the demo keeps its saved picks. As on a grid,
 /// a read after Set Location returns the parcel at the saved coordinates.
 pub fn saved_profile_picks(profiles: &crate::world::profiles::Profiles, owner: Uuid, event: &mut NetEvent) {

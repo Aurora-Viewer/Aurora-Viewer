@@ -4331,7 +4331,7 @@ impl World {
                 None
             }
             NetEvent::PickInfo(p) => {
-                self.profiles.picks.insert(p.id, *p);
+                self.profiles.pick_received(self.agent_id, *p, std::time::Instant::now());
                 None
             }
             NetEvent::AvatarPicks { target, picks } => {

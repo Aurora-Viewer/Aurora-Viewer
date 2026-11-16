@@ -317,7 +317,7 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
 
 /// Start a new pick at our position (LLPanelProfilePicks::onClickNewBtn).
 fn start_new_pick(w: &mut Window, world: &World) {
-    if world.rlva.has("showloc") {
+    if world.rlva.has("showloc") || w.pick_save_waits() {
         return;
     }
     w.editing = true;
@@ -407,7 +407,8 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
             None => {}
         }
     }
-    let add = editing && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
+    let add =
+        editing && !w.pick_save_waits() && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
     thumbs(ui, env, w, &items, add.then_some((pr.picks.len(), limit)), compact);
 }
 
