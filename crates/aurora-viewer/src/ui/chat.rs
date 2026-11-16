@@ -563,7 +563,7 @@ impl ChatUi {
         {
             if self.popped.contains(to) {
                 // a conversation in its own window is only there
-                if self.popped.shown(to) {
+                if popout::in_sight(ctx, &self.popped).any(|shown| shown == to) {
                     self.popped.raise(to, true);
                     return;
                 }
@@ -4899,6 +4899,15 @@ mod tests {
         st.popped.pop_out(Some(group), false, false, false);
         st.start_chat(&ctx, true, exists);
         assert!(!st.focus_request && !st.conv_focus_request && st.selected.is_none());
+        let minimized = egui::Id::unique((popout::floater_id(Some(group)), "minimized"));
+        ctx.data_mut(|d| d.insert_persisted(minimized, true));
+        st.start_chat(&ctx, true, exists);
+        assert!(
+            st.focus_request && !st.conv_focus_request && st.selected.is_none(),
+            "a minimized IM stays put"
+        );
+        st.focus_request = false;
+        ctx.data_mut(|d| d.insert_persisted(minimized, false));
         st.popped.set_hidden(Some(group), true);
         st.start_chat(&ctx, true, exists);
         assert!(st.focus_request);
