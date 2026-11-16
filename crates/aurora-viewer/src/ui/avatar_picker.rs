@@ -271,7 +271,7 @@ impl AvatarPicker {
 /// Multi-select like LLScrollListCtrl / Contacts, without the friend-action
 /// row cap: Ctrl toggles, Shift fills from the anchor, plain click alone.
 fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], id: Uuid, mods: egui::Modifiers) {
-    if mods.command {
+    if mods.ctrl || mods.command {
         if let Some(i) = sel.iter().position(|s| *s == id) {
             sel.remove(i);
         } else {
