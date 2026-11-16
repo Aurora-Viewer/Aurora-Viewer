@@ -73,8 +73,8 @@ const fn t(id: &'static str, kind: Kind, icon: &'static str, group: Group) -> To
     Tool { id, kind, icon, group }
 }
 
-/// Every tool, in catalogue order.
-pub const TOOLS: &[Tool] = &[
+/// Every tool of a published build, in catalogue order.
+const TOOLS: &[Tool] = &[
     t("J1", K::Copy, "file-text-filled", G::Reports),
     t("J2", K::Copy, "clipboard-text-filled", G::Reports),
     t("J3", K::Copy, "alert-triangle-filled", G::Reports),
@@ -121,11 +121,25 @@ pub const TOOLS: &[Tool] = &[
     t("M1", K::Toggle, "movie", G::Network),
 ];
 
+/// The tools of development builds only (`dev`, `ci`, `debugging`): a
+/// published build neither lists them nor finds them, and drops them from a
+/// saved layout.
+const DEV_TOOLS: &[Tool] = &[t("T1", K::Window, "flask-filled", G::Reports)];
+
+/// Every tool of this build, in catalogue order.
+pub fn all() -> impl Iterator<Item = &'static Tool> {
+    all_in(crate::world::rlva_selftest::available())
+}
+
+fn all_in(development: bool) -> impl Iterator<Item = &'static Tool> {
+    TOOLS.iter().chain(DEV_TOOLS.iter().filter(move |_| development))
+}
+
 /// The favourites of a new layout.
 const DEFAULT_FAVORITES: &[&str] = &["J2", "L1", "R3", "P1"];
 
 pub fn find(id: &str) -> Option<&'static Tool> {
-    TOOLS.iter().find(|t| t.id == id)
+    all().find(|t| t.id == id)
 }
 
 /// The tool's label, in the interface language.
@@ -176,6 +190,7 @@ pub fn label(id: &str) -> &'static str {
         "P5" => tr!("dev-toolbox-p5"),
         "P6" => tr!("dev-toolbox-p6"),
         "M1" => tr!("dev-toolbox-m1"),
+        "T1" => tr!("dev-toolbox-t1"),
         _ => "?",
     }
 }
@@ -242,13 +257,13 @@ impl Layout {
                 tools: if g == Group::Favorites {
                     DEFAULT_FAVORITES.iter().map(|s| s.to_string()).collect()
                 } else {
-                    TOOLS.iter().filter(|t| t.group == g).map(|t| t.id.to_string()).collect()
+                    all().filter(|t| t.group == g).map(|t| t.id.to_string()).collect()
                 },
             })
             .collect();
         Layout {
             groups,
-            known: TOOLS.iter().map(|t| t.id.to_string()).collect(),
+            known: all().map(|t| t.id.to_string()).collect(),
         }
     }
 
@@ -271,7 +286,7 @@ impl Layout {
             let favorites = layout.groups.remove(i);
             layout.groups.insert(0, favorites);
         }
-        for tool in TOOLS.iter().filter(|t| !saved.known.iter().any(|k| k == t.id)) {
+        for tool in all().filter(|t| !saved.known.iter().any(|k| k == t.id)) {
             if seen.contains(tool.id) {
                 continue;
             }
@@ -285,15 +300,14 @@ impl Layout {
                 }),
             }
         }
-        layout.known = TOOLS.iter().map(|t| t.id.to_string()).collect();
+        layout.known = all().map(|t| t.id.to_string()).collect();
         layout
     }
 
     /// The tools in no group outside the favourites (removed by the user):
     /// "Add a tool" offers them.
     pub fn removed(&self) -> Vec<&'static str> {
-        TOOLS
-            .iter()
+        all()
             .map(|t| t.id)
             .filter(|id| {
                 !self
@@ -416,10 +430,17 @@ mod tests {
     #[test]
     fn identifiers_are_unique_and_labelled() {
         let mut seen = std::collections::HashSet::new();
-        for t in TOOLS {
+        for t in all_in(true) {
             assert!(seen.insert(t.id), "{} twice", t.id);
             assert_ne!(label(t.id), "?", "{} has no label", t.id);
         }
+    }
+
+    #[test]
+    fn development_tools_are_absent_from_a_published_build() {
+        assert!(all_in(true).any(|t| t.id == "T1"));
+        assert!(all_in(false).all(|t| t.id != "T1"));
+        assert_eq!(all_in(false).count(), TOOLS.len());
     }
 
     #[test]

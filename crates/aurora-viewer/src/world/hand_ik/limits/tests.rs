@@ -39,6 +39,7 @@ fn padded_packets(command: &NetCommand, owner: Uuid, size: usize) -> Vec<ChatMes
         owner_id: owner,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::Other(9),
+        region: None,
         position: Vec3::ZERO,
         message: String::new(),
     };

@@ -133,23 +133,7 @@ impl App {
                 );
             }
             240 => {}
-            300 => {
-                let seat = self
-                    .world
-                    .objects
-                    .iter()
-                    .filter(|(_, o)| o.parent_id == 0 && !o.is_avatar() && !o.is_tree() && o.attachment_point() == 0)
-                    .filter(|(_, o)| Some(o.key.region) == self.world.main_region && o.scale.max_element() < 4.0)
-                    .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
-                    .map(|(_, o)| o.full_id);
-                if let (Some(target), Some(handle)) = (seat, self.world.main_region) {
-                    self.send(NetCommand::RequestSit {
-                        handle,
-                        target,
-                        offset: Vec3::ZERO,
-                    });
-                }
-            }
+            300 => self.demo_sit_on_nearest_prim(),
             420 => {
                 log::info!("demo sit tp: before the teleport, seated {}", self.world.agent.seated);
                 let (x, y) = (me.x - 6.0, me.y - 4.0);
@@ -177,6 +161,27 @@ impl App {
                     drawn.iter().any(|a| a.id == crate::ao::SIT_GENERIC)
                 );
             }
+        }
+    }
+
+    /// Offline: our avatar sits on the nearest small prim of the plaza
+    /// (AURORA_DEMO_SIT_TP, AURORA_DEMO_STAND_FLY=object).
+    pub(super) fn demo_sit_on_nearest_prim(&mut self) {
+        let me = self.world.agent.position;
+        let seat = self
+            .world
+            .objects
+            .iter()
+            .filter(|(_, o)| o.parent_id == 0 && !o.is_avatar() && !o.is_tree() && o.attachment_point() == 0)
+            .filter(|(_, o)| Some(o.key.region) == self.world.main_region && o.scale.max_element() < 4.0)
+            .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+            .map(|(_, o)| o.full_id);
+        if let (Some(target), Some(handle)) = (seat, self.world.main_region) {
+            self.send(NetCommand::RequestSit {
+                handle,
+                target,
+                offset: Vec3::ZERO,
+            });
         }
     }
 

@@ -38,6 +38,9 @@ pub struct RenderState {
     /// Client-only local mesh preview; server volume/scale remain authoritative.
     pub local_volume: Option<Box<VolumeParams>>,
     pub local_scale: Option<Vec3>,
+    /// Natural dimensions of a centered static assembly fitted uniformly to
+    /// this prim. Re-evaluated against damped size, never sent to the simulator.
+    pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
     /// Temporary material-inspector display mode; no simulator state changes.
@@ -130,6 +133,9 @@ pub struct Object {
     /// Clock of its region when the simulator last reported its motion
     /// (`ObjectStore::motion_time`); NaN until the store has stamped it.
     motion_time: f64,
+    /// Client-side turn accumulated before the last motion report. The
+    /// simulator's base angle remains in `rotation` for edits and reports.
+    angular_rotation: Quat,
     /// The last report put it elsewhere than where it was drawn: the gap
     /// fades instead of showing at once (motion.rs).
     correction: Option<Correction>,
@@ -236,12 +242,19 @@ impl Object {
     }
     #[inline]
     pub fn visual_scale(&self) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale())
+        self.local_preview_scale(self.damped_scale())
     }
     /// Sample position and size at the same scene/picking instant. The
     /// cached value in visual_scale is for frame scheduling and coarse bounds.
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
+        self.local_preview_scale(self.damped_scale_at(now))
+    }
+    pub(crate) fn local_preview_scale(&self, anchor: Vec3) -> Vec3 {
+        if let Some(size) = self.render.local_fit {
+            size * (anchor / size).min_element()
+        } else {
+            self.render.local_scale.unwrap_or(anchor)
+        }
     }
     /// Whether the volume has the flexible path, as LLVOVolume::isFlexible
     /// (indra/newview/llvovolume.cpp) and isFlexibleFast classify it. This is
@@ -277,6 +290,7 @@ impl Object {
             angular_velocity: u.angular_velocity,
             foot_plane: u.foot_plane,
             motion_time: f64::NAN,
+            angular_rotation: Quat::IDENTITY,
             correction: None,
             scale_correction: None,
             seat: None,
@@ -341,6 +355,7 @@ impl Object {
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
             self.render.local_scale = None;
+            self.render.local_fit = None;
             self.render.local_appearance.clear();
             self.render.blinn_phong_preview = false;
             self.foot_plane = None;
@@ -547,7 +562,7 @@ impl Object {
         let (velocity, acceleration) = self.linear_motion();
         motion::Reported {
             position: self.position,
-            rotation: self.rotation,
+            rotation: self.angular_rotation * self.rotation,
             velocity,
             acceleration,
             angular_velocity: self.angular_velocity,
@@ -609,6 +624,23 @@ impl Object {
         self.render.needs_records = true;
     }
 
+    /// Port of LLViewerObject::processUpdateMessage / applyAngularVelocity
+    /// (indra/newview/llviewerobject.cpp, originally LGPL 2.1): a repeated
+    /// base angle retains the accumulated llTargetOmega turn. Nonphysical
+    /// speed changes retain it too; physical speed changes start anew.
+    fn retained_angular_rotation(&self, motion_time: f64, rotation: Quat, angular_velocity: Vec3, flags: u32) -> Quat {
+        if self.is_avatar()
+            || self.rotation != rotation
+            || angular_velocity == Vec3::ZERO
+            || (flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 && self.angular_velocity != angular_velocity)
+        {
+            return Quat::IDENTITY;
+        }
+        // Exclude any visual damping: it must never become part of the
+        // permanent spin phase. Rotation here is in the parent's frame.
+        (self.reported_pose(motion_time).1 * self.rotation.inverse()).normalize()
+    }
+
     /// A report was applied at `now`: stamp it with its region's clock and,
     /// when it left the object where `drawn` says it was not, let the gap
     /// fade. True when a correction started. A damped seat needs none: its
@@ -620,7 +652,8 @@ impl Object {
         self.motion_time = motion_time;
         let moving = !self.is_avatar() && self.velocity != Vec3::ZERO;
         let drawn = if self.seat_damping() || moving { None } else { drawn };
-        self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
+        self.correction =
+            drawn.and_then(|drawn| Correction::toward(drawn, self.reported_pose(motion_time), (self.position, self.rotation), now));
         self.correction.is_some()
     }
 }
@@ -1084,7 +1117,9 @@ impl ObjectStore {
         // A HUD shows a report at once: pages on the faces of a turning
         // cube flip instantly in the Legacy Viewer, with no fade.
         let drawn = (!hud).then(|| o.predicted(now, clock));
+        let angular_rotation = o.retained_angular_rotation(clock, t.rotation, t.angular_velocity, o.update_flags);
         o.apply_terse(t);
+        o.angular_rotation = angular_rotation;
         if let Some(sent) = sent {
             o.keep_sent(sent);
         }
@@ -1120,7 +1155,13 @@ impl ObjectStore {
         };
         let mut drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
         let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
+        let angular_rotation = if o.full_id == u.full_id {
+            o.retained_angular_rotation(clock, u.rotation, u.angular_velocity, u.update_flags)
+        } else {
+            Quat::IDENTITY
+        };
         o.apply_full(u);
+        o.angular_rotation = angular_rotation;
         o.parent_region = region;
         if let Some(sent) = sent {
             o.keep_sent(sent);
@@ -1670,6 +1711,7 @@ impl ObjectStore {
         obj.render = RenderState {
             local_volume: obj.render.local_volume.take(),
             local_scale: obj.render.local_scale,
+            local_fit: obj.render.local_fit,
             needs_records: true,
             ..Default::default()
         };
@@ -1715,6 +1757,21 @@ impl ObjectStore {
         self.index_of(&o.parent_key()?)
     }
 
+    /// The root of the linkset of `idx`: the prim whose parent is an avatar
+    /// (an attachment) or nothing.
+    pub fn linkset_root(&self, mut idx: usize) -> usize {
+        for _ in 0..16 {
+            let Some(parent) = self.get(idx).and_then(|o| self.parent_of(o)) else {
+                break;
+            };
+            if self.get(parent).is_none_or(Object::is_avatar) {
+                break;
+            }
+            idx = parent;
+        }
+        idx
+    }
+
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
     pub fn worn_on_hud(&self, mut idx: usize) -> bool {
@@ -1738,6 +1795,45 @@ impl ObjectStore {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn local_assembly_fits_nonuniform_anchor_sizes_without_changing_the_server_shape() {
+        let mut object = Object::from_update(1, update(5, PRIM, ""));
+        let volume = object.volume;
+        object.render.local_fit = Some(Vec3::new(10.0, 4.0, 2.0));
+        for anchor in [Vec3::ONE, Vec3::new(3.0, 8.0, 1.0), Vec3::new(12.0, 2.0, 7.0)] {
+            object.scale = anchor;
+            let drawn = object.visual_scale();
+            assert!(drawn.cmple(anchor + Vec3::splat(1e-5)).all());
+            let ratios = drawn / object.render.local_fit.expect("assembly size");
+            assert!((ratios.max_element() - ratios.min_element()).abs() < 1e-6);
+            assert!((drawn - anchor).abs().min_element() < 1e-5, "fills at least one axis");
+            assert_eq!(object.visual_scale_at(Instant::now()), drawn);
+            assert_eq!(object.scale, anchor);
+            assert_eq!(object.volume, volume);
+        }
+        object.render.local_fit = None;
+        assert_eq!(object.visual_scale(), object.scale);
+    }
+
+    #[test]
+    fn local_assembly_follows_damped_anchor_resizing_and_does_not_leak_to_a_new_identity() {
+        let now = Instant::now();
+        let mut objects = ObjectStore::default();
+        let mut update = update(5, PRIM, "");
+        let index = objects.upsert_at(1, update.clone(), Some(now));
+        let size = Vec3::new(10.0, 4.0, 2.0);
+        objects.get_mut(index).expect("anchor").render.local_fit = Some(size);
+        update.scale *= 2.0;
+        objects.upsert_at(1, update.clone(), Some(now));
+        let half = now + Duration::from_millis(60);
+        let object = objects.get(index).expect("anchor");
+        assert!(object.visual_scale_at(half).abs_diff_eq(size * 0.15, 1e-5));
+        assert_eq!(object.scale, Vec3::splat(2.0));
+        update.full_id = Uuid::new_v4();
+        objects.upsert_at(1, update, Some(half));
+        assert!(objects.get(index).expect("new object").render.local_fit.is_none());
+    }
 
     fn anim(mode: u8, rate: f32) -> TextureAnim {
         TextureAnim {
@@ -2491,6 +2587,98 @@ mod tests {
         assert!(!s.get(ground).expect("prim").is_attachment());
         s.advance_motion(1, 2.0);
         near(s.predicted(s.get(ground).expect("prim"), now).0, Vec3::X * 0.2 + Vec3::Y);
+    }
+
+    #[test]
+    fn target_omega_keeps_turning_through_repeated_full_and_terse_reports() {
+        let start = Instant::now();
+        for point in [0, 0x10, 0xf1] {
+            let mut store = ObjectStore::default();
+            store.upsert(1, update(1, AVATAR, ""));
+            let mut report = update(2, PRIM, "");
+            report.parent_id = if point == 0 { 0 } else { 1 };
+            report.state = point;
+            report.rotation = Quat::from_rotation_x(0.7);
+            report.angular_velocity = Vec3::Z * 1.25;
+            let idx = store.upsert_at(1, report.clone(), Some(start));
+            for step in 1..=80 {
+                store.advance_motion(1, 0.1);
+                let now = start + Duration::from_millis(step * 100);
+                if step % 2 == 0 {
+                    // A colour/text update repeats the simulator's base angle.
+                    report.text = step.to_string();
+                    store.upsert_at(1, report.clone(), Some(now));
+                } else {
+                    let mut terse = terse(2, report.position, Vec3::ZERO);
+                    terse.is_avatar = false;
+                    terse.state = point;
+                    terse.rotation = report.rotation;
+                    terse.angular_velocity = report.angular_velocity;
+                    store.apply_terse_at(idx, &terse, Some(now));
+                }
+                let object = store.get(idx).expect("spinning prim");
+                assert_eq!(object.rotation, report.rotation, "keep the simulator's base angle");
+                let expected = Quat::from_rotation_z(step as f32 * 0.125) * report.rotation;
+                // Also sample after damping would have erased the old phase.
+                for at in [now, now + Duration::from_secs(1)] {
+                    let shown = store.predicted(object, at).1;
+                    assert!(
+                        shown.angle_between(expected) < 0.002,
+                        "point {point}, step {step}: {shown:?} != {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn target_omega_keeps_phase_on_speed_change_and_reparent_but_resets_on_new_base_or_stop() {
+        let start = Instant::now();
+        for physical in [false, true] {
+            let mut store = ObjectStore::default();
+            let mut report = update(2, PRIM, "");
+            report.angular_velocity = Vec3::Z;
+            if physical {
+                report.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+            }
+            let idx = store.upsert_at(1, report.clone(), Some(start));
+            store.advance_motion(1, 1.0);
+            report.angular_velocity = Vec3::X * 2.0;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(1)));
+            store.advance_motion(1, 0.5);
+            let object = store.get(idx).expect("spinning prim");
+            let expected = Quat::from_rotation_x(1.0) * if physical { Quat::IDENTITY } else { Quat::from_rotation_z(1.0) };
+            let shown = store.predicted(object, start + Duration::from_secs(3)).1;
+            assert!(
+                shown.angle_between(expected) < 0.002,
+                "physical {physical}: {shown:?} != {expected:?}"
+            );
+
+            // A genuinely new base angle replaces the accumulated turn.
+            report.rotation = Quat::from_rotation_y(0.8);
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(3)));
+            store.advance_motion(1, 0.5);
+            let shown = store.predicted(store.get(idx).expect("new base"), start + Duration::from_secs(4)).1;
+            assert!(shown.angle_between(Quat::from_rotation_x(1.0) * report.rotation) < 0.002);
+
+            report.angular_velocity = Vec3::ZERO;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(4)));
+            store.advance_motion(1, 0.5);
+            let shown = store.predicted(store.get(idx).expect("stopped"), start + Duration::from_secs(5)).1;
+            assert!(shown.angle_between(report.rotation) < 0.002);
+
+            report.angular_velocity = Vec3::Z;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(5)));
+            store.advance_motion(1, 1.0);
+            report.parent_id = 10;
+            report.state = 0x10;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(6)));
+            store.advance_motion(1, 0.5);
+            let shown = store
+                .predicted(store.get(idx).expect("reparented"), start + Duration::from_secs(7))
+                .1;
+            assert!(shown.angle_between(Quat::from_rotation_z(1.5) * report.rotation) < 0.002);
+        }
     }
 
     #[test]

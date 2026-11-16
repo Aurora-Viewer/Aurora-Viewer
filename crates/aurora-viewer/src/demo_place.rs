@@ -20,7 +20,7 @@ pub const FAVORITES_FOLDER: u128 = 20;
 /// A sub-folder of the landmarks.
 pub const SHOPS_FOLDER: u128 = 30;
 /// Nested under Shopping so the Places rail shows a disclosure caret in demo.
-pub const SHOPS_OUTLETS_FOLDER: u128 = 31;
+pub const SHOPS_OUTLETS_FOLDER: u128 = 36;
 /// Two more of `AURORA_DEMO_MAP=landmarks`.
 pub const CLUBS_FOLDER: u128 = 32;
 pub const BEACHES_FOLDER: u128 = 33;
@@ -716,4 +716,20 @@ pub fn history() -> Vec<HistoryItem> {
             3.0 * 3600.0,
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shopping_contains_a_landmark_folder_and_leaves_the_photo_album_to_inventory() {
+        let owner = Uuid::nil();
+        assert!(folder_contents(u(super::super::PHOTO_ALBUM_FOLDER), owner).is_none());
+        let shopping = folder_contents(u(SHOPS_FOLDER), owner).unwrap();
+        let outlets = shopping.folders.iter().find(|f| f.id == u(SHOPS_OUTLETS_FOLDER)).unwrap();
+        assert_eq!(outlets.parent, shopping.folder_id);
+        let contents = folder_contents(outlets.id, owner).unwrap();
+        assert!(contents.items.iter().any(|item| item.parent == outlets.id && item.asset_type == 3));
+    }
 }

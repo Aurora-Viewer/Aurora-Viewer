@@ -18,7 +18,7 @@
 //! landmark are edited where they are shown.
 
 use super::model::{self, Catalog, Key, Place, PlacesSort};
-use super::{Confirm, PlacesAction, PlacesUi, history_sections, now_secs, slurl_at, system_folder};
+use super::{Confirm, PlacesAction, PlacesUi, history_offset, history_sections, now_secs, slurl_at, system_folder};
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::{self, Ctx};
@@ -503,7 +503,8 @@ impl PlacesUi {
                 .collect(),
             Source::History => {
                 let mut out = Vec::new();
-                for (section, indices) in history_sections(history, "", now_secs()) {
+                let now = now_secs();
+                for (section, indices) in history_sections(history, "", now, history_offset(self.history_zone, now)) {
                     let mut first = true;
                     for i in indices {
                         let Some(place) = cat.place(Key::Visit(i), history) else { continue };
@@ -627,6 +628,7 @@ impl PlacesUi {
             }
             Source::History => {
                 menu::check(ui, p, "history", aurora_i18n::tr!("ui-places-sort-newest"), true, false);
+                super::history_zone_menu(ui, p, self.history_zone, actions);
                 menu::separator(ui, p);
                 if menu::item_if(
                     ui,
@@ -701,8 +703,10 @@ impl PlacesUi {
             let n = cat.landmarks.iter().filter(|pl| pl.folder == Some(f.id)).count();
             let branch = has_children.contains(&f.id);
             let collapsed = branch && self.aurora.collapsed_folders.contains(&f.id);
+            let id = ui.make_persistent_id(("places-folder", f.id));
             let (resp, caret) = widgets::rail_tree_row(
                 ui,
+                id,
                 p,
                 "folder-filled",
                 p.muted,
@@ -850,7 +854,17 @@ impl PlacesUi {
                 Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
                 None => place.thumbnail,
             };
-            let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
+            let out = place_row(
+                ui,
+                p,
+                c,
+                place,
+                selected,
+                snapshot,
+                self.aurora.source == Source::Favorites,
+                wide,
+                self.history_zone,
+            );
             widgets::reveal_search_selection(ui, &out.resp, selected);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
@@ -1000,7 +1014,10 @@ impl PlacesUi {
         ) {
             self.teleport(key, place, inv, history);
         }
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
+        // LLLandmarksPanel / LLTeleportHistoryPanel::isActionEnabled
+        // ("show_on_map"): not under @showworldmap
+        let mappable = place.global.is_some() && crate::ui::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = place.global
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -1221,7 +1238,7 @@ impl PlacesUi {
                 }
             }
             if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
+                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
                     widgets::action_button(
                         ui,
                         p,
@@ -1291,7 +1308,10 @@ impl PlacesUi {
         if !link {
             let visit = place.last_visit.map_or_else(
                 || aurora_i18n::tr!("ui-places-never-visited").to_owned(),
-                |d| model::visit_label(d, now_secs()),
+                |d| {
+                    let now = now_secs();
+                    model::visit_label(d, now, history_offset(self.history_zone, now))
+                },
             );
             kv(ui, p, aurora_i18n::tr!("ui-places-last-visit"), &visit);
             ui.add_space(6.0);
@@ -1641,7 +1661,7 @@ impl PlacesUi {
             }
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
+                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
                     widgets::action_button(
                         ui,
                         p,
@@ -1793,7 +1813,10 @@ fn place_row(
     picture_id: Uuid,
     grip: bool,
     wide: bool,
+    zone: crate::settings::HistoryZone,
 ) -> RowOut {
+    let now = now_secs();
+    let offset = history_offset(zone, now);
     let subtitle = if wide {
         let region = region_line(place, &c.world.map);
         if place.is_landmark() {
@@ -1808,7 +1831,7 @@ fn place_row(
             place.region.clone()
         };
         match place.last_visit {
-            Some(d) => format!("{region} · {}", model::visit_label(d, now_secs())),
+            Some(d) => format!("{region} · {}", model::visit_label(d, now, offset)),
             None => region,
         }
     };
@@ -1838,7 +1861,7 @@ fn place_row(
                 |ui| {
                     if let Some(d) = place.last_visit {
                         ui.add(
-                            egui::Label::new(egui::RichText::new(model::visit_label(d, now_secs())).size(12.0).color(p.muted)).truncate(),
+                            egui::Label::new(egui::RichText::new(model::visit_label(d, now, offset)).size(12.0).color(p.muted)).truncate(),
                         );
                     }
                 },
@@ -2060,6 +2083,111 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn folder_caret_keeps_the_place_filter_and_keyboard_target() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        // A deep branch and a sibling which moves when that branch folds.
+        world.inventory.apply(vec![FolderContents {
+            folder_id: id(11),
+            owner_id: Uuid::nil(),
+            version: 3,
+            folders: vec![folder(110, 11, -1)],
+            items: vec![],
+        }]);
+        for n in 110..127 {
+            let mut folders = vec![folder(n + 1, n, -1)];
+            if n == 110 {
+                folders.push(folder(150, n, -1));
+            }
+            world.inventory.apply(vec![FolderContents {
+                folder_id: id(n),
+                owner_id: Uuid::nil(),
+                version: 3,
+                folders,
+                items: vec![],
+            }]);
+        }
+        let cat = model::catalog(&world.inventory, &world.landmarks, &world.map, &[], false);
+        let env = Env {
+            sort: PlacesSort::default(),
+            favorites: &[],
+        };
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut places = PlacesUi {
+            filter: "lm100".into(),
+            ..Default::default()
+        };
+        let selected = Some(Key::Landmark(id(1000)));
+        places.aurora.selected = selected;
+
+        let frame = |places: &mut PlacesUi, events| {
+            let mut ids = [egui::Id::NULL; 3];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(180.0, 1000.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ids = [111, 126, 150].map(|n| ui.make_persistent_id(("places-folder", id(n))));
+                    places.rail(ui, &p, &world, &cat, &env);
+                },
+            );
+            output.textures_delta.clear();
+            ids
+        };
+        let [branch, deep, sibling] = frame(&mut places, vec![]);
+        let rect = |id| ctx.viewport(|v| v.prev_pass.widgets.get(id).map(|w| w.rect));
+        let visible = |id| rect(id).expect("visible folder control");
+        let caret = |id: egui::Id| id.with("rail_caret");
+        assert!(visible(deep).contains_rect(visible(caret(deep))), "deep caret fits in the rail");
+        let click = |places: &mut PlacesUi, pos| {
+            for pressed in [true, false] {
+                frame(
+                    places,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            frame(places, vec![]);
+        };
+        let before = visible(sibling).top();
+        click(&mut places, visible(caret(branch)).center());
+        assert!(visible(sibling).top() < before);
+        assert!(rect(deep).is_none());
+        assert_eq!(places.aurora.source, Source::All);
+        assert_eq!(places.aurora.selected, selected);
+        assert_eq!(places.filter, "lm100");
+
+        ctx.memory_mut(|m| m.request_focus(caret(branch)));
+        frame(
+            &mut places,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        frame(&mut places, vec![]);
+        assert_eq!(visible(sibling).top(), before);
+        assert_eq!(places.aurora.selected, selected);
+        click(&mut places, visible(sibling).center());
+        assert_eq!(places.aurora.source, Source::Folder(id(150)));
+        assert_eq!(places.aurora.selected, None);
+        assert_eq!(places.filter, "lm100");
     }
 
     fn place(inv: &Inventory, asset: u128) -> Place {

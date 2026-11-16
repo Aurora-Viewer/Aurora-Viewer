@@ -123,7 +123,7 @@ struct Frame {
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
     rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
-    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z flags (1 rain melts it, 2 the puddles may freeze, 4 deep snow, 8 lying snow hidden), w the detail texture's slot (0: none)
     snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
     snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
@@ -132,6 +132,7 @@ struct Frame {
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
+    snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -160,6 +161,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -202,6 +204,9 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 // the snow on an avatar (x of its first column), and the entries per
 // skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
 const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -1255,10 +1260,32 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
 }
 
+// Whether a surface takes the water's fog in its own shading (apply_fog):
+// everything seen from below the water, and from above what lies under it.
+// The Legacy Viewer hazes the opaque scene by its own depth before the
+// blended faces under the water (LLPipeline::renderGeomPostDeferred, "do
+// water haze just before pre water alpha"; doWaterHaze,
+// indra/newview/pipeline.cpp), and those faces fog themselves
+// (applySkyAndWaterFog, class2/deferred/alphaF.glsl): each layer by its own
+// depth, and the surface adds none (class3/environment/waterF.glsl). Aurora's
+// surface used to fog its whole copy of the scene by the first depth under
+// it: where a faint blended face lay just under the surface, the bed behind
+// it lost its fog, and a sheet crossing the water plane showed its triangles.
+fn water_fogs_source(world_pos: vec3<f32>) -> bool {
+    return camera_underwater() || world_pos.z < camera_water_level();
+}
+
+// Density of that fog: the under-water one from below (and for the enhanced
+// absorption, which is tuned on it), the plain one from above, as
+// LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
+fn water_source_density() -> f32 {
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+}
+
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+    if (water_fogs_source(world_pos)) {
         if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
-        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,water_source_density());
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);
@@ -2604,7 +2631,13 @@ fn water_atlas_uv(uv:vec2<f32>)->vec2<f32> {
     return clamped*vec2<f32>(1.0,0.5);
 }
 fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {
-    if(!water_fx_on(16u) || abs(level-water_fx_bed(p).y)>0.2){return vec4<f32>(0.0);}
+    if(!water_fx_on(16u)){return vec4<f32>(0.0);}
+    return water_wake_at(p,level,water_fx_bed(p).y);
+}
+// The same, for a caller that already read the water's own level at `p`
+// (water_fx_bed(p).y).
+fn water_wake_at(p:vec2<f32>,level:f32,native_level:f32)->vec4<f32> {
+    if(!water_fx_on(16u) || abs(level-native_level)>0.2){return vec4<f32>(0.0);}
     let origin=water_fx.clock.zw;
     let uv=(p-origin)/32.0;
     if(any(uv<vec2<f32>(0.0)) || any(uv>vec2<f32>(1.0))){return vec4<f32>(0.0);}
@@ -2643,11 +2676,14 @@ fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16);
     return offset;
 }
-fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>)->vec3<f32> {
+// `swell` and `ground` are the caller's: the gradient of water_swell at `p`
+// and the terrain under it (water_fx_bed(p).x), which the surface reads once
+// for its normal, its wake and its foam.
+fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>,swell:vec2<f32>,ground:f32)->vec3<f32> {
     var gradient=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
-        gradient=water_swell(p,frame.camera_pos.w,water_fx.counts.w).gradient;
-        gradient*=smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+        gradient=swell;
+        gradient*=smoothstep(0.08,2.4,level-ground);
     }
     if(water_fx_on(16u)) {
         let texel=water_fx.area.z/f32(textureDimensions(water_field).x);
@@ -2672,7 +2708,10 @@ fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
 // A global constant avoids Naga re-emitting a local splat when specializing
 // masked/blended pipelines. The alpha specialization regression covers this.
 const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
-fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+// The light the water focuses on a submerged point, before the sun's shadow.
+// A surface that already looked its shadow up multiplies by it (the terrain);
+// water_caustics looks it up for the others.
+fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
     let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
@@ -2691,8 +2730,14 @@ fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
     let energy=max(intensity-0.9,0.0)*0.42;
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
-    let shadow=shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
-    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*shadow*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+}
+fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    let focused=water_caustic_light(pos,normal);
+    // no focused light here, or a face turned away from the sun: nothing for
+    // the shadow to dim, it is not looked up
+    if(max(focused.r,max(focused.g,focused.b))<=0.0){return vec3<f32>(0.0);}
+    return focused*shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
 }
 
 fn water_fx_noise(p: vec2<f32>) -> f32 {
@@ -2702,8 +2747,10 @@ fn water_fx_noise(p: vec2<f32>) -> f32 {
 }
 
 // Continuous torn coverage and filtered fine grain, without a lattice of holes.
-fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
-    if(amount<0.08){return 0.0;}
+// The pattern at a point (x the torn structure, y the grain) does not depend
+// on how much foam there is: the surface works it out once for the foam of
+// its field and the foam of its wakes, and only where one of them shows.
+fn water_foam_pattern(p:vec2<f32>,footprint:f32)->vec2<f32> {
     let drift=p-vec2<f32>(frame.camera_pos.w*0.09,frame.camera_pos.w*0.035);
     let warp=vec2<f32>(water_fx_noise(drift*1.3),water_fx_noise(drift*1.3+7.4));
     let q=drift+(warp-0.5)*0.7;
@@ -2711,7 +2758,10 @@ fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
     let medium=mix(water_fx_noise(rotated*3.7),0.5,smoothstep(0.04,0.18,footprint));
     let fine=mix(water_fx_noise(q*11.3),0.5,smoothstep(0.012,0.07,footprint));
     let structure=water_fx_noise(q*0.9)*0.55+medium*0.3+fine*0.15;
-    let coverage=smoothstep(0.08,0.75,amount)*smoothstep(0.28,0.72,structure);
     let grain=mix(0.84,0.5+0.5*water_fx_noise(rotated*38.0),1.0-smoothstep(0.004,0.025,footprint));
-    return coverage*grain;
+    return vec2<f32>(smoothstep(0.28,0.72,structure),grain);
+}
+fn water_foam_coverage(amount:f32,pattern:vec2<f32>)->f32 {
+    if(amount<0.08){return 0.0;}
+    return smoothstep(0.08,0.75,amount)*pattern.x*pattern.y;
 }

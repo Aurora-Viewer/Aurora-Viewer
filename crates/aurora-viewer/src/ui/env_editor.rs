@@ -148,7 +148,10 @@ impl EnvEditorUi {
 
     /// "SaveSettingAs": the name prompt, filled with the settings' name.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
+        // without its Aurora Weather code (put back on at Save, as a
+        // rename keeps it): shown, it was easily deleted or retyped away
+        let readable = crate::weather::region::strip_code(&self.name);
+        self.save_as = Some(crate::text_validation::generated_name(readable, 63));
     }
 
     /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon, and
@@ -300,7 +303,7 @@ impl EnvEditorUi {
                     _ => match self.tab {
                         1 => self.clouds_panel(ui, p, images, out),
                         2 => self.sun_moon_panel(ui, p, images, out),
-                        3 => self.weather_panel(ui, p),
+                        3 => self.weather_panel(ui, p, out),
                         _ => self.atmosphere_panel(ui, p, out),
                     },
                 });
@@ -509,7 +512,10 @@ impl EnvEditorUi {
                     let enter = widgets::enter_pressed(ui);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() || enter {
                         // onSaveAsCommit: corrected, "Unnamed" when empty
-                        out.push(EditorAction::SaveAs(env_edit::correct_item_name(&name)));
+                        out.push(EditorAction::SaveAs(crate::weather::region::keep_code(
+                            &self.name,
+                            &env_edit::correct_item_name(&name),
+                        )));
                         close = true;
                     }
                     if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
@@ -632,7 +638,7 @@ impl EnvEditorUi {
     /// look from the day's timing, the timing is the day's: where this sky
     /// sits in a day cycle, and the day's period and seed (the day editor).
     /// "Preview" shows it on this viewer while the editor is open.
-    fn weather_panel(&mut self, ui: &mut egui::Ui, p: &Palette) {
+    fn weather_panel(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<EditorAction>) {
         use crate::weather::AuroraColours;
         use crate::weather::Precipitation;
         use crate::weather::region::{AuroraSky, SkyWeather, strip_code, too_long_for};
@@ -784,6 +790,9 @@ impl EnvEditorUi {
                 doc.set_name(&self.name);
             }
             self.dirty = true;
+            // as the other tabs: the day editor writes its frame back on it
+            // (without it, a keyframe's weather never reached the day)
+            out.push(EditorAction::Changed);
         }
     }
 

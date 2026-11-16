@@ -349,13 +349,20 @@ impl World {
         });
         if on {
             self.status.away_since = Some(Instant::now());
-            if self.status.cfg.sit_when_away && !self.agent.is_sitting() {
+            // LLAgent::setAFK (llagent.cpp): no sit under @sit, so nothing
+            // is asked that the send would refuse with a notice
+            if self.status.cfg.sit_when_away && !self.agent.is_sitting() && !self.rlva.has("sit") {
                 self.groups.out.push(NetCommand::OneShotControl(control::SIT_ON_GROUND));
                 self.status.afk_sitting = true;
             }
         } else {
             self.status.away_since = None;
-            if std::mem::take(&mut self.status.afk_sitting) && self.status.cfg.sit_when_away && self.agent.ground_sit {
+            // LLAgent::clearAFK: the avatar stays seated under @unsit
+            if std::mem::take(&mut self.status.afk_sitting)
+                && self.status.cfg.sit_when_away
+                && self.agent.ground_sit
+                && !self.rlva.has("unsit")
+            {
                 self.groups.out.push(NetCommand::OneShotControl(control::STAND_UP));
             }
         }
@@ -485,6 +492,8 @@ impl World {
                         kind: ChatKind::Im,
                         source: from,
                         origin: Origin::Live,
+                        blocked: false,
+                        beyond_range: false,
                     };
                     self.conversation_push(from, line, true);
                 }
@@ -526,6 +535,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.conversation_push(im.from_agent_id, line, false);
     }
@@ -788,6 +799,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@sendim=n".into(),
         }));
