@@ -72,6 +72,37 @@ impl App {
             .and_then(|model| self.world.couple_shift(b, *model))
             .map(|shift| shift.w_axis.truncate());
         let anchor = self.world.couple_base(b).map(|model| model.w_axis.truncate());
+        let own = &self.scene.ik_edit;
+        let own_samples: Vec<_> = own
+            .animations
+            .iter()
+            .map(|sample| {
+                let anim = &sample.animation.anim;
+                let pelvis = anim
+                    .joints
+                    .iter()
+                    .zip(&sample.animation.joints)
+                    .find(|(_, bone)| **bone == Some(rig.pelvis))
+                    .and_then(|(track, _)| track.position_at(sample.time_seconds.unwrap_or(0.0)));
+                (sample.frame, sample.time_seconds, anim.duration, pelvis)
+            })
+            .collect();
+        log::info!(
+            "couple trace A: edited {}; request active {} suppress_live {} samples (frame, time, duration, pelvis key) {own_samples:?}; joints {:?}; goals {:?}",
+            if self.ik_editor.clip_edited_subject(&self.world) == self.world.agent_id {
+                "A"
+            } else {
+                "B"
+            },
+            own.active,
+            own.suppress_live,
+            own.joints
+                .iter()
+                .filter(|j| j.translation.is_some())
+                .map(|j| (j.bone, j.translation))
+                .collect::<Vec<_>>(),
+            own.goals.iter().map(|g| (g.bone, g.position)).collect::<Vec<_>>(),
+        );
         let request = self.scene.ik_edit_others.get(&b);
         let (place, turn) = self.world.couple_place;
         log::info!(
