@@ -1249,9 +1249,6 @@ mod tests {
         assert!(!note(offer(false, Uuid::from_u128(7))).stays_until_answered());
     }
 
-    /// NotificationTipToastLifeTime's default (settings.xml).
-    const TOAST_TIP: f64 = 10.0;
-
     #[test]
     fn closing_a_script_permission_or_object_offer_uses_its_visible_cross() {
         use crate::world::notifications::im;
