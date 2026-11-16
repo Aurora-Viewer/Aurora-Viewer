@@ -345,15 +345,16 @@ impl ExperienceProfileUi {
         if !d.logo.is_nil() {
             self.wanted_images.insert(d.logo);
             // never so tall that the details have no room left: past that,
-            // a band around its middle (cropped, not squashed)
+            // the whole banner smaller (`banner`)
             let most = (ui.available_height() - DETAILS_ROOM).max(MIN_BANNER);
-            // full resolution once decoded, the interface copy until then
+            // the interface copy, and over it the full resolution once
+            // decoded
             let full = self
                 .banner
                 .as_ref()
                 .filter(|(asset, _)| *asset == d.logo)
                 .and_then(|(_, view)| view.image.clone());
-            let drawn = banner(ui, p, full.as_ref().or_else(|| pics.images.get(&d.logo)), most);
+            let drawn = banner(ui, p, pics.images.get(&d.logo), full.as_ref(), most);
             self.banner_px = drawn.width() * ui.ctx().pixels_per_point();
         }
         let (mut list, footer) = widgets::above_footer(ui);
@@ -883,23 +884,77 @@ fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 /// The banner across the window, in the Legacy Viewer's shape; its room
-/// is kept while it loads, so the profile does not jump. Returns where it
-/// was drawn.
-fn banner(ui: &mut egui::Ui, p: &Palette, texture: Option<&egui::TextureHandle>, most: f32) -> Rect {
+/// is kept while it loads, so the profile does not jump. `copy` is the
+/// interface's small copy, `sharp` the full resolution: drawn over the
+/// copy rather than in its place, so the frame a new texture may still miss
+/// on its way to the GPU shows the copy instead of a blink, and only once
+/// it is finer than the copy (the first levels of a download are coarser).
+///
+/// When the window leaves it less than its full height (`most`), the banner
+/// shrinks whole, centred, rather than losing its top and bottom (where
+/// banners often carry their text); the strips beside it show the same
+/// banner cut to the strip, blurred and darkened. Returns where it was
+/// drawn.
+fn banner(ui: &mut egui::Ui, p: &Palette, copy: Option<&egui::TextureHandle>, sharp: Option<&egui::TextureHandle>, most: f32) -> Rect {
     let width = ui.available_width();
     let full = width / BANNER_ASPECT;
     let height = full.min(most).round();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
-    match texture {
-        Some(t) => {
-            ui.painter()
-                .image(t.id(), rect, banner_band(height / full), super::widgets::PICTURE_TINT);
-        }
-        None => {
-            ui.painter().rect_filled(rect, 0.0, p.bar);
-        }
+    let sharp = sharp.filter(|t| finer(t.size(), copy.map(|c| c.size())));
+    let Some(best) = sharp.or(copy) else {
+        ui.painter().rect_filled(rect, 0.0, p.bar);
+        return rect;
+    };
+    let whole = fitted(rect);
+    if whole.width() < rect.width() - 0.5 {
+        backdrop(ui, p, rect, best);
+    }
+    let all = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    if let Some(t) = copy {
+        ui.painter().image(t.id(), whole, all, super::widgets::PICTURE_TINT);
+    }
+    if let Some(t) = sharp {
+        ui.painter().image(t.id(), whole, all, super::widgets::PICTURE_TINT);
     }
     rect
+}
+
+/// The whole banner in `rect`, in its shape, centred: as wide as `rect`
+/// when it has the banner's full height, narrower when it is shorter.
+fn fitted(rect: Rect) -> Rect {
+    let width = (rect.height() * BANNER_ASPECT).min(rect.width());
+    Rect::from_center_size(rect.center(), Vec2::new(width, width / BANNER_ASPECT))
+}
+
+/// Behind a banner narrower than the window: the band of it that fills the
+/// strip, blurred (shifted copies averaged, as the group profile blurs its
+/// insignia across its banner) and darkened toward the window's colour.
+fn backdrop(ui: &egui::Ui, p: &Palette, rect: Rect, texture: &egui::TextureHandle) {
+    const STEPS: i32 = 4;
+    /// How far the copies spread, in the banner's width.
+    const REACH: f32 = 0.03;
+    let band = banner_band(rect.height() / (rect.width() / BANNER_ASPECT));
+    let painter = ui.painter_at(rect);
+    let mut k = 0.0;
+    for y in 0..STEPS {
+        for x in 0..STEPS {
+            let d = Vec2::new(x as f32, y as f32) / (STEPS - 1) as f32 * 2.0 - Vec2::splat(1.0);
+            k += 1.0;
+            painter.image(
+                texture.id(),
+                rect,
+                band.translate(d * REACH),
+                super::widgets::PICTURE_TINT.gamma_multiply(1.0 / k),
+            );
+        }
+    }
+    painter.rect_filled(rect, 0.0, p.panel.gamma_multiply(0.55));
+}
+
+/// Whether a decode of `size` pixels is finer than the copy (wider, or any
+/// decode when there is no copy yet).
+fn finer(size: [usize; 2], copy: Option<[usize; 2]>) -> bool {
+    copy.is_none_or(|c| size[0] > c[0])
 }
 
 /// The part of the banner shown when only `share` of its height fits: a
@@ -1117,10 +1172,29 @@ mod tests {
     }
 
     #[test]
-    fn a_short_window_shows_a_band_of_the_banner() {
+    fn a_short_window_shows_the_whole_banner_smaller() {
+        // the full height: the banner spans the window
+        let full = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(500.0, 500.0 / BANNER_ASPECT));
+        let whole = fitted(full);
+        assert!((whole.width() - 500.0).abs() < 1e-3 && (whole.height() - full.height()).abs() < 1e-3);
+        // half the height: the whole banner, half as wide, centred
+        let short = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(500.0, 150.0));
+        let whole = fitted(short);
+        assert!((whole.height() - 150.0).abs() < 1e-3);
+        assert!((whole.width() - 150.0 * BANNER_ASPECT).abs() < 1e-3);
+        assert!((whole.center().x - 250.0).abs() < 1e-3);
+        // the strips behind show a band of the banner in their shape
         assert_eq!(banner_band(1.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
         let band = banner_band(0.5);
         assert_eq!((band.left(), band.right(), band.top(), band.bottom()), (0.0, 1.0, 0.25, 0.75));
+    }
+
+    #[test]
+    fn the_sharp_banner_covers_the_copy_only_once_finer() {
+        assert!(finer([512, 256], Some([256, 128])));
+        assert!(!finer([128, 64], Some([256, 128])));
+        assert!(!finer([256, 128], Some([256, 128])));
+        assert!(finer([64, 32], None));
     }
 
     #[test]
