@@ -125,6 +125,7 @@ mod outfit_portrait;
 mod own_motion;
 mod pathfinding;
 mod pathfinding_demo;
+mod pathfinding_path;
 mod pathfinding_rebake;
 mod pay;
 mod photo_isolate;
@@ -436,6 +437,10 @@ pub struct App {
     /// Keep the verified standing set through an asynchronous stand-up reply.
     anchor_pose: Option<(u64, crate::ao::Set)>,
     bridge_services: crate::world::bridge::services::Services,
+    /// The pathfinding console's path test through the bridge.
+    path_queue: crate::world::bridge::path::PathQueue,
+    /// The bridge answers queries (the path test's status).
+    path_bridge_ready: bool,
     bridge_demo: crate::world::bridge::demo::Demo,
     movelock_ui: ui::movelock::MoveLockUi,
     movement_ui: ui::movement::MovementUi,
@@ -1755,6 +1760,8 @@ impl App {
             anchor_stands: Default::default(),
             anchor_pose: None,
             bridge_services: Default::default(),
+            path_queue: Default::default(),
+            path_bridge_ready: false,
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
             movement_ui: Default::default(),
@@ -3563,11 +3570,14 @@ impl App {
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
-            if self.bridge_services.owns(request) || self.world.portals.owns(request) {
+            if self.bridge_services.owns(request) || self.world.portals.owns(request) || self.path_queue.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
             }
             self.world.portals.reply(request, &result, Instant::now());
+            if self.path_reply(request, &result) {
+                return;
+            }
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
@@ -15803,6 +15813,7 @@ impl App {
                 self.ik_editor.toggle();
             }
             BarAction::Pathfinding(kind) => self.open_pathfinding_from_selection(kind),
+            BarAction::PathfindingConsole => self.open_pathfinding_console(),
             BarAction::RebakeNavMesh => self.rebake_navmesh(),
             BarAction::ParcelIcon(click) => self.parcel_icon_click(click),
             BarAction::Poser => {
@@ -17862,6 +17873,7 @@ impl App {
                 if let Some(capsule) = self.pathfinding_capsule(Instant::now()) {
                     ui::pathfinding::capsule::draw(&ctx, &p, projector, &capsule);
                 }
+                self.draw_path(&ctx, &p, projector);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 self.director_world(&ctx, &p, projector);
                 aurora_render::end_world_labels(&ctx);
@@ -19444,6 +19456,7 @@ impl App {
                 self.object_profile_window(&ctx, &p);
 
                 self.pathfinding_rebake_frame(&ctx, &p);
+                self.pathfinding_console(&ctx, &p);
                 self.pathfinding_windows(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);

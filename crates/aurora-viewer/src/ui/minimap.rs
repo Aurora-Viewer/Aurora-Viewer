@@ -1412,7 +1412,7 @@ fn beacon_screen(c: glam::Vec4, proj: &super::hud::Projector) -> Pos2 {
 
 /// Homogeneous clipping keeps a partially visible column, including one
 /// that crosses the camera plane, finite and inside the viewport.
-pub(super) fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Projector) -> Option<[Pos2; 2]> {
+pub(crate) fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Projector) -> Option<[Pos2; 2]> {
     if !a.is_finite() || !b.is_finite() {
         return None;
     }

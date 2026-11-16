@@ -1,6 +1,6 @@
 // Aurora bridge IK relay: regional event discovery, no periodic polling.
 // Separate Mono memory from movement and read-only bridge services.
-string VERSION = "1.41";
+string VERSION = "1.42";
 string FOLDER = "__FOLDER__";
 // Both derived as in world/bridge.rs private_channel: the hello from this
 // root's key, the viewer's commands from the random session.

@@ -4,6 +4,46 @@ use aurora_net::inventory::InvItem;
 
 pub const SKY_VISITOR: Uuid = Uuid::from_u128(0xd0d0_b120_0000_0000_0000_0000_0000_0001);
 
+/// The demo region's navmesh hole: a disc of `HOLE_RADIUS` around this
+/// point, off the navmesh (the path test's "off the navmesh" answers).
+pub const HOLE: [f32; 2] = [118.0, 128.0];
+pub const HOLE_RADIUS: f32 = 4.0;
+
+/// llGetStaticPath on the demo region: a point in the hole is off the
+/// navmesh (PU_FAILURE_INVALID_START / _GOAL), two points farther apart than
+/// 120 m cannot be joined (PU_FAILURE_UNREACHABLE), otherwise the path bends
+/// around the middle, a few waypoints long.
+pub fn demo_path(start: [f32; 3], end: [f32; 3]) -> aurora_net::bridge::query::StaticPath {
+    use aurora_net::bridge::query::StaticPath;
+    let in_hole = |p: [f32; 3]| (p[0] - HOLE[0]).hypot(p[1] - HOLE[1]) < HOLE_RADIUS;
+    let failure = |status| StaticPath {
+        status,
+        points: Vec::new(),
+    };
+    if in_hole(start) {
+        return failure(2);
+    }
+    if in_hole(end) {
+        return failure(3);
+    }
+    let (dx, dy) = (end[0] - start[0], end[1] - start[1]);
+    if dx.hypot(dy) > 120.0 {
+        return failure(4);
+    }
+    let bend = |t: f32, side: f32| {
+        [
+            f64::from(start[0] + dx * t - dy * side),
+            f64::from(start[1] + dy * t + dx * side),
+            f64::from(start[2] + (end[2] - start[2]) * t),
+        ]
+    };
+    let at = |p: [f32; 3]| p.map(f64::from);
+    StaticPath {
+        status: 0,
+        points: vec![at(start), bend(0.3, 0.12), bend(0.6, 0.12), at(end)],
+    }
+}
+
 pub fn seed_queries(world: &mut World) {
     if let Some(region) = world.main_region {
         world.coarse.entry(region).or_default().push((
@@ -112,6 +152,7 @@ impl Demo {
                                 .collect(),
                         ),
                         Query::ScriptInfo(object) => Reply::ScriptInfo(scripts(*object)),
+                        Query::StaticPath { start, end, .. } => Reply::StaticPath(demo_path(*start, *end)),
                         Query::ObjectInfo(object) => Reply::ObjectInfo(Box::new(ObjectInfo {
                             scripts: scripts(*object),
                             description: "Demo object, extended information".into(),

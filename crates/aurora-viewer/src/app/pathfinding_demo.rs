@@ -57,6 +57,34 @@ impl App {
         self.panels.chat = false;
         self.panels.people = false;
         self.panels.minimap = false;
+        if name.starts_with("path") {
+            // the console's Test path tab with both ends chosen near the
+            // avatar; `path-hole` starts in the demo navmesh's hole
+            let console = &mut self.pathfinding.console;
+            console.open = true;
+            console.tab = crate::ui::pathfinding::console::Tab::Test;
+            let feet = self.world.agent.position - glam::Vec3::Z * 0.9;
+            let start = if name == "path-hole" {
+                let [x, y] = crate::world::bridge::demo::HOLE;
+                glam::Vec3::new(x, y, feet.z)
+            } else {
+                feet + glam::Vec3::new(-3.0, 4.0, 0.0)
+            };
+            console.test.set_point(false, start);
+            console.test.set_point(true, feet + glam::Vec3::new(8.0, -6.0, 0.0));
+            // an up-to-date navmesh (the simulator status block)
+            let region = self.world.main_region.unwrap_or_default();
+            if let Some(r) = self.world.regions.get_mut(&region) {
+                r.dynamic_pathfinding = true;
+            }
+            self.pathfinding.rebake.region_changed(Some(region));
+            self.pathfinding
+                .rebake
+                .on_status(region, demo_status(State::Complete), Instant::now());
+            self.open_pathfinding_console();
+            self.ask_path();
+            return;
+        }
         if name.starts_with("rebake") {
             let disabled = name == "rebake-disabled";
             let region = self.world.main_region.unwrap_or_default();

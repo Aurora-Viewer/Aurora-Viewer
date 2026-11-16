@@ -61,6 +61,9 @@ pub(super) enum Click {
     /// Left press in mouselook that no script took: touch at the crosshair,
     /// or under the cursor Alt freed (app/script_clicks.rs).
     Gun { at_cursor: bool },
+    /// Ctrl (start) or Shift (end) + left press while the pathfinding
+    /// console's Test path tab shows: one end of the path test.
+    PathPoint { end: bool },
 }
 
 /// What follows a click that waits for its depth, kept in order.
@@ -336,6 +339,14 @@ impl App {
                         self.double_press = false;
                         return;
                     }
+                    // the pathfinding console's path test takes Ctrl and
+                    // Shift clicks (its own toolset in the Legacy Viewer)
+                    if let Some(end) = self.path_click_end() {
+                        self.double_click.reset();
+                        self.double_press = false;
+                        self.click(Click::PathPoint { end });
+                        return;
+                    }
                     if self.beacon_hover() {
                         self.world.map.clear_track();
                         self.beacon_hit = None;
@@ -391,6 +402,7 @@ impl App {
             Click::World => self.world_press(),
             Click::Menu => self.world_menu(),
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
+            Click::PathPoint { end } => self.path_point(end),
         }
         self.clicks.running = None;
         // what the click costs the main thread, each time it runs: when it

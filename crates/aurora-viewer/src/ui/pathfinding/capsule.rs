@@ -68,13 +68,22 @@ impl Capsule {
     }
 }
 
+/// The selected character's physics capsule.
 pub fn draw(ctx: &egui::Context, p: &Palette, proj: &Projector, capsule: &Capsule) {
     let painter = crate::ui::hud::world_painter(ctx);
+    draw_outline(ctx, &painter, proj, capsule, p.violet_light);
+}
+
+/// A capsule's outline in the world, each line hidden where the scene stands
+/// in front of it (the Legacy capsules are drawn with the depth test).
+pub fn draw_outline(ctx: &egui::Context, painter: &egui::Painter, proj: &Projector, capsule: &Capsule, color: egui::Color32) {
     for (a, b) in capsule.segments() {
         if let Some(segment) = crate::ui::minimap::beacon_segment(proj.view_proj * a.extend(1.0), proj.view_proj * b.extend(1.0), proj) {
-            painter.line_segment(segment, egui::Stroke::new(1.5, p.violet_light));
+            aurora_render::world_line_at(ctx, a, b);
+            painter.line_segment(segment, egui::Stroke::new(1.5, color));
         }
     }
+    aurora_render::world_label_at(ctx, None);
 }
 
 #[cfg(test)]

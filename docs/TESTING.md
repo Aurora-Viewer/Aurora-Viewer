@@ -5818,7 +5818,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets-beacon\|linksets:<count>\|characters\|characters-selected\|characters-beacon\|rebake\|rebake-disabled` | Open Build › Pathfinding's Region objects or Characters window on a made-up list (`:<count>` sets the number of linksets), or show the navmesh rebake icon (`rebake`) or the "no dynamic pathfinding" one (`rebake-disabled`). |
+| `AURORA_DEMO_PATHFINDING=linksets\|linksets-selected\|linksets-beacon\|linksets:<count>\|characters\|characters-selected\|characters-beacon\|rebake\|rebake-disabled\|path\|path-hole` | Open Build › Pathfinding's Region objects or Characters window on a made-up list (`:<count>` sets the number of linksets), show the navmesh rebake icon (`rebake`) or the "no dynamic pathfinding" one (`rebake-disabled`), or open View / test on a path test (`path`, `path-hole`). |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
@@ -5858,8 +5858,19 @@ the icon asks PathfindingDirty (Rebake / Close); Rebake, or the menu entry,
 starts a rebake: the icon blinks every half second while the demo region
 builds (6 s), then goes away with the menu entry. `rebake-disabled`: an up to
 date navmesh in a region without dynamic pathfinding: the struck-out route
-icon, whose click says so in a notification. Capture after frame 700 in
-English, French and Japanese.
+icon, whose click says so in a notification. `path`: Build › Pathfinding ›
+View / test opens on its Test path tab with both ends chosen near the
+avatar ("Waiting for the Aurora bridge" until the demo bridge has been
+saved and reattached, around frame 1050); then the demo region answers like
+llGetStaticPath: the orange path bends between a green start capsule and a
+red end capsule, all as wide as the Character width. Ctrl-click and
+Shift-click move the ends, the width and type ask again (two requests a
+second at most), Clear path empties it. The demo navmesh has a hole (a disc
+of 4 m around 118, 128): an end in it answers "not on the navmesh"
+(`path-hole` starts there), and ends more than 120 m apart "no route". The
+View tab shows its controls; Navmesh and the walkability map stay disabled
+(they need Havok). Capture the windows after frame 700, the path after frame
+1100, in English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and

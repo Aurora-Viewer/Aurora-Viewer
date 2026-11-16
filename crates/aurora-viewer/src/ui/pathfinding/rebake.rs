@@ -110,7 +110,6 @@ impl Rebake {
         self.mode = mode;
     }
 
-    #[cfg(test)]
     pub fn mode(&self) -> Mode {
         self.mode
     }

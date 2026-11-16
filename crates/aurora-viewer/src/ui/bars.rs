@@ -50,6 +50,8 @@ pub enum BarAction {
     BuildOptions(crate::build::MenuOptions),
     /// Build › Pathfinding › Region objects / Characters.
     Pathfinding(aurora_net::pathfinding::Kind),
+    /// Build › Pathfinding › View / test (the pathfinding console).
+    PathfindingConsole,
     /// Build › Pathfinding › Rebake region (Tools.DoPathfindingRebakeRegion).
     RebakeNavMesh,
     /// A parcel icon whose click is not About Land (the pathfinding ones).
@@ -1818,6 +1820,9 @@ fn build_menu(
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("pathfinding-menu-characters")) {
             *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Characters);
+        }
+        if menu::item(ui, p, "route", aurora_i18n::tr!("pathfinding-menu-console")) {
+            *action = BarAction::PathfindingConsole;
         }
         // Tools.EnablePathfindingRebakeRegion: the navmesh is not up to date
         if menu::item_if(ui, p, "refresh", aurora_i18n::tr!("pathfinding-menu-rebake"), rebake) {

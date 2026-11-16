@@ -8,6 +8,7 @@
 //! The app supplies what the windows cannot know (`Facts`: which actions the
 //! in-world selection allows, RLVa) and carries out their `Action`s.
 pub mod capsule;
+pub mod console;
 mod edit;
 mod list;
 pub mod rebake;
@@ -94,6 +95,8 @@ pub struct PathfindingUi {
     pub rebake: rebake::Rebake,
     /// PathfindingDirty is open (the rebake icon was clicked).
     pub dirty_question: bool,
+    /// Pathfinding view / test.
+    pub console: console::Console,
 }
 
 impl Default for PathfindingUi {
@@ -112,6 +115,7 @@ impl Default for PathfindingUi {
             confirm: None,
             rebake: rebake::Rebake::default(),
             dirty_question: false,
+            console: console::Console::default(),
         }
     }
 }

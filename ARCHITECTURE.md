@@ -820,7 +820,17 @@ is driven by `app/pathfinding_rebake.rs`: the network's status and agent
 state, Build › Pathfinding › Rebake region, and the two pathfinding icons it
 adds after the parcel icons (`parcel_icons::pathfinding_icons`, whose
 `Click` sends them to their own notices instead of About Land);
-`app/pathfinding_demo.rs` is `AURORA_DEMO_PATHFINDING`.
+The Pathfinding view / test console is `ui/pathfinding/console.rs` (the
+Legacy layout, the path test's state and status lines, the View tab's
+choices) with `app/pathfinding_path.rs`: Ctrl / Shift clicks become
+`Click::PathPoint` in `app/click_pick.rs` and set the path's ends from the
+visible surface; the path is asked of the region through the bridge
+(`Query::StaticPath`, llGetStaticPath in `world/bridge/query.lsl`, bridge
+1.42) by `world/bridge/path.rs` (one request in flight, two a second, the
+newest waiting, dropped on a region change), and drawn in the world scaled
+by the character width. `app/pathfinding_demo.rs` is
+`AURORA_DEMO_PATHFINDING`; the demo bridge answers paths on a made-up
+navmesh with a hole (`world/bridge/demo.rs`).
 `aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
 (`mod.rs`: the object, character and terrain rows), the linkset rules
 (`linkset.rs`: use ↔ phantom + navmesh category, the uses a selection allows,
