@@ -429,11 +429,18 @@ pub fn encode_bvh(animation: &Animation, skeleton: &Skeleton, fps: u32) -> Resul
         motions[index] = Some(motion);
     }
     let spans = ((animation.duration * fps as f32).round() as usize).max(1);
-    let frame_time = if animation.duration > 0.0 {
-        animation.duration / spans as f32
+    let exact = if animation.duration > 0.0 {
+        f64::from(animation.duration) / spans as f64
     } else {
-        1.0 / fps as f32
+        1.0 / f64::from(fps)
     };
+    // the file holds six decimals: rounded up, a 60 s clip at 24, 36 or 60
+    // fps would read back just over the 60 s the import (and the Legacy
+    // Viewer's LLBVHLoader) accepts, so the written value is floored and the
+    // frames are sampled at that same step
+    // (the tiny nudge keeps an exact step such as 0.05 from flooring to 0.049999)
+    let written = (exact * 1e6 + 1e-6).floor() / 1e6;
+    let frame_time = written as f32;
     // SL Z-up metres -> BVH Y-up inches, the inverse of the import's basis
     let basis = Quat::from_mat3(&Mat3::from_cols(Vec3::Y, Vec3::Z, Vec3::X));
     let to_bvh = basis.inverse();
@@ -441,7 +448,7 @@ pub fn encode_bvh(animation: &Animation, skeleton: &Skeleton, fps: u32) -> Resul
     let moves = |index: usize| index == pelvis || motions[index].is_some_and(|motion| !motion.pos_keys.is_empty());
     let mut text = String::from("HIERARCHY\n");
     write_bvh_joint(&mut text, skeleton, &bones, pelvis, 0, &inches, &moves);
-    let _ = write!(text, "MOTION\nFrames: {}\nFrame Time: {frame_time:.6}\n", spans + 2);
+    let _ = write!(text, "MOTION\nFrames: {}\nFrame Time: {written:.6}\n", spans + 2);
     let mut previous: Vec<Vec3> = vec![Vec3::ZERO; skeleton.joints.len()];
     for frame in 0..spans + 2 {
         // frame 0 is the rest pose; frame n is the animation at n - 1
@@ -815,6 +822,21 @@ mod tests {
         }
         // bones the animation leaves alone stay out of the imported tracks
         assert_eq!(back.joints.len(), source.joints.len());
+    }
+
+    #[test]
+    fn a_sixty_second_bvh_imports_back_at_every_frame_rate() {
+        let skeleton = avatar_skeleton();
+        let mut long = wave();
+        long.duration = 60.0;
+        long.loop_out = 60.0;
+        for fps in [24, 30, 36, 45, 60] {
+            let text = encode_bvh(&long, &skeleton, fps).expect("export");
+            let back = parse_bvh_for_edit(text.as_bytes(), &skeleton)
+                .unwrap_or_else(|error| panic!("{fps} fps: {error}"))
+                .animation;
+            assert!((back.duration - 60.0).abs() < 0.01, "{fps} fps: {}", back.duration);
+        }
     }
 
     #[test]

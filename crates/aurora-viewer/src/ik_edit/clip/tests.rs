@@ -3500,6 +3500,41 @@ fn dragging_one_of_several_picked_keys_moves_them_all() {
 }
 
 #[test]
+fn a_group_drag_that_cannot_move_leaves_undo_and_redo_alone() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let document = Arc::new(document);
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(document.clone()),
+            redo: vec![document.clone()],
+            // the group holds a key at frame 0, dragged five frames left
+            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
+            drag_key: Some((head, 10, 5)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    editor.finish_timeline_key_drag(false);
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 10, 30]);
+    assert!(editor.clip.undo.is_empty(), "nothing moved, nothing to undo");
+    assert_eq!(editor.clip.redo.len(), 1, "the redo history is kept");
+    assert_eq!(editor.clip.drag_key, None);
+}
+
+#[test]
 fn delete_removes_every_picked_key_in_one_undo_step() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = &lib.rig;

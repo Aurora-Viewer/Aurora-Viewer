@@ -95,12 +95,19 @@ impl Editor {
         let turn = (start.rotations[lead].inverse() * pose.rotations[lead]).normalize();
         let offset = now[lead].w_axis.truncate() - was[lead].w_axis.truncate();
         let direct = self.goals.iter().any(|g| g.bone == lead && g.mode == Mode::Direct);
-        for bone in followers {
-            // a joint the selected one's own change already carried (its
-            // chain, or a child for a move) keeps that and nothing more
-            let moved = pose.rotations[bone].dot(start.rotations[bone]).abs() < 0.9999999
-                || (!rotate && now[bone].w_axis.truncate().distance_squared(was[bone].w_axis.truncate()) > 1e-12);
-            if moved {
+        // a joint the selected one's own change already carried (its chain,
+        // or a child for a move) keeps that and nothing more; read before any
+        // follower moves, since a follower's own chain would otherwise carry
+        // the next one (an elbow's solve swinging a wrist picked with it)
+        let carried: Vec<bool> = followers
+            .iter()
+            .map(|&bone| {
+                pose.rotations[bone].dot(start.rotations[bone]).abs() < 0.9999999
+                    || (!rotate && now[bone].w_axis.truncate().distance_squared(was[bone].w_axis.truncate()) > 1e-12)
+            })
+            .collect();
+        for (bone, carried) in followers.into_iter().zip(carried) {
+            if carried {
                 continue;
             }
             let before = pose.clone();

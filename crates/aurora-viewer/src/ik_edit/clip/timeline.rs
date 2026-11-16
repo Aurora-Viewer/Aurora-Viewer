@@ -588,13 +588,16 @@ impl Editor {
         if pointer_down {
             return;
         }
+        // the shift a group can really take: a group already at frame 0
+        // dragged left does not move, and leaves undo and redo alone
+        let group_shift = self.group_drag();
         let Some((bone, from, to)) = self.clip.drag_key.take() else {
             return;
         };
-        if from == to {
+        if from == to || group_shift == Some(0) {
             return;
         }
-        let group = self.clip.selected_keys.len() > 1 && self.clip.selected_keys.contains(&(bone, from));
+        let group = group_shift.is_some();
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
             if group {
@@ -1194,9 +1197,17 @@ impl Editor {
             return;
         };
         let tracks = self.clip.timeline_tracks().unwrap_or_default();
-        // keys an undo, a delete or a range change took away are no longer picked
+        let selected = self.selected;
+        let shown: Vec<&TimelineTrack> = tracks
+            .iter()
+            .filter(|track| track.authored || track.keys.len() > 1 || selected == Some(track.bone))
+            .collect();
+        // keys an undo, a delete or a range change took away, and those of a
+        // lane no longer shown (a hidden rest key picked while its joint was
+        // selected), are no longer picked: a group move would otherwise author
+        // a joint the user never keyed
         self.clip.selected_keys.retain(|(bone, frame)| {
-            tracks
+            shown
                 .iter()
                 .any(|track| track.bone == *bone && track.keys.binary_search(frame).is_ok())
         });
@@ -1206,11 +1217,6 @@ impl Editor {
             }
             key_box.hits.clear();
         }
-        let selected = self.selected;
-        let shown: Vec<&TimelineTrack> = tracks
-            .iter()
-            .filter(|track| track.authored || track.keys.len() > 1 || selected == Some(track.bone))
-            .collect();
         let status = self.timeline_status();
         let spacing = ui.spacing().item_spacing.y;
         let status_height = if status.is_some() {
