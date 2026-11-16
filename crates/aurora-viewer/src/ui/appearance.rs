@@ -23,6 +23,7 @@ mod perf_tests;
 pub(crate) mod portrait;
 mod selection;
 mod showcase;
+pub(crate) mod wearable_favorites;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
@@ -101,6 +102,8 @@ pub struct AppearanceUi {
     /// The heights of the rows last drawn, for those left out.
     rows: RowHeights,
     selection_info: Option<SelectionInfo>,
+    /// The Favorite Wearables window, which shares the rows and their menu.
+    pub(crate) wearable_favorites: wearable_favorites::State,
 }
 
 struct SelectionInfo {
@@ -1201,7 +1204,7 @@ fn outfit_list(
                                 st.select_item(&response, *id, it.id, &order);
                                 items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
-                                items::context_menu(&response, p, world, st, *id, it, &selected, actions);
+                                items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
                             row_gap(ui);
                         } else {
