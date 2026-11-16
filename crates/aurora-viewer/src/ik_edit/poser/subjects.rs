@@ -62,7 +62,8 @@ impl Editor {
         let id = if self.poser.active && !self.poser.subject.is_nil() {
             self.poser.subject
         } else {
-            world.agent_id
+            // couple mode: the person the animation editor works on
+            self.edited_subject(world)
         };
         Frame::subject(world, id)
     }

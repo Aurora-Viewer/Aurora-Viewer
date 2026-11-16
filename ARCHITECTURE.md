@@ -4623,7 +4623,13 @@ key/export footer. `clip/timeline.rs` draws the timeline window: one toolbar
 ruler sharing the lanes' scale, and the bone lanes with their keys.
 `clip/picker.rs` builds the Bone page's clickable Body/Hands/Face skeleton
 from the rig's rest pose (pure classification, projection and fit, cached per
-rig). `clip/files.rs` binds previews and runs the
+rig). `clip/couple.rs` is couple mode: Person B, a nearby resident who
+accepted the poser's consent, gets a document of their own; the editor
+works on one person at a time and swaps the whole editing state (document,
+undo, preview, goals, selection) with the person set aside, whose keyed
+preview the scene still plays on their avatar (`Scene::ik_edit_others`).
+`World::set_couple_partner` keeps a partner who left drawn until the mode
+ends. `clip/files.rs` binds previews and runs the
 existing `aurora_assets::import_animation` codec, full native validation,
 file dialogs and writes on background jobs. Preview revisions atomically
 replace the sample before recorded corrections are removed; later pose edits

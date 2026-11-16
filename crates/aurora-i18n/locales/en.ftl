@@ -47,6 +47,19 @@ anim-timeline-file = File
 anim-timeline-delete-frame-keys = Delete all keys at this frame
 anim-timeline-track-enabled = Include this bone in the animation
 anim-timeline-empty = No keyed bone yet: select a bone, pose it, then press Key (K).
+anim-couple-person-a = Person A · You
+anim-couple-person-b = Person B · { $name }
+anim-couple-switch = Click to edit this person
+anim-couple-partner-left = Couple mode ended: Person B is no longer available. Their animation is kept among the drafts.
+anim-couple-title = Couple animation
+anim-couple-hint = Animate two people in one timeline. Pick Person B from the residents nearby: they accept as for the Poser, and only you see the pose.
+anim-couple-partner = Person B: { $name }
+anim-couple-use = Use as B
+anim-couple-edit-a = Edit Person A
+anim-couple-edit-b = Edit Person B
+anim-couple-end = End couple mode
+anim-couple-end-tip = Back to one person. Person B's animation stays among the drafts.
+anim-couple-wait = Couple mode waits for the animation to finish updating: try again in a moment.
 anim-timeline-keys-selected = { $count ->
     [one] { $count } key picked: drag it to move it, Delete removes it, right-click or Esc drops it
    *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, right-click or Esc drops them

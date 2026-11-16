@@ -47,6 +47,19 @@ anim-timeline-file = ファイル
 anim-timeline-delete-frame-keys = このフレームのキーをすべて削除
 anim-timeline-track-enabled = このボーンをアニメーションに含めます
 anim-timeline-empty = キーのあるボーンはまだありません。ボーンを選んでポーズを付け、「キー」（K）を押してください。
+anim-couple-person-a = 人物 A · あなた
+anim-couple-person-b = 人物 B · { $name }
+anim-couple-switch = クリックしてこの人物を編集
+anim-couple-partner-left = カップルモードを終了しました。人物 B は利用できなくなりました。B のアニメーションは下書きに残してあります。
+anim-couple-title = カップルアニメーション
+anim-couple-hint = 1 つのタイムラインで 2 人をアニメートします。近くの住人から人物 B を選んでください。ポーザーと同じように相手が承諾し、ポーズはあなたにだけ見えます。
+anim-couple-partner = 人物 B：{ $name }
+anim-couple-use = B にする
+anim-couple-edit-a = 人物 A を編集
+anim-couple-edit-b = 人物 B を編集
+anim-couple-end = カップルモードを終了
+anim-couple-end-tip = 1 人に戻ります。人物 B のアニメーションは下書きに残ります。
+anim-couple-wait = アニメーションの更新が終わるまでカップルモードは待機します。しばらくしてからもう一度お試しください。
 anim-timeline-keys-selected = { $count ->
     [one] { $count }個のキーを選択中：ドラッグで移動、Deleteで削除、右クリックまたはEscで選択解除
    *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Ctrl+Cでコピー、Deleteで削除、右クリックまたはEscで選択解除

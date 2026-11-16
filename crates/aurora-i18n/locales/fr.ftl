@@ -47,6 +47,19 @@ anim-timeline-file = Fichier
 anim-timeline-delete-frame-keys = Supprimer toutes les clés de cette frame
 anim-timeline-track-enabled = Inclure cet os dans l’animation
 anim-timeline-empty = Aucun os n’a encore de clé : sélectionnez un os, posez-le, puis appuyez sur Clé (K).
+anim-couple-person-a = Personne A · Vous
+anim-couple-person-b = Personne B · { $name }
+anim-couple-switch = Cliquez pour animer cette personne
+anim-couple-partner-left = Mode couple terminé : la personne B n’est plus disponible. Son animation est gardée parmi les brouillons.
+anim-couple-title = Animation en couple
+anim-couple-hint = Animez deux personnes dans une seule ligne de temps. Choisissez la personne B parmi les résidents proches : elle accepte comme pour le Poser, et vous seul voyez la pose.
+anim-couple-partner = Personne B : { $name }
+anim-couple-use = Prendre comme B
+anim-couple-edit-a = Animer la personne A
+anim-couple-edit-b = Animer la personne B
+anim-couple-end = Quitter le mode couple
+anim-couple-end-tip = Revenir à une seule personne. L’animation de la personne B reste parmi les brouillons.
+anim-couple-wait = Le mode couple attend la fin de la mise à jour de l’animation : réessayez dans un instant.
 anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
    *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne

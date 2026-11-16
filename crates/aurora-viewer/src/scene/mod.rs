@@ -890,6 +890,9 @@ pub struct Scene {
     /// Every skeleton holds its pose: the photo mode's frozen world.
     pub pause_all_skeletons: bool,
     pub ik_edit: ik::EditRequest,
+    /// The animation editor's requests on other avatars than ours: Person B
+    /// of its couple mode.
+    pub ik_edit_others: HashMap<Uuid, ik::EditRequest>,
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
@@ -1626,6 +1629,7 @@ impl Scene {
             paused_skeletons: HashSet::new(),
             pause_all_skeletons: false,
             ik_edit: ik::EditRequest::default(),
+            ik_edit_others: HashMap::new(),
             poser: HashMap::new(),
             synchronize_animations: false,
             animation_speed: 1.0,
@@ -5854,13 +5858,16 @@ impl Scene {
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
             motions.set_paused(
-                self.pause_all_skeletons || self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
+                self.pause_all_skeletons
+                    || self.paused_skeletons.contains(&owner)
+                    || (owner == world.agent_id && self.ik_edit.active)
+                    || self.ik_edit_others.get(&owner).is_some_and(|edit| edit.active),
                 now,
             );
             motions.ik.edit = if owner == world.agent_id {
                 self.ik_edit.clone()
             } else {
-                ik::EditRequest::default()
+                self.ik_edit_others.get(&owner).cloned().unwrap_or_default()
             };
             motions.ground = self.grounding_frame(world, idx, now);
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);

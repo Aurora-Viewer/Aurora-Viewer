@@ -326,6 +326,19 @@ impl KeyBox {
     }
 }
 
+/// A row of the timeline's list: in couple mode, each person's name
+/// heads their lanes.
+enum Row<'a> {
+    Person { b: bool, edited: bool },
+    Track(&'a TimelineTrack),
+    Waiting(&'a TimelineTrack),
+}
+
+/// Each person's colour in couple mode: A takes the editor's violet, B amber.
+pub(super) fn person_color(palette: &Palette, b: bool) -> egui::Color32 {
+    if b { palette.amber } else { palette.violet }
+}
+
 /// The lanes' geometry shared by every row: the name column, then the
 /// visible frames.
 #[derive(Clone, Copy)]
@@ -779,7 +792,7 @@ impl Editor {
             self.clip.frame,
             self.clip.playing,
         );
-        let frame = Frame::new(world);
+        let frame = self.editor_frame(world);
         let content = ctx.content_rect();
         let size = timeline_default_size(content);
         let pos = timeline_default_position(content, size);
@@ -1221,6 +1234,45 @@ impl Editor {
             }
             key_box.hits.clear();
         }
+        // couple mode: each person's lanes under their name, A first; the
+        // person set aside's lanes show their keys, a click there switches
+        let editing_b = self.clip.couple.as_ref().map(|couple| couple.editing_b);
+        let partner_name = self
+            .clip
+            .couple
+            .as_ref()
+            .map(|couple| couple.partner_name.clone())
+            .unwrap_or_default();
+        let waiting_lanes = self
+            .clip
+            .couple
+            .as_mut()
+            .and_then(|couple| couple.waiting_lanes())
+            .unwrap_or_default();
+        let rows: Vec<Row> = match editing_b {
+            None => shown.iter().map(|track| Row::Track(track)).collect(),
+            Some(editing_b) => {
+                let edited = shown.iter().map(|track| Row::Track(track));
+                let waiting = waiting_lanes
+                    .iter()
+                    .filter(|track| track.authored || track.keys.len() > 1)
+                    .map(Row::Waiting);
+                let mut rows = vec![Row::Person {
+                    b: false,
+                    edited: !editing_b,
+                }];
+                if editing_b {
+                    rows.extend(waiting);
+                    rows.push(Row::Person { b: true, edited: true });
+                    rows.extend(edited);
+                } else {
+                    rows.extend(edited);
+                    rows.push(Row::Person { b: true, edited: false });
+                    rows.extend(waiting);
+                }
+                rows
+            }
+        };
         let status = self.timeline_status();
         let spacing = ui.spacing().item_spacing.y;
         let status_height = if status.is_some() {
@@ -1231,7 +1283,7 @@ impl Editor {
         let list_height = (ui.available_height() - RULER_HEIGHT - spacing - status_height).max(ROW_HEIGHT);
         // the rows take the width the scroll area leaves them, known before
         // they are drawn, so that the ruler above has exactly their width
-        let rows_height = shown.len() as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP;
+        let rows_height = rows.len() as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP;
         let scroll_bar = rows_height > list_height + 0.5;
         let width = (ui.available_width() - if scroll_bar { widgets::scroll_strip(ui) } else { 0.0 }).max(1.0);
         let name_width = (width * 0.28).clamp(96.0, 168.0);
@@ -1280,7 +1332,7 @@ impl Editor {
             start: view_start,
             end: view_end,
         };
-        let rows_bottom = if shown.is_empty() {
+        let rows_bottom = if rows.is_empty() {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, list_height), egui::Sense::hover());
             let mut hint = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(4.0, 6.0))));
             hint.add(egui::Label::new(egui::RichText::new(aurora_i18n::tr!("anim-timeline-empty")).color(palette.muted)).wrap());
@@ -1293,9 +1345,13 @@ impl Editor {
                         .id_salt("avatar-studio-animation-timeline-tracks")
                         .auto_shrink([false, false])
                         .max_height(list_height)
-                        .show_rows(ui, ROW_HEIGHT, shown.len(), |ui, rows| {
-                            for track in rows.filter_map(|index| shown.get(index)) {
-                                self.timeline_row(ui, palette, rig, frame, track, lanes);
+                        .show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+                            for row in range.filter_map(|index| rows.get(index)) {
+                                match row {
+                                    Row::Track(track) => self.timeline_row(ui, palette, rig, frame, track, lanes),
+                                    Row::Waiting(track) => self.timeline_waiting_row(ui, palette, track, lanes, editing_b == Some(false)),
+                                    Row::Person { b, edited } => self.timeline_person_row(ui, palette, *b, *edited, &partner_name),
+                                }
                             }
                         })
                 })
@@ -1497,6 +1553,7 @@ impl Editor {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             response.on_hover_text(aurora_i18n::tr!("anim-edit-keyframe-at", frame = key));
         }
+        let person_b = self.clip.couple.as_ref().is_some_and(|couple| couple.editing_b);
         let painter = ui.painter();
         let center = lane.center().y;
         let base = if track.enabled {
@@ -1523,6 +1580,8 @@ impl Editor {
                 palette.teal
             } else if !track.enabled {
                 palette.muted_dim
+            } else if person_b {
+                palette.amber
             } else if Some(key) == hovered_key || (key == self.clip.frame && !self.clip.playing) {
                 palette.violet_light
             } else {
@@ -1544,6 +1603,89 @@ impl Editor {
                     paint_key(painter, egui::pos2(scale.x(to), center), KEY_HALF + 1.0, palette.teal);
                 }
             }
+        }
+    }
+
+    /// A person's name above their lanes in couple mode, in their colour;
+    /// a click on the person set aside edits them.
+    fn timeline_person_row(&mut self, ui: &mut egui::Ui, palette: &Palette, b: bool, edited: bool, partner: &str) {
+        let (row, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
+        let color = person_color(palette, b);
+        if edited {
+            ui.painter()
+                .rect_filled(row, ui.visuals().window_corner_radius, color.gamma_multiply(0.14));
+        }
+        paint_key(ui.painter(), egui::pos2(row.left() + 10.0, row.center().y), KEY_HALF, color);
+        let label = if b {
+            aurora_i18n::tr!("anim-couple-person-b", name = partner.to_owned())
+        } else {
+            aurora_i18n::tr!("anim-couple-person-a").to_string()
+        };
+        ui.painter().text(
+            egui::pos2(row.left() + 22.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            if edited { palette.ink } else { palette.muted },
+        );
+        if !edited {
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if response.on_hover_text(aurora_i18n::tr!("anim-couple-switch")).clicked() {
+                self.switch_person();
+            }
+        }
+    }
+
+    /// A lane of the person set aside: their keys, dimmed, in their colour.
+    /// A click on it moves the playhead there and edits that person.
+    fn timeline_waiting_row(&mut self, ui: &mut egui::Ui, palette: &Palette, track: &TimelineTrack, lanes: Lanes, b: bool) {
+        let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::hover());
+        let names = egui::Rect::from_min_size(row.min, egui::vec2(lanes.name_width, ROW_HEIGHT));
+        let lane = egui::Rect::from_min_max(egui::pos2(row.left() + lanes.name_width, row.top()), row.max);
+        let response = ui.interact(
+            row,
+            egui::Id::unique(("avatar-studio-animation-timeline-waiting", track.bone)),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            egui::pos2(names.left() + 26.0, names.center().y),
+            egui::Align2::LEFT_CENTER,
+            &track.name,
+            egui::FontId::proportional(13.0),
+            palette.muted,
+        );
+        let scale = FrameScale::new(lane, lanes.start, lanes.end);
+        let center = lane.center().y;
+        ui.painter().line_segment(
+            [
+                egui::pos2(scale.x(f64::from(scale.start)), center),
+                egui::pos2(scale.x(f64::from(scale.end)), center),
+            ],
+            egui::Stroke::new(1.0, palette.muted_dim.gamma_multiply(0.5)),
+        );
+        let color = if track.enabled {
+            person_color(palette, b).gamma_multiply(0.55)
+        } else {
+            palette.muted_dim
+        };
+        let visible =
+            &track.keys[track.keys.partition_point(|key| *key < scale.start)..track.keys.partition_point(|key| *key <= scale.end)];
+        for &key in visible {
+            paint_key(ui.painter(), egui::pos2(scale.x(f64::from(key)), center), KEY_HALF, color);
+        }
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.on_hover_text(aurora_i18n::tr!("anim-couple-switch")).clicked() {
+            if let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
+                && lane.contains(pointer)
+            {
+                let to = key_under(&track.keys, &scale, pointer.x).unwrap_or_else(|| scale.frame_at(pointer.x));
+                self.clip_seek(to);
+            }
+            self.switch_person();
         }
     }
 }

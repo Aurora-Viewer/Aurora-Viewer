@@ -596,6 +596,12 @@ pub struct World {
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
+    /// The animation editor's Person B (couple mode), set by the app each
+    /// frame: when they teleport away or log off, they stay drawn as they
+    /// were, with what they wear, until couple mode ends (`hold_partner`).
+    pub couple_partner: Option<Uuid>,
+    /// The partner's kills held meanwhile.
+    held_partner: Vec<(ObjKey, Uuid)>,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -1025,6 +1031,8 @@ impl World {
             frozen: false,
             god_level: 0,
             held_kills: Vec::new(),
+            couple_partner: None,
+            held_partner: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
             avatar_marks: Default::default(),
@@ -1877,6 +1885,63 @@ impl World {
             }
         }
         now
+    }
+
+    /// The kill of the couple partner's avatar is held: the animation
+    /// editor keeps posing them after they left (a teleport, a log-off),
+    /// as they were, standing still. Their consent still applies: a
+    /// withdrawal ends couple mode, which lets them go (`set_couple_partner`).
+    /// Returns the kills to apply now.
+    fn hold_partner(&mut self, handle: RegionHandle, local_ids: Vec<u32>) -> Vec<u32> {
+        let Some(partner) = self.couple_partner else { return local_ids };
+        let mut now = Vec::with_capacity(local_ids.len());
+        for id in local_ids {
+            let key = ObjKey {
+                region: handle,
+                local_id: id,
+            };
+            let held = self
+                .objects
+                .index_of(&key)
+                .filter(|idx| self.objects.get(*idx).is_some_and(|o| o.full_id == partner && o.is_avatar()));
+            match held {
+                Some(idx) => {
+                    if let Some(object) = self.objects.get_mut(idx) {
+                        object.velocity = Vec3::ZERO;
+                        object.acceleration = Vec3::ZERO;
+                        object.angular_velocity = Vec3::ZERO;
+                    }
+                    log::info!("couple partner left: kept drawn while the animation editor poses them");
+                    self.held_partner.push((key, partner));
+                }
+                None => now.push(id),
+            }
+        }
+        now
+    }
+
+    /// The animation editor's couple partner, each frame. A partner whose
+    /// kill was held goes once they are no longer the partner, unless their
+    /// key went to another object since (they came back).
+    pub fn set_couple_partner(&mut self, partner: Option<Uuid>) {
+        self.couple_partner = partner;
+        if self.held_partner.is_empty() {
+            return;
+        }
+        let (keep, release): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held_partner)
+            .into_iter()
+            .partition(|(_, id)| Some(*id) == partner);
+        self.held_partner = keep;
+        for (key, id) in release {
+            if self
+                .objects
+                .index_of(&key)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.full_id == id)
+            {
+                self.kill_objects(key.region, &[key.local_id]);
+            }
+        }
     }
 
     /// `idx` is `ancestor` or hangs from it (a prim of what an avatar wears).
@@ -3318,6 +3383,7 @@ impl World {
                 None
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
+                let local_ids = self.hold_partner(handle, local_ids);
                 let local_ids = self.hold_kills(handle, local_ids);
                 self.kill_objects(handle, &local_ids);
                 None
@@ -6969,6 +7035,43 @@ mod motion_tests {
         assert!(!present(&world, 970));
         assert!(present(&world, 975));
         assert!(world.held_kills.is_empty());
+    }
+
+    #[test]
+    fn the_couple_partner_stays_drawn_after_leaving_until_couple_mode_ends() {
+        let (mut world, me, handle) = fixture();
+        let mut partner = me.clone();
+        partner.full_id = Uuid::from_u128(980);
+        partner.local_id = 980;
+        partner.velocity = Vec3::new(1.0, 0.0, 0.0);
+        let mut other = partner.clone();
+        other.full_id = Uuid::from_u128(981);
+        other.local_id = 981;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![me.clone(), partner.clone(), other.clone()],
+        });
+        let present = |world: &World, id: u128| world.objects.index_of_uuid(&Uuid::from_u128(id)).is_some();
+        world.set_couple_partner(Some(partner.full_id));
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![980, 981],
+        });
+        // Person B is kept, standing still; anyone else goes
+        assert!(present(&world, 980));
+        assert!(!present(&world, 981));
+        let held = world
+            .objects
+            .index_of_uuid(&partner.full_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("held");
+        assert_eq!(held.velocity, Vec3::ZERO);
+        world.set_couple_partner(Some(partner.full_id));
+        assert!(present(&world, 980));
+        // couple mode ends: they go
+        world.set_couple_partner(None);
+        assert!(!present(&world, 980));
+        assert!(world.held_partner.is_empty());
     }
 
     #[test]
