@@ -194,6 +194,11 @@ pub struct Preferences {
     pub stores: bool,
     /// Folders Auto-sort never takes anything from, at any depth.
     pub excluded: Vec<Uuid>,
+    /// The user's own folders, whatever their name: a whole sort opens and
+    /// sorts them, never moves them whole as one product (`Hair
+    /// Collection`, `Lingerie Drawer`). Only [`own_allowed`] ones count.
+    /// Kept per account, never shared nor imported.
+    pub own: Vec<Uuid>,
     /// The Clean up tab's choices.
     pub cleanup: Cleanup,
     /// The item kinds a sort moves; the others stay where they are (a
@@ -217,6 +222,7 @@ impl Default for Preferences {
             rules: Vec::new(),
             stores: false,
             excluded: Vec::new(),
+            own: Vec::new(),
             cleanup: Cleanup::default(),
             kinds: Kind::ALL.to_vec(),
             store_hints: Vec::new(),
@@ -1257,6 +1263,32 @@ pub fn untouchable(inv: &Inventory, id: Uuid) -> bool {
     hands_off(inv, id) || actions::in_type(inv, id, 14) || actions::in_type(inv, id, 53)
 }
 
+/// A folder the user may list as their own ([`Preferences::own`]): one of
+/// their folders in an open place, never My Inventory, a default, viewer or
+/// protected folder, nor the sort folder, Pre-Trash or a folder in them.
+pub fn own_allowed(inv: &Inventory, prefs: &Preferences, id: Uuid) -> bool {
+    if id == inv.root
+        || !inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1 && !f.library)
+        || !folder_open(inv, id)
+        || untouchable(inv, id)
+    {
+        return false;
+    }
+    let (base, waiting) = (base_folder(inv, prefs), pre_trash_folders(inv));
+    !actions::ancestors(inv, id).any(|a| Some(a) == base || waiting.contains(&a))
+}
+
+/// The folders listed as the user's own that still may be, and every folder
+/// holding one (below My Inventory): none of them is ever a product's
+/// folder, so none moves whole.
+fn own_folders(inv: &Inventory, prefs: &Preferences) -> HashSet<Uuid> {
+    let mut set = HashSet::new();
+    for id in prefs.own.iter().copied().filter(|id| own_allowed(inv, prefs, *id)) {
+        set.extend(actions::ancestors(inv, id).take_while(|a| *a != inv.root));
+    }
+    set
+}
+
 /// Whether the sorter can run on `source`: My Inventory, Objects, or one of
 /// the user's own folders, in an open place ([`folder_open`]).
 pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
@@ -1726,12 +1758,31 @@ pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
 
 fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
-    // the root's open folders, then the user's own folders of folders below
-    // them (`Clothes/Winter`): each is opened, its products move whole. A
-    // folder not loaded yet is read first (it is judged once its contents
-    // are known).
-    let mut level: Vec<Uuid> = vec![inv.root];
-    for depth in 0..=OPEN_DEPTH {
+    open_levels(inv, prefs, places, vec![inv.root], 0, &mut sources);
+    // a folder listed as the user's own deeper down is opened too, with its
+    // own folders of folders below it
+    let mut listed: Vec<Uuid> = prefs.own.iter().copied().filter(|id| places.own.contains(id)).collect();
+    listed.sort_unstable();
+    listed.dedup();
+    for id in listed {
+        let Some(f) = inv.folders.get(&id) else { continue };
+        let open = !sources.contains(&id) && !prefs.excludes(inv, id) && !places.reserved.contains(&f.info.name.trim().to_lowercase());
+        if open {
+            sources.push(id);
+            if f.state == FetchState::Fetched {
+                open_levels(inv, prefs, places, vec![id], 1, &mut sources);
+            }
+        }
+    }
+    sources
+}
+
+/// The open folders below `level` (`first` levels down from My Inventory),
+/// then the user's own folders of folders below them (`Clothes/Winter`):
+/// each is opened, its products move whole. A folder not loaded yet is
+/// read first (it is judged once its contents are known).
+fn open_levels(inv: &Inventory, prefs: &Preferences, places: &Places, mut level: Vec<Uuid>, first: usize, sources: &mut Vec<Uuid>) {
+    for depth in first..=OPEN_DEPTH {
         let mut next = Vec::new();
         for parent in &level {
             let Some(folder) = inv.folders.get(parent) else { continue };
@@ -1743,8 +1794,11 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
                     && folder_open(inv, id)
                     && !prefs.excludes(inv, id)
                     && (depth == 0 || f.info.type_default == -1 && !places.reserved.contains(&f.info.name.trim().to_lowercase()));
-                let own = f.info.type_default != -1 || f.state != FetchState::Fetched || !product_folder_in(inv, id, &places.reserved);
-                if open && own {
+                let own = f.info.type_default != -1
+                    || f.state != FetchState::Fetched
+                    || places.own.contains(&id)
+                    || !product_folder_in(inv, id, &places.reserved);
+                if open && own && !sources.contains(&id) {
                     sources.push(id);
                     // (Objects and an unlocked default folder too: their
                     // folders of folders are the user's own)
@@ -1759,7 +1813,6 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
         }
         level = next;
     }
-    sources
 }
 
 /// What every folder of a plan is compared with, worked out once: the sort
@@ -1771,6 +1824,8 @@ struct Places {
     /// Every Pre-Trash folder, other languages' included.
     pre_trash: HashSet<Uuid>,
     reserved: HashSet<String>,
+    /// The user's own folders and the folders holding one ([`own_folders`]).
+    own: HashSet<Uuid>,
 }
 
 impl Places {
@@ -1780,6 +1835,7 @@ impl Places {
             waiting: pre_trash(inv),
             pre_trash: pre_trash_folders(inv),
             reserved: sorter_folder_names(prefs),
+            own: own_folders(inv, prefs),
         }
     }
 }
@@ -1817,6 +1873,7 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
                 && Some(*id) != places.base
                 && Some(*id) != places.waiting
                 && folder_open(inv, *id)
+                && !places.own.contains(id)
                 && product_folder_in(inv, *id, &places.reserved)
         }));
     }
@@ -2403,6 +2460,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
         stack.push(base);
     }
     let reserved = sorter_folder_names(prefs);
+    let own = own_folders(inv, prefs);
     let holds_worn = actions::worn_ancestors(inv, worn);
     let pre_trash_at = pre_trash(inv);
     let waiting_all = pre_trash_folders(inv);
@@ -2454,7 +2512,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
                 }
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && product_folder_in(inv, *sub, &reserved);
+            let product = !system && !made && !own.contains(sub) && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
             }
@@ -2734,6 +2792,7 @@ pub fn plan_cleanup(
     let source = if cleanup.whole { inv.root } else { source };
     let base = base_folder(inv, prefs);
     let reserved = sorter_folder_names(prefs);
+    let own = own_folders(inv, prefs);
     let holds_worn = actions::worn_ancestors(inv, worn);
     let pre_trash_at = pre_trash(inv);
     let waiting_all = pre_trash_folders(inv);
@@ -2824,7 +2883,7 @@ pub fn plan_cleanup(
                 continue;
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && product_folder_in(inv, *sub, &reserved);
+            let product = !system && !made && !own.contains(sub) && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
             }
@@ -2904,20 +2963,18 @@ fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) ->
         // My Inventory's own folders are never moved by a sort of it, but a
         // product's folder lying loose at the root goes whole
         if folders {
-            entries.extend(
-                folder
-                    .children
-                    .iter()
-                    .copied()
-                    .filter(|id| Some(*id) != base && Some(*id) != places.waiting && product_folder_in(inv, *id, reserved)),
-            );
+            entries.extend(folder.children.iter().copied().filter(|id| {
+                Some(*id) != base && Some(*id) != places.waiting && !places.own.contains(id) && product_folder_in(inv, *id, reserved)
+            }));
         }
         return entries;
     }
     if folders {
-        // the sorted folders themselves stay where they are
+        // the sorted folders themselves stay where they are, and the user's
+        // own folders (never moved whole)
         entries.extend(folder.children.iter().copied().filter(|id| {
             Some(*id) != base
+                && !places.own.contains(id)
                 && inv
                     .folders
                     .get(id)

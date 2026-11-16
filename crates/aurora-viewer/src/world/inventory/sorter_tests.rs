@@ -2638,3 +2638,64 @@ fn stores_with_no_latin_letter_compare_as_written() {
     assert!(same_store("Котик", "котик"));
     assert!(same_store("Café", "Cafe"));
 }
+
+/// The folders the user lists as their own are opened and sorted whatever
+/// their name, at any depth, and never move whole; a default folder or My
+/// Inventory listed by hand counts for nothing.
+#[test]
+fn listed_own_folders_are_opened_never_moved_whole() {
+    let none = HashSet::new();
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 700, 1, "Hair Collection");
+    add_folder(&mut inv, 701, 700, "Long Waves");
+    add_item(&mut inv, 801, 700, "Bob Cut Hair", 0);
+    add_folder(&mut inv, 702, 1, "Hair Fatpacks");
+    add_folder(&mut inv, 703, 702, "Colors");
+    add_item(&mut inv, 802, 702, "Pixie Hair", 0);
+    add_folder(&mut inv, 704, 1, "Lingerie Drawer");
+    add_item(&mut inv, 803, 704, "Lace Bra", 0);
+    // deeper than a whole sort opens on its own
+    add_folder(&mut inv, 710, 1, "Home");
+    add_folder(&mut inv, 711, 710, "Rooms");
+    add_folder(&mut inv, 712, 711, "Upstairs");
+    add_folder(&mut inv, 713, 712, "Bedroom");
+    add_folder(&mut inv, 714, 713, "Corner");
+    add_folder(&mut inv, 715, 714, "Decor Ideas");
+    add_folder(&mut inv, 716, 715, "Cozy Lamp");
+    add_item(&mut inv, 804, 715, "Glass Vase", 0);
+    let listed = [700, 702, 704, 715];
+    let prefs = Preferences {
+        own: listed.iter().map(|n| id(*n)).collect(),
+        ..Preferences::default()
+    };
+    let sources = whole_sources(&inv, &prefs);
+    for n in listed {
+        assert!(sources.contains(&id(n)), "listed folder {n} is opened");
+    }
+    let plan = plan_whole(&inv, &prefs, &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    for n in [700, 702, 704, 710, 711, 712, 713, 714, 715] {
+        assert!(!moved.contains(&id(n)), "folder {n} never moves whole");
+    }
+    for n in [801, 802, 803, 804] {
+        assert!(moved.contains(&id(n)), "item {n} in a listed folder is sorted");
+    }
+    // My Inventory, a default folder, the Trash: never one of the user's own
+    for n in [1, OBJECTS, 11] {
+        assert!(!own_allowed(&inv, &prefs, id(n)), "folder {n} cannot be listed");
+    }
+    let refused = Preferences {
+        own: vec![id(1), id(OBJECTS), id(11)],
+        ..Preferences::default()
+    };
+    assert_eq!(
+        whole_sources(&inv, &refused),
+        whole_sources(&inv, &Preferences::default()),
+        "a refused folder changes nothing"
+    );
+    // a folder in the sort folder cannot be listed either
+    let base = Preferences::default().base_name();
+    add_folder(&mut inv, 720, 1, &base);
+    add_folder(&mut inv, 721, 720, "Hair Collection");
+    assert!(!own_allowed(&inv, &prefs, id(721)), "inside the sort folder");
+}

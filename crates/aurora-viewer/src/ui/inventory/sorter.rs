@@ -70,6 +70,7 @@ enum Pick {
     Source,
     Rule(usize),
     Exclude,
+    Own,
 }
 
 struct Picker {
@@ -3404,6 +3405,8 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
         state.picker = Some(Picker::new(Pick::Exclude));
     }
     ui.add_space(10.0);
+    own_folders(ui, p, inv, state, options);
+    ui.add_space(10.0);
     default_folders(ui, p, inv, state, options);
     ui.add_space(10.0);
     let worn = std::mem::take(&mut state.worn_now);
@@ -3698,6 +3701,49 @@ fn undo_and_snapshots(
 
 /// Store hints: a store whose names say nothing of what it sells, and the
 /// category its items go to.
+/// The folders the user lists as their own: opened and sorted, never moved
+/// whole, whatever their name. One no longer allowed (made a default
+/// folder, moved into the sort folder) is shown as such and ignored.
+fn own_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, options: &mut sorter::Preferences) {
+    crate::ui::widgets::section_header(ui, p, "folder-open-filled", aurora_i18n::tr!("inventory-sorter-own"));
+    ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-own-hint")).small().color(p.muted));
+    ui.add_space(4.0);
+    let mut remove = None;
+    for (index, id) in options.own.iter().enumerate() {
+        ui.horizontal(|ui| {
+            crate::ui::widgets::glyph(ui, "folder-open-filled", p.muted, 14.0);
+            let text = if !inv.folders.contains_key(id) {
+                aurora_i18n::tr!("inventory-sorter-folder-missing").to_owned()
+            } else if sorter::own_allowed(inv, options, *id) {
+                sorter::folder_path(inv, *id)
+            } else {
+                aurora_i18n::tr!("inventory-sorter-own-refused", path = sorter::folder_path(inv, *id))
+            };
+            ui.label(text);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::ui::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("inventory-sorter-own-remove"), true) {
+                    remove = Some(index);
+                }
+            });
+        });
+    }
+    if let Some(index) = remove {
+        options.own.remove(index);
+    }
+    if crate::ui::widgets::action_button(
+        ui,
+        p,
+        "plus",
+        aurora_i18n::tr!("inventory-sorter-own-add"),
+        crate::ui::widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    )
+    .clicked()
+    {
+        state.picker = Some(Picker::new(Pick::Own));
+    }
+}
+
 fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences) {
     use sorter::{Category, StoreHint};
     crate::ui::widgets::section_header(ui, p, "building-store", aurora_i18n::tr!("inventory-sorter-hints"));
@@ -4047,6 +4093,7 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
                 Pick::Source => sorter::source_allowed(inv, *id),
                 Pick::Rule(_) => sorter::target_allowed(inv, *id) && !prefs.sorter.excludes(inv, *id),
                 Pick::Exclude => *id != inv.root && !sorter::untouchable(inv, *id),
+                Pick::Own => sorter::own_allowed(inv, &prefs.sorter, *id),
             })
             .map(|id| (id, sorter::folder_path(inv, id)))
             .collect();
@@ -4105,6 +4152,11 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
             Pick::Exclude => {
                 if !prefs.sorter.excluded.contains(&id) {
                     prefs.sorter.excluded.push(id);
+                }
+            }
+            Pick::Own => {
+                if !prefs.sorter.own.contains(&id) && sorter::own_allowed(inv, &prefs.sorter, id) {
+                    prefs.sorter.own.push(id);
                 }
             }
         }
