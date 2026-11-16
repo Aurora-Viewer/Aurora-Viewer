@@ -472,6 +472,55 @@ impl ChatUi {
         self.popped.remove(Some(conversation));
     }
 
+    /// Keep the editor, its selection and its window when the simulator gives
+    /// the conference its permanent ID (processSessionInitializedReply).
+    fn rekey_conference(&mut self, ctx: &egui::Context, from: uuid::Uuid, to: uuid::Uuid) {
+        let (old, new) = (Some(from), Some(to));
+        if self.last_field == ChatField::Conversation(old) {
+            self.last_field = ChatField::Conversation(new);
+        }
+        if self.selected == old {
+            self.selected = new;
+        }
+        if self.reveal == old {
+            self.reveal = new;
+        }
+        if self.selection.0 == old {
+            self.selection.0 = new;
+        }
+        if self.picker_window == Some(Some(old)) {
+            self.picker_window = Some(Some(new));
+        }
+        self.popped.rekey(from, to);
+        if let Some(draft) = self.drafts.remove(&old) {
+            self.drafts.insert(new, draft);
+        }
+        if let Some(history) = self.input_history.remove(&old) {
+            self.input_history.insert(new, history);
+        }
+        if let Some(search) = self.searches.remove(&old) {
+            self.searches.insert(new, search);
+        }
+        if let Some(view) = self.views.remove(&old) {
+            self.views.insert(new, view);
+        }
+        let input = |conversation: Option<uuid::Uuid>| egui::Id::unique(("conv_input", conversation));
+        for (before, after) in [
+            (input(old), input(new)),
+            (find::field_id(old), find::field_id(new)),
+            (find::filter_id(old), find::filter_id(new)),
+        ] {
+            if let Some(state) = egui::TextEdit::load_state(ctx, before) {
+                state.store(ctx, after);
+            }
+            ctx.memory_mut(|m| {
+                if m.has_focus(before) {
+                    m.request_focus(after);
+                }
+            });
+        }
+    }
+
     /// "Detach": `conversation` in its own window, its field taking the
     /// keyboard, from the next frame (the Conversations window drew it in
     /// this one).
@@ -598,6 +647,12 @@ impl ChatUi {
     /// button shows and hides that window.
     pub fn nearby_apart(&self) -> bool {
         self.popped.contains(None)
+    }
+
+    /// `conversation` is in a window of its own (`popout.rs`): showing it
+    /// does not need the Conversations window.
+    pub fn in_own_window(&self, conversation: uuid::Uuid) -> bool {
+        self.popped.contains(Some(conversation))
     }
 
     /// The nearby chat's own window is on screen, expanded.
@@ -3378,19 +3433,35 @@ pub fn show(
     let mut actions = std::mem::take(&mut st.thumbnails.actions);
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
+    for (from, to) in world.social.conference_rekeys.drain(..) {
+        st.rekey_conference(ctx, from, to);
+    }
     let opening_conversation = world.social.focus_im.is_some();
-    if let Some(f) = world.social.focus_im.take() {
+    if let Some(f) = world.social.focus_im {
         let conversation = (!f.is_nil()).then_some(f);
-        if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
-            // the keyboard asked of the Conversations window goes to its own
-            let focus = std::mem::take(&mut st.conv_focus_request);
-            st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
-            // and the Conversations window, opened for it, stays closed
-            if !st.main_open {
-                *open = false;
+        let own_window = popout::opens_in_own_window(&st.popped, conversation, st.own_windows);
+        // a request for the Conversations window waits while it is closed:
+        // the app may open it next (a new call opens it), and consuming the
+        // request now would let the "window opened" rule below take the
+        // keyboard for a conversation a call only asked to show
+        if own_window || *open {
+            // a conversation the user opened asks for the keyboard too
+            // (World::focus_conversation; FSFloaterIM::show → setFocus(true)
+            // → focusFirstItem); a call shows it alone
+            let take_keyboard = std::mem::take(&mut world.social.focus_im_to_type);
+            world.social.focus_im = None;
+            if own_window {
+                // the keyboard asked of the Conversations window goes to its own
+                let focus = std::mem::take(&mut st.conv_focus_request) || take_keyboard;
+                st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
+                // and the Conversations window, opened for it, stays closed
+                if !st.main_open {
+                    *open = false;
+                }
+            } else {
+                st.open(f);
+                st.conv_focus_request |= take_keyboard;
             }
-        } else {
-            st.open(f);
         }
     }
     let docked = !contacts_settings.torn_off;
@@ -6279,14 +6350,13 @@ mod tests {
         };
         let field = |c: uuid::Uuid| egui::Id::unique(("conv_input", Some(c)));
         // opened by a call: shown, the keyboard stays nowhere
-        world.social.focus_im = Some(a);
+        world.focus_conversation(a, false);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(a));
         assert!(ctx.memory(|m| m.focused()).is_none());
         // opened by the user: shown and ready to type in
-        world.social.focus_im = Some(b);
-        st.conv_focus_request = true;
+        world.focus_conversation(b, true);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(b));
@@ -6297,8 +6367,7 @@ mod tests {
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert!(crate::ui::widgets::floater_minimized(&ctx, "conversations"));
-        world.social.focus_im = Some(a);
-        st.conv_focus_request = true;
+        world.focus_conversation(a, true);
         crate::ui::notifications::open_conversations(&ctx, &mut open);
         for _ in 0..4 {
             frame(&mut st, &mut world, &mut open);
