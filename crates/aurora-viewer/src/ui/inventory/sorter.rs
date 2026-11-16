@@ -263,6 +263,8 @@ struct TrashJob {
     total: usize,
     /// Entries the delete requests carried, counted once each one is done.
     sent: usize,
+    /// Entries a finished delete request left where they were.
+    failed: usize,
     /// The batch on its way: its entries, frames since it was pushed, and
     /// whether the app took it (a delete pending).
     in_flight: Option<(Vec<(Uuid, Uuid)>, u32, bool)>,
@@ -311,6 +313,11 @@ struct Job {
     begun: bool,
     /// Stop was pressed: the batch on its way ends the run.
     stopping: bool,
+    /// The moves of a refused or unanswered batch, and whether they were
+    /// counted as failed (else they went back to the queue): the server may
+    /// still have applied them, late or in part. Each one found where it
+    /// was sent counts as done and goes in the journal, for Undo.
+    unsure: Vec<(Move, bool)>,
 }
 
 struct InFlight {
@@ -347,6 +354,7 @@ impl Job {
             restoring: None,
             begun: false,
             stopping: false,
+            unsure: Vec::new(),
         }
     }
 
@@ -386,6 +394,7 @@ impl Job {
             }
             Some(error) if self.retries < RETRIES && !self.stopping => {
                 self.retries += 1;
+                self.unsure.extend(batch.moves.iter().cloned().map(|m| (m, false)));
                 self.requeue(batch.moves);
                 self.next_at = Some(now + std::time::Duration::from_secs(1 << self.retries));
                 Some(aurora_i18n::tr!("inventory-sorter-retrying", error = error, attempt = self.retries))
@@ -393,10 +402,43 @@ impl Job {
             Some(error) => {
                 // never the whole job for one refused batch: it stays put
                 self.failed += batch.moves.len();
+                self.unsure.extend(batch.moves.into_iter().map(|m| (m, true)));
                 self.retries = 0;
                 self.next_at = Some(now + PACE);
                 Some(error.to_owned())
             }
+        }
+    }
+
+    /// The moves of failed batches that happened after all (the server
+    /// applied them late, or in part): done and journaled, out of the queue
+    /// or of the failed count. The rest stay unsure until the job ends.
+    fn settle(&mut self, inv: &Inventory) {
+        if self.unsure.is_empty() {
+            return;
+        }
+        let base = self.base.clone();
+        let mut arrived = Vec::new();
+        self.unsure.retain(|(m, failed)| {
+            let here = sorter::arrived(inv, &base, m);
+            if here {
+                arrived.push((m.clone(), *failed));
+            }
+            !here
+        });
+        for (m, failed) in arrived {
+            if failed {
+                self.failed = self.failed.saturating_sub(1);
+            } else if let Some(at) = self.queue.iter().position(|q| q.id == m.id) {
+                self.queue.remove(at);
+            }
+            self.done += 1;
+            self.confirmed.push(sorter::journal::Entry {
+                id: m.id,
+                folder: m.folder,
+                from: m.from,
+                name: m.name.clone(),
+            });
         }
     }
 
@@ -811,6 +853,10 @@ pub(super) fn show(
     }
     if state.unsaved >= SAVE_EVERY {
         state.save_progress();
+    }
+    // a refused batch the server applied after all: done, not resent
+    if let Some(job) = state.job.as_mut() {
+        job.settle(inv);
     }
     // paused or held, a destination's wait starts again afterwards: the
     // pause is not counted against it
@@ -1606,8 +1652,24 @@ fn send_trash_batch(
         *frames += 1;
         *taken |= deleting;
         if *taken && !deleting {
-            trash.sent += batch.len();
-            st.sorter.journal.record(batch.iter().map(|(id, from)| sorter::journal::Entry {
+            // what the delete really did: an entry now in the Trash went
+            // (and goes in the journal, for Undo); one still elsewhere did
+            // not, whatever the request answered
+            let bin = rules::system(inv, 14);
+            let (went, stayed): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = batch.iter().copied().partition(|(id, _)| {
+                crate::world::inventory::actions::parent(inv, *id)
+                    .is_some_and(|p| bin.is_some_and(|t| p == t || crate::world::inventory::actions::under(inv, p, t)))
+            });
+            if !stayed.is_empty() {
+                log::warn!(
+                    "auto-sort: a Trash batch left {} of {} entries where they were",
+                    stayed.len(),
+                    batch.len()
+                );
+            }
+            trash.sent += went.len();
+            trash.failed += stayed.len();
+            st.sorter.journal.record(went.iter().map(|(id, from)| sorter::journal::Entry {
                 id: *id,
                 folder: inv.folders.contains_key(id),
                 from: *from,
@@ -1629,7 +1691,14 @@ fn send_trash_batch(
         return;
     }
     if trash.queue.is_empty() {
-        st.sorter.status = if trash.skipped > 0 {
+        st.sorter.status = if trash.failed > 0 {
+            aurora_i18n::tr!(
+                "inventory-sorter-done-failed",
+                count = trash.sent,
+                skipped = trash.skipped,
+                failed = trash.failed
+            )
+        } else if trash.skipped > 0 {
             aurora_i18n::tr!("inventory-sorter-done-skipped", count = trash.sent, skipped = trash.skipped)
         } else {
             aurora_i18n::tr!("inventory-cleanup-trash-done", count = trash.sent)
@@ -1910,6 +1979,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 total: ids.len(),
                 queue: ids.into(),
                 sent: 0,
+                failed: 0,
                 skipped: 0,
                 in_flight: None,
                 next_at: None,
@@ -1924,6 +1994,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 total: ids.len(),
                 queue: ids.into(),
                 sent: 0,
+                failed: 0,
                 skipped: 0,
                 in_flight: None,
                 next_at: None,

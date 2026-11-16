@@ -1125,6 +1125,30 @@ pub fn unlockable(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 2 | 3 | 5 | 7 | 10 | 13 | 15 | 20 | 21 | 56 | 57)
 }
 
+/// The move has happened: the entry is in the folder `m` sends it to
+/// (its path resolved below the sort folder `base`), not where it was. A
+/// batch the server applied late, or in part, is known by this.
+pub fn arrived(inv: &Inventory, base: &str, m: &Move) -> bool {
+    let Some(parent) = actions::parent(inv, m.id) else { return false };
+    if parent == m.from {
+        return false;
+    }
+    match &m.to {
+        Dest::Folder(target) => parent == *target,
+        Dest::PreTrash => Some(parent) == pre_trash(inv),
+        Dest::Path(path) => {
+            let mut at = inv.root;
+            for part in std::iter::once(base).chain(path.iter().map(String::as_str)) {
+                match child(inv, at, part) {
+                    Some(id) => at = id,
+                    None => return false,
+                }
+            }
+            parent == at
+        }
+    }
+}
+
 /// Lost and Found, semi-protected: closed unless its switch is on.
 const LOST_AND_FOUND: i32 = 16;
 

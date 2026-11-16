@@ -225,3 +225,166 @@ fn after_stop_a_refused_batch_is_not_sent_again() {
     assert!(job.queue.is_empty(), "nothing put back to retry");
     assert_eq!(job.failed, 200);
 }
+
+/// A batch the server applied after all (late, or in part): each move found
+/// where it was sent counts as done and goes in the journal, whether it
+/// was back in the queue or counted as failed; the others stay unsure.
+#[test]
+fn a_batch_applied_late_counts_as_done_and_is_journaled() {
+    use crate::world::inventory::sorter::Dest;
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    for (id, parent, name) in [(1u128, 0u128, "My Inventory"), (2, 1, "Old stuff"), (3, 1, "Keep")] {
+        inv.folders.insert(
+            Uuid::from_u128(id),
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: Uuid::from_u128(id),
+                    parent: Uuid::from_u128(parent),
+                    name: name.into(),
+                    type_default: if id == 1 { 8 } else { -1 },
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    inv.add_items(
+        (0..4u128)
+            .map(|n| aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(9000 + n),
+                parent: Uuid::from_u128(2),
+                name: format!("Item {n}"),
+                asset_type: 6,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let to_keep = |n: u128| Move {
+        id: Uuid::from_u128(9000 + n),
+        folder: false,
+        name: format!("Item {n}"),
+        from: Uuid::from_u128(2),
+        to: Dest::Folder(Uuid::from_u128(3)),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+    };
+    let mut job = Job::new(VecDeque::new(), "Sorted".into());
+    let now = Instant::now();
+    // a refused batch of two, back in the queue
+    job.in_flight = Some(InFlight {
+        moves: vec![to_keep(0), to_keep(1)],
+        request: Some(Uuid::from_u128(1)),
+        frames: 0,
+        sent_at: now,
+    });
+    job.finish(Some("timeout"), now);
+    assert_eq!(job.queue.len(), 2);
+    // a batch of two refused for good
+    job.retries = RETRIES;
+    job.in_flight = Some(InFlight {
+        moves: vec![to_keep(2), to_keep(3)],
+        request: Some(Uuid::from_u128(2)),
+        frames: 0,
+        sent_at: now,
+    });
+    job.finish(Some("refused"), now);
+    assert_eq!(job.failed, 2);
+    // the server applied item 0 and item 2 late
+    for n in [0u128, 2] {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(9000 + n)) {
+            it.parent = Uuid::from_u128(3);
+        }
+    }
+    job.settle(&inv);
+    assert_eq!(job.done, 2);
+    assert_eq!(job.failed, 1, "item 2 is no longer a failure");
+    assert_eq!(
+        job.queue.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![Uuid::from_u128(9001)],
+        "item 0 is not sent again"
+    );
+    assert_eq!(job.confirmed.len(), 2, "both go in the journal, for Undo");
+    assert_eq!(job.unsure.len(), 2, "the others stay unsure");
+    // nothing counted twice
+    job.settle(&inv);
+    assert_eq!(job.done, 2);
+}
+
+/// A Trash batch counts and journals only what is in the Trash once its
+/// delete is over: an entry the request left behind is a failure.
+#[test]
+fn a_trash_batch_counts_what_reached_the_trash() {
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    for (id, parent, name, kind) in [(1u128, 0u128, "My Inventory", 8), (2, 1, "Old stuff", -1), (14, 1, "Trash", 14)] {
+        inv.folders.insert(
+            Uuid::from_u128(id),
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: Uuid::from_u128(id),
+                    parent: Uuid::from_u128(parent),
+                    name: name.into(),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    if let Some(root) = inv.folders.get_mut(&Uuid::from_u128(1)) {
+        root.children = vec![Uuid::from_u128(2), Uuid::from_u128(14)];
+    }
+    inv.add_items(
+        [(9000u128, 14u128), (9001, 2)]
+            .into_iter()
+            .map(|(id, parent)| aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(id),
+                parent: Uuid::from_u128(parent),
+                name: format!("Item {id}"),
+                asset_type: 6,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let mut st = InventoryUi::default();
+    st.sorter.journal.begin(crate::world::inventory::sorter::journal::RunKind::Trash, 1);
+    st.sorter.trash = Some(TrashJob {
+        queue: VecDeque::new(),
+        skipped: 0,
+        total: 2,
+        sent: 0,
+        failed: 0,
+        // taken by the app, and its delete is over
+        in_flight: Some((
+            vec![
+                (Uuid::from_u128(9000), Uuid::from_u128(2)),
+                (Uuid::from_u128(9001), Uuid::from_u128(2)),
+            ],
+            3,
+            true,
+        )),
+        next_at: None,
+        begun: true,
+    });
+    let prefs = InventoryPreferences::default();
+    let mut actions = Vec::new();
+    send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
+    let trash = st.sorter.trash.as_ref().expect("the job goes on");
+    assert_eq!((trash.sent, trash.failed), (1, 1));
+    let run = st.sorter.journal.last().expect("a run");
+    assert_eq!(run.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![Uuid::from_u128(9000)]);
+}
