@@ -7107,13 +7107,22 @@ impl App {
         // now, on the disk before the process ends
         self.keep_login_favorites(true);
         self.login_form.favorites.flush();
+        // an edit of the account list or a dictionary word whose write was
+        // refused, tried once more
+        crate::login_accounts::save_before_exit();
+        crate::spelling::dictionaries::save_before_exit();
+        crate::world::flying_at_exit::save_before_exit();
+        crate::world::derender::save_before_exit();
+        crate::world::region_tracker::save_before_exit();
+        crate::autoreplace::save_before_exit();
+        crate::tolerant::save_before_exit();
         self.world.save_inventory_cache();
         if let Some(path) = self.name_cache_path() {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
-        self.script_editors.back_up();
+        self.script_editors.back_up_before_exit();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
