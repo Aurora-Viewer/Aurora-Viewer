@@ -2333,7 +2333,8 @@ keeps its plain click. `demo photo press` logs restored keyboard modifiers;
 `demo photo interaction` logs the AF point, dialog and released button.
 `avatar-keep-camera` starts from an off-centre side view and enables
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
-a plain body click must preserve position, target, lens and tracked object.
+a plain body click must preserve position and lens (no snap behind) and aim
+the focus at the clicked body point (`LLToolCamera::pickCallback`).
 `avatar-return` disables the option and must return to avatar follow.
 `avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
 and click beside its head / between its legs, inside the former body box.
@@ -2344,10 +2345,11 @@ the ground so that the press can actually pass between the legs.
 `avatar-drag` / `avatar-tag-drag` hold a real press on our body / own plate
 at frame 700, drag horizontally at 710–760 and release at 761. Add
 `-keep-camera` to retain the off-centre focus. Capture at 690, 780 and 840:
-the press keeps the view with the option enabled, then both the view and
-the avatar turn; the log records agent and drawn-body yaw before/after.
-The focus object, lens and distance must remain stable during the kept-focus
-drag. Compare `avatar-keep-camera` for a plain click without motion.
+with the option enabled the press keeps the view and a stationary drag
+orbits without turning the avatar (Legacy Viewer); agent yaw stays put
+while the follow camera's orbit changes. Walking or RMB while holding then
+takes mouse steer. Without `-keep-camera`, the drag mouse-steers as before.
+Compare `avatar-keep-camera` for a plain click without motion.
 `avatar-alt-keep-camera` must still retarget with Alt held; `avatar-other-keep-camera`
 must leave the view unchanged on another resident. The `-keep-camera` suffix
 also works with `worn-own` (scripted touch) and `worn-own-passive` (no script):
@@ -6217,7 +6219,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` or `history-big` / `history:n=<count>` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time; `history-big` seeds thousands of history rows (#2955) |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -9796,6 +9798,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   time for the run, instead of SLT (FSTPHistoryTZ; not saved, until a
   zone is chosen in the menu): the day sections start at that zone's
   midnight, and Aurora's "Today, 21:40" labels follow it.
+  `history-big` (or `history:big` / `history:n=5000`) seeds thousands
+  of history rows (up to 50,000, most older than a month) so Places › History FPS (#2955)
+  can be checked on a fast machine; open History and scroll with the FPS
+  meter (`AURORA_PROFILE=1`).
 - **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
