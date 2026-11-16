@@ -1386,14 +1386,21 @@ mod tests {
         for _ in 0..3 {
             h.frame(Vec::new());
         }
-        let document = h.st.windows.iter().find(|w| w.state.preview == Some(item)).expect("the document window");
+        let document =
+            h.st.windows
+                .iter()
+                .find(|w| w.state.preview == Some(item))
+                .expect("the document window");
         assert_eq!(document.state.document_owner, Some(owner));
         let window = super::super::document::preview_window_id(document.state.ui_id, item, 7);
         crate::ui::widgets::close_floater(&h.ctx, &window);
         for _ in 0..6 {
             h.frame(Vec::new());
         }
-        assert!(h.st.windows.iter().all(|w| w.state.preview != Some(item)), "the document window closed");
+        assert!(
+            h.st.windows.iter().all(|w| w.state.preview != Some(item)),
+            "the document window closed"
+        );
     }
 
     fn open_and_close_selected_note(h: &mut Harness, window: &str, owner: egui::Id) {
@@ -1406,7 +1413,10 @@ mod tests {
         );
         h.st.open_document(&h.ctx, item, 7, Some(owner));
         close_inventory_note(h, item, owner);
-        assert!(h.ctx.memory(|m| m.has_focus(owner)), "the list that opened the document has the keyboard");
+        assert!(
+            h.ctx.memory(|m| m.has_focus(owner)),
+            "the list that opened the document has the keyboard"
+        );
         h.frame(vec![key(egui::Key::ArrowDown)]);
     }
 
@@ -1415,7 +1425,10 @@ mod tests {
         let mut h = Harness::new();
         let owner = focus_id(&h.st);
         open_and_close_selected_note(&mut h, "inventory", owner);
-        assert!(h.st.selected.is_some_and(|item| item != id(8103)), "Down moves the main list selection");
+        assert!(
+            h.st.selected.is_some_and(|item| item != id(8103)),
+            "Down moves the main list selection"
+        );
     }
 
     #[test]
@@ -1431,7 +1444,10 @@ mod tests {
         assert_ne!(owner, focus_id(&h.st));
         let main_selection = h.st.selected;
         open_and_close_selected_note(&mut h, &window, owner);
-        assert!(h.st.windows[0].state.selected.is_some_and(|item| item != id(8103)), "Down moves the folder selection");
+        assert!(
+            h.st.windows[0].state.selected.is_some_and(|item| item != id(8103)),
+            "Down moves the folder selection"
+        );
         assert_eq!(h.st.selected, main_selection, "Down leaves the main list alone");
     }
 
