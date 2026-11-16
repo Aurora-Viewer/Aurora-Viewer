@@ -173,9 +173,10 @@ mod tests {
         let mut events = Vec::new();
         pointer.on_text(&ctx, (5.0, 8.0), &mut events);
         assert!(events.is_empty());
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.text_edit_singleline(&mut draft).request_focus();
         });
+        output.textures_delta.clear();
         pointer.on_text(&ctx, (5.0, 8.0), &mut events);
         pointer.on_text(&ctx, (5.0, 8.0), &mut events);
         assert_eq!(pointer.hidden_for(&ctx), vanish_enabled());
