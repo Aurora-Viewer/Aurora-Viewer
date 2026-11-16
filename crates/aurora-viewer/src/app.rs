@@ -761,6 +761,8 @@ pub struct App {
     god_kick_ask: Option<admin_status::KickAsk>,
     /// A group chat moderator's ejection or ban, asked first.
     group_chat_confirm: Option<ui::chat::moderation::Confirm>,
+    /// An `unmute` or `unblock` link, asked first (app/app_links.rs).
+    unblock_link_ask: Option<app_links::UnblockAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1944,6 +1946,7 @@ impl App {
             moderation_ask: None,
             god_kick_ask: None,
             group_chat_confirm: None,
+            unblock_link_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -3444,6 +3447,7 @@ impl App {
         self.moderation_ask = None;
         self.god_kick_ask = None;
         self.group_chat_confirm = None;
+        self.unblock_link_ask = None;
         self.object_menu = Default::default();
         self.place_confirm = None;
         self.places_ui.forget_question();
@@ -19604,6 +19608,7 @@ impl App {
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
                 self.group_chat_moderation_ui(&ctx, &p);
+                self.unblock_link_question(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -22230,6 +22235,11 @@ impl ApplicationHandler for App {
                 if crate::demo::applinks_actions_scene() {
                     self.panels.inventory = false;
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(440.0, 90.0), egui::vec2(800.0, 440.0));
+                }
+                if let Some((id, name, kind)) = crate::demo::applinks_blocked()
+                    && let Err(e) = self.world.block(id, &name, kind)
+                {
+                    log::warn!("app links demo: could not block first: {e}");
                 }
                 if let Some(action) = crate::demo::applinks_action(&text) {
                     self.prepare_uri_restore_demo(&action);

@@ -8909,7 +8909,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `parcel`, `objectim`, `inventory`, `experience`, `classified`, `event`,
   `worldmap`, `chat`, `search`, `agent`, `wear_folder`, `frobnicate`) its
   first link is clicked once the scene is set, for a capture. Also accepts
-  `profile`, `pay`, `report` and `inventory-show`. Append
+  `profile`, `pay`, `report` and `inventory-show`, and `unmute` / `unblock`:
+  the resident Violet Wolf, or the sign that says the links in the chat
+  console, is blocked first, then its `unmute` or `unblock` link is clicked;
+  the question "A link asks to unblock …" must show, and the block stays
+  until Unblock is pressed (People › Blocked). Append
   `:restore` to a window command: minimize its destination at frame 620,
   repeat its action through the shared UI dispatch at 660, and log its
   minimized state and height at 760. Capture `640,780` to compare the bar
