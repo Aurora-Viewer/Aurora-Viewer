@@ -946,7 +946,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                 st.select_item(&response, id, it.id, &order);
                 items::double_click(&response, world, it, label.is_some(), actions);
                 let selected = st.selected_items(id, it.id, &order);
-                items::context_menu(&response, p, world, st, id, it, &selected, actions);
+                items::context_menu(&response, p, world, st, items::List::Outfit(id), it, &selected, actions);
                 // the menu's Wear, for this item alone (wear_action, replace)
                 if label.is_none()
                     && matches!(it.asset_type, 5 | 6 | 13)

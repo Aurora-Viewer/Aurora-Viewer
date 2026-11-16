@@ -36,6 +36,27 @@ impl TpEntry {
     pub fn title(&self) -> String {
         location_title(&self.parcel, &self.region)
     }
+
+    /// The place of an arrival under @showloc: a name that tells nothing and
+    /// no destination, as `LLTeleportHistoryItem(RlvStrings::getString(
+    /// RlvStringKeys::Hidden::Parcel), LLVector3d::zero)` of
+    /// LLTeleportHistory::updateCurrentLocation.
+    pub fn hidden(label: &str, at: i64) -> TpEntry {
+        TpEntry {
+            region: label.to_owned(),
+            handle: 0,
+            position: Vec3::ZERO,
+            parcel: String::new(),
+            at,
+            grid: None,
+        }
+    }
+
+    /// `mGlobalPos.isExactlyZero()`: the place leads nowhere. No region has
+    /// the handle 0 (the grid's origin is empty).
+    pub fn is_hidden(&self) -> bool {
+        self.handle == 0 && self.position == Vec3::ZERO
+    }
 }
 
 /// The places of the session, oldest first, and the one we are in: what
@@ -56,21 +77,37 @@ pub struct TeleportHistory {
 }
 
 impl TeleportHistory {
-    /// Arrival at a new location (login or teleport).
+    /// Arrival at a new location (login or teleport); under @showloc the
+    /// caller gives `TpEntry::hidden`. The RLVa rules of
+    /// LLTeleportHistory::updateCurrentLocation:
+    /// - back / forward under @showloc moves in the list and leaves the place
+    ///   reached as it was;
+    /// - "only append a new item if the list is currently empty or if not
+    ///   @showloc=n restricted and the last entry wasn't zero'ed out": a
+    ///   hidden arrival takes the place of the one we left, and the next
+    ///   arrival takes the place of a hidden one. The session never holds
+    ///   two hidden places in a row, nor a count of the teleports made.
     pub fn arrived(&mut self, entry: TpEntry) {
         if let Some(i) = self.pending.take()
             && i < self.items.len()
         {
             self.current = i;
-            self.items[i] = entry;
+            if !entry.is_hidden() {
+                self.items[i] = entry;
+            }
             return;
         }
         if !self.items.is_empty() {
             self.items.truncate(self.current + 1);
         }
-        self.items.push(entry);
-        if self.items.len() > MAX_ITEMS {
-            self.items.remove(0);
+        match self.items.last_mut() {
+            Some(last) if entry.is_hidden() || last.is_hidden() => *last = entry,
+            _ => {
+                self.items.push(entry);
+                if self.items.len() > MAX_ITEMS {
+                    self.items.remove(0);
+                }
+            }
         }
         self.current = self.items.len() - 1;
     }
@@ -132,18 +169,42 @@ impl TeleportHistory {
         self.current.checked_sub(1).and_then(|i| self.items.get(i))
     }
 
-    /// RlvUIEnabler::onToggleShowLoc keeps the navigation destination while
-    /// removing the current location's visible name.
+    /// @showloc set or released (RlvUIEnabler::onToggleShowLoc →
+    /// LLTeleportHistory::updateCurrentLocation): the places ahead go, and
+    /// the current one is named `region` with no destination left, as the
+    /// zeroed item of the Legacy Viewer. It stays so while the restriction
+    /// holds; once released, `locate_current` says where we are. Returns
+    /// the place as it was.
     pub fn replace_current_region(&mut self, region: &str) -> Option<TpEntry> {
         let current = self.items.get_mut(self.current)?;
-        let previous = current.clone();
-        current.region = region.to_owned();
-        current.parcel.clear();
+        let hidden = TpEntry::hidden(region, current.at);
+        let previous = std::mem::replace(current, hidden);
+        self.items.truncate(self.current + 1);
         Some(previous)
+    }
+
+    /// The current place, when it has no destination (a place @showloc hid,
+    /// now released), is where the agent stands.
+    pub fn locate_current(&mut self, place: TpEntry) {
+        if let Some(e) = self.items.get_mut(self.current)
+            && e.is_hidden()
+        {
+            *e = place;
+        }
     }
 
     pub fn next(&self) -> Option<&TpEntry> {
         self.items.get(self.current + 1)
+    }
+
+    /// Where the Back arrow leads, when it leads somewhere: a place @showloc
+    /// hid is no destination (`go_to`).
+    pub fn back_name(&self) -> Option<String> {
+        self.previous().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
+    }
+
+    pub fn forward_name(&self) -> Option<String> {
+        self.next().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
     }
 
     /// Start travelling back; returns the destination.
@@ -156,12 +217,14 @@ impl TeleportHistory {
     }
 
     /// LLTeleportHistory::goToItem: start travelling to the place `i` of
-    /// the list; none for the place we are in or past the end.
+    /// the list; none for the place we are in or past the end, nor for a
+    /// place @showloc hid (the Legacy Viewer asks for a teleport to the
+    /// global position zero, which the grid refuses).
     pub fn go_to(&mut self, i: usize) -> Option<TpEntry> {
         if i == self.current {
             return None;
         }
-        let e = self.items.get(i).cloned()?;
+        let e = self.items.get(i).filter(|e| !e.is_hidden()).cloned()?;
         self.pending = Some(i);
         Some(e)
     }
@@ -470,9 +533,9 @@ pub fn history_sections() -> [&'static str; 9] {
 /// seconds to add to UTC there, 0 for UTC), "6 days ago or earlier" goes
 /// back to the same day of the previous month and "1 month ago or earlier"
 /// to six months ago, both from midnight UTC as the source counts them. A
-/// date in the future counts as today. Returns the index in
-/// HISTORY_SECTIONS.
-pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
+/// date in the future counts as today. The returned lookup gives the index
+/// in the translated section titles for each date in the same frame.
+pub fn history_section_lookup(now: f64, offset: f64) -> impl Fn(f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};
     const DAY: f64 = 86_400.0;
     let (y, m, d) = civil_from_days((now / DAY).floor() as i64);
@@ -484,17 +547,14 @@ pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
         let total = y * 12 + (m as i64 - 1) - n;
         days_from_civil(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32, d) as f64 * DAY
     };
-    for i in 0..history_sections().len() - 1 {
-        let lower = match i {
-            0..=5 => (today - i as f64) * DAY - offset,
-            6 => months_back(1),
-            _ => months_back(6),
-        };
-        if date >= lower {
-            return i;
-        }
-    }
-    history_sections().len() - 1
+    // All visits in a frame share their day and month boundaries. Reading
+    // the translated section titles for every date is especially costly.
+    let lower: [f64; 8] = std::array::from_fn(|i| match i {
+        0..=5 => (today - i as f64) * DAY - offset,
+        6 => months_back(1),
+        _ => months_back(6),
+    });
+    move |date| lower.iter().position(|&start| date >= start).unwrap_or(lower.len())
 }
 
 /// LLAgentUI::buildLocationString(LOCATION_FORMAT_NORMAL): "Parcel, Region",
@@ -517,11 +577,15 @@ pub fn history_matches(title: &str, filter: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn history_section(date: f64, now: f64, offset: f64) -> usize {
+        history_section_lookup(now, offset)(date)
+    }
+
     fn e(n: &str) -> TpEntry {
         TpEntry {
             region: n.into(),
-            handle: 0,
-            position: Vec3::ZERO,
+            handle: aurora_net::origin_to_handle(256_000, 256_000),
+            position: Vec3::new(128.0, 128.0, 25.0),
             parcel: String::new(),
             at: 0,
             grid: None,
@@ -630,6 +694,63 @@ mod tests {
         d.arrived(e("Z"));
         assert_eq!(d.session().current, 2);
         assert_eq!(d.previous().map(|x| x.region.clone()), Some("Y".into()));
+    }
+
+    /// LLTeleportHistory::updateCurrentLocation under @showloc: however many
+    /// teleports, the session holds one hidden place, which leads nowhere.
+    #[test]
+    fn rlva_hidden_arrivals_share_one_place_with_no_way_back() {
+        let mut h = TeleportHistory::default();
+        h.arrived(e("A"));
+        h.arrived(e("B"));
+        h.arrived(e("C"));
+        assert!(h.go_back().is_some());
+        h.arrived(e("B"));
+        // the restriction comes at B: B loses its name and its destination,
+        // and the places ahead go
+        let was = h.replace_current_region("(Hidden)").expect("a current place");
+        assert_eq!((was.region.as_str(), was.is_hidden()), ("B", false));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert!(s.items[1].is_hidden());
+        // three teleports under it: still one hidden place, the last one's
+        for at in 1..=3 {
+            h.arrived(TpEntry::hidden("(Hidden)", at));
+        }
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert_eq!((s.items[1].title().as_str(), s.items[1].at), ("(Hidden)", 3));
+        assert_eq!(s.items[1].handle, 0);
+        assert_eq!(s.items[1].position, Vec3::ZERO);
+        // Back to A is a teleport like another; A is left as it was
+        assert_eq!(h.back_name().as_deref(), Some("A"));
+        assert_eq!(h.go_back().map(|x| x.region), Some("A".into()));
+        h.arrived(TpEntry::hidden("(Hidden)", 4));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current, s.items[0].region.as_str()), (2, 0, "A"));
+        assert!(!s.items[0].is_hidden());
+        // the hidden place ahead is shown, and is no destination
+        assert!(h.next().is_some_and(TpEntry::is_hidden));
+        assert!(h.forward_name().is_none());
+        assert!(h.go_forward().is_none() && h.go_to(1).is_none());
+        h.arrived(TpEntry::hidden("(Hidden)", 5));
+        // that arrival was no trip in the list: it takes the place of A
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (1, 0));
+        assert!(s.items[0].is_hidden());
+        // released: the place is the one we stand in, and the list grows again
+        h.replace_current_region("D");
+        assert!(h.session().items[0].is_hidden(), "no destination until the agent is located");
+        h.locate_current(e("D"));
+        h.locate_current(e("not hidden any more"));
+        assert_eq!(h.session().items[0].region, "D");
+        h.arrived(e("E"));
+        assert_eq!(h.back_name().as_deref(), Some("D"));
+        // a hidden place never located is replaced by the next arrival
+        h.replace_current_region("(Hidden)");
+        h.arrived(e("F"));
+        let regions: Vec<_> = h.session().items.iter().map(|t| t.region.as_str()).collect();
+        assert_eq!(regions, ["D", "F"]);
     }
 
     const DAY: f64 = 86_400.0;

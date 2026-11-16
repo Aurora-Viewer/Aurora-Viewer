@@ -569,6 +569,16 @@ impl App {
         if self.world.rlva.has("viewscript") {
             return;
         }
+        // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
+        // of an attachment that cannot be taken off stay closed.
+        if self
+            .world
+            .objects
+            .index_of_uuid(&target.object)
+            .is_some_and(|i| self.world.rlva_locked_attachment(i))
+        {
+            return;
+        }
         if task_script_refused(&self.build, &self.world, target.object) {
             self.world.system_notice(
                 aurora_i18n::tr!("script-object-no-modify"),

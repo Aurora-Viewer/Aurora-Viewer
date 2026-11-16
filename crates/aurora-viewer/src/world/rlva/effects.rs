@@ -234,8 +234,11 @@ impl Visuals {
             }
             return None;
         }
+        // RlvBehaviourInfo::processModifier (rlvhelper.cpp): there is
+        // something to modify only while the object holds @setoverlay /
+        // @setsphere, which is while its effect exists (`activate`).
         if let Some(modifier) = c.behaviour.strip_prefix("setoverlay_") {
-            let effect = self.overlays.entry(source).or_default();
+            let effect = self.overlays.get_mut(&source)?;
             match modifier {
                 "texture" => {
                     if query {
@@ -266,7 +269,7 @@ impl Visuals {
             return None;
         }
         let modifier = c.behaviour.strip_prefix("setsphere_")?;
-        let effect = self.spheres.entry(source).or_default();
+        let effect = self.spheres.get_mut(&source)?;
         match modifier {
             "mode" | "origin" | "distextend" => {
                 let (value, max) = match modifier {
@@ -430,6 +433,12 @@ mod tests {
         assert_eq!(visuals.overlays[&b].color(now), [1.0; 4]);
         visuals.command(a, &Command::parse("setoverlay_alpha:NaN=force").unwrap(), now);
         assert_eq!(visuals.overlays[&a].color(now + Duration::from_secs(10)), [0.0; 4]);
+        visuals.command(a, &Command::parse("setsphere_tween:10=force").unwrap(), now);
+        assert!(visuals.spheres.is_empty(), "no sphere to modify before @setsphere");
+        let c = Uuid::from_u128(3);
+        visuals.command(c, &Command::parse("setoverlay_alpha:0.5=force").unwrap(), now);
+        assert!(!visuals.overlays.contains_key(&c), "nor an overlay before @setoverlay");
+        visuals.activate(a, "setsphere", true);
         visuals.command(a, &Command::parse("setsphere_tween:10=force").unwrap(), now);
         visuals.command(a, &Command::parse("setsphere_distmin:8=force").unwrap(), now);
         visuals.command(a, &Command::parse("setsphere_distmax:4=force").unwrap(), now);

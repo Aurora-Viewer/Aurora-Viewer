@@ -1691,10 +1691,24 @@ fn paste_faces(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel]) 
     };
     let mut image_ok = Vec::with_capacity(sel.len());
     let mut gltf_ok = Vec::with_capacity(sel.len());
+    let mut refusal = None;
     for (i, x) in sel.iter().enumerate() {
         let c = pick(i);
-        image_ok.push(through(tool, world, x.idx, c.image));
-        gltf_ok.push(c.gltf.is_none() || c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material));
+        // a worn prim asks what a drop asks, before anything moves
+        let mut refused = |a: &texture_copy::Availability| {
+            let it = crate::build::contents_drop::worn_paste_refused(world, x.idx, a.item);
+            if let Some(it) = it {
+                refusal.get_or_insert(crate::build::contents_drop::worn_refusal_text(it, world.agent_id));
+            }
+            it.is_some()
+        };
+        let image_refused = refused(&c.image);
+        let material_refused = c.gltf.is_some() && refused(&c.material);
+        image_ok.push(!image_refused && through(tool, world, x.idx, c.image));
+        gltf_ok.push(c.gltf.is_none() || (!material_refused && c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material)));
+    }
+    if let Some(text) = refusal {
+        world.system_notice(text, Topic::Items);
     }
     let order: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     tool.edit_faces(world, |f, idx, face| {

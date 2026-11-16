@@ -28,6 +28,7 @@ use crate::ui::texture_picker::TexturePicker;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::World;
 use crate::world::group_data::GroupData;
+use crate::world::names::NameScope;
 use aurora_net::groups::{GroupInfo, GroupRole, RoleUpdate, powers, role_change};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -1172,7 +1173,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
                     .get(&m.id)
                     .is_some_and(|rs| rs.iter().any(|r| roles.iter().any(|x| x.id == *r)))
         })
-        .map(|m| (m.id, c.world.social.display_name_of(&m.id)))
+        .map(|m| (m.id, c.world.social.display_name_in(NameScope::Roster, &m.id)))
         .collect();
     members.sort_by_cached_key(|m| crate::natural_order::key(&m.1));
     let title = aurora_i18n::tr!("ui-group-admin-members-with", count = members.len() as i64);
@@ -1278,7 +1279,7 @@ fn bans(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &G
                         color,
                     );
                 }
-                let name = c.world.social.display_name_of(id);
+                let name = c.world.social.display_name_in(NameScope::Roster, id);
                 if name == "…" {
                     c.want_names.insert(*id);
                 }
