@@ -6215,7 +6215,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
+| `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|custom\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
@@ -9738,7 +9738,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
-- **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create|import|import-done`**: the
+- **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|custom|create|import|import-done`**: the
   Favorite Wearables window (the toolbar's Favorite wearables command, Me ›
   Favorite wearables) opens at frame 300 on the outfit of the Appearance demo (seeded
   unless `AURORA_DEMO_APPEARANCE` is set) and `#Aurora/#Wearable Favorites`
@@ -9746,6 +9746,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   tag, a spare shirt, a spare attachment, the hair body part) and an
   "Evening" folder of two. `1`: All Favorites, sorted by type then name;
   `evening`: the Evening folder picked; `recent`: sorted by most recent;
+  `custom`: a Custom order, the type order upside down (drag a row to
+  change it: the others slide aside and the dropped one glides into
+  place; the Evening folder keeps its own order; a wearable dragged from
+  the inventory lands where it is let go);
   `create`: no favorites yet, the window creates both folders (the demo
   inventory answers) and shows "Drag wearable items here…"; `import`: the
   Legacy Viewer's folder (`#Firestorm/#Wearable Favorites`) sits beside
@@ -9756,7 +9760,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   nothing of the Legacy folder, and the button disappears (`import-done`
   opens the window as it is after that click). Drag a
   wearable from the inventory onto the list to link it in the folder
-  shown; a double click wears or takes off; the row's menu has Assign to
+  shown; a double click, or the Wear / Take off button of the hovered
+  row, wears or takes off (a status line under the list says what was
+  asked); each row shows the item's inventory picture, else its type
+  icon, and an attachment's point under its name; the row's menu has Assign to
   Folder; New, Rename and Delete folder, Remove, the filter and the sort
   menu act on the demo inventory.
 - **`AURORA_DEMO_ACTIVE_GROUP=none`**: starts the demo session with no active group

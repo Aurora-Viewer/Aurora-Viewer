@@ -916,6 +916,9 @@ pub struct Settings {
     pub appearance_fill_previews: bool,
     /// The order of the Favorite Wearables list (FSWearableFavoritesSortOrder).
     pub wearable_favorites_sort: crate::world::wearable_favorites::SortOrder,
+    /// The Favorite Wearables' custom orders (`SortOrder::Custom`), per
+    /// account: for each view, its originals in the order dragged.
+    pub wearable_favorites_order: std::collections::HashMap<uuid::Uuid, crate::world::wearable_favorites::Orders>,
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
@@ -2417,6 +2420,7 @@ impl Default for Settings {
             show_appearance: false,
             appearance_fill_previews: false,
             wearable_favorites_sort: Default::default(),
+            wearable_favorites_order: Default::default(),
             appearance_tab: 0,
             show_ao: false,
             ao: Default::default(),
