@@ -434,6 +434,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
             });
         }
+        3 => system_folders(cx),
         _ => {
             cx.group(tr!("ui-options-aurora-building"), |cx| {
                 cx.wide().choice(
@@ -511,6 +512,53 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
         }
     }
+}
+
+/// Preferences › Aurora › System folders (feedback #533): Hide empty
+/// folders, and a switch per system folder, on while it shows in the
+/// inventory. A hidden folder leaves the inventory's trees only; it stays on
+/// the server with its contents (`ui/inventory/hidden_folders.rs`).
+fn system_folders(cx: &mut Cx) {
+    use super::super::cx::Custom;
+    use crate::ui::inventory::hidden_folders::{HIDEABLE, label};
+    use aurora_i18n::tr;
+    fn hidden(s: &Settings, name: &str) -> bool {
+        s.inventory.hidden_system_folders.iter().any(|n| n == name)
+    }
+    fn set_hidden(s: &mut Settings, name: &str, hide: bool) {
+        let list = &mut s.inventory.hidden_system_folders;
+        list.retain(|n| n != name);
+        if hide {
+            list.push(name.to_owned());
+        }
+    }
+    cx.group(tr!("ui-options-empty-folders"), |cx| {
+        cx.toggle(
+            tr!("ui-options-hide-empty-folders"),
+            tr!("ui-options-hide-empty-folders-hint"),
+            &field!(inventory.hide_empty_folders),
+        );
+    });
+    cx.group(tr!("ui-options-tab-system-folders"), |cx| {
+        cx.note(tr!("ui-options-system-folders-note"));
+        for &(name, _) in HIDEABLE {
+            let track = Custom {
+                path: "inventory.hidden_system_folders",
+                modified: move |s: &Settings, d: &Settings| hidden(s, name) != hidden(d, name),
+                reset: move |s: &mut Settings, d: &Settings| set_hidden(s, name, hidden(d, name)),
+            };
+            let p = cx.p;
+            cx.row(label(name), tr!("ui-options-system-folder-hint"), &track, |ui, s| {
+                let mut shown = !hidden(s, name);
+                if super::super::toggle(ui, &p, &mut shown) {
+                    set_hidden(s, name, !shown);
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+    });
 }
 
 #[cfg(test)]

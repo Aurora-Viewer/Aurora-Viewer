@@ -37,6 +37,7 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("common-windows"),
             aurora_i18n::tr!("ui-options-tab-world-and-interface"),
             aurora_i18n::tr!("common-behavior"),
+            aurora_i18n::tr!("ui-options-tab-system-folders"),
         ],
         Page::Graphics => vec![
             aurora_i18n::tr!("ui-options-quality"),
