@@ -1,0 +1,552 @@
+[
+  {
+    "session": "B0",
+    "version": "0.9.10",
+    "lines": 290803,
+    "durationSeconds": 648.909,
+    "cache": [
+      {
+        "folders": 0,
+        "readMs": 30,
+        "applyMs": 0
+      }
+    ],
+    "background": [],
+    "cacheClears": [],
+    "itemFailureBatchWarnings": 18699,
+    "itemFailureResults": 265963,
+    "confirmedMissingResults": 36075,
+    "folderFailureResults": 726,
+    "backgroundFailureResults": 166,
+    "aisRetryStatusCounts": {},
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [],
+    "thresholdUniqueItems": 5334,
+    "maximumItemFailureCounter": 96,
+    "debugNetObserved": false,
+    "aisRetryAttemptCounts": {},
+    "inventoryHttpAggregate": {
+      "available": false,
+      "periods": 0,
+      "started": null,
+      "done": null,
+      "failed": null,
+      "failed5xx": null,
+      "maxInFlightPeak": null
+    }
+  },
+  {
+    "session": "T1",
+    "version": "0.9.10+5.gd56180959",
+    "lines": 1553,
+    "durationSeconds": 175.183,
+    "cache": [
+      {
+        "folders": 11355,
+        "readMs": 1673,
+        "applyMs": 128.8
+      }
+    ],
+    "background": [
+      {
+        "folders": 17367,
+        "items": 219975,
+        "seconds": 87.2,
+        "requests": 2295,
+        "foldersLeft": 0,
+        "overLimit": 0
+      }
+    ],
+    "cacheClears": [
+      {
+        "atSeconds": 145.921,
+        "megabytes": 938
+      },
+      {
+        "atSeconds": 149.043,
+        "megabytes": 0
+      }
+    ],
+    "itemFailureBatchWarnings": 0,
+    "itemFailureResults": 0,
+    "confirmedMissingResults": 0,
+    "folderFailureResults": 0,
+    "backgroundFailureResults": 0,
+    "aisRetryStatusCounts": {
+      "503": 147
+    },
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [
+      {
+        "atSeconds": 42.233,
+        "started": 426,
+        "done": 390,
+        "failed": 0,
+        "in_flight": 36,
+        "peak": 36
+      },
+      {
+        "atSeconds": 52.275,
+        "started": 920,
+        "done": 834,
+        "failed": 99,
+        "failed_5xx": 99,
+        "in_flight": 14,
+        "peak": 36
+      },
+      {
+        "atSeconds": 62.29,
+        "started": 933,
+        "done": 897,
+        "failed": 48,
+        "failed_5xx": 48,
+        "in_flight": 1,
+        "peak": 35
+      },
+      {
+        "atSeconds": 72.291,
+        "started": 0,
+        "done": 1,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 1
+      },
+      {
+        "atSeconds": 82.385,
+        "started": 379,
+        "done": 379,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 92.452,
+        "started": 379,
+        "done": 379,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 102.528,
+        "started": 380,
+        "done": 379,
+        "failed": 0,
+        "in_flight": 1,
+        "peak": 19
+      },
+      {
+        "atSeconds": 112.528,
+        "started": 361,
+        "done": 362,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 122.529,
+        "started": 380,
+        "done": 380,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 132.541,
+        "started": 234,
+        "done": 234,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 162.567,
+        "started": 1,
+        "done": 1,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 1
+      }
+    ],
+    "thresholdUniqueItems": 0,
+    "maximumItemFailureCounter": 0,
+    "debugNetObserved": true,
+    "aisRetryAttemptCounts": {
+      "1": 108,
+      "2": 39
+    },
+    "inventoryHttpAggregate": {
+      "available": true,
+      "periods": 11,
+      "started": 4393,
+      "done": 4236,
+      "failed": 147,
+      "failed5xx": 147,
+      "maxInFlightPeak": 36
+    }
+  },
+  {
+    "session": "T2",
+    "version": "0.9.10+5.gd56180959",
+    "lines": 419,
+    "durationSeconds": 61.409,
+    "cache": [
+      {
+        "folders": 17343,
+        "readMs": 1841,
+        "applyMs": 176.1
+      }
+    ],
+    "background": [
+      {
+        "folders": 17367,
+        "items": 219975,
+        "seconds": 17.6,
+        "requests": 2,
+        "foldersLeft": 0,
+        "overLimit": 0
+      }
+    ],
+    "cacheClears": [
+      {
+        "atSeconds": 56.586,
+        "megabytes": 759
+      }
+    ],
+    "itemFailureBatchWarnings": 0,
+    "itemFailureResults": 0,
+    "confirmedMissingResults": 0,
+    "folderFailureResults": 0,
+    "backgroundFailureResults": 0,
+    "aisRetryStatusCounts": {},
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [],
+    "thresholdUniqueItems": 0,
+    "maximumItemFailureCounter": 0,
+    "debugNetObserved": false,
+    "aisRetryAttemptCounts": {},
+    "inventoryHttpAggregate": {
+      "available": false,
+      "periods": 0,
+      "started": null,
+      "done": null,
+      "failed": null,
+      "failed5xx": null,
+      "maxInFlightPeak": null
+    }
+  },
+  {
+    "session": "T3",
+    "version": "0.9.10+5.gd56180959",
+    "lines": 1278,
+    "durationSeconds": 59.93,
+    "cache": [
+      {
+        "folders": 17328,
+        "readMs": 1879,
+        "applyMs": 146.7
+      }
+    ],
+    "background": [
+      {
+        "folders": 17367,
+        "items": 219975,
+        "seconds": 18,
+        "requests": 3,
+        "foldersLeft": 0,
+        "overLimit": 0
+      }
+    ],
+    "cacheClears": [],
+    "itemFailureBatchWarnings": 0,
+    "itemFailureResults": 0,
+    "confirmedMissingResults": 0,
+    "folderFailureResults": 0,
+    "backgroundFailureResults": 0,
+    "aisRetryStatusCounts": {
+      "503": 48
+    },
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [
+      {
+        "atSeconds": 11.18,
+        "started": 501,
+        "done": 483,
+        "failed": 0,
+        "in_flight": 18,
+        "peak": 20
+      },
+      {
+        "atSeconds": 21.232,
+        "started": 1402,
+        "done": 1368,
+        "failed": 48,
+        "failed_5xx": 48,
+        "in_flight": 1,
+        "peak": 18
+      },
+      {
+        "atSeconds": 31.249,
+        "started": 1,
+        "done": 2,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 1
+      }
+    ],
+    "thresholdUniqueItems": 0,
+    "maximumItemFailureCounter": 0,
+    "debugNetObserved": true,
+    "aisRetryAttemptCounts": {
+      "1": 44,
+      "2": 4
+    },
+    "inventoryHttpAggregate": {
+      "available": true,
+      "periods": 3,
+      "started": 1904,
+      "done": 1853,
+      "failed": 48,
+      "failed5xx": 48,
+      "maxInFlightPeak": 20
+    }
+  },
+  {
+    "session": "T4",
+    "version": "0.9.10+5.gd56180959",
+    "lines": 16770,
+    "durationSeconds": 12041.373,
+    "cache": [
+      {
+        "folders": 17309,
+        "readMs": 1709,
+        "applyMs": 147.6
+      }
+    ],
+    "background": [
+      {
+        "folders": 17367,
+        "items": 219976,
+        "seconds": 17.1,
+        "requests": 4,
+        "foldersLeft": 0,
+        "overLimit": 0
+      }
+    ],
+    "cacheClears": [
+      {
+        "atSeconds": 12041.373,
+        "megabytes": 8910
+      }
+    ],
+    "itemFailureBatchWarnings": 0,
+    "itemFailureResults": 0,
+    "confirmedMissingResults": 0,
+    "folderFailureResults": 0,
+    "backgroundFailureResults": 0,
+    "aisRetryStatusCounts": {},
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [],
+    "thresholdUniqueItems": 0,
+    "maximumItemFailureCounter": 0,
+    "debugNetObserved": false,
+    "aisRetryAttemptCounts": {},
+    "inventoryHttpAggregate": {
+      "available": false,
+      "periods": 0,
+      "started": null,
+      "done": null,
+      "failed": null,
+      "failed5xx": null,
+      "maxInFlightPeak": null
+    }
+  },
+  {
+    "session": "T5",
+    "version": "0.9.10+5.gd56180959",
+    "lines": 2613,
+    "durationSeconds": 213.4,
+    "cache": [
+      {
+        "folders": 0,
+        "readMs": 33,
+        "applyMs": 0
+      }
+    ],
+    "background": [
+      {
+        "folders": 17367,
+        "items": 219980,
+        "seconds": 146.1,
+        "requests": 2909,
+        "foldersLeft": 0,
+        "overLimit": 0
+      }
+    ],
+    "cacheClears": [
+      {
+        "atSeconds": 209.288,
+        "megabytes": 965
+      }
+    ],
+    "itemFailureBatchWarnings": 0,
+    "itemFailureResults": 0,
+    "confirmedMissingResults": 0,
+    "folderFailureResults": 0,
+    "backgroundFailureResults": 0,
+    "aisRetryStatusCounts": {
+      "503": 421
+    },
+    "aisExhaustedWarnings": 0,
+    "inventoryHttpPeriods": [
+      {
+        "atSeconds": 24.11,
+        "started": 46,
+        "done": 21,
+        "failed": 0,
+        "in_flight": 25,
+        "peak": 25
+      },
+      {
+        "atSeconds": 34.125,
+        "started": 987,
+        "done": 995,
+        "failed": 0,
+        "in_flight": 17,
+        "peak": 28
+      },
+      {
+        "atSeconds": 44.13,
+        "started": 1482,
+        "done": 1397,
+        "failed": 79,
+        "failed_5xx": 79,
+        "in_flight": 23,
+        "peak": 39
+      },
+      {
+        "atSeconds": 54.142,
+        "started": 1240,
+        "done": 1135,
+        "failed": 109,
+        "failed_5xx": 109,
+        "in_flight": 19,
+        "peak": 35
+      },
+      {
+        "atSeconds": 64.186,
+        "started": 1278,
+        "done": 1166,
+        "failed": 127,
+        "failed_5xx": 127,
+        "in_flight": 4,
+        "peak": 35
+      },
+      {
+        "atSeconds": 74.233,
+        "started": 1348,
+        "done": 1238,
+        "failed": 106,
+        "failed_5xx": 106,
+        "in_flight": 7,
+        "peak": 35
+      },
+      {
+        "atSeconds": 84.263,
+        "started": 281,
+        "done": 271,
+        "failed": 0,
+        "in_flight": 13,
+        "peak": 29
+      },
+      {
+        "atSeconds": 94.345,
+        "started": 146,
+        "done": 156,
+        "failed": 0,
+        "in_flight": 3,
+        "peak": 19
+      },
+      {
+        "atSeconds": 104.346,
+        "started": 0,
+        "done": 3,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 3
+      },
+      {
+        "atSeconds": 114.348,
+        "started": 285,
+        "done": 266,
+        "failed": 0,
+        "in_flight": 19,
+        "peak": 19
+      },
+      {
+        "atSeconds": 124.371,
+        "started": 361,
+        "done": 380,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 134.442,
+        "started": 380,
+        "done": 379,
+        "failed": 0,
+        "in_flight": 1,
+        "peak": 19
+      },
+      {
+        "atSeconds": 144.446,
+        "started": 361,
+        "done": 362,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 154.461,
+        "started": 380,
+        "done": 380,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 164.481,
+        "started": 380,
+        "done": 380,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      },
+      {
+        "atSeconds": 174.489,
+        "started": 109,
+        "done": 109,
+        "failed": 0,
+        "in_flight": 0,
+        "peak": 19
+      }
+    ],
+    "thresholdUniqueItems": 0,
+    "maximumItemFailureCounter": 0,
+    "debugNetObserved": true,
+    "aisRetryAttemptCounts": {
+      "1": 266,
+      "2": 155
+    },
+    "inventoryHttpAggregate": {
+      "available": true,
+      "periods": 16,
+      "started": 9064,
+      "done": 8638,
+      "failed": 421,
+      "failed5xx": 421,
+      "maxInFlightPeak": 39
+    }
+  }
+]

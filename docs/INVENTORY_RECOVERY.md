@@ -69,7 +69,7 @@ cancelation, replaced capabilities, transient service recovery, and the
 distinction between failed reads and confirmed absence. Test evidence is kept
 with the task; only commands actually run are reported as passing.
 
-The final offline run of `check.ps1` passed its PowerShell parser check,
+The original candidate's offline run of `check.ps1` passed its PowerShell parser check,
 format check, Clippy with warnings denied, and locked workspace tests. The
 network crate passed 568 tests; the viewer passed 8,104 (18 ignored by the
 existing suite). Its large-inventory regression recovered all 240,200 items
@@ -77,7 +77,26 @@ after ten injected transient batch failures. This is a simulated server, not
 a throughput measurement on a real account. Six isolated Rust folder-recovery
 regressions fail on the original method bodies and pass on the corrected ones.
 
-Live validation must compare cold/warm login and Appearance closed/open on a
+The PR preparation branch integrates upstream main at
+`0d6ad174604ddcc257fe668615d284e07362d0d5`, preserving its `receive_event`
+dispatch before model-accepted acknowledgments. Its complete `scripts/check.ps1`
+run also passed: 9,826 tests, zero failures, 58 existing ignored tests;
+569 network tests and 8,291 viewer tests (18 viewer ignored). No new binary or
+human grid validation is claimed for the merged upstream changes; the human's
+tested recovery executable is the separately preserved d561809 candidate.
+
+The reporter manually validated the original candidate on a large account:
+four partial/warm-cache sessions completed with no terminal item/folder failure
+notifications and a reported smooth experience. See
+[`inventory-recovery-evidence/README.md`](inventory-recovery-evidence/README.md)
+for sanitized excerpts, recovered 503 attempts, and cache-state limitations.
+The reporter then ran a zero-inventory-cache test on the same candidate:
+17,367 folders / 219,980 items completed in 146.1 s with zero folders left,
+while 421 temporary 503 attempts recovered without terminal read failures.
+This is human-operated completion evidence for d561809, not a controlled
+performance benchmark or a guarantee about the service's availability.
+
+Further live validation should compare cold/warm login and Appearance closed/open on a
 large real account, including time to a usable outfit and final inventory
 counts. Offline tests cannot prove a particular server's completion time or
 that every previously failing private inventory record is readable.

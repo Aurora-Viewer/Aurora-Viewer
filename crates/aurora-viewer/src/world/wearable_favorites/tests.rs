@@ -73,15 +73,19 @@ fn the_whole_list_shows_each_original_once_and_a_folder_its_own() {
     let inv = seeded();
     let root = folder(&inv).expect("favorites");
     let all = entries(&inv, root, root);
-    // the Evening folder first (subfolders before items), each original once
+    // the Evening folder first (subfolders before items), each original once.
+    // Its two rows come in the inventory's order, by name, and the demo items
+    // are named in the system's language: which one is first is not fixed
     let listed = targets(&all);
-    assert_eq!(listed[..2], [715, 719]);
+    let mut first = listed[..2].to_vec();
+    first.sort();
+    assert_eq!(first, [715, 719]);
     let mut sorted = listed.clone();
     sorted.sort();
     assert_eq!(sorted, [712, 714, 715, 717, 719, 720, 722, 723]);
     let (evening, name) = subfolders(&inv, root).into_iter().next().expect("Evening");
     assert_eq!(name, "Evening");
-    assert_eq!(targets(&entries(&inv, root, evening)), [715, 719]);
+    assert_eq!(targets(&entries(&inv, root, evening)), listed[..2]);
     // a link the root view drops is still the folder's own row
     assert!(entries(&inv, root, evening).iter().all(|e| inv.items[&e.link].parent == evening));
     assert!(loaded(&inv, root));

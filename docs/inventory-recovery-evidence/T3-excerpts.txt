@@ -1,0 +1,15 @@
+T3: allowlisted inventory-only log excerpts; timestamps relative to process start.
+Account, inventory IDs, locations, paths, hosts, capability URLs and unrelated log text are not copied.
+
++0.000s Aurora Viewer 0.9.10+5.gd56180959 starting
++9.093s inventory cache: 17328 folders up to date (read in 1879 ms off the main thread, applied in 146.7 ms)
++11.180s inventory started=501 done=483 failed=0 retries=0 595 kb/s in_flight=18 peak=20 latency n=483 p50=60.9 p95=409.6 max=1961.8 wait n=0
++12.237s AIS inventory read failed (status 503); retry 1
++12.237s AIS inventory read failed (status 503); retry 1
++12.252s AIS inventory read failed (status 503); retry 1
++21.232s inventory started=1402 done=1368 failed=48 failed_5xx=48 retries=0 14805 kb/s in_flight=1 peak=18 latency n=1416 p50=51.2 p95=243.5 max=7204.3 wait n=0
++27.524s inventory background fetch: 17367 folders and 219975 items in 18.0 s (3 requests, 0 folders left, 0 over the server's limit)
+
+Aggregates: 0 failed-item result notifications (may repeat IDs); 0 folder failures; 0 background failures.
+AIS status retry counts: {"503":48}; exhausted warnings: 0.
+Threshold unique items: 0; maximum failure counter: 0.

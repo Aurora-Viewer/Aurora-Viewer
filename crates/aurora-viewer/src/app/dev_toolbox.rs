@@ -348,6 +348,7 @@ impl App {
                 crate::ui::perf::set_full(&ctx, true);
                 crate::ui::widgets::open_floater(&ctx, "perf", &mut self.panels.perf);
             }
+            super::rlva_selftest::TOOL => self.request_rlva_selftest(),
             _ => {}
         }
     }
@@ -514,7 +515,7 @@ impl App {
     }
 
     /// The residents a copy may name: the avatars in the scene and us.
-    fn residents(&self) -> Vec<Resident> {
+    pub(super) fn residents(&self) -> Vec<Resident> {
         let mut out = Vec::new();
         for (_, o) in self.world.objects.avatars() {
             let mut names = Vec::new();
@@ -536,7 +537,7 @@ impl App {
 
     /// The window's live values, the target line and the last warnings.
     fn refresh_toolbox_view(&mut self, renderer: &Renderer) {
-        let ids: Vec<&'static str> = tools::TOOLS.iter().filter(|t| t.kind == Kind::Toggle).map(|t| t.id).collect();
+        let ids: Vec<&'static str> = tools::all().filter(|t| t.kind == Kind::Toggle).map(|t| t.id).collect();
         let on = ids.into_iter().filter(|id| self.toggle_on(id)).collect();
         let mut live: HashMap<&'static str, String> = HashMap::new();
         let warnings = crate::logging::recent_warnings(200);

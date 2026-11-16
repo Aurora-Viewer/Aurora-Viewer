@@ -1,0 +1,11 @@
+T4: allowlisted inventory-only log excerpts; timestamps relative to process start.
+Account, inventory IDs, locations, paths, hosts, capability URLs and unrelated log text are not copied.
+
++0.000s Aurora Viewer 0.9.10+5.gd56180959 starting
++12.659s inventory cache: 17309 folders up to date (read in 1709 ms off the main thread, applied in 147.6 ms)
++30.301s inventory background fetch: 17367 folders and 219976 items in 17.1 s (4 requests, 0 folders left, 0 over the server's limit)
++12041.373s cache cleared (8910 MB)
+
+Aggregates: 0 failed-item result notifications (may repeat IDs); 0 folder failures; 0 background failures.
+AIS status retry counts: {}; exhausted warnings: 0.
+Threshold unique items: 0; maximum failure counter: 0.

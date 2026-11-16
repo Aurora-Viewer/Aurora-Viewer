@@ -73,12 +73,16 @@ mod login_wait;
 mod lsl_keywords;
 #[cfg(target_os = "macos")]
 mod mac_quit;
+#[cfg(target_os = "macos")]
+mod mac_window_menu;
 mod machine_id;
 mod media;
 mod movement;
 mod natural_order;
 mod net_adapters;
 mod net_profile;
+mod oiia;
+mod omnifilter;
 mod open_path;
 mod overlay_hooks;
 mod own_motion;

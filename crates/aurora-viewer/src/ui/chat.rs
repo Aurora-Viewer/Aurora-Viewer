@@ -1193,6 +1193,24 @@ pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
     super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
 }
 
+/// The web addresses of a text and their byte ranges, in order, for the
+/// places that draw a one-line text with clickable links (the location
+/// field of the bars, `bars::place`): the Legacy Viewer linkifies the URLs
+/// an owner typed in a parcel name (LLUrlRegistry, LLURLLineEditor). Place
+/// and agent links stay text there.
+pub(crate) fn web_links(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    for (start, len, seg) in link_spans(text) {
+        let Seg::Url(url) = seg else { continue };
+        let range = start..start + len;
+        // A bracketed link may resolve to its URL. Only the literal address is clickable here.
+        if text.get(range.clone()) == Some(url) {
+            out.push((range, url));
+        }
+    }
+    out
+}
+
 /// Who wrote a bubble line, drawn before the name.
 enum Sender {
     Avatar(uuid::Uuid),
@@ -2346,7 +2364,7 @@ fn header_names(
 /// looked up for nothing.
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
     if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_can_name(line.source) {
-        return crate::world::rlva::privacy::anonymous(line.source).display_name.clone();
+        return world.rlva_anonymous(line.source).display_name.clone();
     }
     let logged = line.origin != Origin::Live;
     let own = line.kind.is_own();
