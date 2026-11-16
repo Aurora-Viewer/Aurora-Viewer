@@ -107,6 +107,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 8,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 // never written by a level (`apply`): the default
@@ -139,6 +140,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 32,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
@@ -170,6 +172,7 @@ impl Preset {
                 reflection_probes: 1,
                 probe_count: 64,
                 antialiasing: 1,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
@@ -203,6 +206,7 @@ impl Preset {
                 reflection_probes: 2,
                 probe_count: 128,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
@@ -242,6 +246,7 @@ impl Preset {
                 reflection_probes: 3,
                 probe_count: 256,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 16,
                 sharpen: 0.4,
                 glow: true,
@@ -630,6 +635,26 @@ pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
     }
 }
 
+/// Settings files written before the order of the blended faces was a
+/// setting (version 39), all sorted: a profile exactly on Potato or Low
+/// keeps the sorted order, as these levels now say; any other takes the
+/// exact order at its finest, the default.
+pub(crate) fn upgrade_blend_order(s: &mut Settings) {
+    let on_level = |level: Preset| {
+        let level = level.values();
+        let current = Values {
+            blend_order: level.blend_order,
+            ..Values::read(s)
+        };
+        current.as_shown() == level.as_shown()
+    };
+    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) {
+        0
+    } else {
+        BLEND_ORDER_FULL
+    };
+}
+
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
 /// Deluxe turn on.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -691,6 +716,11 @@ pub struct Values {
     pub reflection_probes: u8,
     pub probe_count: u32,
     pub antialiasing: u8,
+    /// `Settings::blend_order`: the sorted order in Potato and Low, the exact
+    /// one at its finest above (a backup or a saved preset written before
+    /// it holds none: the finest, the default then).
+    #[serde(default = "blend_order_full")]
+    pub blend_order: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
     /// RenderGlow. Kept by a saved profile and the safe graphics backup; a
@@ -721,6 +751,48 @@ const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
 
 fn all_lights() -> u32 {
     ALL_LIGHTS
+}
+
+/// `Settings::blend_order`: the exact order at its finest precision.
+pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+/// `Settings::blend_order`: the stochastic transparency (aurora-render
+/// oit_stochastic.rs), an estimate of the exact order that is also drawn
+/// under MSAA.
+pub(crate) const BLEND_ORDER_STOCHASTIC: u8 = 5;
+
+fn blend_order_full() -> u8 {
+    BLEND_ORDER_FULL
+}
+
+/// The method behind a `Settings::blend_order`, as the preferences show it:
+/// one choice for the exact order, whose precision (1 fast to 4 full) is
+/// set beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlendMethod {
+    Standard,
+    Exact,
+    Stochastic,
+}
+
+impl BlendMethod {
+    pub(crate) fn of(order: u8) -> Self {
+        match order {
+            0 => Self::Standard,
+            BLEND_ORDER_STOCHASTIC => Self::Stochastic,
+            _ => Self::Exact,
+        }
+    }
+
+    /// `Settings::blend_order` for this method; `precision`: the exact
+    /// order's (the full one when it is none of them).
+    pub(crate) fn order(self, precision: u8) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Exact if (1..=BLEND_ORDER_FULL).contains(&precision) => precision,
+            Self::Exact => BLEND_ORDER_FULL,
+            Self::Stochastic => BLEND_ORDER_STOCHASTIC,
+        }
+    }
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -811,6 +883,7 @@ impl Values {
             reflection_probes: s.reflection_probes,
             probe_count: s.probe_count,
             antialiasing: s.antialiasing,
+            blend_order: s.blend_order,
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
@@ -850,6 +923,7 @@ impl Values {
         s.reflection_probes = self.reflection_probes;
         s.probe_count = self.probe_count;
         s.antialiasing = self.antialiasing;
+        s.blend_order = self.blend_order;
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;
@@ -887,6 +961,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_exact_order_is_one_choice_that_keeps_its_precision() {
+        // every saved value comes back from its method and its own precision
+        for order in 0..=BLEND_ORDER_STOCHASTIC {
+            assert_eq!(BlendMethod::of(order).order(order), order);
+        }
+        assert_eq!(BlendMethod::of(2), BlendMethod::Exact);
+        // chosen again after another method: the precision it was left at
+        assert_eq!(BlendMethod::Exact.order(2), 2);
+        // or the full one, the default, when none was
+        assert_eq!(BlendMethod::Exact.order(0), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Exact.order(BLEND_ORDER_STOCHASTIC), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Standard.order(3), 0);
+        assert_eq!(BlendMethod::Stochastic.order(3), BLEND_ORDER_STOCHASTIC);
+    }
 
     #[test]
     fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {
@@ -1195,7 +1285,7 @@ mod tests {
     fn values_stay_inside_what_the_page_offers() {
         for preset in Preset::ALL {
             let v = preset.values();
-            assert!((32.0..=512.0).contains(&v.draw_distance));
+            assert!((crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX).contains(&v.draw_distance));
             assert!((0.5..=4.0).contains(&v.lod_factor));
             assert!((1..=100).contains(&v.max_avatars));
             assert!(v.max_particles <= 8192);

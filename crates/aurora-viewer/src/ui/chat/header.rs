@@ -380,8 +380,18 @@ pub(super) fn more_items(
                         actions.push(ConvAction::OpenInventory);
                     }
                 }
-                if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay")) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "coin-filled",
+                    aurora_i18n::tr!("ui-chat-pay"),
+                    crate::ui::context::can_pay_resident(world),
+                ) {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(other));
+                }
+                // FSFloaterIM's sysinfo button (SysinfoButtonInIM), as a menu row
+                if menu::item(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-chat-send-system-info")) {
+                    actions.push(ConvAction::SendSysinfo(other));
                 }
                 let blocked = world.is_avatar_blocked(&other);
                 let label = if blocked {

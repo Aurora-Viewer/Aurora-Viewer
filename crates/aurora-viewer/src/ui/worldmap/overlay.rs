@@ -65,7 +65,7 @@ const FOLDER_LANDMARKS: i32 = 3;
 const FOLDER_TRASH: i32 = 14;
 const FOLDER_FAVORITES: i32 = 23;
 
-fn search_id() -> egui::Id {
+pub(super) fn search_id() -> egui::Id {
     egui::Id::unique("worldmap-search")
 }
 
@@ -225,7 +225,7 @@ enum Selection {
 /// The floating panels' state.
 #[derive(Default)]
 pub(super) struct Overlay {
-    query: String,
+    pub(super) query: String,
     /// The suggestions show (typing, focus); a touch of the map closes them.
     suggest: bool,
     highlight: usize,
@@ -615,6 +615,7 @@ impl WorldMapUi {
         pictures: &MapPictures,
         actions: &mut Vec<WorldMapAction>,
     ) {
+        let focus_search = std::mem::take(&mut self.focus_search);
         let now = ui.input(|i| i.time);
         let area = ui.available_rect_before_wrap();
         let size = vec2(area.width().max(160.0).floor(), area.height().max(160.0).floor());
@@ -661,7 +662,7 @@ impl WorldMapUi {
             let bottom = card.map_or(map.bottom() - EDGE, |c| c.top() - GAP);
             self.drawer(ui, p, world, tiles, cam, pictures, map, tab, top, bottom, fade, actions);
         }
-        self.search_panel(ui, p, world, cam, pictures, map, fade, now);
+        self.search_panel(ui, p, world, cam, pictures, map, fade, now, focus_search);
     }
 
     /// Ask the folders of Landmarks and Favorites not fetched yet.
@@ -807,6 +808,7 @@ impl WorldMapUi {
         map: Rect,
         fade: f32,
         now: f64,
+        focus_search: bool,
     ) {
         let mut panel = self.ov.open(
             ui,
@@ -840,7 +842,12 @@ impl WorldMapUi {
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w)
                 });
-                if !self.ov.query.is_empty() {
+                if focus_search {
+                    r.request_focus();
+                }
+                // only where room was kept before the field: the first
+                // characters typed fill the query after `hint_w` was measured
+                if hint_w > 0.0 {
                     let (hr, _) = ui.allocate_exact_size(Vec2::new(hint_w - 6.0, 22.0), Sense::hover());
                     ui.painter().text(
                         hr.right_center(),
@@ -1118,7 +1125,12 @@ impl WorldMapUi {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0.0, |d| d.as_secs_f64());
-                for (section, items) in crate::ui::places::history_sections(&world.tp_storage.items, filter, now) {
+                for (section, items) in crate::ui::places::history_sections(
+                    &world.tp_storage.items,
+                    filter,
+                    now,
+                    crate::ui::places::history_offset(self.history_zone, now),
+                ) {
                     rows.push(Row::Section(section));
                     rows.extend(items.into_iter().map(Row::History));
                 }

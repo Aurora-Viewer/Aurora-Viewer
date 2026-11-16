@@ -77,6 +77,36 @@ impl World {
         self.mutes.text_muted(&c.source_id, &c.from_name) || (!c.owner_id.is_nil() && self.mutes.text_muted(&c.owner_id, ""))
     }
 
+    /// A blocked source's nearby line (`chat_blocked`). An object's, or one
+    /// of a blocked owner's objects, is dropped as process_chat_from_simulator
+    /// drops it before anything. A resident's is marked mMuted there, and
+    /// FSFloaterNearbyChat::addMessage keeps it for the muted history alone,
+    /// shown with FSShowMutedChatHistory: no console line, no flash, no
+    /// transcript, no sound, no bubble, no keyword alert, no unread count;
+    /// Aurora keeps it the same way when Preferences › Chat asks for it,
+    /// and translates nothing of it. Ours is never blocked.
+    pub(super) fn blocked_chat_line(&mut self, c: ChatMessage) {
+        if self.blocked_chat == crate::settings::BlockedChat::Hidden
+            || c.source_type != ChatSourceType::Agent
+            || c.source_id.is_nil()
+            || c.source_id == self.agent_id
+        {
+            return;
+        }
+        let from = self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name);
+        self.nearby_push(super::ChatLine {
+            time: std::time::SystemTime::now(),
+            from,
+            text: c.message,
+            kind: super::ChatKind::Local(c.chat_type),
+            source: c.source_id,
+            origin: super::Origin::Live,
+            blocked: true,
+            // already greyed as blocked: not dimmed a second time
+            beyond_range: false,
+        });
+    }
+
     /// A resident whose nearby chat is hidden (`chat_blocked`) is not named
     /// in the chat's "is typing" line either (#1395): their words never
     /// show, so the line would only point at them. The Legacy Viewer has no
@@ -178,10 +208,63 @@ impl World {
             self.close_orphan_inventory_offers();
         }
         if self.groups.report_blocks {
+            let shown_name = if kind == MuteType::Agent && !self.rlva_can_name(id) {
+                self.rlva_anonymous(id).display_name.clone()
+            } else {
+                name.clone()
+            };
             self.system_notice(
-                aurora_i18n::tr!("world-blocking-was-added-to-the-block-list", name = name.to_string()),
+                aurora_i18n::tr!("world-blocking-was-added-to-the-block-list", name = shown_name),
                 crate::world::notice_topics::Topic::People,
             );
+        }
+        Ok(())
+    }
+
+    /// Canonical name and mute type for a remote object's owner. Like
+    /// LLAvatarActions::toggleBlock / LLMuteList::add (llavataractions.cpp,
+    /// llmutelist.cpp), resident blocks enforce self/Linden protections.
+    /// Group owners follow inventory_offer_mute_callback (llviewermessage.cpp).
+    /// Wait for a real name: a display name or RLVa alias cannot establish
+    /// Linden status or be persisted as the owner's identity.
+    pub fn object_owner_block(&self, owner: Uuid, group_owned: bool) -> Option<(String, MuteType)> {
+        if owner.is_nil() || owner == self.agent_id || self.mutes.get(&owner).is_some_and(|entry| entry.flags == 0) {
+            return None;
+        }
+        let (name, kind) = if group_owned {
+            let name = self
+                .groups
+                .groups
+                .iter()
+                .find(|g| g.id == owner)
+                .map(|g| g.name.clone())
+                .or_else(|| self.land.group_names.get(&owner).cloned())?;
+            (name, MuteType::Group)
+        } else {
+            let name = self
+                .social
+                .avatar_names
+                .raw(&owner)
+                .and_then(|n| {
+                    if n.legacy_first.trim().is_empty() {
+                        (!n.username.trim().is_empty()).then(|| n.username.clone())
+                    } else {
+                        Some(n.user_name())
+                    }
+                })
+                .or_else(|| self.social.names.get(&owner).cloned())?;
+            if super::mutes::is_linden(&name) {
+                return None;
+            }
+            (name, MuteType::Agent)
+        };
+        (!name.trim().is_empty()).then_some((name, kind))
+    }
+
+    /// Recheck at dispatch, so stale inspector actions never unblock an owner.
+    pub fn block_object_owner(&mut self, owner: Uuid, group_owned: bool) -> Result<(), String> {
+        if let Some((name, kind)) = self.object_owner_block(owner, group_owned) {
+            self.block(owner, &name, kind)?;
         }
         Ok(())
     }
@@ -293,6 +376,113 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn remote_object_owner_blocks_use_canonical_names_and_never_toggle_an_existing_block() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let owner = Uuid::from_u128(1);
+        // No guessed identity while the name is still loading.
+        w.block_object_owner(owner, false).unwrap();
+        assert!(w.take_social_commands().is_empty());
+        w.social.names.insert(owner, "Demo Owner".into());
+        w.block_flags(owner, "Demo Owner", MuteType::Agent, flag::VOICE_CHAT).unwrap();
+        w.take_social_commands();
+        // A voice-only block can be promoted to a complete owner block.
+        w.block_object_owner(owner, false).unwrap();
+        assert!(
+            matches!(&w.take_social_commands()[..], [NetCommand::UpdateMute { id, name, kind: 1, flags: 0 }]
+            if *id == owner && name == "Demo Owner")
+        );
+        assert_eq!(w.mutes.get(&owner).unwrap().flags, 0);
+        w.block_object_owner(owner, false).unwrap();
+        assert!(w.take_social_commands().is_empty());
+        assert!(w.mutes.is_muted_id(&owner));
+        let group = Uuid::from_u128(2);
+        w.land.group_names.insert(group, "Demo Group".into());
+        w.block_object_owner(group, true).unwrap();
+        assert!(matches!(&w.take_social_commands()[..], [NetCommand::UpdateMute { id, kind: 3, flags: 0, .. }] if *id == group));
+    }
+
+    #[test]
+    fn remote_object_owner_blocks_preserve_self_and_linden_protections_under_rlva() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let staff = Uuid::from_u128(1);
+        w.apply(aurora_net::NetEvent::DisplayNames {
+            names: vec![aurora_net::AvatarNameData {
+                id: staff,
+                username: "test.linden".into(),
+                display_name: "An unrelated display name".into(),
+                ..Default::default()
+            }],
+            bad_ids: Vec::new(),
+            max_age: None,
+        });
+        w.rlva_configure(true);
+        assert!(w.rlva.receive(&ChatMessage {
+            from_name: "RLVa test controller".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: w.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        for (owner, group) in [
+            (Uuid::nil(), false),
+            (w.agent_id, false),
+            (w.agent_id, true),
+            (staff, false),
+            (staff, true),
+        ] {
+            w.block_object_owner(owner, group).unwrap();
+            assert!(w.mutes.get(&owner).is_none());
+        }
+        assert!(w.take_social_commands().is_empty());
+    }
+
+    #[test]
+    fn remote_object_owner_block_keeps_canonical_identity_out_of_rlva_notices() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        w.groups.report_blocks = true;
+        let owner = Uuid::from_u128(1);
+        w.apply(aurora_net::NetEvent::DisplayNames {
+            names: vec![aurora_net::AvatarNameData {
+                id: owner,
+                username: "demo.owner".into(),
+                display_name: "A custom display name".into(),
+                legacy_first: "Demo".into(),
+                legacy_last: "Owner".into(),
+                ..Default::default()
+            }],
+            bad_ids: Vec::new(),
+            max_age: None,
+        });
+        w.rlva_configure(true);
+        assert!(w.rlva.receive(&ChatMessage {
+            from_name: "RLVa test controller".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: w.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        w.refresh_rlva_privacy();
+        w.block_object_owner(owner, false).unwrap();
+        assert_eq!(w.mutes.get(&owner).unwrap().name, "Demo Owner");
+        let notice = &w.chat.back().expect("block notice").text;
+        assert!(!notice.contains("Demo Owner"));
+        assert!(!notice.contains("A custom display name"));
+        assert!(notice.contains(&w.rlva_anonymous(owner).display_name));
+    }
+
+    #[test]
     fn mute_particle_flag_remains_independent_of_other_mute_flags() {
         let mut w = World::new(Arc::new(AvatarLibrary::load()));
         w.agent_id = Uuid::from_u128(99);
@@ -344,5 +534,81 @@ mod tests {
         assert!(!w.nearby_typing_hidden(&bob));
         w.social.names.insert(bob, "Bob Smith".into());
         assert!(w.nearby_typing_hidden(&bob));
+    }
+
+    /// A world with Jane blocked, her spam box blocked, and Bob free.
+    fn blocked_world(mode: crate::settings::BlockedChat) -> World {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        w.block(JANE, "Jane Doe", MuteType::Agent).expect("blocked");
+        w.block(SPAM_BOX, "Spam box", MuteType::Object).expect("blocked");
+        w.take_social_commands();
+        w.blocked_chat = mode;
+        w
+    }
+
+    const JANE: Uuid = Uuid::from_u128(1);
+    const BOB: Uuid = Uuid::from_u128(2);
+    const SPAM_BOX: Uuid = Uuid::from_u128(3);
+    const JANES_BOX: Uuid = Uuid::from_u128(4);
+
+    fn said(w: &mut World, from: Uuid, owner: Uuid, source_type: ChatSourceType, text: &str) {
+        w.apply(aurora_net::NetEvent::Chat(ChatMessage {
+            from_name: "Speaker".into(),
+            source_id: from,
+            owner_id: owner,
+            source_type,
+            chat_type: aurora_net::ChatType::Normal,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: text.into(),
+        }));
+    }
+
+    #[test]
+    fn a_blocked_residents_line_is_dropped_while_hidden_as_by_default() {
+        assert_eq!(crate::settings::BlockedChat::default(), crate::settings::BlockedChat::Hidden);
+        let mut w = blocked_world(crate::settings::BlockedChat::Hidden);
+        said(&mut w, JANE, Uuid::nil(), ChatSourceType::Agent, "hello");
+        assert!(w.chat.is_empty());
+        assert_eq!((w.chat_unread, w.chat_badge), (0, 0));
+        assert!(w.ui_sounds.is_empty() && w.attention.is_empty());
+    }
+
+    #[test]
+    fn a_blocked_residents_line_goes_to_the_history_alone_when_collapsed_or_greyed() {
+        for mode in [crate::settings::BlockedChat::Collapsed, crate::settings::BlockedChat::Greyed] {
+            let mut w = blocked_world(mode);
+            // even a line that names us or holds a keyword alerts nobody
+            let mention = format!("hey secondlife:///app/agent/{}/mention", w.agent_id);
+            said(&mut w, JANE, Uuid::nil(), ChatSourceType::Agent, &mention);
+            let line = w.chat.back().expect("kept for the history");
+            assert!(line.blocked, "{mode:?}");
+            assert_eq!(line.source, JANE);
+            assert_eq!(line.kind, crate::world::ChatKind::Local(aurora_net::ChatType::Normal));
+            // no unread count, sound, flash, notification, bubble, last
+            // speaker
+            assert_eq!((w.chat_unread, w.chat_badge), (0, 0), "{mode:?}");
+            assert!(w.ui_sounds.is_empty() && w.attention.is_empty(), "{mode:?}");
+            assert!(!w.nearby_news && w.last_speaker.is_none(), "{mode:?}");
+            assert!(!w.bubble_chat.has_lines(&JANE, std::time::Instant::now()), "{mode:?}");
+            // Bob's line is his own as ever
+            said(&mut w, BOB, Uuid::nil(), ChatSourceType::Agent, "hi");
+            assert!(!w.chat.back().expect("Bob's line").blocked);
+            assert_eq!(w.chat_unread, 1);
+        }
+    }
+
+    #[test]
+    fn a_blocked_objects_line_is_dropped_in_every_mode() {
+        use crate::settings::BlockedChat;
+        for mode in [BlockedChat::Hidden, BlockedChat::Collapsed, BlockedChat::Greyed] {
+            let mut w = blocked_world(mode);
+            // blocked itself, or owned by a blocked resident
+            said(&mut w, SPAM_BOX, BOB, ChatSourceType::Object, "free money");
+            said(&mut w, JANES_BOX, JANE, ChatSourceType::Object, "buy now");
+            assert!(w.chat.is_empty(), "{mode:?}");
+        }
     }
 }
