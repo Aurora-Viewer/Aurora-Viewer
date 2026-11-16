@@ -438,6 +438,11 @@ cargo run -p aurora-viewer
 - Checking everything like CI: `./scripts/check.ps1`.
 - The agents build in their own folder `..\work\<task>\target`: their open
   viewers do not block yours.
+- **Rust version.** `rust-toolchain.toml` names the version everyone builds
+  with, the CI included: nothing to install or update by hand, rustup
+  downloads it at the first build. Dependabot opens a pull request when a
+  new stable release is out; once it is merged and you pull, the next build
+  downloads that version and recompiles everything once.
 - **Compiler cache.** With sccache installed (Repair / update), the
   repository and every task share the dependencies they already built, kept
   in `.sccache\` in the project folder (10 GB at most; set

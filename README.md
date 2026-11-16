@@ -1076,8 +1076,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
