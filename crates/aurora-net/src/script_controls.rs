@@ -55,12 +55,6 @@ impl ScriptControls {
         bit < BITS && (self.taken[bit] > 0 || self.passed_on[bit] > 0)
     }
 
-    /// A control bit taken outright (`pass_on` false), ignoring pass-on holds.
-    fn taken_only(&self, flag: u32) -> bool {
-        let bit = flag.trailing_zeros() as usize;
-        bit < BITS && self.taken[bit] > 0
-    }
-
     /// Whether a script wants the left button (leftButtonGrabbed): its
     /// mouselook bit in mouselook, the plain one otherwise.
     pub fn left_button_grabbed(&self, mouselook: bool) -> bool {
@@ -69,6 +63,18 @@ impl ScriptControls {
         } else {
             control::LBUTTON_DOWN
         })
+    }
+
+    /// Whether a script took CONTROL_UP without passing it on (upGrabbed).
+    /// Automatic fly must not start while this is true (agent_jump).
+    pub fn up_grabbed(&self) -> bool {
+        self.taken_only(control::UP_POS)
+    }
+
+    /// A control bit taken outright (`pass_on` false), ignoring pass-on holds.
+    fn taken_only(&self, flag: u32) -> bool {
+        let bit = flag.trailing_zeros() as usize;
+        bit < BITS && self.taken[bit] > 0
     }
 
     /// Whether any script holds a control (anyControlGrabbed).
@@ -99,12 +105,6 @@ impl ScriptControls {
     /// (rotateGrabbed, mControlsTakenCount only).
     pub fn rotate_grabbed(&self) -> bool {
         self.taken_only(control::YAW_POS) || self.taken_only(control::YAW_NEG)
-    }
-
-    /// Whether a script took CONTROL_UP without passing it on (upGrabbed,
-    /// mControlsTakenCount only).
-    pub fn up_grabbed(&self) -> bool {
-        self.taken_only(control::UP_POS)
     }
 
     /// Whether a script took the down/crouch control without passing it on
@@ -265,5 +265,17 @@ mod tests {
                 assert_eq!(grabbed(&c), same_query, "{name} taken, {other} asked");
             }
         }
+    }
+
+    #[test]
+    fn up_grabbed_only_counts_pass_on_false() {
+        let mut c = ScriptControls::default();
+        assert!(!c.up_grabbed());
+        c.apply(true, control::UP_POS, true);
+        assert!(!c.up_grabbed(), "pass_on still lets automatic fly");
+        c.apply(true, control::UP_POS, false);
+        assert!(c.up_grabbed());
+        c.apply(false, control::UP_POS, false);
+        assert!(!c.up_grabbed());
     }
 }

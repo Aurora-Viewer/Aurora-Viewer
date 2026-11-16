@@ -18,6 +18,7 @@ pub mod free;
 mod mouselook_zoom;
 pub mod presets;
 mod settings;
+pub mod track;
 pub mod vr;
 
 pub use focus::FocusObject;
@@ -398,6 +399,10 @@ pub struct Camera {
     /// Roll of the view around its direction (radians, positive turns the
     /// picture clockwise): the photo viewfinder's tilt, 0 elsewhere.
     pub roll: f32,
+    /// The Director's track (`track.rs`) playing or scrubbed: while set, the
+    /// view is this pose and whatever camera was there (the avatar's, the
+    /// free camera, the flycam) waits behind it, with the roll kept here.
+    track: Option<(track::Pose, f32)>,
 }
 
 impl Default for Camera {
@@ -491,6 +496,7 @@ impl Default for Camera {
             flycam_lens: None,
             shake: Vec3::ZERO,
             roll: 0.0,
+            track: None,
         }
     }
 }
@@ -505,6 +511,11 @@ fn follow_joint_intensity_scale(percent: u16) -> f32 {
 }
 
 impl Camera {
+    /// The camera follows the avatar (LLAgentCamera::getFocusOnAvatar).
+    pub fn focus_on_avatar(&self) -> bool {
+        self.focus_on_avatar
+    }
+
     pub fn mouselook(&self) -> bool {
         self.mode == CameraMode::Mouselook
     }
@@ -997,6 +1008,35 @@ impl Camera {
         self.set_camera_pos_and_focus(point + dir * 3.0, point, object, s);
     }
 
+    /// Zoom on a media face (LLViewerMediaFocus::setCameraZoom with the
+    /// medium zoom of LLPanelPrimMediaControls, zoom_in_only): the camera
+    /// goes along the face's normal to the distance that frames the prim,
+    /// and never moves back when it is already closer. Returns whether it
+    /// moved.
+    #[allow(clippy::too_many_arguments)]
+    pub fn zoom_media(
+        &mut self,
+        center: Vec3,
+        rotation: Quat,
+        size: Vec3,
+        normal: Vec3,
+        object: Option<(Uuid, FocusObject)>,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) -> bool {
+        let normal = normal.try_normalize().unwrap_or(-self.forward());
+        // the view's own angle, as LLViewerCamera::getView (the settings' one
+        // before a zoom of the view)
+        let eye = media_zoom_eye(center, rotation, size, normal, self.fov_y, aspect, self.position);
+        if self.position.distance_squared(center) < eye.distance_squared(center) {
+            return false;
+        }
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        self.set_camera_pos_and_focus(eye, center, object, s);
+        true
+    }
+
     /// Avatar.ZoomIn from a list (handle_zoom_to_object, llviewermenu.cpp):
     /// the camera faces the avatar, a little above its centre, and keeps it
     /// as the focus object so it follows the avatar as it moves.
@@ -1221,6 +1261,44 @@ impl Camera {
         }
     }
 
+    /// The Director's track takes the view (`Some`: its pose at the
+    /// playhead, each frame of a playback or a scrub) or gives it back to
+    /// the camera it took it from, at once and with the roll it had.
+    pub fn set_track_view(&mut self, pose: Option<track::Pose>) {
+        match (pose, self.track) {
+            (Some(pose), Some((_, roll))) => self.track = Some((pose, roll)),
+            (Some(pose), None) => self.track = Some((pose, self.roll)),
+            (None, Some((_, roll))) => {
+                self.track = None;
+                self.roll = roll;
+                // no glide back from the track's last view
+                self.smoothing_stop = true;
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// The Director's lock: the view turned to `point` for this frame, the
+    /// camera where it is, with its roll. Call it after `update`. The
+    /// avatar's camera keeps its own focus underneath and looks at it again
+    /// once the lock ends; the flycam and the free camera, which have no
+    /// focus, keep the direction the lock gave them. Nothing in mouselook
+    /// (the view is where the avatar aims) nor while the track has the view
+    /// (its pose is aimed before it is handed over).
+    pub fn aim_at(&mut self, point: Vec3) {
+        let direction = point - self.position;
+        if self.track.is_some() || self.mouselook() || !direction.is_finite() || direction.length_squared() < 1e-4 {
+            return;
+        }
+        if let Some(flycam) = &mut self.flycam {
+            let pose = track::Pose::from_view(flycam.position, flycam.forward(), flycam.up(), flycam.fov).aimed(point, 1.0);
+            flycam.rotation = pose.rotation;
+        } else if let Some(free) = &mut self.free {
+            *free = FreeCamera::from_view(free.position, point);
+        }
+        self.target = point;
+    }
+
     /// Back to the default view without animation (login, teleport).
     pub fn snap(&mut self) {
         self.initialized = false;
@@ -1236,6 +1314,9 @@ impl Camera {
             *target += delta;
         }
         self.vr_head = None;
+        if let Some((pose, _)) = &mut self.track {
+            pose.position += delta;
+        }
         self.follow.shift(delta);
         for p in [
             &mut self.position,
@@ -1977,6 +2058,17 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        if let Some((pose, _)) = self.track {
+            // the Director's track: its own view; the camera it took the
+            // view from waits for its return (RLVa's limits still apply to
+            // it, in `update`)
+            self.position = pose.position;
+            self.target = pose.position + pose.forward();
+            self.fov_y = pose.fov;
+            self.roll = pose.roll();
+            self.anim = None;
+            return;
+        }
         if let Some(flycam) = self.flycam {
             self.position = flycam.position;
             self.target = flycam.position + flycam.forward();
@@ -2896,6 +2988,9 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
+        if let Some((pose, _)) = self.track {
+            return glam::camera::rh::view::look_to_mat4(self.position + self.shake, pose.forward(), pose.up());
+        }
         if let Some(flycam) = self.flycam {
             return glam::camera::rh::view::look_to_mat4(self.position + self.shake, flycam.forward(), flycam.up());
         }
@@ -2906,6 +3001,9 @@ impl Camera {
     }
 
     pub fn view_up(&self) -> Vec3 {
+        if let Some((pose, _)) = self.track {
+            return pose.up();
+        }
         if let Some(flycam) = self.flycam {
             return flycam.up();
         }
@@ -3064,6 +3162,51 @@ pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
     extent * PADDING_FACTOR / angle.atan()
 }
 
+/// LLPanelPrimMediaControls' zoom_medium_padding.
+const MEDIA_ZOOM_PADDING: f32 = 1.1;
+
+/// The camera position of a media zoom (LLViewerMediaFocus::setCameraZoom
+/// and getBBoxAspectRatio, indra/newview/llviewermediafocus.cpp, originally
+/// LGPL 2.1). The prim's box is seen along `normal` (unit, world): its
+/// largest local component is the depth, the other two sides are the face's
+/// rectangle, the one nearest the vertical its height; the distance frames
+/// the side that matches the screen's short side, plus half the depth.
+pub fn media_zoom_eye(center: Vec3, rotation: Quat, size: Vec3, normal: Vec3, fov: f32, aspect: f32, camera: Vec3) -> Vec3 {
+    let inv = rotation.inverse();
+    let local = (inv * normal).abs();
+    let up = inv * Vec3::Z;
+    let (a, b, depth) = if local.x > local.y && local.x > local.z {
+        (Vec3::new(0.0, size.y, 0.0), Vec3::new(0.0, 0.0, size.z), size.x)
+    } else if local.x <= local.y && local.y > local.z {
+        (Vec3::new(size.x, 0.0, 0.0), Vec3::new(0.0, 0.0, size.z), size.y)
+    } else {
+        (Vec3::new(size.x, 0.0, 0.0), Vec3::new(0.0, size.y, 0.0), size.z)
+    };
+    let (height, width) = if a.dot(up).abs() > b.dot(up).abs() {
+        (a.length(), b.length())
+    } else {
+        (b.length(), a.length())
+    };
+    let ratio = width / height.max(1e-4);
+    let invert = (aspect > 1.0 && ratio > aspect) || (aspect < 1.0 && ratio < aspect);
+    let mut distance = if aspect < 1.0 || invert {
+        let angle = (fov * aspect).max(0.1);
+        width * 0.5 * MEDIA_ZOOM_PADDING / (angle * 0.5).tan()
+    } else {
+        let angle = fov.max(0.1);
+        height * 0.5 * MEDIA_ZOOM_PADDING / (angle * 0.5).tan()
+    };
+    distance += depth * 0.5;
+    let mut eye = center + normal * distance;
+    if normal.z.abs() > 0.9999 {
+        // looking straight down or up: a smidge towards the current camera
+        // so that it does not flip around
+        let delta = camera - eye;
+        eye += delta * 0.01;
+    }
+    eye
+}
+
 /// The alt-camera focus object of a clicked object: an attachment focuses
 /// its avatar (LLAgentCamera::setFocusGlobal); HUDs are not focusable.
 pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uuid, FocusObject)> {
@@ -3090,6 +3233,26 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_zoom_frames_the_face_height_along_its_normal() {
+        // a 0.1 × 3.6 × 2.25 m screen facing -X, a 16:9 view, 60° vertically
+        let fov = 60f32.to_radians();
+        let (center, size) = (Vec3::new(10.0, 20.0, 2.0), Vec3::new(0.1, 3.6, 2.25));
+        let eye = media_zoom_eye(center, Quat::IDENTITY, size, -Vec3::X, fov, 16.0 / 9.0, Vec3::ZERO);
+        let expected = 2.25 * 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5).tan() + 0.05;
+        assert!((eye - (center - Vec3::X * expected)).length() < 1e-4, "{eye}");
+        // a tall narrow screen: its width decides, with the screen's width angle
+        let size = Vec3::new(0.1, 1.0, 4.0);
+        let eye = media_zoom_eye(center, Quat::IDENTITY, size, -Vec3::X, fov, 0.5, Vec3::ZERO);
+        let expected = 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5 * 0.5).tan() + 0.05;
+        assert!((center.distance(eye) - expected).abs() < 1e-4);
+        // the prim turned 90° about Z: its local Y faces the normal now
+        let rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let eye = media_zoom_eye(center, rot, Vec3::new(3.6, 0.1, 2.25), -Vec3::X, fov, 16.0 / 9.0, Vec3::ZERO);
+        let expected = 2.25 * 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5).tan() + 0.05;
+        assert!((center.distance(eye) - expected).abs() < 1e-3);
+    }
 
     #[test]
     fn third_person_joint_intensity_scales_and_caps_translation() {
@@ -4236,6 +4399,7 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: avatar,
             message: "@setcam=n,setcam_avdistmax:2=n,setcam_fovmin:0.8=n".to_owned(),
         }));
