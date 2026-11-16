@@ -684,6 +684,11 @@ pub struct World {
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
+    /// Inventory item of the Aurora bridge while its factory sets it up
+    /// (`bridge::Bridge::update`), nil otherwise: its worn object is the
+    /// Library container until the simulator applies its new look, and the
+    /// HUD pass leaves it out (`concealed`, `Scene::build_huds`).
+    pub concealed_attachment: Uuid,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
     /// Avatar Studio's display-only hover height (metres) that our avatar's
@@ -1051,6 +1056,7 @@ impl World {
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
+            concealed_attachment: Uuid::nil(),
             avatar_studio: false,
             avatar_studio_lift: 0.0,
             parcel: None,
@@ -2634,6 +2640,22 @@ impl World {
             .iter()
             .copied()
             .find(|i| self.objects.get(*i).and_then(|o| o.attachment_item_id()) == Some(*item))
+    }
+
+    /// Whether object `index` is a prim of the object our avatar wears from
+    /// `concealed_attachment`: the HUD pass neither draws nor picks it.
+    /// Anything that is not worn is answered without reading a name value.
+    pub fn concealed(&self, index: usize) -> bool {
+        let item = self.concealed_attachment;
+        if item.is_nil() {
+            return false;
+        }
+        let Some(o) = self.objects.get(index).filter(|o| o.parent_id != 0) else {
+            return false;
+        };
+        let parent = |o: &Object| self.objects.parent_of(o).and_then(|i| self.objects.get(i));
+        let root = |o: &Object| o.attachment_item_id() == Some(item) && parent(o).is_some_and(|p| p.full_id == self.agent_id);
+        root(o) || parent(o).is_some_and(root)
     }
 
     /// Worn items whose object handles touches (enable_attachment_touch:
