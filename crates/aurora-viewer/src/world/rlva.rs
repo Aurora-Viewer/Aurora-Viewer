@@ -1164,3 +1164,7 @@ mod tests;
 #[cfg(test)]
 #[path = "rlva/link_lock_tests.rs"]
 pub(crate) mod link_lock_tests;
+
+#[cfg(test)]
+#[path = "rlva/outfit_swap_tests.rs"]
+mod outfit_swap_tests;

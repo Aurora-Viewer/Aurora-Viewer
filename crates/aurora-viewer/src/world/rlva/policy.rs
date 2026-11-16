@@ -139,6 +139,15 @@ impl World {
         self.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil())
     }
 
+    /// World › Teleport Home (LLWorldEnableTeleportHome, llviewermenu.cpp):
+    /// the menu entry is greyed under either @tplm or @tploc, although the
+    /// teleport is refused only under both. The Home buttons of the
+    /// navigation bar and of the map follow the teleport's rule
+    /// (RlvUIEnabler::onToggleTp, LLFloaterWorldMap).
+    pub fn rlva_home_entry_enabled(&self) -> bool {
+        self.rlva_can_teleport_home() && !self.rlva.has("tplm") && !self.rlva.has("tploc")
+    }
+
     pub fn rlva_can_teleport_landmark(&self) -> bool {
         self.rlva_allows_command(&NetCommand::TeleportLandmark(Uuid::nil()), Uuid::nil())
     }
@@ -561,9 +570,6 @@ impl World {
                 if c.behaviour == "tpto" {
                     self.tp_cancel.lock_for_rlva();
                 }
-                if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
-                    self.rlva.stand_origin = self.main_region.map(|h| (h, self.agent.position));
-                }
                 commands.push((source, command));
             }
         }
@@ -625,6 +631,34 @@ fn teleport(option: &str) -> Option<NetCommand> {
 #[cfg(test)]
 mod teleport_tests {
     use super::*;
+
+    /// LLWorldEnableTeleportHome greys the menu entry under either lock;
+    /// the teleport and the Home buttons give way only under both.
+    #[test]
+    fn rlva_teleport_home_entry_is_greyed_under_either_teleport_lock() {
+        for (rules, entry, teleport) in [
+            ("@clear", true, true),
+            ("@tplm=n", false, true),
+            ("@tploc=n", false, true),
+            ("@tplm=n,tploc=n", false, false),
+        ] {
+            let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            assert!(w.rlva_home_entry_enabled() && w.rlva_can_teleport_home(), "RLVa off");
+            w.rlva_configure(true);
+            assert!(w.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Collar".to_owned(),
+                source_id: Uuid::from_u128(9),
+                owner_id: Uuid::nil(),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: rules.to_owned(),
+            }));
+            assert_eq!(w.rlva_home_entry_enabled(), entry, "{rules}: the menu entry");
+            assert_eq!(w.rlva_can_teleport_home(), teleport, "{rules}: the teleport");
+        }
+    }
 
     #[test]
     fn rlva_tpto_preserves_global_fractions_and_named_region_heading() {

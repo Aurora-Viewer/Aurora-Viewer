@@ -329,9 +329,12 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
-    /// RLVa leaves Teleport Home allowed (enable_teleport_home,
-    /// LLFloaterWorldMap's Go Home button).
+    /// RLVa leaves Teleport Home allowed (the Home buttons of the
+    /// navigation bar and of LLFloaterWorldMap).
     pub can_go_home: bool,
+    /// The Teleport Home menu entry (LLWorldEnableTeleportHome): greyed
+    /// under either @tplm or @tploc.
+    pub home_entry: bool,
     /// The agent's region has a ServerReleaseNotes page (Help › Server
     /// release notes) and a SimConsoleAsync console (Advanced › Region
     /// console, estate managers).
@@ -951,7 +954,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::widgets::toggle_floater(ui.ctx(), super::avatar_welcome::WINDOW, &mut panels.avatar_welcome);
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
+        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
