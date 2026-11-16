@@ -1617,6 +1617,10 @@ fn four_hundred_thousand_items_timings() {
     let copy = snapshot(&inv);
     eprintln!("snapshot: {:?} ({} items)", t.elapsed(), copy.items.len());
     drop(copy);
+    let t = std::time::Instant::now();
+    let layout = journal::Snapshot::take(&inv, 0, id(AGENT));
+    eprintln!("layout snapshot: {:?} ({} items)", t.elapsed(), layout.items.len());
+    drop(layout);
     let none = HashSet::new();
     let prefs = Preferences::default();
     let t = std::time::Instant::now();

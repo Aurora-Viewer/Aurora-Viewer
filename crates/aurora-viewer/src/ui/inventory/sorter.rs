@@ -140,7 +140,11 @@ pub(super) struct State {
     waiting: Option<(u64, std::sync::Arc<Vec<Uuid>>, Option<Uuid>)>,
     /// The preview and Clean up's list being made off the frame, for a
     /// large inventory.
-    planning: Option<Planning<Plan>>,
+    planning: Option<Planning<(Plan, sorter::journal::Snapshot)>>,
+    /// The layout the last background plan read, at its inventory
+    /// generation: a run that starts on that same inventory saves it as its
+    /// snapshot, nothing taken on the frame.
+    layout: Option<(u64, sorter::journal::Snapshot)>,
     cleaning: Option<Planning<CleanupPlan>>,
     /// The run an Undo puts back (its start time in the journal).
     undoing: Option<i64>,
@@ -525,7 +529,16 @@ impl State {
         let Some(dir) = self.account_dir() else { return };
         let at = unix_now();
         let Some(account) = self.account else { return };
-        let snapshot = sorter::journal::Snapshot::take(inv, at, account);
+        // a large inventory's layout was read off the frame with its
+        // preview: used when nothing changed since, else read now
+        let snapshot = match self.layout.take() {
+            Some((generation, mut layout)) if generation == inv.generation => {
+                layout.at = at;
+                layout.account = account;
+                layout
+            }
+            _ => sorter::journal::Snapshot::take(inv, at, account),
+        };
         self.snapshots.insert(0, (at, sorter::journal::snapshot_path(&dir, at)));
         self.snapshots.truncate(sorter::journal::SNAPSHOTS);
         in_order(move || {
@@ -991,10 +1004,11 @@ pub(super) fn show(
     // A plan made off the frame arrives: kept when it is still for this
     // source (its options and inventory are compared below, like any
     // preview's, and a newer one is made when they moved on).
-    if let Some((task, plan)) = Planning::take(&mut state.planning)
+    if let Some((task, (plan, layout))) = Planning::take(&mut state.planning)
         && task.source == source
     {
         state.to_request.extend(plan.unfetched.iter().copied());
+        state.layout = Some((task.generation, layout));
         state.preview = Some((task.generation, task.options, plan));
     }
     let options_changed = state.preview.as_ref().is_some_and(|(_, options, _)| *options != prefs.sorter);
@@ -1015,7 +1029,9 @@ pub(super) fn show(
             }
         };
         if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
-            state.planning = Some(Planning::spawn(inv, &prefs.sorter, &source, None, make));
+            // the layout is read on the same copy, for the run's snapshot
+            let plan_and_layout = move |inv: &Inventory| (make(inv), sorter::journal::Snapshot::take(inv, 0, Uuid::nil()));
+            state.planning = Some(Planning::spawn(inv, &prefs.sorter, &source, None, plan_and_layout));
             state.updating = true;
         } else {
             let plan = make(inv);

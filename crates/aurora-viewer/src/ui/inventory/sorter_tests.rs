@@ -200,7 +200,7 @@ fn a_background_plan_matches_the_frames_and_follows_its_source() {
     // the window keeps it only for the source it still shows
     let mut st = InventoryUi::default();
     st.sorter.planning = Some(Planning::spawn(&inv, &options, &Source::Whole, None, |_: &Inventory| {
-        Plan::default()
+        (Plan::default(), crate::world::inventory::sorter::journal::Snapshot::default())
     }));
     st.sorter.source = Some(source.clone());
     std::thread::sleep(std::time::Duration::from_millis(50));

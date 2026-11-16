@@ -174,7 +174,9 @@ impl Snapshot {
         let items = inv
             .items
             .values()
-            .filter(|it| !actions::library(inv, it.id))
+            // the Library's folders carry their flag: one lookup an item,
+            // not a walk up its folders
+            .filter(|it| inv.folders.get(&it.parent).is_none_or(|f| !f.library))
             .map(|it| (it.id, it.parent, it.name.clone()))
             .collect();
         Self {
