@@ -2788,3 +2788,85 @@ fn listed_own_folders_stay_on_resume_pre_trash_and_clean_up() {
     assert!(!cleanup.rows.iter().any(|r| r.id == id(700)), "Clean up takes its items one by one");
     assert!(cleanup.rows.iter().any(|r| r.id == id(801)));
 }
+
+/// A folder listed inside a delivery opens only itself: the delivery keeps
+/// its own contents and stays in place. An exclusion wins over the list, and
+/// a listed folder chosen by hand stays too.
+#[test]
+fn a_listed_folder_inside_a_delivery_opens_only_itself() {
+    let none = HashSet::new();
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 700, 1, "Velvet Gown");
+    add_folder(&mut inv, 701, 700, "HUD");
+    add_item(&mut inv, 801, 701, "Velvet Gown HUD", 0);
+    add_item(&mut inv, 802, 700, "Velvet Gown Maitreya", 0);
+    add_folder(&mut inv, 702, 700, "My Edits");
+    add_item(&mut inv, 803, 702, "Lace Bra", 0);
+    let prefs = Preferences {
+        own: vec![id(702)],
+        ..Preferences::default()
+    };
+    let plan = plan_whole(&inv, &prefs, &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(moved.contains(&id(803)), "the listed folder is sorted");
+    for n in [700, 701, 702, 801, 802] {
+        assert!(!moved.contains(&id(n)), "the delivery keeps {n}");
+    }
+    // excluded and listed: excluded wins, the delivery moves whole as before
+    let excluded = Preferences {
+        excluded: vec![id(702)],
+        ..prefs.clone()
+    };
+    assert!(!whole_sources(&inv, &excluded).contains(&id(700)));
+    assert!(!whole_sources(&inv, &excluded).contains(&id(702)));
+    // chosen by hand: kept, said so
+    let plan = plan_entries(&inv, &[id(700), id(702)], &prefs, &none, &none);
+    assert!(plan.moves.is_empty(), "never moved whole");
+    assert_eq!(plan.kept_list.iter().filter(|(_, k)| *k == Kept::Own).count(), 2);
+}
+
+/// Shelves audit 33 found moved whole (a plural name beside a HUD or a body
+/// folder), shelves of other stores' deliveries beside a `Rez Box`, and a
+/// kitchen with its `Decor Only` version kept whole.
+#[test]
+fn plural_shelves_open_and_a_kitchen_with_its_decor_only_stays_whole() {
+    let none = HashSet::new();
+    let shelves: [(&str, &[&str]); 14] = [
+        ("Work Outfits", &["HUD", "Dresses", "Tops"]),
+        ("Work Outfits", &["Maitreya", "Reborn", "Tops"]),
+        ("Gym Outfits", &["HUDs", "Tops"]),
+        ("Fantasy Heads", &["HUDs", "Skins", "Shapes"]),
+        ("Anime Heads", &["Catwa", "Shapes"]),
+        ("Mens Shirts", &["Gianni", "Jake", "Jackets"]),
+        ("Couple Poses", &["HUD", "Props", "Poses"]),
+        ("Elf Skins", &["Lelutka", "Skins"]),
+        ("Jewelry Sets", &["Necklaces", "Earrings", "HUD"]),
+        ("Lingerie Sets", &["Maitreya", "Bras"]),
+        ("Lashes", &["Lelutka", "Catwa"]),
+        ("Eyebrows", &["Lelutka", "Catwa"]),
+        ("Cars", &["Rez Box", "[Zoom] Bike", "Tempest Sport Car"]),
+        ("AOs", &["HUD", "Velvet Dreams AO", "[Mila] AO"]),
+    ];
+    for (name, subs) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(!plan.moves.iter().any(|m| m.id == id(900)), "{name} never moves whole");
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Hollis Kitchen");
+    for (n, sub) in ["Cabinets", "Appliances", "Decor Only"].iter().enumerate() {
+        add_folder(&mut inv, 901 + n as u128, 900, sub);
+        add_item(&mut inv, 950 + n as u128, 901 + n as u128, &format!("Hollis {sub}"), 0);
+    }
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        ![901, 902, 903, 950, 951, 952].iter().any(|n| moved.contains(&id(*n))),
+        "the kitchen is never opened"
+    );
+}

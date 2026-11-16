@@ -1283,19 +1283,58 @@ pub fn own_check<'a>(inv: &'a Inventory, prefs: &Preferences) -> impl Fn(Uuid) -
     }
 }
 
-/// The folders listed as the user's own that still may be, and every folder
-/// holding one (below My Inventory): none of them is ever a product's
-/// folder, so none moves whole.
-pub fn own_folders(inv: &Inventory, prefs: &Preferences) -> HashSet<Uuid> {
-    let mut set = HashSet::new();
+/// The folders listed as the user's own that still may be (and are not
+/// excluded: an exclusion wins), and every folder holding one below My
+/// Inventory.
+#[derive(Debug, Default)]
+pub struct OwnFolders {
+    /// The listed folders: opened and sorted.
+    listed: HashSet<Uuid>,
+    /// The listed folders and their holders: none moves whole. A holder is
+    /// not opened for them (a delivery holding the user's `My Edits` keeps
+    /// its own contents).
+    holds: HashSet<Uuid>,
+}
+
+impl OwnFolders {
+    /// `id` is listed, or holds a listed folder: never moved whole.
+    pub fn contains(&self, id: &Uuid) -> bool {
+        self.holds.contains(id)
+    }
+
+    /// `id` is listed: opened and sorted.
+    pub fn opens(&self, id: &Uuid) -> bool {
+        self.listed.contains(id)
+    }
+
+    /// The listed folders below `holder` with no other listed folder
+    /// between (the deeper ones are reached through those).
+    fn listed_below(&self, inv: &Inventory, holder: Uuid) -> Vec<Uuid> {
+        self.listed
+            .iter()
+            .copied()
+            .filter(|id| {
+                *id != holder
+                    && actions::ancestors(inv, *id)
+                        .skip(1)
+                        .find(|a| *a == holder || self.listed.contains(a))
+                        .is_some_and(|a| a == holder)
+            })
+            .collect()
+    }
+}
+
+pub fn own_folders(inv: &Inventory, prefs: &Preferences) -> OwnFolders {
+    let mut own = OwnFolders::default();
     if prefs.own.is_empty() {
-        return set;
+        return own;
     }
     let allowed = own_check(inv, prefs);
-    for id in prefs.own.iter().copied().filter(|id| allowed(*id)) {
-        set.extend(actions::ancestors(inv, id).take_while(|a| *a != inv.root));
+    for id in prefs.own.iter().copied().filter(|id| allowed(*id) && !prefs.excludes(inv, *id)) {
+        own.listed.insert(id);
+        own.holds.extend(actions::ancestors(inv, id).take_while(|a| *a != inv.root));
     }
-    set
+    own
 }
 
 /// Whether the sorter can run on `source`: My Inventory, Objects, or one of
@@ -1417,6 +1456,14 @@ const MASS_KINDS: [&str; 10] = [
     "clutter",
 ];
 
+/// A word that is a kind's plural, written loosely: the word less its `s`
+/// or `es` is a kind (`Tops`, `Sets`, `Dresses`).
+fn loose_plural(w: &str) -> bool {
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let less = |n: usize| w.len() > n && w.is_char_boundary(w.len() - n) && is_kind(&w[..w.len() - n]);
+    w.ends_with("es") && less(2) || w.ends_with('s') && less(1)
+}
+
 /// Folders a user marks a shelf of their own with: a folder of folders so
 /// named is never kept whole as one product.
 const SHELF_MARKERS: [&str; 17] = [
@@ -1482,29 +1529,35 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
                 .iter()
                 .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()))
     });
-    let holds_deliveries = !parts_seen
-        && subs.iter().any(|s| {
-            let sub = s.info.name.trim();
-            if store(sub).is_some() {
-                return true;
-            }
-            let read = classify(sub, -1, 0);
-            read.body.is_none()
-                && read.category.is_some_and(|c| {
-                    !matches!(
-                        c,
-                        Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
-                    )
-                })
-                && names_a_product(sub)
-                && product_words(sub)
-                    .iter()
-                    .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
-        });
+    // (another store's tagged delivery always shows a shelf)
+    let holds_deliveries = subs.iter().any(|s| {
+        let sub = s.info.name.trim();
+        if store(sub).is_some() {
+            return true;
+        }
+        if parts_seen {
+            return false;
+        }
+        let read = classify(sub, -1, 0);
+        read.body.is_none()
+            && read.category.is_some_and(|c| {
+                !matches!(
+                    c,
+                    Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
+                )
+            })
+            && names_a_product(sub)
+            && product_words(sub)
+                .iter()
+                .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
+    });
     // a plural kind in the name: a shelf of them (`Work Outfits`, `Poses
     // for Photos`), unless sold as one (`Winter Boots`); a delivery named so
     // (`Mila Poses Pack`) was kept by its versions above
-    let plural_shelf = name_words.iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str()));
+    // (`Lingerie Sets` too: a kind's word less its `s`)
+    let plural_shelf = name_words
+        .iter()
+        .any(|w| (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
     !(by_kind || holds_deliveries || plural_shelf)
 }
 
@@ -1585,8 +1638,11 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // (nor a delivery with a version of its own beside them, `Kira Avatar`
     // holding `Head` and `Eyes`, or a named one or a body with its HUD:
     // `Orion Head` holding `HUDs`, `Shapes`, `Skins`)
+    // (only for a name of one product: `Work Outfits` holding `HUD` and
+    // `Tops`, `Fantasy Heads` holding `Skins` stay shelves)
     let body_named = words(name).last().is_some_and(|w| w == "body");
-    let delivery_extras = versions || (named || body_named) && fatpack_seen;
+    let many_named = words(name).iter().any(|w| loose_plural(w));
+    let delivery_extras = names_a_product(name) && !many_named && (versions || (named || body_named) && fatpack_seen);
     let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen) && !delivery_extras;
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
     all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen || part_seen) && names_a_product(name))
@@ -1619,7 +1675,7 @@ fn product_words(name: &str) -> Vec<String> {
 }
 
 /// The folders a product's delivery holds beside its body versions.
-const VERSION_WORDS: [&str; 38] = [
+const VERSION_WORDS: [&str; 39] = [
     "hud",
     "huds",
     "textures",
@@ -1658,6 +1714,7 @@ const VERSION_WORDS: [&str; 38] = [
     "no",
     "with",
     "without",
+    "only",
 ];
 
 /// A delivery's working parts: with a name of its own (`Elegance AO`
@@ -1791,7 +1848,7 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
     open_levels(inv, prefs, places, vec![inv.root], 0, &mut sources, &mut seen);
     // a folder listed as the user's own is opened at any depth, with its own
     // folders of folders below it (the same depth wherever it lies)
-    let mut listed: Vec<Uuid> = prefs.own.iter().copied().filter(|id| places.own.contains(id)).collect();
+    let mut listed: Vec<Uuid> = prefs.own.iter().copied().filter(|id| places.own.opens(id)).collect();
     listed.sort_unstable();
     listed.dedup();
     for id in listed {
@@ -1836,7 +1893,7 @@ fn open_levels(
                     && (depth == 0 || f.info.type_default == -1 && !places.reserved.contains(&f.info.name.trim().to_lowercase()));
                 let own = f.info.type_default != -1
                     || f.state != FetchState::Fetched
-                    || places.own.contains(&id)
+                    || places.own.opens(&id)
                     || !product_folder_in(inv, id, &places.reserved);
                 if open && own {
                     if seen.insert(id) {
@@ -1867,7 +1924,7 @@ struct Places {
     pre_trash: HashSet<Uuid>,
     reserved: HashSet<String>,
     /// The user's own folders and the folders holding one ([`own_folders`]).
-    own: HashSet<Uuid>,
+    own: OwnFolders,
 }
 
 impl Places {
@@ -2567,9 +2624,12 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
                 }
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && !own.contains(sub) && product_folder_in(inv, *sub, &reserved);
+            let product = !system && !made && !own.opens(sub) && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
+            } else if own.contains(sub) {
+                // (a delivery holding a listed folder: only that one is read)
+                stack.extend(own.listed_below(inv, *sub));
             }
         }
     }
@@ -2941,9 +3001,12 @@ pub fn plan_cleanup(
                 continue;
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && !own.contains(sub) && product_folder_in(inv, *sub, &reserved);
+            let product = !system && !made && !own.opens(sub) && product_folder_in(inv, *sub, &reserved);
             if !product {
                 stack.push(*sub);
+            } else if own.contains(sub) {
+                // (a delivery holding a listed folder: only that one is read)
+                stack.extend(own.listed_below(inv, *sub));
             }
         }
     }
@@ -3075,6 +3138,7 @@ fn plan_with(
     // left out
     let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !(r.pre_trash && r.skip_sorted)).cloned().collect();
     let waiting_all = pre_trash_folders(inv);
+    let own = own_folders(inv, prefs);
     // only read who made an entry when a creator hint can use it
     let by_creator = prefs.store_hints.iter().any(|h| h.creator.is_some());
     let mut candidates = Vec::new();
@@ -3099,6 +3163,13 @@ fn plan_with(
         if prefs.excludes(inv, id) {
             plan.kept += 1;
             plan.kept_list.push((name, Kept::Excluded));
+            continue;
+        }
+        // one of the user's own folders (or one holding one) never moves
+        // whole, chosen by hand neither
+        if is_folder && own.contains(&id) {
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Own));
             continue;
         }
         if is_folder {

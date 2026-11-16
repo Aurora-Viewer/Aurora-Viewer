@@ -181,10 +181,14 @@
         "eye liner",
         "liner",
         "blush",
+        "brow",
         "brows",
+        "eyebrow",
         "eyebrows",
         "freckles",
+        "lash",
         "lashes",
+        "eyelash",
         "contour",
         "highlighter"
       ]
@@ -454,6 +458,7 @@
         "leash",
         "wings",
         "tail",
+        "ear",
         "ears",
         "horns",
         "hair bow",
