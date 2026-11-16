@@ -298,6 +298,7 @@ pub fn tab(
             data,
             st,
             id,
+            crate::world::names::NameScope::World,
             true,
             true,
             actions,
@@ -371,7 +372,7 @@ fn list_part(
     let compact = data.settings.compact;
     toolbar(ui, p, data, st, blocked);
     ui.add_space(if compact { 6.0 } else { 4.0 });
-    if data.settings.show_minimap {
+    if radar::shows_minimap(world, data.settings) {
         ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
         ui.add_space(6.0);
     }
@@ -385,12 +386,20 @@ fn list_part(
     }
     let filter = st.filter.trim().to_lowercase();
     let list = radar::rows(world, data, &filter);
+    // the rules of the radar's table under @shownames (`radar::names_hidden`):
+    // no menu, no friendship offer, and none of the row's own shortcuts
+    // to the resident behind an anonymous name
+    let anonymous = radar::names_hidden(world);
     summary(
         ui,
         p,
-        data.radar.total,
-        list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
-        list.iter().filter(|r| r.friend).count(),
+        (!radar::nearby_hidden(world)).then(|| {
+            [
+                data.radar.total,
+                list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
+                list.iter().filter(|r| r.friend).count(),
+            ]
+        }),
     );
     ui.add_space(if compact { 4.0 } else { 3.0 });
     let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
@@ -403,7 +412,7 @@ fn list_part(
             ui.spacing_mut().item_spacing.y = if compact { 0.0 } else { RICH_GAP };
             if list.is_empty() {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(aurora_i18n::tr!("radar-empty")).size(12.0).color(p.muted));
+                ui.label(egui::RichText::new(radar::empty_text(world)).size(12.0).color(p.muted));
             }
             let mut band = None;
             for (i, row) in list.iter().enumerate() {
@@ -426,10 +435,12 @@ fn list_part(
                         == Some(row.id),
                 );
                 if !ui.is_rect_visible(rect) {
-                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    if !anonymous {
+                        super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    }
                     continue;
                 }
-                if !data.pics.contains_key(&row.id) {
+                if !anonymous && !data.pics.contains_key(&row.id) {
                     st.want_pic(row.id, now);
                 }
                 let selected = st.radar_selected.contains(&row.id) || st.sheet == Some(row.id);
@@ -440,11 +451,12 @@ fn list_part(
                 let pointer = resp.hover_pos();
                 let hot =
                     (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
+                let shortcuts = (hot && !anonymous).then_some(count);
                 let end = right_end(
                     rect,
                     names_left(rect, compact),
                     badge_count,
-                    hot.then_some(count),
+                    shortcuts,
                     compact,
                     data.settings.shows(Column::Seen),
                     data.settings.shows(Column::Age),
@@ -456,7 +468,7 @@ fn list_part(
                 };
                 ui.set_opacity(opacity);
                 let action = super::rows::select(ui, &resp, &mut st.radar_selected, &mut st.radar_anchor, &order, row.id);
-                if action.sheet {
+                if action.sheet && !anonymous {
                     open_sheet(st, row.id);
                 }
                 // double click: the camera goes to the avatar and follows it
@@ -465,7 +477,9 @@ fn list_part(
                     radar::zoom_from_list(ui, st, row, data, actions);
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
-                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                if !anonymous {
+                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                }
                 super::rows::contact_tip(resp, tip.as_deref());
             }
         });
@@ -588,19 +602,22 @@ fn choose_sort(data: &mut RadarData, column: Column) {
 
 /// "16 near you Â· 7 within earshot Â· 2 friends": the figures in the ink,
 /// their words in the muted color.
-fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: usize) {
+fn summary(ui: &mut egui::Ui, p: &Palette, counts: Option<[usize; 3]>) {
     // a line of text, not of buttons
     ui.spacing_mut().interact_size.y = 16.0;
     ui.horizontal_wrapped(|ui| {
         ui.add_space(2.0);
         ui.spacing_mut().item_spacing.x = 12.0;
+        // the words of no avatar and a dash for each figure under @shownearby
+        let [total, chat, friends] = counts.unwrap_or_default();
         for (n, words) in [
             (total, aurora_i18n::tr!("people-sum-nearby", count = total as i64)),
             (chat, aurora_i18n::tr!("people-sum-earshot", count = chat as i64)),
             (friends, aurora_i18n::tr!("people-sum-friends", count = friends as i64)),
         ] {
             let mut job = egui::text::LayoutJob::default();
-            job.append(&aurora_i18n::integer(n as i64), 0.0, semibold(ui, 12.0, p.ink));
+            let figure = counts.map_or_else(|| "-".to_owned(), |_| aurora_i18n::integer(n as i64));
+            job.append(&figure, 0.0, semibold(ui, 12.0, p.ink));
             job.append(&words, 4.0, egui::TextFormat::simple(FontId::proportional(12.0), p.muted));
             ui.label(job);
         }
@@ -885,7 +902,11 @@ fn paint_rich(
     // the picture, round, with its status dot
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), RICH_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, identity.center().y), Vec2::splat(30.0));
-    widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    // (a profile picture would name an anonymous row; so would its mark,
+    // which `ring` leaves out)
+    let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+    widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
@@ -931,7 +952,11 @@ fn paint_rich(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
     let cut = name_g.elided;
-    let user = second_line(world, &row.id, data.settings.name_format);
+    let user = if row.anonymous {
+        String::new()
+    } else {
+        second_line(world, &row.id, data.settings.name_format)
+    };
     let mut job = egui::text::LayoutJob::single_section(user, egui::TextFormat::simple(FontId::proportional(11.5), p.muted));
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let user_g = ui.painter().layout_job(job);
@@ -987,7 +1012,9 @@ fn paint_compact(
     }
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), COMPACT_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, identity.center().y), Vec2::splat(20.0));
-    widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+    widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
@@ -1126,6 +1153,7 @@ mod tests {
                     range: Some(4.7),
                     loaded: true,
                     left_behind: false,
+                    anonymous: false,
                 };
                 let buttons = quick_actions(&world, &row);
                 assert_eq!(buttons.len(), if friend { 4 } else { 5 });
@@ -1336,6 +1364,7 @@ mod tests {
             age: Age::Days(9),
             loaded: true,
             left_behind: false,
+            anonymous: false,
         };
         let mut settings = RadarSettings {
             columns: 0,
