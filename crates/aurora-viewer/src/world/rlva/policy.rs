@@ -59,7 +59,11 @@ impl World {
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
         // @interact is enforced when the object is picked
         // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
-        // RlvActions::canTouch and its @touchme override are asked.
+        // RlvActions::canTouch and its @touchme override are asked. A HUD's
+        // pick is dropped there too, by `rlva_drops_picks` where the click
+        // is read: this rule also answers the Touch entry of a worn object,
+        // which needs no pick and keeps a HUD's touch (handle_attachment_touch,
+        // llviewermenu.cpp).
         if !hud && r.has("interact") {
             return false;
         }

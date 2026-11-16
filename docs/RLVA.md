@@ -119,7 +119,10 @@ script authors; the command lists below describe this branch specifically.
   are greyed under either tplm or tploc; the Home buttons and the teleport
   itself give way only under both.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
-  touchhud/this, interact and fartouch.
+  touchhud/this, interact and fartouch. Interact drops every pick, a HUD's
+  included: no click action, media, menu or selection by a click, on a HUD
+  as in the world; our own avatar keeps its menu and a worn HUD its Touch
+  entry. Fartouch leaves the HUDs alone.
   Vendor payments obey buy; resident payments obey pay. Fartouch includes
   the exact distance boundary; sitting/teleport distances remain exclusive.
   A worn removal-locked HUD cannot be hidden through the HUD switch and

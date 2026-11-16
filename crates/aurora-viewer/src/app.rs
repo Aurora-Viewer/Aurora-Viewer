@@ -8126,7 +8126,9 @@ impl App {
             return false;
         }
         let (x, y) = self.cursor_pos;
-        let hud = (self.build.tool == crate::build::Tool::Edit)
+        // (under @interact a click selects no HUD: its pick is dropped like
+        // the world's, LLViewerWindow::cursorIntersect)
+        let hud = (self.build.tool == crate::build::Tool::Edit && !self.world.rlva_drops_picks())
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
         let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
