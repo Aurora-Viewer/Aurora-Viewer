@@ -215,31 +215,31 @@ pub fn show(
         ui.add_space(4.0);
         let now = ui.input(|i| i.time);
         let status = st.wearable_favorites.status.clone().filter(|(_, at)| now - at < STATUS_SECONDS);
-        let room = ui.available_size() - Vec2::new(0.0, if status.is_some() { STATUS_HEIGHT + 4.0 } else { 0.0 });
-        let list = ui
-            .allocate_ui(room, |ui| {
-                list_area(
-                    ui,
-                    p,
-                    world,
-                    st,
-                    images,
-                    &rows,
-                    &labels,
-                    &points,
-                    &folders,
-                    shown,
-                    total,
-                    sort,
-                    &mut actions,
-                )
-            })
-            .inner;
-        if let Some((text, at)) = status {
-            status_line(ui, p, &text);
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64((STATUS_SECONDS - (now - at)).max(0.0)));
-        }
+        // the list takes what the status line leaves, measured: a guessed
+        // height under it made the window grow at every frame
+        let (mut above, footer) = widgets::above_footer(ui);
+        let list = list_area(
+            &mut above,
+            p,
+            world,
+            st,
+            images,
+            &rows,
+            &labels,
+            &points,
+            &folders,
+            shown,
+            total,
+            sort,
+            &mut actions,
+        );
+        footer.show(ui, |ui| {
+            if let Some((text, at)) = &status {
+                status_line(ui, p, text);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64((STATUS_SECONDS - (now - at)).max(0.0)));
+            }
+        });
         // Custom order chosen (the menu or a first drag): the other views
         // keep the order they showed instead of falling back to the type's
         if *sort == SortOrder::Custom
@@ -750,7 +750,6 @@ fn asked_status(it: &InvItem, worn: bool) -> String {
 /// What the last Wear or Take off asked for, at the bottom of the window,
 /// under the list and never over a row.
 fn status_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.add_space(4.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_HEIGHT), Sense::hover());
     ui.painter()
         .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.22));
@@ -978,6 +977,35 @@ pub fn demo_pick(inv: &Inventory, st: &mut AppearanceUi, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_status_line_keeps_the_window_steady() {
+        let agent = Uuid::from_u128(2);
+        let status = aurora_i18n::tr!("wearable-favorites-wearing", name = "Boots").to_string();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(360.0, 430.0), Vec2::new(260.0, 220.0)],
+            &status,
+            || {
+                let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                world.agent_id = agent;
+                crate::world::appearance::seed_demo(&mut world.inventory, agent);
+                model::seed_demo(&mut world.inventory, agent);
+                let mut st = AppearanceUi::default();
+                // a Wear just asked: the line shows under the list
+                st.wearable_favorites.status = Some((status.clone(), 0.0));
+                (world, st, SortOrder::Custom)
+            },
+            |(world, st, sort), ctx, p| {
+                // asked again at every frame: the line stays the whole run
+                if let Some((_, at)) = &mut st.wearable_favorites.status {
+                    *at = ctx.input(|i| i.time);
+                }
+                let mut open = true;
+                show(ctx, p, world, st, &mut open, sort, true, &HashMap::new(), None);
+            },
+        );
+    }
 
     #[test]
     fn the_import_button_returns_once_the_accepted_change_is_over() {
