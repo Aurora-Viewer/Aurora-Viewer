@@ -113,8 +113,8 @@ jobs:
           if [ "$free" -ge 1 ]; then rest=$mac; fi
           if [ "$free" -ge 2 ]; then interface=$mac; fi
           if [ "$EVENT" = push ] && [ "$rest" = "$mac" ]; then
-            rustup toolchain install stable --profile minimal --no-self-update > /dev/null 2>&1 || true
-            rustc=$(rustc +stable -V | awk '{ print $2 "-" substr($3, 2) }')
+            rustup toolchain install --profile minimal --no-self-update > /dev/null 2>&1 || true
+            rustc=$(rustc -V | awk '{ print $2 "-" substr($3, 2) }')
             key="cargo-v1-macos-tests-macOS-ARM64-$rustc-${MANIFESTS:0:16}"
             # an error counts as found: the Mac then runs main as usual
             found=$(GH_TOKEN=$CACHE_TOKEN gh api "repos/$REPO/actions/caches?ref=refs/heads/main&key=$key" --jq '.total_count') || found=1
@@ -146,7 +146,7 @@ jobs:
         uses: ./.github/actions/mac-runner
       - name: Rust stable
         run: |
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add clippy
       # caches are written from main only (see ci.yml); one cache for the
       # two macOS jobs, written by this one. The Mac keeps its own build
@@ -256,7 +256,7 @@ jobs:
         if: runner.environment == 'self-hosted'
         uses: ./.github/actions/mac-runner
       - name: Rust stable
-        run: rustup update stable --no-self-update
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: ./.github/actions/rust-cache
         if: runner.environment == 'github-hosted'
         with:

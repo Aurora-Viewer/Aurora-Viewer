@@ -1858,7 +1858,7 @@ displayed.
 ```
 aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace: version, edition, licence, common lints
-├─ rust-toolchain.toml          stable Rust (always the latest version)
+├─ rust-toolchain.toml          the Rust version, the same on every PC and in the CI (rustup installs it; Dependabot proposes the next stable release)
 ├─ rustfmt.toml                 formatting (140-character lines)
 ├─ README.md                    overview, differences from Firestorm, build
 ├─ AGENTS.md                    rules for AI agents (Claude, Codex…)
@@ -1887,6 +1887,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
 │  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude)
+├─ .claude/                     Claude Code settings shared by every contributor's agents: `settings.json` runs `hooks/shell-rules.sh` before each shell command of an agent, which refuses the ones AGENTS.md forbids (section 5, "Tools"; tested by `scripts/test-agent-hook.ps1`)
 └─ .github/                     CI and wiki publication (workflows/, actions/), release and nightly betas, PR template, Dependabot
 ```
 
@@ -1898,6 +1899,8 @@ one-line command (`scripts/setup.ps1`, then the tools):
 ├─ aurora-viewer\               the repository
 ├─ phoenix-firestorm\           official Firestorm sources (read-only)
 ├─ RELEASE\                     --release build of the latest main (scripts/build-release.ps1)
+├─ .cargo\                      Cargo configuration of the repository and of every task, written by the scripts: the build gate (`aurora-build-gate-*`, its `build-slots\`) and the compiler cache
+├─ .sccache\                    compiler cache shared by the tasks (sccache)
 └─ work\                        one git worktree per agent task
 ```
 
@@ -1918,6 +1921,7 @@ one-line command (`scripts/setup.ps1`, then the tools):
 | `aurora-audio` | Audio output: mixer with the SL volume channels, music streams, world sounds, wind noise; HTTPS radio uses rustls with platform certificate verification (`http.rs`), including intermediate-chain completion on Windows/macOS (#1628). `playlist.rs` resolves bounded PLS/M3U documents and the playlist exported by an AzuraCast public player before decoding, with discovered links and their redirects restricted to the same HTTP(S) origin. Stream failures are typed (`StreamError`: web page, playlist, HTTP status, TLS, connection, address, audio format, interruption), and a retry keeps the last error until audio returns (#2582). |
 | `aurora-voice` | SL voice over WebRTC (receiving and sending). `link_stats.rs`: one `voice stats:` log line every 5 s during a call (what waits in the receive and send queues, the arrival lag, the RTCP jitter and loss of both streams), to tell a delay built in the viewer from one on the network or the server |
 | `aurora-media` | Host of the SLPlugin media plugins (CEF for the web, LibVLC for video, GStreamer instead on Linux), taken from Aurora's media plugins pack or from a folder chosen in the preferences; pixels in Win32 or POSIX shared memory. On macOS the plugins live in `SLPlugin.app/Contents/Frameworks` (`PluginPaths::bundle_in`: the pack's `llplugin/`, a folder, or a Legacy Viewer's application), are `.dylib` files, and SLPlugin runs in that folder; the viewer's `media/keys.rs` sends CEF the Cocoa key data of the Legacy Viewer's window, and `Modifiers::command` carries the Command key. On Linux, `stream_volume.rs` sets a web page's volume on the sound server, which the Linux CEF plugin does not do |
+| `aurora-build-gate` | Development tool, not a part of the viewer: the compiler wrapper the scripts give Cargo (`rustc-wrapper` of `<project folder>\.cargo\config.toml`, written by `Sync-BuildCache` of `scripts/common.ps1`). Every compile of the viewer crate waits there for one of `AURORA_BUILD_SLOTS` build slots (a locked file of `.cargo\build-slots\`, freed by the system when the process ends), whatever the Cargo command; the other crates go straight through, and the compiler is handed over to sccache when it is installed. One file and the standard library only: the scripts build it with `rustc` alone, before Cargo can run. |
 
 Dependencies between crates (simplified):
 
@@ -3179,6 +3183,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `gpu_load.rs` | The graphics card as every program on the PC uses it (Windows: PDH counters `GPU Adapter Memory` and `GPU Engine`, read every 2 s on a thread, for the card named by its LUID): the memory all programs hold there: past what the card keeps, the textures give back this viewer's part of the excess (`oversubscribed`), each reading numbered so that the relief is applied once per reading (`Load::seq`). Windows only, off in demo and timed runs; elsewhere nothing is read |
 | `instances.rs` | The other Aurora viewers on this PC: each rewrites a small file in the `instances` folder (next to `logs`) every 2 s, from a thread of its own, with its video memory in use, whether its window is in front and the LUID of its card, and reads the others' on the same card (a file older than 8 s is a viewer that is gone). Gives the texture streamer its fair share of the driver's budget (`share_cap`, room left only to a neighbour in front that is growing) and caps a window that is not in front at 10 fps while another viewer is in front (`throttle`, not with the background cap off). Not used in demo and timed runs |
 | `window_hold.rs` | Frames while Windows holds the window (mouse button pressed on the title bar, a border or a title bar button, move, resize, system menu): Windows follows those in a message loop of its own, in which winit's loop does not turn and no redraw is asked. The window procedure is hooked to know when a hold begins and ends, and a helper thread then asks for an immediate repaint, which winit delivers as a `RedrawRequested` on the main thread. During a hold the frame limiter does not wait on the main thread (`paces`): the helper waits between two frames, and spaces them out while the cursor moves so that the window keeps following it |
+| `wide_chars.rs` | Characters beyond U+FFFF (most emoji) typed as two `VK_PACKET` presses by remote desktops and text-injection tools (`SendInput` with `KEYEVENTF_UNICODE`): winit 0.30 drops each lone surrogate half. `raw_mouse.rs`'s message hook joins the halves when key messages came between them, and `App::window_event` gives the character to the text-less press of the second half, in its place among the other characters, like `LLWindow::handleUnicodeUTF16` |
 | `alt_codes.rs` | Windows Alt codes in text fields: left Alt + numpad digits read from the key events while egui has a text field focused (the digits kept from it), the character given at Alt's release in the OEM code page, or the ANSI one after a leading 0 (winit drops the `WM_CHAR` Windows sends after the Alt key-up) |
 | `natural_order.rs` | Dictionary order of the names in every list: case ignored, runs of digits compared by value ("Pose 2" before "Pose 10", as LLStringUtil::compareDict); `cmp` for comparators, `key` for `sort_by_key` / `sort_by_cached_key`, `cmp_folded` for names already in lower case (the inventory's index) |
 | `world/attention.rs`, `app/attention.rs`, `system_notify.rs` | Taskbar flash and system notifications while the window is not in front (LLWindow::flashIcon, the Growl manager): what asks for attention, recorded by the world beside its notifications (`world/attention.rs`); the settings, the focus, do not disturb, the one-second throttle by title, the flash (FlashWindowEx between frames) and the click back to the conversation (`app/attention.rs`); Windows notifications from a worker thread, with the AppUserModelID registered for the current user (`system_notify.rs`) |

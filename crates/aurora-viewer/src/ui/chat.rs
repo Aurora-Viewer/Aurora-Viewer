@@ -3778,13 +3778,10 @@ fn classic_pane(
     let strip_top = ui.min_rect().bottom();
     ui.add_space(4.0);
     // input + emoji
-    let hint = input::hint(
-        ui,
-        match st.selected {
-            None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-            Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
-        },
-    );
+    let hint = match st.selected {
+        None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+        Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+    };
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
@@ -3817,6 +3814,7 @@ fn classic_pane(
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
                 .floor()
                 .max(40.0);
+            let hint = input::hint(ui, hint, field_w);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);

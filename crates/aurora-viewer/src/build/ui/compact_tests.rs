@@ -11,6 +11,14 @@ mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
 
+/// Whether a painted text is the heading of the former labelled navigation
+/// ("OBJECT"). In Japanese that heading is オブジェクト, the very word of
+/// the compact navigation's own Shape entry, so it marks nothing there.
+fn labelled_navigation(text: &str) -> bool {
+    let heading = aurora_i18n::tr!("build-workspace-object");
+    text == heading && heading != aurora_i18n::tr!("build-compact-shape")
+}
+
 fn fixture() -> (World, BuildTool, BuildSettings) {
     let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     for event in crate::demo::events() {
@@ -1541,7 +1549,7 @@ fn construction_presentations_follow_pointer_resizing_without_changing_selection
             "A presentation must not snap to another width: {width}, {rect:?}"
         );
         assert!((rect.height() - before.height()).abs() < 1.0);
-        let rail = texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-workspace-object"));
+        let rail = texts.iter().any(|(text, _)| labelled_navigation(text));
         assert!(!rail, "Labeled navigation at width {width}");
         let vectors: Vec<_> = texts
             .iter()
@@ -1626,7 +1634,7 @@ fn construction_reflows_at_fixed_sizes_and_uses_saved_geometry_after_layout_relo
     for width in [518.0, 524.0, 918.0, 924.0, 640.0] {
         let (rect, texts) = resize_inspector(&mut inspector, vec2(width, 710.0));
         assert!((rect.width() - width).abs() < 1.0);
-        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-workspace-object")));
+        assert!(!texts.iter().any(|(text, _)| labelled_navigation(text)));
         assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-position")));
     }
     let custom = inspector.show(vec![]).0.size();
@@ -1639,7 +1647,7 @@ fn construction_reflows_at_fixed_sizes_and_uses_saved_geometry_after_layout_relo
     }
     let (rect, texts) = reopened.show(vec![]);
     assert!((rect.size() - custom).length() < 1.0, "Restored {rect:?}, saved {custom:?}");
-    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-workspace-object")));
+    assert!(!texts.iter().any(|(text, _)| labelled_navigation(text)));
     assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-position")));
     resize_inspector(&mut reopened, vec2(1000.0, 780.0));
     reopened.screen = vec2(800.0, 600.0);
@@ -2528,26 +2536,9 @@ fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
             for property in 0..5 {
                 let before = values(&inspector, channel);
                 let (_, texts) = inspector.show(vec![]);
-                let (label, width, row) = match property {
-                    0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
-                    2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
-                    _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
-                };
-                let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
-                let mut fields: Vec<_> = texts
-                    .iter()
-                    .filter(|(text, rect)| {
-                        aurora_i18n::parse_number(text).is_some()
-                            && rect.top() > title.bottom()
-                            && rect.top() < title.bottom() + 70.0
-                            && rect.left() >= title.left()
-                            && rect.right() < title.left() + width
-                    })
-                    .collect();
-                fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
-                let point = fields
-                    .get(row)
+                let point = uv_field(&texts, property)
                     .unwrap_or_else(|| panic!("Missing UV field {property}, PBR={pbr}, channel={channel}"))
+                    .1
                     .1
                     .center();
                 drag(&mut inspector, point);
@@ -2981,20 +2972,23 @@ fn uv_field(texts: &[(String, egui::Rect)], property: usize) -> Option<(egui::Re
         2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
         _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
     };
-    let title = texts.iter().find(|(text, _)| text == label)?.1;
-    let mut fields: Vec<_> = texts
-        .iter()
-        .filter(|(text, rect)| {
-            (text == "—" || aurora_i18n::parse_number(text).is_some())
-                && rect.top() > title.bottom()
-                && rect.top() < title.bottom() + 70.0
-                && rect.left() >= title.left()
-                && rect.right() < title.left() + width
-        })
-        .cloned()
-        .collect();
-    fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
-    Some((title, fields.get(row)?.clone()))
+    // the title over the UV fields: in Japanese the transform's Rotation
+    // (回転) reads like the texture's, so the first one is not always it
+    texts.iter().filter(|(text, _)| text == label).find_map(|&(_, title)| {
+        let mut fields: Vec<_> = texts
+            .iter()
+            .filter(|(text, rect)| {
+                (text == "—" || aurora_i18n::parse_number(text).is_some())
+                    && rect.top() > title.bottom()
+                    && rect.top() < title.bottom() + 70.0
+                    && rect.left() >= title.left()
+                    && rect.right() < title.left() + width
+            })
+            .cloned()
+            .collect();
+        fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+        Some((title, fields.get(row)?.clone()))
+    })
 }
 
 /// How a typed UV entry ends in `typed_uv_value_*`.
