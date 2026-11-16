@@ -5177,7 +5177,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
 | `AURORA_DEMO_VEILS=<n>[,<strings>[,<gap cm>]]` | A hall hung with `n` lace curtains, some crossing the others, and glowing strings among them: order and cost of many blended layers |
-| `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
+| `AURORA_DEMO_COPLANAR_DECAL=1`, `mask`, `blend` or `layers` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059); `layers`: three blended faces on it and on one another |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -5452,6 +5452,16 @@ both open states and the selection count. Capture at frame 620.
   change: the blended pass of static faces passes equal depths, as the
   Legacy Viewer's alpha pass (GL_LEQUAL). Grass alone after frame 360
   means the blended face loses the depth test again.
+  `layers`: four faces with the very same triangles, as the layers of a
+  mesh eye: the grass, a blue disc, a smaller black disc and two white
+  dots, the three of them blended. With every `AURORA_BLEND_ORDER` (0, 4
+  and 5) the black disc must be black and the dots white: each blended
+  face lies over the faces before it, as the Legacy Viewer draws blended
+  faces at one distance in the order of the faces (`stacked_layer_rank`,
+  scene/mod.rs). A blue-grey centre and grey dots mean the layers at one
+  depth are mixed again (`AURORA_BLEND_FACE_RANK=0` shows it). The panel
+  is above our avatar: `AURORA_DEMO_POS="60,128"` has only the sky
+  behind it.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture
@@ -11891,6 +11901,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
+| `AURORA_BLEND_FACE_RANK=0` | Blended faces of one object lying on one another without their face order in the exact and stochastic orders, as before |
 | `AURORA_LEGACY_NAN=off` or `check` | Legacy highlights unguarded against a NaN as in 0.9.8, or magenta where the guard caught one |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
@@ -12499,6 +12510,15 @@ What the inventory must show with these scenarios:
   as before #3259. For a tester whose card shows squares on blended leaves
   or streaks in hair: the same place with and without it tells whether the
   glare is the cause.
+- **`AURORA_BLEND_FACE_RANK=0`**: a blended face of an object that is
+  neither rigged nor a HUD takes the layer rank of its face number
+  (`stacked_layer_rank`, scene/mod.rs), so that blended faces given the
+  same triangles (the iris, pupil and highlights of mesh eyes) lie on one
+  another in the order of the faces in every order of transparent
+  surfaces, as the Legacy Viewer draws them. `0` gives them no rank, as
+  before: the exact order mixes such layers and the stochastic order sums
+  them. Compare with `AURORA_DEMO_COPLANAR_DECAL=layers` and
+  `AURORA_BLEND_ORDER=4`, then `5`.
 - **`AURORA_LEGACY_NAN=off|check`**: a legacy material's highlight
   (sun, local lights, projectors) or environment sample that is not a
   finite number gives none, whatever the card's min, max and clamp do with
