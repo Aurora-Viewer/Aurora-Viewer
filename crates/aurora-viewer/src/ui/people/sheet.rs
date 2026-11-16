@@ -15,6 +15,7 @@ use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::widgets::{self, ActionKind};
 use crate::ui::{menu, presence};
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::social::{Friend, rights};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
@@ -104,6 +105,7 @@ pub(super) fn show(
     data: &RadarData,
     st: &mut PeopleUi,
     id: Uuid,
+    scope: NameScope,
     nearby_tab: bool,
     closable: bool,
     actions: &mut Vec<PeopleAction>,
@@ -117,15 +119,24 @@ pub(super) fn show(
     }
     // The head stays put above what scrolls.
     let (top, rest) = split_head(content);
-    let closed = head(&mut child(ui, top, ("people-sheet-head", id)), p, world, data, id, row, closable);
+    let closed = head(
+        &mut child(ui, top, ("people-sheet-head", id)),
+        p,
+        world,
+        data,
+        id,
+        scope,
+        row,
+        closable,
+    );
     egui::ScrollArea::vertical()
         .id_salt(("people-sheet-scroll", id))
         .auto_shrink([false, false])
         .show(&mut child(ui, rest, ("people-sheet-body", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            buttons(ui, p, world, st, id, friend.as_ref(), actions);
+            buttons(ui, p, world, st, id, scope, friend.as_ref(), actions);
             if let Some(f) = &friend {
-                let name = world.social.display_name_of(&id);
+                let name = world.social.display_name_in(scope, &id);
                 ui.add_space(12.0);
                 granted(ui, p, f, &name, actions);
                 ui.add_space(10.0);
@@ -158,13 +169,23 @@ pub(super) fn show(
 }
 
 /// The picture with its status dot, the names, and the cross.
-fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uuid, row: Option<&Row>, closable: bool) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn head(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    data: &RadarData,
+    id: Uuid,
+    scope: NameScope,
+    row: Option<&Row>,
+    closable: bool,
+) -> bool {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
     let names = &world.social.avatar_names;
-    let display = world.social.display_name_of(&id);
+    let display = world.social.display_name_in(scope, &id);
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 20.0, rect.center().y), Vec2::splat(40.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&id), &display, row.is_some_and(|r| r.muted));
-    let status = presence::of(world, &id);
+    let status = presence::of_in(world, scope, &id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
     }
@@ -185,7 +206,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     let width = (right - left).max(20.0);
     // "Legacy Name · account name" under the display name: who they are
     // whatever the name preferences
-    let sub = names.get(&id).map(|n| {
+    let sub = names.get_in(scope, &id).map(|n| {
         let legacy = crate::world::social::format_name(&n.legacy_first, &n.legacy_last);
         if n.is_default || legacy.is_empty() {
             n.username.clone()
@@ -231,6 +252,7 @@ fn buttons(
     world: &World,
     st: &mut PeopleUi,
     id: Uuid,
+    scope: NameScope,
     friend: Option<&Friend>,
     actions: &mut Vec<PeopleAction>,
 ) {
@@ -264,7 +286,10 @@ fn buttons(
             context::request(ui.ctx(), CtxAction::Call(id));
         }
         if widgets::action_button(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), ActionKind::Flat, size).clicked() {
-            actions.push(PeopleAction::Profile(id));
+            actions.push(match scope {
+                NameScope::Roster => PeopleAction::RosterProfile(id),
+                _ => PeopleAction::Profile(id),
+            });
         }
         let tp = widgets::action_button_if(
             ui,
@@ -273,7 +298,8 @@ fn buttons(
             aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
             ActionKind::Flat,
             size,
-            online && !own,
+            // LLInspectAvatar::enableTeleportOffer (LLAvatarActions::canOfferTeleport)
+            online && !own && world.rlva_can_offer_teleport(id),
         );
         if tp.clicked() {
             actions.push(PeopleAction::OfferTeleport(id));
@@ -282,7 +308,10 @@ fn buttons(
             .on_hover_text(aurora_i18n::tr!("ui-chat-more"));
         let kind = if friend.is_some() { AvatarList::Friend } else { AvatarList::Nearby };
         let open = menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            context::avatar_list_menu(ui, p, world, id, kind);
+            match scope {
+                NameScope::Roster => context::avatar_roster_menu(ui, p, world, id, kind),
+                _ => context::avatar_list_menu(ui, p, world, id, kind),
+            }
             if !own {
                 // the contact sets' last button (FSPanelContactSets)
                 menu::separator(ui, p);
@@ -574,11 +603,23 @@ fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, friend: Optio
     ui.spacing_mut().item_spacing.x = 5.0;
     let size = Vec2::new(0.0, BUTTON_H);
     // a friend who lets us see them on the map can be shown there from afar
-    let mappable = world.can_locate_avatar(id);
+    let mappable = world.can_locate_avatar(id) && context::can_show_on_map(world);
     if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
-    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, size).clicked() {
+    // LLInspectAvatar::enablePay
+    let payable = context::can_pay_resident(world);
+    if widgets::action_button_if(
+        ui,
+        p,
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        ActionKind::Flat,
+        size,
+        payable,
+    )
+    .clicked()
+    {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     if friend.is_some() {
@@ -676,6 +717,7 @@ mod tests {
             settings: &mut settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
@@ -683,7 +725,7 @@ mod tests {
         let mut actions = Vec::new();
         for height in [220.0, 300.0, 380.0] {
             let (bar, crossing) = scroll_bar_crossings(height, |ui| {
-                show(ui, &p, &world, &data, &mut st, friend, false, true, &mut actions);
+                show(ui, &p, &world, &data, &mut st, friend, NameScope::Roster, false, true, &mut actions);
             });
             assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
             assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");

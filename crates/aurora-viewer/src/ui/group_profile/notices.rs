@@ -94,6 +94,7 @@ pub fn sender(from: &str) -> &str {
 /// the attachment, the date. Shared with the Home tab.
 pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, selected: bool, icon: bool, now: i64) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -201,7 +202,13 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         ui.spacing_mut().item_spacing.x = 5.0;
         let send = v.can(powers::NOTICES_SEND);
         let w = ui.available_width() - if send { 150.0 } else { 40.0 };
-        widgets::search_field(ui, &mut st.notices.search, aurora_i18n::tr!("ui-group-notices-search"), w.max(80.0));
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.notices.search,
+            aurora_i18n::tr!("ui-group-notices-search"),
+            w.max(80.0),
+        );
         if send
             && widgets::action_button(
                 ui,

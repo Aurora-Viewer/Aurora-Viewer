@@ -85,7 +85,7 @@ fn exception_source(world: &World, option: &str, want_groups: &mut Vec<Uuid>) ->
         return world.rlva_filter_text(&item.name).into_owned();
     }
     if !world.rlva_can_name(id) {
-        return crate::world::rlva::privacy::anonymous(id).display_name.clone();
+        return world.rlva_anonymous(id).display_name.clone();
     }
     if let Some(name) = world.social.avatar_names.complete(&id).or_else(|| world.avatar_name(&id)) {
         return name;
@@ -255,16 +255,14 @@ impl Tools {
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
                     .show(&mut list, |ui| {
+                        let ids = std::cell::OnceCell::new();
                         for entry in &world.rlva.diagnostics.entries {
                             let color = if entry.outcome == Outcome::Rejected { p.danger } else { p.ink };
+                            let text = entry.shown(|| ids.get_or_init(|| AssetIds::per_frame(world)));
                             ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!("{} {}", status(entry.outcome), entry.text))
-                                        .monospace()
-                                        .color(color),
-                                )
-                                .selectable(true)
-                                .wrap(),
+                                egui::Label::new(RichText::new(format!("{} {text}", status(entry.outcome))).monospace().color(color))
+                                    .selectable(true)
+                                    .wrap(),
                             )
                             .on_hover_text(source_name(world, entry.source));
                         }
@@ -307,11 +305,9 @@ impl Tools {
                     }
                 });
             } else {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text(tr!("rlva-tools-filter"))
-                        .desired_width(f32::INFINITY),
-                );
+                crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                    edit.hint_text(tr!("rlva-tools-filter")).desired_width(f32::INFINITY)
+                });
                 let filter = self.filter.to_lowercase();
                 let mut rows = match self.tab {
                     Tab::Exceptions => exception_rows(world, &mut actions.want_groups),

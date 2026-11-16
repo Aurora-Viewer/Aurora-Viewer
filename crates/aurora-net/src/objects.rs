@@ -678,6 +678,42 @@ mod tests {
     }
 
     #[test]
+    fn compressed_flexible_path_keeps_its_extra_params() {
+        use aurora_prim::params::*;
+
+        let flexible = aurora_prim::extra::FlexibleParams {
+            softness: 2,
+            tension: 0.7,
+            air_friction: 0.5,
+            gravity: -0.3,
+            wind_sensitivity: 0.8,
+            user_force: glam::Vec3::new(0.1, 0.2, 0.3),
+        };
+        let payload = aurora_prim::extra::pack_flexible(&flexible);
+        let mut data = vec![0; 84];
+        data[20] = LL_PCODE_VOLUME;
+        data.push(1); // one extra parameter
+        data.extend_from_slice(&aurora_prim::extra::PARAMS_FLEXIBLE.to_le_bytes());
+        data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        data.extend_from_slice(&payload);
+        let mut shape = [0; 23];
+        shape[0] = LL_PCODE_PATH_FLEXIBLE;
+        shape[16] = LL_PCODE_PROFILE_CIRCLE;
+        data.extend_from_slice(&shape);
+        data.extend_from_slice(&0u32.to_le_bytes()); // empty texture entry
+
+        let update = parse_compressed(&data, 0).expect("compressed flexible object");
+        assert_eq!(update.volume.path.curve_type, LL_PCODE_PATH_FLEXIBLE);
+        let decoded = update.extra.flexible.expect("flexible parameters");
+        assert_eq!(decoded.softness, flexible.softness);
+        assert!((decoded.tension - flexible.tension).abs() < 1e-6);
+        assert!((decoded.air_friction - flexible.air_friction).abs() < 1e-6);
+        assert!((decoded.gravity - flexible.gravity).abs() < 1e-5);
+        assert!((decoded.wind_sensitivity - flexible.wind_sensitivity).abs() < 1e-6);
+        assert!(decoded.user_force.abs_diff_eq(flexible.user_force, 1e-6));
+    }
+
+    #[test]
     fn compressed_extended_particles_follow_texture_animation() {
         use aurora_prim::particles::*;
         let mut legacy = [0; PS_LEGACY_DATA_BLOCK_SIZE];

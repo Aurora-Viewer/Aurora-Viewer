@@ -98,7 +98,13 @@ What each part tells the one who fixes it:
   the driver reset the card; a real hang on an RTX 5070 Ti was declared
   1.1 s after), a fault the driver found in a frame's work (the loss within
   0.1 s of the submission, or after the frame ended), or undecided between
-  the two. Frame numbers and ages only.
+  the two. Frame numbers and ages only. It describes the loss that began
+  the end of the session: the first of the last losses less than five
+  minutes apart, not a recovery's new device lost after it.
+- **GPU work at the later losses**: when the viewer recovered (or tried
+  to) and the card was lost again, each later loss in the same words,
+  numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
+  there is a recovery whose new device was lost before its first frame.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came
@@ -137,7 +143,11 @@ What each part tells the one who fixes it:
   Meta, Virtual Desktop, Monado, Windows Mixed Reality or other), and
   whether it created the Vulkan device. Only shown when one was loaded.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, texture memory pressure,
+  preset, memory, video memory used / budget, the tightest video memory
+  headroom of the last 60 seconds (the driver's budget less what it
+  counted for the viewer, in MB, negative while the viewer was past its
+  budget: a card shared with another program, where the driver moves
+  memory out and the frames slow down together), texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
   when the graphics card is lost. It also tells the cause of a GPU loss
@@ -198,6 +208,22 @@ inlined functions included, to functions and source lines. It then:
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
   sets the Bug type;
 - adds the `crash-triaged` label to the issue it signed.
+
+A GPU loss (`GPU device lost`, `GPU device lost at startup`) or an
+`Unexpected shutdown` is signed differently, since its stack shows the
+driver or the last state seen, not the cause. Its signature is the card
+family from the GPU row (`NVIDIA RTX 30`, `AMD RX 9000`, `AMD integrated`,
+`Intel Arc`, `Apple M2`, with ` laptop` for a laptop chip) and the system
+(Windows, macOS, Linux). A GPU loss adds the work the card had in hand
+(`hang`, `fault`, `at startup`, from the "GPU work at the loss" row). An
+unexpected shutdown adds how it ended (system restarted, viewer and
+watcher stopped together, ended from outside, or the exit code) and the
+window (never shown, not answering, answering). The version, the driver
+and the model inside the family stay out, so the reports of one group
+land on one issue, renamed for example
+`Crash: GPU device lost, NVIDIA RTX 30, hang (Windows)`. The comment of
+each duplicate on it also gives its risk factors (the settings that were
+on), so what tells the reports of a group apart stays visible.
 
 The signature lives in a hidden comment, the last line of the triage
 section. An open issue is a reference only when it carries the
