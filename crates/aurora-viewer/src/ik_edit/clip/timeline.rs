@@ -22,6 +22,10 @@ const LANE_PAD: f32 = 7.0;
 const KEY_GRAB: f32 = 8.0;
 /// Half the diagonal of a key's diamond.
 const KEY_HALF: f32 = 4.5;
+/// How close to the playhead line a press grabs the playhead rather than a
+/// key under it: on a clip keyed at every frame, every point of a lane is
+/// on a key.
+const PLAYHEAD_GRAB: f32 = 5.0;
 /// Labelled ruler ticks stay at least this many points apart.
 const LABEL_SPACING: f32 = 60.0;
 /// Frames between labelled ruler ticks, from the closest zoom out.
@@ -263,6 +267,11 @@ impl FrameScale {
 /// only on its diamond (or its own frame) when the frames are packed tighter:
 /// with keys a few frames apart the full reach covered the whole lane, and a
 /// click between two keys could only send the playhead to one of them.
+/// Whether a press at `x` grabs the playhead drawn at `cursor`.
+pub(super) fn on_playhead(scale: &FrameScale, cursor: f64, x: f32) -> bool {
+    (scale.x(cursor) - x).abs() <= PLAYHEAD_GRAB
+}
+
 pub(super) fn key_under(keys: &[u32], scale: &FrameScale, x: f32) -> Option<u32> {
     let grab = KEY_GRAB.min(KEY_HALF.max(scale.points_per_frame() * 0.5));
     let visible = &keys[keys.partition_point(|key| *key < scale.start)..keys.partition_point(|key| *key <= scale.end)];
@@ -1482,17 +1491,25 @@ impl Editor {
             egui::Sense::click_and_drag(),
         );
         let grabbing = self.clip.drag_key.is_some_and(|(dragged, _, _)| dragged == bone);
+        // the playhead line takes a press before the keys: a clip keyed at
+        // every frame leaves no room between them to drag it
+        let cursor = self.clip.cursor;
         let hovered_key = if grabbing {
             None
         } else {
-            response.hover_pos().and_then(|pointer| key_under(&track.keys, &scale, pointer.x))
+            response
+                .hover_pos()
+                .filter(|pointer| !on_playhead(&scale, cursor, pointer.x))
+                .and_then(|pointer| key_under(&track.keys, &scale, pointer.x))
         };
         let modifiers = ui.input(|input| input.modifiers);
         if response.drag_started() && !self.clip.key_box_armed {
             // the key under the press, not under the pointer once the drag
             // threshold is passed
             let origin = ui.input(|input| input.pointer.press_origin()).or(response.interact_pointer_pos());
-            let key = origin.and_then(|pointer| key_under(&track.keys, &scale, pointer.x));
+            let key = origin
+                .filter(|pointer| !on_playhead(&scale, cursor, pointer.x))
+                .and_then(|pointer| key_under(&track.keys, &scale, pointer.x));
             self.clip.drag_key = key.map(|key| (bone, key, key));
             if let Some(key) = key {
                 // the playhead stays where it is: following the grabbed key
@@ -1546,6 +1563,8 @@ impl Editor {
         } else if let Some(key) = hovered_key {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             response.on_hover_text(aurora_i18n::tr!("anim-edit-keyframe-at", frame = key));
+        } else if response.hover_pos().is_some_and(|pointer| on_playhead(&scale, cursor, pointer.x)) {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         let person_b = self.clip.couple.as_ref().is_some_and(|couple| couple.editing_b);
         let painter = ui.painter();

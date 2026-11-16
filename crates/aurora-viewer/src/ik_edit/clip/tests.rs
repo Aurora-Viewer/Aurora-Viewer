@@ -779,6 +779,10 @@ fn ruler_and_lanes_share_one_frame_scale() {
     assert_eq!(packed.points_per_frame(), 2.5);
     assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 112.0), None, "frame 2");
     assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 111.0), Some(0), "on the diamond");
+    // the playhead line takes a press before a key under it
+    assert!(timeline::on_playhead(&scale, 10.0, 211.0));
+    assert!(timeline::on_playhead(&scale, 12.5, 228.0), "between frames while playing");
+    assert!(!timeline::on_playhead(&scale, 10.0, 213.0));
 }
 
 #[test]
