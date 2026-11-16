@@ -432,6 +432,31 @@ mod wayland {
         }
     }
 
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Text {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_seat::WlSeat, ()> for Text {
+        fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    }
+
+    impl Dispatch<wl_keyboard::WlKeyboard, ()> for Text {
+        fn event(text: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+            // the keymap's own fd closes with the event
+            if let Some(buf) = keymap_file(event).and_then(KeymapFile::read) {
+                text.0 = Some(buf);
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -463,31 +488,6 @@ mod wayland {
             assert!(heard.layouts.is_empty(), "the stale keymap was discarded");
             assert!(heard.pending.is_none());
             assert!(heard.parsing.take().expect("new parse").recv().expect("worker reply").is_none());
-        }
-    }
-
-    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Text {
-        fn event(
-            _: &mut Self,
-            _: &wl_registry::WlRegistry,
-            _: wl_registry::Event,
-            _: &GlobalListContents,
-            _: &Connection,
-            _: &QueueHandle<Self>,
-        ) {
-        }
-    }
-
-    impl Dispatch<wl_seat::WlSeat, ()> for Text {
-        fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-    }
-
-    impl Dispatch<wl_keyboard::WlKeyboard, ()> for Text {
-        fn event(text: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-            // the keymap's own fd closes with the event
-            if let Some(buf) = keymap_file(event).and_then(KeymapFile::read) {
-                text.0 = Some(buf);
-            }
         }
     }
 }
