@@ -71,9 +71,10 @@ pub fn submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid]) {
 
 /// The ring of a marked resident around their picture in a People list:
 /// `round` for Aurora's discs, the theme's corners for the Legacy table's
-/// squares. Nothing for a resident without a mark.
+/// squares. Nothing for a resident without a mark, nor for one whose name
+/// RLVa hides (`World::rlva_shown_mark`).
 pub fn ring(ui: &egui::Ui, world: &World, id: &Uuid, picture: Rect, round: bool) {
-    let Some(rgb) = world.avatar_marks.get(id) else {
+    let Some(rgb) = world.rlva_shown_mark(id) else {
         return;
     };
     let stroke = Stroke::new(RING, color(rgb));

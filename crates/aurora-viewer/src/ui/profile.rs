@@ -22,6 +22,7 @@ use super::web_view::WebView;
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::profiles::{self, Online};
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::profile::location_text;
@@ -165,6 +166,12 @@ struct Publish {
 
 struct Window {
     id: Uuid,
+    /// Where the profile was asked from, for RLVa's `@shownames`: opened
+    /// from a list of people known besides the world (`NameScope::Roster`)
+    /// it names its resident as that list does, the Legacy Viewer's profile
+    /// having no test of its own (LLPanelProfileSecondLife); opened from the
+    /// world it stays closed to a hidden name.
+    scope: NameScope,
     open: bool,
     tab: usize,
     about: Edit,
@@ -215,6 +222,7 @@ impl Window {
     fn new(id: Uuid) -> Window {
         Window {
             id,
+            scope: NameScope::World,
             open: true,
             tab: TAB_SL,
             about: Edit::default(),
@@ -356,20 +364,40 @@ impl ProfileUi {
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {
-        if id.is_nil() || !world.rlva_can_name(id) {
+        self.open_in(world, NameScope::World, id);
+    }
+
+    /// `open` from a place that shows names in `scope`: nothing opens from
+    /// a name that place hides (the Legacy Viewer disables the entry or
+    /// links an `rlvanonym` name, RlvActions::canShowName).
+    pub fn open_in(&mut self, world: &mut World, scope: NameScope, id: Uuid) {
+        if id.is_nil() || !world.rlva_shows_name(scope, id) {
             return;
         }
         world.profiles.refresh(id);
         world.social.want_name(id);
         match self.windows.iter_mut().find(|w| w.id == id) {
             Some(w) => {
+                if scope == NameScope::Roster {
+                    w.scope = scope;
+                }
                 w.open = true;
                 w.raise = true;
                 w.asked.clear();
                 w.classifieds_asked = false;
             }
-            None => self.windows.push(Window::new(id)),
+            None => {
+                let mut window = Window::new(id);
+                window.scope = scope;
+                self.windows.push(window);
+            }
         }
+    }
+
+    /// The windows open and the place each one names its resident from.
+    #[cfg(test)]
+    pub(crate) fn opened(&self) -> Vec<(Uuid, NameScope)> {
+        self.windows.iter().filter(|w| w.open).map(|w| (w.id, w.scope)).collect()
     }
 
     /// The toolbar's Profile (Avatar.ToggleMyProfile, llviewermenu.cpp): our
@@ -520,7 +548,7 @@ impl ProfileUi {
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
-            if !world.rlva_can_name(w.id) {
+            if !world.rlva_shows_name(w.scope, w.id) {
                 continue;
             }
             if !classic {
@@ -575,7 +603,7 @@ impl ProfileUi {
             if std::mem::take(&mut w.raise) {
                 widgets::expand_floater(ctx, &win_id);
             }
-            let name = world.social.name_of(&w.id);
+            let name = world.social.name_in(w.scope, &w.id);
             world.social.avatar_names.want(&w.id);
             // floater_profile.xml: 485 x 510 (480 x 510 at least), centered
             let size = Vec2::new(540.0, 650.0);
@@ -759,7 +787,7 @@ fn photo_window(
     window: &mut Window,
 ) {
     let Some(photo) = &mut window.photo else { return };
-    let name = aurora::display_name(world, &window.id);
+    let name = aurora::display_name(world, window.scope, &window.id);
     let caption = match photo.slot {
         PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
         PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
@@ -1128,7 +1156,7 @@ fn second_life_tab(
                     .truncate(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    copy_menu(ui, p, world, id);
+                    copy_menu(ui, p, world, w.scope, id);
                     crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &id), 9.5);
                 });
             });
@@ -1169,7 +1197,7 @@ fn second_life_tab(
             }
         }
     });
-    let appearance = world.contact_sets.appearance(&id);
+    let appearance = world.rlva_contact_appearance(&id);
     if !appearance.icons.is_empty() {
         ui.horizontal_wrapped(|ui| {
             for badge in &appearance.icons {
@@ -1477,22 +1505,33 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.vertical(|ui| {
+            // LLPanelProfileSecondLife::updateButtons: no map under
+            // @showworldmap, no teleport offer that @showloc forbids
             if ui
                 .add_enabled(
-                    world.can_locate_avatar(id),
+                    world.can_locate_avatar(id) && super::context::can_show_on_map(world),
                     egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
                 )
                 .clicked()
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
+            if ui
+                .add_enabled(
+                    super::context::can_pay_resident(world),
+                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
+                )
+                .clicked()
+            {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
         ui.vertical(|ui| {
             if ui
-                .add(egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size))
+                .add_enabled(
+                    world.rlva_can_offer_teleport(id),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-offer-teleport")).min_size(size),
+                )
                 .clicked()
             {
                 actions.push(ProfileAction::OfferTeleport(id));
@@ -1528,19 +1567,30 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
                 {
                     actions.push(ProfileAction::ToggleBlock(id));
                 }
-                overflow_menu(ui, p, world, id, blocked, actions);
+                overflow_menu(ui, p, world, w.scope, id, blocked, actions);
             });
         });
     });
 }
 
 /// menu_fs_profile_overflow.xml.
-fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
+fn overflow_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    scope: NameScope,
+    id: Uuid,
+    blocked: bool,
+    actions: &mut Vec<ProfileAction>,
+) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
+        // LLPanelProfileSecondLife::onEnableMenu ("can_show_on_map")
+        let mappable = world.can_locate_avatar(id) && super::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        let payable = super::context::can_pay_resident(world);
+        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), payable) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
@@ -1572,7 +1622,7 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
-            ui.ctx().copy_text(world.social.name_of(&id));
+            ui.ctx().copy_text(world.social.name_in(scope, &id));
         }
         if menu::item(ui, p, "link-filled", aurora_i18n::tr!("ui-profile-copy-uri")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
@@ -1593,9 +1643,9 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
 }
 
 /// menu_fs_profile_name_field.xml (copy menu inside the name field).
-fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
+fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, scope: NameScope, id: Uuid) {
     let names = &world.social.avatar_names;
-    let display = names.get(&id).map(|n| n.display(&names.options));
+    let display = names.get_in(scope, &id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
     widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
         let display_name = aurora_i18n::tr!("ui-profile-copy-display-name");
@@ -1670,7 +1720,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
         );
         return;
     };
-    let Some(username) = web_username(c.world, &w.id) else {
+    let Some(username) = web_username(c.world, w.scope, &w.id) else {
         loading(ui, c.p);
         return;
     };
@@ -1688,9 +1738,9 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, id: &Uuid) -> Option<String> {
+fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
-    if let Some(u) = names.get(id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
+    if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
     }
     world.legacy_name(id).map(|n| {

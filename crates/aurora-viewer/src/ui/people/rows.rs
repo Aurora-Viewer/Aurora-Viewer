@@ -8,6 +8,7 @@ use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, presence, widgets};
 use crate::world::World;
+use crate::world::names::NameScope;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -73,6 +74,7 @@ pub(super) fn picture(
     ui: &egui::Ui,
     p: &Palette,
     world: &World,
+    scope: NameScope,
     rect: Rect,
     pic: Option<&egui::TextureHandle>,
     id: Uuid,
@@ -81,7 +83,7 @@ pub(super) fn picture(
 ) -> f32 {
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, rect.center().y), Vec2::splat(30.0));
     widgets::avatar_disc(ui, p, disc, pic, name, dim);
-    let status = presence::of(world, &id);
+    let status = presence::of_in(world, scope, &id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
     }

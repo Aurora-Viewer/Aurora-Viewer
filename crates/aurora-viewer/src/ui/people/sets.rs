@@ -27,6 +27,7 @@ use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::contact_sets::{self, ContactSets};
+use crate::world::names::NameScope;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -143,7 +144,7 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
     ui.add_space(4.0);
     let filter = st.filter.trim().to_lowercase();
     let mut ids = all.ids.clone();
-    ids.retain(|id| super::matches_name(world, id, &rows::display_name(world, id), &filter));
+    ids.retain(|id| super::matches_name(world, NameScope::World, id, &rows::display_name(world, id), &filter));
     let online = online_friends(world);
     if st.sets_online_only {
         ids.retain(|id| online.contains(id));
@@ -370,7 +371,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
+    let left = rows::picture(ui, p, world, NameScope::World, rect, data.pics.get(&id), id, name, false);
     let mutable = !ContactSets::is_internal(set);
     // under the pointer: take out, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
@@ -528,7 +529,7 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
     card.painter().rect_filled(rect, radius, p.raised);
     card.painter()
         .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-    let left = rows::picture(&card, p, world, rect, data.pics.get(&id), id, &name, false);
+    let left = rows::picture(&card, p, world, NameScope::World, rect, data.pics.get(&id), id, &name, false);
     let color = crate::ui::colors::resident_name(world, &id, p.ink);
     member_names(
         &card,

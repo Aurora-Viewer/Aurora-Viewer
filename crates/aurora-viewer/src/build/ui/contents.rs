@@ -350,8 +350,13 @@ fn item_row(
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7 || preview;
-            let no_open = if can_open {
+            // LLTaskInvFVBridge::buildContextMenu: the scripts and notecards
+            // of an attachment that cannot be taken off stay closed.
+            let closed = (script || item.asset_type == 7) && world.rlva_locked_attachment(idx);
+            let can_open = (script || item.asset_type == 7 || preview) && !closed;
+            let no_open = if closed {
+                aurora_i18n::tr!("rlva-blocked")
+            } else if can_open {
                 ""
             } else {
                 aurora_i18n::tr!("build-ui-contents-opening-items-inside-an-object-is-not-available-yet")

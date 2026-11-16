@@ -122,6 +122,7 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
@@ -134,6 +135,7 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
 pub mod stand_fly;
 pub mod stream_title;
@@ -170,6 +172,8 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Favorite Wearables window (`ui/appearance/wearable_favorites.rs`).
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -268,6 +272,7 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,

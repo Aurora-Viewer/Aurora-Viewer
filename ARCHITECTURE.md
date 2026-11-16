@@ -1601,6 +1601,11 @@ mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
 Disabling cancels its work; already-sent inventory replies still update the
 ordinary inventory model without restarting the naming workflow.
+`rlva/interaction.rs` answers whether an object may be interacted with at a
+hovered point (@interact, @fartouch). The world's cursor, hover tips and
+one-click actions ask it, with the touch, sit and buy rules of the send
+boundary (`app/object_actions.rs`, `hover_tips.rs`), so that the interface
+does not offer what the boundary would refuse.
 `rlva/wear_locks.rs` snapshots what the locks leave of wearing (add, replace)
 and taking off, by item, point, layer and folder, for the inventory menus
 and buttons (`Facts::rlva`), which see the inventory but not the world; its
@@ -1660,6 +1665,45 @@ watchdog once the actual point is known. Experimental command discovery and
 acceptance share one catalogue; already-active restrictions remain removable.
 [RLVa validation status](docs/RLVA.md) lists the implemented families and the
 human grid checks required before publication.
+
+`world/rlva/boundary.rs` is the RLVa send boundary: `World::rlva_send_boundary`
+reduces an outgoing command to what the restrictions leave of it and says
+whether it leaves, is dropped or is refused, and `rlva_note_sent` records what
+RLVa remembers of a command that left. `App::send_from` calls both for every
+command, whoever asks.
+
+`world/rlva_selftest.rs` is the RLVa self-test, the Dev Toolbox tool T1 of
+development builds (`available`: any build profile but `release`). The human
+starts it, logged in, from the tool then its confirmation dialog
+(`Runner::request`, `Runner::confirm`); the only other start is
+`AURORA_DEMO_RLVA=selftest` in demo mode. The runner is owned by `App` beside
+the bridge and stepped each frame (`app/rlva_selftest.rs`). It sends nothing
+itself: it queues `Out`s that the application passes to the same `send` path
+as the interface, so that the real boundary is what is tested, and it reads
+the boundary's answer (`Runner::boundary`), RLVa's replies (`Runner::reply`)
+and the world. `rlva_selftest/factory.rs` prepares the test's inventory
+(`#RLV/~AuroraSelfTest`, copies of the Library object, one link) and its
+worn relays, found again by exact name, place and owner before anything is
+created, never renamed, moved or deleted; the Library search, the attach
+request and the script calls are shared with the bridge
+(`world/bridge/factory.rs`). The relay script `world/bridge/selftest_relay.lsl`
+repeats with `llOwnerSay` what its owner says on a private negative channel
+(`bridge::private_channel`); without a script engine (demo mode, unit tests)
+the same text is delivered as the owner-say of the worn test object.
+`rlva_selftest/guard.rs` is the one gate of what a case or the cleanup may
+send: commands that name the test's own items or, in phase 2, the prims the
+run rezzed itself and still owns; what changes an object passes only as a
+probe that the boundary refuses. `rlva_selftest/cases.rs` holds the phase 1 cases
+(rules checked at the boundary, replies, wear round trips),
+`rlva_selftest/cases_world.rs` the in-world ones of phase 2 (rez, edit,
+touch, sit, fly on its own prims), chosen apart in the dialog. Whatever ends
+a run (failure, timeout, Stop, RLVa switched off, a teleport, a logout), the
+cleanup releases the restrictions, stands up, lands, removes the run's prims
+and takes its objects off, from the world's state alone.
+`rlva_selftest/report.rs` is the report (one `PASS` / `FAIL` / `SKIPPED` /
+`KNOWN` line per case, no id in it), shown by `ui/rlva_selftest.rs` and logged
+with the prefix `rlva-selftest:`. `rlva_selftest/sim.rs` answers the test's
+commands offline with the demo's own building blocks.
 
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),
@@ -3015,6 +3059,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `graphics_presets.rs` | The five graphics levels of Preferences › Graphics (the quality settings each one writes, from the Legacy Viewer's featuretable; the level whose settings match, or none: "Custom") |
 | `ui/options.rs`, `ui/options/cx.rs`, `ui/options/pages.rs`, `ui/options/pages/` | The preferences window: a sidebar of pages in sections (Aurora, the modified settings, World and rendering, Communication, Interface, Controls, System) with the search of every setting at its top, the page's tabs, its rows in two columns, the footer (reset everything, reset the page with an Undo, Close). `cx.rs` is the engine of the rows: one declaration per setting (`Cx::row`, `toggle`, `slider`, `combo`, `choice`…, with the settings it edits as `field!` paths) draws it, marks it when it differs from its default (a dot that resets it), finds it for the search (words starting the name, help or choices, accents folded), lists it among the modified settings, counts it for the sidebar and resets it with its page; `subs` puts rows behind the cog of the row before; `borrow` draws, on another page, the rows of a page that edit given settings (only drawn there: the search, the counts and the resets keep them on their page), which Accessibility uses to gather the settings that help to see, read and hear. `ui/options/scale.rs` shares physical gesture references between interface zoom and text resizing, retaining each setting's limits, mapping and units; numeric entry commits before applying the resize. Numeric fields reserve a font- and locale-aware slot shared by their display and text editor; named levels and volume percentages reserve their longest label so changing values does not move the slider rails. `pages/` holds one module per page; a test checks that every setting of the former pages still has a row, and that a setting has one page |
 | `ui_sound.rs` | Catalogue of the interface sounds (Firestorm's UISnd*), per-sound settings |
+| `oiia/`, `app/spinning_cat.rs`, `scene/spinning_cat.rs`, `ui/spinning_cat.rs` | The spinning cat, an easter egg of Aurora's own behind a key sequence, local to this viewer. `oiia/konami.rs` watches the keys without taking them; `oiia/mod.rs` holds the warning, the show and its clock; `oiia/show.rs` turns a moment of the music into the cat's pose, the circle and the look of the view (a look of its own per phrase of a drop; it flashes on purpose, behind its warning, and its tests hold the calm show of the Reduce motion setting to no flash at all); `oiia/video.rs` is the cue sheet of the video the music plays from (YouTube's player in the video window of `ui/chat/previews.rs`, which reports where the video is through `link_preview::video_time`; the viewer holds none of the music, and there is no show without the video); `scene/spinning_cat.rs` draws the cat (a bundled glTF, its morph blended on the CPU), the cats circling it and the circle on the ground; `ui/spinning_cat.rs` the warning and the Stop button |
 | `keywords.rs` | Keyword alerts in chat and IMs (#674, the Legacy Viewer's FSKeywords): the settings of Preferences › Chat › Keyword alerts and the matcher installed process-wide (`set`); the world asks `matches` when a line arrives (`World::keyword_alert` in `world/attention.rs`: sound and system notification), the chat asks `ui/colors.rs::keyword_color` when it draws one |
 | `spelling.rs`, `spelling/words.rs`, `spelling/dictionaries.rs`, `spelling/tests.rs`, `assets/dictionaries/` | Spell checking (#675, the Legacy Viewer's LLSpellChecker, SpellCheck / SpellCheckDictionary): `SpellSettings` (on, main dictionary, extra ones), the ten bundled Hunspell dictionaries and the Second Life glossary (gzipped into the exe by build.rs), imported ones and the user's added / ignored words in `<config>/dictionaries` (Legacy file names). spellbook (pure-Rust Hunspell) dictionaries are built and the suggestions computed on one `aurora-spelling` thread; the fields check their words on the interface thread through a per-word verdict cache (`misspelled`), the suggestions prepared as soon as a word is marked. `words.rs` is the Legacy word scan (3 characters or more, contractions), without digits, `_` or addresses. |
 | `autoreplace.rs`, `autoreplace/tests.rs`, `assets/autoreplace.xml` | Auto-replace (#675, LLAutoReplace / LLAutoReplaceSettings, AutoReplace): the lists in their order in `<config>/autoreplace.xml` (Legacy LLSD format; the bundled Abbreviations and Spelling Corrections until changed), read and saved on threads; `after_space` replaces the keyword before a typed space; single lists import and export in the Legacy format. |
@@ -3030,6 +3075,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `world/outfit.rs`, `aurora-net/src/session/attach_queue.rs`, `demo_outfit_restore.rs` | Outfit restore at login (LLAppearanceMgr::updateAppearanceFromCOF): COF and items fetched, the region's own restore waited for until it is quiet, the other objects requested, those the region takes off asked for again with their COF link kept, no COF link removed by an unrequested detach before the COF is read (mAttachmentInvLinkEnabled), one retry at 30 s; objects a COF change links before their items are known worn once fetched; attachment requests leave one at a time, a limited number waiting for their object (eight at first, more as objects arrive, half after a simulator refusal, which also pauses the queue) (LLAttachmentsMgr::requestAttachments); `AURORA_DEMO_OUTFIT_RESTORE` |
 | `ui/appearance/json.rs`, `world/outfit_backup.rs` | Outfit backup to JSON (#2115): Export to JSON and Import from JSON in the Appearance gear menu; native file dialogs, bounded reads, parsing and atomic writes on a worker; versioned recipe of inventory references (item UUIDs, clothing layer order in the link descriptions cut to the server's 127 bytes, gestures, attachment points), no asset copies; import confirmation with an editable name, missing originals fetched then listed, partial import only on an explicit choice, an empty or fully unavailable backup refused; the new outfit is created and worn through `appearance::Action::ImportJson`, keeping the current body parts the backup lacks |
 | `ui/appearance/layers.rs` | Worn clothing layers in the outfit editor: listed furthest from the body first within each wearable type, arrows hidden past either end, and the drag of a layer within its type to a new place (insertion marker, edge scrolling), sent as `Action::PlaceLayer` and written in the COF links' `@<type * 100 + index>` descriptions |
+| `ui/appearance/wearable_favorites.rs`, `world/wearable_favorites.rs`, `app/wearable_favorites.rs` | Favorite Wearables (FSFloaterWearableFavorites): `#Aurora/#Wearable Favorites`, created once while the window is open, holds links to wearables and attachments and subfolders; the window picks All Favorites (each original once) or a subfolder, New / Rename / Delete folder, filter (worn tag included), sort by name / most recent / type (FSWearableFavoritesSortOrder, saved), Remove, links what is dropped from the inventory, wears or takes off on a double click, and shares the outfit rows' menu with Assign to Folder; every change is an ordinary inventory mutation or outfit action; AURORA_DEMO_WEARABLE_FAVORITES |
 | `ui/appearance/selection.rs` | Shared gallery/list outfit selection in display order: Ctrl/Cmd toggles, Shift ranges, stable UUID anchors, right-click preservation and pruning of hidden or deleted outfits |
 | `ui/appearance/clipboard.rs`, `world/outfit_paste.rs` | Ctrl+C / Ctrl+X / Ctrl+V in Appearance on the inventory's clipboard (outfits, items of an outfit, Worn, the outfit editor; links copied, not originals), and the outfit branches of the Legacy paste shared with the inventory: items linked into an outfit (a cut link of another outfit moves), worn when pasted into the Current Outfit, folders made outfits or groups in My Outfits, cut outfits and groups moved |
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items |
@@ -3079,6 +3125,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `logging.rs`, `cache.rs`, `cache_key.rs`, `credentials.rs` | Logs (written by the `aurora-log-write` thread from a bounded queue, so a stalled disk never holds a thread that logs, and flushed to the disk once per second, so a frozen and reset PC keeps them; the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache (`cache/store`; `cache_key.rs` keeps its key in the OS vault), remembered password (OS vault) |
 | `open_path.rs` | Files and folders handed to the system's file manager or viewer (`xdg-open`, `open`, `explorer`), the launcher waited for on a short thread so that none stays a zombie process |
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
+| `world/rlva_selftest.rs`, `world/rlva_selftest/`, `app/rlva_selftest.rs`, `ui/rlva_selftest.rs` | The RLVa self-test (Dev Toolbox T1, development builds only): the runner and its step types, the inventory and relay factory, the guard of what a case may send, the phase 1 and phase 2 cases, the cleanup, the report and the offline simulator (`world/`); the tool, the frame step and the hand-over to the send and receive paths (`app/rlva_selftest.rs`); the confirmation dialog and the report window (`ui/rlva_selftest.rs`). `AURORA_DEMO_RLVA=selftest` |
 | `legacy_profile.rs` | Where a Legacy Viewer keeps an account's files on this computer, for the imports that read them: its application folders on each system, the account's folder in them |
 | `ui/conversation_log.rs`, `app/conversation_log.rs`, `demo_conversation_log.rs` | The Conversation log window (toolbar `conversation_log`, Communicate › Conversation log…, People › Friends' view menu; LLFloaterConversationLog): the filter, the rows with their offline mark and picture, the actions of the selection and the view menu (`ui/conversation_log.rs`); what it asks of the app, a transcript in the History window or outside and an entry removed (`app/conversation_log.rs`); the demo (`AURORA_DEMO_CONVERSATION_LOG`). The log follows the conversations in `world/transcripts.rs` |
 | `app/chat_import.rs` | The import of a Legacy Viewer's chat history from Preferences › Chat: its folders looked for off the frame, the import window's list, and what follows a finished import (result line, History window read again) |
