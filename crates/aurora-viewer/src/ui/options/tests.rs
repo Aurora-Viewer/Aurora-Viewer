@@ -671,7 +671,8 @@ fn the_search_finds_settings_on_their_pages() {
         .expect("inventory shortcut")
         .label();
     assert!(counts(&mut s, &inventory).hits(Page::Shortcuts) >= 1);
-    assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
+    let anti_spam = cx::fold(aurora_i18n::tr!("anti-spam-title"));
+    assert!(counts(&mut s, &anti_spam).hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());

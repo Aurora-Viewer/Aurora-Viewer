@@ -178,6 +178,18 @@ On Debian and Ubuntu, the build packages are `build-essential cmake clang
 pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev`, with
 Rust from [rustup.rs](https://rustup.rs).
 
+To work on the code with an AI agent, also install the search tools the
+agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools"):
+ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; on Windows the
+Aurora tools install them.
+
+```bash
+sudo pacman -S --needed ripgrep fd jq ast-grep
+```
+
+On Debian and Ubuntu: `sudo apt install ripgrep fd-find jq` (`fd` is named
+`fdfind` there), and `cargo install ast-grep --locked`.
+
 ## Reporting a problem
 
 See [Reporting bugs](BUG_REPORTING.md), and say that you are on Linux, with
