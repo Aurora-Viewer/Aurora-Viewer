@@ -259,7 +259,10 @@ fn personal_files(path: &Path) {
 }
 fn assert_personal_files(path: &Path) {
     assert_eq!(fs::read(path.join("personal-document.txt")).expect("personal file kept"), b"mine");
-    assert_eq!(fs::read(path.join("skins/mine/theme.json")).expect("personal folder kept"), b"my skin");
+    assert_eq!(
+        fs::read(path.join("skins/mine/theme.json")).expect("personal folder kept"),
+        b"my skin"
+    );
 }
 
 #[test]

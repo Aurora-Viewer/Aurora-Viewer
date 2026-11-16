@@ -202,8 +202,7 @@ fn move_entries(names: &[&'static str], from: &Path, to: &Path) -> Result<Vec<&'
         if let Err(error) = fs::rename(from.join(name), to.join(name)) {
             let error = anyhow::Error::from(error).context(format!("cannot move {name}"));
             for &back in moved.iter().rev() {
-                fs::rename(to.join(back), from.join(back))
-                    .with_context(|| format!("{error:#}; and {back} could not be put back"))?;
+                fs::rename(to.join(back), from.join(back)).with_context(|| format!("{error:#}; and {back} could not be put back"))?;
             }
             return Err(error);
         }
