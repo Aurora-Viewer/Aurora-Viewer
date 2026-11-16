@@ -517,6 +517,12 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
         );
         replace(
             c,
+            "play-sound-world",
+            complete_selection && selected.iter().all(|item| item.asset_type == 1 && !item.asset_id.is_nil()),
+            super::Command::Batch(selected.iter().map(|item| InvAction::TriggerSound(item.asset_id)).collect()),
+        );
+        replace(
+            c,
             "rez-previous",
             complete_selection
                 && selected.iter().all(|item| {
@@ -563,7 +569,8 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             );
         }
         for (kind, key, label, local) in [
-            (1, "play-sound", aurora_i18n::tr!("common-play"), true),
+            (1, "play-sound", aurora_i18n::tr!("common-play-locally"), true),
+            (1, "play-sound-world", aurora_i18n::tr!("common-play-in-world"), false),
             (
                 20,
                 "play-world",
@@ -577,7 +584,11 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                     .iter()
                     .map(|item| {
                         if kind == 1 {
-                            InvAction::Sound(item.asset_id)
+                            if local {
+                                InvAction::Sound(item.asset_id)
+                            } else {
+                                InvAction::TriggerSound(item.asset_id)
+                            }
                         } else {
                             InvAction::Animation {
                                 asset: item.asset_id,
@@ -590,7 +601,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 c.add(
                     key,
                     TEXT,
-                    "player-play-filled",
+                    if local { "player-play-filled" } else { "world-filled" },
                     label,
                     selected.iter().all(|item| !item.asset_id.is_nil()),
                     super::Command::Batch(batch),
