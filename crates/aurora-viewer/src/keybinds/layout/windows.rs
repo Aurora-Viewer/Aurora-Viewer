@@ -44,13 +44,14 @@ pub(super) fn detect() -> Option<KeyboardLayout> {
 /// The input locale last seen on the window's thread (the address of its
 /// handle: only compared).
 pub(super) struct OsWatch {
-    last: usize,
+    last: Option<usize>,
 }
 
 impl OsWatch {
     pub(super) fn new(_: &winit::window::Window) -> Option<Self> {
         log::info!("keyboard layout: following the input locale of the window's thread");
-        Some(Self { last: active() as usize })
+        // The input locale may have changed since Settings read it, before this window existed.
+        Some(Self { last: None })
     }
 
     /// The layout of a locale switched to since the last call. A locale
@@ -58,10 +59,10 @@ impl OsWatch {
     /// QWERTY, as at start.
     pub(super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
         let hkl = active();
-        if hkl.is_null() || hkl as usize == self.last {
+        if hkl.is_null() || Some(hkl as usize) == self.last {
             return Ok(None);
         }
-        self.last = hkl as usize;
+        self.last = Some(hkl as usize);
         log::info!("keyboard layout: input locale {:#x} active", hkl as usize);
         Ok(Some(read(hkl).unwrap_or_default()))
     }

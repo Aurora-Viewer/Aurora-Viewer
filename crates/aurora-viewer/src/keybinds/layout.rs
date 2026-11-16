@@ -381,6 +381,11 @@ impl Layouts {
         }
     }
 
+    fn undetected() -> Self {
+        // A real window can still report its first layout, e.g. with a handed-off WAYLAND_SOCKET.
+        Self::new(Vec::new(), 0, true)
+    }
+
     fn current(&self) -> Arc<KeyboardLayout> {
         let seen = self.seen.read().unwrap_or_else(PoisonError::into_inner);
         Arc::clone(&seen.all[seen.active])
@@ -432,7 +437,7 @@ fn layouts() -> &'static Layouts {
         }
         detect().unwrap_or_else(|| {
             log::info!("keyboard layout detection unavailable; using WASD defaults and US QWERTY shortcut keys");
-            Layouts::one(KeyboardLayout::default())
+            Layouts::undetected()
         })
     })
 }
@@ -624,8 +629,11 @@ mod tests {
         // the one reported is found under the other's index, nothing changes
         let layouts = Layouts::new(vec![KeyboardLayout::default(), KeyboardLayout::default()], 1, true);
         assert!(layouts.activate(KeyboardLayout::default()).is_none());
-        // an empty start (no detection) still has a layout in use
-        assert_eq!(*Layouts::new(Vec::new(), 3, false).current(), KeyboardLayout::default());
+        // A handed-off Wayland socket cannot be opened before winit creates the window.
+        let layouts = Layouts::undetected();
+        assert_eq!(*layouts.current(), KeyboardLayout::default());
+        assert!(layouts.activate(KeyboardLayout::zqsd()).expect("the window reports French").guessed);
+        assert!(!layouts.activate(KeyboardLayout::wasd()).expect("later switch").guessed);
     }
 
     /// What Windows' KBDFR gives for each key read (`MapVirtualKeyExW`):
