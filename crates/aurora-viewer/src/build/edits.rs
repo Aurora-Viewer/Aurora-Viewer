@@ -30,6 +30,9 @@ pub const CLICK_ACTION_BUY: u8 = 2;
 pub enum CapPurpose {
     /// GetObjectCost for these objects.
     ObjectCost(Vec<Uuid>),
+    /// GetObjectPhysicsData of the pathfinding console's shapes, answered
+    /// to the app (app/pathfinding_view.rs), never into the build cache.
+    PathfindingPhysics,
     /// GetObjectCost owned by Area Search, with a separate bounded cache.
     AreaSearchCost,
     /// ResourceCostSelected for the current selection.

@@ -39,6 +39,53 @@ pub struct ParcelIcon {
     /// The ability in a word or two, written next to the icon by the place
     /// island of the Aurora bars when there is room for it.
     pub name: &'static str,
+    /// What a click does.
+    pub click: Click,
+    /// The icon's opacity (the rebake icon blinks while the navmesh bakes).
+    pub alpha: f32,
+}
+
+/// What a click on an icon does: About Land for the parcel's abilities,
+/// the Legacy notices for the pathfinding ones (onParcelIconClick).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Click {
+    #[default]
+    AboutLand,
+    /// PathfindingDirty, with its Rebake button.
+    PathfindingDirty,
+    /// DynamicPathfindingDisabled.
+    PathfindingDisabled,
+}
+
+/// The pathfinding icons (LLStatusBar::updateParcelIcons'
+/// PATHFINDING_DIRTY_ICON and PATHFINDING_DISABLED_ICON): the navmesh waits
+/// for a rebake or is rebaking (`dirty`: the icon's opacity, see
+/// `pathfinding::rebake::Rebake::dirty_icon`), or dynamic pathfinding is off
+/// in the region. Red: something needs attention, neither is an ability.
+pub fn pathfinding_icons(dirty: Option<f32>, disabled: bool) -> Vec<ParcelIcon> {
+    let mut out = Vec::new();
+    if let Some(alpha) = dirty {
+        let mut it = icon(
+            "route",
+            false,
+            aurora_i18n::tr!("ui-parcel-icons-name-navmesh"),
+            aurora_i18n::tr!("ui-parcel-icons-navmesh-dirty"),
+        );
+        it.strike = false;
+        it.click = Click::PathfindingDirty;
+        it.alpha = alpha;
+        out.push(it);
+    } else if disabled {
+        let mut it = icon(
+            "route-off",
+            false,
+            aurora_i18n::tr!("ui-parcel-icons-name-no-pathfinding"),
+            aurora_i18n::tr!("ui-parcel-icons-pathfinding-disabled"),
+        );
+        it.click = Click::PathfindingDisabled;
+        out.push(it);
+    }
+    out
 }
 
 /// What the rules need to know about where the agent stands.
@@ -246,6 +293,8 @@ fn icon(icon: &'static str, ok: bool, name: &'static str, tip: &str) -> ParcelIc
         label: None,
         tip: tip.to_owned(),
         name,
+        click: Click::AboutLand,
+        alpha: 1.0,
     }
 }
 
@@ -298,12 +347,12 @@ pub fn width(ui: &egui::Ui, items: &[ParcelIcon]) -> f32 {
 }
 
 /// Draw the icons left to right; `bg` is the color under them (for the gap
-/// around the strike line). Returns true when one is clicked.
-pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon], bg: Color32) -> bool {
-    let mut clicked = false;
+/// around the strike line). Returns what a click asks, if any.
+pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon], bg: Color32) -> Option<Click> {
+    let mut clicked = None;
     ui.spacing_mut().item_spacing.x = GAP;
     for it in items {
-        let col = if it.ok { p.success } else { p.danger };
+        let col = if it.ok { p.success } else { p.danger }.gamma_multiply(it.alpha);
         let label = it.label.as_ref().map(|t| ui.painter().layout_no_wrap(t.clone(), label_font(), col));
         let w = item_width(ui, it);
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, SLOT_HEIGHT), egui::Sense::click());
@@ -323,13 +372,24 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, ir.right() + 2.0, rect.center().y);
             ui.painter().galley(pos, g, col);
         }
-        let resp = resp.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()));
+        let resp = resp.on_hover_text(hover_text(it));
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        clicked |= resp.clicked();
+        if resp.clicked() {
+            clicked = Some(it.click);
+        }
     }
     clicked
+}
+
+/// The tooltip: the ability and "click for About Land", or the pathfinding
+/// icon's own text.
+pub fn hover_text(it: &ParcelIcon) -> String {
+    match it.click {
+        Click::AboutLand => aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()),
+        Click::PathfindingDirty | Click::PathfindingDisabled => it.tip.clone(),
+    }
 }
 
 #[cfg(test)]

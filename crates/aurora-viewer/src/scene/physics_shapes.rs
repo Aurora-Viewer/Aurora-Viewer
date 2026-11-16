@@ -55,6 +55,16 @@ pub fn selection(tool: &crate::build::BuildTool, world: &World, settings: &crate
         .collect()
 }
 
+/// Whether `update` draws a prim's collision shape: a volume, not flexible,
+/// and not a traditional sculpt (only mesh sculpts carry a shape of their
+/// own; `update` leaves the others out, as the reference editor does).
+pub fn has_shape(object: &crate::world::objects::Object) -> bool {
+    object.pcode == LL_PCODE_VOLUME
+        && object.extra.flexible.is_none()
+        && object.volume.path.curve_type != LL_PCODE_PATH_FLEXIBLE
+        && object.volume.sculpt.is_none_or(|s| s.is_mesh())
+}
+
 impl PhysicsShapes {
     pub fn update(&mut self, renderer: &mut Renderer, world: &World, meshes: &mut MeshStreamer, selected: &[(usize, u8)]) {
         self.active.clear();
@@ -176,12 +186,23 @@ impl PhysicsShapes {
         }
     }
 
+    /// A shape is still being built: `update` has more to upload.
+    pub fn pending(&self) -> bool {
+        self.geometry.values().any(|g| matches!(g, Geometry::Pending(_)))
+    }
+
     pub fn append(&self, lists: &mut DrawLists) {
+        self.append_to(&mut lists.physics_shapes);
+    }
+
+    /// The shapes' draws into another list (the pathfinding console's
+    /// shapes, `app/pathfinding_view.rs`).
+    pub fn append_to(&self, list: &mut Vec<DrawCmd>) {
         for (key, record) in &self.active {
             let Some(Geometry::Ready(meshes)) = self.geometry.get(key) else {
                 continue;
             };
-            lists.physics_shapes.extend(meshes.iter().map(|mesh| DrawCmd {
+            list.extend(meshes.iter().map(|mesh| DrawCmd {
                 index_count: mesh.index_count,
                 first_index: mesh.index_offset,
                 base_vertex: mesh.vertex_offset as i32,

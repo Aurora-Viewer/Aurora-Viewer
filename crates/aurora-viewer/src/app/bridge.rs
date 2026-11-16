@@ -34,6 +34,7 @@ impl App {
             && (std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || std::env::var_os("AURORA_DEMO_PATHFINDING").is_some()
                 || crate::ao::water_demo::mode().is_some()
                 || folder_names)
         {
@@ -41,8 +42,10 @@ impl App {
             if self.ao_demo.is_none() {
                 crate::ao::demo::inventory_services(&mut self.world, true);
             }
-            self.movelock_ui.open =
-                crate::ao::water_demo::mode().is_none() && !folder_names && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
+            self.movelock_ui.open = crate::ao::water_demo::mode().is_none()
+                && !folder_names
+                && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none()
+                && std::env::var_os("AURORA_DEMO_PATHFINDING").is_none();
             if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
                 crate::world::bridge::demo::seed_queries(&mut self.world);
                 self.panels.people = true;
@@ -75,6 +78,7 @@ impl App {
                 || std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || std::env::var_os("AURORA_DEMO_PATHFINDING").is_some()
                 || crate::ao::water_demo::mode().is_some()
                 || folder_names);
         if !online {
@@ -114,6 +118,7 @@ impl App {
         if let Some(command) = command {
             self.send(command);
         }
+        self.pathfinding_bridge(endpoint.as_ref());
         if let Some(message) = message {
             self.world.system_message(message);
         }

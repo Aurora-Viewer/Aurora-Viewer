@@ -963,6 +963,7 @@ fn post_links_ability_follows_the_region() {
         currency_symbol: String::new(),
         export_supported: false,
         group_chat_post_links: enabled,
+        dynamic_pathfinding: false,
     };
     world.apply(features(true));
     assert!(view::View::of(&world, DEMO_GROUP1).post_links);

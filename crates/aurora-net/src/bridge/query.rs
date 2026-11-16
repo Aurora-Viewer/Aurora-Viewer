@@ -13,11 +13,42 @@ const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
-    Portal { target: Uuid, message: super::portal::Message },
-    Pose { request: Uuid, kind: PoseKind, target: Uuid },
+    Portal {
+        target: Uuid,
+        message: super::portal::Message,
+    },
+    Pose {
+        request: Uuid,
+        kind: PoseKind,
+        target: Uuid,
+    },
     Altitudes(Vec<Uuid>),
     ScriptInfo(Uuid),
     ObjectInfo(Uuid),
+    /// The pathfinding console's path test, answered by the region itself:
+    /// llGetStaticPath on its static navmesh (the Legacy Viewer computes it
+    /// with Havok in the viewer). Region coordinates, a character radius and
+    /// an LSL CHARACTER_TYPE value (A 0 … D 3, NONE 4).
+    StaticPath {
+        start: [f32; 3],
+        end: [f32; 3],
+        radius: f32,
+        character: i32,
+    },
+}
+
+/// llGetStaticPath's radius range.
+pub const PATH_RADIUS: std::ops::RangeInclusive<f32> = 0.125..=5.0;
+/// The waypoints query.lsl answers at most (it thins longer paths, keeping
+/// both ends), so the reply stays under `MAX_REPLY`.
+pub const MAX_WAYPOINTS: usize = 100;
+
+/// llGetStaticPath's answer: the status code (0 success, else a
+/// PU_FAILURE_*) and the waypoints of a found path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticPath {
+    pub status: i32,
+    pub points: Vec<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +133,7 @@ pub enum Reply {
     Altitudes(Vec<Altitude>),
     ScriptInfo(ScriptInfo),
     ObjectInfo(Box<ObjectInfo>),
+    StaticPath(StaticPath),
 }
 
 impl Query {
@@ -122,6 +154,22 @@ impl Query {
                     && ids.iter().collect::<HashSet<_>>().len() == ids.len()
             }
             Self::ScriptInfo(id) | Self::ObjectInfo(id) => !id.is_nil(),
+            Self::StaticPath {
+                start,
+                end,
+                radius,
+                character,
+            } => {
+                // region coordinates (variable regions up to 8192 m) and the
+                // heights a navmesh can have
+                let inside = |p: &[f32; 3]| {
+                    p.iter().all(|v| v.is_finite())
+                        && (0.0..=8192.0).contains(&p[0])
+                        && (0.0..=8192.0).contains(&p[1])
+                        && (-500.0..=8192.0).contains(&p[2])
+                };
+                inside(start) && inside(end) && PATH_RADIUS.contains(radius) && (0..=4).contains(character)
+            }
         }
     }
     fn body(&self, token: Uuid) -> String {
@@ -134,6 +182,15 @@ impl Query {
             ),
             Self::ScriptInfo(id) => format!("query|{token}|scripts|{id}"),
             Self::ObjectInfo(id) => format!("query|{token}|object|{id}"),
+            Self::StaticPath {
+                start,
+                end,
+                radius,
+                character,
+            } => format!(
+                "query|{token}|path|{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{radius:.3},{character}",
+                start[0], start[1], start[2], end[0], end[1], end[2]
+            ),
         }
     }
     pub fn decode(&self, bytes: &[u8]) -> Option<Reply> {
@@ -143,6 +200,15 @@ impl Query {
         let value: Value = serde_json::from_slice(bytes).ok()?;
         let values = value.as_array()?;
         match self {
+            Self::StaticPath { .. } => {
+                let (status, points) = values.split_first()?;
+                let status = i32::try_from(status.as_i64()?).ok()?;
+                if points.len() > MAX_WAYPOINTS || (status != 0 && !points.is_empty()) {
+                    return None;
+                }
+                let points = points.iter().map(components::<3>).collect::<Option<Vec<_>>>()?;
+                Some(Reply::StaticPath(StaticPath { status, points }))
+            }
             Self::Portal { .. } => values.is_empty().then_some(Reply::Portal),
             Self::Pose { .. } => values.is_empty().then_some(Reply::Pose),
             Self::Altitudes(requested) => {
@@ -310,6 +376,66 @@ mod tests {
             format!("query|{}|object|{}", id(100), id(1))
         );
     }
+    fn path(radius: f32, character: i32) -> Query {
+        Query::StaticPath {
+            start: [10.0, 20.0, 21.5],
+            end: [100.25, 120.0, 22.0],
+            radius,
+            character,
+        }
+    }
+
+    #[test]
+    fn path_queries_are_bounded_and_read_by_query_lsl() {
+        assert!(path(0.5, 4).valid());
+        for bad in [path(0.1, 0), path(5.5, 0), path(0.5, -1), path(0.5, 5), path(f32::NAN, 0)] {
+            assert!(!bad.valid(), "{bad:?}");
+        }
+        let outside = Query::StaticPath {
+            start: [-1.0, 0.0, 0.0],
+            end: [1.0, 1.0, 1.0],
+            radius: 0.5,
+            character: 0,
+        };
+        assert!(!outside.valid());
+        let body = path(0.5, 2).body(id(100));
+        assert_eq!(
+            body,
+            format!("query|{}|path|10.000,20.000,21.500,100.250,120.000,22.000,0.500,2", id(100))
+        );
+        // bridge.lsl's body limit, and no '|' in the arguments
+        assert!(body.len() <= 768 && body.matches('|').count() == 3);
+    }
+
+    #[test]
+    fn path_replies_carry_a_status_and_waypoints_only_on_success() {
+        let query = path(0.5, 0);
+        let decode = |value: Value| query.decode(value.to_string().as_bytes());
+        assert_eq!(
+            decode(json!([0, "<10.00000, 20.00000, 21.50000>", "<100.25000, 120.00000, 22.00000>"])),
+            Some(Reply::StaticPath(StaticPath {
+                status: 0,
+                points: vec![[10.0, 20.0, 21.5], [100.25, 120.0, 22.0]],
+            }))
+        );
+        assert_eq!(
+            decode(json!([4])),
+            Some(Reply::StaticPath(StaticPath { status: 4, points: vec![] }))
+        );
+        let too_many: Vec<Value> = std::iter::once(json!(0))
+            .chain((0..=MAX_WAYPOINTS).map(|_| json!("<1, 1, 1>")))
+            .collect();
+        for value in [
+            json!([]),
+            json!([2, "<1, 1, 1>"]),
+            json!(["0"]),
+            json!([0, "<1, 1>"]),
+            Value::Array(too_many),
+        ] {
+            assert_eq!(decode(value.clone()), None, "{value}");
+        }
+    }
+
     #[test]
     fn altitude_replies_require_requested_unique_finite_samples_and_allow_partial_absence() {
         let query = Query::Altitudes(vec![id(1), id(2)]);

@@ -627,6 +627,12 @@ pub enum RiggedBlendDepth {
     Exact,
 }
 
+/// The pathfinding shape lists of `DrawLists::pathfinding`.
+pub const PATHFINDING_WALKABLE: usize = 0;
+pub const PATHFINDING_MATERIAL: usize = 1;
+pub const PATHFINDING_STATIC: usize = 2;
+pub const PATHFINDING_EXCLUSION: usize = 3;
+
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
@@ -744,6 +750,12 @@ pub struct DrawLists {
     /// `debug_blue`, blended ones to `debug_red`.
     pub debug_green: Vec<DrawCmd>,
     pub debug_yellow: Vec<DrawCmd>,
+    /// The pathfinding console's shapes (LLFloaterPathfindingConsole's
+    /// Walkables, Material volumes, Static obstacles, Exclusion volumes):
+    /// the linksets of each use, tinted, in that order of `PATHFINDING_*`.
+    pub pathfinding: [Vec<DrawCmd>; 4],
+    /// With X-ray vision: their hidden parts drawn again, dimmed.
+    pub pathfinding_xray: bool,
     /// Parcel ownership and property lines, on existing terrain geometry.
     pub land_overlay: Vec<DrawCmd>,
     /// Build tools: wireframe of the selected mesh / sculpted objects
@@ -824,6 +836,8 @@ impl DrawLists {
         self.debug_blue.clear();
         self.debug_green.clear();
         self.debug_yellow.clear();
+        self.pathfinding.iter_mut().for_each(Vec::clear);
+        self.pathfinding_xray = false;
         self.land_overlay.clear();
         self.select_root.clear();
         self.select_child.clear();
@@ -881,6 +895,8 @@ impl DrawLists {
         self.debug_blue.clone_from(&src.debug_blue);
         self.debug_green.clone_from(&src.debug_green);
         self.debug_yellow.clone_from(&src.debug_yellow);
+        self.pathfinding.clone_from(&src.pathfinding);
+        self.pathfinding_xray = src.pathfinding_xray;
         self.land_overlay.clone_from(&src.land_overlay);
         self.select_root.clone_from(&src.select_root);
         self.select_child.clone_from(&src.select_child);
@@ -940,6 +956,8 @@ impl DrawLists {
         self.debug_blue.clear();
         self.debug_green.clear();
         self.debug_yellow.clear();
+        self.pathfinding.iter_mut().for_each(Vec::clear);
+        self.pathfinding_xray = false;
         self.land_overlay.clear();
         self.select_root.clear();
         self.select_child.clear();

@@ -709,6 +709,10 @@ pub enum NetEvent {
         /// "GroupChatPostLinksEnabled": the region applies the group ability
         /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
         group_chat_post_links: bool,
+        /// "DynamicPathfindingEnabled": scripted pathfinding runs in the
+        /// region (LLViewerRegion::dynamicPathfindingEnabled; the status
+        /// bar's "pathfinding disabled" icon when false).
+        dynamic_pathfinding: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -801,6 +805,36 @@ pub enum NetEvent {
     /// Help › Server release notes: the page to open, or why there is none
     /// (`NetCommand::ServerReleaseNotes`, release_notes.rs).
     ServerReleaseNotes(Result<String, String>),
+    /// The answer to `NetCommand::SetLinksets`: the linksets the region
+    /// changed (the terrain row among them when it was edited), to merge
+    /// into the list; an error when either request failed (LinksetsResponder).
+    LinksetsUpdated {
+        request: Uuid,
+        region: RegionHandle,
+        result: Result<Vec<crate::pathfinding::Row>, crate::pathfinding::Error>,
+    },
+    /// A region's navmesh status, from NavMeshGenerationStatus (on arrival
+    /// in a region, `NetCommand::FetchNavMeshStatus`) or the
+    /// NavMeshStatusUpdate event. None: the region answered with an error or
+    /// an invalid status.
+    NavMeshStatus {
+        region: RegionHandle,
+        status: Option<crate::pathfinding::navmesh::Status>,
+    },
+    /// Whether the agent may rebake the navmesh of its region (AgentState on
+    /// arrival in a region, or the AgentStateUpdate event).
+    PathfindingAgentState {
+        region: RegionHandle,
+        can_rebake: bool,
+    },
+    /// The answer to `NetCommand::RebakeNavMesh`: false shows
+    /// PathfindingCannotRebakeNavmesh.
+    NavMeshRebake {
+        region: RegionHandle,
+        ok: bool,
+    },
+    /// A RegionObjects (with the terrain row first when it was asked) or
+    /// CharacterProperties list; an error when any request failed.
     Pathfinding {
         request: Uuid,
         region: RegionHandle,
@@ -1750,10 +1784,32 @@ pub enum NetCommand {
     /// Fetch the page of the region's ServerReleaseNotes capability,
     /// answered by `NetEvent::ServerReleaseNotes`.
     ServerReleaseNotes,
+    /// RegionObjects or CharacterProperties, answered by
+    /// `NetEvent::Pathfinding`. `terrain`: also TerrainNavMeshProperties,
+    /// for a god or an estate manager (isAllowViewTerrainProperties).
     FetchPathfinding {
         request: Uuid,
         region: RegionHandle,
         kind: crate::pathfinding::Kind,
+        terrain: bool,
+    },
+    /// Linkset edits (requestSetLinksets): a PUT of the objects' changes to
+    /// ObjectNavMeshProperties and of the terrain's to
+    /// TerrainNavMeshProperties, answered by `NetEvent::LinksetsUpdated`.
+    SetLinksets {
+        request: Uuid,
+        region: RegionHandle,
+        objects: Vec<(Uuid, crate::pathfinding::linkset::Edit)>,
+        terrain: Option<crate::pathfinding::linkset::Edit>,
+    },
+    /// The navmesh status of a region again, answered by `NetEvent::NavMeshStatus`.
+    FetchNavMeshStatus {
+        region: RegionHandle,
+    },
+    /// Rebake the navmesh of a region (navMeshRebakeCoro), answered by
+    /// `NetEvent::NavMeshRebake`.
+    RebakeNavMesh {
+        region: RegionHandle,
     },
     /// One command line for the region console (SimConsoleAsync); the
     /// output comes as `NetEvent::SimConsoleReply`.

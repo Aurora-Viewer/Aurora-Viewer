@@ -438,19 +438,7 @@ impl App {
                 self.flush_build();
             }
             Action::Return(ids) => self.ask_return_objects(&ids),
-            Action::Delete(ids) => {
-                // LLSelectMgr::selectDelete's question, on all their linksets
-                let flags: Vec<u32> = ids
-                    .iter()
-                    .filter_map(|id| self.world.objects.index_of_uuid(id))
-                    .flat_map(|idx| crate::build::family(&self.world, context_menu::linkset_root(&self.world, idx)))
-                    .filter_map(|i| self.world.objects.get(i).map(|o| o.update_flags))
-                    .collect();
-                match ui::context::delete_warning(&flags) {
-                    Some(text) => self.delete_confirm = Some((ids, text)),
-                    None => self.delete_objects(&ids),
-                }
-            }
+            Action::Delete(ids) => self.ask_delete_objects(ids),
             Action::Blacklist(ids) => {
                 for id in ids {
                     self.derender(id, true);
@@ -469,6 +457,21 @@ impl App {
     fn area_search_select(&mut self, ids: &[Uuid]) {
         let idxs: Vec<usize> = ids.iter().filter_map(|id| self.world.objects.index_of_uuid(id)).collect();
         self.build.select_many(&mut self.world, &self.settings.build, &idxs);
+    }
+
+    /// Delete several objects, after LLSelectMgr::selectDelete's question
+    /// when their linksets call for it (Area Search, the pathfinding windows).
+    pub(super) fn ask_delete_objects(&mut self, ids: Vec<Uuid>) {
+        let flags: Vec<u32> = ids
+            .iter()
+            .filter_map(|id| self.world.objects.index_of_uuid(id))
+            .flat_map(|idx| crate::build::family(&self.world, context_menu::linkset_root(&self.world, idx)))
+            .filter_map(|i| self.world.objects.get(i).map(|o| o.update_flags))
+            .collect();
+        match ui::context::delete_warning(&flags) {
+            Some(text) => self.delete_confirm = Some((ids, text)),
+            None => self.delete_objects(&ids),
+        }
     }
 
     /// Delete to the trash, confirmed: the objects of several rows together.

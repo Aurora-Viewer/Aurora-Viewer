@@ -472,6 +472,8 @@ impl App {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
             CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
+            // Pathfinding.Linksets.Select / Pathfinding.Characters.Select:
+            // the window opens with the clicked linkset selected
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
                     && let Some(object) = self.world.objects.get(linkset_root(&self.world, index))
@@ -481,12 +483,7 @@ impl App {
                     } else {
                         aurora_net::pathfinding::Kind::Objects
                     };
-                    let command = self.pathfinding_ui.open(object.key.region, kind, object.full_id);
-                    if self.demo {
-                        self.pathfinding_ui.demo(&self.world, command);
-                    } else {
-                        self.send(command);
-                    }
+                    self.open_pathfinding(kind, vec![object.full_id]);
                 }
             }
             CtxAction::ResetMeshLod(id) => {

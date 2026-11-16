@@ -228,6 +228,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         edit_particles: false,
         save_to_contents: false,
         build_options: Default::default(),
+        pathfinding: false,
+        pathfinding_rebake: false,
         health: Default::default(),
         hover_tips: Default::default(),
         world_overlays: Default::default(),

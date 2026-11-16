@@ -23,7 +23,7 @@ pub const NAME: &str = "#Aurora Bridge v1.0";
 pub(crate) const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.41";
+const VERSION: &str = "1.42";
 /// The controller's and query script's owner-say tags, never shown in chat.
 const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridge>",
@@ -51,6 +51,7 @@ pub const QUERY_NAME: &str = "#Aurora Bridge Query";
 const QUERY_SOURCE: &str = include_str!("bridge/query.lsl");
 pub(crate) mod ik;
 
+pub mod path;
 pub mod services;
 const TIMEOUT: Duration = Duration::from_secs(60);
 // A worn bridge that moved keeps its scripts: it only renews its HTTP-in URLs.

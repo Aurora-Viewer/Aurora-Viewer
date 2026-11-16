@@ -22,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod pathfinding_net;
 mod render_info_net;
 mod scripts;
 mod sim_requests;
@@ -760,6 +761,7 @@ impl Session<'_> {
             if self.sims.get(&addr).is_some_and(|s| !s.caps.is_empty()) {
                 self.update_agent_language();
                 self.request_environment(None);
+                self.request_pathfinding_state();
             }
         }
         let handle = self.sims.get(&addr).map_or(0, |sim| sim.handle);
@@ -1021,6 +1023,7 @@ impl Session<'_> {
             self.update_agent_language();
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
+            self.request_pathfinding_state();
             if self.inventory_merchant_pending {
                 self.inventory_merchant_pending = false;
                 self.on_command(NetCommand::RequestInventoryMerchant);
@@ -1049,6 +1052,7 @@ impl Session<'_> {
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     let lua_scripts = v["LuaScriptsEnabled"].as_bool();
                     let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
+                    let dynamic_pathfinding = v["DynamicPathfindingEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1075,6 +1079,7 @@ impl Session<'_> {
                         currency_symbol,
                         export_supported,
                         group_chat_post_links,
+                        dynamic_pathfinding,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1655,7 +1660,20 @@ impl Session<'_> {
                 im_via_email,
             } => self.update_user_info(directory_visibility, im_via_email),
             NetCommand::ServerReleaseNotes => self.fetch_server_release_notes(),
-            NetCommand::FetchPathfinding { request, region, kind } => self.fetch_pathfinding(request, region, kind),
+            NetCommand::FetchPathfinding {
+                request,
+                region,
+                kind,
+                terrain,
+            } => self.fetch_pathfinding(request, region, kind, terrain),
+            NetCommand::SetLinksets {
+                request,
+                region,
+                objects,
+                terrain,
+            } => self.set_linksets(request, region, objects, terrain),
+            NetCommand::FetchNavMeshStatus { region } => self.fetch_navmesh_status(region),
+            NetCommand::RebakeNavMesh { region } => self.rebake_navmesh(region),
             NetCommand::SimConsole(command) => self.send_sim_console(command),
             NetCommand::ModerateVoice { target, mute } => self.moderate_voice(target, mute),
             NetCommand::FetchLslSyntax { id, cache_dir } => self.fetch_lsl_syntax(id, cache_dir),
@@ -4109,6 +4127,20 @@ impl Session<'_> {
                 });
                 if self.main != Some(e.sim) {
                     self.remove_sim(e.sim);
+                }
+            }
+            // LLNavMeshSimStateChangeNode / LLAgentStateChangeNode
+            // (llpathfindingmanager.cpp)
+            "NavMeshStatusUpdate" => {
+                if let Some(region) = self.sims.get(&e.sim).map(|sim| sim.handle) {
+                    let status = crate::pathfinding::navmesh::Status::parse(b);
+                    emit(self.sh, NetEvent::NavMeshStatus { region, status });
+                }
+            }
+            "AgentStateUpdate" => {
+                if let Some(region) = self.sims.get(&e.sim).map(|sim| sim.handle) {
+                    let can_rebake = crate::pathfinding::navmesh::can_rebake(b);
+                    emit(self.sh, NetEvent::PathfindingAgentState { region, can_rebake });
                 }
             }
             // the region console's output (ConsoleResponseNode,

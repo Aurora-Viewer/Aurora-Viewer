@@ -804,10 +804,52 @@ and deed confirmation reuse `build/ui/floaters.rs` with separate widget IDs.
 `context/object_profile_tests.rs` exercises actual pointer/keyboard editing,
 sale and permission messages, target changes, HUD roots and selection lifetime.
 Group names use the existing cached GroupNames request and pathfinding attributes
-come from object flags. `context/pathfinding.rs`
-shows searchable, virtualized RegionObjects / CharacterProperties lists from
-`aurora-net/src/pathfinding.rs`, with correlated asynchronous requests scoped to
-the clicked object's region; this reader does not edit navmesh or terrain.
+come from object flags. The pathfinding windows (Build › Pathfinding, and the
+object menu's Show in region objects / characters) are `ui/pathfinding/`: the
+list shared by Region objects and Characters (`list.rs`: cells, filters
+applied on demand, sort by value, the Legacy messaging line, a row index so
+selections of thousands stay cheap), the edit panel (`edit.rs`), the drawing in
+the Legacy layout (`view.rs`) and the wire physics capsule (`capsule.rs`).
+`app/pathfinding.rs` opens them, resolves owner names, works out which actions
+the in-world selection allows (with RLVa's `rlva_can_delete_or_return`), makes
+the list selection the in-world one, carries out Take / Return / Delete /
+Teleport / Apply and draws Show beacon (`ui::beacons::labeled`). The navmesh
+rebake (`ui/pathfinding/rebake.rs`: LLMenuOptionPathfindingRebakeNavmesh's
+modes, the menu's enabling, the rebake icon's blinking and stuck dimming)
+is driven by `app/pathfinding_rebake.rs`: the network's status and agent
+state, Build › Pathfinding › Rebake region, and the two pathfinding icons it
+adds after the parcel icons (`parcel_icons::pathfinding_icons`, whose
+`Click` sends them to their own notices instead of About Land).
+The Pathfinding view / test console is `ui/pathfinding/console.rs` (the
+Legacy layout, the path test's state and status lines, the View tab's
+choices) with `app/pathfinding_path.rs`: Ctrl / Shift clicks become
+`Click::PathPoint` in `app/click_pick.rs` and set the path's ends from the
+visible surface; the path is asked of the region through the bridge
+(`Query::StaticPath`, llGetStaticPath in `world/bridge/query.lsl`, bridge
+1.42) by `world/bridge/path.rs` (one request in flight, two a second, the
+newest waiting, dropped on a region change), and drawn in the world scaled
+by the character width. The View tab is `app/pathfinding_view.rs`: it asks
+the region's linksets for itself (RegionObjects), matches each linkset's use
+to its prims and gives the scene a `scene::pathfinding_view::PathfindingView`:
+World off and Movables only go through the objects' `hidden` flag (with the
+photo isolation and the hidden rendering types, `sync_photo_isolation`), and
+the shapes through four draw lists (`DrawLists::pathfinding`) that the
+renderer draws in the Legacy colours with `fs_debug_flat`, then once more
+behind the scene for X-ray; the water plane is a depth-tested grid of lines.
+`app/pathfinding_demo.rs` is `AURORA_DEMO_PATHFINDING`; the demo bridge
+answers paths on a made-up navmesh with a hole (`world/bridge/demo.rs`).
+`aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
+(`mod.rs`: the object, character and terrain rows), the linkset rules
+(`linkset.rs`: use ↔ phantom + navmesh category, the uses a selection allows,
+the edit warnings, the coefficient fields and the PUT bodies, from
+LLPathfindingLinkset / LLPathfindingLinksetList) and the navmesh status and
+agent state (`navmesh.rs`). `session/pathfinding_net.rs` sends the requests
+(LLPathfindingManager): the lists, the linkset edits to ObjectNavMeshProperties
+and TerrainNavMeshProperties, the navmesh status and the agent's right to
+rebake on arrival in a region, and the rebake; the event queue's
+NavMeshStatusUpdate and AgentStateUpdate arrive as `NetEvent`s. No Havok: the
+navmesh source (RetrieveNavMeshSrc) is never requested, which a `caps.rs` test
+enforces.
 `scene/mesh_inspection.rs` briefly requests the highest LOD for an avatar's worn
 meshes, bounds failed streaming to five seconds and restores the inspector's
 manual LOD without changing object or account preferences.

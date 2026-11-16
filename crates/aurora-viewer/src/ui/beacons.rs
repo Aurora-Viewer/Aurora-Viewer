@@ -83,7 +83,15 @@ pub fn draw(
     }
     let painter = super::hud::world_painter(ctx);
     for &(at, kind) in markers {
-        marker(ctx, &painter, proj, at, color(p, kind), f32::from(s.width.clamp(1, 16)));
+        marker(
+            ctx,
+            &painter,
+            proj,
+            at,
+            color(p, kind),
+            f32::from(s.width.clamp(1, 16)),
+            [0.125, 0.5],
+        );
     }
     if s.info {
         // Keep the source legend above the nearby-chat console, which
@@ -116,12 +124,20 @@ pub fn draw(
 /// (indra/newview/llviewerobjectlist.cpp, originally LGPL 2.1): faint long
 /// axes through the world, then a short cross and a 0.1 m cube compared
 /// with scene depth on the GPU.
-fn marker(ctx: &egui::Context, painter: &egui::Painter, proj: &super::hud::Projector, at: glam::Vec3, color: egui::Color32, width: f32) {
+fn marker(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    proj: &super::hud::Projector,
+    at: glam::Vec3,
+    color: egui::Color32,
+    width: f32,
+    alpha: [f32; 2],
+) {
     for (axis, half) in [(glam::Vec3::X, 2.0), (glam::Vec3::Y, 2.0), (glam::Vec3::Z, 50.0)] {
         let a = proj.view_proj * (at - axis * half).extend(1.0);
         let b = proj.view_proj * (at + axis * half).extend(1.0);
         if let Some(segment) = super::minimap::beacon_segment(a, b, proj) {
-            painter.line_segment(segment, egui::Stroke::new(width, color.gamma_multiply(0.125)));
+            painter.line_segment(segment, egui::Stroke::new(width, color.gamma_multiply(alpha[0])));
         }
     }
     for axis in [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z] {
@@ -131,7 +147,7 @@ fn marker(ctx: &egui::Context, painter: &egui::Painter, proj: &super::hud::Proje
             proj,
             at - axis * 0.5,
             at + axis * 0.5,
-            egui::Stroke::new(width, color.gamma_multiply(0.5)),
+            egui::Stroke::new(width, color.gamma_multiply(alpha[1])),
         );
     }
     for axis in 0..3 {
@@ -142,7 +158,7 @@ fn marker(ctx: &egui::Context, painter: &egui::Painter, proj: &super::hud::Proje
                 a[(axis + 1) % 3] += u;
                 a[(axis + 2) % 3] += v;
                 let b = a + [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][axis] * 0.2;
-                depth_line(ctx, painter, proj, a, b, egui::Stroke::new(width, color.gamma_multiply(0.5)));
+                depth_line(ctx, painter, proj, a, b, egui::Stroke::new(width, color.gamma_multiply(alpha[1])));
             }
         }
     }
@@ -223,7 +239,7 @@ pub fn draw_guides(
             aurora_i18n::tr!("map-dir-ne"),
         ];
         for (at, name) in crate::world::beacons::region_corners(&region.heightmap).into_iter().zip(names) {
-            marker(ctx, &painter, proj, at, p.amber, width);
+            marker(ctx, &painter, proj, at, p.amber, width, [0.125, 0.5]);
             if let Some((point, _)) = proj.project(at) {
                 aurora_render::world_label_at(ctx, Some(at));
                 let galley = painter.layout_no_wrap(name.to_owned(), egui::FontId::proportional(12.5), p.ink);
@@ -235,6 +251,25 @@ pub fn draw_guides(
                 painter.galley(rect.min + egui::vec2(6.0, 3.0), galley, p.ink);
                 aurora_render::world_label_at(ctx, None);
             }
+        }
+    }
+}
+
+/// Debug beacons with their names (LLViewerObjectList::addDebugBeacon, as
+/// the pathfinding windows' Show beacon draws them): the object marker, its
+/// name above it, not hidden by the scene (setZCompare(false)).
+pub fn labeled(ctx: &egui::Context, p: &Palette, proj: &super::hud::Projector, beacons: &[(glam::Vec3, egui::Color32, String)]) {
+    if beacons.is_empty() {
+        return;
+    }
+    let painter = super::hud::world_painter(ctx);
+    for (at, color, name) in beacons {
+        // the pathfinding colours are 80 % opaque, the long lines a quarter of that
+        marker(ctx, &painter, proj, *at, *color, 2.0, [0.2, 0.8]);
+        if !name.is_empty()
+            && let Some((pos, _)) = proj.project(*at)
+        {
+            painter.text(pos, egui::Align2::CENTER_BOTTOM, name, egui::FontId::proportional(12.5), p.ink);
         }
     }
 }

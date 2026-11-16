@@ -123,6 +123,11 @@ mod outfit_batch;
 mod outfit_hd;
 mod outfit_portrait;
 mod own_motion;
+mod pathfinding;
+mod pathfinding_demo;
+mod pathfinding_path;
+mod pathfinding_rebake;
+mod pathfinding_view;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
@@ -439,6 +444,15 @@ pub struct App {
     /// Keep the verified standing set through an asynchronous stand-up reply.
     anchor_pose: Option<(u64, crate::ao::Set)>,
     bridge_services: crate::world::bridge::services::Services,
+    /// The pathfinding console's path test through the bridge.
+    path_queue: crate::world::bridge::path::PathQueue,
+    /// The bridge answers queries (the path test's status).
+    path_bridge_ready: bool,
+    /// The path end a Ctrl (start) or Shift (end) click would set, under
+    /// the cursor (app/pathfinding_path.rs).
+    path_hover: Option<(bool, Vec3)>,
+    /// The pathfinding console's View tab: its list and matching.
+    pathfinding_view_feed: pathfinding_view::ViewFeed,
     bridge_demo: crate::world::bridge::demo::Demo,
     movelock_ui: ui::movelock::MoveLockUi,
     movement_ui: ui::movement::MovementUi,
@@ -607,7 +621,9 @@ pub struct App {
     context_customization: ui::context::Customization,
     avatar_textures: ui::context::AvatarTexturesUi,
     object_profile: ui::context::ObjectProfileUi,
-    pathfinding_ui: ui::context::PathfindingUi,
+    pathfinding: ui::pathfinding::PathfindingUi,
+    pathfinding_feed: pathfinding::PathfindingFeed,
+    pathfinding_demo: pathfinding_demo::PathfindingDemo,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
@@ -1770,6 +1786,10 @@ impl App {
             anchor_stands: Default::default(),
             anchor_pose: None,
             bridge_services: Default::default(),
+            path_queue: Default::default(),
+            path_bridge_ready: false,
+            path_hover: None,
+            pathfinding_view_feed: Default::default(),
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
             movement_ui: Default::default(),
@@ -1871,7 +1891,9 @@ impl App {
             context_customization: Default::default(),
             avatar_textures: Default::default(),
             object_profile: Default::default(),
-            pathfinding_ui: Default::default(),
+            pathfinding: Default::default(),
+            pathfinding_feed: Default::default(),
+            pathfinding_demo: Default::default(),
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
@@ -3603,11 +3625,14 @@ impl App {
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
-            if self.bridge_services.owns(request) || self.world.portals.owns(request) {
+            if self.bridge_services.owns(request) || self.world.portals.owns(request) || self.path_queue.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
             }
             self.world.portals.reply(request, &result, Instant::now());
+            if self.path_reply(request, &result) {
+                return;
+            }
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
@@ -3641,16 +3666,12 @@ impl App {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
             return;
         }
-        if let NetEvent::Pathfinding {
-            request,
-            region,
-            kind,
-            result,
-        } = ev
-        {
-            self.pathfinding_ui.reply(request, region, kind, result);
+        let Some(ev) = self.on_pathfinding_event(ev) else {
             return;
-        }
+        };
+        let Some(ev) = self.on_rebake_event(ev) else {
+            return;
+        };
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
@@ -4115,6 +4136,7 @@ impl App {
             }
             NetEvent::CapReply { tag, result } => {
                 self.area_search_feed.on_cost_reply(tag, &result);
+                self.on_pathfinding_physics(tag, &result);
                 self.build.on_cap_reply(&mut self.world, tag, result);
             }
             NetEvent::ScriptRunning {
@@ -11848,6 +11870,7 @@ impl App {
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
+            self.pathfinding_shapes_frame(&mut gfx.renderer, Instant::now());
             let huds_shown = self.huds_shown();
             self.scene
                 .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {
@@ -12516,7 +12539,8 @@ impl App {
                 fill: weather_fill,
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
-            hide_sky: self.settings.debug.hidden_types.sky,
+            // (the pathfinding console's World unticked hides it too)
+            hide_sky: self.settings.debug.hidden_types.sky || self.scene.pathfinding_view.world_hidden,
             look: None,
         };
         if let Some(view) = studio_view {
@@ -13060,6 +13084,7 @@ impl App {
             self.hover_drawn.cancel(&mut gfx.renderer);
         }
         self.track_toolbox_hover(&gfx.renderer);
+        self.path_hover = self.path_hover_point(&mut gfx.renderer, ctx.is_pointer_over_egui());
         if self.plate_cursor() {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
@@ -15945,6 +15970,10 @@ impl App {
             BarAction::IkEdit => {
                 self.ik_editor.toggle();
             }
+            BarAction::Pathfinding(kind) => self.open_pathfinding_from_selection(kind),
+            BarAction::PathfindingConsole => self.open_pathfinding_console(),
+            BarAction::RebakeNavMesh => self.rebake_navmesh(),
+            BarAction::ParcelIcon(click) => self.parcel_icon_click(click),
             BarAction::Poser => {
                 self.ik_editor.open_poser();
                 let window = self.ik_editor.poser_window(&self.settings.poser);
@@ -18001,6 +18030,12 @@ impl App {
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
                 ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
+                ui::beacons::labeled(&ctx, &p, projector, &self.pathfinding_beacons(Instant::now(), &p));
+                if let Some(capsule) = self.pathfinding_capsule(Instant::now()) {
+                    ui::pathfinding::capsule::draw(&ctx, &p, projector, &capsule);
+                }
+                self.draw_path(&ctx, &p, projector);
+                self.draw_water_plane(&ctx, &p, projector);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 self.director_world(&ctx, &p, projector);
                 if !held {
@@ -18164,17 +18199,22 @@ impl App {
                     avatar_welcome: avatar_welcome_page.is_some(),
                     linden_home: self.second_life(),
                     destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
-                    parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
-                        (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
-                            region_flags: region.region_flags,
-                            parcel,
-                            agent_id: self.world.agent_id,
-                            group: self.world.groups.group(&parcel.group_id),
-                            health: self.world.health,
-                            frozen: self.world.frozen,
-                            god_level: self.world.god_level,
-                        }),
-                        _ => Vec::new(),
+                    parcel_icons: {
+                        let mut icons = match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
+                            (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
+                                region_flags: region.region_flags,
+                                parcel,
+                                agent_id: self.world.agent_id,
+                                group: self.world.groups.group(&parcel.group_id),
+                                health: self.world.health,
+                                frozen: self.world.frozen,
+                                god_level: self.world.god_level,
+                            }),
+                            _ => Vec::new(),
+                        };
+                        // the navmesh's own icons follow the parcel's abilities
+                        icons.extend(self.pathfinding_parcel_icons());
+                        icons
                     },
                     classic_bars,
                     islands,
@@ -18204,6 +18244,8 @@ impl App {
                     edit_particles: self.particle_editor_target().is_some(),
                     save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     build_options: crate::build::MenuOptions::of(&self.settings.build),
+                    pathfinding: self.demo || self.world.main_has_cap("NavMeshGenerationStatus"),
+                    pathfinding_rebake: self.pathfinding.rebake.menu_enabled(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -19592,13 +19634,10 @@ impl App {
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
                 self.object_profile_window(&ctx, &p);
 
-                if let Some(command) = self.pathfinding_ui.show(&ctx, &p, &mut self.world) {
-                    if self.demo {
-                        self.pathfinding_ui.demo(&self.world, command);
-                    } else {
-                        self.send(command);
-                    }
-                }
+                self.pathfinding_rebake_frame(&ctx, &p);
+                self.pathfinding_console(&ctx, &p);
+                self.pathfinding_view_frame(Instant::now());
+                self.pathfinding_windows(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
                 self.group_chat_moderation_ui(&ctx, &p);
@@ -22322,6 +22361,10 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_CONV_OPTIONS: Nova's conversation and its history
             if crate::demo::conv_options::scene().is_some() {
                 crate::demo::conv_options::lines(&mut self.world);
+            }
+            // AURORA_DEMO_PATHFINDING: the pathfinding windows on made-up lists.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_PATHFINDING") {
+                self.demo_pathfinding(&mode);
             }
             // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {

@@ -487,7 +487,7 @@ fn place(
                 .rect_filled(slot.expand(1.0), ui.visuals().window_corner_radius, p.raised);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        let col = if it.ok { p.muted_dim } else { p.danger };
+        let col = if it.ok { p.muted_dim } else { p.danger }.gamma_multiply(it.alpha);
         let glyph = crate::ui::parcel_icons::glyph_rect(slot);
         paint_icon(ui, icons, it.icon, glyph, GLYPH, col);
         if it.strike {
@@ -498,10 +498,11 @@ fn place(
             let g = ui.painter().layout_no_wrap(t, name_font(), col);
             crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(glyph.right() + RIGHT_GAP, cy), col);
         }
-        if r.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()))
-            .clicked()
-        {
-            panels.about_land = !panels.about_land;
+        if r.on_hover_text(crate::ui::parcel_icons::hover_text(it)).clicked() {
+            match it.click {
+                crate::ui::parcel_icons::Click::AboutLand => panels.about_land = !panels.about_land,
+                click => action = Some(BarAction::ParcelIcon(click)),
+            }
         }
     }
 

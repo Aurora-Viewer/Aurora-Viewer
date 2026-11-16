@@ -48,6 +48,7 @@ pub mod mesh_inspection;
 pub mod meshes;
 pub mod morph;
 pub mod particles;
+pub mod pathfinding_view;
 pub mod physics_shapes;
 mod pick_accel;
 pub mod picking;
@@ -1081,6 +1082,9 @@ pub struct Scene {
     /// Debug "Show transparency": Some(rigged faces too).
     debug_alpha: Option<bool>,
     beacon_highlights: HashSet<usize>,
+    /// The pathfinding console's View tab (`pathfinding_view`).
+    pub pathfinding_view: pathfinding_view::PathfindingView,
+    pathfinding_view_applied: u64,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
     /// The lights' boxes while Beacons > Bounding boxes for lights is on.
     pub light_boxes: Vec<crate::world::beacons::LightBox>,
@@ -1112,6 +1116,9 @@ pub struct Scene {
     pub creation_preview: creation_preview::CreationPreview,
     pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
+    /// The pathfinding console's shapes drawn from their physics, one set per
+    /// use (`aurora_render::PATHFINDING_*`; app/pathfinding_view.rs).
+    pub pathfinding_shapes: [physics_shapes::PhysicsShapes; 4],
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
     pub still: Option<still_check::StillCheck>,
@@ -1725,6 +1732,8 @@ impl Scene {
             selection_changed: None,
             debug_alpha: None,
             beacon_highlights: Default::default(),
+            pathfinding_view: Default::default(),
+            pathfinding_view_applied: 0,
             beacon_markers: Vec::new(),
             light_boxes: Vec::new(),
             land_overlays: Default::default(),
@@ -1765,6 +1774,7 @@ impl Scene {
             creation_preview: creation_preview::CreationPreview::default(),
             build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
+            pathfinding_shapes: Default::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
@@ -2401,6 +2411,9 @@ impl Scene {
         self.creation_preview.clear(renderer);
         self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
+        for shapes in &mut self.pathfinding_shapes {
+            shapes.clear(renderer);
+        }
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
         // (our avatar is a first appearance again at the next login)
@@ -2818,8 +2831,12 @@ impl Scene {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
+        // the pathfinding console's World off and Movables only, too
+        let pathfinding = &self.pathfinding_view;
         // (a HUD is no rendering type: it stays)
-        let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
+        let left_out = |idx: usize, hud: bool| {
+            !isolate::object_visible(world, idx) || (!hud && (types.hides_object(world, idx) || pathfinding.hides(world, idx)))
+        };
         let studio_roots = if world.avatar_studio {
             isolate::studio_roots(world)
         } else {
@@ -2829,9 +2846,11 @@ impl Scene {
             || self.hidden_types_applied != types
             || self.studio_visible != world.avatar_studio
             || self.studio_roots != studio_roots
+            || self.pathfinding_view_applied != pathfinding.version
         {
             self.photo_isolation_version = iso.version;
             self.hidden_types_applied = types;
+            self.pathfinding_view_applied = pathfinding.version;
             self.studio_visible = world.avatar_studio;
             self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
@@ -2841,7 +2860,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() || types.any_object() || world.avatar_studio {
+        } else if iso.applied() || types.any_object() || world.avatar_studio || pathfinding.active() {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     g.hidden = left_out(idx, g.hud);
@@ -5066,6 +5085,7 @@ impl Scene {
                         || self.photo_marks.contains(&i)
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
+                        || self.pathfinding_view.overlay.contains_key(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
                         || self.gpu.get(i).is_some_and(|g| posed(g, i))
                     {
@@ -5086,6 +5106,7 @@ impl Scene {
                         || self.photo_marks.contains(&i)
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
+                        || self.pathfinding_view.overlay.contains_key(&i)
                         || captured(g, i)
                         || posed(g, i)
                     {
@@ -5151,6 +5172,7 @@ impl Scene {
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
+            pathfinding: [Vec<DrawCmd>; 4],
             casters: Vec<ShadowCaster>,
             shelter: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
@@ -5179,6 +5201,7 @@ impl Scene {
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
+            pathfinding: Default::default(),
             casters: Vec::new(),
             shelter: Vec::new(),
             refl: Vec::new(),
@@ -5314,6 +5337,14 @@ impl Scene {
                     } else {
                         l.glow.push(cmd);
                     }
+                }
+                // the pathfinding console's shapes: the face again, in its use's colour,
+                // until its physics shape is known (`pathfinding_shapes`)
+                if in_view
+                    && let Some(&shape) = self.pathfinding_view.overlay.get(&idx)
+                    && !self.pathfinding_view.physics.contains_key(&idx)
+                {
+                    l.pathfinding[shape].push(cmd);
                 }
                 // debug "Show transparency" (renderDebugAlpha): blended,
                 // masked and invisible faces in red, material masks in blue;
@@ -5489,6 +5520,9 @@ impl Scene {
             a.debug_blue.append(&mut b.debug_blue);
             a.debug_green.append(&mut b.debug_green);
             a.debug_yellow.append(&mut b.debug_yellow);
+            for (into, from) in a.pathfinding.iter_mut().zip(&mut b.pathfinding) {
+                into.append(from);
+            }
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
@@ -5587,6 +5621,8 @@ impl Scene {
         self.lists.debug_blue = result.debug_blue;
         self.lists.debug_green = result.debug_green;
         self.lists.debug_yellow = result.debug_yellow;
+        self.lists.pathfinding = result.pathfinding;
+        self.lists.pathfinding_xray = self.pathfinding_view.xray;
         self.lists.select_root = result.select_root;
         self.lists.select_child = result.select_child;
         if gpu_mode {

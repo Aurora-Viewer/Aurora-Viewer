@@ -162,6 +162,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "rotate-clockwise",
     "rotate-clockwise-2",
     "route",
+    "route-off",
     "rss",
     "run",
     "select-all",

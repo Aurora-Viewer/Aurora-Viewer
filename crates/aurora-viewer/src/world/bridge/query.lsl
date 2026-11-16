@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.41: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.42: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.41";
+string VERSION = "1.42";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -129,6 +129,32 @@ query(key request, string kind, string targets) {
             details += [llGetPos(), RAD_TO_DEG * llRot2Euler(llList2Rot(details, 13))];
         }
         llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, [(string)object] + details));
+    } else if (kind == "path") {
+        // The pathfinding console's path test: the region's own static
+        // navmesh path (llGetStaticPath) between two region-local points,
+        // for a character radius and CHARACTER_TYPE. Read-only.
+        list fields = llParseStringKeepNulls(targets, [","], []);
+        float radius = llList2Float(fields, 6);
+        integer type = llList2Integer(fields, 7);
+        if (llGetListLength(fields) != 8 || radius < 0.125 || radius > 5.0 || type < 0 || type > 4) {
+            llHTTPResponse(request, 400, "invalid"); return;
+        }
+        vector start = <llList2Float(fields, 0), llList2Float(fields, 1), llList2Float(fields, 2)>;
+        vector end = <llList2Float(fields, 3), llList2Float(fields, 4), llList2Float(fields, 5)>;
+        list path = llGetStaticPath(start, end, radius, [CHARACTER_TYPE, type]);
+        integer count = llGetListLength(path) - 1;
+        integer status = llList2Integer(path, count);
+        path = llDeleteSubList(path, count, count);
+        // At most 100 waypoints, both ends kept: the reply stays under the
+        // viewer's 4 KB.
+        while (count > 100) {
+            list kept = [llList2Vector(path, 0)];
+            integer i;
+            for (i = 2; i < count - 1; i += 2) kept += [llList2Vector(path, i)];
+            path = kept + [llList2Vector(path, count - 1)];
+            count = llGetListLength(path);
+        }
+        llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, [status] + path));
     } else llHTTPResponse(request, 400, "invalid");
 }
 
