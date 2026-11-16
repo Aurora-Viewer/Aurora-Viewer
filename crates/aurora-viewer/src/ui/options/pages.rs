@@ -5,6 +5,7 @@ pub mod accessibility;
 pub mod appearance;
 pub mod aurora;
 pub mod avatars;
+pub mod build;
 pub mod camera;
 pub mod chat;
 pub mod commands;
@@ -24,6 +25,7 @@ pub mod shortcuts;
 pub mod sound;
 pub mod spelling;
 pub mod system;
+pub mod vr;
 
 use super::Page;
 use super::cx::Cx;
@@ -51,6 +53,10 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("common-mouselook"),
         ],
         Page::Controls => vec![aurora_i18n::tr!("ui-options-page-controls"), aurora_i18n::tr!("joystick-title")],
+        Page::Gamepad => vec![
+            aurora_i18n::tr!("joystick-gamepad-settings"),
+            aurora_i18n::tr!("joystick-map-controls"),
+        ],
         Page::Avatars => vec![
             aurora_i18n::tr!("ui-options-tab-name-tags"),
             aurora_i18n::tr!("ui-options-names"),
@@ -92,7 +98,9 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
         Page::Aurora => aurora::page(cx, tab),
         Page::Graphics => graphics::page(cx, tab),
         Page::Camera => camera::page(cx, tab),
+        Page::Vr => vr::page(cx),
         Page::Avatars => avatars::page(cx, tab),
+        Page::Build => build::page(cx),
         Page::Chat => chat::page(cx, tab),
         Page::Sound => sound::page(cx, tab),
         Page::Media => media::page(cx),
@@ -111,6 +119,7 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
                 joystick::page(cx)
             }
         }
+        Page::Gamepad => joystick::gamepad_page(cx, tab),
         Page::Shortcuts => shortcuts::page(cx, tab),
         Page::Commands => commands::page(cx),
         Page::System => system::page(cx),

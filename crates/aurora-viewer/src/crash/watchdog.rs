@@ -55,6 +55,9 @@ pub struct State {
     pub preset: &'static str,
     pub vram_used_mb: Option<u64>,
     pub vram_budget_mb: Option<u64>,
+    /// The tightest headroom of the last minute: budget less usage,
+    /// negative while the viewer was past the budget (vram.rs).
+    pub vram_headroom_min_mb: Option<i64>,
     /// Texture memory pressure step and its maximum.
     pub texture_pressure: (u32, u32),
     pub objects: usize,
@@ -71,11 +74,16 @@ pub struct State {
     pub window_state: &'static str,
     /// The latest GPU frame time measured, the longest one of the last
     /// 10 s (up to a GPU loss), and the pass that took most of each
-    /// (`GpuElement::key`). A driver reset follows a GPU task of more than
-    /// about 2 s: frames getting longer before the loss show it.
+    /// (`GpuElement::key`). A driver reset follows a GPU task of about 1.1 s
+    /// on NVIDIA (measured, `HANG_AFTER` in aurora-render) and of Windows'
+    /// 2 s setting otherwise: frames getting longer before the loss show it.
+    /// The frame that hung is never measured.
     pub gpu_ms: Option<f32>,
     pub gpu_peak_ms: Option<f32>,
     pub gpu_peak_pass: Option<&'static str>,
+    /// The ambient occlusion and contact shadows of that longest frame (ms),
+    /// which its `effects` pass gathers with others.
+    pub gpu_peak_ao_contact: Option<(f32, f32)>,
     pub gpu_last_pass: Option<&'static str>,
     /// Texture uploads since the previous note: how many and how many MB,
     /// and the most MB one frame uploaded in that time.
@@ -90,14 +98,11 @@ pub struct State {
     /// Still loading: textures being fetched or decoded, textures waiting
     /// for their upload, geometry pending.
     pub loading: (usize, usize, usize),
-    /// The Vulkan layers on offer to the viewer, comma separated
-    /// (`VK_LAYER_*` names only).
-    pub layers: String,
     /// What is known of a GPU loss, as fixed words: the reason wgpu gave,
     /// what its message is about, and how the loss was first seen.
     pub loss: Option<(&'static str, &'static str, &'static str)>,
-    /// The longest time the render thread was held by the GPU before the
-    /// loss (ms, 0 when the GPU never stalled for 2 s).
+    /// The longest time the render thread was held by the GPU past 2 s
+    /// (ms); 0 when it never was, and then no row.
     pub stall_ms: u64,
     /// The other Aurora viewers on this card and how many of them are in
     /// front (instances.rs); None when the registry does not run (demo).
@@ -120,6 +125,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "aa-msaa",
     "aa-taa",
     "aa-smaa",
+    "blend-exact",
     "bloom",
     "glow",
     "indirect-light",
@@ -147,6 +153,9 @@ impl State {
         if let (Some(used), Some(budget)) = (self.vram_used_mb, self.vram_budget_mb) {
             let _ = writeln!(out, "vram_mb={used}/{budget}");
         }
+        if let Some(headroom) = self.vram_headroom_min_mb {
+            let _ = writeln!(out, "vram_headroom_60s_mb={headroom}");
+        }
         let _ = writeln!(out, "texture_pressure={}/{}", self.texture_pressure.0, self.texture_pressure.1);
         let _ = writeln!(out, "objects={}", self.objects);
         let _ = writeln!(out, "avatars={}", self.avatars);
@@ -167,6 +176,9 @@ impl State {
         if let Some(pass) = self.gpu_peak_pass {
             let _ = writeln!(out, "gpu_peak_pass={pass}");
         }
+        if let Some((ao, contact)) = self.gpu_peak_ao_contact {
+            let _ = writeln!(out, "gpu_peak_ao_contact={ao:.1}/{contact:.1}");
+        }
         if let Some(pass) = self.gpu_last_pass {
             let _ = writeln!(out, "gpu_last_pass={pass}");
         }
@@ -182,15 +194,14 @@ impl State {
             let _ = writeln!(out, "region_s={s}");
         }
         let _ = writeln!(out, "loading={}/{}/{}", self.loading.0, self.loading.1, self.loading.2);
-        if !self.layers.is_empty() {
-            let _ = writeln!(out, "layers={}", self.layers);
-        }
         if let Some((reason, cause, seen)) = self.loss {
             let _ = writeln!(out, "loss_reason={reason}");
             let _ = writeln!(out, "loss_cause={cause}");
             let _ = writeln!(out, "loss_seen_by={seen}");
         }
-        let _ = writeln!(out, "stall_ms={}", self.stall_ms);
+        if self.stall_ms > 0 {
+            let _ = writeln!(out, "stall_ms={}", self.stall_ms);
+        }
         if let Some((n, front)) = self.viewers_on_card {
             let _ = writeln!(out, "other_viewers={n}/{front}");
         }
@@ -439,4 +450,19 @@ pub fn read_alive(dir: &Path) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// When `alive.txt` was last written, in Unix seconds: the last sign of life
+/// when its content is lost. The file is renamed into place without a flush
+/// (every 5 s, a flush would cost the disk): a system that stops at once
+/// (Windows crash, power cut, forced restart) can leave it empty or full of
+/// zeros, while its date, journaled with the rename, survives. The pending
+/// copy counts too: a rename lost with the system leaves only it.
+pub fn alive_written(dir: &Path) -> Option<u64> {
+    ["alive.txt", "alive.pending"]
+        .iter()
+        .filter_map(|name| std::fs::metadata(dir.join(name)).and_then(|m| m.modified()).ok())
+        .filter_map(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map(|at| at.as_secs())
+        .max()
 }

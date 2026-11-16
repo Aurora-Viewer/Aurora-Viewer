@@ -88,7 +88,7 @@ mod native {
                 .name("image-clipboard".into())
                 .spawn(move || {
                     while let Ok((ctx, image)) = rx.recv() {
-                        let result = copy(&crate::settings::cache_dir().join("clipboard-images"), &image);
+                        let result = copy(&crate::settings::asset_cache_dir().join(crate::cache::CLIPBOARD_IMAGES), &image);
                         finish(&ctx, &image, result);
                     }
                 })
@@ -118,7 +118,7 @@ mod native {
             let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
             writer.write_image_data(&rgba).map_err(|error| error.to_string())?;
         }
-        crate::cache::write(&path, &bytes).map_err(|error| error.to_string())?;
+        crate::cache::write_plain(&path, &bytes).map_err(|error| error.to_string())?;
         Ok((path, rgba))
     }
 

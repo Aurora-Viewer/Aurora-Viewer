@@ -1,4 +1,8 @@
-<!-- One line per issue: "Closes #<n>" if this PR resolves it, "Refs #<n>"
+<!-- Keep these headings. The PR description check asks for the issue line
+     and for text of your own under What it is for, Legacy Viewer origin,
+     What changes and Tests ("No" or "Not applicable" is enough where it
+     fits); a pull request is reviewed once they are there.
+     One line per issue: "Closes #<n>" if this PR resolves it, "Refs #<n>"
      if a part or a validation stays pending; "No issue" if there is none. -->
 Closes #
 

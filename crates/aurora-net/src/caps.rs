@@ -25,12 +25,18 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "CopyInventoryFromNotecard",
     // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
     "CreateInventoryCategory",
+    // a new script or notecard made in an object's contents
+    // (LLPanelContents::createTaskInventoryItemHelper)
+    "CreateTaskInventoryItem",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
     // the General panel's "Apply", the estate lists, the Estate panel's
     // "Apply", the region's experiences and its restart schedule
     "DispatchRegionInfo",
+    // the "Region settings" tab of Aurora-Sim based grids
+    // (LLPanelRegionOpenSettingsInfo, buildCapabilityNames)
+    "DispatchOpenRegionSettings",
     "EnvironmentSettings",
     "EstateAccess",
     "EstateChangeInfo",
@@ -50,6 +56,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
+    // the experience profile's Edit (LLFloaterExperienceProfile::
+    // experienceIsAdmin, LLExperienceCache::updateExperience)
+    "IsExperienceAdmin",
+    "UpdateExperience",
     "GetMesh",
     "GetMesh2",
     "GetMetadata",
@@ -88,6 +98,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ObjectAnimation",
     "ObjectMedia",
     "ObjectMediaNavigate",
+    // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
+    "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
@@ -101,6 +113,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the LSL and SLua keywords together, ahead of LSLSyntax (LLSyntaxDefCache)
+    "ScriptDefinitions",
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
@@ -175,6 +189,11 @@ mod language_tests {
     use super::*;
 
     #[test]
+    fn parcel_rename_requests_the_properties_update_capability() {
+        assert!(REQUESTED_CAPS.contains(&"ParcelPropertiesUpdate"));
+    }
+
+    #[test]
     fn maturity_preference_is_sent_and_read_as_short_strings() {
         assert!(REQUESTED_CAPS.contains(&"UpdateAgentInformation"));
         let body = maturity_preference_body(crate::search::SIM_ACCESS_MATURE);
@@ -205,6 +224,7 @@ mod language_tests {
     fn the_region_estate_capabilities_are_requested() {
         for cap in [
             "DispatchRegionInfo",
+            "DispatchOpenRegionSettings",
             "EstateAccess",
             "EstateChangeInfo",
             "RegionExperiences",
@@ -228,6 +248,7 @@ mod language_tests {
     fn the_minor_simulator_capabilities_are_requested() {
         for cap in [
             "LSLSyntax",
+            "ScriptDefinitions",
             "SendPostcard",
             "ServerReleaseNotes",
             "SimConsoleAsync",

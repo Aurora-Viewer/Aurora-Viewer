@@ -11,7 +11,16 @@ fn row(id: u64, name: &str, own: bool, playing: bool, ago: u64, priority: Option
         playing,
         started: Instant::now() - Duration::from_secs(ago),
         priority,
+        animation_shown: true,
     }
+}
+
+#[test]
+fn the_tooltip_writes_the_animation_id_by_the_asset_id_rule() {
+    let mut r = row(7, "Pose ball", false, true, 1, None);
+    assert_eq!(r.tooltip(), format!("Pose ball\n{}", Uuid::from_u128(7)));
+    r.animation_shown = false;
+    assert_eq!(r.tooltip(), "Pose ball");
 }
 
 fn ids(explorer: &AnimationExplorer) -> Vec<u64> {

@@ -186,8 +186,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         if !notice {
             let name = sender_name(world, env.own_name, line);
             // the cube names its object under the pointer and inspects it
-            // like the name (an object's IM comes from its owner's id: the
-            // name alone, no menu)
+            // like the name, for nearby chat and an object's IM alike (the
+            // IM's line belongs to the object, its session id)
             let id = ui.scope_id().with(("compact_icon", line.time, line.source));
             let cube = ui.interact(icon.expand(2.0), id, egui::Sense::click()).on_hover_text(&name);
             let color = tone.unwrap_or_else(|| crate::ui::colors::sender_color(line));
@@ -205,15 +205,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 resp = resp.on_hover_text(&name);
             }
             crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, color);
-            if matches!(line.kind, ChatKind::Object(_)) && !line.source.is_nil() {
+            if matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !line.source.is_nil() {
                 for r in [cube, resp] {
-                    object_sender(
-                        &r.on_hover_cursor(egui::CursorIcon::PointingHand),
-                        p,
-                        world,
-                        line.source,
-                        &line.from,
-                    );
+                    object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
                 }
             }
             ui.add_space(GAP);
@@ -224,7 +218,13 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, p.muted_dim);
             ui.add_space(GAP);
         }
-        let (text, italics) = if notice { (&line.text[..], false) } else { body(line) };
+        let system;
+        let (text, italics) = if notice {
+            system = super::system_text(&line.text);
+            (&system[..], false)
+        } else {
+            body(line)
+        };
         let color = crate::ui::colors::keyword_color(line)
             .or(tone)
             .unwrap_or_else(|| text_color(line, p));
@@ -271,6 +271,8 @@ pub(super) mod tests {
             kind,
             source: uuid::Uuid::from_u128(9),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
@@ -346,6 +348,7 @@ pub(super) mod tests {
                     menu: None,
                     bubbles: style,
                     previews: None,
+                    moderators: None,
                 };
                 super::super::draw_line(ui, &mut env, &said, look, None);
             },
@@ -480,6 +483,7 @@ pub(super) mod tests {
                                 menu: None,
                                 bubbles: None,
                                 previews: None,
+                                moderators: None,
                             };
                             let place = Place {
                                 icon_center: 14.0,

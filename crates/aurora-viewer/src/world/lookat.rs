@@ -89,10 +89,11 @@ pub struct Settings {
 /// Where our head looks while the cursor moves (`cursor_look`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Aim {
-    /// The very point under the cursor (LOOKAT_TARGET_HOVER), Aurora's own.
-    #[default]
+    /// The very point under the cursor (LOOKAT_TARGET_HOVER), Aurora's own:
+    /// everyone nearby sees what the cursor is over. A choice, not the default.
     Point,
-    /// Firestorm: only toward the cursor's side (FREELOOK).
+    /// The Legacy Viewer's: only toward the cursor's side (FREELOOK).
+    #[default]
     Direction,
 }
 
@@ -122,7 +123,7 @@ impl Default for Settings {
             head_pitch: 90.0,
             static_eyes: false,
             style: Style::Aurora,
-            aim: Aim::Point,
+            aim: Aim::Direction,
         }
     }
 }
@@ -243,8 +244,9 @@ pub fn cursor_direction(forward: Vec3, x: f32, y: f32, yaw: f32, pitch: f32) -> 
 /// What the head looks at while the cursor moves (third person). Firestorm
 /// only turns the head toward the cursor's direction (FREELOOK,
 /// `cursor_direction`): the crosshair stands 1 m from the head, never on
-/// what the cursor points at, and LOOKAT_TARGET_HOVER has no caller. Aurora
-/// looks at the very point under the cursor when there is one (the hover
+/// what the cursor points at, and LOOKAT_TARGET_HOVER has no caller: the
+/// default. With `Aim::Point`, chosen in Preferences, Aurora looks at the
+/// very point under the cursor when there is one (the hover
 /// pick of the cursor icon): an object with the point in its frame, or a
 /// point of the ground (`hover`); over the sky, a window or ourselves, the
 /// direction of Firestorm. Its priority and its 1 s timeout are those of
@@ -682,10 +684,13 @@ mod tests {
         for hover in [Some(on), Some((None, DVec3::new(30.0, 40.0, 21.5))), None] {
             assert_eq!(cursor_look(Aim::Direction, hover, me, free), (FREELOOK, Some(me), free.as_dvec3()));
         }
-        // Aurora's point by default, also in a file saved before the setting
-        assert_eq!(Settings::default().aim, Aim::Point);
+        // the Legacy Viewer's direction by default, also in a file saved
+        // before the setting; the point stays a choice that is kept
+        assert_eq!(Settings::default().aim, Aim::Direction);
         let old: Settings = serde_json::from_str(r#"{"show_targets":true}"#).expect("former look-at settings");
-        assert_eq!(old.aim, Aim::Point);
+        assert_eq!(old.aim, Aim::Direction);
+        let chosen: Settings = serde_json::from_str(r#"{"aim":"Point"}"#).expect("look-at settings");
+        assert_eq!(chosen.aim, Aim::Point);
     }
 
     #[test]

@@ -6,6 +6,10 @@
 $CrashMarker = '<!-- aurora-crash v1 -->'
 $TriageStart = '<!-- crash-triage:start -->'
 $TriageEnd = '<!-- crash-triage:end -->'
+# Set by the triage on each issue it signed (scripts/crash-triage.ps1). Only
+# a maintainer or the workflow can set a label: an issue without it is no
+# reference, whatever its body says.
+$TriagedLabel = 'crash-triaged'
 # The viewer's own module, the one whose symbols each release publishes.
 $OwnModule = 'aurora_viewer'
 
@@ -14,7 +18,11 @@ function Read-CrashReport([string]$Body) {
     # A body already triaged keeps its report above the added section.
     $start = $Body.IndexOf($TriageStart)
     if ($start -ge 0) { $Body = $Body.Substring(0, $start) }
-    $report = [ordered]@{ Version = $null; Kind = $null; Location = $null; System = $null; Gpu = $null; Frames = @(); Modules = @{} }
+    $report = [ordered]@{
+        Version = $null; Kind = $null; Location = $null; System = $null; Gpu = $null; Frames = @(); Modules = @{}
+        # The rows that group a GPU loss or an unexpected shutdown (Get-ReportSignature).
+        GpuWork = $null; EndOfSession = $null; ExitCode = $null; Window = $null; Risk = $null
+    }
     $section = ''
     $inFence = $false
     foreach ($raw in ($Body -split "`r?`n")) {
@@ -22,7 +30,7 @@ function Read-CrashReport([string]$Body) {
         if ($line -match '^### (.+)$') { $section = $Matches[1]; $inFence = $false; continue }
         if ($line -eq '```text') { $inFence = $true; continue }
         if ($line -eq '```') { $inFence = $false; continue }
-        if ($line -match '^\| (Version|Crash|System|GPU) \| (.+) \|$') {
+        if ($line -match '^\| (Version|Crash|System|GPU|GPU work at the loss|End of session|Exit code|Window|Risk factors) \| (.+) \|$') {
             $value = $Matches[2]
             switch ($Matches[1]) {
                 'Version' { if ($value -match '^\d+\.\d+\.\d+([-+][0-9A-Za-z.+-]*)?$') { $report.Version = $value } }
@@ -30,11 +38,21 @@ function Read-CrashReport([string]$Body) {
                     if ($value -eq 'Rust panic') { $report.Kind = 'Rust panic' }
                     elseif ($value -eq 'Freeze') { $report.Kind = 'Freeze' }
                     elseif ($value -eq 'GPU not responding') { $report.Kind = 'GPU not responding' }
+                    elseif ($value -eq 'GPU device lost') { $report.Kind = 'GPU device lost' }
+                    elseif ($value -eq 'GPU device lost at startup') { $report.Kind = 'GPU device lost at startup' }
+                    elseif ($value -eq 'Unexpected shutdown') { $report.Kind = 'Unexpected shutdown' }
                     elseif ($value -match '^Out of memory \(\d{1,20} bytes\)$') { $report.Kind = 'Out of memory' }
                     elseif ($value -match '^Native exception (0x[0-9A-F]{8})$') { $report.Kind = "Native exception $($Matches[1])" }
                 }
                 'System' { if ($value -match '^[A-Za-z0-9 ._()\-,+/]{1,120}$') { $report.System = $value } }
                 'GPU' { if ($value -match '^[A-Za-z0-9 ._()\-,+/]{1,160}$') { $report.Gpu = $value } }
+                # Only the class of these rows is used (Get-GpuLossKind,
+                # Get-ShutdownKind): what they say is never published.
+                'GPU work at the loss' { $report.GpuWork = $value }
+                'End of session' { $report.EndOfSession = $value }
+                'Exit code' { if ($value -match '^(0x[0-9A-F]{8})( |$)') { $report.ExitCode = $Matches[1] } }
+                'Window' { $report.Window = $value }
+                'Risk factors' { if ($value -match '^[A-Za-z0-9 ._()\-,+/:\u00B7]{1,240}$') { $report.Risk = $value } }
             }
             continue
         }
@@ -225,6 +243,94 @@ function Get-StableName([string]$Name) {
 # and of the process start: the same in every crash.
 $IgnoredFrame = '^(std|core|alloc|panic_unwind|backtrace|backtrace_rs)::|^__rust|^rust_(begin_unwind|panic)|^aurora_viewer::(crash|logging|allocator)::|^(mimalloc|libmimalloc_sys)::|^_?mi_|^_*scrt_|^invoke_main$|^main$|^(kernelbase|ntdll|kernel32|ucrtbase|vcruntime140)(\+0x[0-9a-f]+)?$|^\?$'
 
+# The kinds grouped by their rows, not by their stack: the stack of a GPU
+# loss shows the driver's submission, the one of an unexpected shutdown the
+# last state seen, never the cause.
+$GroupedKinds = @('GPU device lost', 'GPU device lost at startup', 'Unexpected shutdown')
+
+<#
+    The family of a graphics card, from the GPU row: vendor and generation
+    ("NVIDIA RTX 30", "AMD RX 9000", "AMD integrated"), " laptop" for a
+    laptop chip. Built from fixed words and matched digits only: the row is
+    written by anyone.
+#>
+function Get-GpuFamily([string]$Gpu) {
+    if (-not $Gpu) { return 'unknown GPU' }
+    $name = $Gpu
+    $i = $name.IndexOf(' (')
+    if ($i -gt 0) { $name = $name.Substring(0, $i) }
+    # The viewer's notice in place of a name (summary.rs, gpu_in).
+    if ($name.StartsWith('no discrete GPU')) { return 'no discrete GPU visible' }
+    $laptop = ''
+    if ($name -match '(?i)\blaptop\b') { $laptop = ' laptop' }
+    if ($name -match '(?i)\bNVIDIA\b') {
+        if ($name -match '(?i)\bRTX\s+A\d{3,4}\b|\bAda Generation\b|\bQuadro\b') { return "NVIDIA RTX workstation$laptop" }
+        if ($name -match '(?i)\b(RTX|GTX)\s*(\d{2})\d{2}\b') { return "NVIDIA $($Matches[1].ToUpper()) $($Matches[2])$laptop" }
+        if ($name -match '(?i)\b(RTX|GTX)\s*(\d)\d{2}\b') { return "NVIDIA $($Matches[1].ToUpper()) $($Matches[2])00$laptop" }
+        if ($name -match '(?i)\bRTX\b') { return "NVIDIA RTX workstation$laptop" }
+        return "NVIDIA other$laptop"
+    }
+    if ($name -match '(?i)\b(AMD|Radeon)\b') {
+        if ($name -match '(?i)\bRX\s*(\d)\d{3}\b') { return "AMD RX $($Matches[1])000$laptop" }
+        if ($name -match '(?i)\bRX\s*(\d)\d{2}\b') { return "AMD RX $($Matches[1])00$laptop" }
+        if ($name -match '(?i)Radeon(\(TM\))?\s+(\d{3,4}M\s+)?Graphics|Radeon\s+\d{3,4}M\b|\bVega\b') { return 'AMD integrated' }
+        return "AMD other$laptop"
+    }
+    if ($name -match '(?i)\bIntel\b') {
+        if ($name -match '(?i)\bArc\b') { return 'Intel Arc' }
+        return 'Intel integrated'
+    }
+    if ($name -match '(?i)\bApple\s+M(\d{1,2})\b') { return "Apple M$($Matches[1])" }
+    'other GPU'
+}
+
+function Get-OsFamily([string]$System) {
+    if (-not $System) { return 'unknown system' }
+    if ($System -match '^Windows\b') { return 'Windows' }
+    if ($System -match '(?i)\bmacOS\b') { return 'macOS' }
+    if ($System -match '(?i)\bLinux\b') { return 'Linux' }
+    'other system'
+}
+
+# What the GPU had in hand when it was lost (summary.rs, "GPU work at the loss").
+function Get-GpuLossKind($Report) {
+    if ($Report.Kind -eq 'GPU device lost at startup') { return 'at startup' }
+    $work = [string]$Report.GpuWork
+    if ($work.StartsWith('nothing submitted yet')) { return 'at startup' }
+    if ($work.Contains(', a hang (')) { return 'hang' }
+    if ($work.Contains(', a fault in the work')) { return 'fault' }
+    'loss not described'
+}
+
+# How an unexpected shutdown ended: the watcher's word, or the exit code.
+function Get-ShutdownKind($Report) {
+    $end = [string]$Report.EndOfSession
+    if ($end.Contains('started again right after')) { return 'system restarted' }
+    if ($end.Contains('stopped together')) { return 'viewer and watcher stopped together' }
+    if ($Report.ExitCode -eq '0x00000001') { return 'ended from outside' }
+    if ($Report.ExitCode) { return "exit code $($Report.ExitCode)" }
+    'end not described'
+}
+
+function Get-WindowKind($Report) {
+    $window = [string]$Report.Window
+    if ($window.StartsWith('never shown')) { return 'window never shown' }
+    if ($window.StartsWith('not answering')) { return 'window not answering' }
+    if ($window.StartsWith('answering')) { return 'window answering' }
+    'window not described'
+}
+
+<#
+    The keys of a GPU loss or an unexpected shutdown: the family of the
+    card, how it ended and the system.
+#>
+function Get-GroupKeys($Report) {
+    if ($Report.Kind -eq 'Unexpected shutdown') {
+        return @('unexpected shutdown', (Get-GpuFamily $Report.Gpu), (Get-ShutdownKind $Report), (Get-WindowKind $Report), (Get-OsFamily $Report.System))
+    }
+    @('GPU device lost', (Get-GpuFamily $Report.Gpu), (Get-GpuLossKind $Report), (Get-OsFamily $Report.System))
+}
+
 <#
     The crash's signature: its kind and its first three meaningful frames,
     by function name (stable across versions while the code stays). Without
@@ -259,7 +365,28 @@ function Get-CrashSignature($Report, $Frames) {
     @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys }
 }
 
+<#
+    The signature of a report: by its rows for a GPU loss or an unexpected
+    shutdown (Get-GroupKeys), by its stack otherwise (Get-CrashSignature).
+#>
+function Get-ReportSignature($Report, $Frames) {
+    if ($GroupedKinds -contains $Report.Kind) {
+        $keys = @(Get-GroupKeys $Report)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("grouped|$($keys -join '|')"))
+        return @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys; Grouped = $true }
+    }
+    Get-CrashSignature $Report $Frames
+}
+
 function Get-TriageTitle($Report, $Signature) {
+    # "Crash: GPU device lost, NVIDIA RTX 30, hang (Windows)": the reference
+    # of every report of that group, whatever their version.
+    if ($Signature.Grouped) {
+        $keys = @($Signature.Frames)
+        $last = $keys.Count - 1
+        return "Crash: $($keys[0..($last - 1)] -join ', ') ($($keys[$last]))"
+    }
     $kind = 'Rust panic'
     if ($Report.Kind -like 'Native exception*') { $kind = 'native exception ' + $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
@@ -287,26 +414,56 @@ function Format-TriageSection($Frames, [string]$SymbolsName, $Signature) {
     }
     $lines += '```'
     $lines += ''
+    if ($Signature.Grouped) {
+        $lines += 'Grouped by card family, how it ended and system: the stack of a GPU loss or of an unexpected shutdown does not show its cause.'
+        $lines += ''
+    }
     $lines += "Signature ``$($Signature.Id)``: $(@($Signature.Frames) -join ' > ')"
     $lines += "<!-- crash-signature: $($Signature.Id) -->"
     $lines += $TriageEnd
     $lines -join "`n"
 }
 
+# The triage section of a body: from the first start marker to the next end
+# marker. Its start and length, or $null.
+function Find-TriageSection([string]$Body) {
+    if (-not $Body) { return $null }
+    $start = $Body.IndexOf($TriageStart)
+    if ($start -lt 0) { return $null }
+    $end = $Body.IndexOf($TriageEnd, $start)
+    if ($end -lt 0) { return $null }
+    @{ Start = $start; Length = $end + $TriageEnd.Length - $start }
+}
+
 # Replaces an earlier triage section (re-run, new symbols) instead of adding one.
 function Merge-TriageSection([string]$Body, [string]$Section) {
-    $start = $Body.IndexOf($TriageStart)
-    $end = $Body.IndexOf($TriageEnd)
-    if ($start -ge 0 -and $end -gt $start) {
-        return $Body.Substring(0, $start) + $Section + $Body.Substring($end + $TriageEnd.Length)
+    $found = Find-TriageSection $Body
+    if ($found) {
+        return $Body.Substring(0, $found.Start) + $Section + $Body.Substring($found.Start + $found.Length)
     }
     $Body.TrimEnd() + "`n`n" + $Section + "`n"
 }
 
-# The first open issue (lowest number) with the same signature, other than this one.
+<#
+    The signature the triage wrote in a body: the marker on the line just
+    before the end of the triage section, where Format-TriageSection puts it
+    and where Merge-TriageSection replaces it. A marker anywhere else (in the
+    report, or typed by anyone) is not read.
+#>
+function Get-TriageSignature([string]$Body) {
+    $found = Find-TriageSection $Body
+    if (-not $found) { return $null }
+    $section = $Body.Substring($found.Start, $found.Length - $TriageEnd.Length)
+    if ($section -match '(?:^|\n)<!-- crash-signature: ([0-9a-f]{16}) -->\r?\n$') { return $Matches[1] }
+    $null
+}
+
+# The first open issue (lowest number) the triage signed with the same
+# signature, other than this one. Each issue: Number, Body, Labels (names).
 function Find-DuplicateIssue($Issues, [string]$SignatureId, [int]$Self) {
-    $marker = "<!-- crash-signature: $SignatureId -->"
-    $same = @($Issues | Where-Object { $_.Number -ne $Self -and $_.Body -and $_.Body.Contains($marker) } | Sort-Object Number)
+    $same = @($Issues | Where-Object {
+            $_.Number -ne $Self -and @($_.Labels) -contains $TriagedLabel -and (Get-TriageSignature $_.Body) -eq $SignatureId
+        } | Sort-Object Number)
     if ($same.Count) { return [int]$same[0].Number }
     $null
 }

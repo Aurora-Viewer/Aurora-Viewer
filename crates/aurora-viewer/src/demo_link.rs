@@ -697,6 +697,7 @@ fn cycle(period: f32, swing: f32, lean: f32) -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: period,
         looping: true,
+        ends_after: None,
         ease_in: 0.2,
         ease_out: 0.2,
         hand_pose: 0,
