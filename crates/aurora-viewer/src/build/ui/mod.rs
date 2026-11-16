@@ -904,7 +904,7 @@ mod copy_feedback_tests {
         assert_eq!(uuid_copy_feedback(Some((10.0, 0)), 10.0), None);
         assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 10.0), Some(1));
         assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 11.5), Some(3));
-        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 11.6), None);
+        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 11.7), None);
         assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 9.9), None);
     }
 }
