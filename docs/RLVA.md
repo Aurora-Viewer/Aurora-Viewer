@@ -246,7 +246,8 @@ script authors; the command lists below describe this branch specifically.
   Positive query-angle domains, exact axis cases and solar-glow component
   resets follow the native conversion helpers. Temporary overrides restore
   the user's local environment when released or disabled. Native environment
-  changes respect the lock.
+  changes respect the lock. A sky forced while no setenv lock is held gives
+  way to the user's next choice of environment, the shared one included.
 - Editing: edit, editobj, editattach and editworld at selection, local
   transforms and network writes, including material and media capabilities;
   viewtransparent and viewwireframe. viewnote/viewscript/viewtexture also

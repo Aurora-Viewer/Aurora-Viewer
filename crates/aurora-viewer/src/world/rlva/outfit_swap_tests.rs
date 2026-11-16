@@ -113,14 +113,17 @@ impl Wardrobe {
         assert!(self.world.rlva.receive(&chat), "{text}");
     }
 
-    /// What the forced commands received so far take off and put on.
+    /// What the forced commands received so far take off and put on. A
+    /// folder's removal names what the folder holds, worn or not: only what
+    /// is worn counts here.
     fn forced(&mut self) -> (BTreeSet<Uuid>, BTreeSet<Uuid>) {
         self.world.rlva_pending();
+        let worn = [self.collar, self.body, self.alpha, self.dress, self.shirt, self.head];
         let mut off = BTreeSet::new();
         let mut on = BTreeSet::new();
         for (_, action) in self.world.rlva.appearance.drain(..) {
             if let Action::Force { remove, wear } = action {
-                off.extend(remove);
+                off.extend(remove.into_iter().filter(|item| worn.contains(item)));
                 on.extend(wear.into_iter().map(|w| w.item));
             }
         }
