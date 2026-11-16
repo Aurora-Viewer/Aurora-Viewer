@@ -319,9 +319,7 @@ const UUID_COPY_FEEDBACK_SECONDS: f64 = 0.8;
 
 /// The header shows a confirmation briefly; a second click restarts it.
 fn uuid_copy_feedback(copied: Option<(f64, usize)>, now: f64) -> Option<usize> {
-    copied.and_then(|(at, count)| {
-        (count > 0 && (0.0..UUID_COPY_FEEDBACK_SECONDS).contains(&(now - at))).then_some(count)
-    })
+    copied.and_then(|(at, count)| (count > 0 && (0.0..UUID_COPY_FEEDBACK_SECONDS).contains(&(now - at))).then_some(count))
 }
 
 /// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
@@ -893,7 +891,10 @@ impl BuildTool {
         } else {
             self.roots(world)
         };
-        let ids: Vec<String> = idxs.iter().filter_map(|&i| world.objects.get(i).map(|o| o.full_id.to_string())).collect();
+        let ids: Vec<String> = idxs
+            .iter()
+            .filter_map(|&i| world.objects.get(i).map(|o| o.full_id.to_string()))
+            .collect();
         let count = ids.len();
         (ids.join(&s.copy_key_separator), count)
     }
