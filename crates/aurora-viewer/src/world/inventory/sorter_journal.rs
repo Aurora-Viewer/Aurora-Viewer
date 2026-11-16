@@ -342,10 +342,11 @@ impl Snapshot {
 impl Snapshot {
     /// The layout to share (`Save my inventory layout to share`): no
     /// account, every folder and item numbered in place of its inventory
-    /// id, and nothing of the Trash, Lost and Found or Calling Cards (other
-    /// residents' names); calling cards elsewhere are left out too.
+    /// id, and nothing of the Trash, Lost and Found, Calling Cards (other
+    /// residents' names) or Landmarks (places the user goes); calling cards
+    /// and landmarks elsewhere are left out too.
     pub fn take_to_share(inv: &Inventory, at: i64) -> Self {
-        const LEFT_OUT: [i32; 3] = [14, 16, 2];
+        const LEFT_OUT: [i32; 4] = [14, 16, 2, 3];
         let hidden = |id: Uuid| {
             actions::ancestors(inv, id).any(|a| {
                 inv.folders
@@ -364,7 +365,11 @@ impl Snapshot {
             .iter()
             .map(|f| (number(f.info.id), number(f.info.parent), f.info.name.clone(), f.info.type_default))
             .collect();
-        let mut items: Vec<_> = inv.items.values().filter(|it| it.asset_type != 2 && !hidden(it.parent)).collect();
+        let mut items: Vec<_> = inv
+            .items
+            .values()
+            .filter(|it| !matches!(it.asset_type, 2 | 3) && !hidden(it.parent))
+            .collect();
         items.sort_by_key(|it| it.id);
         let items = items.iter().map(|it| (number(it.id), number(it.parent), it.name.clone())).collect();
         Self {

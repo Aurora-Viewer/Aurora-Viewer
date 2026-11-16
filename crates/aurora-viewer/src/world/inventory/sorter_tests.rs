@@ -3249,3 +3249,43 @@ fn body_shelves_unpacked_stuff_and_dates_are_shelves() {
     assert!(version_tag("Kira HUD [6.0]") && version_tag("Kira (1.0.4)") && version_tag("Kira v.4"));
     assert!(!version_tag("Hunt (10.12.2016)") && !version_tag("Gifts [24.12]") && !version_tag("Fair (12.2023)"));
 }
+
+/// Audit 43: a bracket of everyday words is no unpacker's mark, and a mark
+/// beside shelf words only is the user's pile.
+#[test]
+fn everyday_brackets_and_marked_piles_are_shelves() {
+    for name in [
+        "Gifts (Gift Box)",
+        "My Stuff (unpacked)",
+        "To Unpack",
+        "Dresses [Unpacked]",
+        "Boxed Gifts",
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        add_item(&mut inv, 950, 900, "Zephyr Gizmo", 0);
+        add_item(&mut inv, 951, 900, "Quillon Thing", 0);
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+    for name in [
+        "Kira Dress (Wear)",
+        "Kira HUD [BOXED]",
+        "Slapper {Unpacker/backup}",
+        "Kira (add me)",
+    ] {
+        assert_eq!(delivery_mark(name), Some(Mark::Strong), "{name}");
+    }
+}
+
+/// Audit 43: a shelf named with a shelf word keeps loose items of many
+/// creators sharing its qualifier (`Group Gifts` holding `Kira Hat (Group
+/// Gift)`).
+#[test]
+fn a_shelf_word_shelf_shares_no_brand() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Group Gifts");
+    add_item(&mut inv, 950, 900, "Velmora Dress GROUP GIFT", 0);
+    add_item(&mut inv, 951, 900, "Kira Hat (Group Gift)", 0);
+    add_item(&mut inv, 952, 900, "Lumen Group Gift Boots", 0);
+    assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)));
+}

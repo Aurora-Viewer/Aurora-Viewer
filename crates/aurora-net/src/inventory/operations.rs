@@ -101,8 +101,11 @@ pub enum UdpEdit {
 /// Items read back fifty to a `FetchInventory2` request, one request at a
 /// time (LLInventoryModel::fetchItemHttp): a batch of two hundred moves is
 /// four requests, never two hundred.
-async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, ids: &[Uuid]) -> super::ais::ItemReads {
+/// Also returns the items a successful answer left out (never those of a
+/// request that failed: a busy server is waited for, not given up on).
+async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, ids: &[Uuid]) -> (super::ais::ItemReads, Vec<Uuid>) {
     let mut reads = super::ais::ItemReads::default();
+    let mut omitted = Vec::new();
     for chunk in ids.chunks(50) {
         let body = super::fetch_items_body(chunk, owner);
         match crate::caps::post_llsd_as(http, fetch, &body, crate::probe::HttpKind::Inventory).await {
@@ -111,6 +114,7 @@ async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, id
                 reads.items.extend(read.items);
                 // left out of an answer is weaker than a 404: read again,
                 // never taken as deleted (the batch would count it done)
+                omitted.extend_from_slice(&read.missing);
                 reads.failed.extend(read.missing);
                 reads.failed.extend(read.failed);
             }
@@ -120,7 +124,7 @@ async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, id
             }
         }
     }
-    reads
+    (reads, omitted)
 }
 
 pub(crate) async fn folder_landed(http: &reqwest::Client, fetch_cap: &str, owner: Uuid, parent: Uuid, folder: Uuid) -> bool {
@@ -734,17 +738,27 @@ where
         let mut omitted: HashMap<Uuid, u32> = HashMap::new();
         let mut given_up: Vec<Uuid> = Vec::new();
         for attempt in 0..=5u32 {
-            let reads = async {
-                let read_items = match change.confirm_with.as_deref() {
+            // (items and folders each within the deadline: what one read
+            // gave is kept when the other runs out of time)
+            let items_read = async {
+                match change.confirm_with.as_deref() {
                     Some(fetch) => read_items_in_bulk(http, fetch, owner, &items).await,
-                    None => super::ais::read_items(http, cap, owner, &items).await,
-                };
-                let read_folders = super::ais::read_folders(http, cap, &moved).await;
-                (read_items, read_folders)
+                    None => (super::ais::read_items(http, cap, owner, &items).await, Vec::new()),
+                }
             };
-            let Ok((read_items, read_folders)) = tokio::time::timeout_at(deadline, reads).await else {
+            let Ok((read_items, left_out)) = tokio::time::timeout_at(deadline, items_read).await else {
                 log::warn!("inventory: the read-back of a move ran out of time");
                 break;
+            };
+            let read_folders = match tokio::time::timeout_at(deadline, super::ais::read_folders(http, cap, &moved)).await {
+                Ok(read) => read,
+                Err(_) => {
+                    log::warn!("inventory: the read-back of a move ran out of time");
+                    for it in read_items.items {
+                        item_records.insert(it.id, it);
+                    }
+                    break;
+                }
             };
             // a read the server did not answer (busy, throttled): the next
             // attempt waits longer, never hammering it
@@ -757,10 +771,8 @@ where
             for f in read_folders {
                 folder_records.insert(f.id, f);
             }
-            if change.confirm_with.is_some() {
-                for id in &read_items.failed {
-                    *omitted.entry(*id).or_default() += 1;
-                }
+            for id in &left_out {
+                *omitted.entry(*id).or_default() += 1;
             }
             // only what is not placed yet is read again
             items.retain(|id| !gone.contains(id) && item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));

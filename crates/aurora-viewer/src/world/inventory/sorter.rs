@@ -1462,7 +1462,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         .any(|w| SHELF_MARKERS.contains(&w.as_str()) && !(w.chars().count() == 1 && name_words.len() > 2));
     let delivered = match delivery_mark(name) {
         Some(Mark::Strong) => true,
-        Some(Mark::Plain) => !shelf_marked,
+        Some(Mark::Plain) => !shelf_marked && !words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str())),
         None => !shelf_marked && shares_its_name(inv, f, name),
     };
     if delivered {
@@ -1497,7 +1497,6 @@ enum Mark {
 }
 
 fn delivery_mark(name: &str) -> Option<Mark> {
-    const BRACKETED: [&str; 7] = ["unpacked", "unpacker", "boxed", "box", "wear", "add", "unpack"];
     const PHRASES: [&[&str]; 6] = [
         &["to", "unpack"],
         &["auto", "unpack"],
@@ -1514,6 +1513,7 @@ fn delivery_mark(name: &str) -> Option<Mark> {
     let mut inside = Vec::new();
     let mut depth = 0usize;
     let mut segment = String::new();
+    let mut outside = String::new();
     for c in name.chars() {
         match c {
             '(' | '[' | '{' => {
@@ -1525,17 +1525,41 @@ fn delivery_mark(name: &str) -> Option<Mark> {
                 inside.push(std::mem::take(&mut segment));
             }
             _ if depth > 0 => segment.push(c),
-            _ => {}
+            _ => outside.push(c),
         }
     }
-    if inside.iter().any(|s| words(s).iter().any(|w| BRACKETED.contains(&w.as_str()))) {
+    // (a bracket of marks only, `(Wear)`, `[BOXED]`, `(add me)`, or one
+    // naming the unpacker; never `(Casual Wear)`, `(Add-Ons)`, `(Gift Box)`)
+    const MARK_WORDS: [&str; 11] = [
+        "unpacked", "unpacker", "unpack", "boxed", "box", "wear", "add", "me", "to", "auto", "touch",
+    ];
+    let marked = inside.iter().any(|s| {
+        let segment = words(s);
+        !segment.is_empty()
+            && (segment.iter().any(|w| matches!(w.as_str(), "unpacked" | "unpacker" | "boxed"))
+                || segment.iter().all(|w| MARK_WORDS.contains(&w.as_str())))
+    });
+    // (a mark beside shelf words only is the user's pile: `My Stuff
+    // (unpacked)`, `To Unpack`)
+    let rest_is_shelf = name_words
+        .iter()
+        .all(|w| MARK_WORDS.contains(&w.as_str()) || SHELF_MARKERS.contains(&w.as_str()) || SHELF_WORDS.contains(&w.as_str()));
+    if rest_is_shelf {
+        return (marked || version_tag(name)).then_some(Mark::Plain);
+    }
+    // (beside a product's name only: `Dresses [Unpacked]`, `To Unpack` are
+    // the user's piles)
+    let product = names_a_product(outside.trim());
+    if marked && product {
         return Some(Mark::Strong);
     }
-    if PHRASES.iter().any(|phrase| {
-        name_words
-            .windows(phrase.len())
-            .any(|w| w.iter().map(String::as_str).eq(phrase.iter().copied()))
-    }) {
+    if product
+        && PHRASES.iter().any(|phrase| {
+            name_words
+                .windows(phrase.len())
+                .any(|w| w.iter().map(String::as_str).eq(phrase.iter().copied()))
+        })
+    {
         return Some(Mark::Strong);
     }
     if version_tag(name) {
@@ -1597,7 +1621,20 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
         return false;
     }
     let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
-    let sharing = items.iter().filter(|n| words(n).iter().any(|w| own.contains(w))).count();
+    // (beside a shelf word, `Group Gifts`, `Rare Gacha`, only an item whose
+    // first word is the folder's own: a creator puts the brand first)
+    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
+    let sharing = items
+        .iter()
+        .filter(|n| {
+            let item_words = words(n);
+            if shelf_named {
+                item_words.first().is_some_and(|w| own.contains(w))
+            } else {
+                item_words.iter().any(|w| own.contains(w))
+            }
+        })
+        .count();
     // (two in five: a delivery's notecards, landmarks and add-ons carry
     // other names; a shelf's things come from many creators)
     sharing >= 2 && sharing * 5 >= items.len() * 2
