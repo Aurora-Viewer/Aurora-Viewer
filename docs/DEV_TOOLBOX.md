@@ -53,7 +53,7 @@ English.
 
 | Report | Ask the human to | Tools | They paste | Read first |
 |---|---|---|---|---|
-| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass` |
+| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass`; `blended faces of prim` for layers at the same place (eyes, jewels) |
 | An avatar stays in its system body (nothing it wears shows, even after a relog) | Stand within 3 m of the avatar, press J2 | J2 | The `worn objects:` line and the `network this session:` line | listed against arrived, the missing ids, blocks not read, packets skipped |
 | An object in the world renders wrong | Select it (right-click › Edit) and press J2; for one face, point at it, then L1 and Copy | J2, L1 | The linkset's faces, or one prim | pass, material state, texture alpha class |
 | Textures stay grey or blurry | Point at a grey face, press L1 and Copy, then J3 | L1, J3, N3 | The face's state, the last warnings | texture state, memory pressure, failed downloads |
