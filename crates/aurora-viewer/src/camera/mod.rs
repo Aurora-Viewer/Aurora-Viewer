@@ -3305,6 +3305,26 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
     Some((id, focus_object_geom(world, &id, now)?))
 }
 
+/// A frame's camera position further than this from its view's eye is a
+/// world drawn from another moment's camera. The view's own translation is
+/// rounded to single precision: about 0.04 mm near the ground, up to 0.4 mm
+/// at 4000 m.
+pub const VIEW_EYE_GAP_MAX: f32 = 0.001;
+
+/// How far `position` is from the point `view` looks from, in metres.
+///
+/// The renderer places objects relative to the frame's camera position and
+/// turns them with the rotation of its view alone (`eye_view_proj`,
+/// aurora-render/src/renderer.rs): both must describe the same state of the
+/// camera. A gap is a world drawn from where the camera was at another
+/// moment, one camera step behind its own view (#3645). Not finite when an
+/// input is not.
+pub fn view_eye_gap(view: Mat4, position: Vec3) -> f32 {
+    // a view sends its own eye to the origin (in double precision: the
+    // products of region coordinates would add their own rounding)
+    view.as_dmat4().transform_point3(position.as_dvec3()).length() as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3324,6 +3344,28 @@ mod tests {
         assert_eq!(free_zoom_fraction(0.0, min, max), 0.0);
         assert_eq!(free_zoom_fraction(1e6, min, max), 1.0);
         assert_eq!(free_zoom_fraction(5.0, 1.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn view_eye_gap_is_the_distance_between_a_position_and_the_views_eye() {
+        // a skybox in a region corner: coarse single precision
+        let mut camera = Camera {
+            position: Vec3::new(250.3, 4.7, 4000.2),
+            target: Vec3::new(248.0, 9.0, 3999.1),
+            ..Default::default()
+        };
+        assert!(view_eye_gap(camera.view(), camera.position) < VIEW_EYE_GAP_MAX);
+        // the camera orbits: the position read before the move is a step behind
+        let before = camera.position;
+        camera.position += Vec3::new(0.2, -0.1, 0.05);
+        let step = before.distance(camera.position);
+        let gap = view_eye_gap(camera.view(), before);
+        assert!((gap - step).abs() < VIEW_EYE_GAP_MAX, "{gap} for a step of {step}");
+        assert!(gap > VIEW_EYE_GAP_MAX);
+        assert!(view_eye_gap(camera.view(), camera.position) < VIEW_EYE_GAP_MAX);
+        // a broken input never reads as "in place"
+        assert!(!view_eye_gap(camera.view(), Vec3::splat(f32::NAN)).is_finite());
+        assert!(!view_eye_gap(Mat4::from_scale(Vec3::splat(f32::NAN)), before).is_finite());
     }
 
     #[test]
