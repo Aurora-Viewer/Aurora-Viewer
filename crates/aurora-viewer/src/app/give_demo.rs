@@ -1,4 +1,4 @@
-//! `AURORA_DEMO_GIVE=profile|avatar[:over|:drop]` (#991): inventory carried
+//! `AURORA_DEMO_GIVE=profile|avatar|texture[:over|:drop]` (#991): inventory carried
 //! from frame 700 to a resident's profile window or to their avatar in the
 //! world, without a press (the payload alone lasts until a release).
 //! `profile` leaves the pointer beside the window (it fades behind the
@@ -6,7 +6,10 @@
 //! `:drop` releases it there at frame 720 (the Share confirmation). The
 //! window is `AURORA_DEMO_PROFILE`'s. `avatar` puts the pointer on the
 //! other avatar nearest the middle of the view (outlined); `:drop` releases
-//! it there at frame 720. The entries are seven of `AURORA_DEMO_INVENTORY`'s.
+//! it there at frame 720. The entries are seven of `AURORA_DEMO_INVENTORY`'s;
+//! `texture` carries its demo texture alone to the avatar, as a row dragged
+//! from the inventory (a single texture, which the texture library also
+//! takes, is given there too).
 
 use super::*;
 
@@ -14,6 +17,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 struct Mode {
     avatar: bool,
+    texture: bool,
     over: bool,
     drop: bool,
 }
@@ -26,13 +30,15 @@ fn mode() -> Option<Mode> {
         }
         let v = std::env::var("AURORA_DEMO_GIVE").ok()?;
         let (target, step) = v.split_once(':').unwrap_or((v.as_str(), ""));
-        let avatar = match target {
-            "profile" => false,
-            "avatar" => true,
+        let (avatar, texture) = match target {
+            "profile" => (false, false),
+            "avatar" => (true, false),
+            "texture" => (true, true),
             _ => return None,
         };
         Some(Mode {
             avatar,
+            texture,
             over: avatar || matches!(step, "over" | "drop"),
             drop: step == "drop",
         })
@@ -51,7 +57,8 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.frame_count == 700 {
-            ui::inventory::drag::demo_carry(&ctx, ITEMS.iter().map(|&n| uuid::Uuid::from_u128(n)).collect());
+            let items: &[u128] = if mode.texture { &[8104] } else { &ITEMS };
+            ui::inventory::drag::demo_carry(&ctx, items.iter().map(|&n| uuid::Uuid::from_u128(n)).collect());
         }
         let pos = if mode.avatar {
             let projector = ui::hud::Projector {

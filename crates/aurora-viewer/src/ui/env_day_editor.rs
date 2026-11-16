@@ -223,7 +223,10 @@ impl DayEditorUi {
 
     /// "Save As" confirmed by the app: the name prompt.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
+        // without its Aurora Weather code (put back on at Save, as a
+        // rename keeps it): shown, it was easily deleted or retyped away
+        let readable = crate::weather::region::strip_code(&self.name);
+        self.save_as = Some(crate::text_validation::generated_name(readable, 63));
     }
 
     /// Import over the current day (loadSettingFromFile: no item, the
@@ -422,6 +425,7 @@ impl DayEditorUi {
             self.name_row(ui, p, &mut out);
             ui.add_space(4.0);
             self.tracks_row(ui, p, &mut out);
+            self.weather_row(ui, p);
             self.timeline(ui, p, &mut out);
             self.track_row(ui, p, inv, &mut out);
             self.frame_row(ui, p, inv, &mut out);
@@ -448,11 +452,77 @@ impl DayEditorUi {
         out
     }
 
+    /// Aurora Weather's preview from the selected key frame's sky panels
+    /// (the sky editor's Aurora Weather tab), while the day editor is open.
+    pub fn weather_preview(&self) -> Option<(crate::weather::region::SkyWeather, bool)> {
+        if self.open { self.frame.weather_preview } else { None }
+    }
+
+    /// "Aurora Weather" (Aurora's own): the day's weather schedule, kept as
+    /// a code at the end of its name. As EEP splits a sky's look from the
+    /// day's timing, the skies carry the weather of their moments (the
+    /// key frames' Aurora Weather tab, marked under the timeline) and the
+    /// day how often it may change and its seed (weather/region.rs).
+    fn weather_row(&mut self, ui: &mut egui::Ui, p: &Palette) {
+        use crate::weather::region::{DAY_LEN, DayWeather, WINDOWS, too_long_for};
+        use aurora_i18n::tr;
+        let mut w = DayWeather::from_name(&self.name).unwrap_or_default();
+        let before = w;
+        let enabled = self.rights.modify && self.doc.is_some();
+        ui.horizontal(|ui| {
+            let font = egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
+            ui.label(crate::ui::options::aurora_word(p, tr!("ui-weather-aurora"), font, p.ink))
+                .on_hover_text(tr!("ui-day-editor-weather-tip"));
+            ui.add_space(8.0);
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.label(tr!("ui-env-editor-weather-window"))
+                    .on_hover_text(tr!("ui-env-editor-weather-window-tip"));
+                let length = |m: u16| {
+                    if m < 60 {
+                        tr!("ui-env-editor-weather-minutes", n = i64::from(m)).to_string()
+                    } else if m.is_multiple_of(60) {
+                        tr!("ui-env-editor-weather-hours", n = i64::from(m / 60)).to_string()
+                    } else {
+                        format!(
+                            "{} {}",
+                            tr!("ui-env-editor-weather-hours", n = i64::from(m / 60)),
+                            tr!("ui-env-editor-weather-minutes", n = i64::from(m % 60))
+                        )
+                    }
+                };
+                egui::ComboBox::from_id_salt("day_editor_weather_window")
+                    .selected_text(length(WINDOWS[usize::from(w.window.min(15))]))
+                    .show_ui(ui, |ui| {
+                        for (i, m) in WINDOWS.iter().enumerate() {
+                            ui.selectable_value(&mut w.window, i as u8, length(*m));
+                        }
+                    });
+                ui.add_space(8.0);
+                ui.label(tr!("ui-env-editor-weather-seed"))
+                    .on_hover_text(tr!("ui-env-editor-weather-seed-tip"));
+                ui.add(egui::DragValue::new(&mut w.seed).range(0..=1023));
+            });
+        });
+        if w != before {
+            if too_long_for(&self.name, DAY_LEN) {
+                self.message = Some((tr!("ui-env-editor-weather-name-cut").into(), false));
+            }
+            self.name = w.name_with(&self.name);
+            if let Some(doc) = &mut self.doc {
+                doc.set_name(&self.name);
+            }
+            self.dirty = true;
+        }
+    }
+
     fn name_row(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<DayAction>) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
-            // refresh: renaming needs modify rights and an item
-            let enabled = self.rights.modify && self.rights.save && self.item.is_some();
+            // refresh: the Legacy Viewer renames only with modify rights and
+            // an item. Aurora: with modify rights, item or not (a day from a
+            // region or parcel, a new one), the name kept for Save As and
+            // applying, so that its Aurora Weather code can be written too
+            let enabled = self.rights.modify && self.rights.save && self.doc.is_some();
             let r =
                 crate::ui::widgets::restricted_text_field(ui, enabled, &mut self.name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
                     egui::TextEdit::singleline(b).desired_width(320.0).char_limit(63)
@@ -531,6 +601,18 @@ impl DayEditorUi {
             .as_ref()
             .map(|d| d.tracks[self.track].iter().map(|k| k.0).collect())
             .unwrap_or_default();
+        // the key frames whose sky carries Aurora Weather
+        let weathered: Vec<bool> = self
+            .doc
+            .as_ref()
+            .filter(|_| self.track != TRACK_WATER)
+            .map(|d| {
+                d.tracks[self.track]
+                    .iter()
+                    .map(|k| crate::weather::region::SkyWeather::from_name(k.1["name"].as_str()).is_some())
+                    .collect()
+            })
+            .unwrap_or_default();
         let hit = |x: f32| frames.iter().position(|f| (x_of(*f) - x).abs() <= 7.0);
         // interactions: press on a key frame selects it (and starts a drag),
         // elsewhere moves the time cursor; double click adds a frame
@@ -600,6 +682,10 @@ impl DayEditorUi {
                 p.ink.gamma_multiply(0.75)
             };
             painter.rect_filled(r, radius, fill);
+            // Aurora Weather on this key's sky: a dot under it
+            if weathered.get(i).copied().unwrap_or(false) {
+                painter.circle_filled(egui::pos2(c.x, lane.bottom() + 5.0), 2.5, p.teal);
+            }
         }
         if let Some(d) = self.drag.filter(|d| d.copy) {
             let c = egui::pos2(x_of(d.pos), lane.center().y);
@@ -1001,7 +1087,10 @@ impl DayEditorUi {
                     let size = Vec2::new(0.0, 26.0);
                     let enter = widgets::enter_pressed(ui);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() || enter {
-                        out.push(DayAction::SaveAs(env_edit::correct_item_name(&name)));
+                        out.push(DayAction::SaveAs(crate::weather::region::keep_code(
+                            &self.name,
+                            &env_edit::correct_item_name(&name),
+                        )));
                         close = true;
                     }
                     if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {

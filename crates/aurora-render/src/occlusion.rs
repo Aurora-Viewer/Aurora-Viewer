@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::types::DrawIndexedIndirect;
 
@@ -199,11 +198,12 @@ impl Occlusion {
         let down_pipeline = pipeline(&down_layout, "cs_hiz_down");
         let prepare_pipeline = pipeline(&cull_layout, "cs_prepare");
         let cull_pipeline = pipeline(&cull_layout, "cs_cull");
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("occlusion params"),
-            contents: bytemuck::bytes_of(&CullParams::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let params = crate::gpu_alloc::buffer_init(
+            device,
+            "occlusion params",
+            bytemuck::bytes_of(&CullParams::zeroed()),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let cap = 4096u64;
         let draws = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occlusion draws"),
@@ -237,7 +237,7 @@ impl Occlusion {
                 .map(|_| {
                     let b = device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("occlusion readback"),
-                        size: 8,
+                        size: crate::readback::readback_size(8),
                         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
@@ -254,7 +254,7 @@ impl Occlusion {
         for (buf, ready, pending) in self.readback.iter_mut() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let n: &[u32] = bytemuck::cast_slice(&view[..8]);
+                    let n = crate::readback::u32_array::<2>(&view[..8]);
                     self.last_hidden = n[0] + n[1];
                 }
                 buf.unmap();
@@ -502,6 +502,7 @@ mod tests {
     use super::*;
     use crate::pipeline_cache::CachedPipelines;
     use glam::{Mat4, Vec3};
+    use wgpu::util::DeviceExt;
 
     /// The occlusion test of `spheres` (camera at the origin looking down
     /// -Z) against a depth of `w` x `h` whose columns left of `wall` hold a
@@ -574,7 +575,7 @@ mod tests {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occlusion test readback"),
-            size: main_args.size(),
+            size: crate::readback::readback_size(main_args.size()),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -606,8 +607,8 @@ mod tests {
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("occlusion readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("occlusion GPU completion");
         let view = readback.get_mapped_range(..).expect("occlusion args");
-        let out: &[u32] = bytemuck::cast_slice(&view);
-        out.chunks(5).map(|a| a[1] != 0).collect()
+        let out = crate::readback::u32s(&view[..main_args.size() as usize]);
+        out.as_chunks::<5>().0.iter().map(|a| a[1] != 0).collect()
     }
 
     /// #2459: the pyramid's levels are floor-sized, and an odd level used to

@@ -103,9 +103,15 @@ pub struct View<'a> {
     pub views: &'a SavedViews,
     pub flying: bool,
     pub always_run: bool,
-    /// RLVa @alwaysrun: the Run button is greyed (LLFloaterMove::sUpdateMovementStatus).
-    pub run_locked: bool,
     pub seated: bool,
+    /// What is greyed, as LLFloaterMove::sUpdateMovementStatus and
+    /// LLPanelStandStopFlying::onStandButtonClick (indra/newview/
+    /// llmoveview.cpp) decide it: the Run mode under RLVa's @alwaysrun, the
+    /// Fly mode where no takeoff is allowed (LLAgent::canFly; never while
+    /// flying, so that it still lands), Stand up under @unsit.
+    pub run_locked: bool,
+    pub fly_locked: bool,
+    pub stand_locked: bool,
     pub mouselook: bool,
     /// "Object view": a click in the world focuses the camera (Alt+click).
     pub object_view: bool,
@@ -966,9 +972,9 @@ fn movement_tab(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
             aurora_i18n::tr!("common-stand-up"),
             widgets::ActionKind::Flat,
             Vec2::new(w, BUTTON_H),
-            view.seated,
+            view.seated && !view.stand_locked,
         );
-        if stand.clicked() && view.seated {
+        if stand.clicked() && view.seated && !view.stand_locked {
             out.actions.push(ControlAction::StandUp);
         }
     });
@@ -1028,11 +1034,6 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     }
 }
 
-/// A mode button both window styles grey the same way.
-fn mode_enabled(action: &ControlAction, view: &View) -> bool {
-    *action != ControlAction::Run || !view.run_locked
-}
-
 /// Walk, run, fly (floater_moveview.xml's mode buttons).
 fn modes(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     let mut mode = if view.flying {
@@ -1051,18 +1052,23 @@ fn modes(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         ui.spacing_mut().item_spacing.x = 4.0;
         let w = (ui.available_width() - 8.0) / 3.0;
         for (n, (icon, label, action)) in options.into_iter().enumerate() {
-            let enabled = mode_enabled(&action, view);
-            if ui
-                .add_enabled_ui(enabled, |ui| mode_button(ui, p, icon, label, n == mode, w))
-                .inner
-                .clicked()
-                && n != mode
-            {
+            let enabled = !mode_locked(view, &action);
+            if mode_button(ui, p, icon, label, n == mode, enabled, w).clicked() && n != mode && enabled {
                 mode = n;
                 out.actions.push(action);
             }
         }
     });
+}
+
+/// Whether a movement mode's button is greyed (`View::run_locked`,
+/// `View::fly_locked`); Walk never is.
+fn mode_locked(view: &View, action: &ControlAction) -> bool {
+    match action {
+        ControlAction::Run => view.run_locked,
+        ControlAction::Fly => view.fly_locked && !view.flying,
+        _ => false,
+    }
 }
 
 /// Firestorm's camera window: views on top, the joysticks and the zoom,
@@ -1138,14 +1144,19 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
             ),
             ("plane-tilt-filled", aurora_i18n::tr!("common-fly"), view.flying, ControlAction::Fly),
         ] {
-            if ui
-                .add_enabled_ui(mode_enabled(&action, view), |ui| widgets::icon_toggle(ui, p, icon, tip, on))
-                .inner
-            {
+            if mode_locked(view, &action) {
+                let _ = widgets::icon_button(ui, p, icon, tip, false);
+            } else if widgets::icon_toggle(ui, p, icon, tip, on) {
                 out.actions.push(action);
             }
         }
-        if view.seated && widgets::flat_button(ui, p, aurora_i18n::tr!("common-stand-up")).clicked() {
+        if view.seated
+            && ui
+                .add_enabled_ui(!view.stand_locked, |ui| {
+                    widgets::flat_button(ui, p, aurora_i18n::tr!("common-stand-up")).clicked()
+                })
+                .inner
+        {
             out.actions.push(ControlAction::StandUp);
         }
     });
@@ -1392,16 +1403,22 @@ fn paint_icon(ui: &egui::Ui, icon: &str, center: Pos2, size: f32, tint: egui::Co
     }
 }
 
-/// A movement mode: its icon and its name, the accent's face when chosen.
-fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, width: f32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, BUTTON_H + 2.0), Sense::click());
-    let fill = match (on, resp.hovered()) {
+/// A movement mode: its icon and its name, the accent's face when chosen,
+/// dimmed and deaf to clicks when not `enabled`.
+fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, enabled: bool, width: f32) -> egui::Response {
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, BUTTON_H + 2.0), sense);
+    let fill = match (on, resp.hovered() && enabled) {
         (true, _) => p.violet,
         (false, true) => p.raised.gamma_multiply(1.3),
         (false, false) => p.raised,
     };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
-    let color = if on { p.on_accent } else { p.muted };
+    let color = match (on, enabled) {
+        (true, _) => p.on_accent,
+        (false, true) => p.muted,
+        (false, false) => p.muted_dim.gamma_multiply(0.7),
+    };
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), color);
@@ -1557,67 +1574,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alwaysrun_greys_the_run_button_and_leaves_walk() {
-        let clicks = |run_locked: bool| {
-            let ctx = egui::Context::default();
-            let theme = crate::theme::Theme::default();
-            theme.apply(&ctx, 1.0);
-            let p = theme.palette();
-            let keys = KeyBindings::default();
-            let view = View {
-                zoom: 0.5,
-                roll: 0.0,
-                preset: CameraPreset::Rear,
-                shots: &[],
-                flying: false,
-                always_run: false,
-                run_locked,
-                seated: false,
-                mouselook: false,
-                object_view: false,
-                keys: &keys,
-                views: &SavedViews::default(),
-                free: None,
-            };
-            let mut time = 0.0;
-            let mut target = Pos2::ZERO;
-            let mut frame = |events| {
-                time += 1.0 / 60.0;
-                let mut out = Output::default();
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(300.0, 200.0))),
-                        time: Some(time),
-                        events,
-                        ..Default::default()
-                    },
-                    |ui| {
-                        let at = ui.cursor().min;
-                        let third = (ui.available_width() - 8.0) / 3.0;
-                        target = at + Vec2::new(third * 1.5 + 4.0, BUTTON_H / 2.0);
-                        modes(ui, &p, &view, &mut out);
-                    },
-                );
-                // no renderer here: the font atlas would trip TexturesDelta's drop check
-                output.textures_delta.clear();
-                (out.actions, target)
-            };
-            let (_, pos) = frame(vec![]);
-            frame(vec![egui::Event::PointerMoved(pos)]);
-            let press = |pressed| egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            };
-            frame(vec![press(true)]);
-            frame(vec![press(false)]).0
-        };
-        assert_eq!(clicks(false), vec![ControlAction::Run]);
-        assert!(clicks(true).is_empty());
-    }
-
-    #[test]
     fn a_long_roll_press_never_drags_or_snaps_its_floater() {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
@@ -1632,8 +1588,10 @@ mod tests {
             views: &SavedViews::default(),
             flying: false,
             always_run: false,
-            run_locked: false,
             seated: false,
+            run_locked: false,
+            fly_locked: false,
+            stand_locked: false,
             mouselook: false,
             object_view: false,
             keys: &keys,
@@ -1720,8 +1678,10 @@ mod tests {
                 views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
-                run_locked: false,
                 seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
                 mouselook,
                 object_view: false,
                 keys: &keys,
@@ -1941,8 +1901,10 @@ mod tests {
                 views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
-                run_locked: false,
                 seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
                 mouselook: false,
                 object_view: false,
                 keys: &keys,
@@ -2014,5 +1976,44 @@ mod tests {
         // the slides borrow the turn's key with Shift
         let slide = pad_binding(&keys, Action::StrafeLeft).expect("a slide key");
         assert!(slide.shift);
+    }
+
+    #[test]
+    fn the_run_and_fly_modes_are_greyed_when_refused_and_landing_never_is() {
+        let keys = KeyBindings::default();
+        let views = SavedViews::default();
+        let view = |flying: bool, run_locked: bool, fly_locked: bool| View {
+            zoom: 0.5,
+            roll: 0.0,
+            preset: CameraPreset::Rear,
+            shots: &[],
+            views: &views,
+            flying,
+            always_run: false,
+            seated: false,
+            run_locked,
+            fly_locked,
+            stand_locked: false,
+            mouselook: false,
+            object_view: false,
+            keys: &keys,
+            free: None,
+        };
+        let free = view(false, false, false);
+        for action in [ControlAction::Walk, ControlAction::Run, ControlAction::Fly] {
+            assert!(!mode_locked(&free, &action), "{action:?}");
+        }
+        // @alwaysrun: Run alone
+        let no_run = view(false, true, false);
+        assert!(mode_locked(&no_run, &ControlAction::Run));
+        assert!(!mode_locked(&no_run, &ControlAction::Walk) && !mode_locked(&no_run, &ControlAction::Fly));
+        // no takeoff: Fly alone, and only on the ground
+        let no_fly = view(false, false, true);
+        assert!(mode_locked(&no_fly, &ControlAction::Fly));
+        assert!(!mode_locked(&no_fly, &ControlAction::Walk) && !mode_locked(&no_fly, &ControlAction::Run));
+        assert!(
+            !mode_locked(&view(true, false, true), &ControlAction::Fly),
+            "the Fly mode still lands"
+        );
     }
 }

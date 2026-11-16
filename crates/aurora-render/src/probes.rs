@@ -1037,7 +1037,7 @@ mod tests {
         let row = (res * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (row * res) as u64,
+            size: crate::readback::readback_size((row * res) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

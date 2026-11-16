@@ -34,6 +34,10 @@ pub struct Demo {
     /// stays known but every request times out until a recompile.
     pub halt: bool,
     halted: bool,
+    /// The bridge is worn as the Library container looks, a rock-sized
+    /// sphere, and this simulator applies none of the looks the viewer sends:
+    /// what a slow region shows while the factory works.
+    pub container: bool,
 }
 
 pub fn seed(world: &mut World) {
@@ -222,12 +226,48 @@ impl Demo {
                     .collect();
                 Some(vec![NetEvent::InventoryContents(contents)])
             }
-            NetCommand::Build(BuildCmd::Transform { updates, .. })
+            NetCommand::RezAttachments(items) if self.container && items.iter().all(|item| item.item_id == bridge.item) => {
+                Some(vec![NetEvent::ObjectUpdates {
+                    handle: world.main_region.unwrap_or_default(),
+                    objects: items
+                        .iter()
+                        .map(|item| {
+                            let mut rock = crate::demo::outfit_attachment(item);
+                            rock.scale = glam::Vec3::splat(0.6);
+                            rock.volume = aurora_prim::RawShape {
+                                path_curve: aurora_prim::params::LL_PCODE_PATH_CIRCLE,
+                                profile_curve: aurora_prim::params::LL_PCODE_PROFILE_CIRCLE_HALF,
+                                path_scale_x: 100,
+                                path_scale_y: 100,
+                                ..Default::default()
+                            }
+                            .to_params();
+                            let mut look = aurora_prim::te::TextureEntry::default();
+                            for face in &mut look.faces {
+                                face.texture = aurora_prim::te::BLANK_TEXTURE;
+                                face.color = [0.55, 0.6, 0.5, 1.0];
+                            }
+                            rock.texture_entry = Some(std::sync::Arc::new(look));
+                            rock
+                        })
+                        .collect(),
+                }])
+            }
+            // The bridge's look (`Bridge::disguise`): taken, never echoed.
+            NetCommand::Build(edit @ (BuildCmd::Transform { .. } | BuildCmd::SetShape { .. } | BuildCmd::SetTextures { .. }))
                 if world
                     .objects
                     .index_of_uuid(&bridge.object)
                     .and_then(|i| world.objects.get(i))
-                    .is_some_and(|object| updates.iter().all(|update| update.local_id == object.key.local_id)) =>
+                    .is_some_and(|object| {
+                        let own = |local_id: &u32| *local_id == object.key.local_id;
+                        match edit {
+                            BuildCmd::Transform { updates, .. } => updates.iter().all(|update| own(&update.local_id)),
+                            BuildCmd::SetShape { local_ids, .. } => local_ids.iter().all(own),
+                            BuildCmd::SetTextures { local_id, .. } => own(local_id),
+                            _ => false,
+                        }
+                    }) =>
             {
                 Some(Vec::new())
             }
@@ -370,7 +410,7 @@ impl Demo {
                     object_id: *object_id,
                     item_id: *item_id,
                     running: self.installed,
-                    mono: Some(true),
+                    compile: Some(aurora_net::scripts::CompileTarget::Mono),
                 }])
             }
             _ => None,
@@ -422,6 +462,7 @@ impl Demo {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: world.main_region,
             position: glam::Vec3::ZERO,
             message: format!(
                 "<auroraBridge>{VERSION}|{}|https://{host}:12043/cap/11111111-1111-4111-8111-111111111111|{}</auroraBridge>",

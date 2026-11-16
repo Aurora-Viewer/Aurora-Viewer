@@ -20,8 +20,14 @@ impl App {
             views: &self.settings.camera_views,
             flying: self.world.agent.flying,
             always_run: self.always_run,
-            run_locked: self.world.rlva.has("alwaysrun"),
             seated: self.world.agent.seated,
+            // the answers `set_always_run`, `toggle_fly` and the send
+            // boundary give, so a button never promises what they refuse
+            run_locked: self.world.rlva.has("alwaysrun"),
+            fly_locked: !self.world.agent.flying && !crate::autopilot::can_takeoff(&self.world),
+            stand_locked: !self
+                .world
+                .rlva_allows_command(&NetCommand::OneShotControl(control::STAND_UP), uuid::Uuid::nil()),
             mouselook: self.camera.mouselook(),
             object_view: self.object_view,
             keys: &self.settings.keybinds,
@@ -99,6 +105,12 @@ impl App {
             ControlAction::Mouselook => self.toggle_mouselook(),
             ControlAction::ObjectView => self.object_view = !self.object_view,
             ControlAction::Walk | ControlAction::Run => {
+                // @alwaysrun: the Run mode is greyed (LLFloaterMove::
+                // sUpdateMovementStatus), and a refused Run must not land
+                // a flying avatar on its way to being refused
+                if action == ControlAction::Run && self.world.rlva.has("alwaysrun") {
+                    return;
+                }
                 if self.world.agent.flying {
                     self.toggle_fly();
                 }

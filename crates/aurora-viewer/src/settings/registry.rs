@@ -233,6 +233,7 @@ impl Settings {
         self.debug = current.debug;
         self.hover_height_account = current.hover_height_account;
         self.photo_held = current.photo_held.clone();
+        self.draw_stepping = current.draw_stepping;
         self.newer_file = current.newer_file.clone();
         self.new_profile = current.new_profile;
         self.camera_limits_restored = current.camera_limits_restored;
@@ -285,6 +286,7 @@ mod tests {
         let mut s = Settings {
             username: "someone".into(),
             remember_username: true,
+            last_login: Some(("synthetic-grid".into(), "someone".into())),
             ..Settings::default()
         };
         s.gifs.giphy_key = "a-service-key".into();
@@ -293,6 +295,7 @@ mod tests {
         for key in [
             "username",
             "remember_username",
+            "last_login",
             "remember_password",
             "mfa_hash",
             "grid",

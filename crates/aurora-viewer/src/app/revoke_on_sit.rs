@@ -1,5 +1,5 @@
 //! Revoke the permissions of the object we sit on, when we sit down, stand
-//! up, or both (Preferences › Mouse and keyboard, FSRevokePerms).
+//! up, or both (FSRevokePerms, in Debug Settings).
 //!
 //! Port of the FSRevokePerms checks in LLVOAvatar::sitOnObject and
 //! LLVOAvatar::getOffObject, with LLVOAvatar::revokePermissionsOnObject

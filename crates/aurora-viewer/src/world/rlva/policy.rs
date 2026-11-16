@@ -57,6 +57,12 @@ impl World {
         };
         let id = object.full_id.to_string();
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
+        // @interact is enforced when the object is picked
+        // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
+        // RlvActions::canTouch and its @touchme override are asked.
+        if !hud && r.has("interact") {
+            return false;
+        }
         if r.rules_for("touchme", Uuid::nil()).any(|(source, _)| {
             let Some(mut i) = self.objects.index_of_uuid(&source) else {
                 return false;
@@ -73,9 +79,6 @@ impl World {
             false
         }) {
             return true;
-        }
-        if !hud && r.has("interact") {
-            return false;
         }
         if r.targets("touchthis", &id) || (!hud && r.has("touchall")) {
             return false;
@@ -192,8 +195,18 @@ impl World {
                 10 => !r.has("viewscript"),
                 _ => true,
             },
-            NetCommand::PreviewTaskNotecard { .. } => !r.has("viewnote"),
-            NetCommand::LoadScript { .. } => !r.has("viewscript"),
+            // LLTaskNotecardBridge / LLTaskLSLBridge::openItem
+            // (llpanelobjectinventory.cpp): nor those of a locked attachment.
+            NetCommand::PreviewTaskNotecard { object, .. } => {
+                !r.has("viewnote") && !self.objects.index_of_uuid(object).is_some_and(|i| self.rlva_locked_attachment(i))
+            }
+            NetCommand::LoadScript { target, .. } => {
+                !r.has("viewscript")
+                    && !self
+                        .objects
+                        .index_of_uuid(&target.object)
+                        .is_some_and(|i| self.rlva_locked_attachment(i))
+            }
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
@@ -205,6 +218,9 @@ impl World {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }
             NetCommand::GroupTitleUpdate { .. } => !blocked("setgroup"),
+            // LLGroupActions::leave (llgroupactions.cpp): leaving the active
+            // group would change it, which @setgroup forbids.
+            NetCommand::LeaveGroup(group) => *group != self.groups.active || !blocked("setgroup"),
             // LLAgent::teleportViaLandmark: home stays allowed unless both
             // @tplm and @tploc restrict it
             NetCommand::TeleportHome => !(blocked("tplm") && blocked("tploc")) && !(self.agent.is_sitting() && blocked("unsit")),
@@ -278,11 +294,10 @@ impl World {
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
-            NetCommand::Build(
-                aurora_net::build::BuildCmd::Add(_)
-                | aurora_net::build::BuildCmd::RezInventory(_)
-                | aurora_net::build::BuildCmd::Duplicate { .. },
-            ) => !blocked("rez"),
+            // LLToolPlacer::placeObject and LLToolDragAndDrop::dropObject.
+            NetCommand::Build(aurora_net::build::BuildCmd::Add(_) | aurora_net::build::BuildCmd::RezInventory(_)) => {
+                !blocked("rez") && !blocked("interact")
+            }
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
             NetCommand::AcceptLure { lure_id, godlike } => {
@@ -311,24 +326,7 @@ impl World {
             // only removable predecessors once the actual point is known.
             NetCommand::RezAttachments(items) => {
                 let worn = self.rlva_worn_attachment_points();
-                items.iter().all(|item| {
-                    let at = if item.point == 0 {
-                        self.inventory.items.get(&item.item_id).map_or(0, |it| (it.flags & 0xff) as u8)
-                    } else {
-                        item.point
-                    };
-                    self.rlva_can_add(item.item_id, item.point, actor)
-                        && (item.add
-                            || r.preferences.replace_unlocked
-                            || actor == super::watchdog::ACTOR
-                            || !worn
-                                .iter()
-                                .any(|(old, point)| *old != item.item_id && at != 0 && *point == at && !self.rlva_can_remove(*old, actor)))
-                        && (actor == super::watchdog::ACTOR
-                            || worn
-                                .get(&item.item_id)
-                                .is_none_or(|old| at == 0 || at == *old || self.rlva_can_remove(item.item_id, actor)))
-                })
+                items.iter().all(|item| self.rlva_rez_allowed(item, &worn, actor))
             }
             NetCommand::UpdateOutfit { change, .. } => {
                 let Some(cof) = super::super::appearance::cof(&self.inventory) else {
@@ -371,6 +369,56 @@ impl World {
         }
     }
 
+    /// One attachment of a rez request: it may go on its point, does not
+    /// replace a locked attachment there (RLVaWearReplaceUnlocked off), and a
+    /// worn one is not moved off a point it is locked on.
+    fn rlva_rez_allowed(&self, item: &aurora_net::AttachRequest, worn: &std::collections::HashMap<Uuid, u8>, actor: Uuid) -> bool {
+        let watchdog = actor == super::watchdog::ACTOR;
+        let at = if item.point == 0 {
+            self.inventory.items.get(&item.item_id).map_or(0, |it| (it.flags & 0xff) as u8)
+        } else {
+            item.point
+        };
+        self.rlva_can_add(item.item_id, item.point, actor)
+            && (item.add
+                || self.rlva.preferences.replace_unlocked
+                || watchdog
+                || !worn
+                    .iter()
+                    .any(|(old, point)| *old != item.item_id && at != 0 && *point == at && !self.rlva_can_remove(*old, actor)))
+            && (watchdog
+                || worn
+                    .get(&item.item_id)
+                    .is_none_or(|old| at == 0 || at == *old || self.rlva_can_remove(item.item_id, actor)))
+    }
+
+    /// LLAgentWearables::userRemoveMultipleAttachments (llagentwearables.cpp)
+    /// and LLAttachmentsMgr::addAttachmentRequest (llattachmentsmgr.cpp) with
+    /// RLVa: a lock takes its own attachments out of a detach or attach
+    /// request and says nothing, the others go through. The outfit sync sends
+    /// such requests on its own (what is worn and not in the outfit, what is
+    /// in the outfit and not worn): refusing the whole request left the
+    /// unlocked attachments on and posted a notice for nothing the user did.
+    /// Returns false when nothing is left to send. The watchdog's own
+    /// requests are exact and stay whole (`rlva_allows_command`).
+    pub fn rlva_prepare_attachments(&self, command: &mut NetCommand, actor: Uuid) -> bool {
+        if !self.rlva.enabled() || actor == super::watchdog::ACTOR || (!actor.is_nil() && self.rlva.controllers.blocked(actor)) {
+            return true;
+        }
+        match command {
+            NetCommand::DetachAttachments(items) => {
+                items.retain(|item| self.rlva_can_remove(*item, actor));
+                !items.is_empty()
+            }
+            NetCommand::RezAttachments(items) => {
+                let worn = self.rlva_worn_attachment_points();
+                items.retain(|item| self.rlva_rez_allowed(item, &worn, actor));
+                !items.is_empty()
+            }
+            _ => true,
+        }
+    }
+
     /// Queries requiring world state and force commands are consumed in their
     /// original order. The issuing object may bypass only its own locks.
     pub fn rlva_pending(&mut self) -> Vec<(Uuid, NetCommand)> {
@@ -402,8 +450,10 @@ impl World {
                 continue;
             }
             if let super::Param::Reply(channel) = c.param {
+                // (RlvHandler::processReplyCommand reads no option for
+                // @getgroup and @getsitid: one given changes nothing)
                 let text = match c.behaviour.as_str() {
-                    "getgroup" if c.option.is_empty() => Some(
+                    "getgroup" => Some(
                         self.groups
                             .groups
                             .iter()
@@ -411,7 +461,7 @@ impl World {
                             .map_or("none", |g| g.name.as_str())
                             .to_owned(),
                     ),
-                    "getsitid" if c.option.is_empty() => Some(self.rlva_sit_id().to_string()),
+                    "getsitid" => Some(self.rlva_sit_id().to_string()),
                     name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
                     _ => Some(String::new()),
                 };
@@ -463,7 +513,11 @@ impl World {
             }
             let command = match c.behaviour.as_str() {
                 "unsit" if c.option.is_empty() && self.agent.is_sitting() => Some(NetCommand::OneShotControl(control::STAND_UP)),
-                "sitground" if c.option.is_empty() => self.rlva_force_ground_sit(source),
+                // RlvForceHandler<RLV_BHVR_SITGROUND>::onCommand reads no
+                // option; RlvForceHandler<RLV_BHVR_SIT> (rlvhandler.cpp) hands
+                // it the null key, which no option is too (LLUUID::set).
+                "sitground" => self.rlva_force_ground_sit(source),
+                "sit" if c.option.is_empty() => self.rlva_force_ground_sit(source),
                 "sit" => match Uuid::parse_str(&c.option) {
                     Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
                     Ok(id) => self
@@ -486,10 +540,10 @@ impl World {
                     None
                 }
                 "fly" => {
-                    let flying = match c.option.as_str() {
-                        "" | "true" => Some(true),
-                        "false" => Some(false),
-                        _ => None,
+                    let flying = if c.option.is_empty() {
+                        Some(true)
+                    } else {
+                        super::option_bool(&c.option)
                     };
                     if let Some(flying) = flying
                         && (!flying || !self.rlva.has_except("fly", source))
@@ -505,6 +559,11 @@ impl World {
                 && self.rlva_normalize_teleport(&mut command)
                 && self.rlva_allows_command(&command, source)
             {
+                // LLAgent::teleportViaLocation: a teleport forced by @tpto
+                // cannot be cancelled (RlvHandler::setCanCancelTp(false))
+                if c.behaviour == "tpto" {
+                    self.tp_cancel.lock_for_rlva();
+                }
                 if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
                     self.rlva.stand_origin = self.main_region.map(|h| (h, self.agent.position));
                 }

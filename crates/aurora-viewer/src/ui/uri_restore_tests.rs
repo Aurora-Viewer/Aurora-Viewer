@@ -149,12 +149,12 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
                                             places.show(ctx, &mut c, &mut true, false, false, None);
                                         }
                                         _ => {
-                                            details.show(ctx, &mut c);
+                                            details.show(ctx, &mut c, !classic);
                                         }
                                     }
                                 }
                                 Destination::Experience => {
-                                    experience_profile::show(ctx, &p, &mut world);
+                                    experience_profile::ExperienceProfileUi::default().show(ctx, &p, &mut world, &HashMap::new());
                                 }
                                 Destination::Pay => {
                                     pay.show(ctx, &p, &world, (&HashMap::new(), &HashMap::new()), classic, true, 0);

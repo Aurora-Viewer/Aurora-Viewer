@@ -3,13 +3,13 @@
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
 use crate::pipeline_cache::CachedPipelines;
+pub use crate::preview_mesh::paint as paint_antialiased_mesh;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Weak},
 };
-use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable, Default)]
@@ -266,6 +266,7 @@ struct Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+    meshes: crate::preview_mesh::Cache,
 }
 
 type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
@@ -437,13 +438,7 @@ impl Target {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
             }
-            let buffer = |label, bytes: &[u8], usage| {
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytes,
-                    usage,
-                })
-            };
+            let buffer = |label, bytes: &[u8], usage| crate::gpu_alloc::buffer_init(device, label, bytes, usage);
             let key = Arc::as_ptr(&part.vertices) as *const () as usize;
             let vertices = if let Some((owner, buffer)) = assets.vertices.get(&key)
                 && owner.strong_count() > 0
@@ -748,6 +743,7 @@ impl Cache {
         primitives: &mut [egui::ClippedPrimitive],
         scale: f32,
     ) {
+        self.meshes.render(device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
         for primitive in primitives {
             let egui::epaint::Primitive::Callback(callback) = &primitive.primitive else {
@@ -808,6 +804,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wgpu::util::DeviceExt;
 
     #[test]
     fn large_preview_targets_keep_the_shape_of_their_rectangle() {
@@ -896,7 +893,7 @@ mod tests {
             );
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Layer pixels"),
-                size: u64::from(SIZE * SIZE * 4),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -1149,7 +1146,7 @@ mod tests {
         let depth = texture(wgpu::TextureFormat::Depth32Float, attachment, SIZE, None).create_view(&Default::default());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Preview test readback"),
-            size: u64::from(SIZE * SIZE * 4),
+            size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

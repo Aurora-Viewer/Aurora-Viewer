@@ -140,6 +140,8 @@ pub enum JobResult {
         geom: PreparedGeom,
         /// LLVolume::getSurfaceArea (sculpts; 1 otherwise).
         area: f32,
+        /// The swept grid's area of prims and sculpts (surface_area.rs).
+        grid_area: f32,
     },
     GeometryFailed {
         key: GeomKey,
@@ -247,12 +249,18 @@ fn below_normal_priority() {
 
 impl JobResult {
     /// A geometry built by a job, prepared for the GPU on the job's thread.
-    pub fn geometry(key: GeomKey, (faces, min, max): (Vec<FaceData>, Vec3, Vec3), area: f32, pool: Option<&StagingPool>) -> Self {
+    pub fn geometry(
+        key: GeomKey,
+        (faces, min, max): (Vec<FaceData>, Vec3, Vec3),
+        (area, grid_area): (f32, f32),
+        pool: Option<&StagingPool>,
+    ) -> Self {
         let pick = !matches!(key, GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. });
         JobResult::Geometry {
             key,
             geom: PreparedGeom::new(faces, min, max, pick, pool),
             area,
+            grid_area,
         }
     }
 }
@@ -296,6 +304,28 @@ pub struct Jobs {
     trash: Sender<Box<dyn Send>>,
 }
 
+/// Run `work` on a job's thread; None when it panics. The panic hook
+/// (logging.rs) has already logged the panic with its backtrace, as for the
+/// other panics the viewer survives (settings/saver.rs): the caller turns
+/// None into its asset's failure result. Costs nothing measurable when
+/// nothing panics (no allocation, one call frame).
+pub fn caught<T>(work: impl FnOnce() -> T) -> Option<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(r) => Some(r),
+        Err(_) => {
+            log::warn!("background job stopped on a panic (above); its asset is marked failed");
+            None
+        }
+    }
+}
+
+/// The pool's panic handler, for the jobs that are not wrapped in
+/// [`caught`] (`run`, `execute`): the panic is logged by the hook and the
+/// pool's thread goes on with the next job.
+fn job_stopped(_: Box<dyn std::any::Any + Send>) {
+    log::warn!("background job stopped on a panic (above); the viewer goes on");
+}
+
 /// The thread that frees what `Jobs::discard` receives, until every `Jobs`
 /// is gone. If it cannot start, `discard` frees in place.
 fn start_trash_thread() -> Sender<Box<dyn Send>> {
@@ -317,16 +347,24 @@ impl Jobs {
     pub fn new() -> (Jobs, Receiver<JobResult>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        // (without a panic handler, rayon ends the process when a job panics)
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.saturating_sub(2).max(1))
             .thread_name(|i| format!("aurora-jobs-{i}"))
             .start_handler(|_| below_normal_priority())
+            .panic_handler(job_stopped)
             .build()
             .map(Arc::new)
             .unwrap_or_else(|e| {
                 log::warn!("background pool: {e}; falling back to one thread");
                 // a pool of one thread cannot fail in practice; keep going
-                Arc::new(rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("one-thread pool"))
+                Arc::new(
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(1)
+                        .panic_handler(job_stopped)
+                        .build()
+                        .expect("one-thread pool"),
+                )
             });
         (
             Jobs {
@@ -339,12 +377,21 @@ impl Jobs {
         )
     }
 
+    /// A job whose result comes back through the results. A panic in it
+    /// sends `Done`: give a decode its failure result with [`Self::spawn_or`].
     pub fn spawn(&self, f: impl FnOnce() -> JobResult + Send + 'static) {
+        self.spawn_or(f, || JobResult::Done);
+    }
+
+    /// A job that sends `failed()` instead when it panics, so that its asset
+    /// takes the failure path (retry, refetch) rather than waiting forever
+    /// for a result. `in_flight` is given back either way.
+    pub fn spawn_or(&self, f: impl FnOnce() -> JobResult + Send + 'static, failed: impl FnOnce() -> JobResult + Send + 'static) {
         let tx = self.tx.clone();
         let n = self.in_flight.clone();
         n.fetch_add(1, Ordering::Relaxed);
         self.pool.spawn(move || {
-            let r = f();
+            let r = caught(f).unwrap_or_else(failed);
             n.fetch_sub(1, Ordering::Relaxed);
             let _ = tx.send(r);
         });
@@ -390,7 +437,9 @@ impl Jobs {
                 let (f, tx, n) = (f.clone(), tx.clone(), n.clone());
                 // (on a pool thread: queued in this pool)
                 rayon::spawn_fifo(move || {
-                    let r = f(item);
+                    // (an item with a failure result of its own wraps its
+                    // work in `caught`)
+                    let r = caught(|| f(item)).unwrap_or(JobResult::Done);
                     n.fetch_sub(1, Ordering::Relaxed);
                     let _ = tx.send(r);
                 });
@@ -607,7 +656,7 @@ pub fn mesh_to_faces(
                                 // LLSkinningUtil::getPerVertexSkinMatrix:
                                 // clamp in the mesh's palette before remapping.
                                 sv.joints[k] = map[(j[k] as usize).min(map.len() - 1)];
-                                sv.weights[k] = (w[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                                sv.weights[k] = aurora_render::pack_skin_weight(w[k]);
                             }
                             sv
                         })
@@ -654,7 +703,7 @@ mod tests {
             [9, 9, 9, 3],
             "invalid indices clamp to the last mesh joint before mapping"
         );
-        assert_eq!(vertices[1].weights, [128, 64, 64, 0]);
+        assert_eq!(vertices[1].weights, [32768, 16384, 16384, 0]);
         assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
         let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
         assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");
@@ -718,6 +767,47 @@ mod tests {
         let deepest = seen.lock().expect("lock").values().map(|(lo, hi)| hi - lo).max().unwrap_or(0);
         assert!(deepest < 64 * 1024, "jobs nested {deepest} bytes deep on one thread's stack");
         assert_eq!(elsewhere.load(Ordering::Relaxed), 0, "jobs ran outside the background pool");
+    }
+
+    /// A job that panics leaves the viewer running: its result is its
+    /// failure (or `Done`), `in_flight` is given back, and the pool goes on
+    /// with the next jobs.
+    #[test]
+    fn a_panicking_job_sends_a_failure_and_is_counted_as_finished() {
+        let (jobs, results) = Jobs::new();
+        let id = Uuid::from_u128(7);
+        let wait = std::time::Duration::from_secs(30);
+        jobs.spawn_or(|| panic!("decoder bug"), move || JobResult::TextureFailed { id });
+        assert!(matches!(results.recv_timeout(wait), Ok(JobResult::TextureFailed { id: got }) if got == id));
+        jobs.spawn(|| panic!("decoder bug"));
+        assert!(matches!(results.recv_timeout(wait), Ok(JobResult::Done)));
+        // in a batch: the item that panics comes back as `Done`, the others
+        // as they are
+        jobs.spawn_many(vec![0u32, 1, 2], move |i| {
+            if i == 1 {
+                panic!("decoder bug");
+            }
+            JobResult::TextureFailed {
+                id: Uuid::from_u128(i.into()),
+            }
+        });
+        let (mut done, mut others) = (0, 0);
+        for _ in 0..3 {
+            match results.recv_timeout(wait) {
+                Ok(JobResult::Done) => done += 1,
+                Ok(JobResult::TextureFailed { .. }) => others += 1,
+                _ => panic!("every item sends a result"),
+            }
+        }
+        assert_eq!((done, others), (1, 2));
+        assert_eq!(caught(|| -> u8 { panic!("decoder bug") }), None);
+        assert_eq!(caught(|| 3), Some(3));
+        // a job with no result: the pool's handler keeps its thread alive
+        let (tx, rx) = std::sync::mpsc::channel();
+        jobs.run(|| panic!("decoder bug"));
+        jobs.run(move || tx.send(()).expect("receiver"));
+        rx.recv_timeout(wait).expect("the pool still runs jobs");
+        assert_eq!(jobs.pending(), 0, "every job is counted as finished");
     }
 
     /// Tells on which thread it is dropped.
