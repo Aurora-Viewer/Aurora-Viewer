@@ -47,9 +47,10 @@ pub const FLOAT_CLEARANCE: f32 = 100.0;
 pub const HIDE_GAP: f32 = 60.0;
 /// Vertical gap under which a hidden linkset shows again.
 pub const SHOW_GAP: f32 = 50.0;
-/// Object slots whose linkset is measured again per frame (an edit or a
-/// move of something still): a whole pass every few frames at most.
-const REFRESH_SLOTS: usize = 2048;
+/// Object slots measured again per frame besides those that changed, for
+/// what changes without an update of its own (the ground under it
+/// arriving, the water height).
+const REFRESH_SLOTS: usize = 1024;
 /// Water height when the region has not told it yet.
 const DEFAULT_WATER: f32 = 20.0;
 
@@ -110,12 +111,25 @@ struct Root {
     /// Its extent when it floats.
     floating: Option<Extent>,
     hidden: bool,
+    /// In `SkyVisibility::floating` (once at most).
+    listed: bool,
 }
+
+/// What a slot holds for the rule: a root and its extent when it floats,
+/// or nothing (an empty slot, a child, our avatar).
+type Measure = Option<(Uuid, Option<Extent>)>;
 
 /// The state of the rule, per root object slot.
 #[derive(Debug, Default)]
 pub struct SkyVisibility {
     roots: Vec<Option<Root>>,
+    /// The slots of the floating roots: the only ones checked against the
+    /// camera at each frame. A region holds hundreds of thousands of
+    /// objects; a pass over all of them at each frame took about 9 ms on
+    /// the mainland (Object synchronisation).
+    floating: Vec<usize>,
+    /// Every root was measured since the rule was switched on.
+    primed: bool,
     cursor: usize,
     hidden: usize,
     /// Roots whose state changed since the scene last read them: the scene
@@ -147,11 +161,48 @@ impl SkyVisibility {
         }
     }
 
+    /// The slot no longer holds a root the rule hides (its place in
+    /// `floating` stays until the next pass drops it).
     fn forget(&mut self, idx: usize) {
         self.set_hidden(idx, false);
-        if let Some(slot) = self.roots.get_mut(idx) {
-            *slot = None;
+        if let Some(Some(r)) = self.roots.get_mut(idx) {
+            r.floating = None;
         }
+    }
+
+    fn store(&mut self, idx: usize, measure: Measure) {
+        let Some((id, floating)) = measure else {
+            self.forget(idx);
+            return;
+        };
+        if self.roots.len() <= idx {
+            self.roots.resize(idx + 1, None);
+        }
+        let old = self.roots[idx];
+        let known = old.filter(|r| r.id == id);
+        if known.is_none() || floating.is_none() {
+            self.forget(idx);
+        }
+        let listed = old.is_some_and(|r| r.listed);
+        if floating.is_some() && !listed {
+            self.floating.push(idx);
+        }
+        self.roots[idx] = Some(Root {
+            id,
+            floating,
+            hidden: known.is_some_and(|r| r.hidden) && floating.is_some(),
+            listed: listed || floating.is_some(),
+        });
+    }
+
+    /// Switched off: everything shows, and is measured again once on.
+    fn clear(&mut self) {
+        for idx in std::mem::take(&mut self.floating) {
+            self.set_hidden(idx, false);
+        }
+        self.roots.clear();
+        self.primed = false;
+        self.cursor = 0;
     }
 }
 
@@ -163,10 +214,7 @@ impl World {
     pub fn update_sky_visibility(&mut self, enabled: bool, eye: Vec3, focus: Option<Vec3>, focus_object: Option<Uuid>) {
         let mut sky = std::mem::take(&mut self.sky_visibility);
         if !enabled {
-            for idx in 0..sky.roots.len() {
-                sky.forget(idx);
-            }
-            sky.roots.clear();
+            sky.clear();
             self.sky_visibility = sky;
             return;
         }
@@ -176,53 +224,85 @@ impl World {
             for idx in n..sky.roots.len() {
                 sky.forget(idx);
             }
+            sky.roots.truncate(n);
         }
-        sky.roots.resize(n, None);
+        if !sky.primed {
+            // switched on: every root at once, on the worker threads
+            use rayon::prelude::*;
+            let measured: Vec<(usize, Measure)> = (0..n)
+                .into_par_iter()
+                .filter_map(|idx| {
+                    let m = self.measure(idx, now);
+                    m.is_some().then_some((idx, m))
+                })
+                .collect();
+            for (idx, m) in measured {
+                sky.store(idx, m);
+            }
+            sky.primed = true;
+        } else {
+            // what changed (and the roots of the children that did), and a
+            // few slots more for what changes without an update of its own
+            // (the ground under it arriving, the water height)
+            let mut queue = std::collections::HashSet::new();
+            for &idx in self.objects.touched().iter().chain(&self.objects.removed_slots) {
+                queue.insert(idx);
+                if let Some(o) = self.objects.get(idx)
+                    && o.parent_id != 0
+                {
+                    queue.insert(self.objects.linkset_root(idx));
+                }
+            }
+            let end = (sky.cursor + REFRESH_SLOTS).min(n);
+            queue.extend(sky.cursor..end);
+            sky.cursor = if end >= n { 0 } else { end };
+            for idx in queue {
+                sky.store(idx, self.measure(idx, now));
+            }
+        }
         let seat = self.own_seat_root();
         // focused away: our avatar's height counts too
         let me_z = focus.map(|_| self.agent.position.z);
         let focused = focus_object
             .and_then(|id| self.objects.index_of_uuid(&id))
             .map(|idx| self.objects.linkset_root(idx));
-        let window = sky.cursor..sky.cursor + REFRESH_SLOTS;
-        for idx in 0..n {
-            let Some(o) = self.objects.get(idx) else {
-                sky.forget(idx);
-                continue;
-            };
-            // a root: nothing above it (a seated avatar follows its seat)
-            if o.parent_id != 0 || o.full_id == self.agent_id || Some(idx) == seat || Some(idx) == focused {
-                sky.forget(idx);
-                continue;
+        let mut floating = std::mem::take(&mut sky.floating);
+        floating.retain(|&idx| match sky.roots.get_mut(idx) {
+            Some(Some(r)) if r.floating.is_some() => true,
+            Some(Some(r)) => {
+                r.listed = false;
+                false
             }
-            let known = sky.roots[idx].filter(|r| r.id == o.full_id);
-            let vehicle = !o.is_avatar() && (o.update_flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 || o.has_motion());
-            let floating = if vehicle {
-                // a vehicle and what moves never float (an avatar does)
-                None
-            } else if known.is_none() || o.is_avatar() || window.contains(&idx) {
-                self.floating_extent(idx, now)
-            } else {
-                known.and_then(|r| r.floating)
-            };
-            let was_hidden = known.is_some_and(|r| r.hidden);
-            if known.is_none() {
-                sky.forget(idx);
-            }
-            sky.roots[idx] = Some(Root {
-                id: o.full_id,
-                floating,
+            _ => false,
+        });
+        for &idx in &floating {
+            let Some(Some(Root {
+                floating: Some(e),
                 hidden: was_hidden,
-            });
-            let hidden = floating.is_some_and(|e| {
-                let band = focus.map_or(e.gap(eye.z), |f| e.gap_to(eye.z.min(f.z), eye.z.max(f.z)));
-                let gap = me_z.map_or(band, |z| band.min(e.gap(z)));
-                stays_hidden(was_hidden, gap)
-            });
-            sky.set_hidden(idx, hidden);
+                ..
+            })) = sky.roots.get(idx).copied()
+            else {
+                continue;
+            };
+            let band = focus.map_or(e.gap(eye.z), |f| e.gap_to(eye.z.min(f.z), eye.z.max(f.z)));
+            let gap = me_z.map_or(band, |z| band.min(e.gap(z)));
+            let exempt = Some(idx) == seat || Some(idx) == focused;
+            sky.set_hidden(idx, !exempt && stays_hidden(was_hidden, gap));
         }
-        sky.cursor = if window.end >= n { 0 } else { window.end };
+        sky.floating = floating;
         self.sky_visibility = sky;
+    }
+
+    /// What the slot holds for the rule.
+    fn measure(&self, idx: usize, now: Instant) -> Measure {
+        let o = self.objects.get(idx)?;
+        // a root: nothing above it (a seated avatar follows its seat)
+        if o.parent_id != 0 || o.full_id == self.agent_id {
+            return None;
+        }
+        // a vehicle and what moves never float (an avatar does)
+        let vehicle = !o.is_avatar() && (o.update_flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 || o.has_motion());
+        Some((o.full_id, if vehicle { None } else { self.floating_extent(idx, now) }))
     }
 
     /// The linkset `root` (or the avatar) floats: its vertical extent.
@@ -465,6 +545,33 @@ mod tests {
         // the focus back on our avatar: from the island, the skybox hides
         world.update_sky_visibility(true, scene::ISLAND, None, None);
         assert!(!world.object_shown(below));
+    }
+
+    /// After the first pass, only what changed is measured again: a build
+    /// raised into the sky or brought down to the ground is seen through
+    /// the store's change list, as the scene sync drains it each frame.
+    #[test]
+    fn what_changes_after_the_first_pass_is_measured_again() {
+        let mut world = world();
+        let ground = Vec3::new(140.0, 130.0, 30.0);
+        world.update_sky_visibility(true, ground, None, None);
+        world.objects.take_touched(&mut Vec::new());
+        world.objects.removed_slots.clear();
+        let tower = prim(&world, TOWER);
+        let skybox = prim(&world, SKYBOX);
+        assert!(world.object_shown(tower) && !world.object_shown(skybox));
+        // the tower raised 400 m, the skybox brought down to the ground
+        world.objects.get_mut(tower).expect("tower").position.z += 400.0;
+        world.objects.get_mut(skybox).expect("skybox").position.z = 40.0;
+        world.update_sky_visibility(true, ground, None, None);
+        assert!(!world.object_shown(tower), "raised into the sky");
+        assert!(world.object_shown(skybox), "on the ground now");
+        assert!(world.sky_visibility.changed.contains(&tower) && world.sky_visibility.changed.contains(&skybox));
+        // nothing changed: nothing measured or synced again
+        world.objects.take_touched(&mut Vec::new());
+        world.sky_visibility.changed.clear();
+        world.update_sky_visibility(true, ground, None, None);
+        assert!(world.sky_visibility.changed.is_empty());
     }
 
     #[test]

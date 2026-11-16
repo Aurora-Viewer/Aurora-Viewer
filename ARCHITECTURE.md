@@ -978,9 +978,11 @@ geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
 `world/sky_visibility.rs` hides the skyboxes seen from other heights (Preferences
-› Graphics, on by default, an Aurora addition). Each frame, before the scene
-sync, it measures the linksets that arrived or changed (and a rolling slice of
-the others): a linkset floats when its lowest point is 100 m above the ground or
+› Graphics, on by default, an Aurora addition). When it is switched on it
+measures every linkset once, on the worker threads; then each frame, before the
+scene sync, only those the object store lists as changed (and a rolling slice
+of the others), and checks the list of floating ones against the camera: a
+linkset floats when its lowest point is 100 m above the ground or
 water under its root; a moving or physical object never does (an avatar does).
 A floating linkset is hidden while the camera is more than 60 m above or below
 its vertical extent, and shows again within 50 m; while the camera is focused
