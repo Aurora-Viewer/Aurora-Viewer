@@ -1421,6 +1421,18 @@ mod outgoing_offers {
     }
 
     #[test]
+    fn a_timed_out_private_read_leaves_only_the_check_available_to_retry() {
+        let (mut inv, item, receipt) = prepare();
+        drop(lost_ack(&mut inv, receipt));
+        assert!(matches!(
+            &inv.poll_offers(Some(id(41)))[..],
+            [Effect::Feedback(Feedback::CheckFailed)]
+        ));
+        assert!(inv.items.contains_key(&item));
+        assert!(matches!(start(&mut inv, item), Ok(NetCommand::CheckInventoryOffer { .. })));
+    }
+
+    #[test]
     fn an_authoritative_original_uses_its_current_rights_without_resending() {
         let (mut inv, item, receipt) = prepare();
         let read = lost_ack(&mut inv, receipt);

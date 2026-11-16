@@ -260,8 +260,8 @@ impl Inventory {
                     match receipt.try_recv() {
                         Ok(InventoryOfferStatus::Transmitted) => *transmitted = true,
                         Ok(InventoryOfferStatus::Acknowledged) => {
-                            // LLGiveInventory::giveInventoryItemToAgent removes no-copy
-                            // originals after send. Wait for the actual simulator ACK.
+                            // LLGiveInventory::handleCopyProtectedItem (indra/newview/llgiveinventory.cpp)
+                            // removes the original after sending; wait for the simulator ACK.
                             effects.push(Effect::Sent {
                                 recipient: p.recipient,
                                 name: std::mem::take(&mut p.name),

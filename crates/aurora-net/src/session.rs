@@ -3786,10 +3786,11 @@ impl Session<'_> {
         let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
-        tokio::spawn(async move {
+        let private = offer_reply.is_some();
+        let read = async move {
             let mut all = ItemReads::default();
             let mut receive = |mut reads: ItemReads| {
-                if offer_reply.is_some() {
+                if private {
                     all.items.append(&mut reads.items);
                     all.missing.append(&mut reads.missing);
                     all.failed.append(&mut reads.failed);
@@ -3822,8 +3823,17 @@ impl Session<'_> {
                     ..Default::default()
                 });
             }
+            all
+        };
+        tokio::spawn(async move {
             if let Some(reply) = offer_reply {
-                let _ = reply.try_send(all);
+                // A stalled inventory server must release the private check.
+                // Dropping its sender leaves the original reserved for a manual recheck.
+                if let Ok(reads) = tokio::time::timeout(crate::inventory::ais::REQUEST_TIMEOUT, read).await {
+                    let _ = reply.try_send(reads);
+                }
+            } else {
+                read.await;
             }
         });
     }
