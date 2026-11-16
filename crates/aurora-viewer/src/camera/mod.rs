@@ -3988,10 +3988,10 @@ mod tests {
         input.follow_joint_offset = Some(Vec3::ZERO);
         camera.update(&mut world, &settings, &input);
         input.follow_joint_offset = Some(Vec3::new(0.1, 0.4, -10.68));
-        let delta = camera.third_person_joint_delta(&settings, &input);
+        let delta = camera.third_person_joint_delta(&settings, input.follow_joint_offset);
         assert!(delta.length() <= FOLLOW_JOINT_MAX_OFFSET * 2.85 + 1e-4, "{delta}");
         input.follow_joint_offset = Some(Vec3::Z * 0.2);
-        let small = camera.third_person_joint_delta(&settings, &input);
+        let small = camera.third_person_joint_delta(&settings, input.follow_joint_offset);
         assert!(small.abs_diff_eq(Vec3::Z * 0.2 * 2.85, 1e-4), "a real movement is not capped");
     }
 
