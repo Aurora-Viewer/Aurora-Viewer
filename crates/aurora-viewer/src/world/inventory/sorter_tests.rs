@@ -694,6 +694,22 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
     let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
     assert!(!moved.contains(&id(40)) && !moved.contains(&id(43)), "shelves are opened");
+    // deliveries with plural parts or fatpack folders stay whole
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 30, 1, "Hex Outfit");
+    add_folder(&mut inv, 31, 30, "Top");
+    add_folder(&mut inv, 32, 30, "Shoes");
+    add_folder(&mut inv, 33, 1, "Kira Avatar");
+    add_folder(&mut inv, 34, 33, "Head");
+    add_folder(&mut inv, 35, 33, "Eyes");
+    add_folder(&mut inv, 36, 1, "Hex Dress");
+    add_folder(&mut inv, 37, 36, "Maitreya");
+    add_folder(&mut inv, 38, 36, "HUDs");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(![31, 32, 34, 35, 37, 38].iter().any(|n| moved.contains(&id(*n))), "never opened");
+    // (Kira Avatar names no kind: it stays whole where it is)
+    assert!([30, 36].iter().all(|n| moved.contains(&id(*n))), "they move whole");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

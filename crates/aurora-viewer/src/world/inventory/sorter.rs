@@ -1099,7 +1099,7 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
 /// whole once they are, so they are asked for. One the server failed to
 /// give is not listed: it keeps its parent where it is (`holds_closed`)
 /// and is never asked for again in a loop.
-pub fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+pub fn unloaded_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> Vec<Uuid> {
     let mut out = Vec::new();
     let mut stack = vec![id];
     let mut seen = HashSet::new();
@@ -1114,7 +1114,8 @@ pub fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
             }
             continue;
         }
-        stack.extend(f.children.iter().copied());
+        // (an excluded folder is never read)
+        stack.extend(f.children.iter().copied().filter(|c| !excluded.contains(c)));
     }
     out
 }
@@ -1359,23 +1360,34 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // aside
     let own = product_words(name);
     let mut versions = false;
+    // the subfolders named only for a kind: one thing each (`Top`, `Head`,
+    // `Shape`) are a delivery's parts; all of them plural (`Heads`,
+    // `Skins`, `Boots`) are a shelf sorted by kind
+    let (mut singular, mut plural) = (0, 0);
     let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
         let named_again = sub_words.iter().any(|w| own.contains(w));
+        // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
+        let fatpack = !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()));
+        let kind_only = !fatpack && !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w));
+        let many = kind_only && sub_words.iter().any(|w| plural_kind(w));
         // a body's or a head's version (`Lelutka`, `Catwa EvoX`), Squish,
         // Waifus, or the product's own name again
-        // (one head named, never a shelf of them: `Heads`)
-        let one = !sub_words.iter().any(|w| plural_kind(w));
-        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && one || read.squish || read.waifus;
+        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && !many || read.squish || read.waifus;
         versions |= version;
-        // a fatpack's own folders, or an outfit's or an avatar's parts, one
-        // thing each (`Top`, `Pants`, `Head`, `Shape`; never `Shoes`,
-        // `Skins`: a shelf sorted by kind)
-        version || one && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w))
+        if kind_only && !version {
+            if many {
+                plural += 1;
+            } else {
+                singular += 1;
+            }
+        }
+        version || fatpack || kind_only
     });
-    all && (versions || named && !occasion)
+    let shelf_by_kind = plural > 0 && singular == 0;
+    all && !shelf_by_kind && (versions || named && !occasion || singular > 0 && names_a_product(name))
 }
 
 /// A kind word written as many (`Dresses`, `Shoes`, `Heads`): the word
@@ -1962,7 +1974,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
                 Dest::Path(_) | Dest::PreTrash => true,
             }
         {
-            let unloaded = unloaded_below(inv, m.id);
+            let unloaded = unloaded_below(inv, m.id, &prefs.excluded);
             if !unloaded.is_empty() {
                 // the run waits for its tree before it goes (step), so it is
                 // never left out of a Resume or an Undo
@@ -2807,8 +2819,14 @@ fn plan_with(
             plan.kept_list.push((name, Kept::Protected));
             continue;
         }
+        // an excluded folder is never read, not even to judge it
+        if prefs.excludes(inv, id) {
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Excluded));
+            continue;
+        }
         if is_folder {
-            let unloaded = unloaded_below(inv, id);
+            let unloaded = unloaded_below(inv, id, &prefs.excluded);
             if !unloaded.is_empty() {
                 // moved whole once all it holds is loaded (and seen not worn)
                 plan.unfetched.extend(unloaded);
@@ -2956,7 +2974,7 @@ pub fn step(
             && actions::relocatable(inv, next.id, protected)
             && !holds_worn.contains(&next.id)
         {
-            let loading = unloaded_below(inv, next.id);
+            let loading = unloaded_below(inv, next.id, &[]);
             if !loading.is_empty() {
                 // a few at a time beside the inventory's own loading, never
                 // a whole deep tree in one frame
