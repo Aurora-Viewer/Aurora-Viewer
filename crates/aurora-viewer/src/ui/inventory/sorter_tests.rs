@@ -100,9 +100,9 @@ fn a_batch_counts_only_its_own_confirmed_result() {
     let request = Uuid::from_u128(77);
     in_flight(&mut st, 0..200, request);
     // another change's result is not ours
-    st.finish_sorter(Uuid::from_u128(78), None);
+    st.finish_sorter(Uuid::from_u128(78), None, None);
     assert!(st.sorter.job.as_ref().is_some_and(|job| job.done == 0 && job.in_flight.is_some()));
-    st.finish_sorter(request, None);
+    st.finish_sorter(request, None, None);
     let job = st.sorter.job.as_ref().expect("job");
     assert_eq!(job.done, 200);
     assert!(job.in_flight.is_none() && !st.sorter.submitted);
@@ -122,7 +122,7 @@ fn a_refused_batch_is_retried_then_skipped_never_the_whole_job() {
             job.retries = attempt - 1;
             job.queue = moves(200..200 + queued as u128).into();
         }
-        st.finish_sorter(request, Some("network down"));
+        st.finish_sorter(request, Some("network down"), None);
         let job = st.sorter.job.as_ref().expect("the job goes on");
         assert_eq!(job.queue.len(), 200 + queued, "the batch is back in the queue");
         assert_eq!(
@@ -138,7 +138,7 @@ fn a_refused_batch_is_retried_then_skipped_never_the_whole_job() {
     if let Some(job) = st.sorter.job.as_mut() {
         job.retries = RETRIES;
     }
-    st.finish_sorter(request, Some("network down"));
+    st.finish_sorter(request, Some("network down"), None);
     let job = st.sorter.job.as_ref().expect("the job goes on");
     assert_eq!(job.failed, 200);
 }
@@ -220,7 +220,7 @@ fn after_stop_a_refused_batch_is_not_sent_again() {
         job.stopping = true;
         job.queue.clear();
     }
-    st.finish_sorter(request, Some("network down"));
+    st.finish_sorter(request, Some("network down"), None);
     let job = st.sorter.job.as_ref().expect("the job ends on its own");
     assert!(job.queue.is_empty(), "nothing put back to retry");
     assert_eq!(job.failed, 200);
@@ -285,7 +285,10 @@ fn a_batch_applied_late_counts_as_done_and_is_journaled() {
         frames: 0,
         sent_at: now,
     });
-    job.finish(Some("timeout"), now);
+    job.finish(Some("timeout"), None, now);
+    // no answer: both shown back where they were until the server says
+    assert_eq!(job.put_back.len(), 2);
+    job.put_back.clear();
     assert_eq!(job.queue.len(), 2);
     // a batch of two refused for good
     job.retries = RETRIES;
@@ -295,7 +298,10 @@ fn a_batch_applied_late_counts_as_done_and_is_journaled() {
         frames: 0,
         sent_at: now,
     });
-    job.finish(Some("refused"), now);
+    // the answer read item 3 (its record applied): only item 2 goes back
+    job.finish(Some("refused"), Some(&[to_keep(2).id]), now);
+    assert_eq!(job.put_back.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(), vec![to_keep(2).id]);
+    job.put_back.clear();
     assert_eq!(job.failed, 2);
     // the server applied item 0 and item 2 late
     for n in [0u128, 2] {
@@ -441,7 +447,7 @@ fn a_batch_accepted_on_its_retry_counts_once() {
     let mut st = InventoryUi::default();
     st.open_sorter(Uuid::from_u128(8000));
     in_flight(&mut st, 0..3, Uuid::from_u128(500));
-    st.finish_sorter(Uuid::from_u128(500), Some("busy"));
+    st.finish_sorter(Uuid::from_u128(500), Some("busy"), None);
     let unsure = st.sorter.job.as_ref().map_or(0, |job| job.unsure.len());
     assert_eq!(unsure, 3);
     // resent, and accepted
@@ -454,7 +460,7 @@ fn a_batch_accepted_on_its_retry_counts_once() {
             sent_at: Instant::now(),
         });
     }
-    st.finish_sorter(Uuid::from_u128(501), None);
+    st.finish_sorter(Uuid::from_u128(501), None, None);
     let job = st.sorter.job.as_ref().expect("job");
     assert_eq!(job.done, 3);
     assert!(job.unsure.is_empty(), "nothing left to count twice");

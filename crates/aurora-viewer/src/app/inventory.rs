@@ -741,8 +741,25 @@ impl App {
             .as_ref()
             .is_ok_and(|reply| !reply.unconfirmed.is_empty())
             .then(|| aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders"));
-        self.inventory_ui
-            .finish_sorter(request, result.as_ref().err().map(String::as_str).or(unconfirmed));
+        // unconfirmed entries the server's answer carries no record of: their
+        // place is not known (the inventory shows them where they were only
+        // sent), so Auto-sort puts them back where they were until it knows
+        let unread: Vec<Uuid> = result.as_ref().map_or_else(
+            |_| Vec::new(),
+            |reply| {
+                reply
+                    .unconfirmed
+                    .iter()
+                    .copied()
+                    .filter(|id| !reply.moved_items.iter().any(|it| it.id == *id) && !reply.moved_folders.iter().any(|f| f.id == *id))
+                    .collect()
+            },
+        );
+        self.inventory_ui.finish_sorter(
+            request,
+            result.as_ref().err().map(String::as_str).or(unconfirmed),
+            result.is_ok().then_some(unread.as_slice()),
+        );
         self.inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());

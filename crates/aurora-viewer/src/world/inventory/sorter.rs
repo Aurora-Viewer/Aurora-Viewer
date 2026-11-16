@@ -1331,6 +1331,26 @@ pub fn arrived(inv: &Inventory, base: &str, m: &Move) -> bool {
     }
 }
 
+/// Show an entry in `parent` locally, as the inventory does when a move is
+/// sent (`NetEvent::InventoryMoved`): a refused batch's entry goes back
+/// where it was until the server says otherwise.
+pub fn show_in(inv: &mut Inventory, id: Uuid, folder: bool, parent: Uuid) {
+    if actions::parent(inv, id) == Some(parent) || !inv.folders.contains_key(&parent) {
+        return;
+    }
+    if folder {
+        if let Some(f) = inv.folders.get(&id) {
+            let mut moved = f.info.clone();
+            moved.parent = parent;
+            inv.server_updated(vec![moved], Vec::new());
+        }
+    } else if let Some(item) = inv.items.get(&id) {
+        let mut moved = item.clone();
+        moved.parent = parent;
+        inv.server_updated(Vec::new(), vec![moved]);
+    }
+}
+
 /// Lost and Found, semi-protected: closed unless its switch is on.
 const LOST_AND_FOUND: i32 = 16;
 

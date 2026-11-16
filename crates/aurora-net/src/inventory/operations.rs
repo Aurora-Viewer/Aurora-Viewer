@@ -694,6 +694,9 @@ where
         for attempt in 0..=5u32 {
             let read_items = super::ais::read_items(http, cap, owner, &items).await;
             let read_folders = super::ais::read_folders(http, cap, &moved).await;
+            // a read the server did not answer (busy, throttled): the next
+            // attempt waits longer, never hammering it
+            let refused = !read_items.failed.is_empty() || read_folders.len() < moved.len();
             // an entry deleted meanwhile has nothing left to confirm
             let gone: std::collections::HashSet<Uuid> = read_items.missing.iter().copied().collect();
             for it in read_items.items {
@@ -710,7 +713,8 @@ where
             }
             // a move can show a moment after its request: read again, never
             // write again
-            tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
+            let pause = if refused { 1000 } else { 200 };
+            tokio::time::sleep(std::time::Duration::from_millis(pause << attempt.min(3))).await;
         }
         return Ok(Reply {
             contents: Vec::new(),

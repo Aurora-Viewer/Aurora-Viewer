@@ -511,6 +511,9 @@ struct Job {
     started: Instant,
     /// Since when the next move waits for its destination to load.
     waiting_since: Option<Instant>,
+    /// Entries of a refused batch to show back in the folder they were in
+    /// (id, folder, that folder): the server did not say where they are.
+    put_back: Vec<(Uuid, bool, Uuid)>,
     /// The move that wait is for, and whether for its own subfolders: a
     /// new move or another kind of wait starts the clock again.
     waiting_for: Option<(Uuid, bool)>,
@@ -582,6 +585,7 @@ impl Job {
             earlier_runs: Vec::new(),
             base_id: None,
             waiting_for: None,
+            put_back: Vec::new(),
             unfinished_len: None,
         }
     }
@@ -604,8 +608,22 @@ impl Job {
     }
 
     /// The server's answer to the batch on its way.
-    fn finish(&mut self, error: Option<&str>, now: Instant) -> Option<String> {
+    /// `unread`: the moves the answer gives no place for; None (no answer,
+    /// or a request that failed) is every move of the batch.
+    fn finish(&mut self, error: Option<&str>, unread: Option<&[Uuid]>, now: Instant) -> Option<String> {
         let batch = self.in_flight.take()?;
+        // the inventory moved them when they were sent: until the server
+        // shows where they are, they are shown back where they were, so
+        // nothing is counted from where it was only sent
+        if error.is_some() {
+            self.put_back.extend(
+                batch
+                    .moves
+                    .iter()
+                    .filter(|m| unread.is_none_or(|ids| ids.contains(&m.id)))
+                    .map(|m| (m.id, m.folder, m.from)),
+            );
+        }
         if let Some(error) = error {
             // for a tester's report (Dev Toolbox J3): what was refused, why,
             // and which attempt; no name, no id
@@ -1119,8 +1137,10 @@ impl InventoryUi {
     }
 
     /// The result of `request`: completes the sorter batch that took it.
-    pub(crate) fn finish_sorter(&mut self, request: Uuid, error: Option<&str>) {
-        fn finish(state: &mut State, request: Uuid, error: Option<&str>) {
+    /// `unread`: moves of the batch whose place the server's answer does not
+    /// give; None (a failed request) is the whole batch.
+    pub(crate) fn finish_sorter(&mut self, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
+        fn finish(state: &mut State, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
             let ours = state
                 .job
                 .as_ref()
@@ -1132,14 +1152,14 @@ impl InventoryUi {
             state.submitted = false;
             state.preview = None;
             if let Some(job) = state.job.as_mut()
-                && let Some(message) = job.finish(error, Instant::now())
+                && let Some(message) = job.finish(error, unread, Instant::now())
             {
                 state.status = message;
             }
         }
-        finish(&mut self.sorter, request, error);
+        finish(&mut self.sorter, request, error, unread);
         for window in &mut self.windows {
-            finish(&mut window.state.sorter, request, error);
+            finish(&mut window.state.sorter, request, error, unread);
         }
     }
 }
@@ -1219,7 +1239,7 @@ pub(super) fn show(
             .as_ref()
             .is_some_and(|batch| now.duration_since(batch.sent_at) > ANSWER_LIMIT);
         if silent {
-            if let Some(message) = job.finish(Some(aurora_i18n::tr!("inventory-sorter-no-answer")), now) {
+            if let Some(message) = job.finish(Some(aurora_i18n::tr!("inventory-sorter-no-answer")), None, now) {
                 state.status = message;
             }
             state.submitted = false;
@@ -1229,8 +1249,12 @@ pub(super) fn show(
     // the journal takes this frame's confirmed moves, so none is left out)
     if let Some(job) = state.job.as_mut() {
         // (a refused or partly confirmed batch's answer carries the server's
-        // record of each entry it read, already applied: an entry is never
-        // counted from where it was only sent)
+        // record of each entry it read, already applied; the others are
+        // shown back where they were: an entry is never counted from where
+        // it was only sent)
+        for (id, folder, from) in std::mem::take(&mut job.put_back) {
+            sorter::show_in(inv, id, folder, from);
+        }
         job.settle(inv);
     }
     // The journal takes what the server confirmed; saved every few batches
