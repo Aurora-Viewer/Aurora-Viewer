@@ -824,6 +824,61 @@ impl Bridge {
         true
     }
     pub fn update(&mut self, world: &mut World, prefs: &Preferences, online: bool, now: Instant) {
+        self.advance(world, prefs, online, now);
+        world.concealed_attachment = if online { self.concealed() } else { Uuid::nil() };
+    }
+    /// The item whose worn object the HUD pass leaves out: ours while the
+    /// factory works on it. A new bridge is worn as the Library rock, on a
+    /// HUD point (31, Center 2), and the simulator takes a moment to apply
+    /// the look sent by `disguise`, longer still to run the script; a rock
+    /// must not show in the middle of the screen meanwhile. A finished
+    /// bridge is an invisible 1 cm box; a failed one shows again, so that
+    /// what is worn can be seen and removed.
+    fn concealed(&self) -> Uuid {
+        if self.disabled || self.user_detached || matches!(self.phase, Phase::Ready | Phase::Failed) {
+            Uuid::nil()
+        } else {
+            self.item
+        }
+    }
+    /// The look of the bridge, sent as soon as the Library container is worn
+    /// (FSLSLBridge::setupBridgePrim, indra/newview/fslslbridge.cpp,
+    /// originally LGPL 2.1): 1 cm, a plain box, transparent. The values are
+    /// those `initialize` of bridge.lsl sets again once it runs, so that the
+    /// script's own pass changes nothing.
+    fn disguise(&mut self, handle: u64, local_id: u32) {
+        const FACES: usize = 6;
+        let face = aurora_prim::te::TextureFace {
+            color: [1.0, 1.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let look = aurora_prim::te::TextureEntry { faces: vec![face; FACES] };
+        self.commands.extend([
+            NetCommand::Build(BuildCmd::Transform {
+                handle,
+                updates: vec![aurora_net::build::TransformUpdate {
+                    local_id,
+                    position: None,
+                    rotation: None,
+                    scale: Some(glam::Vec3::splat(0.01)),
+                    linked: true,
+                    uniform: false,
+                }],
+            }),
+            NetCommand::Build(BuildCmd::SetShape {
+                handle,
+                local_ids: vec![local_id],
+                shape: aurora_prim::VolumeParams::default().to_raw(),
+            }),
+            NetCommand::Build(BuildCmd::SetTextures {
+                handle,
+                local_id,
+                media_url: String::new(),
+                texture_entry: aurora_prim::te::pack_texture_entry(&look, FACES),
+            }),
+        ]);
+    }
+    fn advance(&mut self, world: &mut World, prefs: &Preferences, online: bool, now: Instant) {
         if !online || world.agent_id.is_nil() || world.main_region.is_none() {
             return;
         }
@@ -1204,19 +1259,10 @@ impl Bridge {
                     if self.phase == Phase::Restore || self.relocated {
                         self.enter(Phase::Handshake, now);
                     } else {
-                        // Keep the freshly copied library object unobtrusive
-                        // while the disabled script is installed and compiled.
-                        self.commands.push(NetCommand::Build(BuildCmd::Transform {
-                            handle: object.key.region,
-                            updates: vec![aurora_net::build::TransformUpdate {
-                                local_id: object.key.local_id,
-                                position: None,
-                                rotation: None,
-                                scale: Some(glam::Vec3::splat(0.01)),
-                                linked: true,
-                                uniform: false,
-                            }],
-                        }));
+                        // The freshly copied Library object takes the bridge's
+                        // look at once, not when its script is compiled.
+                        let (handle, local_id) = (object.key.region, object.key.local_id);
+                        self.disguise(handle, local_id);
                         self.enter(Phase::Listing, now);
                         self.request_contents(world);
                     }

@@ -3196,6 +3196,15 @@ and IK Edit reload scenarios remain direct offline rendering fixtures. Real
 LSL compilation and regional announcements across two viewers require human
 grid validation with the current complete publisher export.
 
+**Bridge container:** `AURORA_DEMO_MOVELOCK=container` wears the new bridge as
+the Library container looks (a 60 cm grey sphere; the bridge is worn on a HUD
+point, so it fills the middle of the screen), on a simulator that applies none
+of the looks the viewer sends and whose scripts never answer. Nothing must
+show while the Movelock window says the bridge is being prepared (capture at
+frame 1500); once the factory gives up (60 s, the window shows the failure)
+the sphere is drawn. The factory tests check the size, shape and texture entry
+sent when the container is worn, before any script is saved.
+
 **Native Movelock choice (2026-10-18):** `AURORA_DEMO_MOVELOCK=native`
 opens the same options with native sitting selected and an offline full-body
 P4 standing AO above a P3 constrained sit. `native-missing` disables Aurora's
