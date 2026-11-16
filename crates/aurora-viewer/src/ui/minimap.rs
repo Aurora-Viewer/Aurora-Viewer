@@ -374,7 +374,7 @@ mod name_format_tests {
         // RLVa must win over both a cached real name and the legacy fallback.
         world.social.avatar_names.set_rlva_privacy(true, Default::default());
         for id in [known, not_cached] {
-            let anonymous = crate::world::rlva::privacy::anonymous(id).display_name.as_str();
+            let anonymous = world.social.avatar_names.anonymous(&id).display_name.as_str();
             for format in formats {
                 assert_eq!(avatar_name(&world, &id, format), anonymous, "privacy leak for {id} in {format:?}");
             }
