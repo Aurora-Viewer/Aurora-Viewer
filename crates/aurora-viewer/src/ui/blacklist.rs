@@ -188,7 +188,7 @@ fn rows<'a>(
                 .map(move |flag| (RowId { id: *id, flag }, e))
         })
         .collect();
-    let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+    let text = |a: &str, b: &str| crate::natural_order::cmp(a, b);
     rows.sort_by(|(ia, a), (ib, b)| {
         let order = match sort {
             None => b.date.cmp(&a.date),
@@ -302,7 +302,7 @@ impl BlacklistUi {
             const BUTTONS: f32 = 26.0;
             let w = ui.available_width();
             ui.allocate_ui_with_layout(Vec2::new(w, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
+                widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
             });
             ui.add_space(6.0);
             let shown = rows(list.entries(), &self.filter, self.sort, ids);
@@ -325,6 +325,14 @@ impl BlacklistUi {
                         let radius = ui.visuals().window_corner_radius;
                         for (id, entry) in &shown {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                self.anchor
+                                    .filter(|id| self.selected.contains(id))
+                                    .or_else(|| self.selected.iter().next().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }

@@ -132,6 +132,7 @@ fn emote_animation() -> Animation {
         loop_in: 0.0,
         loop_out: 0.0,
         looping: false,
+        ends_after: None,
         ease_in: EMOTE_FADE_IN,
         ease_out: EMOTE_FADE_OUT,
         hand_pose: 0,

@@ -77,7 +77,11 @@ pub fn page(cx: &mut Cx) {
         // world tooltips name what is under the pointer — useful when focus
         // is hard to track; same rows as World › World tooltips
         cx.borrow(Page::Layout, 1, &["hover_tips.enabled", "hover_tips.delay"]);
-        cx.borrow(Page::Inventory, 0, &["inventory.thumbnail_tooltips"]);
+        cx.borrow(
+            Page::Inventory,
+            0,
+            &["inventory.show_hover_tooltips", "inventory.thumbnail_tooltips"],
+        );
     });
     cx.group(tr!("ui-options-motion"), |cx| {
         cx.toggle(

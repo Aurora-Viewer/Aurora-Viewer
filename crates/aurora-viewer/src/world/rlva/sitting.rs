@@ -59,7 +59,7 @@ impl World {
 
     /// getsitid reports the seat's root linkset, whereas notifications name
     /// the actual parent prim. Both remain independent of location privacy.
-    pub(super) fn rlva_sit_id(&self) -> Uuid {
+    pub(crate) fn rlva_sit_id(&self) -> Uuid {
         if !self.agent.seated {
             return Uuid::nil();
         }
@@ -258,6 +258,33 @@ mod tests {
         seated(&mut w, false);
         assert!(w.rlva_sitting_tick().is_empty());
         assert!(w.rlva.sitting.pending_ground.is_none());
+    }
+
+    #[test]
+    fn rlva_sit_distance_uses_world_axis_offsets_on_rotated_linked_seats() {
+        use glam::{Quat, Vec3};
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&ROOT).unwrap();
+        let child = w.objects.index_of_uuid(&CHILD).unwrap();
+        let now = std::time::Instant::now();
+        w.objects.get_mut(root).unwrap().position = Vec3::new(128.0, 128.0, 30.0);
+        w.objects.get_mut(root).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        w.objects.get_mut(child).unwrap().position = Vec3::new(0.0, -3.0, 0.0);
+        let (position, _, _) = crate::scene::Scene::object_transform_unshifted(&w, child, now).unwrap();
+        w.agent.position = position + Vec3::X * 2.0;
+        for restriction in ["sittp=n", "fartouch=n"] {
+            restrict(&mut w, A, restriction);
+            for (offset, allowed) in [(Vec3::X, true), (-Vec3::X, false), (Vec3::X * 0.5, false), (Vec3::ZERO, false)] {
+                let request = NetCommand::RequestSit {
+                    handle: w.main_region.unwrap(),
+                    target: CHILD,
+                    offset,
+                };
+                assert_eq!(w.rlva_allows_command(&request, Uuid::nil()), allowed, "{restriction}: {offset:?}");
+                assert!(w.rlva_allows_command(&request, A), "forced sit retains its distance exception");
+            }
+            restrict(&mut w, A, "clear");
+        }
     }
 
     #[test]

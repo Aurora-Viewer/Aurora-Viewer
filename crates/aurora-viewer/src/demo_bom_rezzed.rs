@@ -100,7 +100,9 @@ pub fn events() -> Vec<NetEvent> {
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: if avatar_id == super::DEMO_LOUP { 2 } else { 1 },
+                attachments: (0..if avatar_id == super::DEMO_LOUP { 2 } else { 1 })
+                    .map(|i| (Uuid::from_u128(0xde40_1793_0000_0000_0000_0000_0001_0000 + i), 1))
+                    .collect(),
             }));
         }
     }

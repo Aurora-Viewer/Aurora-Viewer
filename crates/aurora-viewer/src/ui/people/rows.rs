@@ -8,6 +8,7 @@ use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, presence, widgets};
 use crate::world::World;
+use crate::world::names::NameScope;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -28,6 +29,16 @@ pub(super) const TOOLBAR_H: f32 = 30.0;
 
 /// The side of a contact set's symbol after a name (`SetMark::Icon`).
 const SET_ICON: f32 = 12.0;
+
+/// A resident owns the row's interactions and popup, even when sorting or
+/// incoming names move it. Positional auto ids can transfer an open menu to
+/// the next resident. LLListContextMenu::show retains UUIDs too
+/// (indra/newview/lllistcontextmenu.cpp).
+pub(super) fn allocate(ui: &mut egui::Ui, id: Uuid, size: Vec2) -> (Rect, egui::Response) {
+    let (_, rect) = ui.allocate_space(size);
+    let response = ui.interact(rect, ui.scope_id().with(("people-person-row", id)), Sense::click_and_drag());
+    (rect, response)
+}
 
 /// The name a row shows: the display name as the name preferences make it
 /// (a contact set nickname included), as Near you's rows do.
@@ -63,6 +74,7 @@ pub(super) fn picture(
     ui: &egui::Ui,
     p: &Palette,
     world: &World,
+    scope: NameScope,
     rect: Rect,
     pic: Option<&egui::TextureHandle>,
     id: Uuid,
@@ -71,7 +83,7 @@ pub(super) fn picture(
 ) -> f32 {
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, rect.center().y), Vec2::splat(30.0));
     widgets::avatar_disc(ui, p, disc, pic, name, dim);
-    let status = presence::of(world, &id);
+    let status = presence::of_in(world, scope, &id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
     }
@@ -229,14 +241,10 @@ pub(super) fn person_names(
         _ => {}
     }
     if let Some((text, ink, fill)) = tag.filter(|_| !cut) {
-        let g = ui
-            .painter()
-            .layout_no_wrap(text.to_owned(), FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
-        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(g.size().x + 12.0, 16.0));
+        let (g, w) = crate::ui::widgets::tag_pill_layout(ui, text, ink);
+        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(w, 16.0));
         if r.right() <= right {
-            ui.painter().rect_filled(r, ui.visuals().window_corner_radius, fill);
-            let left = r.center().x - g.size().x / 2.0;
-            crate::ui::widgets::paint_row_text(ui.painter(), g, left, r.center().y, ink);
+            crate::ui::widgets::paint_tag_pill(ui, g, r, ink, fill);
         }
     }
     cut
@@ -377,13 +385,52 @@ pub(super) fn actions(
 }
 
 /// A deliberate hold opens contact settings; ordinary clicks keep the
-/// Legacy list's selection and double-click actions (LLPanelPeople).
-const SHEET_HOLD_SECONDS: f64 = 0.5;
+/// Legacy list's selection and double-click actions (LLPanelPeople). Past
+/// `HOLD_DELAY` a wash spreads from the press along the row, and the sheet
+/// opens as it reaches the row's far end.
+const HOLD_DELAY: f64 = 0.5;
+const HOLD_SPREAD: f64 = 0.6;
+const SHEET_HOLD_SECONDS: f64 = HOLD_DELAY + HOLD_SPREAD;
+// the wash takes between half a second and a second
+const _: () = assert!(HOLD_SPREAD >= 0.5 && HOLD_SPREAD <= 1.0);
+
+/// How far the pointer may wander during a hold.
+const HOLD_SLOP: f32 = 6.0;
 
 #[derive(Clone, Copy)]
 struct SheetPress {
     started: f64,
     opened: bool,
+    /// Where the row was pressed: the wash spreads from there.
+    origin: Pos2,
+}
+
+/// How far the hold's wash has spread, 0 to 1, `held` seconds into it.
+fn hold_spread(held: f64) -> f32 {
+    let t = ((held - HOLD_DELAY) / HOLD_SPREAD).clamp(0.0, 1.0) as f32;
+    // eased out: quick at first, settling as it reaches the end
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
+/// The hold's wash: a soft disc of the accent from the press, reaching the
+/// row's farthest corner at `spread` 1, its edge a little brighter.
+fn paint_hold(ui: &egui::Ui, row: Rect, origin: Pos2, spread: f32) {
+    if spread <= 0.0 {
+        return;
+    }
+    let reach = [row.left_top(), row.right_top(), row.left_bottom(), row.right_bottom()]
+        .iter()
+        .map(|c| c.distance(origin))
+        .fold(0.0, f32::max);
+    let r = reach * spread;
+    let accent = ui.visuals().selection.bg_fill;
+    let painter = ui.painter().with_clip_rect(row.intersect(ui.clip_rect()));
+    painter.circle_filled(origin, r, accent.gamma_multiply(0.16));
+    painter.circle_stroke(
+        origin,
+        r,
+        egui::Stroke::new(2.0, accent.gamma_multiply(0.35 * (1.0 - spread * 0.6))),
+    );
 }
 
 #[derive(Default)]
@@ -421,25 +468,37 @@ pub(super) fn select(
         let child_clicked = hovered
             .iter()
             .any(|other| *other != resp.id && ui.ctx().read_response(*other).is_some_and(|r| r.sense.senses_click()));
+        let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(resp.rect.center());
         press = (resp.is_pointer_button_down_on() && !child_clicked && !mods.command && !mods.shift && !secondary).then_some(SheetPress {
             started: now,
             opened: false,
+            origin,
         });
     }
     let consumed = press.is_some_and(|p| p.opened);
     let mut action = RowAction::default();
     if !consumed {
-        if !down || secondary || mods.command || mods.shift || !resp.contains_pointer() || resp.dragged() {
+        // moved away from the press: a drag, not a hold (egui counts a
+        // still press longer than its click as a drag too: not here)
+        let moved = press.is_some_and(|p| {
+            ui.input(|i| i.pointer.interact_pos())
+                .is_some_and(|at| at.distance(p.origin) > HOLD_SLOP)
+        });
+        if !down || secondary || mods.command || mods.shift || !resp.contains_pointer() || moved {
             press = None;
         } else if let Some(p) = &mut press {
-            let remaining = SHEET_HOLD_SECONDS - (now - p.started);
-            if remaining <= 0.0 {
+            let held = now - p.started;
+            if held >= SHEET_HOLD_SECONDS {
                 p.opened = true;
                 action.sheet = true;
                 *sel = vec![id];
                 *anchor = Some(id);
+            } else if held >= HOLD_DELAY {
+                paint_hold(ui, resp.rect, p.origin, hold_spread(held));
+                ui.ctx().request_repaint();
             } else {
-                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(remaining));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(HOLD_DELAY - held));
             }
         }
     }
@@ -453,7 +512,16 @@ pub(super) fn select(
     if consumed {
         return action;
     }
-    resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
+    // a still hold is not a drag yet, whatever egui counts
+    if press.is_none() {
+        resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
+        // egui started the drag of a still press at its click time, while
+        // the hold had it: the hold given up for a move hands the resident
+        // to that drag (dnd_set_drag_payload only acts on its first frame)
+        if resp.dragged() && !egui::DragAndDrop::has_any_payload(ui.ctx()) {
+            egui::DragAndDrop::set_payload(ui.ctx(), crate::ui::call_invite::PersonDrag(id));
+        }
+    }
     if resp.secondary_clicked() && !sel.contains(&id) {
         *sel = vec![id];
         *anchor = Some(id);
@@ -476,12 +544,18 @@ pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>) {
 /// row is part of a selection of several (menu_fs_radar_multiselect.xml),
 /// else the resident's own.
 pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid) {
-    let several = sel.len() > 1 && sel.contains(&id);
     let kind = if world.social.is_friend(&id) {
         AvatarList::Friend
     } else {
         AvatarList::Nearby
     };
+    list_menu(resp, p, world, sel, id, kind);
+}
+
+/// Also called for clipped rows: an open popup stays at its original click
+/// while its resident moves out of the visible part of the list.
+pub(super) fn list_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid, kind: AvatarList) {
+    let several = sel.len() > 1 && sel.contains(&id);
     menu::context_menu(resp, p, |ui| {
         if several {
             context::avatars_menu(ui, p, world, sel);
@@ -510,6 +584,142 @@ pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, text: &str) {
 mod tests {
     use super::*;
 
+    struct MenuHarness {
+        frames: crate::ui::widgets::elide_tests::Frames,
+        world: World,
+        rects: std::collections::HashMap<Uuid, Rect>,
+        popups: std::collections::HashMap<Uuid, egui::Id>,
+        texts: Vec<crate::ui::widgets::elide_tests::Text>,
+    }
+
+    impl MenuHarness {
+        fn new() -> Self {
+            let frames = crate::ui::widgets::elide_tests::Frames::new();
+            crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+            frames.ctx.all_styles_mut(|s| s.animation_time = 0.0);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.agent_id = Uuid::from_u128(99);
+            for n in 1..=3 {
+                let id = Uuid::from_u128(n);
+                world.social.names.insert(id, format!("Resident {n}"));
+                world.calls.voice_peers.insert(id);
+            }
+            world.calls.set_volume(Uuid::from_u128(1), 0.2);
+            Self {
+                frames,
+                world,
+                rects: Default::default(),
+                popups: Default::default(),
+                texts: Vec::new(),
+            }
+        }
+
+        fn frame(&mut self, order: &[Uuid], events: Vec<egui::Event>) {
+            let p = crate::theme::Theme::default().palette();
+            self.rects.clear();
+            self.popups.clear();
+            self.texts = self.frames.run(events, |ui| {
+                // Only the first row is visible; sorting may move the menu's
+                // owner outside the clip without removing them from the list.
+                ui.set_clip_rect(Rect::from_min_size(ui.cursor().min, Vec2::new(600.0, RICH_H)));
+                for &id in order {
+                    let (rect, resp) = allocate(ui, id, Vec2::new(300.0, RICH_H));
+                    self.rects.insert(id, rect);
+                    self.popups.insert(id, egui::Popup::default_response_id(&resp));
+                    person_menu(&resp, &p, &self.world, &[], id);
+                }
+            });
+        }
+
+        fn click(&mut self, order: &[Uuid], at: Pos2, button: egui::PointerButton) {
+            for pressed in [true, false] {
+                self.frame(
+                    order,
+                    vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+
+        fn open_first(&mut self, order: &[Uuid]) -> egui::Id {
+            for _ in 0..3 {
+                self.frame(order, Vec::new());
+            }
+            let at = self.rects[&order[0]].center();
+            self.click(order, at, egui::PointerButton::Secondary);
+            for _ in 0..3 {
+                self.frame(order, Vec::new());
+            }
+            let popup = self.popups[&order[0]];
+            assert!(egui::Popup::is_id_open(&self.frames.ctx, popup));
+            popup
+        }
+
+        fn text_rect(&self, text: &str) -> Rect {
+            self.texts.iter().find(|t| t.source == text).expect("menu text is visible").rect
+        }
+    }
+
+    #[test]
+    fn resident_context_menu_keeps_its_target_when_the_list_changes() {
+        let [a, b, c] = [1, 2, 3].map(Uuid::from_u128);
+        for order in [vec![b, a], vec![c, a, b], vec![a]] {
+            let mut h = MenuHarness::new();
+            let popup = h.open_first(&[a, b]);
+            let profile = h.text_rect(aurora_i18n::tr!("common-view-profile"));
+            for _ in 0..3 {
+                h.frame(&order, Vec::new());
+            }
+            assert_eq!(h.popups[&a], popup, "the popup belongs to the resident, not the row position");
+            assert!(egui::Popup::is_id_open(&h.frames.ctx, popup));
+            assert_eq!(
+                h.text_rect(aurora_i18n::tr!("common-view-profile")),
+                profile,
+                "the menu stays at the right-click position"
+            );
+            let percent = h.text_rect("40 %");
+            h.click(
+                &order,
+                egui::pos2(profile.left() + 12.0, percent.center().y),
+                egui::PointerButton::Primary,
+            );
+            let requests = context::take_requests(&h.frames.ctx);
+            assert!(!requests.is_empty(), "the slider sent a volume change");
+            assert!(
+                requests
+                    .iter()
+                    .all(|r| matches!(r, context::CtxAction::SetVoiceVolume(id, _) if *id == a)),
+                "{requests:?}"
+            );
+            assert!(egui::Popup::is_id_open(&h.frames.ctx, popup));
+            h.click(&order, profile.center(), egui::PointerButton::Primary);
+            assert!(matches!(&context::take_requests(&h.frames.ctx)[..], [context::CtxAction::Profile(id)] if *id == a));
+        }
+    }
+
+    #[test]
+    fn resident_context_menu_does_not_transfer_to_a_replacement_row() {
+        let [a, b] = [1, 2].map(Uuid::from_u128);
+        let mut h = MenuHarness::new();
+        h.open_first(&[a, b]);
+        for _ in 0..3 {
+            h.frame(&[b], Vec::new());
+        }
+        assert!(h.texts.iter().all(|t| t.source != aurora_i18n::tr!("common-view-profile")));
+        assert!(context::take_requests(&h.frames.ctx).is_empty());
+        h.open_first(&[b]);
+        let profile = h.text_rect(aurora_i18n::tr!("common-view-profile"));
+        h.click(&[b], profile.center(), egui::PointerButton::Primary);
+        assert!(matches!(&context::take_requests(&h.frames.ctx)[..], [context::CtxAction::Profile(id)] if *id == b));
+    }
+
     struct PressHarness {
         frames: crate::ui::widgets::elide_tests::Frames,
         sel: Vec<Uuid>,
@@ -527,7 +737,7 @@ mod tests {
             self.frames.run(events, |ui| {
                 ui.input_mut(|i| i.modifiers = self.modifiers);
                 for id in order {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(300.0, RICH_H), Sense::click_and_drag());
+                    let (rect, resp) = allocate(ui, id, Vec2::new(300.0, RICH_H));
                     self.rects.push(rect);
                     let child = Rect::from_min_max(Pos2::new(rect.right() - 30.0, rect.top()), rect.max);
                     ui.interact(child, resp.id.with("quick-action"), Sense::click());
@@ -573,13 +783,32 @@ mod tests {
     }
 
     #[test]
+    fn the_hold_wash_waits_half_a_second_then_spreads_until_the_sheet_opens() {
+        assert_eq!(hold_spread(0.0), 0.0);
+        assert_eq!(hold_spread(HOLD_DELAY), 0.0, "nothing during the first half second");
+        let mid = hold_spread(HOLD_DELAY + HOLD_SPREAD / 2.0);
+        assert!(mid > 0.5 && mid < 1.0, "eased out: past half way at half time ({mid})");
+        assert_eq!(hold_spread(SHEET_HOLD_SECONDS), 1.0, "it reaches the end as the sheet opens");
+        assert_eq!(hold_spread(5.0), 1.0);
+        let mut last = 0.0;
+        for i in 0..=60 {
+            let t = hold_spread(i as f64 / 50.0);
+            assert!(t >= last, "it never goes back");
+            last = t;
+        }
+    }
+
+    #[test]
     fn contact_hold_opens_once_and_consumes_release_and_drag() {
         let mut h = PressHarness::new();
         let at = h.rects[0].center();
         h.button(at, egui::PointerButton::Primary, true);
         h.wait(20);
         assert_eq!(h.sheets, 0, "a short press does not open settings");
-        h.wait(15);
+        // past half a second the wash spreads; settings wait for it to end
+        h.wait(25);
+        assert_eq!(h.sheets, 0, "settings open only once the wash has spread");
+        h.wait(25);
         assert_eq!(h.sheets, 1, "settings open while the button is still down");
         assert_eq!(h.sel, vec![Uuid::from_u128(1)]);
         h.wait(60);
@@ -621,6 +850,35 @@ mod tests {
             assert_eq!(h.sheets, 0, "{kind} cannot open settings");
             h.button(at, button, false);
         }
+    }
+
+    #[test]
+    fn a_hand_that_wobbles_a_little_still_opens_the_sheet() {
+        // 52 frames at 60 per second: past egui's still-press drag time
+        // (`max_click_duration`, 0.8 s), before the sheet (1.1 s)
+        const PAUSE: usize = 52;
+        let mut h = PressHarness::new();
+        let at = h.rects[0].center();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(PAUSE);
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(4.0, 2.0))]);
+        h.wait(40);
+        assert_eq!(h.sheets, 1, "a wobble within the slop keeps the hold");
+        assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx), "and it is not a drag");
+        h.button(at, egui::PointerButton::Primary, false);
+        // a pause then a move past the slop: the hold gives way to a drag
+        let mut h = PressHarness::new();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(PAUSE);
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(HOLD_SLOP + 1.0, 0.0))]);
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(40.0, 0.0))]);
+        assert!(
+            egui::DragAndDrop::has_payload_of_type::<crate::ui::call_invite::PersonDrag>(&h.frames.ctx),
+            "the resident is carried after a pause"
+        );
+        h.wait(40);
+        assert_eq!(h.sheets, 0, "past the slop the hold is cancelled");
+        h.button(at, egui::PointerButton::Primary, false);
     }
 
     #[test]

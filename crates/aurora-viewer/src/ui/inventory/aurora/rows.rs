@@ -351,6 +351,8 @@ pub(in super::super) fn item(
     let (Some(it), Some(frame)) = (inv.items.get(&id), st.aurora) else {
         return;
     };
+    let opacity = ui.opacity();
+    ui.multiply_opacity(clipboard::opacity(inv, st, id));
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
@@ -369,6 +371,7 @@ pub(in super::super) fn item(
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon_name, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
+        ui.set_opacity(opacity);
         return;
     }
     let r = ui.interact(rect, ui.make_persistent_id(("inv_item", id)), Sense::click_and_drag());
@@ -400,12 +403,18 @@ pub(in super::super) fn item(
     // By human choice, names share the tag's semi-bold face and text colour.
     let active = pills.iter().any(|(_, tone)| *tone == Tone::Worn);
     let ink = if active { widgets::row_tag_ink(p, true) } else { p.ink };
+    // an Aurora Weather code at the end of a sky's or day's name: the tag
+    let coded = super::super::weather_coded_name(it);
+    let shown = coded.unwrap_or(&it.name);
     let name = if selected || active {
-        sheet::semibold(ui, &it.name, NAME, ink)
+        sheet::semibold(ui, shown, NAME, ink)
     } else {
-        egui::text::LayoutJob::single_section(it.name.clone(), egui::TextFormat::simple(egui::FontId::proportional(NAME), ink))
+        egui::text::LayoutJob::single_section(shown.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(NAME), ink))
     };
     let mut name = name;
+    if coded.is_some() {
+        super::super::weather_tag(p, &mut name, egui::FontId::proportional(NAME));
+    }
     name.wrap = egui::text::TextWrapping::truncate_at_width(room.max(24.0));
     if matches!(it.asset_type, 24 | 25) {
         for section in &mut name.sections {
@@ -445,6 +454,7 @@ pub(in super::super) fn item(
     }
     ui.set_clip_rect(clip);
     paint_columns(ui, p, inv, &st.view, id, cols, frame, permissions, rect.center().y, selected);
+    ui.set_opacity(opacity);
     item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     if !quick.is_empty() {
         let right = cols.name_end - trailing - if trailing > 0.0 { 8.0 } else { 0.0 };
@@ -472,6 +482,8 @@ pub(in super::super) fn folder(
     let (Some(folder), Some(frame)) = (inv.folders.get(&id), st.aurora) else {
         return;
     };
+    let opacity = ui.opacity();
+    ui.multiply_opacity(clipboard::opacity(inv, st, id));
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
@@ -492,6 +504,7 @@ pub(in super::super) fn folder(
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
+        ui.set_opacity(opacity);
         return;
     }
     let sense = if folder_draggable(inv, id, prefs) {
@@ -583,6 +596,7 @@ pub(in super::super) fn folder(
     paint_columns(ui, p, inv, &st.view, id, cols, frame, None, rect.center().y, selected);
     let lead = caret.as_ref().map(|caret| caret.rect);
     let was_open = *open;
+    ui.set_opacity(opacity);
     let r = folder_response(ui, p, inv, id, r, lead, open, st, prefs, facts, actions);
     if frame.explorer {
         // The explorer goes into a folder (a double-click, or cargo held

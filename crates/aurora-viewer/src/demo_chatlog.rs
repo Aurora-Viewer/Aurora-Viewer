@@ -42,11 +42,21 @@ const LONG_MESSAGES: u64 = 19_949;
 pub enum Mode {
     Im,
     Find,
-    History { find: bool },
+    History {
+        find: bool,
+    },
     Offline,
     Restore,
     Import(ImportStage),
-    Long { lines: usize, scroll: bool },
+    /// The Legacy layout: a synthetic Legacy Viewer folder chosen for the
+    /// session only; `on`, the option turned on too.
+    Shared {
+        on: bool,
+    },
+    Long {
+        lines: usize,
+        scroll: bool,
+    },
 }
 
 /// What `import` goes through.
@@ -67,6 +77,7 @@ pub fn mode() -> Option<Mode> {
         "find" => Mode::Find,
         "history" => Mode::History { find: arg == "find" },
         "offline" => Mode::Offline,
+        "shared" => Mode::Shared { on: arg == "on" },
         "restore" => Mode::Restore,
         "import" => Mode::Import(match arg {
             "run" => ImportStage::Run,
@@ -162,6 +173,30 @@ fn sentences() -> [&'static str; 6] {
 /// The synthetic Legacy Viewer of `import`, beside the demo's transcripts.
 pub fn legacy_root(dir: &Path) -> PathBuf {
     dir.with_file_name("demo-legacy-viewer")
+}
+
+/// The synthetic Legacy Viewer folder of `shared`, beside the demo's
+/// transcripts: `<root>/<account folder>/<peer>.txt` holds what the Legacy
+/// Viewer wrote, rewritten at each launch, and a file of its own that Aurora
+/// must leave as it is.
+pub fn seed_shared(root: &Path, folder: &str, own_name: &str) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(root);
+    let dir = root.join(folder);
+    std::fs::create_dir_all(&dir)?;
+    let peer = peer_name();
+    let now = SystemTime::now();
+    let day = Duration::from_secs(86_400);
+    let s = sentences();
+    let mut text = String::new();
+    for (i, sentence) in s.iter().take(4).enumerate() {
+        let from = if i % 2 == 0 { peer.as_str() } else { own_name };
+        let stamp = format::stamp(now - day * 3 + Duration::from_secs(60 * i as u64), true);
+        text.push_str(&format::format_line(Some(&stamp), from, sentence).replace('\n', store::EOL));
+        text.push_str(store::EOL);
+    }
+    let path = names::file_path(&dir, &names::resident(&peer), None);
+    std::fs::write(path.ok_or_else(|| std::io::Error::other("no file name"))?, text)?;
+    std::fs::write(dir.join("conversation.log"), "kept as written\n")
 }
 
 /// What a Legacy Viewer left for the demo account: the conversation Aurora

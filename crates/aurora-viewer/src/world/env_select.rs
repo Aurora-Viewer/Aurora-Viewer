@@ -58,6 +58,9 @@ pub struct SettingsChoice {
     pub item: Uuid,
     pub name: String,
     pub asset: Uuid,
+    /// Its name carried an Aurora Weather code (taken off `name`): the
+    /// lists tag it " [Aurora Weather]", as the inventory's rows.
+    pub weather: bool,
 }
 
 /// The three lists of the selector.
@@ -122,7 +125,11 @@ impl SettingsCatalog {
     }
 
     pub fn name_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&str> {
-        self.list(kind).iter().find(|c| c.asset == asset).map(|c| c.name.as_str())
+        self.choice_of(kind, asset).map(|c| c.name.as_str())
+    }
+
+    pub fn choice_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&SettingsChoice> {
+        self.list(kind).iter().find(|c| c.asset == asset)
     }
 
     pub fn choices(&self, kinds: &[SettingsKind], rank: impl Fn(Uuid) -> usize) -> Vec<(SettingsKind, &SettingsChoice)> {
@@ -167,7 +174,11 @@ impl SettingsCatalog {
             })
             .collect();
         items.sort_by_key(|(item, library)| (*library, rank(item.id)));
-        items.into_iter().map(|(it, _)| (it.id, it.name.clone())).collect()
+        // (without an Aurora Weather code: shown as the inventory shows it)
+        items
+            .into_iter()
+            .map(|(it, _)| (it.id, crate::weather::region::strip_code(&it.name).to_owned()))
+            .collect()
     }
 
     /// FSSettingsCollector's filtering and asset deduplication, preserving
@@ -190,8 +201,11 @@ impl SettingsCatalog {
             };
             let choice = SettingsChoice {
                 item: it.id,
-                name: it.name.clone(),
+                // the name as the inventory shows it: without its Aurora
+                // Weather code (searched and listed by what people read)
+                name: crate::weather::region::strip_code(&it.name).to_owned(),
                 asset: it.asset_id,
+                weather: crate::weather::region::coded_name(&it.name).is_some(),
             };
             match kind {
                 SettingsKind::Sky => out.sky.push(choice),
@@ -493,6 +507,7 @@ mod tests {
         let list: Vec<SettingsChoice> = (1..=3)
             .map(|i| SettingsChoice {
                 item: Uuid::from_u128(i),
+                weather: false,
                 name: format!("S{i}"),
                 asset: Uuid::from_u128(i),
             })
@@ -515,11 +530,22 @@ mod tests {
     }
 
     #[test]
+    fn a_coded_item_is_listed_without_its_code_and_marked_as_weather() {
+        let parent = Uuid::from_u128(9);
+        let coded = item(&crate::weather::region::SkyWeather::CLEAR.name_with("Storm"), 0, 1, parent);
+        let plain = item("Noon", 0, 2, parent);
+        let c = SettingsCatalog::from_items([&coded, &plain]);
+        let found: Vec<(&str, bool)> = c.sky.iter().map(|c| (c.name.as_str(), c.weather)).collect();
+        assert_eq!(found, [("Storm", true), ("Noon", false)]);
+    }
+
+    #[test]
     fn search_matches_any_part_of_the_name_ignoring_case() {
         let choice = |name: &str, n: u128| SettingsChoice {
             item: Uuid::from_u128(n),
             name: name.into(),
             asset: Uuid::from_u128(n + 100),
+            weather: false,
         };
         let list = [choice("Coastal Sunset", 1), choice("A-6PM", 2), choice("Nacon's Natural Sunset", 3)];
         let names = |q: &str| matching(&list, q).iter().map(|c| c.name.as_str()).collect::<Vec<_>>();

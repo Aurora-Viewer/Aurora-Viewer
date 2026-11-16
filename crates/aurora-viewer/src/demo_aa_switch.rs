@@ -1,7 +1,7 @@
 //! AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]: the
 //! anti-aliasing changed at those frames, as Preferences › Graphics would
 //! (modes of `AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA,
-//! 6 SMAA). A change of MSAA samples compiles the scene's pipelines on a
+//! 6 SMAA, 7 FSR). A change of MSAA samples compiles the scene's pipelines on a
 //! worker (#1746): the frames go on meanwhile, `AURORA_PROFILE` shows no
 //! long frame and the log gives `pipelines for <n> sample(s) ready in … ms`.
 
@@ -19,9 +19,9 @@ fn parse(v: &str) -> Vec<(u64, u8)> {
         .filter_map(|e| {
             let parsed = e
                 .split_once(':')
-                .and_then(|(f, m)| Some((f.trim().parse().ok()?, m.trim().parse().ok().filter(|m: &u8| *m <= 6)?)));
+                .and_then(|(f, m)| Some((f.trim().parse().ok()?, m.trim().parse().ok().filter(|m: &u8| *m <= 7)?)));
             if parsed.is_none() {
-                log::warn!("AURORA_DEMO_AA_SWITCH: `{e}` skipped (expected <frame>:<mode 0-6>)");
+                log::warn!("AURORA_DEMO_AA_SWITCH: `{e}` skipped (expected <frame>:<mode 0-7>)");
             }
             parsed
         })
