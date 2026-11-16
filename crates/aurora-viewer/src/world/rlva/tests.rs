@@ -1693,6 +1693,32 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
     );
 }
 
+/// RlvHandler::processCommand runs a force when it is received: another
+/// object's lock released before the queue runs does not let it through.
+/// One set after it still stops it (stricter than the Legacy Viewer, where
+/// the avatar takes off and the lock then lands it).
+#[test]
+fn rlva_queued_force_reads_the_rules_it_was_received_under() {
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    command(&mut w.rlva, B, "@fly=n");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=y");
+    let revision = w.rlva.revision;
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock held when it was received");
+    assert!(!w.rlva.has("fly"), "the current rules are back once the queue has run");
+    assert_eq!(w.rlva.revision, revision, "running the queue changes no rule");
+    command(&mut w.rlva, A, "@fly=force");
+    command(&mut w.rlva, B, "@fly=n");
+    w.rlva_pending();
+    assert!(!w.agent.flying, "refused under the lock set since");
+    command(&mut w.rlva, B, "@fly=y");
+    command(&mut w.rlva, A, "@fly=force");
+    w.rlva_pending();
+    assert!(w.agent.flying);
+}
+
 #[test]
 fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() {
     let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
