@@ -2550,6 +2550,41 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
 /// from, forty regions east, whose simulator still tells us who is there.
 pub const RADAR_LEFT_REGION: u64 = ((256000u64 + 40 * 256) << 32) | 256000;
 
+/// Two residents with cached display names. Only the western one has an avatar
+/// object; the eastern one is known solely through its coarse map position.
+pub fn minimap_name_events(center: Vec3) -> [NetEvent; 3] {
+    let visible = u(0x327701);
+    let distant = u(0x327702);
+    let mut avatar = action_avatar(false);
+    avatar.local_id = 0x327701;
+    avatar.full_id = visible;
+    avatar.position = center - Vec3::X * 32.0;
+    avatar.name_values = "FirstName STRING RW SV Luna\nLastName STRING RW SV Example".into();
+    let name = |id, first: &str, display: &str| aurora_net::AvatarNameData {
+        id,
+        username: format!("{}.example", first.to_lowercase()),
+        display_name: display.into(),
+        legacy_first: first.into(),
+        legacy_last: "Example".into(),
+        ..Default::default()
+    };
+    [
+        NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![avatar],
+        },
+        NetEvent::DisplayNames {
+            names: vec![name(visible, "Luna", "Luna ✦"), name(distant, "Orion", "Orion ✦")],
+            bad_ids: Vec::new(),
+            max_age: Some(3600),
+        },
+        NetEvent::CoarseLocations {
+            handle: HANDLE,
+            positions: vec![(distant, center + Vec3::X * 32.0)],
+        },
+    ]
+}
+
 /// AURORA_DEMO_RADAR: residents around us for the radar of the People
 /// window, at every kind of range (chat, shout, farther, unknown altitude);
 /// with `left_behind`, three more in `RADAR_LEFT_REGION`.
