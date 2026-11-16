@@ -10,6 +10,9 @@
 
 Set-Location (git rev-parse --show-toplevel).Trim()
 Sync-BuildCache
+# the Rust version of rust-toolchain.toml, before the first Cargo command
+# installs it: one install at a time for the PC (common.ps1)
+Install-RustVersion (Get-Location).Path
 # Off Windows, clippy allows dead code, as the Linux and macOS CI jobs do:
 # Windows-only helpers have no caller in those builds. Windows PowerShell
 # (and check.ps1 there) still rejects it. $IsWindows is unset on 5.1.

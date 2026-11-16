@@ -244,6 +244,16 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
+      # self-hosted: rustup's folder is the runner's own, next to its build
+      # folder, as on the Mac (.github/actions/mac-runner). Two runners of one
+      # machine that share the account's folder both install a new Rust
+      # version at the same moment, and each breaks the other's. PowerShell 7
+      # named, as below
+      - name: Rust folder (self-hosted)
+        if: runner.environment == 'self-hosted'
+        shell: pwsh
+        run: |
+          "RUSTUP_HOME=$(Join-Path (Split-Path $env:RUNNER_WORKSPACE) 'aurora-rustup')" >> $env:GITHUB_ENV
       - name: Rust stable
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         run: |

@@ -211,10 +211,14 @@ function Invoke-Repair($P) {
     }
 
     Write-Title 'Rust toolchain and crates'
+    . (Get-CommonScript $P)
+    # rust-toolchain.toml: the project's Rust version, with rustfmt and clippy.
+    # One install at a time for the PC: an agent's build may be installing it
+    # at this very moment (Install-RustVersion, scripts/common.ps1)
+    Install-RustVersion $P.Repo
     Push-Location $P.Repo
     try {
-        # rust-toolchain.toml: the project's Rust version, with rustfmt and clippy
-        rustup toolchain install
+        rustup show active-toolchain
         if ($LASTEXITCODE -ne 0) { rustup show }
         cargo fetch --locked
         if ($LASTEXITCODE -ne 0) { throw 'downloading the crates (cargo fetch).' }
@@ -224,7 +228,6 @@ function Invoke-Repair($P) {
 
     Write-Title 'Compiler cache (sccache)'
     # the tasks take the dependencies already built by another one from it
-    . (Get-CommonScript $P)
     if (-not (Find-Sccache)) {
         try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
     } elseif (Get-Command winget -ErrorAction SilentlyContinue) {

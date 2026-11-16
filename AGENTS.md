@@ -345,7 +345,11 @@ Before each significant commit, and always before the PR:
   exception is the fuzzing targets, which need nightly
   (`cargo +nightly fuzz`, [docs/TESTING.md](docs/TESTING.md#fuzzing)). After
   a pull that changes it, the next build downloads the new version and
-  recompiles everything once.
+  recompiles everything once. `new-task.ps1` and `check.ps1` install it
+  first, one at a time for the PC: two Cargo commands that start together
+  on a PC that lacks it both install it, and one fails (`component download
+  failed`, or a `rustc` that is not found). Run it again, or run
+  `check.ps1` first after such a pull.
 - **Every change to `Cargo.lock`** (a dependency added, removed or updated,
   Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
   commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in

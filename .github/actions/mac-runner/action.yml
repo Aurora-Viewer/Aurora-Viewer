@@ -41,13 +41,20 @@ runs:
     # Support: on a Mac that keeps them, a run would read the settings and
     # the demo log of the one before (the demo step greps its log), and two
     # runners would share them. An empty home in the job's temporary folder,
-    # which the runner empties, avoids all three; Cargo and rustup keep the
-    # runner's own folders.
+    # which the runner empties, avoids all three; Cargo keeps the account's
+    # folder.
+    #
+    # rustup gets a folder per runner, next to the build folder. The two
+    # runners of the Mac start their jobs at the same second: sharing the
+    # account's ~/.rustup, both installed the Rust version rust-toolchain.toml
+    # names, and the one that failed took the other's toolchain back with it
+    # (rustc was gone under a build that had just started). The first job of
+    # each runner downloads the version; rustup's commands stay on the PATH.
     - name: Empty home
       shell: bash
       run: |
         home="$RUNNER_TEMP/home"
         mkdir -p "$home"
         echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
-        echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/aurora-rustup" >> "$GITHUB_ENV"
         echo "HOME=$home" >> "$GITHUB_ENV"
