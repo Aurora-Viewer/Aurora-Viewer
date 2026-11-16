@@ -560,6 +560,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-build-gate"
+version = "0.1.0"
+
+[[package]]
 name = "aurora-i18n"
 version = "0.1.0"
 dependencies = [
