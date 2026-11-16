@@ -1387,6 +1387,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // `Skins`, `Boots`) are a shelf sorted by kind
     let (mut singular, mut plural) = (0, 0);
     let mut fatpack_seen = false;
+    let mut named_seen = false;
     let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
@@ -1401,6 +1402,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && !many || read.squish || read.waifus;
         versions |= version;
         fatpack_seen |= fatpack;
+        named_seen |= named_again;
         if kind_only && !version {
             if many {
                 plural += 1;
@@ -1410,7 +1412,10 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         }
         version || fatpack || kind_only
     });
-    let shelf_by_kind = plural > 0 && singular == 0;
+    // (a product named for what it is, with a folder repeating its name,
+    // keeps its plural extras: `Lelutka Avalon Head` holding `Avalon HUD`,
+    // `Skins`, `Shapes`)
+    let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen);
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
     all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen) && names_a_product(name))
 }

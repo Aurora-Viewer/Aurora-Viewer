@@ -1633,7 +1633,12 @@ pub(super) fn show(
             Some((generation, loaded)) if generation == inv.generation => loaded,
             _ => {
                 let mut read: HashSet<Uuid> = moves.iter().map(|m| m.from).collect();
-                for m in moves.iter().filter(|m| m.folder) {
+                // a run's move in or of a folder excluded now is kept: its
+                // folders are never read (an Undo puts back what it moved)
+                let excluded =
+                    |m: &Move| !(m.restore && !m.snapshot) && (prefs.sorter.excludes(inv, m.id) || prefs.sorter.excludes(inv, m.from));
+                read.retain(|from| moves.iter().any(|m| m.from == *from && !excluded(m)));
+                for m in moves.iter().filter(|m| m.folder && !excluded(m)) {
                     let undo = m.restore && !m.snapshot;
                     read.extend(sorter::unloaded_below(inv, m.id, if undo { &[] } else { &prefs.sorter.excluded }));
                 }
