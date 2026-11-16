@@ -15,6 +15,8 @@ struct Harness {
     time: f64,
     size: Vec2,
     draw_distance: f32,
+    /// What RLVa hides of the right-click menu (none by default).
+    locks: MenuLocks,
 }
 impl Harness {
     fn frame(&mut self, events: Vec<egui::Event>) -> (egui::FullOutput, Option<Action>) {
@@ -28,7 +30,8 @@ impl Harness {
                 ..Default::default()
             },
             |_| {
-                action = self.ui.show(&self.ctx, &self.p, &mut true, true, self.draw_distance);
+                let locks = self.locks;
+                action = self.ui.show(&self.ctx, &self.p, &mut true, true, self.draw_distance, &|_| locks);
             },
         );
         (crate::ui::login::test_output(output), action)
@@ -103,6 +106,7 @@ impl Harness {
             time: 0.0,
             size,
             draw_distance: 64.0,
+            locks: MenuLocks::default(),
         };
         for _ in 0..6 {
             h.frame(Vec::new());
@@ -560,4 +564,81 @@ fn area_search_filter_and_range_resets_preserve_other_sections() {
         }
         assert_eq!(h.ui.expanded, Some(section), "Reset keeps the current section open");
     }
+}
+
+fn count_text(shape: &egui::Shape, label: &str) -> usize {
+    match shape {
+        egui::Shape::Text(t) if t.galley.text() == label => 1,
+        egui::Shape::Vec(shapes) => shapes.iter().map(|s| count_text(s, label)).sum(),
+        _ => 0,
+    }
+}
+
+/// FSPanelAreaSearchList::onContextMenuItemVisibleRLV with the `on_visible`
+/// parameters of menu_fs_area_search.xml: an entry goes (it is not greyed)
+/// when RLVa refuses one of its words.
+#[test]
+fn area_search_menu_hides_the_entries_rlva_refuses() {
+    let script = aurora_i18n::tr!("ui-context-script-information");
+    let touch = aurora_i18n::tr!("ui-context-touch");
+    let sit = aurora_i18n::tr!("area-search-sit");
+    let teleport = aurora_i18n::tr!("common-teleport-to");
+    let zoom = aurora_i18n::tr!("common-zoom-2");
+    let inspect = aurora_i18n::tr!("ui-context-inspect-2");
+    let edit = aurora_i18n::tr!("common-edit");
+    let ret = aurora_i18n::tr!("ui-context-return");
+    let delete = aurora_i18n::tr!("common-delete");
+    let blacklist = aurora_i18n::tr!("ui-context-derender-blacklist");
+    let buy = aurora_i18n::tr!("common-buy-object");
+    let mine = aurora_i18n::tr!("area-search-filter-mine");
+    let select_all = aurora_i18n::tr!("common-select-all");
+    let clear = aurora_i18n::tr!("area-search-clear-selection");
+    let all = [
+        script, touch, sit, teleport, zoom, inspect, edit, ret, delete, blacklist, buy, mine, select_all, clear,
+    ];
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 40);
+    // how often each label is painted with the menu open on one row
+    let painted = |h: &mut Harness, locks: MenuLocks| -> Vec<usize> {
+        h.locks = locks;
+        let pos = h.find("Object 5").center();
+        h.press(pos, egui::PointerButton::Secondary, Default::default());
+        let (out, _) = h.frame(Vec::new());
+        let counts = all
+            .iter()
+            .map(|label| out.shapes.iter().map(|s| count_text(&s.shape, label)).sum())
+            .collect();
+        egui::Popup::close_all(&h.ctx);
+        h.frame(Vec::new());
+        counts
+    };
+    let free = painted(&mut h, MenuLocks::default());
+    assert!(free.iter().all(|n| *n >= 1), "every entry is in the menu: {free:?}");
+    let one = |f: fn(&mut MenuLocks)| {
+        let mut locks = MenuLocks::default();
+        f(&mut locks);
+        locks
+    };
+    for (locks, hidden) in [
+        (one(|l| l.touch = true), vec![touch, ret, delete, buy]),
+        (one(|l| l.edit = true), vec![script, inspect, edit, buy]),
+        (one(|l| l.delete = true), vec![ret, delete, blacklist]),
+        (one(|l| l.sit = true), vec![sit]),
+        (one(|l| l.teleport = true), vec![teleport]),
+        (one(|l| l.buy = true), vec![buy]),
+        // @interact, or a row whose object is gone: Zoom and the list's own
+        // entries are all that is left
+        (
+            MenuLocks::ALL,
+            vec![script, touch, sit, teleport, inspect, edit, ret, delete, blacklist, buy],
+        ),
+    ] {
+        let counts = painted(&mut h, locks);
+        for (i, label) in all.iter().enumerate() {
+            let expected = free[i] - usize::from(hidden.contains(label));
+            assert_eq!(counts[i], expected, "{label} under {locks:?}");
+        }
+    }
+    // nothing refused any more: the entries are back and answer
+    h.locks = MenuLocks::default();
+    assert!(matches!(h.menu("Object 5", touch), Some(Action::Touch(ids)) if ids == [Uuid::from_u128(5)]));
 }

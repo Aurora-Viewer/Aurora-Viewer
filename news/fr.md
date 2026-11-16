@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-16 — Aurora 0.9.10 : le Director, la transparence dans le bon ordre et une météo qui porte plus loin
+Le Director permet de filmer dans le monde : gardez des vues de la caméra comme images clés sur une ligne de temps, rejouez-les en un seul plan fluide avec le monde seul, et enregistrez une vidéo avec votre propre ffmpeg. Le verre, les rideaux et les couches des cheveux mesh s'affichent dans leur vrai ordre à chaque pixel (Préférences › Graphismes, Ordre des surfaces transparentes) ; merci à Anne Skydancer pour le choix Stochastique. La Météo Aurora porte plus loin, avec une neige plus stable. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)
+
+## 2026-11-16 — Chat, personnes et monde
+Le Journal des conversations et les options des conversations fonctionnent comme dans le Legacy Viewer. Personnes › Cercles de contacts est repensé, avec glisser-déposer et Tri rapide. Le chat local venu d'au-delà de la portée est atténué, et celui d'un résident bloqué peut rester caché, replié ou grisé. Les étiquettes de nom peuvent afficher la distance, les marques du radar prennent la couleur de votre choix, et des balises montrent les boîtes de lumière, les coins de région et les sphères de portée du chat. La distance d'affichage monte à 1024 m.
+
+## 2026-11-16 — Construction, avatars et encore plus comme le Legacy Viewer
+Enregistrez des objets en Collada ou en OBJ, Sélectionner les faces avec cette texture, un sous-menu Construire › Options, et des champs numériques qui suivent la molette. Le menu Vitesse des animations, l'effet Doppler sur les sons du monde en mouvement, les boutons de souris façon MMO (désactivés par défaut) et des aides au combat en vue subjective. Une mise à jour ne revient plus en arrière quand le cache est occupé. Merci à anne-skydancer, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik et RheaMercury.
+
 ## 2026-11-13 — Aurora 0.9.9 : Météo Aurora, Studio avatar et scripts Lua
 Météo Aurora apporte la pluie, la neige, le vent, l'orage et les aurores boréales, avec flaques, neige au sol et traces de pas : choisissez la vôtre dans la fenêtre Environnement, ou laissez les régions la choisir (désactivé par défaut). Le Studio avatar est un espace calme pour habiller, poser et photographier votre avatar, avec son propre éditeur d'animations : images clés, ligne de temps, import ANIM et BVH. Les scripts SLua ont un vrai éditeur, avec couleurs Lua, complétion et aide. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.9)
