@@ -66,6 +66,8 @@ pub struct Command {
     pub option: String,
     pub strict: bool,
     pub param: Param,
+    /// `@setenv=n` was held when this force was queued.
+    pub environment_locked: bool,
 }
 
 impl Command {
@@ -93,6 +95,7 @@ impl Command {
             option: if param == Param::Clear { value } else { option }.to_owned(),
             strict,
             param,
+            environment_locked: false,
         })
     }
 
@@ -860,7 +863,18 @@ impl Rlva {
                     && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
                     && self.pending.len() < 256 =>
             {
-                self.pending.push((source, c));
+                // A foreign environment lock refuses the force when received.
+                // Releasing it before the queue drains must not revive that command.
+                if was_environment_locked && c.behaviour.starts_with("setenv_") && self.has_except("setenv", source) {
+                    return Outcome::Rejected;
+                }
+                self.pending.push((
+                    source,
+                    Command {
+                        environment_locked: was_environment_locked,
+                        ..c
+                    },
+                ));
                 outcome = Outcome::Queued;
             }
             Param::Reply(channel)
@@ -1062,6 +1076,7 @@ fn rule_text(r: &Rule) -> String {
         option: r.option.clone(),
         strict: r.strict,
         param: Param::Add,
+        environment_locked: false,
     }
     .restriction()
 }
