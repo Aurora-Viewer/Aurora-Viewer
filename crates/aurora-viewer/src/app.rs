@@ -11153,8 +11153,9 @@ impl App {
             gfx.renderer.cut_motion_history();
         }
         let studio_view = self.studio_view(aspect);
-        let render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
-        let render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
+        // (both follow `view` when the late camera update rebuilds it, below)
+        let mut render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
+        let mut render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
             crate::avatar_studio::FOV
         } else {
             self.camera.fov_y
@@ -11544,6 +11545,13 @@ impl App {
                 };
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
+                // The renderer places objects relative to `camera_pos` and
+                // turns them with the view's rotation alone: a position read
+                // before this update drew the world one camera step behind
+                // its own view (#3645: mouselook trailing, the manipulator
+                // and the selection outlines off the edited object).
+                render_eye = self.camera.position;
+                render_fov = self.camera.fov_y;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
                     self.camera.forward(),
                     aspect,
@@ -12215,6 +12223,24 @@ impl App {
             let centre = self.trail_centre();
             let snowing = if self.weather_now.snowing() { self.weather_now.fall() } else { 0.0 };
             crate::scene::snow_trail::SnowTrails::press(&mut self.scene, &self.world, centre, reach, world_clock(), snowing);
+        }
+        // demo: every frame drawn from the camera has the position its view
+        // looks from (#3645). The Avatar Studio and VR place their own eyes,
+        // and the shake pans the view alone.
+        if self.demo && studio_view.is_none() && !gfx.renderer.vr_engaged() && self.camera.shake == Vec3::ZERO {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static BEHIND: AtomicU32 = AtomicU32::new(0);
+            let gap = crate::camera::view_eye_gap(view, render_eye);
+            if gap.is_nan() || gap > crate::camera::VIEW_EYE_GAP_MAX {
+                let n = BEHIND.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_multiple_of(600) {
+                    log::warn!(
+                        "render: world drawn {:.1} mm from its view's eye at frame {} ({n} such frames)",
+                        gap * 1000.0,
+                        self.frame_count
+                    );
+                }
+            }
         }
         let mut fp = FrameParams {
             // (a window behind past the driver's budget, or on a card another

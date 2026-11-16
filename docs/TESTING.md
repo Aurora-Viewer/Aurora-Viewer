@@ -3015,7 +3015,11 @@ object updates or the periodic LOD sweep.
 a handle, with "Follow object while editing" disabled / enabled. With `off`,
 the view stays fixed at the centre of the screen; with `on`, it follows the
 local transformations without jolts or drift when the mouse stays still.
-Test moving and stretching by face and by corner.
+Test moving and stretching by face and by corner. With `on`, capture during
+the drag (start frame +55): the manipulator and the selection outline stay on
+the object, and the log has no `render: world drawn … from its view's eye`
+line (a frame drawn from the camera position of before its late update,
+#3645; every demo run checks it).
 
 **`AURORA_DEMO_BUILD_EDGE=left|right|top|bottom`** — completes a `move`
 script: the mouse reaches the edge in 40 frames, stays there 60 frames then
