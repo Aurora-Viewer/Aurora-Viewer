@@ -6,6 +6,7 @@ struct Fixture {
     frame: usize,
     fixed: bool,
     framed: bool,
+    details: bool,
     auto_height: bool,
     body_height: f32,
     open: bool,
@@ -24,6 +25,7 @@ impl Fixture {
             frame: 0,
             fixed,
             framed,
+            details: false,
             auto_height: false,
             body_height: 180.0,
             open: true,
@@ -62,6 +64,10 @@ impl Fixture {
                 }
                 if self.framed {
                     floater = floater.framed_header("box");
+                }
+                if self.details {
+                    floater.header_status.push(("check", "Owned and modifiable".into(), p.ink));
+                    floater.header_summary = Some("Impact 1 - 14951 available    1 object - 1 prim".into());
                 }
                 if self.auto_height {
                     floater = floater.auto_height();
@@ -185,6 +191,10 @@ fn minimized_title_can_be_dragged_and_does_not_expand_on_single_click() {
 #[test]
 fn inspector_header_restores_geometry_and_preserves_hidden_contents() {
     let mut f = Fixture::with_header(false, true);
+    f.details = true;
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
     let expanded = f.show(vec![]);
     let collapsed = f.double_click(f.title());
     assert!(collapsed.height() >= 40.0 && collapsed.height() < 50.0, "{collapsed:?}");
@@ -271,7 +281,7 @@ fn a_close_asked_of_a_window_not_drawn_is_forgotten() {
 #[test]
 fn a_close_asked_of_a_hidden_window_closes_it() {
     let mut f = Fixture::new(false);
-    hide_windows(&f.ctx, true, false);
+    hide_windows(&f.ctx, true, HideKeep::None);
     f.show(vec![]);
     let bodies = f.bodies;
     f.show(vec![]);
@@ -280,7 +290,7 @@ fn a_close_asked_of_a_hidden_window_closes_it() {
     close_floater(&f.ctx, "collapse_fixture");
     f.show(vec![]);
     assert!(!f.open);
-    hide_windows(&f.ctx, false, false);
+    hide_windows(&f.ctx, false, HideKeep::None);
     f.show(vec![]);
     assert!(!f.open, "it does not come back with the interface");
 }

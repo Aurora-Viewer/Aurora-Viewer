@@ -2,7 +2,7 @@
 //! originally LGPL 2.1): animated mesh, flexible path, light (and its
 //! projector texture), reflection probe, physics shape and material.
 
-use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small, spin};
+use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
 use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
 use crate::build::{BuildSettings, BuildTool};
@@ -45,21 +45,32 @@ const PROBE_DYNAMIC: u8 = 0x02;
 
 const W: f32 = 56.0;
 
+// LLPanelVolume::getState (indra/newview/llpanelvolume.cpp) clears disabled
+// flexible, light and probe parameters. Physics values remain readable.
+fn spin(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    mixed: bool,
+) -> Edit {
+    if ui.is_enabled() {
+        super::common::spin(ui, value, increment, range, decimals, width, mixed)
+    } else {
+        super::common::empty_spin(ui, width)
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let single = tool.sel_prims(world).len() == 1;
-    let editable = tool.can_modify(world, idx);
+    let editable = tool.can_modify(world, idx) && !crate::build::linking::permanent(world, crate::build::root_of(world, idx));
     let enabled = editable && single;
-    let (extra, volume, material, is_root, click, flexible) = (
-        o.extra.clone(),
-        o.volume,
-        o.prim_material,
-        o.parent_id == 0,
-        o.click_action,
-        o.has_flexible_path(),
-    );
+    let (extra, volume, material, click, flexible) = (o.extra.clone(), o.volume, o.prim_material, o.click_action, o.has_flexible_path());
     let mesh = volume.is_mesh();
     let legacy_canvas =
         super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
@@ -107,7 +118,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         animated,
         false,
         aurora_i18n::tr!("build-ui-features-animated-mesh"),
-        enabled && is_root && mesh,
+        tool.animated_mesh_editable(world),
     ) {
         let flags = extra.extended_mesh_flags.unwrap_or(0);
         let f = if v {
@@ -144,7 +155,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             ui.add_enabled_ui(flex_on, |ui| {
                 let mut soft = f.softness as i32;
                 row(ui, p, aurora_i18n::tr!("build-ui-features-softness"), 70.0, |ui| {
-                    let r = super::common::spin_i(ui, &mut soft, 0..=3, W);
+                    let r = if flex_on {
+                        super::common::spin_i(ui, &mut soft, 0..=3, W)
+                    } else {
+                        super::common::empty_spin(ui, W)
+                    };
                     e = e.or(r);
                 });
                 f.softness = soft as u8;
@@ -231,16 +246,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             let mut e = Edit::default();
             ui.add_enabled_ui(editable && phys.is_some(), |ui| {
                 row(ui, p, aurora_i18n::tr!("build-ui-features-gravity"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("common-friction"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("build-ui-features-density-in-100-kg-m-3"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
                 });
                 row(ui, p, aurora_i18n::tr!("common-restitution"), 70.0, |ui| {
-                    e = e.or(spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
+                    e = e.or(super::common::spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
                 });
             });
             if e.commit && Some(ph) != phys {
@@ -284,8 +299,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// The reference volume panel keeps all groups exposed, including their
-/// disabled values. Aurora retains its independent folding sections.
+/// The reference volume panel keeps all groups exposed, with unavailable
+/// parameters cleared. Aurora retains its independent folding sections.
 #[allow(clippy::too_many_arguments)]
 fn feature_group(
     ui: &mut egui::Ui,
@@ -351,14 +366,28 @@ fn light_section(
         ui.add_space(12.0);
         // the swatch shows sRGB; the wire carries linear (setLightSRGBColor)
         let srgb = [linear_to_srgb(l.color[0]), linear_to_srgb(l.color[1]), linear_to_srgb(l.color[2])];
-        let swatch = color_swatch(
-            ui,
-            p,
-            srgb,
-            if legacy { "" } else { aurora_i18n::tr!("common-color") },
-            swatch_size,
-            on,
-        )
+        let swatch = if on {
+            color_swatch(
+                ui,
+                p,
+                srgb,
+                if legacy { "" } else { aurora_i18n::tr!("common-color") },
+                swatch_size,
+                on,
+            )
+        } else {
+            super::common::swatch(
+                ui,
+                p,
+                env.images,
+                &mut tool.ui.wanted_images,
+                None,
+                if legacy { "" } else { aurora_i18n::tr!("common-color") },
+                swatch_size,
+                false,
+                false,
+            )
+        }
         .on_hover_text(aurora_i18n::tr!("common-color"));
         if let Some(object) = world.objects.get(idx) {
             tool.color_swatch_response(world, env, super::ColorTarget::Light(object.full_id), srgb, swatch);
@@ -371,6 +400,7 @@ fn light_section(
             world
                 .objects
                 .get(idx)
+                .filter(|_| on)
                 .and_then(|object| object.visual_light_image())
                 .map(|image| image.texture),
             if legacy { "" } else { aurora_i18n::tr!("common-texture") },
@@ -477,7 +507,7 @@ fn probe_section(
                 tool.set_extra(world, idx, Extra::Probe(None));
             }
         }
-        if let Some(b) = combo(ui, "probe_shape", Some(pr.flags & PROBE_BOX), &shape_items, 90.0, on) {
+        if let Some(b) = combo(ui, "probe_shape", on.then_some(pr.flags & PROBE_BOX), &shape_items, 90.0, on) {
             np.flags = (pr.flags & !PROBE_BOX) | b;
             send = true;
         }
@@ -486,7 +516,7 @@ fn probe_section(
         if let Some(d) = check(
             ui,
             p,
-            pr.flags & PROBE_DYNAMIC != 0,
+            on && pr.flags & PROBE_DYNAMIC != 0,
             false,
             aurora_i18n::tr!("build-ui-features-dynamic"),
             on,

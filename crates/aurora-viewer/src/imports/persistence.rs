@@ -66,6 +66,8 @@ pub struct Asset {
     active: bool,
     model: usize,
     use_scale: bool,
+    #[serde(default)]
+    scene: bool,
     texture_target: usize,
     camera: [f32; 3],
     pan: [f32; 2],
@@ -136,6 +138,7 @@ impl Asset {
             active: entry.local_published || entry.local_restore_active,
             model: entry.local_model,
             use_scale: entry.local_use_scale,
+            scene: entry.local_scene,
             texture_target: entry.texture_target,
             camera: [entry.view.yaw, entry.view.pitch, entry.view.distance],
             pan: entry.view.pan,
@@ -154,6 +157,7 @@ impl Asset {
         entry.local_restore_active = self.active;
         entry.local_model = self.model;
         entry.local_use_scale = self.use_scale;
+        entry.local_scene = self.scene;
         entry.texture_target = self.texture_target.min(9);
         [entry.view.yaw, entry.view.pitch, entry.view.distance] = self.camera;
         entry.view.pan = self.pan;
@@ -547,6 +551,7 @@ impl Imports {
                     entry.local_published || entry.local_restore_active,
                     entry.local_model,
                     entry.local_use_scale,
+                    entry.local_scene,
                     entry.texture_target,
                 ),
                 (
@@ -962,6 +967,56 @@ mod tests {
     }
 
     #[test]
+    fn saved_material_local_maps_resolve_to_the_same_files_after_restart() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let account = profile(Uuid::from_u128(10), "grid-one");
+        let mut imports = restored(path.clone(), &account, &jobs);
+        for slot in 0..4 {
+            let name = format!("saved-map-{slot}.png");
+            image::save_buffer(files.0.join(&name), &[20 + slot as u8, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("map file");
+            let mut entry = files.entry(&name);
+            entry.local_published = true;
+            imports.entries.push(entry);
+        }
+        let ids: Vec<_> = imports.entries.iter().map(|entry| entry.id).collect();
+        let material = PbrMaterial {
+            base_color_texture: Some(ids[0]),
+            normal_texture: Some(ids[1]),
+            metallic_roughness_texture: Some(ids[2]),
+            emissive_texture: Some(ids[3]),
+            ..Default::default()
+        };
+        let saved = material.encode_asset().expect("saved inventory material");
+        imports.flush_local_registry();
+        drop(imports);
+        let restarted = restored(path, &account, &jobs);
+        let saved = aurora_assets::parse_material_asset(&saved).expect("reopened material");
+        for (slot, id) in maps::ids(&saved).into_iter().enumerate() {
+            let entry = restarted
+                .entries
+                .iter()
+                .find(|entry| Some(entry.id) == id)
+                .expect("restored local ID");
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("restored texture")
+            };
+            assert_eq!(pixels.data[0], 20 + slot as u8);
+            assert!(entry.local_restore_active, "publish the same local ID after login");
+        }
+        image::save_buffer(files.0.join("saved-map-0.png"), &[200, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("edit map");
+        let reloaded = Asset::capture(&restarted.entries[0])
+            .restore(&Preferences::default())
+            .expect("reload file");
+        assert_eq!(Some(reloaded.id), saved.base_color_texture);
+        let Some(Source::Texture(pixels)) = reloaded.source else {
+            panic!("reloaded texture")
+        };
+        assert_eq!(pixels.data[0], 200, "file edits keep the material's texture ID");
+    }
+
+    #[test]
     fn restart_preserves_all_types_settings_and_bindings_and_removal_never_deletes_sources() {
         let files = Files::new();
         let path = files.0.join(FILE);
@@ -1052,6 +1107,8 @@ mod tests {
         assert_eq!(draft.lods[1].error, 0.037);
         assert!(draft.lods[1].error_mode);
         assert_eq!(draft.preview_lod, 1);
+        assert!(restarted.entries[2].local_scene, "remember the complete-file choice");
+        assert!(restarted.local_targets[&object].scene, "restore the complete-file binding");
         assert_eq!(restarted.local_targets[&object].entry, ids[2]);
         assert_eq!(restarted.local_appearance_targets[&(object, Some(1))].entry(), ids[1]);
         let other = restored(path.clone(), &other_grid, &jobs);

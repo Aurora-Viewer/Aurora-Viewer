@@ -23,7 +23,18 @@ mod perf_tests;
 pub(crate) mod portrait;
 mod selection;
 mod showcase;
+pub(crate) mod wearable_favorites;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
+
+/// The list on screen. The Legacy Viewer outfit editor can be opened from
+/// any browsing tab, and Add more shows the same inventory on every editor tab.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+enum ListView {
+    Browse(usize),
+    Showcase,
+    Edit(usize),
+    Add,
+}
 
 #[derive(Default)]
 pub struct AppearanceUi {
@@ -101,6 +112,8 @@ pub struct AppearanceUi {
     /// The heights of the rows last drawn, for those left out.
     rows: RowHeights,
     selection_info: Option<SelectionInfo>,
+    /// The Favorite Wearables window, which shares the rows and their menu.
+    pub(crate) wearable_favorites: wearable_favorites::State,
 }
 
 struct SelectionInfo {
@@ -146,6 +159,7 @@ impl RowHeights {
 /// found missing with the folder's version and item count at the time.
 struct Prepared {
     generation: u64,
+    filtering_contents: bool,
     /// The inventory's item count: when items go away, an original once
     /// there may be missing in a folder that did not change.
     items: usize,
@@ -171,6 +185,20 @@ struct Shown {
 }
 
 impl AppearanceUi {
+    fn list_view(&self) -> ListView {
+        if self.editing {
+            if self.adding {
+                ListView::Add
+            } else {
+                ListView::Edit(self.edit_tab)
+            }
+        } else if self.tab == 0 && self.showcase {
+            ListView::Showcase
+        } else {
+            ListView::Browse(self.tab)
+        }
+    }
+
     pub fn open_outfit(&mut self, id: Uuid) {
         self.open(1, false);
         self.outfit_selection.single(id);
@@ -195,6 +223,17 @@ impl AppearanceUi {
     /// from the worn tab, the gallery.
     pub fn open_outfits(&mut self) {
         self.open(if self.tab < 2 { self.tab } else { 0 }, false);
+    }
+
+    /// @showinv: the outfit tabs are left for the worn one and the list of
+    /// items to add closes, as
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// (rlvhandler.cpp) leaves "My Outfits" for the worn tab and
+    /// LLPanelOutfitEdit::showAddWearablesPanel refuses its inventory panel.
+    /// The gallery shows the same outfit folders as the list: both go.
+    pub fn hide_inventory(&mut self) {
+        self.tab = 2;
+        self.adding = false;
     }
 
     /// Scrolls the gallery or the list to the current outfit and selects
@@ -408,17 +447,43 @@ impl AppearanceUi {
         for id in inv.take_item_retries() {
             self.requested_items.remove(&id);
         }
-        let changed = self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
+        let filtering_contents = self.tab < 2 && !self.search.trim().is_empty();
+        let scope_changed = self.prepared.as_ref().is_none_or(|p| p.filtering_contents != filtering_contents);
+        let changed = scope_changed || self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
         if changed {
             let folders = model::prepare_folders(inv);
+            let mut nested = HashSet::new();
+            if filtering_contents {
+                for &id in &folders {
+                    if inv
+                        .folders
+                        .get(&id)
+                        .is_some_and(|f| f.info.type_default == model::FT_OUTFIT && !f.children.is_empty())
+                    {
+                        nested.extend(crate::world::outfit_folders::contents_folders(inv, id).skip(1).map(|f| f.info.id));
+                    }
+                }
+                // Newly discovered descendants are queued once. A failed read can be retried
+                // when the user starts another search or refreshes the inventory.
+                use crate::world::inventory::FetchState;
+                for id in &nested {
+                    if inv
+                        .folders
+                        .get(id)
+                        .is_some_and(|f| f.state == FetchState::Unknown || (scope_changed && f.state == FetchState::Failed))
+                    {
+                        inv.request(*id);
+                    }
+                }
+            }
             let mut known = self
                 .prepared
                 .take()
                 .filter(|p| inv.items.len() >= p.items)
                 .map(|p| p.missing)
                 .unwrap_or_default();
-            let mut missing = HashMap::with_capacity(folders.len());
-            for id in &folders {
+            let mut missing = HashMap::with_capacity(folders.len() + nested.len());
+            for id in folders.iter().chain(&nested) {
                 let key = inv.folders.get(id).map_or((0, 0), |f| (f.info.version, f.items.len()));
                 let targets = match known.remove(id) {
                     Some((was, targets)) if was == key => targets,
@@ -428,6 +493,7 @@ impl AppearanceUi {
             }
             self.prepared = Some(Prepared {
                 generation: inv.generation,
+                filtering_contents,
                 items: inv.items.len(),
                 folders,
                 missing,
@@ -655,6 +721,15 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> egui::R
 
 fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl FnOnce(&mut egui::Ui)) {
     let response = icon_button(ui, p, name, tip);
+    if name == "settings-filled"
+        && ui
+            .ctx()
+            .data_mut(|data| data.remove_temp::<bool>(egui::Id::unique("appearance_xml_demo")))
+            .unwrap_or(false)
+    {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
@@ -1163,7 +1238,7 @@ fn outfit_list(
                     });
                     ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
-                    items::sort_links(&world.inventory, &mut links, false);
+                    items::sort_links(&world.inventory, &mut links);
                     let order: Vec<_> = links
                         .iter()
                         .filter(|l| !l.folder && world.inventory.items.contains_key(&l.target))
@@ -1192,7 +1267,7 @@ fn outfit_list(
                                 st.select_item(&response, *id, it.id, &order);
                                 items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
-                                items::context_menu(&response, p, world, st, *id, it, &selected, actions);
+                                items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
                             row_gap(ui);
                         } else {
@@ -1284,7 +1359,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             });
         }
     }
-    items::sort_links(inv, &mut links, true);
+    items::sort_links(inv, &mut links);
     // each clothing type's layers as shown, furthest from the body first
     let mut groups: HashMap<u32, Vec<Uuid>> = HashMap::new();
     for link in &links {
@@ -1673,6 +1748,10 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    let inventory_hidden = world.rlva.has("showinv");
+    if inventory_hidden {
+        st.hide_inventory();
+    }
     if *open {
         st.read_pictures(world);
     }
@@ -1761,7 +1840,8 @@ pub fn show(
                         super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
                     }
                     if !st.editing {
-                        let can_locate = locatable(inv).is_some();
+                        // it opens an outfit tab, which @showinv disables
+                        let can_locate = locatable(inv).is_some() && !inventory_hidden;
                         let locate = ui
                             .add_enabled_ui(can_locate, |ui| {
                                 icon_button(
@@ -1813,8 +1893,8 @@ pub fn show(
                 p,
                 &mut st.tab,
                 &[
-                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), true),
-                    (aurora_i18n::tr!("ui-appearance-outfits"), true),
+                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), !inventory_hidden),
+                    (aurora_i18n::tr!("ui-appearance-outfits"), !inventory_hidden),
                     (&worn, true),
                 ],
             );
@@ -1835,14 +1915,13 @@ pub fn show(
         // a guess too small (buttons wrapped in a narrow window, a long
         // message) made the window grow to fit them, the list take the new
         // room, and the window grow again at every frame.
-        let below_id = ui
-            .scope_id()
-            .with(("appearance_below_list", st.editing, st.adding, st.tab, st.edit_tab));
+        let view = st.list_view();
+        let below_id = ui.scope_id().with(("appearance_below_list", view));
         let estimate = if st.editing || st.tab == 2 { 130.0 } else { 154.0 };
         let reserved = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(estimate);
         let list_top = ui.cursor().top();
         let height = (ui.available_height() - reserved).max(100.0);
-        let showcase = st.showcase && !st.editing && st.tab == 0;
+        let showcase = view == ListView::Showcase;
         if showcase {
             // the framed list's height: its own and its margins
             showcase::show(ui, p, world, st, &entries, &outfits, base, &mut actions, images, height + 16.0);
@@ -1856,7 +1935,7 @@ pub fn show(
                     let list_width = ui.available_width();
                     clipboard::list_focus(ui, egui::Rect::from_min_size(ui.cursor().min, Vec2::new(list_width, height)));
                     egui::ScrollArea::vertical()
-                        .id_salt(("appearance_list", st.editing, st.adding, st.tab, st.edit_tab))
+                        .id_salt(("appearance_list", view))
                         .max_height(height)
                         .min_scrolled_height(height)
                         .auto_shrink([false, false])
@@ -1889,16 +1968,16 @@ pub fn show(
         }
         if st.editing {
             ui.horizontal(|ui| {
-                if widgets::flat_button(
-                    ui,
-                    p,
-                    if st.adding {
-                        aurora_i18n::tr!("ui-appearance-back-to-worn-items")
-                    } else {
-                        aurora_i18n::tr!("ui-appearance-add-more")
-                    },
-                )
-                .clicked()
+                let label = if st.adding {
+                    aurora_i18n::tr!("ui-appearance-back-to-worn-items")
+                } else {
+                    aurora_i18n::tr!("ui-appearance-add-more")
+                };
+                // LLPanelOutfitEdit::showAddWearablesPanel: no inventory to add from under @showinv
+                if ui
+                    .add_enabled_ui(!inventory_hidden, |ui| widgets::flat_button(ui, p, label))
+                    .inner
+                    .clicked()
                 {
                     st.adding = !st.adding;
                     st.selected_item = None;
@@ -1980,6 +2059,16 @@ pub fn show(
                     model::cof(&world.inventory)
                 };
                 let idle = !st.json.busy() && st.pending.is_none();
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
+                    aurora_i18n::tr!("appearance-xml-export-mine"),
+                    idle && crate::world::appearance_xml::ready(world),
+                ) {
+                    st.json.export_appearance(ui.ctx(), world);
+                }
+
                 if menu::item_if(
                     ui,
                     p,
@@ -2231,6 +2320,21 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
 mod tests {
     use super::*;
 
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle: the
+    /// window is left on the worn tab, with no list of items to add.
+    #[test]
+    fn rlva_showinv_leaves_the_outfit_tabs_for_the_worn_one() {
+        for tab in 0..=2 {
+            let mut st = AppearanceUi {
+                tab,
+                adding: true,
+                ..Default::default()
+            };
+            st.hide_inventory();
+            assert_eq!((st.tab, st.adding), (2, false));
+        }
+    }
+
     #[test]
     fn outfit_previews_fit_or_fill_without_distortion_or_overflow() {
         let frame = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(240.0, 210.0));
@@ -2275,6 +2379,27 @@ mod tests {
             let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
             assert_eq!(restored.appearance_fill_previews, fill);
         }
+    }
+
+    #[test]
+    fn appearance_xml_menu_disables_export_until_own_appearance_is_available() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        let mut state = AppearanceUi::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        assert!(!crate::world::appearance_xml::ready(&world));
+        assert!(click_menu(&ctx, &mut world, &mut state, aurora_i18n::tr!("appearance-xml-export-mine")).is_empty());
+        assert!(!state.json.busy());
     }
 
     #[test]
@@ -3256,6 +3381,7 @@ mod tests {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n,remattach=n,remoutfit:tattoo=n".into(),
         }));
@@ -3721,6 +3847,63 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn outfit_filter_fetches_cold_subfolders_and_matches_the_original() {
+        use crate::world::inventory::FetchState;
+        use aurora_net::inventory::FolderContents;
+        let mut world = wardrobe(0);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let outfit = Uuid::from_u128(704);
+        let child = Uuid::from_u128(9001);
+        let target = Uuid::from_u128(9002);
+        let mut folder = inv.folders[&outfit].info.clone();
+        folder.id = child;
+        folder.parent = outfit;
+        folder.type_default = -1;
+        inv.server_updated(vec![folder], vec![]);
+        let mut st = AppearanceUi::default();
+        let worn = HashSet::new();
+        st.prepare(inv, agent, &worn);
+        assert!(!inv.queue.contains(&(child, false)), "no search: no subtree read");
+        st.search = "renamed boots".into();
+        st.prepare(inv, agent, &worn);
+        assert!(inv.queue.contains(&(child, false)));
+        inv.queue.clear();
+        st.prepare(inv, agent, &worn);
+        assert!(inv.queue.is_empty(), "an idle frame does not repeat the request");
+
+        let mut link = inv.items[&inv.folders[&outfit].items[0]].clone();
+        link.id = Uuid::from_u128(9003);
+        link.parent = child;
+        link.asset_type = 24;
+        link.asset_id = target;
+        link.inv_type = -1;
+        link.name = "Original link name".into();
+        inv.apply(vec![FolderContents {
+            folder_id: child,
+            owner_id: agent,
+            version: 1,
+            folders: vec![],
+            items: vec![link],
+        }]);
+        assert_eq!(fetched(&st.prepare(inv, agent, &worn)), HashSet::from([target]));
+        assert!(fetched(&st.prepare(inv, agent, &worn)).is_empty());
+        assert!(st.shown_outfits(inv).is_empty(), "the target is still missing");
+
+        let mut original = inv.items[&Uuid::from_u128(719)].clone();
+        original.id = target;
+        original.name = "Renamed boots".into();
+        inv.add_items(vec![original]);
+        assert_eq!(st.shown_outfits(inv), vec![outfit]);
+        st.search = "original link name".into();
+        assert!(st.shown_outfits(inv).is_empty(), "Appearance displays the original's current name");
+        inv.folders.get_mut(&child).expect("child").state = FetchState::Failed;
+        inv.generation += 1;
+        st.prepare(inv, agent, &worn);
+        assert!(!inv.queue.contains(&(child, false)), "a failed subtree is not polled");
+    }
+
     /// A wardrobe of thousands of outfits used to have all its links walked
     /// and copied at every frame the window was open (25 ms a frame with
     /// 3,000 outfits). They are walked again only when the inventory changed.
@@ -3823,7 +4006,7 @@ mod tests {
             .map(|(clip, pos)| (pos.y - clip.top(), clip.bottom() - pos.y))
     }
 
-    fn visible_list_outfit(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi) -> Option<(Uuid, String, egui::Pos2)> {
+    fn visible_list_outfit(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi) -> Option<Uuid> {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
             ..Default::default()
@@ -3837,19 +4020,57 @@ mod tests {
             }
             shapes.iter().find_map(|shape| {
                 let pos = text_position(&shape.shape, &folder.info.name)?;
-                (shape.clip_rect.height() < window_height && shape.clip_rect.contains(pos)).then(|| (id, folder.info.name.clone(), pos))
+                (shape.clip_rect.height() < window_height && shape.clip_rect.contains(pos)).then_some(id)
             })
         })
     }
 
     #[test]
+    fn inactive_tabs_and_filters_do_not_split_the_displayed_appearance_list() {
+        let mut st = AppearanceUi::default();
+        st.open(1, false);
+        let outfits = st.list_view();
+        st.open(1, true);
+        let clothing = st.list_view();
+        st.open(2, true);
+        assert_eq!(st.list_view(), clothing);
+        st.edit_tab = 1;
+        assert_ne!(st.list_view(), clothing);
+        st.adding = true;
+        let add = st.list_view();
+        st.edit_tab = 2;
+        st.add_search = "boots".into();
+        assert_eq!(st.list_view(), add);
+        st.open(1, false);
+        st.search = "boots".into();
+        assert_eq!(st.list_view(), outfits);
+        st.open(2, false);
+        assert_ne!(st.list_view(), outfits);
+        st.open(0, false);
+        let gallery = st.list_view();
+        st.showcase = true;
+        assert_ne!(st.list_view(), gallery);
+    }
+
+    #[test]
     fn outfit_list_keeps_its_position_and_window_size_after_visiting_worn() {
+        outfit_list_round_trip("", false);
+    }
+
+    #[test]
+    fn filtered_outfits_keep_their_position_after_changing_editor_tabs() {
+        // The generated outfits match by their items, not their titles (#3350).
+        outfit_list_round_trip("clothing", true);
+    }
+
+    fn outfit_list_round_trip(filter: &str, visit_editor: bool) {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let _icons = icons::Icons::load(&ctx, None);
         let mut world = wardrobe(120);
         let mut st = AppearanceUi::default();
         st.open(1, false);
+        st.search = filter.into();
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
@@ -3876,7 +4097,7 @@ mod tests {
             );
         }
 
-        let (outfit, _, _) = visible_list_outfit(&ctx, &mut world, &mut st).expect("scrolled outfit is in sight");
+        let outfit = visible_list_outfit(&ctx, &mut world, &mut st).expect("scrolled outfit is in sight");
         assert!(
             st.shown_outfits(&world.inventory)
                 .iter()
@@ -3894,25 +4115,22 @@ mod tests {
             st.list_open.as_ref().is_some_and(|open| open.contains(&outfit)),
             "the outfit is expanded"
         );
-        let item = model::folder_links(&world.inventory, outfit)
-            .into_iter()
-            .find_map(|link| world.inventory.items.get(&link.target).map(|item| item.name.clone()))
+        let mut links = model::folder_links(&world.inventory, outfit);
+        items::sort_links(&world.inventory, &mut links);
+        let (item, name) = links
+            .iter()
+            .find_map(|link| world.inventory.items.get(&link.target).map(|it| (it.id, it.name.clone())))
             .expect("outfit item");
         click_row(
             &ctx,
             &mut world,
             &mut st,
-            &item,
+            &name,
             egui::Modifiers::NONE,
             egui::PointerButton::Primary,
         );
-        assert!(
-            st.item_selected(outfit, model::folder_links(&world.inventory, outfit)[0].target),
-            "item row click selects an item"
-        );
-        let first_visible = visible_list_outfit(&ctx, &mut world, &mut st)
-            .expect("outfit list remains scrolled")
-            .0;
+        assert!(st.item_selected(outfit, item), "item row click selects an item");
+        let first_visible = visible_list_outfit(&ctx, &mut world, &mut st).expect("outfit list remains scrolled");
         assert_eq!(first_visible, outfit, "the expanded outfit is the first visible row");
         let before_size = ctx
             .memory(|m| m.area_rect(egui::Id::unique("appearance")))
@@ -3927,14 +4145,19 @@ mod tests {
             .memory(|m| m.area_rect(egui::Id::unique("appearance")))
             .expect("appearance window")
             .size();
+        if visit_editor {
+            st.open(2, true);
+            draw(&ctx, &mut world, &mut st, None);
+            st.edit_tab = 1;
+            draw(&ctx, &mut world, &mut st, None);
+        }
         st.open(1, false);
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
+        assert_eq!(st.search, filter);
 
-        let after_visible = visible_list_outfit(&ctx, &mut world, &mut st)
-            .expect("outfit list remains visible")
-            .0;
+        let after_visible = visible_list_outfit(&ctx, &mut world, &mut st).expect("outfit list remains visible");
         let after_size = ctx
             .memory(|m| m.area_rect(egui::Id::unique("appearance")))
             .expect("appearance window")
@@ -4050,7 +4273,7 @@ mod tests {
         };
         // right click an item of the open outfit, then draw the whole list
         let mut links = model::folder_links(&world.inventory, outfit);
-        items::sort_links(&world.inventory, &mut links, false);
+        items::sort_links(&world.inventory, &mut links);
         let label = links
             .into_iter()
             .find_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
@@ -4428,6 +4651,7 @@ mod tests {
             owner_id: Uuid::from_u128(1),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@showinv=n".into(),
         };
@@ -4494,6 +4718,7 @@ mod tests {
                 owner_id: Uuid::from_u128(1),
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
                 position: glam::Vec3::ZERO,
                 message: String::new(),
             };
@@ -4513,16 +4738,27 @@ mod tests {
                     let pos = label_position(&ctx, &mut world, &mut st, label);
                     modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary)
                 } else {
-                    if !egui::Popup::is_any_open(&ctx) {
-                        click_row(
-                            &ctx,
-                            &mut world,
-                            &mut st,
-                            &name,
-                            egui::Modifiers::NONE,
-                            egui::PointerButton::Secondary,
-                        );
+                    // RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+                    // (rlvhandler.cpp): the outfits tab is left for the worn
+                    // one, and the outfit's rows go with it
+                    if !enabled {
+                        assert_eq!(st.tab, 2, "@showinv leaves the outfits tab");
+                        continue;
                     }
+                    // the release leaves the window on the worn tab
+                    st.open_outfit(folder);
+                    st.reveal_outfit = None;
+                    for _ in 0..5 {
+                        draw(&ctx, &mut world, &mut st, None);
+                    }
+                    click_row(
+                        &ctx,
+                        &mut world,
+                        &mut st,
+                        &name,
+                        egui::Modifiers::NONE,
+                        egui::PointerButton::Secondary,
+                    );
                     click_menu(&ctx, &mut world, &mut st, label)
                 };
                 if enabled {
@@ -4532,9 +4768,6 @@ mod tests {
                     );
                 } else {
                     assert!(actions.is_empty(), "profile={profile}: a disabled command must not dispatch");
-                    if !profile {
-                        assert!(egui::Popup::is_any_open(&ctx), "clicking the disabled entry keeps its menu open");
-                    }
                 }
             }
         }

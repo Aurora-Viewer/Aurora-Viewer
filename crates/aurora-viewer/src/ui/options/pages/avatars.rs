@@ -99,6 +99,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(tag_complexity_own),
                     );
                 });
+                // FSTagShowDistance, FSTagShowDistanceColors (panel_preferences_colors.xml)
+                cx.toggle(
+                    tr!("ui-options-distance-in-name-tags"),
+                    tr!("ui-options-distance-in-name-tags-help"),
+                    &field!(tag_distance),
+                );
+                cx.toggle(
+                    tr!("ui-options-names-by-distance"),
+                    tr!("ui-options-names-by-distance-help"),
+                    &field!(tag_distance_colors),
+                );
             });
             // the plates' settings mean nothing to the classic name tags
             cx.group(tr!("ui-options-aurora-avatar-plates"), |cx| {
@@ -313,7 +324,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     );
                 });
             });
-            // PlayTypingAnim and FSTypeDuringEmote (panel_preferences_chat.xml)
+            // PlayTypingAnim, FSTypeDuringEmote and PlayChatAnim
+            // (panel_preferences_chat.xml)
             cx.group(tr!("ui-options-typing-and-voice"), |cx| {
                 cx.toggle(
                     tr!("ui-options-play-typing-anim"),
@@ -328,6 +340,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(type_during_emote),
                     );
                 });
+                cx.toggle(
+                    tr!("ui-options-play-chat-anim"),
+                    tr!("ui-options-play-chat-anim-hint"),
+                    &field!(play_chat_anim),
+                );
                 cx.toggle(tr!("voice-lip-sync"), "", &field!(audio.lip_sync));
             });
             // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer

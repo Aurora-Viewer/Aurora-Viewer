@@ -616,7 +616,7 @@ mod tests {
                 5 => w.map.set_track_altitude(1000.0),
                 6 => now += POSITION_TIMEOUT,
                 7 => {
-                    w.apply(NetEvent::TeleportStarted);
+                    w.apply(NetEvent::TeleportStarted { flags: 0 });
                 }
                 _ => {}
             }

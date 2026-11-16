@@ -291,6 +291,16 @@ fn grid_and_object_snap_are_one_choice() {
         assert_eq!(s.snap_mode(), mode);
         assert!(!(s.snap && s.object_snap));
     }
+    for choice in [SnapMode::Objects, SnapMode::Grid] {
+        s.set_snap_mode(choice);
+        s.set_snap_enabled(false);
+        assert_eq!(s.snap_mode(), SnapMode::Off);
+        assert_eq!(s.snap_choice(), choice);
+        let text = serde_json::to_string(&s).unwrap();
+        let mut restored: BuildSettings = serde_json::from_str(&text).unwrap();
+        restored.set_snap_enabled(true);
+        assert_eq!(restored.snap_mode(), choice);
+    }
     // a settings file with both on snaps to the grid, never to both
     s.snap = true;
     s.object_snap = true;

@@ -34,6 +34,15 @@ use uuid::Uuid;
 pub const ICON: &str = "stack-2-filled";
 pub const VERTICAL: &str = "texture_library_vertical";
 pub const HORIZONTAL: &str = "texture_library_horizontal";
+
+/// Saved local map IDs resolve through this viewer's persistent local registry.
+pub(crate) fn material_has_local_maps(material: &aurora_assets::PbrMaterial, world: &World) -> bool {
+    crate::imports::maps::ids(material)
+        .into_iter()
+        .flatten()
+        .any(|id| world.local_assets.contains_key(&id))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Presentation {
     #[default]

@@ -318,3 +318,53 @@ fn the_backspace_key_deletes_on_a_mac_only() {
     assert!(deletes(egui::Key::Backspace, true), "the Mac key labelled Delete");
     assert!(!deletes(egui::Key::A, true));
 }
+
+/// LLFolderView::getNextUnselectedItem: the row after the last one deleted,
+/// else the one before; a deleted folder's rows leave with it (#2764).
+#[test]
+fn the_row_after_a_deletion_is_the_next_one_that_stays() {
+    let mut inv = Inventory {
+        root: id(ROOT),
+        ..Default::default()
+    };
+    folder(&mut inv, id(ROOT), Uuid::nil(), 8);
+    folder(&mut inv, id(10), id(ROOT), -1);
+    item(&mut inv, id(11), id(10));
+    item(&mut inv, id(12), id(10));
+    item(&mut inv, id(20), id(ROOT));
+    item(&mut inv, id(30), id(ROOT));
+    let order = [10, 11, 12, 20, 30].map(id);
+    let next = |deleted: &[u128], last: u128| {
+        let gone = deleted.iter().map(|n| id(*n)).collect();
+        delete::next_row(&inv, &order, &gone, id(last))
+    };
+    assert_eq!(next(&[11], 11), Some(id(12)), "the row below");
+    assert_eq!(next(&[30], 30), Some(id(20)), "the row above at the end of the list");
+    assert_eq!(next(&[10], 10), Some(id(20)), "past the deleted folder's own rows");
+    assert_eq!(next(&[12, 20], 20), Some(id(30)));
+    assert_eq!(next(&[20, 30], 30), Some(id(12)), "above, past every deleted row");
+    assert_eq!(next(&[20, 30, 10], 30), None, "nothing stays");
+    assert_eq!(next(&[11], 99), None, "a row the list does not show");
+    let mut st = InventoryUi {
+        selection: HashSet::from([id(11), id(20)]),
+        selected: Some(id(11)),
+        ..Default::default()
+    };
+    st.plain.order = order.to_vec();
+    let deletion = delete::DeleteRequest::new(&inv, &st, &[id(11), id(20)], Default::default());
+    st.begin_delete(id(90), deletion.selection);
+    st.finish_delete(id(90), true, false);
+    assert!(delete::reconcile_selection(&inv, &mut st));
+    assert_eq!(
+        st.selection,
+        HashSet::from([id(12)]),
+        "after the current row, like the Legacy Viewer's last selected"
+    );
+    assert_eq!((st.selected, st.anchor), (Some(id(12)), Some(id(12))));
+    st.selected = Some(id(99));
+    let deletion = delete::DeleteRequest::new(&inv, &st, &[id(12), id(20)], Default::default());
+    st.begin_delete(id(91), deletion.selection);
+    st.finish_delete(id(91), true, false);
+    assert!(delete::reconcile_selection(&inv, &mut st));
+    assert_eq!(st.selected, Some(id(30)), "else after the lowest deleted row");
+}

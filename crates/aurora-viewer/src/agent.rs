@@ -49,6 +49,19 @@ pub struct MoveInput {
 }
 
 impl MoveInput {
+    pub(crate) fn keyboard_yaw(&self) -> f32 {
+        (i32::from(self.turn_left) - i32::from(self.turn_right)) as f32 * TURN_RATE * yaw_rate(self.turn_held)
+    }
+
+    pub(crate) fn vr_lateral_keys(&mut self, mouse_look: bool) {
+        let left = self.turn_left || self.strafe_left;
+        let right = self.turn_right || self.strafe_right;
+        self.turn_left = left && !mouse_look;
+        self.turn_right = right && !mouse_look;
+        self.strafe_left = left && mouse_look;
+        self.strafe_right = right && mouse_look;
+    }
+
     /// LLAgent::moveAt/moveLeft/moveUp/moveYaw (indra/newview/llagent.cpp):
     /// movement returns the camera to the avatar, except latched crouching.
     pub fn resets_camera(&self, crouch_latched: bool) -> bool {
@@ -672,9 +685,8 @@ impl AgentState {
     pub fn update(&mut self, input: &MoveInput, mouselook: bool, dt: f32, camera_distance: f32) {
         self.yaw += input.joystick_yaw * dt.clamp(0.0, 0.2);
         self.pitch = (self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2)).clamp(-1.55, 1.55);
-        if !mouselook && input.turn_left != input.turn_right {
-            let step = TURN_RATE * yaw_rate(input.turn_held) * dt;
-            self.yaw += if input.turn_left { step } else { -step };
+        if !mouselook {
+            self.yaw += input.keyboard_yaw() * dt;
         }
         self.yaw = (self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         if !self.has_local_control() {
@@ -876,6 +888,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn vr_lateral_keys_switch_between_turn_and_strafe() {
+        let mut keys = MoveInput {
+            strafe_left: true,
+            turn_held: 1.0,
+            up: true,
+            ..Default::default()
+        };
+        keys.vr_lateral_keys(false);
+        assert!(keys.turn_left && !keys.strafe_left && keys.up);
+        assert_eq!(keys.keyboard_yaw(), TURN_RATE);
+        keys.vr_lateral_keys(true);
+        assert!(!keys.turn_left && keys.strafe_left && keys.up);
+        assert_eq!(keys.keyboard_yaw(), 0.0);
+    }
+
     use std::time::Duration;
 
     fn moving(velocity: Vec3, acceleration: Vec3) -> (AgentState, Instant) {
