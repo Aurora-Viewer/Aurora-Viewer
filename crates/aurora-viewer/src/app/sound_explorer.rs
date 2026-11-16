@@ -249,7 +249,7 @@ fn sound_owner_name(world: &World, owner: Uuid) -> String {
         return aurora_i18n::tr!("sound-explorer-unknown").to_owned();
     }
     if !world.rlva_can_name(owner) {
-        return crate::world::rlva::privacy::anonymous(owner).display_name.clone();
+        return world.rlva_anonymous(owner).display_name.clone();
     }
     world.social.name_of(&owner)
 }

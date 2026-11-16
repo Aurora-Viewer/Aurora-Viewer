@@ -22,6 +22,7 @@ mod bulk_permissions;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
+pub(crate) use clipboard::return_focus_to;
 mod context;
 mod context_catalog;
 pub(crate) mod context_customize;
@@ -175,7 +176,8 @@ pub enum InvAction {
         items: Vec<Uuid>,
         resident: Uuid,
     },
-    Preview(Uuid),
+    /// Preview the item and return to its originating inventory list when it closes.
+    Preview(Uuid, Option<egui::Id>),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
     EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
@@ -258,7 +260,7 @@ pub struct Facts {
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
-    pub rlva: crate::world::rlva::WearLocks,
+    pub rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
@@ -576,6 +578,9 @@ pub struct InventoryUi {
     list_focus_frame: Option<u64>,
     /// Which row order the list drew last, for the work done outside it.
     shown_order: keyboard::ShownOrder,
+    /// The list's focus target that opened this document window, so closing
+    /// it hands the keyboard back there (see `clipboard::return_focus_to`).
+    document_owner: Option<egui::Id>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -4878,9 +4883,11 @@ mod tests {
         let mut outside = nested.clone();
         outside.id = Uuid::from_u128(8200);
         outside.parent = Uuid::from_u128(8002);
+        // the item's own name ("Instructions…"), in the language's words
+        let search = inv.items[&Uuid::from_u128(8103)].name.clone();
         inv.add_items(vec![nested, outside]);
         let mut st = InventoryUi {
-            search: "instructions".into(),
+            search,
             ..Default::default()
         };
         folder_window_frame(&ctx, &mut inv, root, &mut st);
