@@ -1025,6 +1025,9 @@ impl State {
             let mut confirmed = std::mem::take(&mut job.confirmed);
             confirmed.extend(flying);
             confirmed.extend(job.unsure_entries());
+            // a move resent while unsure is both on its way and unsure
+            let mut seen = HashSet::new();
+            confirmed.retain(|e| seen.insert(e.id));
             if !confirmed.is_empty() {
                 self.journal.record_in(job.run, confirmed);
                 self.unsaved += 1;
@@ -1529,7 +1532,10 @@ pub(super) fn show(
                 // after all, not seen yet: journaled too (Undo leaves an
                 // entry still where it was), never lost from Undo
                 let mut last = placed(inv, std::mem::take(&mut job.confirmed));
-                last.extend(job.unsure_entries());
+                let unsure = job.unsure_entries();
+                // not seen at their place: counted as skipped (never done)
+                job.skipped += unsure.iter().filter(|e| !last.iter().any(|l| l.id == e.id)).count();
+                last.extend(unsure);
                 state.journal.record_in(run, last);
                 state.job = None;
                 // only a run that moved something (or a resume) ends the run
@@ -2816,11 +2822,12 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     // a whole sort waits for every folder it opens to be read: a run never
     // starts on part of the inventory
     if matches!(state.source, Some(Source::Whole))
-        && plan.unfetched.iter().any(|id| {
-            inv.folders
-                .get(id)
-                .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching))
-        })
+        // (a folder read since the plan was made counts too: the plan
+        // made after it is waited for)
+        && plan
+            .unfetched
+            .iter()
+            .any(|id| inv.folders.get(id).is_some_and(|f| f.state != FetchState::Failed))
     {
         state.status = aurora_i18n::tr!("inventory-sorter-updating").into();
         return;
@@ -3341,7 +3348,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     default_folders(ui, p, inv, state, options);
     ui.add_space(10.0);
     let worn = std::mem::take(&mut state.worn_now);
-    undo_and_snapshots(ui, p, inv, state, &worn);
+    undo_and_snapshots(ui, p, inv, state, &worn, options);
     state.worn_now = worn;
     ui.add_space(10.0);
     crate::ui::widgets::section_header(ui, p, "share", aurora_i18n::tr!("inventory-share-section"));
@@ -3436,7 +3443,14 @@ fn snapshot_date(at: i64) -> String {
 
 /// Undo the last run, put a snapshot's layout back, resume a stopped run,
 /// take a snapshot: each opens its preview; nothing moves before Sort.
-fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>) {
+fn undo_and_snapshots(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    state: &mut State,
+    worn: &HashSet<Uuid>,
+    options: &sorter::Preferences,
+) {
     use crate::ui::widgets::{ActionKind, action_button};
     let size = Vec2::new(0.0, 26.0);
     let protected = state.protected_now.clone();
@@ -3592,7 +3606,7 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             Ok(snapshot) => {
                 let account = state.account.unwrap_or_default();
                 let by_runs = state.journal.with(|j| sorter::journal::moved_since(j, snapshot.at));
-                match sorter::journal::restore_moves(inv, &snapshot, account, &by_runs, &protected, worn) {
+                match sorter::journal::restore_moves(inv, &snapshot, account, &by_runs, &protected, worn, options) {
                     Ok((moves, summary)) => {
                         state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));
                         state.tab = PREVIEW;

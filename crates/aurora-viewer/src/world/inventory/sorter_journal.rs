@@ -11,7 +11,7 @@
 //! The files are gzip-compressed JSON in the account's folder
 //! (`settings::account_dir`), under `auto-sort/`.
 
-use super::{Dest, Inventory, Move, actions, folder_path, restorable, restore_target_allowed};
+use super::{Dest, Inventory, Move, actions, folder_path, holds_closed, restorable, restore_target_allowed};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -377,6 +377,7 @@ pub fn restore_moves(
     moved_by_runs: &HashSet<Uuid>,
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
+    prefs: &super::Preferences,
 ) -> Result<(Vec<Move>, RestoreSummary), OtherAccount> {
     if !snapshot.account.is_nil() && snapshot.account != account {
         return Err(OtherAccount);
@@ -413,7 +414,10 @@ pub fn restore_moves(
             summary.folder_gone += 1;
             return;
         }
-        if !restorable(inv, id, protected, &holds_worn) || actions::under(inv, was_in, id) {
+        // a folder excluded since the snapshot is neither read nor changed:
+        // nothing leaves it, nothing goes back into it
+        let excluded = prefs.excludes(inv, id) || prefs.excludes(inv, was_in) || folder && holds_closed(inv, id, &prefs.excluded);
+        if excluded || !restorable(inv, id, protected, &holds_worn) || actions::under(inv, was_in, id) {
             summary.kept += 1;
             return;
         }

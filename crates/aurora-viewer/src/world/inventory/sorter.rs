@@ -1269,12 +1269,20 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
     }
     // (the inventory's address and size too: a copy of another one, or a
     // test's, may share its generation)
+    // (the reserved names themselves: renaming the sort folder keeps their
+    // count)
+    let names = reserved.iter().fold(0u64, |acc, name| {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        name.hash(&mut hasher);
+        acc ^ hasher.finish()
+    });
     let key = (
         inv.generation,
         std::ptr::from_ref(inv) as usize,
         inv.folders.len(),
         inv.items.len(),
-        reserved.len(),
+        names as usize,
     );
     if let Some(known) = JUDGED.with(|j| {
         let j = j.borrow();
@@ -1334,7 +1342,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
         // the product's name again, word for word (`Hex Dress Legacy`)
-        sub_words.starts_with(&product)
+        has(&sub_words, &product.join(" "))
             || read.body.is_some()
             || read.squish
             || read.waifus
@@ -1792,6 +1800,9 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
             }
         }
         // a folder excluded since (or an entry in one) stays, like any sort's
+        // (an Undo puts back what its run moved, whatever was excluded since;
+        // a snapshot's restore leaves excluded folders out, see
+        // `journal::restore_moves`)
         if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
             plan.kept += 1;
             plan.kept_list.push((m.name.clone(), Kept::Excluded));

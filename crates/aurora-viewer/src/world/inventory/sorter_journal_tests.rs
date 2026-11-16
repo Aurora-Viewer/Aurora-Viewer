@@ -263,8 +263,16 @@ fn a_snapshot_puts_the_layout_back() {
     assert!(snapshot.items.iter().any(|(item, parent, _)| *item == id(100) && *parent == id(10)));
     let _ = sort(&mut inv);
     // a folder the snapshot knew is gone: its entries are counted, not guessed
-    let (moves, summary) =
-        restore_moves(&inv, &snapshot, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    let (moves, summary) = restore_moves(
+        &inv,
+        &snapshot,
+        id(AGENT),
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &crate::world::inventory::sorter::Preferences::default(),
+    )
+    .expect("same account");
     assert_eq!(summary.folder_gone, 0);
     send(&mut inv, moves);
     for n in [100, 101, 102] {
@@ -276,8 +284,41 @@ fn a_snapshot_puts_the_layout_back() {
     if let Some(it) = inv.items.get_mut(&id(100)) {
         it.parent = id(12);
     }
-    let (_, summary) = restore_moves(&inv, &gone, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    let (_, summary) = restore_moves(
+        &inv,
+        &gone,
+        id(AGENT),
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &crate::world::inventory::sorter::Preferences::default(),
+    )
+    .expect("same account");
     assert_eq!(summary.folder_gone, 1);
+}
+
+#[test]
+fn a_snapshot_restore_leaves_a_folder_excluded_since_alone() {
+    let mut inv = fixture();
+    let snapshot = Snapshot::take(&inv, 42, id(AGENT));
+    let _ = sort(&mut inv);
+    // Objects excluded after the snapshot: nothing goes back into it
+    let prefs = crate::world::inventory::sorter::Preferences {
+        excluded: vec![id(10)],
+        ..Default::default()
+    };
+    let (moves, summary) = restore_moves(
+        &inv,
+        &snapshot,
+        id(AGENT),
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &prefs,
+    )
+    .expect("same account");
+    assert!(moves.iter().all(|m| m.to != Dest::Folder(id(10))), "never into an excluded folder");
+    assert!(summary.kept > 0);
 }
 
 #[test]
@@ -356,7 +397,16 @@ fn a_layout_restore_survives_everything_that_changed_since() {
     }
     inv.folders.remove(&id(15));
     inv.generation += 1;
-    let (moves, summary) = restore_moves(&inv, &snapshot, id(AGENT), &by_runs, &HashSet::new(), &HashSet::new()).expect("same account");
+    let (moves, summary) = restore_moves(
+        &inv,
+        &snapshot,
+        id(AGENT),
+        &by_runs,
+        &HashSet::new(),
+        &HashSet::new(),
+        &crate::world::inventory::sorter::Preferences::default(),
+    )
+    .expect("same account");
     assert_eq!(summary.new_since, 1, "the new item is counted, never moved");
     assert!(!moves.iter().any(|m| m.id == id(107)));
     assert_eq!(summary.trashed, 1, "nothing comes out of the Trash but by Undo");
@@ -382,7 +432,16 @@ fn a_layout_restore_survives_everything_that_changed_since() {
     assert_eq!(inv.items[&id(105)].parent, id(11), "still in the Trash");
     // another account's snapshot is refused
     assert_eq!(
-        restore_moves(&inv, &snapshot, id(99), &by_runs, &HashSet::new(), &HashSet::new()).err(),
+        restore_moves(
+            &inv,
+            &snapshot,
+            id(99),
+            &by_runs,
+            &HashSet::new(),
+            &HashSet::new(),
+            &crate::world::inventory::sorter::Preferences::default()
+        )
+        .err(),
         Some(OtherAccount)
     );
 }
@@ -509,6 +568,15 @@ fn a_layout_restore_puts_nothing_back_into_pre_trash() {
     if let Some(it) = inv.items.get_mut(&id(100)) {
         it.parent = id(12);
     }
-    let (moves, _) = restore_moves(&inv, &snapshot, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    let (moves, _) = restore_moves(
+        &inv,
+        &snapshot,
+        id(AGENT),
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &crate::world::inventory::sorter::Preferences::default(),
+    )
+    .expect("same account");
     assert!(moves.iter().all(|m| m.id != id(100)));
 }
