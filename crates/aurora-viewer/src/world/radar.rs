@@ -191,6 +191,17 @@ pub struct Radar {
     script_frame: u32,
 }
 
+/// A nearby chat line said at `position` (region-local, in the region whose
+/// origin sits at `region_offset` in the render frame) reaches us at `me`
+/// from beyond the say range. LLViewerChat::getChatColor
+/// (indra/newview/llviewerchat.cpp) dims such a line: the 3D distance,
+/// strictly beyond the region's say range (20 m, or the OpenSim region's
+/// own), and only for a line that carries a position (an exact zero is
+/// none, as for an IM).
+pub fn beyond_say_range(position: Vec3, region_offset: Vec3, me: Vec3, say: f32) -> bool {
+    position != Vec3::ZERO && (region_offset + position).distance_squared(me) > say * say
+}
+
 /// True when `range` is known and within `limit`.
 fn within(range: Option<f32>, limit: f32) -> bool {
     range.is_some_and(|d| d <= limit)
@@ -452,7 +463,7 @@ fn region_gap(me: glam::Vec2, main: glam::Vec2, offset: glam::Vec2, size: glam::
 
 /// Resolve the complete parent chain, as LLWorld::getAvatars excludes orphaned
 /// avatars. A seat-relative position is never a usable region position.
-fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object) -> Option<Vec3> {
+pub(crate) fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object) -> Option<Vec3> {
     let mut position = object.position;
     for _ in 0..64 {
         if !position.is_finite() {
@@ -620,6 +631,34 @@ mod tests {
             sweep(&mut radar, vec![at(1, HERE, 10.0)], 3.0),
             vec![Event::ChatEnter(id(1), 10.0), Event::DrawEnter(id(1), 10.0)]
         );
+    }
+
+    #[test]
+    fn chat_beyond_the_say_range_is_strictly_farther_in_3d() {
+        let me = Vec3::new(128.0, 128.0, 20.0);
+        let here = Vec3::ZERO;
+        // 20 m away on the ground: still in range; a step more: beyond
+        assert!(!beyond_say_range(Vec3::new(148.0, 128.0, 20.0), here, me, 20.0));
+        assert!(beyond_say_range(Vec3::new(148.5, 128.0, 20.0), here, me, 20.0));
+        // the height counts: 15 m across, 15 m up is 21.2 m
+        assert!(beyond_say_range(Vec3::new(143.0, 128.0, 35.0), here, me, 20.0));
+        // an OpenSim region's own say range
+        assert!(!beyond_say_range(Vec3::new(158.0, 128.0, 20.0), here, me, 30.0));
+        // a neighbouring region's speaker, 10 m across the border
+        assert!(!beyond_say_range(
+            Vec3::new(2.0, 128.0, 20.0),
+            Vec3::new(256.0, 0.0, 0.0),
+            Vec3::new(248.0, 128.0, 20.0),
+            20.0
+        ));
+        assert!(beyond_say_range(
+            Vec3::new(30.0, 128.0, 20.0),
+            Vec3::new(256.0, 0.0, 0.0),
+            Vec3::new(248.0, 128.0, 20.0),
+            20.0
+        ));
+        // no position (an exact zero, as an IM's): never dimmed
+        assert!(!beyond_say_range(Vec3::ZERO, here, me, 20.0));
     }
 
     #[test]

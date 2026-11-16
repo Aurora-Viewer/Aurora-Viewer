@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub const FT_OUTFIT: i32 = 47;
 pub const FT_MY_OUTFITS: i32 = 48;
+/// The Clothing system folder (LLFolderType::FT_CLOTHING).
+pub const FT_CLOTHING: i32 = 5;
 pub fn wearables() -> &'static Vec<&'static str> {
     static TABLE: aurora_i18n::Localized<Vec<&'static str>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -111,6 +113,8 @@ pub enum Action {
         items: Vec<Uuid>,
     },
     ShowOriginal(Uuid),
+    /// Activate (true) or deactivate the gestures among favorite rows.
+    Gesture(Vec<Uuid>, bool),
     Favorite(Uuid),
     Category(Uuid, aurora_net::outfits::categories::Update),
     Folders(aurora_net::inventory::operations::Mutation),
@@ -191,6 +195,28 @@ pub fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
 
 pub fn cof(inv: &Inventory) -> Option<Uuid> {
     system_folder(inv, super::outfit::FT_CURRENT_OUTFIT)
+}
+
+/// findDescendentCategoryIDByName (indra/newview/llappearancemgr.cpp): the
+/// first folder under `root` named `name`, case-insensitive
+/// (LLNameCategoryCollector), depth first in the folders' order.
+pub fn descendant_named(inv: &Inventory, root: Uuid, name: &str) -> Option<Uuid> {
+    let wanted = name.to_lowercase();
+    let mut stack: Vec<Uuid> = inv.folders.get(&root)?.children.iter().rev().copied().collect();
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else {
+            continue;
+        };
+        if folder.info.name.to_lowercase() == wanted {
+            return Some(id);
+        }
+        stack.extend(folder.children.iter().rev());
+    }
+    None
 }
 
 /// Confirmed clothing only: required body parts never enter Take Off.
@@ -545,9 +571,21 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     // the rewritten COF drops its broken links
     warn_broken(inv, cof);
     let mut current = usable_links(inv, cof);
+    // An object that arrived worn is linked a moment later
+    // (`update_attachment_inventory`: never while an outfit change is pending,
+    // at most every few seconds). Every action that keeps the current outfit
+    // keeps it too, as LLAppearanceMgr::updateAppearanceFromCOF keeps the
+    // attachments of LLAttachmentsMgr::getPendingAttachments
+    // (indra/newview/llappearancemgr.cpp): without it, adding a folder right
+    // after a wear took the objects of that wear off again.
     if matches!(
         action,
         Action::Add(_)
+            | Action::Wear(_, true)
+            | Action::WearContents {
+                mode: WearMode::Append | WearMode::ReplaceItems,
+                ..
+            }
             | Action::WearItem { .. }
             | Action::WearItems { .. }
             | Action::Force { .. }
@@ -945,6 +983,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::ShowOriginal(_)
+        | Action::Gesture(..)
         | Action::Favorite(_)
         | Action::OutfitImage(_)
         | Action::OutfitSnapshot(_)
@@ -1074,6 +1113,22 @@ fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
     links.retain(|l| l.folder || !inv.items.get(&l.target).is_some_and(coalesced));
 }
 
+/// A clothing link's place among the layers of its wearable type `kind`,
+/// closest to the body first: the `@<type * 100 + index>` of its description
+/// (build_order_string, indra/newview/llappearancemgr.cpp), read as a number.
+/// A link without one, or with another type's, sinks to the end, as in
+/// WearablesOrderComparator: ties then go by name. The outfit lists and the
+/// layers worn share this order, so a list shows what the avatar wears.
+pub fn layer_rank(link: &OutfitLink, kind: u32) -> (u32, String) {
+    let order = link
+        .desc
+        .strip_prefix('@')
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|order| order / 100 == kind)
+        .unwrap_or(u32::MAX);
+    (order, link.name.to_lowercase())
+}
+
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     for kind in 4..=16 {
         let mut indices: Vec<_> = links
@@ -1086,17 +1141,9 @@ fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
                         .get(&l.target)
                         .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
             })
-            .map(|(i, l)| {
-                let order = l
-                    .desc
-                    .strip_prefix('@')
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .filter(|order| order / 100 == kind)
-                    .unwrap_or(u32::MAX);
-                (i, order)
-            })
+            .map(|(i, l)| (i, layer_rank(l, kind)))
             .collect();
-        indices.sort_by_key(|(_, order)| *order);
+        indices.sort_by(|a, b| a.1.cmp(&b.1));
         for (order, (i, _)) in indices.iter().enumerate() {
             links[*i].desc = format!("@{}", kind * 100 + order as u32);
         }
@@ -2009,6 +2056,37 @@ mod tests {
     }
 
     #[test]
+    fn adding_a_folder_keeps_objects_worn_before_their_link() {
+        // The Avatar Welcome Pack wears a body (head, mesh body), then adds a
+        // look a second later: the body's objects are worn but not linked yet.
+        let mut inv = fixture();
+        let mut head = inv.items[&Uuid::from_u128(723)].clone();
+        head.id = Uuid::from_u128(724);
+        inv.add_items(vec![head]);
+        let worn = HashMap::from([(Uuid::from_u128(724), 5)]);
+        let outfit = Uuid::from_u128(703);
+        let contents = |mode| Action::WearContents { folder: outfit, mode };
+        for action in [
+            Action::Wear(outfit, true),
+            contents(WearMode::Append),
+            contents(WearMode::ReplaceItems),
+        ] {
+            let (change, _) = plan(&inv, action.clone(), &worn).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(
+                change.links.iter().any(|link| link.target == Uuid::from_u128(724)),
+                "{action:?} keeps the worn object"
+            );
+        }
+        for action in [Action::Wear(outfit, false), contents(WearMode::ReplaceOutfit)] {
+            let (change, _) = plan(&inv, action.clone(), &worn).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(
+                !change.links.iter().any(|link| link.target == Uuid::from_u128(724)),
+                "{action:?} replaces the outfit"
+            );
+        }
+    }
+
+    #[test]
     fn combined_outfits_bodypart_conflicts_follow_last_in_display_order() {
         let mut inv = fixture();
         let mut shape = inv.items[&Uuid::from_u128(710)].clone();
@@ -2598,6 +2676,53 @@ mod tests {
             links.iter().find(|l| l.target == Uuid::from_u128(715)).expect("jacket").desc,
             "@800"
         );
+    }
+
+    #[test]
+    fn layers_without_a_place_sink_to_the_top_by_name() {
+        // WearablesOrderComparator: placed tattoos keep their order; an
+        // empty description, a creator's text or another type's place go
+        // after them, by name, whatever the folder's order
+        let mut inv = Inventory::default();
+        let mut links = Vec::new();
+        for (n, name, desc) in [
+            (1, "Zebra freckles", ""),
+            (2, "Outer tattoo", "@1401"),
+            (3, "Beard", "Made by a creator"),
+            (4, "Inner tattoo", "@1400"),
+            (5, "anchor tattoo", "@500"),
+        ] {
+            let id = Uuid::from_u128(n);
+            inv.add_items(vec![InvItem {
+                id,
+                asset_type: 5,
+                flags: 14,
+                name: name.into(),
+                ..Default::default()
+            }]);
+            links.push(OutfitLink {
+                target: id,
+                name: name.into(),
+                desc: desc.into(),
+                folder: false,
+                inv_type: 18,
+            });
+        }
+        normalize_layers(&inv, &mut links);
+        let mut order: Vec<_> = links.iter().map(|l| (l.desc.clone(), l.target.as_u128())).collect();
+        order.sort();
+        assert_eq!(
+            order,
+            [
+                ("@1400".to_owned(), 4),
+                ("@1401".to_owned(), 2),
+                ("@1402".to_owned(), 5),
+                ("@1403".to_owned(), 3),
+                ("@1404".to_owned(), 1),
+            ]
+        );
+        assert!(layer_rank(&links[0], 14) > layer_rank(&links[1], 14));
+        assert_eq!(layer_rank(&links[0], 5).0, u32::MAX, "another type's place");
     }
 
     #[test]

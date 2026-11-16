@@ -84,13 +84,20 @@ fn frame_border(p: &Palette) -> Color32 {
     crate::ui::widgets::border_stroke(p, Stroke::new(1.0, p.raised)).color
 }
 
-/// The rectangle and corner radius of a stock pop-up frame in `shape`: the
-/// theme's window face inside its `border`. The panels drawn with
+/// The rectangle, corner radius and fade of a stock pop-up frame in
+/// `shape`: the theme's window face (`tint`) inside its `border`. A menu
+/// fading in (egui's `Area::fade_in`) has both at a part of their alpha:
+/// matched by colour, that part is the fade. The panels drawn with
 /// `widgets::overlay` have another border and bring their own glass.
-fn stock_frame(shape: &egui::Shape, faces: [Color32; 2], border: Color32) -> Option<(egui::Rect, f32)> {
+fn stock_frame(shape: &egui::Shape, tint: Color32, border: Color32) -> Option<(egui::Rect, f32, f32)> {
+    use crate::ui::surface_opacity::same_colour;
     match shape {
-        egui::Shape::Rect(r) if faces.contains(&r.fill) && r.stroke.color == border => Some((r.rect, f32::from(r.corner_radius.nw))),
-        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, faces, border)),
+        egui::Shape::Rect(r) if same_colour(r.fill, tint) && same_colour(r.stroke.color, border) => {
+            let full = if r.fill.a() <= tint.a() { tint.a() } else { u8::MAX };
+            let fade = (f32::from(r.fill.a()) / f32::from(full)).min(1.0);
+            Some((r.rect, f32::from(r.corner_radius.nw), fade))
+        }
+        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, tint, border)),
         _ => None,
     }
 }
@@ -108,16 +115,22 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
         .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr())
         .map(|(_, layers)| layers)
         .unwrap_or_default();
-    if p.panel_alpha == 255 && distinct.is_empty() {
+    // FSMenuBackgroundAlpha (LLMenuGL::draw), `ui::surface_opacity`
+    let opacity = crate::ui::surface_opacity::menus();
+    if p.panel_alpha == 255 && distinct.is_empty() && opacity >= 1.0 {
         return;
     }
     let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
-    let faces = [tint, p.panel];
     let layers: Vec<LayerId> = ctx
         .memory(|m| m.areas().visible_layer_ids())
         .into_iter()
         .filter(|layer| layer.order == egui::Order::Foreground)
         .collect();
+    let (blur, tint_alpha) = crate::ui::surface_opacity::glass(p.panel_alpha, opacity);
+    let faded_tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), tint_alpha);
+    for layer in &layers {
+        crate::ui::surface_opacity::fade_after(ctx, *layer, egui::layers::ShapeIdx(0), p, opacity);
+    }
     ctx.graphics_mut(|graphics| {
         for layer in layers {
             let Some(list) = graphics.get_mut(layer) else {
@@ -127,22 +140,36 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
                 continue;
             }
             list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
-                if let Some((rect, radius)) = stock_frame(&first.shape, faces, frame_border(p)) {
-                    let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                if let Some((rect, radius, fade)) = stock_frame(&first.shape, tint, frame_border(p)) {
+                    let mut frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                    if opacity < 1.0 {
+                        crate::ui::surface_opacity::fade_shape(&mut frame, &[p.panel, p.bar], opacity);
+                    }
                     let mut shapes = vec![frame];
                     if p.panel_alpha < 255 {
+                        // (a menu over a surface of its colour stays dense)
                         let tint = if distinct.contains(&layer) {
-                            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha.max(245))
+                            Color32::from_rgba_unmultiplied(
+                                p.bar.r(),
+                                p.bar.g(),
+                                p.bar.b(),
+                                crate::ui::surface_opacity::glass(p.panel_alpha.max(245), opacity).1,
+                            )
                         } else {
-                            tint
+                            faded_tint
                         };
-                        shapes.push(aurora_render::glass_panel(rect.shrink(1.0), radius, tint));
+                        shapes.push(aurora_render::glass_panel_faded(
+                            rect.shrink(1.0),
+                            radius,
+                            tint.gamma_multiply(fade),
+                            blur.unwrap_or(0.0) * fade,
+                        ));
                     }
                     if distinct.contains(&layer) {
                         shapes.push(egui::Shape::rect_stroke(
                             rect,
                             radius,
-                            Stroke::new(1.0, p.muted_dim),
+                            Stroke::new(1.0, p.muted_dim.gamma_multiply(fade)),
                             egui::StrokeKind::Inside,
                         ));
                     }
@@ -1449,6 +1476,31 @@ pub fn search_demo_events(frame: u64) -> Vec<egui::Event> {
 mod tests {
     use super::*;
     use crate::ui::widgets::{Floater, elide_tests::Frames};
+
+    /// A menu fading in had its frame at a part of its colours: not found,
+    /// it was drawn without its glass and at the skin's full opacity.
+    #[test]
+    fn a_menu_frame_fading_in_is_found_with_its_fade() {
+        let p = crate::theme::Theme::default().palette();
+        let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::splat(40.0));
+        let frame = |fade: f32| {
+            egui::Shape::Rect(egui::epaint::RectShape::new(
+                rect,
+                4.0,
+                tint.gamma_multiply(fade),
+                Stroke::new(1.0, frame_border(&p).gamma_multiply(fade)),
+                egui::StrokeKind::Inside,
+            ))
+        };
+        for fade in [1.0, 0.5, 0.2] {
+            let (found, _, seen) = stock_frame(&frame(fade), tint, frame_border(&p)).expect("a stock frame");
+            assert_eq!(found, rect);
+            assert!((seen - fade).abs() < 0.02, "{fade}: {seen}");
+        }
+        let other = egui::Shape::rect_filled(rect, 4.0, p.violet);
+        assert!(stock_frame(&other, tint, frame_border(&p)).is_none());
+    }
 
     fn words(q: &str) -> Vec<String> {
         query_words(q)

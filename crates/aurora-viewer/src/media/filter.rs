@@ -14,9 +14,9 @@
 //! * media on a prim is filtered too (the Legacy Viewer filters the parcel
 //!   media and music only), and the check comes before anything reaches the
 //!   site, the request that discovers the media type included; media on
-//!   worn items (attachments, HUDs) we made ourselves is not asked about by
-//!   default (the list's refusals still apply), closer to the Legacy Viewer,
-//!   which asks about no prim media at all;
+//!   our worn items (attachments, HUDs), whoever made them, is not asked
+//!   about by default (the list's refusals still apply), closer to the
+//!   Legacy Viewer, which asks about no prim media at all;
 //! * a domain rule matches that domain and its subdomains at a dot
 //!   (`example.com` no longer matches `badexample.com`), and the most
 //!   precise rule wins (the URL, then the longest domain) instead of the
@@ -535,6 +535,20 @@ mod tests {
         assert_eq!(filter.questions.len(), 1);
         filter.answer("https://new.example/live", true, Remember::Once);
         assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Allow);
+    }
+
+    #[test]
+    fn parcel_music_refused_by_the_list_is_told_once_per_url() {
+        // LLViewerParcelMedia::filterAudioUrl reports MediaFilterAudioContentBlocked
+        // for each blocked station, not on every frame's recheck.
+        let mut f = MediaFilter::default();
+        f.apply(Edit::Set("blocked.example".into(), Action::Deny));
+        for _ in 0..10 {
+            assert_eq!(f.check("https://blocked.example/a", Source::Music), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.check("https://blocked.example/b", Source::Music), Verdict::Deny);
+        assert_eq!(f.messages.len(), 2, "a new denied music URL is told again");
     }
 
     #[test]

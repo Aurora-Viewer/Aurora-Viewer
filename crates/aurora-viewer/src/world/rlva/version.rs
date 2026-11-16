@@ -279,6 +279,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@versionnum=123,versionnum:impl=124,version:ignored=125".into(),
         }));

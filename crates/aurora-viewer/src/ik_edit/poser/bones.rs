@@ -222,6 +222,10 @@ impl Editor {
             && let Some(other) = self.mirrors.counterpart(bone)
             && (side == Side::Right && left || side == Side::Left && !left)
         {
+            if self.poser.together.contains(&other) {
+                self.poser.together.retain(|b| *b != other);
+                self.poser.together.push(bone);
+            }
             self.select_pose_bone(other, rig, frame);
         }
     }
@@ -268,6 +272,10 @@ impl Editor {
     pub(super) fn bone_list(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         self.mirrors.initialize(rig);
         let filter = self.poser.filter.to_lowercase();
+        if self.poser.group == OTHER_GROUP && self.poser.other_used.is_empty() && self.poser.other_inner_used.is_empty() {
+            ui.label(egui::RichText::new(aurora_i18n::text("poser-other-none")).size(12.0).color(p.muted));
+            return;
+        }
         if self.poser.group == 0 {
             caption(ui, p, aurora_i18n::text("poser-whole-avatar"));
             let label = aurora_i18n::text("poser-avatar-position");
@@ -281,6 +289,7 @@ impl Editor {
                     edited,
                     "mPelvis",
                 ) {
+                    self.clear_together();
                     self.select_pose_bone(rig.pelvis, rig, frame);
                     self.poser.transform = 1;
                     self.tool = Tool::Move;
@@ -289,7 +298,10 @@ impl Editor {
         }
         let mut rows = BTreeMap::<(usize, usize, String), [Option<usize>; 2]>::new();
         for (bone, name) in rig.canonical_names.iter().enumerate() {
-            if group(name) != self.poser.group {
+            // the open tab's joints; of the Other bones, the used ones, those
+            // inside the body here only (`refresh_other_bones`)
+            let inner = self.poser.group == OTHER_GROUP && self.poser.other_inner_used.contains(name);
+            if !self.poser_bone_visible(name) && !inner {
                 continue;
             }
             let (base, side) = stem(name);
@@ -331,7 +343,8 @@ impl Editor {
             }
             let Some(bone) = self.row_bone(pair) else { continue };
             let both: Vec<_> = pair.iter().flatten().copied().collect();
-            let selected = self.selected.is_some_and(|s| both.contains(&s)) && !(bone == rig.pelvis && self.poser.transform == 1);
+            let selected = (self.selected.is_some_and(|s| both.contains(&s)) || both.iter().any(|b| self.poser.together.contains(b)))
+                && !(bone == rig.pelvis && self.poser.transform == 1);
             let edited = match self.poser.side {
                 Side::Mirror => both.iter().any(|b| self.subject_edited(*b)),
                 _ => self.subject_edited(bone),
@@ -342,7 +355,8 @@ impl Editor {
                 .collect::<Vec<_>>()
                 .join(" · ");
             if self.joint_row(ui, p, &label(&base), selected, edited, &names) {
-                self.select_pose_bone(bone, rig, frame);
+                let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                self.click_pose_bone(bone, rig, frame, add);
             }
         }
     }
@@ -370,7 +384,9 @@ impl Editor {
                 .circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
         }
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
-        response.on_hover_text(tip).clicked()
+        response
+            .on_hover_text(format!("{tip}\n{}", aurora_i18n::tr!("poser-together-tip")))
+            .clicked()
     }
     /// The Hands tab: the five presets, applied to the chosen side (both in
     /// Mirror), and the finger grid (finger × base, middle, tip).
@@ -448,7 +464,7 @@ impl Editor {
                     };
                     let other = self.mirrors.counterpart(bone);
                     let selected =
-                        self.selected == Some(bone) || self.poser.side == Side::Mirror && self.selected.is_some() && self.selected == other;
+                        self.in_selection(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.in_selection(o));
                     let edited =
                         self.subject_edited(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.subject_edited(o));
                     let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::click());
@@ -469,7 +485,8 @@ impl Editor {
                     let label = aurora_i18n::tr!("poser-numbered-bone", name = name, number = joint).to_string();
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
                     if response.on_hover_text(&rig.canonical_names[bone]).clicked() {
-                        self.select_pose_bone(bone, rig, frame);
+                        let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                        self.click_pose_bone(bone, rig, frame, add);
                     }
                 }
             });

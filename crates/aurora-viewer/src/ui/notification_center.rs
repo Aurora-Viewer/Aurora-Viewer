@@ -110,6 +110,8 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
         // a message is information; a shorter IM toast setting shortens it
         Data::Message { .. } => message_seconds.clamp(1.0, SHOW_INFO),
+        // ShowMyComplexityChanges (the notice's expiry)
+        Data::Complexity { seconds } => f64::from(seconds),
         _ if n.interactive() => SHOW_ANSWER,
         _ => SHOW_INFO,
     }
@@ -130,9 +132,10 @@ fn may_show(n: &Notification, m: &Moment) -> bool {
 }
 
 /// Rolls out as a card: what is listed, and a message kept out of the bell
-/// (`ToastPrefs::im_in_bell` off), whose card leaves with its time.
+/// (`ToastPrefs::im_in_bell` off) or the complexity notice, whose card
+/// leaves with its time.
 fn card(n: &Notification) -> bool {
-    !n.transient || matches!(n.data, Data::Message { .. })
+    !n.transient || matches!(n.data, Data::Message { .. } | Data::Complexity { .. })
 }
 
 /// The count on the bell: what waits in "To do", without the cards still
@@ -490,7 +493,8 @@ fn rolled_out(
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
+    // ToastGap, as between the Legacy toasts
+    ui.spacing_mut().item_spacing.y = env.toast_gap;
     let (shown, behind) = visible(&nui.center);
     // newest on top
     for peek in shown.iter().rev() {
@@ -503,6 +507,8 @@ fn rolled_out(
         let top = ui.cursor().min;
         let width = nui.center.inner_width;
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
+        // the card keeps its own row spacing; ToastGap stands between cards
+        child.spacing_mut().item_spacing.y = super::notifications::CARD_ROW_SPACING;
         if fold > 0.0 {
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
@@ -733,7 +739,7 @@ pub(super) fn history_list(
         .filter_map(|(i, e)| {
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
-            privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
+            privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();
@@ -849,7 +855,7 @@ fn presence_toasts(
         .collect();
     let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
     let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
-    let rects = presence::stack(room, env.presence_at, &only, &avoid);
+    let rects = presence::stack(room, env.presence_at, &only, &avoid, env.toast_gap);
     let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
         return;
     };

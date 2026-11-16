@@ -127,6 +127,51 @@ pub fn filter_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: 
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A G / M / A toggle: its badge, and its name when `label` (a compact
+/// window shows the badge alone, the name in its tooltip), lit on `raised`
+/// while on; a rating the account may not see stays off and says why.
+/// Shared by Aurora's Search and Destinations.
+pub fn rating_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool, name: &str, allowed: bool, label: bool) -> bool {
+    let font = FontId::proportional(12.0);
+    let lit = *on && allowed;
+    let ink = if lit { p.ink } else { p.muted_dim };
+    let galley = label.then(|| ui.painter().layout_no_wrap(name.to_owned(), font, ink));
+    let text_w = galley.as_ref().map_or(0.0, |g| 6.0 + g.size().x + 3.0);
+    let size = Vec2::new(6.0 + 16.0 + 6.0 + text_w, 26.0);
+    let (rect, resp) = ui.allocate_exact_size(size, if allowed { Sense::click() } else { Sense::hover() });
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let fill = if lit {
+        p.raised
+    } else if allowed && resp.hovered() {
+        p.raised.gamma_multiply(0.5)
+    } else {
+        p.bar
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    let left = if label { rect.left() + 6.0 } else { rect.center().x - 8.0 };
+    let badge = Rect::from_center_size(egui::pos2(left + 8.0, rect.center().y), Vec2::splat(16.0));
+    let mut painter = ui.painter().clone();
+    if !lit {
+        painter.multiply_opacity(0.35);
+    }
+    super::paint_maturity_badge(&painter, p, name, badge, super::inner_radius(ui.visuals()));
+    if let Some(g) = galley {
+        super::paint_row_text(ui.painter(), g, badge.right() + 6.0, rect.center().y, ink);
+    }
+    let resp = if !allowed {
+        resp.on_hover_text(aurora_i18n::tr!("search-rating-not-allowed"))
+    } else if label {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name)
+    };
+    if allowed && resp.clicked() {
+        *on = !*on;
+        return true;
+    }
+    false
+}
+
 /// `filter_pill` at a place of its own (a row's right end laid out apart).
 pub fn filter_pill_at(ui: &mut egui::Ui, p: &Palette, rect: Rect, id: egui::Id, icon: &str, label: &str, on: bool) -> egui::Response {
     let resp = ui.interact(rect, id, Sense::click());

@@ -303,6 +303,9 @@ impl World {
         }
         self.set_invite_notification(invite, id);
         if rating == Rating::Allowed && self.rlva.auto_accept("accepttp", im.from_agent_id) {
+            // LLIMProcessing::processNewMessage: a lure accepted by
+            // @accepttp cannot be cancelled (setCanCancelTp(false))
+            self.tp_cancel.lock_for_rlva();
             self.rlva_teleport_dnd(im.from_agent_id);
             let commands = self.answer_teleport_invite(invite, true);
             self.teleport_invites.out.extend(commands);
@@ -561,6 +564,8 @@ impl World {
             kind,
             source: from,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.conversation_card(from, line);
     }
@@ -579,6 +584,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
@@ -1060,6 +1067,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: format!("@{commands}"),
         }));

@@ -108,6 +108,12 @@ pub fn radius_weighted_tris(lod_bytes: [u32; 4], radius: f32) -> f32 {
 /// Shapes kept by `Scene::prim_triangle_counts` (then it starts over).
 const PRIM_TRIANGLES_CACHED: usize = 16384;
 
+/// A HUD attachment point (31..=38): drawn on the screen, never counted in
+/// the complexity.
+pub fn is_hud_point(point: u8) -> bool {
+    (31..=38).contains(&point)
+}
+
 /// What decides which avatars show as grey silhouettes.
 pub struct Rules<'a> {
     /// RenderAvatarMaxComplexity (0 = no limit).
@@ -295,22 +301,38 @@ impl Scene {
                 continue;
             };
             // HUD attachments (points 31..=38) do not count
-            if (31..=38).contains(&root.attachment_point()) {
+            if is_hud_point(root.attachment_point()) {
                 continue;
             }
-            let mut textures = HashSet::new();
-            let mut total = self.prim_render_cost(world, att, &mut textures);
-            area += self.prim_scaled_area(world, att);
-            for &c in world.objects.children_of(&root.key) {
-                total += self.prim_render_cost(world, c, &mut textures);
-                area += self.prim_scaled_area(world, c);
-            }
-            for t in &textures {
-                total += texture_cost(self.textures.full_size(t)) as f32;
-            }
-            cost += total.clamp(0.0, MAX_ATTACHMENT_COMPLEXITY) as u32;
+            let (c, a) = self.attachment_complexity(world, att);
+            cost += c;
+            area += a;
         }
         (cost, area)
+    }
+
+    /// One worn object's share of its avatar's complexity, the root at
+    /// `att` and its linked prims with their textures counted once
+    /// (accountRenderComplexityForObject, capped at
+    /// MAX_ATTACHMENT_COMPLEXITY), and its scaled surface area. The
+    /// Performance window lists it per attachment, as the Legacy Viewer's
+    /// panel_performance_complexity (its ARC column, from
+    /// LLAvatarRenderNotifier::getObjectComplexityList).
+    pub fn attachment_complexity(&self, world: &World, att: usize) -> (u32, f32) {
+        let Some(root) = world.objects.get(att) else {
+            return (0, 0.0);
+        };
+        let mut textures = HashSet::new();
+        let mut total = self.prim_render_cost(world, att, &mut textures);
+        let mut area = self.prim_scaled_area(world, att);
+        for &c in world.objects.children_of(&root.key) {
+            total += self.prim_render_cost(world, c, &mut textures);
+            area += self.prim_scaled_area(world, c);
+        }
+        for t in &textures {
+            total += texture_cost(self.textures.known_size(t)) as f32;
+        }
+        (total.clamp(0.0, MAX_ATTACHMENT_COMPLEXITY) as u32, area)
     }
 
     /// Refresh every avatar's complexity (every 2 s, at once when a rule

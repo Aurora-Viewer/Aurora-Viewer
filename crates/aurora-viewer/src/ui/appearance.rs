@@ -23,6 +23,7 @@ mod perf_tests;
 pub(crate) mod portrait;
 mod selection;
 mod showcase;
+pub(crate) mod wearable_favorites;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
@@ -101,6 +102,8 @@ pub struct AppearanceUi {
     /// The heights of the rows last drawn, for those left out.
     rows: RowHeights,
     selection_info: Option<SelectionInfo>,
+    /// The Favorite Wearables window, which shares the rows and their menu.
+    pub(crate) wearable_favorites: wearable_favorites::State,
 }
 
 struct SelectionInfo {
@@ -195,6 +198,17 @@ impl AppearanceUi {
     /// from the worn tab, the gallery.
     pub fn open_outfits(&mut self) {
         self.open(if self.tab < 2 { self.tab } else { 0 }, false);
+    }
+
+    /// @showinv: the outfit tabs are left for the worn one and the list of
+    /// items to add closes, as
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// (rlvhandler.cpp) leaves "My Outfits" for the worn tab and
+    /// LLPanelOutfitEdit::showAddWearablesPanel refuses its inventory panel.
+    /// The gallery shows the same outfit folders as the list: both go.
+    pub fn hide_inventory(&mut self) {
+        self.tab = 2;
+        self.adding = false;
     }
 
     /// Scrolls the gallery or the list to the current outfit and selects
@@ -655,6 +669,15 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> egui::R
 
 fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl FnOnce(&mut egui::Ui)) {
     let response = icon_button(ui, p, name, tip);
+    if name == "settings-filled"
+        && ui
+            .ctx()
+            .data_mut(|data| data.remove_temp::<bool>(egui::Id::unique("appearance_xml_demo")))
+            .unwrap_or(false)
+    {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
@@ -1163,7 +1186,7 @@ fn outfit_list(
                     });
                     ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
-                    items::sort_links(&world.inventory, &mut links, false);
+                    items::sort_links(&world.inventory, &mut links);
                     let order: Vec<_> = links
                         .iter()
                         .filter(|l| !l.folder && world.inventory.items.contains_key(&l.target))
@@ -1192,7 +1215,7 @@ fn outfit_list(
                                 st.select_item(&response, *id, it.id, &order);
                                 items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
-                                items::context_menu(&response, p, world, st, *id, it, &selected, actions);
+                                items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
                             row_gap(ui);
                         } else {
@@ -1284,7 +1307,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             });
         }
     }
-    items::sort_links(inv, &mut links, true);
+    items::sort_links(inv, &mut links);
     // each clothing type's layers as shown, furthest from the body first
     let mut groups: HashMap<u32, Vec<Uuid>> = HashMap::new();
     for link in &links {
@@ -1673,6 +1696,10 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    let inventory_hidden = world.rlva.has("showinv");
+    if inventory_hidden {
+        st.hide_inventory();
+    }
     if *open {
         st.read_pictures(world);
     }
@@ -1761,7 +1788,8 @@ pub fn show(
                         super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
                     }
                     if !st.editing {
-                        let can_locate = locatable(inv).is_some();
+                        // it opens an outfit tab, which @showinv disables
+                        let can_locate = locatable(inv).is_some() && !inventory_hidden;
                         let locate = ui
                             .add_enabled_ui(can_locate, |ui| {
                                 icon_button(
@@ -1813,8 +1841,8 @@ pub fn show(
                 p,
                 &mut st.tab,
                 &[
-                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), true),
-                    (aurora_i18n::tr!("ui-appearance-outfits"), true),
+                    (aurora_i18n::tr!("ui-appearance-outfit-gallery"), !inventory_hidden),
+                    (aurora_i18n::tr!("ui-appearance-outfits"), !inventory_hidden),
                     (&worn, true),
                 ],
             );
@@ -1887,16 +1915,16 @@ pub fn show(
         }
         if st.editing {
             ui.horizontal(|ui| {
-                if widgets::flat_button(
-                    ui,
-                    p,
-                    if st.adding {
-                        aurora_i18n::tr!("ui-appearance-back-to-worn-items")
-                    } else {
-                        aurora_i18n::tr!("ui-appearance-add-more")
-                    },
-                )
-                .clicked()
+                let label = if st.adding {
+                    aurora_i18n::tr!("ui-appearance-back-to-worn-items")
+                } else {
+                    aurora_i18n::tr!("ui-appearance-add-more")
+                };
+                // LLPanelOutfitEdit::showAddWearablesPanel: no inventory to add from under @showinv
+                if ui
+                    .add_enabled_ui(!inventory_hidden, |ui| widgets::flat_button(ui, p, label))
+                    .inner
+                    .clicked()
                 {
                     st.adding = !st.adding;
                     st.selected_item = None;
@@ -1978,6 +2006,16 @@ pub fn show(
                     model::cof(&world.inventory)
                 };
                 let idle = !st.json.busy() && st.pending.is_none();
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
+                    aurora_i18n::tr!("appearance-xml-export-mine"),
+                    idle && crate::world::appearance_xml::ready(world),
+                ) {
+                    st.json.export_appearance(ui.ctx(), world);
+                }
+
                 if menu::item_if(
                     ui,
                     p,
@@ -2229,6 +2267,21 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
 mod tests {
     use super::*;
 
+    /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle: the
+    /// window is left on the worn tab, with no list of items to add.
+    #[test]
+    fn rlva_showinv_leaves_the_outfit_tabs_for_the_worn_one() {
+        for tab in 0..=2 {
+            let mut st = AppearanceUi {
+                tab,
+                adding: true,
+                ..Default::default()
+            };
+            st.hide_inventory();
+            assert_eq!((st.tab, st.adding), (2, false));
+        }
+    }
+
     #[test]
     fn outfit_previews_fit_or_fill_without_distortion_or_overflow() {
         let frame = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(240.0, 210.0));
@@ -2273,6 +2326,27 @@ mod tests {
             let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
             assert_eq!(restored.appearance_fill_previews, fill);
         }
+    }
+
+    #[test]
+    fn appearance_xml_menu_disables_export_until_own_appearance_is_available() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        let mut state = AppearanceUi::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        assert!(!crate::world::appearance_xml::ready(&world));
+        assert!(click_menu(&ctx, &mut world, &mut state, aurora_i18n::tr!("appearance-xml-export-mine")).is_empty());
+        assert!(!state.json.busy());
     }
 
     #[test]
@@ -3254,6 +3328,7 @@ mod tests {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n,remattach=n,remoutfit:tattoo=n".into(),
         }));
@@ -3925,7 +4000,7 @@ mod tests {
         };
         // right click an item of the open outfit, then draw the whole list
         let mut links = model::folder_links(&world.inventory, outfit);
-        items::sort_links(&world.inventory, &mut links, false);
+        items::sort_links(&world.inventory, &mut links);
         let label = links
             .into_iter()
             .find_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
@@ -4303,6 +4378,7 @@ mod tests {
             owner_id: Uuid::from_u128(1),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@showinv=n".into(),
         };
@@ -4369,6 +4445,7 @@ mod tests {
                 owner_id: Uuid::from_u128(1),
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
                 position: glam::Vec3::ZERO,
                 message: String::new(),
             };
@@ -4388,16 +4465,27 @@ mod tests {
                     let pos = label_position(&ctx, &mut world, &mut st, label);
                     modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary)
                 } else {
-                    if !egui::Popup::is_any_open(&ctx) {
-                        click_row(
-                            &ctx,
-                            &mut world,
-                            &mut st,
-                            &name,
-                            egui::Modifiers::NONE,
-                            egui::PointerButton::Secondary,
-                        );
+                    // RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+                    // (rlvhandler.cpp): the outfits tab is left for the worn
+                    // one, and the outfit's rows go with it
+                    if !enabled {
+                        assert_eq!(st.tab, 2, "@showinv leaves the outfits tab");
+                        continue;
                     }
+                    // the release leaves the window on the worn tab
+                    st.open_outfit(folder);
+                    st.reveal_outfit = None;
+                    for _ in 0..5 {
+                        draw(&ctx, &mut world, &mut st, None);
+                    }
+                    click_row(
+                        &ctx,
+                        &mut world,
+                        &mut st,
+                        &name,
+                        egui::Modifiers::NONE,
+                        egui::PointerButton::Secondary,
+                    );
                     click_menu(&ctx, &mut world, &mut st, label)
                 };
                 if enabled {
@@ -4407,9 +4495,6 @@ mod tests {
                     );
                 } else {
                     assert!(actions.is_empty(), "profile={profile}: a disabled command must not dispatch");
-                    if !profile {
-                        assert!(egui::Popup::is_any_open(&ctx), "clicking the disabled entry keeps its menu open");
-                    }
                 }
             }
         }
