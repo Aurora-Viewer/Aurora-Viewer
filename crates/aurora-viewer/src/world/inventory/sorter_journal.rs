@@ -209,7 +209,7 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
     let mut targets = Targets::new(inv);
     let mut moves = Vec::new();
     let mut skipped = 0;
-    // the newest move of an entry wins: undo puts it where it was first
+    // an entry moved twice in a run goes back where it was first
     let mut first_from: HashMap<Uuid, &Entry> = HashMap::new();
     for entry in &run.entries {
         first_from.entry(entry.id).or_insert(entry);

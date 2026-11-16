@@ -1511,6 +1511,9 @@ pub(super) fn show(
                 }
             }
             Step::Done => {
+                // moves sent again after a refusal and never seen at their
+                // place (a Stop cleared the queue): skipped, not done
+                job.skipped += job.unsure.iter().filter(|(_, failed, _)| !failed).count();
                 state.status = if job.failed > 0 {
                     aurora_i18n::tr!(
                         "inventory-sorter-done-failed",

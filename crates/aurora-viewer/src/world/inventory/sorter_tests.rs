@@ -534,13 +534,13 @@ fn the_whole_inventory_reads_objects_and_moves_root_deliveries_whole() {
     part.name = "Kitty - Hex Dress HUD".into();
     inv.add_items(vec![part]);
     let prefs = Preferences::default();
-    assert_eq!(whole_sources(&inv, &prefs), [id(1), id(OBJECTS)]);
+    assert_eq!(whole_sources(&inv, &prefs), [id(1), id(OBJECTS), home]);
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     let mut moved: Vec<_> = plan.moves.iter().map(|m| m.id).collect();
     moved.sort();
-    // "My chairs", the user's folder lying at the root with a name that
-    // reads as furniture and no folder inside, moves whole like a delivery
-    assert_eq!(moved, [home, fatpack, id(100), id(150)]);
+    // "My chairs", the user's shelf at the root, is opened even named for
+    // furniture: its chair is sorted, the shelf stays
+    assert_eq!(moved, [fatpack, id(100), id(150), id(151)]);
     // excluding Objects leaves the root's loose item and its delivery
     let prefs = Preferences {
         excluded: vec![id(OBJECTS)],
@@ -549,7 +549,7 @@ fn the_whole_inventory_reads_objects_and_moves_root_deliveries_whole() {
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     let mut moved: Vec<_> = plan.moves.iter().map(|m| m.id).collect();
     moved.sort();
-    assert_eq!(moved, [home, id(150)]);
+    assert_eq!(moved, [id(150), id(151)]);
 }
 
 const OLD: i64 = 1_400_000_000;
@@ -600,6 +600,16 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     assert!(moved.contains(&id(81)) && moved.contains(&id(85)), "products move whole");
     assert!(moved.contains(&id(201)), "a loose item of Stuff is sorted");
     assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
+    // a shelf of items named for a kind or a body is opened too
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 93, 1, "My Shoes");
+    add_item(&mut inv, 205, 93, "Lace Boots", 0);
+    add_folder(&mut inv, 94, 1, "Hex Dress");
+    add_item(&mut inv, 206, 94, "Hex Dress Maitreya", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(93)) && moved.contains(&id(205)), "My Shoes is opened");
+    assert!(moved.contains(&id(94)) && !moved.contains(&id(206)), "Hex Dress moves whole");
     // shelves named for a kind are opened, whatever their subfolders
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 95, 1, "Dresses");

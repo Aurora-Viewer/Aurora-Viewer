@@ -1322,9 +1322,10 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         tagged || store_named && named || named && versions_only(inv, f, name)
     } else {
         // a folder of items alone is a product when its name says what or
-        // whose it is (`Hex Dress`, `[Velmora] Hex`); `Stuff`, `2024` or
-        // `Hunt Gifts` are opened
-        tagged || named || store_named
+        // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
+        // named for a kind or a body (`Stuff`, `2024`, `Hunt Gifts`, `My
+        // Shoes`, `Old Hair`, `Reborn Stuff`)
+        tagged || store_named || named && names_a_product(name)
     }
 }
 
@@ -2036,9 +2037,7 @@ fn first_rule<'a>(rules: &[&'a Rule], name_words: &[String], created: Option<i64
 /// any depth, and the sort folder's tree unless every Pre-Trash rule leaves
 /// it out. An item goes when its first usable rule is a Pre-Trash one; a
 /// product's folder (a delivery, a fatpack) is never split: it goes whole
-/// when a Pre-Trash rule names it, or when a dated one finds every item in
-/// it (at any depth) acquired before its date, and otherwise stays with all
-/// it holds. Only the folders Auto-sort made, the system folders, the
+/// when a Pre-Trash rule names it, and otherwise stays with all it holds. Only the folders Auto-sort made, the system folders, the
 /// folders whose name reads as no product (the user's own arrangement) and
 /// `source` itself are opened. Never read: the Trash, Marketplace Listings,
 /// the Library, Favorites, outfits, the Current Outfit, the Pre-Trash folder,
