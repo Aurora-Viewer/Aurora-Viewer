@@ -9,18 +9,24 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
     if ids.is_empty() {
         return false;
     }
-    let holds_worn = rules::worn_ancestors(inv, &facts.worn);
+    let holds_worn = rules::worn_ancestors(inv, &worn_or_active(facts));
     ids.iter()
         .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
 }
 
+/// What Delete counts as worn: the worn items and the active gestures
+/// (get_is_item_worn, llinventoryfunctions.cpp, LGPL 2.1, counts an active
+/// AT_GESTURE). Only for Delete: the other rules keep `facts.worn`. Active
+/// gestures are originals, so a gesture's link is not counted.
+fn worn_or_active(facts: &Facts) -> HashSet<Uuid> {
+    facts.worn.iter().chain(&facts.active_gestures).copied().collect()
+}
+
 /// The worn items a Delete of `ids` would take with it: the selected worn
-/// items and those inside a selected folder.
+/// items and active gestures, and those inside a selected folder.
 pub(super) fn worn_in(inv: &Inventory, ids: &[Uuid], facts: &Facts) -> Vec<Uuid> {
-    let mut worn: Vec<_> = facts
-        .worn
-        .iter()
-        .copied()
+    let mut worn: Vec<_> = worn_or_active(facts)
+        .into_iter()
         .filter(|item| rules::ancestors(inv, *item).any(|a| ids.contains(&a)))
         .collect();
     worn.sort();
@@ -30,7 +36,8 @@ pub(super) fn worn_in(inv: &Inventory, ids: &[Uuid], facts: &Facts) -> Vec<Uuid>
 /// LLInventoryAction::doToSelected "delete" (llinventoryfunctions.cpp, LGPL
 /// 2.1): a selection holding worn items may still be deleted once they are
 /// taken off ("DeleteWornItems"), unless one is a body part
-/// ("CantDeleteRequiredClothing") or RLVa keeps it on. The Trash move must
+/// ("CantDeleteRequiredClothing") or RLVa keeps it on. An active gesture is
+/// deactivated instead (LLGestureBridge::removeItem). The Trash move must
 /// then be allowed with those items off.
 pub(super) fn detach_allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreferences, facts: &Facts) -> bool {
     if ids.is_empty() || facts.appearance_busy || !ids.iter().all(|id| rules::removable(inv, *id, &prefs.protected)) {
@@ -38,9 +45,11 @@ pub(super) fn detach_allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPre
     }
     let worn = worn_in(inv, ids, facts);
     if worn.is_empty()
-        || !worn
-            .iter()
-            .all(|id| inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6)) && facts.rlva.can_remove(*id))
+        || !worn.iter().all(|id| match inv.items.get(id).map(|it| it.asset_type) {
+            Some(21) => facts.active_gestures.contains(id),
+            Some(5 | 6) => facts.rlva.can_remove(*id),
+            _ => false,
+        })
     {
         return false;
     }
@@ -63,10 +72,17 @@ pub(crate) struct DetachDelete {
     /// Started from the worn object's menu: say failures in chat, since the
     /// Inventory window may be closed.
     from_world: bool,
-    /// The outfit update was seen running; until then a refused take-off
+    /// The outfit update was seen running, or the app detached the objects
+    /// itself (`InventoryUi::take_off_sent`); until then a refused take-off
     /// leaves the items worn with nothing under way.
     seen_busy: bool,
     idle_frames: u8,
+}
+
+impl DetachDelete {
+    pub(super) fn take_off_sent(&mut self) {
+        self.seen_busy = true;
+    }
 }
 
 /// Say why a Detach and Delete stopped: in the window, and in chat when it
@@ -102,7 +118,13 @@ pub(super) fn start_detach(
     // The worn object's menu deletes something this window did not select.
     selection.advance = !from_world;
     st.message.clear();
-    actions.push(InvAction::Appearance(crate::world::appearance::Action::RemoveItems(worn.clone())));
+    let (gestures, items): (Vec<_>, Vec<_>) = worn.iter().partition(|id| facts.active_gestures.contains(id));
+    if !items.is_empty() {
+        actions.push(InvAction::Appearance(crate::world::appearance::Action::RemoveItems(items)));
+    }
+    if !gestures.is_empty() {
+        actions.push(InvAction::Gesture(crate::ui::gestures::Action::Active(gestures, false)));
+    }
     st.detach_delete = Some(DetachDelete {
         ids,
         worn,
@@ -125,7 +147,11 @@ pub(super) fn finish_detach(
 ) {
     let Some(pending) = &mut st.detach_delete else { return };
     pending.seen_busy |= facts.appearance_busy;
-    let off = !facts.appearance_busy && !pending.worn.iter().any(|id| facts.worn.contains(id));
+    let off = !facts.appearance_busy
+        && !pending
+            .worn
+            .iter()
+            .any(|id| facts.worn.contains(id) || facts.active_gestures.contains(id));
     if !off {
         // The take-off is applied after the frame that asked for it, so the
         // outfit update shows as running by the next one. Still idle a frame
@@ -636,6 +662,89 @@ mod tests {
             finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
         }
         assert!(st.detach_delete.is_some());
+    }
+
+    /// The app detached the objects itself (an incomplete outfit): no outfit
+    /// update runs, so a slow detach is waited for, not taken as refused.
+    #[test]
+    fn a_detach_sent_by_the_app_is_waited_for() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi::default();
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
+        actions.clear();
+        st.take_off_sent();
+        for _ in 0..10 {
+            finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        }
+        assert!(st.detach_delete.is_some() && actions.is_empty() && st.message.is_empty());
+        facts.worn.remove(&id(10));
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(matches!(actions.as_slice(), [InvAction::Delete(request)] if request.change.move_only()));
+    }
+
+    /// An active gesture counts as worn (get_is_item_worn): Delete asks
+    /// "Detach and Delete", deactivates it, then moves it to the Trash.
+    #[test]
+    fn an_active_gesture_is_deactivated_before_the_trash_move() {
+        let mut inv = worn_inventory();
+        inv.items.insert(
+            id(12),
+            aurora_net::inventory::InvItem {
+                id: id(12),
+                parent: id(1),
+                name: "12".into(),
+                asset_type: 21,
+                owner_mask: 0x7fff_ffff,
+                ..Default::default()
+            },
+        );
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            active_gestures: [id(12)].into(),
+            ..Default::default()
+        };
+        assert!(!allowed(&inv, &[id(12)], &prefs, &facts));
+        assert!(detach_allowed(&inv, &[id(12)], &prefs, &facts));
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(12)]),
+            selected: Some(id(12)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        let Some(EditDialog::DetachDelete(ids)) = st.dialog.take() else {
+            panic!("Delete on an active gesture asks to detach first");
+        };
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, ids);
+        assert!(
+            matches!(actions.as_slice(), [InvAction::Gesture(crate::ui::gestures::Action::Active(ids, false))] if *ids == [id(12)]),
+            "deactivated, no outfit update"
+        );
+        actions.clear();
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty(), "still active: nothing deleted");
+        facts.active_gestures.clear();
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(matches!(actions.as_slice(), [InvAction::Delete(request)] if request.change.move_only()));
+
+        // A worn shirt and an active gesture together: each comes off its own way.
+        facts.active_gestures = [id(12)].into();
+        let mut st = InventoryUi::default();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10), id(12)]);
+        assert!(matches!(
+            &actions[1..],
+            [
+                InvAction::Appearance(crate::world::appearance::Action::RemoveItems(items)),
+                InvAction::Gesture(crate::ui::gestures::Action::Active(gestures, false)),
+            ] if *items == [id(10)] && *gestures == [id(12)]
+        ));
     }
 
     /// The selection is the one confirmed: a click elsewhere during the wait

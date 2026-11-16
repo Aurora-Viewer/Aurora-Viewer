@@ -879,6 +879,21 @@ impl InventoryUi {
         self.show_original_in(inv, id, 0);
     }
 
+    /// Demo: press the Detach and Delete confirmation's button
+    /// (`AURORA_DEMO_WORN=detach-delete-confirm`, `AURORA_DEMO_GESTURES=delete`).
+    pub fn demo_confirm_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts) -> Vec<InvAction> {
+        let mut actions = Vec::new();
+        if let Some(EditDialog::DetachDelete(ids)) = self.dialog.take() {
+            delete::start_detach(inv, self, prefs, facts, &mut actions, ids);
+        }
+        actions
+    }
+
+    /// Demo: whether a Detach and Delete still waits for the take-off.
+    pub fn demo_detach_waiting(&self) -> bool {
+        self.detach_delete.is_some()
+    }
+
     /// "Detach and Delete" from the worn object's menu: ask the same
     /// confirmation as Inventory's own entry, without opening the window.
     /// Nothing opens while another dialog or a delete is under way; the
@@ -893,6 +908,16 @@ impl InventoryUi {
         self.detach_from_world = true;
         self.dialog = Some(EditDialog::DetachDelete(vec![id]));
         Ok(())
+    }
+
+    /// The app detached a Detach and Delete's objects itself (an incomplete
+    /// outfit or a temporary attachment, `World::recover_attachment_removal`):
+    /// no outfit update runs, so the wait must not read that as refused.
+    pub fn take_off_sent(&mut self) {
+        let windows = self.windows.iter_mut().map(|w| &mut w.state.detach_delete);
+        for pending in std::iter::once(&mut self.detach_delete).chain(windows).flatten() {
+            pending.take_off_sent();
+        }
     }
 
     fn show_original_in(&mut self, inv: &Inventory, id: Uuid, tab: usize) {

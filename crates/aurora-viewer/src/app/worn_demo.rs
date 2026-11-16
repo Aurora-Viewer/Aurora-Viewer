@@ -50,7 +50,11 @@ impl App {
         }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
-        let detach_delete = mode == "detach-delete";
+        let detach_delete = matches!(mode.as_str(), "detach-delete" | "detach-delete-confirm");
+        if mode == "detach-delete-confirm" {
+            let (confirm, log) = (self.frame_count == 780, [760, 800, 900, 1200].contains(&self.frame_count));
+            self.demo_detach_delete_steps("worn detach-delete", crate::demo::worn::item_id(), confirm, log);
+        }
         if !(edit || inspect || detach_delete || mode == "menu") {
             return;
         }

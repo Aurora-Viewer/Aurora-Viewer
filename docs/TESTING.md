@@ -3738,7 +3738,7 @@ Collada on an object of their own (prim, sculpt and mesh), on a bought one
 (nothing exportable) and on a megaprim, and checks that a texture they did not
 upload, or have no item of, is never written.
 
-**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|detach-delete|detach-delete-confirm|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -3789,6 +3789,10 @@ access to a grid.
   bottom bar) at frame 740: Inventory's "Detach and Delete" confirmation
   opens over the world and the Inventory window does not change. Capture
   at frame 760.
+- `detach-delete-confirm`: like `detach-delete`, then presses its button at
+  frame 780. The log writes `demo worn detach-delete:` lines at frames 760,
+  800, 900 and 1200 with `worn`, `trash`, `waiting` and `message`: worn at
+  760, then taken off and in the Trash, no wait left and no message.
 - `derender-part` (#3384): "Edit" on the backpack at frame 700, "Edit
   linked parts" ticked and its linked prim selected at 720, right click on
   that prim at 740, "Derender temporarily" at 780: only the linked prim
@@ -6405,7 +6409,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -11040,7 +11044,7 @@ rezzed object must disappear while its inventory original stays in place and
 no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
 an inventory row afterwards must give its ordinary shortcuts back to the list.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|chat-keys|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|chat-keys|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open|delete`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -11056,6 +11060,12 @@ conversation, in the Aurora and Legacy styles. Text and editing keys stay
 in the field; popup menus and other editors keep their function keys.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`delete` asks Inventory's "Detach and Delete" on the active F8 gesture
+at frame 650 and presses its button at 700, as the Legacy Viewer's
+Delete does for an active gesture (`get_is_item_worn`,
+`LLGestureBridge::removeItem`). The log writes `demo gesture delete:`
+lines: active at 600, `asked: Ok(())`, then inactive and in the Trash
+at 900, no wait left and no message.
 `once` (#2931) adds an authored one-shot on `/once` (F6), plays it at frames 650 and 1010,
 and waits for its natural completion before writing the finished chat line;
 there is no Stop Animation step. At 60 FPS capture frames 680, 950 and 1310:
