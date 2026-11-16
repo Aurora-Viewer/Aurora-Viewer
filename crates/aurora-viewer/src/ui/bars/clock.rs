@@ -258,6 +258,35 @@ pub(crate) fn chat_twelve_hours() -> bool {
     CHAT_12H.load(Ordering::Relaxed)
 }
 
+/// Whether the clock shows local time this frame, published once per UI
+/// frame by the app (`set_zone`): the event times of Search follow it
+/// (#1754). SLT until the first frame.
+static ZONE_LOCAL: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the clock's zone for the times shown elsewhere (once per UI
+/// frame).
+pub(crate) fn set_zone(zone: ClockZone) {
+    ZONE_LOCAL.store(zone == ClockZone::Local, Ordering::Relaxed);
+}
+
+/// The clock's zone, as last published.
+pub(crate) fn zone() -> ClockZone {
+    if ZONE_LOCAL.load(Ordering::Relaxed) {
+        ClockZone::Local
+    } else {
+        ClockZone::Slt
+    }
+}
+
+/// What names `zone` at `unix`: "SLT", or local time's abbreviation or
+/// offset ("CET", "UTC+4"), like the clock writes it.
+pub(crate) fn zone_name(zone: ClockZone, unix: i64) -> String {
+    match zone {
+        ClockZone::Slt => "SLT".to_owned(),
+        ClockZone::Local => local(unix).1,
+    }
+}
+
 /// "14:05", "14:05:09", "2:05 PM" or "2:05:09 PM", at `offset` seconds
 /// from UTC.
 fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
@@ -280,7 +309,9 @@ pub(crate) fn hour_text(h: i64, m: i64, secs: &str, twelve: bool) -> String {
             0 => 12,
             h => h,
         };
-        format!("{h12}:{m:02}{secs} {marker}")
+        // the marker's place is the language's: after in English, before
+        // in Japanese (time_ampm of panel_status_bar.xml, xui/ja)
+        aurora_i18n::tr!("ui-bars-clock-twelve-hours", time = format!("{h12}:{m:02}{secs}"), marker = marker)
     } else {
         format!("{h:02}:{m:02}{secs}")
     }
@@ -359,20 +390,34 @@ mod tests {
     fn hours_in_24_and_12_hours() {
         // 2026-01-15 22:05:09 UTC
         let unix = 1_768_514_709;
+        // the catalogue's markers: the tests run in the system language
+        // ("AM" / "PM" in English and French, 午前 / 午後 in Japanese)
+        let (am, pm) = (aurora_i18n::tr!("ui-bars-clock-am"), aurora_i18n::tr!("ui-bars-clock-pm"));
+        // and their place: after the hour, before it in Japanese (午後10:05)
+        let twelve =
+            |time: &str, marker: &str| aurora_i18n::tr!("ui-bars-clock-twelve-hours", time = time.to_owned(), marker = marker.to_owned());
+        assert_eq!(
+            aurora_i18n::tr_in!("ja", "ui-bars-clock-twelve-hours", time = "10:05", marker = "午後"),
+            "午後10:05"
+        );
+        assert_eq!(
+            aurora_i18n::tr_in!("en", "ui-bars-clock-twelve-hours", time = "10:05", marker = "PM"),
+            "10:05 PM"
+        );
         assert_eq!(hours(unix, 0, true, false), "22:05:09");
         assert_eq!(hours(unix, 0, false, false), "22:05");
-        assert_eq!(hours(unix, 0, false, true), "10:05 PM");
-        assert_eq!(hours(unix, 0, true, true), "10:05:09 PM");
+        assert_eq!(hours(unix, 0, false, true), twelve("10:05", pm));
+        assert_eq!(hours(unix, 0, true, true), twelve("10:05:09", pm));
         // in January SLT is PST, UTC-8
         let slt = offset(ClockZone::Slt, unix);
         assert_eq!(hours(unix, slt, false, false), "14:05");
-        assert_eq!(hours(unix, slt, false, true), "2:05 PM");
+        assert_eq!(hours(unix, slt, false, true), twelve("2:05", pm));
         // midnight and noon
-        assert_eq!(hours(unix, 2 * 3600 - 5 * 60 - 9, false, true), "12:00 AM");
-        assert_eq!(hours(unix, -10 * 3600 - 5 * 60 - 9, false, true), "12:00 PM");
+        assert_eq!(hours(unix, 2 * 3600 - 5 * 60 - 9, false, true), twelve("12:00", am));
+        assert_eq!(hours(unix, -10 * 3600 - 5 * 60 - 9, false, true), twelve("12:00", pm));
         // a positive offset past midnight wraps
         assert_eq!(hours(unix, 3 * 3600, false, false), "01:05");
-        assert_eq!(hours(unix, 3 * 3600, false, true), "1:05 AM");
+        assert_eq!(hours(unix, 3 * 3600, false, true), twelve("1:05", am));
     }
 
     #[test]

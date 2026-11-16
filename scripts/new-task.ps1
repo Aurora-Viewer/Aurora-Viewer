@@ -86,6 +86,9 @@ Invoke-Checked 'git worktree add' { git -C $p.Main worktree add -b $branch $dir 
 New-Item -ItemType Directory -Force -Path (Join-Path $dir '.scratch') | Out-Null
 # the first build of the task takes the dependencies from the shared cache
 Sync-BuildCache
+# and finds its Rust version installed: two tasks whose first builds both
+# install it at the same moment would break it (common.ps1)
+Install-RustVersion $dir
 
 Write-Host ""
 Write-Host "Task ready:" -ForegroundColor Green

@@ -20,6 +20,8 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -183,7 +185,8 @@ impl Harness {
         };
         self.frame(vec![egui::Event::PointerMoved(at)]);
         self.frame(vec![button(true)]);
-        for _ in 0..36 {
+        // past the hold that opens a sheet (`rows::SHEET_HOLD_SECONDS`)
+        for _ in 0..72 {
             self.frame(Vec::new());
         }
         self.frame(vec![button(false)]);
@@ -1241,8 +1244,11 @@ fn empty_sections_are_not_drawn() {
     let texts = h.settle();
     let head = |key: &'static str| aurora_i18n::text(key).to_uppercase();
     assert!(texts.iter().any(|t| t.source == head("ui-chat-section-private")), "the IMs' head");
+    // (the window's title may read the same: Japanese writes 会話 for both)
+    let title = aurora_i18n::tr!("common-conversations");
     for key in ["ui-chat-section-groups", "ui-chat-section-conferences"] {
-        assert!(texts.iter().all(|t| t.source != head(key)), "{key} drawn while empty");
+        let drawn = texts.iter().filter(|t| t.source == head(key)).count();
+        assert_eq!(drawn, usize::from(head(key) == title), "{key} drawn while empty");
     }
     let new = super::super::sidebar::control_id("new-conversation");
     assert!(h.frames.ctx.read_response(new).is_some(), "the new conversation button");
@@ -2654,11 +2660,16 @@ fn the_column_previews_show_link_labels() {
         line("Jane", JANE, ChatKind::Im, &format!("ask secondlife:///app/agent/{lune}/about")),
     );
     let texts = h.settle();
-    // (a teleport link reads "Teleport to Pinede (1,2,3)", in the language)
+    // (a teleport link reads "Teleport to Pinede (1,2,3)", in the language's
+    // order: Japanese puts the place first)
     assert!(
-        texts
-            .iter()
-            .any(|t| t.source.contains(" · Nova : join Cercle des Brumes with Lune Étoilée at ") && t.source.ends_with(" Pinede (1,2,3)")),
+        texts.iter().any(|t| {
+            let (_, preview) = t
+                .source
+                .split_once(" · Nova : join Cercle des Brumes with Lune Étoilée at ")
+                .unwrap_or_default();
+            preview.contains("Pinede (1,2,3)")
+        }),
         "the nearby chat's entry: {:?}",
         texts.iter().map(|t| &t.source).collect::<Vec<_>>()
     );

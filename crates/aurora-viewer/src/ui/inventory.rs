@@ -258,7 +258,7 @@ pub struct Facts {
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
-    pub rlva: crate::world::rlva::WearLocks,
+    pub rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
@@ -442,6 +442,16 @@ pub struct InvDrag(pub Uuid);
 /// A single folder dragged to inventory or Marketplace listings.
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
+
+/// An object embedded in an open notecard, dragged out of its text
+/// (LLViewerTextEditor::handleHover, SOURCE_NOTECARD): the editor and the
+/// notecard that hold it, and its marker in the text.
+#[derive(Debug, Clone, Copy)]
+pub struct NotecardDrag {
+    pub editor: Uuid,
+    pub notecard: Uuid,
+    pub marker: char,
+}
 
 pub(crate) struct WorldDrag {
     pub item: Uuid,
@@ -1612,7 +1622,10 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
             continue;
         }
         complete &= folder.state == FetchState::Fetched;
-        if matches!(folder.state, FetchState::Unknown | FetchState::Failed) && inv.queue.len() + requests.len() < 16 {
+        if !inv.too_big.contains(&id)
+            && matches!(folder.state, FetchState::Unknown | FetchState::Failed)
+            && inv.queue.len() + requests.len() < 16
+        {
             requests.push(id);
         }
         todo.extend(folder.children.iter().copied());
@@ -4865,9 +4878,11 @@ mod tests {
         let mut outside = nested.clone();
         outside.id = Uuid::from_u128(8200);
         outside.parent = Uuid::from_u128(8002);
+        // the item's own name ("Instructions…"), in the language's words
+        let search = inv.items[&Uuid::from_u128(8103)].name.clone();
         inv.add_items(vec![nested, outside]);
         let mut st = InventoryUi {
-            search: "instructions".into(),
+            search,
             ..Default::default()
         };
         folder_window_frame(&ctx, &mut inv, root, &mut st);

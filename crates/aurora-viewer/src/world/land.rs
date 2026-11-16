@@ -350,7 +350,8 @@ impl EnvSummary {
         };
         if name.is_empty() {
             name = self.track_name(index - 1);
-            if !name.starts_with('(') {
+            // already in brackets: the region's own message (full width in Japanese)
+            if !name.starts_with(['(', '（']) {
                 name = format!("({name})");
             }
         }

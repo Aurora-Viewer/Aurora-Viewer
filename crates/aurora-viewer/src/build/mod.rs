@@ -174,6 +174,15 @@ pub struct BuildSettings {
     pub follow_edit_object: bool,
     /// RenderHighlightSelections.
     pub show_highlight: bool,
+    /// RenderHiddenSelections (off): the outline edges on the far side of
+    /// the selected prims too, fainter.
+    pub show_hidden_selection: bool,
+    /// RenderLightRadius (off): the reach of the selected lights while the
+    /// tools are open.
+    pub show_light_radius: bool,
+    /// RenderReflectionProbeVolumes: off at each start (Persist=0).
+    #[serde(skip)]
+    pub show_probe_volumes: bool,
     /// Create tool: shape (index in `shapes::SHAPES`).
     pub create_shape: usize,
     /// CreateToolKeepSelected.
@@ -220,6 +229,13 @@ pub struct BuildSettings {
     pub select_owned_only: bool,
     /// SelectMovableOnly: the same for the objects we may move.
     pub select_movable_only: bool,
+    /// FSSelectLockedOnly: only the objects we may not move (off).
+    pub select_locked_only: bool,
+    /// FSSelectCopyableOnly: only the objects we may copy (off).
+    pub select_copyable_only: bool,
+    /// FSSelectIncludeGroupOwned (on): off, the selection rectangle leaves
+    /// the group-owned objects out (`passes_rect_filters`).
+    pub select_group_owned: bool,
     /// RectangleSelectInclusive, the Legacy Viewer's "Select By Surrounding"
     /// (on by default): the selection rectangle takes only the prims it
     /// wholly surrounds; off, any prim it touches (`rect_select`). The
@@ -365,6 +381,11 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     if !world.rlva_can_edit(idx) || linking::permanent(world, idx) || linking::permanent(world, root_of(world, idx)) {
         return false;
     }
+    // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
+    // held on under @unsit or @sittp neither moves nor changes.
+    if world.rlva_restrained_seat(idx) {
+        return false;
+    }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
     let Some(root) = world.objects.get(root_of(world, idx)) else {
         return false;
@@ -383,15 +404,17 @@ pub fn copyable_object(world: &World, idx: usize) -> bool {
             .is_some_and(|root| root.update_flags & OBJECT_COPY != 0)
 }
 
-/// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
-/// (indra/newview/llselectmgr.cpp, originally LGPL 2.1). permYouOwner and
-/// permMove read the root's flags; a permanent (pathfinding) object only
-/// counts as movable in the agent's region (isPermanentEnforced). The
-/// right-click menu's temporary selection skips this check, as
+/// SelectOwnedOnly / SelectMovableOnly, FSSelectLockedOnly and
+/// FSSelectCopyableOnly in LLSelectMgr::canSelectObject
+/// (indra/newview/llselectmgr.cpp, originally LGPL 2.1). permYouOwner,
+/// permMove and permCopy read the root's flags; a permanent (pathfinding)
+/// object only counts as movable in the agent's region
+/// (isPermanentEnforced), and counts as locked elsewhere. The right-click
+/// menu's temporary selection skips this check, as
 /// LLToolSelect::handleObjectSelection does with temp_select.
 pub fn passes_select_filters(world: &World, s: &BuildSettings, idx: usize) -> bool {
-    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MOVE, OBJECT_YOU_OWNER};
-    if !s.select_owned_only && !s.select_movable_only {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_COPY, OBJECT_MOVE, OBJECT_YOU_OWNER};
+    if !s.select_owned_only && !s.select_movable_only && !s.select_locked_only && !s.select_copyable_only {
         return true;
     }
     let Some(root) = world.objects.get(root_of(world, idx)) else {
@@ -399,7 +422,73 @@ pub fn passes_select_filters(world: &World, s: &BuildSettings, idx: usize) -> bo
     };
     let flags = root.update_flags;
     let permanent_enforced = flags & AFFECTS_NAVMESH != 0 && world.main_region != Some(root.key.region);
-    !(s.select_owned_only && flags & OBJECT_YOU_OWNER == 0) && !(s.select_movable_only && (flags & OBJECT_MOVE == 0 || permanent_enforced))
+    let movable = flags & OBJECT_MOVE != 0 && !permanent_enforced;
+    !(s.select_owned_only && flags & OBJECT_YOU_OWNER == 0)
+        && !(s.select_movable_only && !movable)
+        && !(s.select_locked_only && movable)
+        && !(s.select_copyable_only && flags & OBJECT_COPY == 0)
+}
+
+/// The switches of Build > Options (menu_viewer.xml), as the menu shows and
+/// sets them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MenuOptions {
+    pub owned_only: bool,
+    pub movable_only: bool,
+    pub locked_only: bool,
+    pub copyable_only: bool,
+    pub probes: bool,
+    pub surrounding: bool,
+    pub group_owned: bool,
+    pub highlight: bool,
+    pub hidden_selection: bool,
+    pub light_radius: bool,
+    pub probe_volumes: bool,
+}
+
+impl MenuOptions {
+    pub fn of(s: &BuildSettings) -> Self {
+        Self {
+            owned_only: s.select_owned_only,
+            movable_only: s.select_movable_only,
+            locked_only: s.select_locked_only,
+            copyable_only: s.select_copyable_only,
+            probes: s.select_probes,
+            surrounding: s.select_surrounding,
+            group_owned: s.select_group_owned,
+            highlight: s.show_highlight,
+            hidden_selection: s.show_hidden_selection,
+            light_radius: s.show_light_radius,
+            probe_volumes: s.show_probe_volumes,
+        }
+    }
+
+    pub fn apply(self, s: &mut BuildSettings) {
+        s.select_owned_only = self.owned_only;
+        s.select_movable_only = self.movable_only;
+        s.select_locked_only = self.locked_only;
+        s.select_copyable_only = self.copyable_only;
+        s.select_probes = self.probes;
+        s.select_surrounding = self.surrounding;
+        s.select_group_owned = self.group_owned;
+        s.show_highlight = self.highlight;
+        s.show_hidden_selection = self.hidden_selection;
+        s.show_light_radius = self.light_radius;
+        s.show_probe_volumes = self.probe_volumes;
+    }
+}
+
+/// The selection rectangle's filters: the click's, then
+/// FSSelectIncludeGroupOwned (LLSelectMgr::highlightObjectOnly, which
+/// leaves a group-owned root out while the switch is off).
+pub fn passes_rect_filters(world: &World, s: &BuildSettings, idx: usize) -> bool {
+    use crate::ui::context::flags::OBJECT_GROUP_OWNED;
+    passes_select_filters(world, s, idx)
+        && (s.select_group_owned
+            || world
+                .objects
+                .get(root_of(world, idx))
+                .is_some_and(|root| root.update_flags & OBJECT_GROUP_OWNED == 0))
 }
 
 /// LLSelectMgr::highlightObjectAndFamily for the objects of ForceObjectSelect:
@@ -654,6 +743,9 @@ impl Default for BuildSettings {
             scale_stretch_textures: true,
             follow_edit_object: false,
             show_highlight: true,
+            show_hidden_selection: false,
+            show_light_radius: false,
+            show_probe_volumes: false,
             create_shape: 0,
             keep_tool: false,
             rez_under_land_group: true,
@@ -675,6 +767,9 @@ impl Default for BuildSettings {
             select_probes: false,
             select_owned_only: false,
             select_movable_only: false,
+            select_locked_only: false,
+            select_copyable_only: false,
+            select_group_owned: true,
             select_surrounding: true,
             decimal_precision: 5,
             copy_selection: false,
@@ -987,7 +1082,7 @@ pub fn select_type(world: &World, mut idx: usize) -> SelectType {
 /// World objects and what our avatar wears, HUDs included; the attachments
 /// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
-    if !world.rlva_can_edit(idx) {
+    if !world.rlva_can_edit(idx) || !world.rlva_within_fartouch(idx) {
         return false;
     }
     let mut i = idx;
@@ -1514,9 +1609,11 @@ impl BuildTool {
     }
 
     /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
-    /// outside attachments.
+    /// outside attachments, and under @unsit no linkset the agent sits on.
     pub fn can_unlink(&self, world: &World) -> bool {
-        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+        !self.attachment_selected(world)
+            && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+            && self.roots(world).iter().all(|&r| world.rlva_can_unlink(r))
     }
 
     fn advance_link(&mut self, world: &mut World, now: Instant) {
@@ -1586,7 +1683,8 @@ impl BuildTool {
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
             && !self.manip.dragging()
-            && let Some(max) = s.select_limit()
+            // deselectAllIfTooFar: in the tools, @fartouch stands for the limit
+            && let Some(max) = self.open.then(|| world.rlva_select_limit()).flatten().or(s.select_limit())
             && let Some(b) = self.bounds(world, now)
             && b.center.distance(world.agent.position) > max
         {
@@ -1842,7 +1940,7 @@ impl BuildTool {
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
-        if self.attachment_selected(world) {
+        if self.attachment_selected(world) || !self.roots(world).iter().all(|&r| world.rlva_can_unlink(r)) {
             return;
         }
         let prims: Vec<usize> = self
@@ -2013,7 +2111,7 @@ impl BuildTool {
                 }),
             };
             if taken
-                && passes_select_filters(world, s, idx)
+                && passes_rect_filters(world, s, idx)
                 && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
                 && seen.insert(u)
             {
@@ -2235,6 +2333,11 @@ impl BuildTool {
                 if mods.shift || mods.ctrl {
                     // Shift / Ctrl click selects instead (LLToolCompCreate)
                     self.click_select(world, s, pick, true);
+                    return true;
+                }
+                // LLToolPlacer::placeObject: under @rez or @interact the
+                // click does nothing, and plays no sound.
+                if !world.rlva_can_rez(None) {
                     return true;
                 }
                 if s.copy_selection {
@@ -2591,6 +2694,60 @@ impl BuildTool {
         Some((s.move_hologram, self.manip.move_ghost()?))
     }
 
+    /// RenderLightRadius (LLViewerWindow::renderSelections, while the tools
+    /// are open): around each selected light, a sphere of its radius in its
+    /// colour at half opacity. The Legacy Viewer fills it; here three
+    /// circles outline it, so the prims inside stay readable.
+    fn light_radius_draw(&self, p: &draw::Painter3d, world: &World, now: Instant) {
+        if self.select_type(world) != SelectType::World {
+            return;
+        }
+        for idx in self.sel_prims(world) {
+            let Some(light) = world.objects.get(idx).and_then(|o| o.extra.light) else {
+                continue;
+            };
+            let Some((center, _, false)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            // getLightSRGBColor: the packed colour is linear
+            let srgb = |c: f32| c.clamp(0.0, 1.0).powf(1.0 / 2.2);
+            let color = draw::rgba(srgb(light.color[0]), srgb(light.color[1]), srgb(light.color[2]), 0.5);
+            for [a, b] in draw::light_radius_circles(center, light.radius) {
+                p.line(a, b, color, 1.5);
+            }
+        }
+    }
+
+    /// RenderReflectionProbeVolumes (LLPipeline::renderDebug), whatever the
+    /// tools show: the reach of every reflection probe. The Legacy Viewer
+    /// shades it with a full-screen debug pass (reflectionProbeDisplay);
+    /// here each probe's volume is outlined (LLReflectionMap::update: a box
+    /// probe fills its prim, a sphere probe reaches half its X scale).
+    pub fn draw_probe_volumes(&self, ctx: &egui::Context, pal: &crate::theme::Palette, world: &World, s: &BuildSettings) {
+        if !s.show_probe_volumes || self.select_type(world) == SelectType::Hud {
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("build_probe_volumes")));
+        let cam = self.cam;
+        let p = draw::Painter3d::new(painter, &cam, *pal);
+        let now = Instant::now();
+        for (idx, o) in world.objects.iter() {
+            let Some(probe) = o.extra.reflection_probe else {
+                continue;
+            };
+            if !world.parcel_object_visible(idx) {
+                continue;
+            }
+            let Some((pos, rot, false)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            let scale = o.visual_scale();
+            for [a, b] in draw::probe_volume_edges(pos, rot, scale, probe.flags & 1 != 0) {
+                p.line(a, b, pal.teal, 1.0);
+            }
+        }
+    }
+
     fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
@@ -2632,13 +2789,16 @@ impl BuildTool {
         let now = Instant::now();
         let prims = self.outlined(world, s);
         if !prims.is_empty() {
-            self.silhouettes.draw(&p, world, scene, &prims);
+            self.silhouettes.draw(&p, world, scene, &prims, s.show_hidden_selection);
         }
         if !self.open && !self.menu_selection {
             return;
         }
         if !self.open || self.replacement_active() || self.ui.color_picker.pipette {
             return;
+        }
+        if s.show_light_radius {
+            self.light_radius_draw(&p, world, now);
         }
         match self.tool {
             Tool::Edit => {

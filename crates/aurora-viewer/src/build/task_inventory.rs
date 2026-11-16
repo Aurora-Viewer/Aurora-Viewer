@@ -57,6 +57,11 @@ pub fn kind(world: &World, object: Uuid, item: &TaskItem, object_owned: bool) ->
     if item.is_folder || item.item_id.is_nil() || item.parent_id != object {
         return Err(aurora_i18n::tr!("task-transfer-unavailable"));
     }
+    // LLTaskInvFVBridge::isItemMovable and startDrag: nothing leaves a locked
+    // attachment or the restraining seat, not even as a copy.
+    if world.rlva_contents_locked(idx) {
+        return Err(aurora_i18n::tr!("rlva-blocked"));
+    }
     // LLPermissions::allowCopyBy(agent, active group), allowTransferTo(agent).
     let mask = if !item.group_owned && item.owner_id == world.agent_id {
         item.owner_mask
@@ -152,7 +157,7 @@ pub fn contents_folder_name(object_name: &str) -> String {
     let name: String = object_name.chars().filter(|c| !c.is_control() && *c != '|').collect();
     let name = name.trim();
     if name.is_empty() {
-        crate::text_validation::generated_name(aurora_i18n::tr!("common-object"), 63)
+        crate::text_validation::generated_name(crate::text_validation::default_name("common-object"), 63)
     } else {
         crate::text_validation::generated_name(name, 63)
     }
