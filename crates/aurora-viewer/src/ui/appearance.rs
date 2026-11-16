@@ -4097,6 +4097,10 @@ mod tests {
             );
         }
 
+        // Let the wheel's smooth delta expire before choosing a particular row.
+        for _ in 0..120 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
         let outfit = visible_list_outfit(&ctx, &mut world, &mut st).expect("scrolled outfit is in sight");
         assert!(
             st.shown_outfits(&world.inventory)
@@ -4107,7 +4111,9 @@ mod tests {
         );
         st.outfit_selection.single(outfit);
         st.reveal_outfit = Some(outfit);
-        for _ in 0..4 {
+        // The accordion opens and scroll_to_me aligns its header. Pointer coordinates
+        // sampled mid-animation can hit another row by the time the button is released.
+        for _ in 0..120 {
             draw(&ctx, &mut world, &mut st, None);
         }
         assert_eq!(st.outfit_selection.focus, Some(outfit), "the outfit is selected");
@@ -4117,18 +4123,22 @@ mod tests {
         );
         let mut links = model::folder_links(&world.inventory, outfit);
         items::sort_links(&world.inventory, &mut links);
-        let (item, name) = links
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            ..Default::default()
+        };
+        let shapes = draw_output(&ctx, &mut world, &mut st, input).1;
+        let (item, pos) = links
             .iter()
-            .find_map(|link| world.inventory.items.get(&link.target).map(|it| (it.id, it.name.clone())))
-            .expect("outfit item");
-        click_row(
-            &ctx,
-            &mut world,
-            &mut st,
-            &name,
-            egui::Modifiers::NONE,
-            egui::PointerButton::Primary,
-        );
+            .find_map(|link| {
+                let it = world.inventory.items.get(&link.target)?;
+                shapes.iter().find_map(|shape| {
+                    let pos = text_position(&shape.shape, &it.name)?;
+                    shape.clip_rect.contains(pos).then_some((it.id, pos))
+                })
+            })
+            .expect("a visible item in the expanded outfit");
+        assert!(modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary).is_empty());
         assert!(st.item_selected(outfit, item), "item row click selects an item");
         let first_visible = visible_list_outfit(&ctx, &mut world, &mut st).expect("outfit list remains scrolled");
         assert_eq!(first_visible, outfit, "the expanded outfit is the first visible row");
