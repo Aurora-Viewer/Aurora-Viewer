@@ -154,7 +154,11 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
                                     }
                                 }
                                 Destination::Experience => {
-                                    experience_profile::ExperienceProfileUi::default().show(ctx, &p, &mut world, &HashMap::new());
+                                    let pictures = experience_profile::Pictures {
+                                        images: &images,
+                                        avatars: &images,
+                                    };
+                                    experience_profile::ExperienceProfileUi::default().show(ctx, &p, &mut world, pictures);
                                 }
                                 Destination::Pay => {
                                     pay.show(ctx, &p, &world, (&HashMap::new(), &HashMap::new()), classic, true, 0);

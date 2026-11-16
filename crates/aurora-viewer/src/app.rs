@@ -2205,6 +2205,7 @@ impl App {
                 self.world.system_message(text);
             }
             crate::demo::experience::Reply::Nothing => {}
+            crate::demo::experience::Reply::OpenList => self.panels.experiences = true,
         }
     }
 
@@ -9260,6 +9261,7 @@ impl App {
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
+        wanted.extend(self.experience_profile_ui.wanted_pics.drain());
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -9325,6 +9327,7 @@ impl App {
         images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
+        images.extend(self.experiences_ui.wanted_images.drain());
         let overlays = self.world.rlva_overlay_frames(Instant::now());
         self.rlva_overlay_slots.retain(|id, _| {
             let keep = overlays.iter().any(|frame| frame.texture == *id);
@@ -19386,7 +19389,8 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
-                self.experiences_ui.show(&ctx, &p, &mut self.world, &mut self.panels.experiences);
+                self.experiences_ui
+                    .show(&ctx, &p, &mut self.world, &mut self.panels.experiences, &self.ui_images);
                 for action in contents_actions {
                     self.apply_contents_action(action);
                 }
@@ -19658,7 +19662,11 @@ impl App {
                     self.send(cmd);
                 }
                 // the experience profile (the permission question's link)
-                if let Some((experience, change)) = self.experience_profile_ui.show(&ctx, &p, &mut self.world, &self.ui_images) {
+                let pictures = ui::experience_profile::Pictures {
+                    images: &self.ui_images,
+                    avatars: &self.avatar_pics,
+                };
+                if let Some((experience, change)) = self.experience_profile_ui.show(&ctx, &p, &mut self.world, pictures) {
                     self.world.experiences.change(experience, change);
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
@@ -19868,6 +19876,7 @@ impl App {
                     profile_base: profile_base.as_deref(),
                 };
                 self.profile_ui.prepare_photos(&ctx, &mut self.scene, &self.world);
+                self.experience_profile_ui.prepare_banner(&ctx, &mut self.scene, &self.world);
                 let acts = self.profile_ui.show(
                     &ctx,
                     &p,

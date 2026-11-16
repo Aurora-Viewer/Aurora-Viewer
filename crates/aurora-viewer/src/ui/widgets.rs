@@ -573,6 +573,8 @@ pub struct Floater<'a> {
     /// Resized by its edges, its body keeps this width over height, the
     /// window adding the second value around it (see `keep_aspect`).
     pub aspect: Option<(f32, Vec2)>,
+    /// The widest its edges make it (see `max_width`).
+    pub max_width: Option<f32>,
     /// Its layer: the windows' own (`Middle`), or `Foreground` over an
     /// overlay whose controls sit there (the photo viewfinder's poser).
     pub order: egui::Order,
@@ -611,6 +613,7 @@ impl<'a> Floater<'a> {
             flush_body: false,
             steady_size: false,
             aspect: None,
+            max_width: None,
             order: egui::Order::Middle,
             cascade: None,
             partial_outside: false,
@@ -724,6 +727,13 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Resized by its edges, the window grows no wider than `width`: the
+    /// dragged edge stops there, the opposite one stays (a window whose
+    /// content would only stretch past it, such as a banner).
+    pub fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(width);
+        self
+    }
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -819,6 +829,9 @@ impl<'a> Floater<'a> {
         // opens larger than that room, nor outside it.
         let work = super::layout::work_area(ctx);
         self.min_size = self.min_size.min(work.size());
+        if let Some(max) = self.max_width {
+            self.default_size.x = self.default_size.x.min(max);
+        }
         self.default_size = self.default_size.min(work.size());
         self.default_pos = fit_in(work, self.default_pos, self.default_size);
         let opening = self
@@ -837,8 +850,14 @@ impl<'a> Floater<'a> {
         // are (LLFloaterView::adjustToFitScreen).
         let shrink = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
-            .filter(|s| resizable && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
-            .map(|s| s.min(work.size()));
+            .map(|s| {
+                (
+                    s,
+                    Vec2::new(self.max_width.unwrap_or(f32::INFINITY).min(work.width()), work.height()),
+                )
+            })
+            .filter(|(s, room)| resizable && resize_drag.is_none() && (s.x > room.x + 0.5 || s.y > room.y + 0.5))
+            .map(|(s, room)| s.min(room));
         // Our handles clamp both geometry and position at the minimum, while
         // Window retains its normal movement and persisted layout.
         let mut w = egui::Window::new(&self.title)
@@ -902,8 +921,12 @@ impl<'a> Floater<'a> {
                 super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
             );
             // a window of fixed shape: the snapped rect brought back to it
-            match self.aspect {
+            let rect = match self.aspect {
                 Some((ratio, chrome)) => on_pixels(ctx, drag.keep_aspect(rect, ratio, chrome)),
+                None => rect,
+            };
+            match self.max_width {
+                Some(max) => on_pixels(ctx, drag.cap_width(rect, max)),
                 None => rect,
             }
         });

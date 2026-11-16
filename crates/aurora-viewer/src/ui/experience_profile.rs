@@ -1,13 +1,23 @@
 //! Experience profile: what the experience is and the agent's permission
-//! for it, with Firestorm's Allow / Forget / Block buttons
+//! for it, with the Legacy Viewer's Allow / Forget / Block buttons
 //! (LLFloaterExperienceProfile, indra/newview/llfloaterexperienceprofile.cpp,
-//! originally LGPL 2.1): the logo, name and description, rating, scope,
-//! location, owner, group and marketplace address, and "Report Abuse". An
+//! originally LGPL 2.1, refreshExperience): the banner (the logo), the name
+//! with a button that copies the experience's SLURL, the description, the
+//! rating with its badge, the scope, the location, owner, group and
+//! Marketplace links with a conversation's menus, and "Report Abuse". An
 //! administrator also edits it (the Edit tab, experienceIsAdmin): name,
 //! description, rating, location, group (the owner only), marketplace
 //! address, logo, "Enable Experience" and "Hide In Search", saved with
 //! UpdateExperience; closing or going back with changes asks first.
+//!
+//! The banner spans the window edge to edge, where the Legacy Viewer frames
+//! it in a margin, with the shape of the Legacy Viewer's box (creators make
+//! their banners for it); the window grows no wider than `MAX_WIDTH`, so the
+//! banner never takes the screen. The permission and its actions stay in a
+//! footer under the scrolled details.
 
+use super::menu;
+use super::texture_library::texture_view::ImageView;
 use super::texture_picker::TexturePicker;
 use super::widgets::{self, ActionKind, Floater, action_button_if, flat_button};
 use crate::theme::Palette;
@@ -15,12 +25,14 @@ use crate::world::World;
 use aurora_net::experience::{
     ExperienceDetails, ExperienceEdit, ExperiencePermission, ExperiencePermissionChange, MATURITIES, update_body,
 };
-use egui::{RichText, Vec2};
+use egui::{Rect, RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const WINDOW: &str = "experience_profile";
-const VIEW_SIZE: Vec2 = Vec2::new(380.0, 340.0);
+/// Tall enough for a banner and every row: the window opens before the
+/// details arrive, so its size cannot follow them.
+const VIEW_SIZE: Vec2 = Vec2::new(400.0, 600.0);
 const EDIT_SIZE: Vec2 = Vec2::new(420.0, 600.0);
 const LABEL_WIDTH: f32 = 110.0;
 const LOGO_SIZE: Vec2 = Vec2::new(180.0, 122.0);
@@ -29,6 +41,48 @@ const LOGO_SIZE: Vec2 = Vec2::new(180.0, 122.0);
 const NAME_BYTES: usize = 63;
 const MARKETPLACE_BYTES: usize = 255;
 const DESCRIPTION_CHARS: usize = 2048;
+
+/// The Legacy Viewer's banner: the `logo` texture picker of
+/// floater_experienceprofile.xml, 290 × 197 with its 23-point caption
+/// (LLTextureCtrl::mCaptionHeight), so a 290 × 174 picture.
+pub const BANNER_ASPECT: f32 = 290.0 / 174.0;
+const MAX_WIDTH: f32 = 560.0;
+/// The least size of the window: a band of banner, the name and the first
+/// rows, and the actions.
+const MIN_SIZE: Vec2 = Vec2::new(320.0, 470.0);
+/// The height kept under the banner for the details and the actions, and
+/// the least band of banner shown.
+const DETAILS_ROOM: f32 = 250.0;
+const MIN_BANNER: f32 = 80.0;
+const TITLE_SIZE: f32 = 15.0;
+// the least size leaves the details and the actions their room, and the
+// window can still be made that narrow
+const _: () = assert!(MIN_SIZE.y >= DETAILS_ROOM + MIN_BANNER && MIN_SIZE.x <= MAX_WIDTH);
+/// The side of the owner's picture and of the group's insignia.
+const PICTURE: f32 = 18.0;
+
+/// `secondlife:///app/experience/<id>/profile`, the experience's SLURL
+/// (LLSLURL("experience", id, "profile")).
+pub fn slurl(id: Uuid) -> String {
+    format!("secondlife:///app/experience/{id}/profile")
+}
+
+/// The right-click menu of an experience's name: "Copy SLurl", as the
+/// Legacy Viewer's link of the name (LLUrlEntryExperienceProfile).
+pub fn name_menu(response: &egui::Response, p: &Palette, id: Uuid) {
+    menu::context_menu(response, p, |ui| {
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl")) {
+            ui.ctx().copy_text(slurl(id));
+        }
+    });
+}
+
+/// The pictures the window shows: the decoded images by texture, the
+/// residents' profile pictures by resident.
+pub struct Pictures<'a> {
+    pub images: &'a HashMap<Uuid, egui::TextureHandle>,
+    pub avatars: &'a HashMap<Uuid, egui::TextureHandle>,
+}
 
 /// What follows a save or the "Save changes?" answer (PostSaveAction).
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -53,6 +107,18 @@ pub struct ExperienceProfileUi {
     /// The logo chosen was not a full-permission texture.
     logo_refused: bool,
     pub wanted_images: HashSet<Uuid>,
+    /// Residents whose profile picture the window shows (the owner).
+    pub wanted_pics: HashSet<Uuid>,
+    /// Groups whose profile was asked, for their insignia (once each).
+    asked_groups: HashSet<Uuid>,
+    /// The banner at full resolution, decoded on the scene's workers like a
+    /// profile's photo (`prepare_banner`): the interface copies stop at
+    /// 256 pixels, blurred across a window-wide banner.
+    banner: Option<(Uuid, ImageView)>,
+    /// How many physical pixels wide the banner was last drawn.
+    banner_px: f32,
+    /// What the window adds above its body (the title bar), last measured.
+    chrome_h: f32,
 }
 
 impl ExperienceProfileUi {
@@ -63,8 +129,9 @@ impl ExperienceProfileUi {
         ctx: &egui::Context,
         p: &Palette,
         world: &mut World,
-        images: &HashMap<Uuid, egui::TextureHandle>,
+        pics: Pictures,
     ) -> Option<(Uuid, ExperiencePermissionChange)> {
+        let images = pics.images;
         let Some(id) = world.experiences.profile else {
             self.leave_edit(ctx);
             return None;
@@ -95,25 +162,41 @@ impl ExperienceProfileUi {
         let mut open = true;
         let mut change = None;
         let mut pick_logo = false;
-        Floater::new(
+        let mut floater = Floater::new(
             WINDOW,
             aurora_i18n::tr!("ui-experience-profile-title"),
             egui::pos2(screen.center().x - VIEW_SIZE.x * 0.5, screen.center().y - VIEW_SIZE.y * 0.5),
             VIEW_SIZE,
-        )
-        .show(ctx, p, &mut open, |ui| {
+        );
+        floater.min_size = MIN_SIZE;
+        let mut max_width = MAX_WIDTH;
+        // with a banner, the window's height follows its width and the
+        // other way round, so the banner always has its full height
+        let banner = self.edit.is_none() && details.as_ref().is_some_and(|d| !d.logo.is_nil());
+        if banner && let Some(size) = egui::AreaState::load(ctx, egui::Id::unique(WINDOW)).and_then(|s| s.size) {
+            let (least_height, most_width) = banner_limits(size, self.chrome_h);
+            floater.min_size.y = floater.min_size.y.max(least_height);
+            max_width = most_width;
+        }
+        let measured = egui::AreaState::load(ctx, egui::Id::unique(WINDOW)).and_then(|s| s.size);
+        floater.max_width(max_width).flush_body().show(ctx, p, &mut open, |ui| {
+            if let Some(size) = measured {
+                self.chrome_h = (size.y - ui.available_height()).max(0.0);
+            }
             let Some(d) = details.as_ref() else {
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-experience-profile-loading"))
-                        .size(12.0)
-                        .color(p.muted),
-                );
+                body(ui, |ui| {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-experience-profile-loading"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                });
                 return;
             };
             if self.edit.is_some() {
-                pick_logo = self.edit_tab(ui, p, world, images, d);
+                body(ui, |ui| pick_logo = self.edit_tab(ui, p, world, images, d));
             } else {
-                change = self.view_tab(ui, p, world, images, d, admin);
+                change = self.view(ui, p, world, &pics, d, admin);
             }
         });
         if pick_logo && let Some((_, e)) = &self.edit {
@@ -156,6 +239,34 @@ impl ExperienceProfileUi {
         self.after_save = None;
         self.logo_refused = false;
         widgets::size_floater(ctx, WINDOW, EDIT_SIZE);
+    }
+
+    /// The banner of the profile on screen, at the size it is drawn
+    /// (`ProfileUi::prepare_photos` does the same for a photo); dropped
+    /// with the window.
+    pub(crate) fn prepare_banner(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene, world: &World) {
+        let logo = world
+            .experiences
+            .profile
+            .and_then(|id| world.experiences.details.get(&id))
+            .map_or(Uuid::nil(), |d| d.logo);
+        if logo.is_nil() {
+            self.banner = None;
+            return;
+        }
+        if self.banner.as_ref().is_none_or(|(asset, _)| *asset != logo) {
+            self.banner = Some((logo, ImageView::default()));
+        }
+        if let Some((_, view)) = &mut self.banner {
+            // the size it is drawn, before the first frame a usual window's
+            let px = if self.banner_px > 0.0 {
+                self.banner_px
+            } else {
+                VIEW_SIZE.x * ctx.pixels_per_point()
+            };
+            scene.textures.note_usage_boosted(&logo, px);
+            view.prepare(ctx, logo, scene);
+        }
     }
 
     fn leave_edit(&mut self, ctx: &egui::Context) {
@@ -231,197 +342,192 @@ impl ExperienceProfileUi {
         }
     }
 
-    fn view_tab(
+    /// The profile: the banner across the top, the details scrolled under
+    /// it, and the permission and its actions in a footer that never
+    /// scrolls away.
+    fn view(
         &mut self,
         ui: &mut egui::Ui,
         p: &Palette,
         world: &mut World,
-        images: &HashMap<Uuid, egui::TextureHandle>,
+        pics: &Pictures,
         d: &ExperienceDetails,
         admin: bool,
     ) -> Option<ExperiencePermissionChange> {
-        let id = d.id;
-        let mut change = None;
-        let permission = world.experiences.permissions.get(&id).copied();
-        let busy = world.experiences.busy.contains(&id);
-        let error = world.experiences.errors.get(&id).cloned();
-        let owner = (!d.owner.is_nil()).then_some(d.owner);
-        let owner_name = owner.map(|o| {
-            let names = &world.social.avatar_names;
-            names.want(&o);
-            names.get(&o).map(|n| n.display_name.clone()).unwrap_or_else(|| o.to_string())
-        });
-        let group_name = (!d.group.is_nil()).then(|| {
-            world
-                .land
-                .group_name(&d.group, &world.groups.groups)
-                .unwrap_or_else(|| d.group.to_string())
-        });
+        // the banner stays above the scrolled details: the scroll bar's
+        // strip would otherwise cut it short of the window's right edge
+        if !d.logo.is_nil() {
+            self.wanted_images.insert(d.logo);
+            // never so tall that the details have no room left: past that,
+            // the whole banner smaller (`banner`)
+            let most = (ui.available_height() - DETAILS_ROOM).max(MIN_BANNER);
+            // the interface copy, and over it the full resolution once
+            // decoded
+            let full = self
+                .banner
+                .as_ref()
+                .filter(|(asset, _)| *asset == d.logo)
+                .and_then(|(_, view)| view.image.clone());
+            let drawn = banner(ui, p, pics.images.get(&d.logo), full.as_ref(), most);
+            self.banner_px = drawn.width() * ui.ctx().pixels_per_point();
+        }
+        let (mut list, footer) = widgets::above_footer(ui);
         egui::ScrollArea::vertical()
-            .id_salt("experience_profile_view")
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                // the logo, when the experience has one
-                if !d.logo.is_nil() {
-                    let tex = images.get(&d.logo);
-                    if tex.is_none() {
-                        self.wanted_images.insert(d.logo);
-                    }
-                    widgets::picture(ui, p, tex, LOGO_SIZE, "photo-filled", "");
-                    ui.add_space(6.0);
-                }
-                let name = if d.name.trim().is_empty() { id.to_string() } else { d.name.clone() };
-                ui.label(RichText::new(name).size(15.0).strong().color(p.ink));
-                if d.invalid() {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(aurora_i18n::tr!("ui-experience-profile-unknown"))
-                                .size(12.0)
-                                .color(p.muted),
-                        )
-                        .wrap(),
-                    );
-                }
-                if !d.description.trim().is_empty() {
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::Label::new(RichText::new(&d.description).size(12.0).color(p.ink))
-                            .wrap()
-                            .selectable(true),
-                    );
-                }
-                ui.add_space(8.0);
-                if !d.invalid() {
-                    row(
-                        ui,
-                        p,
-                        aurora_i18n::tr!("ui-experience-profile-rating"),
-                        crate::world::worldmap::access_label(d.maturity),
-                    );
-                    let scope = if d.grid_wide() {
-                        aurora_i18n::tr!("world-experiences-grid-scope")
-                    } else {
-                        aurora_i18n::tr!("world-experiences-land-scope")
-                    };
-                    row(ui, p, aurora_i18n::tr!("ui-experience-profile-scope"), scope);
-                }
-                if !d.slurl.trim().is_empty() {
-                    row(ui, p, aurora_i18n::tr!("ui-experience-profile-location"), &place_label(&d.slurl));
-                }
-                if let Some(owner) = &owner_name {
-                    row(ui, p, aurora_i18n::tr!("ui-experience-profile-owner"), owner);
-                }
-                if let Some(group) = &group_name {
-                    row(ui, p, aurora_i18n::tr!("ui-experience-profile-group"), group);
-                }
-                if !d.marketplace.trim().is_empty() {
-                    row(ui, p, aurora_i18n::tr!("ui-experience-profile-marketplace"), &d.marketplace);
-                }
-                ui.add_space(10.0);
-                let state = match (busy, permission) {
-                    (true, _) | (false, None) => aurora_i18n::tr!("ui-experience-profile-checking"),
-                    (false, Some(ExperiencePermission::Allowed)) => aurora_i18n::tr!("ui-experience-profile-allowed"),
-                    (false, Some(ExperiencePermission::Blocked)) => aurora_i18n::tr!("ui-experience-profile-blocked"),
-                    (false, Some(ExperiencePermission::Unset)) => aurora_i18n::tr!("ui-experience-profile-unset"),
-                };
-                row(ui, p, aurora_i18n::tr!("ui-experience-profile-permission"), state);
-                if let Some(e) = &error {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(aurora_i18n::tr!("ui-experience-profile-error", error = e.clone()))
-                                .size(12.0)
-                                .color(p.danger),
-                        )
-                        .wrap(),
-                    );
-                }
-                save_notes(ui, p, world, id);
-                ui.add_space(8.0);
-                // experiencePermissionResults: the button of the current
-                // permission is the one that cannot be pressed
-                ui.horizontal(|ui| {
-                    let size = Vec2::new(0.0, 26.0);
-                    let ready = !busy && permission.is_some();
-                    if action_button_if(
-                        ui,
-                        p,
-                        "circle-check-filled",
-                        aurora_i18n::tr!("ui-experience-profile-allow"),
-                        ActionKind::Primary,
-                        size,
-                        ready && permission != Some(ExperiencePermission::Allowed),
-                    )
-                    .clicked()
-                    {
-                        change = Some(ExperiencePermissionChange::Allow);
-                    }
-                    if action_button_if(
-                        ui,
-                        p,
-                        "restore",
-                        aurora_i18n::tr!("ui-experience-profile-forget"),
-                        ActionKind::Flat,
-                        size,
-                        ready && permission != Some(ExperiencePermission::Unset),
-                    )
-                    .on_hover_text(aurora_i18n::tr!("ui-experience-profile-forget-tip"))
-                    .clicked()
-                    {
-                        change = Some(ExperiencePermissionChange::Forget);
-                    }
-                    if action_button_if(
-                        ui,
-                        p,
-                        "ban",
-                        aurora_i18n::tr!("ui-experience-profile-block"),
-                        ActionKind::FlatDanger,
-                        size,
-                        ready && permission != Some(ExperiencePermission::Blocked),
-                    )
-                    .clicked()
-                    {
-                        change = Some(ExperiencePermissionChange::Block);
-                    }
-                });
-                // LLFloaterExperienceProfile::onReportExperience: Report
-                // Abuse on the experience (LLFloaterReporter::
-                // showFromExperience); on its own row with Edit, the window
-                // is too narrow for a fourth button
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if admin
-                        && action_button_if(
-                            ui,
-                            p,
-                            "pencil-filled",
-                            aurora_i18n::tr!("common-edit"),
-                            ActionKind::Flat,
-                            Vec2::new(0.0, 26.0),
-                            true,
-                        )
-                        .clicked()
-                    {
-                        self.enter_edit(ui.ctx(), id, d);
-                    }
-                    if action_button_if(
-                        ui,
-                        p,
-                        "flag-filled",
-                        aurora_i18n::tr!("report-abuse-title"),
-                        ActionKind::Flat,
-                        Vec2::new(0.0, 26.0),
-                        true,
-                    )
-                    .clicked()
-                    {
-                        crate::ui::context::request(
-                            ui.ctx(),
-                            crate::ui::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Experience(id)),
-                        );
-                    }
-                });
+            .id_salt("experience_profile_body")
+            .auto_shrink([false, false])
+            .show(&mut list, |ui| {
+                body(ui, |ui| self.details(ui, p, world, pics, d));
             });
+        let mut change = None;
+        let mut edit = false;
+        footer.show(ui, |ui| {
+            footer_body(ui, |ui| (change, edit) = actions(ui, p, world, d.id, admin));
+        });
+        if edit {
+            self.enter_edit(ui.ctx(), d.id, d);
+        }
         change
+    }
+
+    /// Everything under the banner.
+    fn details(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, pics: &Pictures, d: &ExperienceDetails) {
+        let id = d.id;
+        let name = if d.name.trim().is_empty() { id.to_string() } else { d.name.clone() };
+        // the name, and right after it the button that copies the
+        // experience's SLURL (the Legacy Viewer draws the name as that
+        // SLURL's link; the avatar profile's place has the same button);
+        // a right click on the name copies it too
+        let copy = Vec2::splat(24.0);
+        let gap = ui.spacing().item_spacing.x;
+        let room = (ui.available_width() - copy.x - gap).max(0.0);
+        ui.horizontal_top(|ui| {
+            let title = ui
+                .scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(
+                        egui::Label::new(RichText::new(name).size(TITLE_SIZE).strong().color(p.ink))
+                            .wrap()
+                            .sense(egui::Sense::click()),
+                    )
+                })
+                .inner;
+            name_menu(&title, p, id);
+            // centred on the name's first line, however many it wraps to
+            let line = ui.ctx().fonts_mut(|f| f.row_height(&egui::FontId::proportional(TITLE_SIZE)));
+            let at = Rect::from_center_size(
+                egui::pos2(title.rect.right() + gap + copy.x / 2.0, title.rect.top() + line / 2.0),
+                copy,
+            );
+            let button = ui.scope_builder(egui::UiBuilder::new().max_rect(at), |ui| {
+                super::widgets::action_button(ui, p, "copy-filled", "", ActionKind::Flat, copy)
+            });
+            if button.inner.on_hover_text(aurora_i18n::tr!("common-copy-slurl")).clicked() {
+                ui.ctx().copy_text(slurl(id));
+            }
+        });
+        if d.invalid() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("ui-experience-profile-unknown"))
+                        .size(12.0)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
+        }
+        if !d.description.trim().is_empty() {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(RichText::new(&d.description).size(12.0).color(p.ink))
+                    .wrap()
+                    .selectable(true),
+            );
+        }
+        ui.add_space(8.0);
+        if !d.invalid() {
+            labelled(ui, p, aurora_i18n::tr!("ui-experience-profile-rating"), |ui| {
+                if d.maturity != 0 {
+                    super::widgets::maturity_badge_of(ui, p, d.maturity, 14.0);
+                }
+                value(ui, p, crate::world::worldmap::access_label(d.maturity));
+            });
+            let scope = if d.grid_wide() {
+                aurora_i18n::tr!("world-experiences-grid-scope")
+            } else {
+                aurora_i18n::tr!("world-experiences-land-scope")
+            };
+            row(ui, p, aurora_i18n::tr!("ui-experience-profile-scope"), scope);
+        }
+        if !d.slurl.trim().is_empty() {
+            labelled(ui, p, aurora_i18n::tr!("ui-experience-profile-location"), |ui| {
+                location(ui, p, &d.slurl)
+            });
+        }
+        if !d.owner.is_nil() {
+            labelled(ui, p, aurora_i18n::tr!("ui-experience-profile-owner"), |ui| {
+                self.owner(ui, p, world, pics, d.owner);
+            });
+        }
+        if !d.group.is_nil() {
+            labelled(ui, p, aurora_i18n::tr!("ui-experience-profile-group"), |ui| {
+                self.group(ui, p, world, pics, d.group);
+            });
+        }
+        if !d.marketplace.is_empty() {
+            labelled(ui, p, aurora_i18n::tr!("ui-experience-profile-marketplace"), |ui| {
+                web_link(ui, p, &d.marketplace);
+            });
+        }
+        save_notes(ui, p, world, id);
+    }
+
+    /// The owner's picture and name, which opens the profile (LLSLURL
+    /// "agent ... inspect"); hidden as everywhere while RLVa hides names.
+    fn owner(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, pics: &Pictures, owner: Uuid) {
+        if !world.rlva_can_name(owner) {
+            value(ui, p, aurora_i18n::tr!("scene-object-hidden-person"));
+            return;
+        }
+        world.social.want_name(owner);
+        let name = world.social.name_of(&owner);
+        self.wanted_pics.insert(owner);
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(PICTURE), egui::Sense::hover());
+        super::widgets::avatar_picture(ui, p, rect, pics.avatars.get(&owner), &name, false);
+        let r = link(ui, p, &name).on_hover_text(aurora_i18n::tr!("common-view-profile"));
+        // the menu of a resident's name in a conversation (menu_url_agent.xml)
+        super::chat::resident_name_menu(&r, p, world, owner);
+        if r.clicked() {
+            super::profile::request_open(ui.ctx(), owner);
+        }
+    }
+
+    /// The group's insignia and name, which opens its profile (LLSLURL
+    /// "group ... inspect"); its profile is asked once for the insignia of
+    /// a group the agent is not in.
+    fn group(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, pics: &Pictures, group: Uuid) {
+        let ours = world.groups.group(&group).map(|g| (g.name.clone(), g.insignia));
+        let searched = world.search.groups.get(&group).map(|g| (g.name.clone(), g.insignia));
+        if ours.is_none() && searched.is_none() && self.asked_groups.insert(group) {
+            world.search.request_group(group);
+        }
+        let insignia = [&ours, &searched].into_iter().flatten().map(|(_, i)| *i).find(|i| !i.is_nil());
+        let groups = world.groups.groups.clone();
+        let name = world
+            .land
+            .group_name(&group, &groups)
+            .or_else(|| searched.map(|(n, _)| n).filter(|n| !n.is_empty()))
+            .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+        if let Some(i) = insignia {
+            self.wanted_images.insert(i);
+        }
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(PICTURE), egui::Sense::hover());
+        super::widgets::avatar_picture(ui, p, rect, insignia.and_then(|i| pics.images.get(&i)), &name, false);
+        let r = link(ui, p, &name).on_hover_text(aurora_i18n::tr!("ui-group-profile-view"));
+        // a conversation's group link menu (menu_url_group.xml)
+        super::chat::app_link_menu(&r, p, world, &format!("secondlife:///app/group/{group}/inspect"), &name);
+        if r.clicked() {
+            super::group_profile::request_open(ui.ctx(), group);
+        }
     }
 
     /// The Edit tab (edit_panel_experience_info); true when the logo is
@@ -774,4 +880,330 @@ fn labelled(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut e
         label_cell(ui, p, label);
         add(ui);
     });
+}
+
+/// The body's margins, which the banner above it does without.
+fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 8,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui);
+        });
+}
+
+/// The banner across the window, in the Legacy Viewer's shape; its room
+/// is kept while it loads, so the profile does not jump. `copy` is the
+/// interface's small copy, `sharp` the full resolution: drawn over the
+/// copy rather than in its place, so the frame a new texture may still miss
+/// on its way to the GPU shows the copy instead of a blink, and only once
+/// it is finer than the copy (the first levels of a download are coarser).
+///
+/// The window keeps the banner its full height (`banner_limits`); should
+/// it ever leave less (`most`: a screen smaller than the window's least
+/// size), the banner shrinks whole, centred, rather than losing its top and
+/// bottom, where banners often carry their text. Returns where it was
+/// drawn.
+fn banner(ui: &mut egui::Ui, p: &Palette, copy: Option<&egui::TextureHandle>, sharp: Option<&egui::TextureHandle>, most: f32) -> Rect {
+    let width = ui.available_width();
+    let full = width / BANNER_ASPECT;
+    let height = full.min(most).round();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+    let sharp = sharp.filter(|t| finer(t.size(), copy.map(|c| c.size())));
+    if sharp.or(copy).is_none() {
+        ui.painter().rect_filled(rect, 0.0, p.bar);
+        return rect;
+    };
+    let whole = fitted(rect);
+    let all = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    if let Some(t) = copy {
+        ui.painter().image(t.id(), whole, all, super::widgets::PICTURE_TINT);
+    }
+    if let Some(t) = sharp {
+        ui.painter().image(t.id(), whole, all, super::widgets::PICTURE_TINT);
+    }
+    rect
+}
+
+/// The whole banner in `rect`, in its shape, centred: as wide as `rect`
+/// when it has the banner's full height, narrower when it is shorter.
+fn fitted(rect: Rect) -> Rect {
+    let width = (rect.height() * BANNER_ASPECT).min(rect.width());
+    Rect::from_center_size(rect.center(), Vec2::new(width, width / BANNER_ASPECT))
+}
+
+/// The window's least height and greatest width for a profile with a
+/// banner, from its current `size` and the height its title bar takes
+/// (`chrome`): tall enough for the banner's full height at this width and
+/// the details' room under it, no wider than the banner may be at this
+/// height. Its height then follows its width and the other way round, and
+/// the banner never has to shrink.
+fn banner_limits(size: Vec2, chrome: f32) -> (f32, f32) {
+    let room = chrome + DETAILS_ROOM;
+    let least_height = size.x / BANNER_ASPECT + room;
+    let most_width = ((size.y - room) * BANNER_ASPECT).clamp(MIN_SIZE.x, MAX_WIDTH);
+    (least_height, most_width)
+}
+
+/// Whether a decode of `size` pixels is finer than the copy (wider, or any
+/// decode when there is no copy yet).
+fn finer(size: [usize; 2], copy: Option<[usize; 2]>) -> bool {
+    copy.is_none_or(|c| size[0] > c[0])
+}
+
+fn value(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.add(
+        egui::Label::new(RichText::new(text).size(12.0).color(p.ink))
+            .wrap()
+            .selectable(true),
+    );
+}
+
+/// A text in the link colour that answers a click.
+fn link(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
+    ui.add(
+        egui::Label::new(RichText::new(text).size(12.0).color(p.violet_light))
+            .truncate()
+            .sense(egui::Sense::click()),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The experience's place: "Region (x,y,z)" (LLSLURL), which shows it on
+/// the world map; a conversation's place link menu on a right click
+/// (menu_url_slurl.xml: details, map, teleport, Copy SLurl).
+fn location(ui: &mut egui::Ui, p: &Palette, url: &str) {
+    let place = crate::slurl::place_link(url);
+    let label = place.as_ref().map_or_else(|| url.to_owned(), |l| l.label.clone());
+    let r = link(ui, p, &label).on_hover_text(aurora_i18n::tr!("common-show-on-map"));
+    match &place {
+        Some(l) => super::chat::place_link_menu(&r, p, url, l),
+        None => {
+            menu::context_menu(&r, p, |ui| {
+                if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl")) {
+                    ui.ctx().copy_text(url.to_owned());
+                }
+            });
+        }
+    }
+    if r.clicked()
+        && let Some(l) = place
+    {
+        super::context::request(ui.ctx(), super::context::CtxAction::ShowPlace(l.location.target(), l.location.pos));
+    }
+}
+
+/// The Marketplace link: opened like a link of a text (trusted at once,
+/// else after the external link warning). A right click offers what the
+/// Legacy Viewer's web links do (menu_url_http.xml): open it, open it in
+/// the system browser, copy it.
+fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str) {
+    let r = link(ui, p, url).on_hover_text(url);
+    menu::context_menu(&r, p, |ui| {
+        if menu::item(ui, p, "world-filled", aurora_i18n::tr!("ui-notifications-open-link")) {
+            super::chat::open_web_link(ui.ctx(), url);
+        }
+        if menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("search-web-open-external")) {
+            super::context::request(ui.ctx(), super::context::CtxAction::OpenUrlExternal(url.to_owned()));
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-url")) {
+            ui.ctx().copy_text(url.to_owned());
+        }
+    });
+    if r.clicked() {
+        super::chat::open_web_link(ui.ctx(), url);
+    }
+}
+
+/// The footer's margins: the body's across, a little air above.
+fn footer_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 2,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui);
+        });
+}
+
+/// The height of the main actions, and of the secondary ones.
+const HERO_H: f32 = 32.0;
+const SECONDARY_H: f32 = 26.0;
+
+/// The agent's permission and what changes it, always in view: Allow and
+/// Forget, the two answers to an experience, side by side across the
+/// window; Edit (for an administrator), Block and Report Abuse smaller
+/// under them; true when Edit was pressed. As in
+/// experiencePermissionResults, the button of the current permission is
+/// the one that cannot be pressed.
+fn actions(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, admin: bool) -> (Option<ExperiencePermissionChange>, bool) {
+    let permission = world.experiences.permissions.get(&id).copied();
+    let busy = world.experiences.busy.contains(&id);
+    let state = match (busy, permission) {
+        (true, _) | (false, None) => aurora_i18n::tr!("ui-experience-profile-checking"),
+        (false, Some(ExperiencePermission::Allowed)) => aurora_i18n::tr!("ui-experience-profile-allowed"),
+        (false, Some(ExperiencePermission::Blocked)) => aurora_i18n::tr!("ui-experience-profile-blocked"),
+        (false, Some(ExperiencePermission::Unset)) => aurora_i18n::tr!("ui-experience-profile-unset"),
+    };
+    super::widgets::divider(ui, p);
+    row(ui, p, aurora_i18n::tr!("ui-experience-profile-permission"), state);
+    if let Some(e) = world.experiences.errors.get(&id) {
+        ui.add(
+            egui::Label::new(
+                RichText::new(aurora_i18n::tr!("ui-experience-profile-error", error = e.clone()))
+                    .size(12.0)
+                    .color(p.danger),
+            )
+            .wrap(),
+        );
+    }
+    ui.add_space(6.0);
+    let ready = !busy && permission.is_some();
+    let mut change = None;
+    ui.horizontal(|ui| {
+        let half = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(0.0);
+        if action_button_if(
+            ui,
+            p,
+            "circle-check-filled",
+            aurora_i18n::tr!("ui-experience-profile-allow"),
+            ActionKind::Primary,
+            Vec2::new(half, HERO_H),
+            ready && permission != Some(ExperiencePermission::Allowed),
+        )
+        .clicked()
+        {
+            change = Some(ExperiencePermissionChange::Allow);
+        }
+        if action_button_if(
+            ui,
+            p,
+            "restore",
+            aurora_i18n::tr!("ui-experience-profile-forget"),
+            ActionKind::Flat,
+            Vec2::new(half, HERO_H),
+            ready && permission != Some(ExperiencePermission::Unset),
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-experience-profile-forget-tip"))
+        .clicked()
+        {
+            change = Some(ExperiencePermissionChange::Forget);
+        }
+    });
+    let mut edit = false;
+    ui.horizontal(|ui| {
+        if admin
+            && action_button_if(
+                ui,
+                p,
+                "pencil-filled",
+                aurora_i18n::tr!("common-edit"),
+                ActionKind::Flat,
+                Vec2::new(0.0, SECONDARY_H),
+                true,
+            )
+            .clicked()
+        {
+            edit = true;
+        }
+        if action_button_if(
+            ui,
+            p,
+            "ban",
+            aurora_i18n::tr!("ui-experience-profile-block"),
+            ActionKind::FlatDanger,
+            Vec2::new(0.0, SECONDARY_H),
+            ready && permission != Some(ExperiencePermission::Blocked),
+        )
+        .clicked()
+        {
+            change = Some(ExperiencePermissionChange::Block);
+        }
+        // LLFloaterExperienceProfile::onReportExperience: Report Abuse on
+        // the experience (LLFloaterReporter::showFromExperience)
+        if action_button_if(
+            ui,
+            p,
+            "flag-filled",
+            aurora_i18n::tr!("report-abuse-title"),
+            ActionKind::Flat,
+            Vec2::new(0.0, SECONDARY_H),
+            true,
+        )
+        .clicked()
+        {
+            super::context::request(
+                ui.ctx(),
+                super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Experience(id)),
+            );
+        }
+    });
+    (change, edit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_slurl_opens_the_profile() {
+        let id = Uuid::from_u128(0x1234);
+        let url = slurl(id);
+        assert_eq!(url, format!("secondlife:///app/experience/{id}/profile"));
+        assert!(matches!(crate::slapp::parse(&url), Some(crate::slapp::AppLink::Experience(e)) if e == id));
+    }
+
+    #[test]
+    fn a_short_window_shows_the_whole_banner_smaller() {
+        // the full height: the banner spans the window
+        let full = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(500.0, 500.0 / BANNER_ASPECT));
+        let whole = fitted(full);
+        assert!((whole.width() - 500.0).abs() < 1e-3 && (whole.height() - full.height()).abs() < 1e-3);
+        // half the height: the whole banner, half as wide, centred
+        let short = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(500.0, 150.0));
+        let whole = fitted(short);
+        assert!((whole.height() - 150.0).abs() < 1e-3);
+        assert!((whole.width() - 150.0 * BANNER_ASPECT).abs() < 1e-3);
+        assert!((whole.center().x - 250.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_window_keeps_the_banner_its_full_height() {
+        let chrome = 40.0;
+        for size in [Vec2::new(400.0, 600.0), Vec2::new(560.0, 480.0), Vec2::new(320.0, 900.0)] {
+            let (least_height, most_width) = banner_limits(size, chrome);
+            // at the least height, the body holds the whole banner and the
+            // details' room
+            assert!((least_height - chrome - DETAILS_ROOM - size.x / BANNER_ASPECT).abs() < 1e-3);
+            // at the greatest width, the banner still fits this height
+            assert!(most_width / BANNER_ASPECT + chrome + DETAILS_ROOM <= size.y + 1e-3 || most_width == MIN_SIZE.x);
+            assert!((MIN_SIZE.x..=MAX_WIDTH).contains(&most_width));
+        }
+        // a short window cannot be widened: its greatest width is its own
+        // banner's, a tall one stops at the window's widest
+        assert_eq!(banner_limits(Vec2::new(560.0, 2000.0), chrome).1, MAX_WIDTH);
+    }
+
+    #[test]
+    fn the_sharp_banner_covers_the_copy_only_once_finer() {
+        assert!(finer([512, 256], Some([256, 128])));
+        assert!(!finer([128, 64], Some([256, 128])));
+        assert!(!finer([256, 128], Some([256, 128])));
+        assert!(finer([64, 32], None));
+    }
+
+    #[test]
+    fn the_banner_has_the_legacy_shape() {
+        assert!((BANNER_ASPECT - 1.6667).abs() < 0.001);
+    }
 }

@@ -6138,7 +6138,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
-| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes\|list` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab; `list`: Me › Experiences with banners |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
@@ -8865,7 +8865,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the account's page; `fail`: the settings never come, the switches stay
   greyed; `savefail`: a change is refused, a notice says so and the
   switches go back to what the grid has.
-- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes`**: experiences
+- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes|list`**: experiences
   asking for permissions; the demo plays the simulator, GetExperienceInfo and
   ExperiencePreferences. In SL a script may ask from any event (a click, a
   collision, the arrival on the parcel, a timer): the viewer only sees the
@@ -8878,10 +8878,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   once allowed, the next clicks teleport without asking. No: the door says
   it needs the permission. Block experience refuses and blocks: the next
   clicks only print "you have blocked this experience". The profile (the
-  link) shows the rating, the scope, the location, the owner and the
-  permission, with Allow / Forget / Block; Forget lets the door ask again.
+  link) shows the club's banner edge to edge (a violet sunset over hills),
+  the name (a right click copies its SLurl), the rating with its badge, the
+  scope, the location (a click opens the world map on it), the owner and
+  the group with their pictures (each opens its profile), a Marketplace
+  link and the permission, with Allow / Forget / Block; Forget lets the
+  door ask again. Widening the window stops at 560 points.
   `auto` asks at frame 420 without a click (captures), `profile` also opens
   the profile; `blocked` starts with the experience blocked.
+  `list`: no door; Me › Experiences opens at frame 360 on its Allowed tab,
+  six experiences: four with a banner (it fills the card's right side, the
+  row colour fading over it), the plaza's and the ferry's without (plain
+  cards). A right click on a card offers Copy SLurl; a click opens the
+  profile.
   `walk`: a translucent teal "Teleport pad" on the floor in front of the
   avatar (135.5, 126), a phantom volume: walking forward into it (W / up
   arrow) asks the same question (collision_start), once per entry; Yes

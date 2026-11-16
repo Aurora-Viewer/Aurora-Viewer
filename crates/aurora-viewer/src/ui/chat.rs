@@ -1193,6 +1193,29 @@ pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
     super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
 }
 
+/// The right-click menu a conversation gives a resident's name (`name_menu`,
+/// menu_url_agent.xml), for the windows that show the same names (the
+/// experience profile's owner).
+pub(crate) fn resident_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
+    name_menu(r, p, world, id);
+}
+
+/// The right-click menu a conversation gives a `secondlife:///app/...`
+/// command shown as `label` (its menu_url_*.xml), for the windows that show
+/// the same links (the experience profile's group). A resident's name is
+/// not a command: [`resident_name_menu`].
+pub(crate) fn app_link_menu(r: &egui::Response, p: &Palette, world: &World, url: &str, label: &str) {
+    if let Some(link) = crate::slapp::parse(url) {
+        app_links::menu(r, p, world, url, &link, label);
+    }
+}
+
+/// The right-click menu a conversation gives a place link (`place_menu`),
+/// for the windows that show the same links.
+pub(crate) fn place_link_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::PlaceLink) {
+    place_menu(r, p, url, place);
+}
+
 /// Who wrote a bubble line, drawn before the name.
 enum Sender {
     Avatar(uuid::Uuid),
