@@ -106,9 +106,26 @@ fn run(mut commands: Vec<Command>) -> io::Result<ExitStatus> {
 /// names the crate with `--crate-name <name>`; under clippy the real
 /// compiler comes first, so the pair is looked for anywhere.
 fn is_heavy(arguments: &[OsString]) -> bool {
-    arguments
+    expanded(arguments)
         .windows(2)
-        .any(|pair| pair[0] == "--crate-name" && pair[1].to_str().is_some_and(|name| HEAVY_CRATES.contains(&name)))
+        .any(|pair| pair[0] == "--crate-name" && HEAVY_CRATES.contains(&pair[1].as_str()))
+}
+
+/// The arguments, with those of an argument file in its place. When the
+/// command line is too long for the system, Cargo hands it over as
+/// `@<file>`, one argument per line (rustc's own syntax): on Windows, the
+/// viewer's test build, the heaviest compile of all, always comes that way.
+/// A file that cannot be read stays as it is: the compiler will say why.
+fn expanded(arguments: &[OsString]) -> Vec<String> {
+    let mut list = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        let text = argument.to_string_lossy();
+        match text.strip_prefix('@').and_then(|file| fs::read(file).ok()) {
+            Some(content) => list.extend(String::from_utf8_lossy(&content).lines().map(str::to_owned)),
+            None => list.push(text.into_owned()),
+        }
+    }
+    list
 }
 
 /// Number of slots: `AURORA_BUILD_SLOTS` when it is a whole number of at
@@ -208,6 +225,29 @@ mod tests {
         assert!(!is_heavy(&arguments(&[])));
         // the heavy name, but not as the crate being built
         assert!(!is_heavy(&arguments(&["--crate-name", "smoke", "--extern", "aurora_viewer"])));
+    }
+
+    #[test]
+    fn a_crate_named_in_an_argument_file_is_seen() {
+        let dir = scratch("argfile");
+        fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, content: &str| {
+            let path = dir.join(name);
+            fs::write(&path, content).unwrap();
+            OsString::from(format!("@{}", path.display()))
+        };
+        // as Cargo writes it: one argument per line
+        let viewer = file("viewer", "--crate-name\naurora_viewer\n--edition=2024\n--test\n");
+        assert!(is_heavy(&[OsString::from("C:\\toolchain\\rustc.exe"), viewer]));
+        let windows_lines = file("crlf", "--crate-name\r\naurora_viewer\r\n--test\r\n");
+        assert!(is_heavy(&[windows_lines]));
+        let other = file("other", "--crate-name\naurora_net\n--extern\naurora_viewer\n");
+        assert!(!is_heavy(&[other]));
+        // a file that is not there: not heavy, and the argument is kept
+        let missing = OsString::from(format!("@{}", dir.join("missing").display()));
+        assert!(!is_heavy(std::slice::from_ref(&missing)));
+        assert_eq!(expanded(&[missing.clone()]), [missing.to_string_lossy()]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
