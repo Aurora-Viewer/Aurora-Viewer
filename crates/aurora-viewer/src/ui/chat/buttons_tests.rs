@@ -2450,6 +2450,8 @@ fn ooc_shortcut_always_uses_normal_volume() {
                     h.st.conv_focus_request = true;
                     h.settle();
                 }
+                // This test types twice without clicking the field again.
+                h.st.keep_focus = true;
                 h.st.volume = volume;
                 h.type_text("brb");
                 h.history_key(egui::Key::Enter, egui::Modifiers::ALT);
@@ -2459,6 +2461,11 @@ fn ooc_shortcut_always_uses_normal_volume() {
                     "{style:?}, {volume:?}, detached={detached}: normal OOC"
                 );
                 assert_eq!(h.st.volume, volume);
+                let field = egui::Id::unique(("conv_input", None::<Uuid>));
+                assert!(
+                    h.frames.ctx.memory(|m| m.has_focus(field)),
+                    "{style:?}, detached={detached}: ready for the next message"
+                );
                 h.type_text("ordinary");
                 h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
                 let expected = match (style.workspace(), volume) {
