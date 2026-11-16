@@ -8,40 +8,40 @@
    "why": "a delivery folder: store from the // tag"
   },
   {
-   "name": "WOBBLINGAVATAR",
+   "name": "TUMBLINGPUPPET",
    "type": -1,
    "expect": null
   },
   {
-   "name": "QxVe 1.2.5 Box",
+   "name": "ZyLo 1.2.5 Box",
    "type": -1,
    "expect": null
   },
   {
-   "name": "oh-my: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+   "name": "hey-you: Pip Candy Striped Thigh Socks  - Aniseed (Wear)",
    "type": -1,
-   "expect": "{stockings}/oh-my",
+   "expect": "{stockings}/hey-you",
    "why": "a store and a colon"
   },
   {
-   "name": "NimbusCore Combat System V39.812",
+   "name": "StratusEdge Combat System V27.514",
    "type": -1,
    "expect": null
   },
   {
-   "name": "{QE} What a S****y Attack Hud [boxed]",
+   "name": "{RW} Such a S****y Strike Hud [boxed]",
    "type": -1,
-   "expect": "{huds}/QE"
+   "expect": "{huds}/RW"
   },
   {
-   "name": "~KK~ The Chameleon Halo Set",
+   "name": "~JJ~ The Lizard Glow Set",
    "type": -1,
-   "expect": "{outfits}/KK"
+   "expect": "{outfits}/JJ"
   },
   {
-   "name": "[ZT][GESTURES][1] COUNTRY APPLE PIE PACK (ADD+CLICK)",
+   "name": "[XQ][GESTURES][1] PRAIRIE PEACH TART PACK (ADD+CLICK)",
    "type": 6,
-   "expect": "{gestures}/ZT",
+   "expect": "{gestures}/XQ",
    "why": "a gesture pack worn as an object"
   },
   {
@@ -86,7 +86,7 @@
    "expect": "{huds}"
   },
   {
-   "name": "P_Scaner_Salty",
+   "name": "Q_Scanner_Briny",
    "type": 6,
    "expect": null
   },
@@ -118,7 +118,7 @@
    "expect": null
   },
   {
-   "name": "Mouth Spitter (Light Pink)",
+   "name": "Mouth Sprinkler (Light Pink)",
    "type": 6,
    "expect": null
   },
@@ -144,15 +144,15 @@
    "expect": "Reborn/{tops}/Fenwick/Waifus Squish"
   },
   {
-   "name": "MARROW: The \"Harbor Body\" for eBody Reborn (Porcelain)",
+   "name": "THISTLE: The \"Harbor Body\" for eBody Reborn (Porcelain)",
    "type": 6,
-   "expect": "Reborn/{skins}/MARROW",
+   "expect": "Reborn/{skins}/THISTLE",
    "why": "a body skin named by body and tone"
   },
   {
-   "name": "LUMA.mods - Soft Thighs V4.2 - eBody Reborn",
+   "name": "VELA.mods - Soft Thighs V4.2 - eBody Reborn",
    "type": 6,
-   "expect": "Reborn/{body-addons}/LUMA.mods",
+   "expect": "Reborn/{body-addons}/VELA.mods",
    "why": "a body mod maker's tag"
   },
   {

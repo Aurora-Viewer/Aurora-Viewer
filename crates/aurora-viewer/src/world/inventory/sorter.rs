@@ -344,6 +344,17 @@ pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
 /// else as written (two Cyrillic names never match as two empty ones).
 fn same_store(a: &str, b: &str) -> bool {
     let (x, y) = (inventory_name(a.trim(), ""), inventory_name(b.trim(), ""));
+    // (letters and digits only: `Mila Rose`, `MilaRose`, `Mila_Rose` and
+    // `Mila-Rose` are one store)
+    let bare = |s: &str| {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    if !bare(&x).is_empty() && !bare(&y).is_empty() {
+        return bare(&x) == bare(&y);
+    }
     if x.is_empty() || y.is_empty() {
         a.trim().to_lowercase() == b.trim().to_lowercase()
     } else {
@@ -941,7 +952,7 @@ const WAIFUS: &str = "Waifus";
 pub fn store<'a>(name: &'a str) -> Option<String> {
     let text = name.trim();
     let first = text.chars().next()?;
-    // `oh-my: Thigh Socks`, `MARROW: The Body`: a store and a colon
+    // `hey-you: Thigh Socks`, `THISTLE: The Body`: a store and a colon
     let tags = &VOCABULARY.store_tags;
     // `**Store** Dress`, `..::Store::.. Top`: the opening run of marks is
     // skipped before the closing one is looked for
@@ -982,7 +993,7 @@ fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
     let tag_words = joined_words(tag);
     let found = classify(tag, -1, 0);
-    // a body mod maker's tag (`LUMA.mods`) names its trade, not a product
+    // a body mod maker's tag (`VELA.mods`) names its trade, not a product
     let maker = tag_words.last().is_some_and(|w| w == "mods" || w == "mod");
     let reads = (2..=32).contains(&tag.chars().count())
         && (1..=4).contains(&tag_words.len())
@@ -1461,6 +1472,25 @@ const MASS_KINDS: [&str; 10] = [
     "clutter",
 ];
 
+/// The pack words of a name that sell many of one thing (`Kyoto Kimono
+/// Sets`, `Opal Jewelry Collections`): a pack word after a singular kind, in
+/// a name with a word of its own. They say nothing of a shelf; `Makeup Sets`
+/// or `Pose Packs`, with no word of their own, stay shelves.
+fn pack_of_one(name: &str) -> Vec<usize> {
+    const PACKS: [&str; 4] = ["sets", "packs", "bundles", "collections"];
+    if product_words(name).is_empty() {
+        return Vec::new();
+    }
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let name_words = words(name);
+    (1..name_words.len())
+        .filter(|&i| {
+            let before = &name_words[i - 1];
+            PACKS.contains(&name_words[i].as_str()) && is_kind(before) && !plural_kind(before) && !loose_plural(before)
+        })
+        .collect()
+}
+
 /// A word that is a kind's plural, written loosely: the word less its `s`
 /// or `es` is a kind (`Tops`, `Sets`, `Dresses`).
 fn loose_plural(w: &str) -> bool {
@@ -1515,7 +1545,12 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     if !(names_a_product(name) || store_named || singular_kind) {
         return false;
     }
-    if name_words.iter().any(|w| SHELF_MARKERS.contains(&w.as_str())) {
+    let packs = pack_of_one(name);
+    if name_words
+        .iter()
+        .enumerate()
+        .any(|(i, w)| SHELF_MARKERS.contains(&w.as_str()) && !packs.contains(&i))
+    {
         return false;
     }
     let own = product_words(name);
@@ -1571,7 +1606,8 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     // (`Lingerie Sets` too: a kind's word less its `s`)
     let plural_shelf = name_words
         .iter()
-        .any(|w| (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
+        .enumerate()
+        .any(|(i, w)| !packs.contains(&i) && (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
     !(by_kind || holds_deliveries || plural_shelf)
 }
 
@@ -1659,7 +1695,8 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     let ends_one = words(name)
         .last()
         .is_some_and(|w| is_kind(w) && !loose_plural(w) && !plural_kind(w));
-    let many_named = !ends_one && words(name).iter().any(|w| loose_plural(w));
+    let packs = pack_of_one(name);
+    let many_named = !ends_one && words(name).iter().enumerate().any(|(i, w)| !packs.contains(&i) && loose_plural(w));
     let delivery_extras = names_a_product(name) && !many_named && (versions || (named || body_named) && fatpack_seen);
     let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen) && !delivery_extras;
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)

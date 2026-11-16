@@ -14653,8 +14653,14 @@ inventory-sorter-resume-source = The run that was stopped
 inventory-sorter-snapshot-source = The layout of { $date }
 inventory-sorter-undo-section = Undo and snapshots
 inventory-sorter-undo-hint = Every run is remembered and a snapshot of your layout is taken before it. Each of these opens its preview first.
-inventory-sorter-resume-run = Resume the stopped run ({ $count } left)
-inventory-sorter-undo-run = Undo the last run ({ $count } moves, { $date })
+inventory-sorter-resume-run = Resume the stopped run ({ $count ->
+        [one] { $count } move left
+       *[other] { $count } moves left
+    })
+inventory-sorter-undo-run = Undo the last run ({ $count ->
+        [one] { $count } move
+       *[other] { $count } moves
+    }, { $date })
 inventory-sorter-undo-none = No run to undo yet.
 inventory-sorter-snapshots = Snapshots
 inventory-sorter-snapshot-take = Take a snapshot now

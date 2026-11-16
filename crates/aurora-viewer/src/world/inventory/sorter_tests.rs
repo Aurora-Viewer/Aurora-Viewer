@@ -62,7 +62,7 @@ fn path(name: &str) -> Option<String> {
 fn creator_names_find_their_body_and_category() {
     for (name, expected) in [
         ("FemAvg_Dress_Cut_Long_Reborn_F", "Reborn/Dresses"),
-        ("LUMA.mods - Soft Thighs V4.2 - eBody Reborn", "Reborn/Body add-ons"),
+        ("VELA.mods - Soft Thighs V4.2 - eBody Reborn", "Reborn/Body add-ons"),
         (
             ". i i c i n g . // duo toned stockings - REBORN (add me)",
             "Reborn/Stockings & socks",
@@ -1197,21 +1197,21 @@ fn real_creator_names_find_their_folders() {
     let cases: Vec<(&str, i32, String)> = vec![
         // folders: deliveries and boxes
         ("Brindlewood // Bento Money Envelope (Packed)", -1, format!("{stores}/Brindlewood")),
-        ("WOBBLINGAVATAR", -1, none.clone()),
-        ("QxVe 1.2.5 Box", -1, none.clone()),
+        ("TUMBLINGPUPPET", -1, none.clone()),
+        ("ZyLo 1.2.5 Box", -1, none.clone()),
         (
-            "oh-my: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+            "hey-you: Pip Candy Striped Thigh Socks  - Aniseed (Wear)",
             -1,
-            format!("{}/oh-my", cat(Stockings)),
+            format!("{}/hey-you", cat(Stockings)),
         ),
-        ("NimbusCore Combat System V39.812", -1, none.clone()),
-        ("{QE} What a S****y Attack Hud [boxed]", -1, format!("{}/QE", cat(Huds))),
-        ("~KK~ The Chameleon Halo Set", -1, format!("{}/KK", cat(Outfits))),
+        ("StratusEdge Combat System V27.514", -1, none.clone()),
+        ("{RW} Such a S****y Strike Hud [boxed]", -1, format!("{}/RW", cat(Huds))),
+        ("~JJ~ The Lizard Glow Set", -1, format!("{}/JJ", cat(Outfits))),
         // objects
         (
-            "[ZT][GESTURES][1] COUNTRY APPLE PIE PACK (ADD+CLICK)",
+            "[XQ][GESTURES][1] PRAIRIE PEACH TART PACK (ADD+CLICK)",
             6,
-            format!("{}/ZT", cat(Gestures)),
+            format!("{}/XQ", cat(Gestures)),
         ),
         ("Velmora - Ryu Jeans - FATPACK", 6, format!("{}/Velmora", cat(Pants))),
         ("LeLUTKA Otto Head 4.0", 6, cat(Heads).to_owned()),
@@ -1221,7 +1221,7 @@ fn real_creator_names_find_their_folders() {
         ("[Thornlace] Rebellion Jacket // Fatpack", 6, format!("{}/Thornlace", cat(Jackets))),
         ("Ashgrove Homes ~ Eclipse (ADD)", 6, format!("{stores}/Ashgrove Homes")),
         ("MossPixel Deposit HUD", 6, cat(Huds).to_owned()),
-        ("P_Scaner_Salty", 6, none.clone()),
+        ("Q_Scanner_Briny", 6, none.clone()),
         ("Nyla - Slow Unwind - Bom Bandages Fatpack", 6, format!("{}/Nyla", cat(Tattoos))),
         // a product's HUD goes with the product
         ("[Thornlace] Trauma Tee // Fatpack Hud", 6, format!("{}/Thornlace", cat(Tops))),
@@ -1237,7 +1237,7 @@ fn real_creator_names_find_their_folders() {
             format!("{}/QuillFox Willy Wrappers", cat(Gloves)),
         ),
         ("Garden Party Invitation", 6, none.clone()),
-        ("Mouth Spitter (Light Pink)", 6, none.clone()),
+        ("Mouth Sprinkler (Light Pink)", 6, none.clone()),
         // Waifus, Reborn's body mod: the mod itself is an add-on, its clothes
         // get a Waifus folder (with Squish when both)
         ("Waifu REBORN - Waifus - Addon v2.0", 6, format!("Reborn/{}", cat(BodyAddons))),
@@ -1258,14 +1258,14 @@ fn real_creator_names_find_their_folders() {
         ),
         // a body skin, named by its body and tone; a body mod maker
         (
-            "MARROW: The \"Harbor Body\" for eBody Reborn (Porcelain)",
+            "THISTLE: The \"Harbor Body\" for eBody Reborn (Porcelain)",
             6,
-            format!("Reborn/{}/MARROW", cat(Skins)),
+            format!("Reborn/{}/THISTLE", cat(Skins)),
         ),
         (
-            "LUMA.mods - Soft Thighs V4.2 - eBody Reborn",
+            "VELA.mods - Soft Thighs V4.2 - eBody Reborn",
             6,
-            format!("Reborn/{}/LUMA.mods", cat(BodyAddons)),
+            format!("Reborn/{}/VELA.mods", cat(BodyAddons)),
         ),
     ];
     let mut wrong = Vec::new();
@@ -2939,4 +2939,35 @@ fn sets_and_own_store_tags_stay_whole_and_shelves_of_packs_open() {
     assert_eq!(path("Lash Ring"), path("Silver Ring"));
     assert_eq!(path("Eyebrow Piercing"), path("Brow Piercing"));
     assert_eq!(path("Elf Ear Shape"), path("Elf Shape"));
+}
+
+/// Audit 35: sets and collections of one thing stay whole, and a store's
+/// own tag written another way is still its own.
+#[test]
+fn sets_of_one_thing_and_own_store_spellings_stay_whole() {
+    let none = HashSet::new();
+    let whole: [(&str, &[&str]); 7] = [
+        ("Kyoto Kimono Sets", &["Kimono", "Obi", "HUD"]),
+        ("Vesper Ring Sets", &["Gold", "Silver"]),
+        ("Vesper Earring Sets", &["Gold", "Silver", "HUD"]),
+        ("Opal Jewelry Collections", &["Necklaces", "HUD"]),
+        ("Mila Rose - Photo Studio", &["Props", "[MilaRose] Poses"]),
+        ("Mila-Rose - Photo Studio", &["Props", "[Mila Rose] Poses"]),
+        ("Bloom&Co - Garden Gazebo", &["Props", "[Bloom & Co] Plants"]),
+    ];
+    for (name, subs) in whole {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        let mut inside = Vec::new();
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, &format!("Item {sub}"), 0);
+            inside.extend([901 + n as u128, 950 + n as u128]);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!inside.iter().any(|n| moved.contains(&id(*n))), "{name} is never opened");
+    }
+    assert!(same_store("Mila Rose", "Mila_Rose") && same_store("MILA.", "mila"));
+    assert!(!same_store("Mila", "Milan"));
 }

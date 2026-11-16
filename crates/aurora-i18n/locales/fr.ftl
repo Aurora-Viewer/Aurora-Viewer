@@ -14667,8 +14667,14 @@ inventory-sorter-resume-source = Le tri interrompu
 inventory-sorter-snapshot-source = La disposition du { $date }
 inventory-sorter-undo-section = Annuler et instantanés
 inventory-sorter-undo-hint = Chaque tri est mémorisé et un instantané de votre disposition est pris avant. Chacun de ces boutons ouvre d'abord son aperçu.
-inventory-sorter-resume-run = Reprendre le tri interrompu ({ $count } restants)
-inventory-sorter-undo-run = Annuler le dernier tri ({ $count } déplacements, { $date })
+inventory-sorter-resume-run = Reprendre le tri interrompu ({ $count ->
+        [one] { $count } restant
+       *[other] { $count } restants
+    })
+inventory-sorter-undo-run = Annuler le dernier tri ({ $count ->
+        [one] { $count } déplacement
+       *[other] { $count } déplacements
+    }, { $date })
 inventory-sorter-undo-none = Aucun tri à annuler pour l'instant.
 inventory-sorter-snapshots = Instantanés
 inventory-sorter-snapshot-take = Prendre un instantané
