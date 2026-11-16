@@ -26,13 +26,20 @@ use uuid::Uuid;
 /// Frame of the region answer.
 const REGION_FRAME: u64 = 40;
 
-/// The preset asked for, `None` when the scenario is off or unknown.
+/// The preset asked for, `None` when the scenario is off or unknown, or
+/// outside demo mode (the variable left set never turns the clouds on in a
+/// grid session).
 pub fn scenario() -> Option<&'static str> {
     static S: OnceLock<Option<&'static str>> = OnceLock::new();
     *S.get_or_init(|| {
-        let value = std::env::var("AURORA_DEMO_CLOUDS").ok()?;
-        PRESETS.iter().map(|p| p.0).find(|name| *name == value.trim())
+        std::env::var_os("AURORA_DEMO")?;
+        preset(&std::env::var("AURORA_DEMO_CLOUDS").ok()?)
     })
+}
+
+/// The preset of this name.
+fn preset(value: &str) -> Option<&'static str> {
+    PRESETS.iter().map(|p| p.0).find(|name| *name == value.trim())
 }
 
 /// Name, `cloud_shadow` (the cover).
@@ -192,6 +199,13 @@ fn cloud_noise(u: f32, v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_preset_is_found_by_its_name_only() {
+        assert_eq!(preset(" broken "), Some("broken"));
+        assert_eq!(preset("overcast"), Some("overcast"));
+        assert_eq!(preset("stormy"), None);
+    }
 
     #[test]
     fn the_presets_cover_the_three_cloud_types() {
