@@ -196,6 +196,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         parcel_landmark: None,
         can_set_home: false,
         can_go_home: true,
+        home_entry: true,
         release_notes: false,
         region_console: false,
         god_level: 0,

@@ -1,6 +1,6 @@
-# Weekly update PRs for the Rust crates and the GitHub actions, so the
-# project never falls behind (an agent checks them, and merges them once
-# its human agrees).
+# Weekly update PRs for the Rust crates, the Rust version and the GitHub
+# actions, so the project never falls behind (an agent checks them, and
+# merges them once its human agrees).
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -17,6 +17,16 @@ updates:
     groups:
       crates-mineures:
         update-types: [minor, patch]
+
+  # the version of rust-toolchain.toml: one PR per new stable release, and
+  # every PC and the CI change version together when it is merged
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [maintenance]
+    commit-message:
+      prefix: "chore(deps)"
 
   - package-ecosystem: github-actions
     directory: /

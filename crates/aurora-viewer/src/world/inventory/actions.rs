@@ -708,7 +708,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
     if !destination(inv, to) || ids.iter().any(|id| parent(inv, *id) != Some(to)) {
         return Err(aurora_i18n::tr!("world-inventory-actions-select-items-from-the-same-folder").into());
     }
-    let mut change = create_folder(to, aurora_i18n::tr!("common-new-folder"))?;
+    let mut change = create_folder(to, crate::text_validation::default_name("common-new-folder"))?;
     let new = match &change.operations[0] {
         Operation::Folder { id, .. } => *id,
         _ => return Err(aurora_i18n::tr!("common-folder-not-found").into()),
