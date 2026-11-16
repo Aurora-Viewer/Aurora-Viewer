@@ -45,7 +45,11 @@ pub(super) fn folders(view: &ViewCache, inv: &Inventory, root: Uuid, show_root: 
 /// scale above 1 makes taller than `ROW_HEIGHT` (its icons stay 16 points).
 /// The lists scroll and draw by this height, so it must be the drawn one:
 /// LLFolderViewItem::getItemHeight (indra/llui/llfolderviewitem.cpp) is
-/// likewise the height every row is laid out at.
+/// likewise the height every row is laid out at. Aurora difference: there it
+/// is the `FSFolderViewItemHeight` setting, 20 by default, whatever the font
+/// (LLInventoryPanel::createFolderRoot, createFolderViewFolder and
+/// createFolderViewItem in indra/newview/llinventorypanel.cpp); here a row
+/// grows when the font scale makes its label taller.
 pub fn row_height(ui: &egui::Ui, p: &Palette, st: &InventoryUi) -> f32 {
     if st.aurora.is_some() {
         return super::aurora::rows::HEIGHT;
