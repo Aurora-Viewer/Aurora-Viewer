@@ -4182,7 +4182,7 @@ impl App {
                     let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
                     if let Some(mut account) = self.login_form.accounts.iter().find(|account| account.key() == key).cloned() {
                         account.remember_password = false;
-                        self.login_form.accounts = crate::login_accounts::save(account);
+                        crate::login_accounts::save(&mut self.login_form.accounts, account);
                     }
                 }
                 if mfa_required {
@@ -4356,11 +4356,10 @@ impl App {
                     crate::credentials::forget(&uri, &user);
                 }
                 if !self.demo && self.settings.remember_username {
-                    self.login_form.accounts = crate::login_accounts::save(crate::login_accounts::Account::from_settings(
-                        &self.settings,
-                        self.login_form.remember_mfa,
-                        Some(l.agent_id),
-                    ));
+                    crate::login_accounts::save(
+                        &mut self.login_form.accounts,
+                        crate::login_accounts::Account::from_settings(&self.settings, self.login_form.remember_mfa, Some(l.agent_id)),
+                    );
                 }
                 if !self.demo {
                     // An explicit MFA opt-in is independent of remembering the login name/password.
@@ -7135,7 +7134,7 @@ impl App {
         }
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
-        self.script_editors.back_up();
+        self.script_editors.back_up_before_exit();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
@@ -7143,9 +7142,21 @@ impl App {
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
-        // and the settings theirs (written by the save thread), before a
-        // restarted viewer reads them
-        Settings::wait_saved(Duration::from_secs(5));
+        // and the files handed to the save threads theirs (the settings, the
+        // layout, the inventory cache…), before a restarted viewer reads
+        // them; a disk that does not answer keeps the viewer 5 s at most
+        // (#3466: a minute in the inventory cache's write)
+        crate::saves::wait(Duration::from_secs(5));
+        // an edit of the account list or a dictionary word whose write was
+        // refused, tried once more: after the save threads, whose last
+        // writes may have been refused and kept owed (save_retry.rs)
+        crate::login_accounts::save_before_exit();
+        crate::spelling::dictionaries::save_before_exit();
+        crate::world::flying_at_exit::save_before_exit();
+        crate::world::derender::save_before_exit();
+        crate::world::region_tracker::save_before_exit();
+        crate::autoreplace::save_before_exit();
+        crate::tolerant::save_before_exit();
         event_loop.exit();
     }
 
@@ -11681,6 +11692,9 @@ impl App {
                     language: aurora_i18n::language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
+                for url in std::mem::take(&mut self.media.links) {
+                    self.on_ctx_action(crate::ui::web_view::clicked_link_action(&url));
+                }
                 self.options_ui.media_plugins = self
                     .media
                     .plugins_found()
@@ -17104,6 +17118,7 @@ impl App {
     /// when the grid or the name changes, forgotten as soon as the option is
     /// switched off.
     fn sync_remembered_password(&mut self) {
+        ui::login::manager::disk_answer(&self.egui_ctx, &mut self.settings, &mut self.login_form);
         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         if !self.login_form.accounts_loaded && !self.demo {
             self.login_form.accounts = crate::login_accounts::load();
@@ -17112,8 +17127,10 @@ impl App {
                 && !key.1.is_empty()
                 && !self.login_form.accounts.iter().any(|a| a.key() == key)
             {
-                self.login_form.accounts =
-                    crate::login_accounts::save(crate::login_accounts::Account::from_settings(&self.settings, false, None));
+                crate::login_accounts::save(
+                    &mut self.login_form.accounts,
+                    crate::login_accounts::Account::from_settings(&self.settings, false, None),
+                );
             }
             self.login_form.accounts_loaded = true;
             self.login_form
@@ -17208,7 +17225,7 @@ impl App {
                 crate::credentials::forget(&key.0, &key.1);
                 if let Some(mut account) = self.login_form.accounts.iter().find(|a| a.key() == key).cloned() {
                     account.remember_password = false;
-                    self.login_form.accounts = crate::login_accounts::save(account);
+                    crate::login_accounts::save(&mut self.login_form.accounts, account);
                 }
             }
             return;
@@ -23592,17 +23609,18 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            // AURORA_DEMO_MEDIA=<url> (1: a test page): a screen with media
-            // on a prim east of the start position, playing at once
+            // AURORA_DEMO_MEDIA=<url> (1: a test page, links: the
+            // secondlife:// link reproduction page): a screen with media on
+            // a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 // Mini controls: the same page, with the address hidden
                 // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
                 let mini = v == "mini";
-                let url = if v == "1" || v.is_empty() || mini {
-                    crate::demo::demo_media_page().to_string()
-                } else {
-                    v
+                let url = match v.as_str() {
+                    "1" | "" | "mini" => crate::demo::demo_media_page().to_string(),
+                    "links" => crate::demo::demo_media_links_page(),
+                    _ => v,
                 };
                 let (ev, object, face) = crate::demo::media_screen();
                 if let Some(e) = self.world.apply(ev) {

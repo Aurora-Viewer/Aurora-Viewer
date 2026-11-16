@@ -874,7 +874,7 @@ pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
 /// FSFloaterContacts::refreshUI, LLInspectAvatar::enablePay), instead of
 /// being refused after the click.
 pub fn can_pay_resident(world: &World) -> bool {
-    !world.rlva.has("pay")
+    world.rlva_can_pay()
 }
 
 /// @showworldmap greys the buttons and entries that open the world map on a

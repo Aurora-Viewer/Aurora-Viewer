@@ -882,12 +882,20 @@ impl World {
         self.save_tracked_regions();
     }
 
+    /// Written by a save thread (saves.rs), from a copy of the list.
     fn save_tracked_regions(&self) {
-        if let Some(path) = &self.region_tracker_path
-            && let Err(error) = self.region_tracker.save(path)
-        {
-            log::warn!("region tracker: could not save {}: {error}", path.display());
-        }
+        let Some(path) = self.region_tracker_path.clone() else {
+            return;
+        };
+        let list = self.region_tracker.clone();
+        crate::saves::replace(path.clone(), move || {
+            if let Err(error) = list.save(&path) {
+                log::warn!(
+                    "region tracker: could not save {} ({error}); kept, tried again later",
+                    path.display()
+                );
+            }
+        });
     }
 
     /// ALFloaterRegionTracker::refresh, while its window is open: every

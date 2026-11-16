@@ -673,13 +673,20 @@ impl Inventory {
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("tmp");
-        if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
-        }
+        // The document is the snapshot; its encoding, sealing and writing
+        // go to a save thread (saves.rs): a large inventory on a slow disk
+        // held the frame for over a minute at exit (#3466). The exit waits
+        // for it with a bound, and the next login's read waits for it.
+        let path = path.to_path_buf();
+        crate::saves::replace(path.clone(), move || {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = path.with_extension("tmp");
+            if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        });
     }
 
     /// Restore cached folders whose version still matches the login
@@ -776,6 +783,8 @@ pub struct CachedInventory {
 /// the file, its LLSD document, the items and their order in each folder,
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
+    // a relogin reads what the logout's save thread writes
+    crate::saves::wait_for(path, std::time::Duration::from_secs(10));
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
     if doc["version"].as_i32() != CACHE_VERSION {
