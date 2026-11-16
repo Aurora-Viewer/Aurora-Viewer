@@ -761,6 +761,22 @@ impl EnvSelector {
         std::mem::take(&mut self.preset_dropped).then_some(self.local_preset)
     }
 
+    /// Each frame: the panels' time of day and the selector's follow each
+    /// other. While RLVa holds the environment the panels' choice is put
+    /// back to the preset shown, never kept for later: a choice made under
+    /// @setenv (a menu still open, a shortcut) is dropped, and nothing
+    /// changes when the restriction lifts, as in the Legacy Viewer, whose
+    /// greyed entries (menu_viewer.xml, RLV.EnableIfNot setenv) set nothing.
+    pub fn sync_time_of_day(&mut self, time_of_day: &mut u8) {
+        if let Some(p) = self.take_preset_change() {
+            *time_of_day = p;
+        }
+        if self.rlva_locked {
+            *time_of_day = self.local_preset;
+        }
+        self.set_time_of_day(*time_of_day);
+    }
+
     /// FSEnvironmentManualTransitionTime (s, 0 = instant).
     pub fn set_manual_transition(&mut self, seconds: f32) {
         self.manual_transition = if seconds.is_finite() { seconds.clamp(0.0, 60.0) } else { 0.0 };
@@ -1507,10 +1523,7 @@ impl super::World {
             now: self.env_clock.elapsed().as_secs_f64(),
             altitude: self.agent.position.z,
         };
-        if let Some(p) = self.eep.take_preset_change() {
-            *time_of_day = p;
-        }
-        self.eep.set_time_of_day(*time_of_day);
+        self.eep.sync_time_of_day(time_of_day);
         let (sky, water) = self.eep.frame(&input);
         self.rlva_environment_frames((sky, water))
     }
@@ -2485,5 +2498,38 @@ mod tests {
         sel.apply_local_day(DayCycle::fixed(SkyFrame::default(), WaterFrame::default()));
         sel.frame(&input(4.0));
         assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
+    }
+
+    #[test]
+    fn a_time_of_day_chosen_while_rlva_holds_the_environment_is_dropped() {
+        let mut sel = region_selector();
+        // a preset chosen freely follows the panels
+        let mut panels = 2;
+        sel.sync_time_of_day(&mut panels);
+        library_sky_arrives(&mut sel, 2);
+        sel.frame(&input(1.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        // @setenv: another preset, then the shared environment, are refused
+        // and the panels go back to what is shown
+        sel.rlva_locked = true;
+        for chosen in [4, 0] {
+            panels = chosen;
+            sel.sync_time_of_day(&mut panels);
+            assert_eq!(panels, 2, "choice {chosen}");
+            assert!(sel.wanted_settings().is_empty());
+        }
+        // the restriction lifts: nothing was kept to apply now
+        sel.rlva_locked = false;
+        sel.sync_time_of_day(&mut panels);
+        sel.frame(&input(2.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        assert!(sel.wanted_settings().is_empty());
+        // and a choice made from then on applies again
+        panels = 4;
+        sel.sync_time_of_day(&mut panels);
+        assert_eq!(
+            sel.wanted_settings(),
+            vec![super::super::env::time_of_day_sky(4).expect("a preset")]
+        );
     }
 }

@@ -115,6 +115,11 @@ impl LastPoints {
         self.points.get(item).map(|(point, _)| *point)
     }
 
+    /// Changes with every point noted: what a copy (`snapshot`) is good for.
+    pub fn revision(&self) -> u64 {
+        self.seq
+    }
+
     pub fn snapshot(&self) -> HashMap<Uuid, u8> {
         self.points.iter().map(|(item, (point, _))| (*item, *point)).collect()
     }

@@ -116,7 +116,8 @@ fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let width = text_width(ui, &line.text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
+    let text = super::system_text(&line.text);
+    let width = text_width(ui, &text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -132,7 +133,7 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                         env.emoji,
                         world,
                         env.want_names,
-                        &line.text,
+                        &text,
                         chat_size(ui.ctx(), 12.0),
                         tone.unwrap_or(p.muted),
                         true,
@@ -226,10 +227,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let col = super::super::colors::contact_sender_color(line, world)
                 .or(tone)
                 .unwrap_or_else(|| super::super::colors::sender_color(line));
+            // a moderator's name style (`conversation_options::moderator`)
+            let emphasis = super::moderator_look(env, line).map(|(n, _)| n).unwrap_or_default();
             let r = ui.add(
                 super::super::widgets::elided_label(
                     ui,
-                    RichText::new(&name).size(chat_size(ui.ctx(), 11.5)).strong().color(col),
+                    emphasis.rich_text(ui.ctx(), &name, chat_size(ui.ctx(), 11.5), col).strong(),
                     max_bubble,
                 )
                 .sense(egui::Sense::click()),
@@ -254,6 +257,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
+    let emphasis = super::line_emphasis(env, line, italics);
     let text = world.rlva_filter_text(&text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
@@ -292,18 +296,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(
-                        ui,
-                        p,
-                        env.emoji,
-                        world,
-                        env.want_names,
-                        &visible,
-                        size,
-                        text_color,
-                        super::message_emphasis(line.kind, italics),
-                        mark,
-                    );
+                    chat_text_marked(ui, p, env.emoji, world, env.want_names, &visible, size, text_color, emphasis, mark);
                 }
                 super::previews::cards(ui, env, line, &text);
             });
@@ -434,6 +427,7 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(1),
             origin: Origin::Live,
+            blocked: false,
             beyond_range: false,
         };
         let day = 86_400;
@@ -482,6 +476,7 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
+            blocked: false,
             beyond_range: false,
         };
         let mut list_top = 0.0;
@@ -507,6 +502,7 @@ mod tests {
                     menu: None,
                     bubbles: Some(true),
                     previews: None,
+                    moderators: None,
                 };
                 draw(ui, &mut env, &line, look, None, true);
             },

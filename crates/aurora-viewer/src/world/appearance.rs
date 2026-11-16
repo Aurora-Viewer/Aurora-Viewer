@@ -113,6 +113,8 @@ pub enum Action {
         items: Vec<Uuid>,
     },
     ShowOriginal(Uuid),
+    /// Activate (true) or deactivate the gestures among favorite rows.
+    Gesture(Vec<Uuid>, bool),
     Favorite(Uuid),
     Category(Uuid, aurora_net::outfits::categories::Update),
     Folders(aurora_net::inventory::operations::Mutation),
@@ -193,6 +195,28 @@ pub fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
 
 pub fn cof(inv: &Inventory) -> Option<Uuid> {
     system_folder(inv, super::outfit::FT_CURRENT_OUTFIT)
+}
+
+/// findDescendentCategoryIDByName (indra/newview/llappearancemgr.cpp): the
+/// first folder under `root` named `name`, case-insensitive
+/// (LLNameCategoryCollector), depth first in the folders' order.
+pub fn descendant_named(inv: &Inventory, root: Uuid, name: &str) -> Option<Uuid> {
+    let wanted = name.to_lowercase();
+    let mut stack: Vec<Uuid> = inv.folders.get(&root)?.children.iter().rev().copied().collect();
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else {
+            continue;
+        };
+        if folder.info.name.to_lowercase() == wanted {
+            return Some(id);
+        }
+        stack.extend(folder.children.iter().rev());
+    }
+    None
 }
 
 /// Confirmed clothing only: required body parts never enter Take Off.
@@ -959,6 +983,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::ShowOriginal(_)
+        | Action::Gesture(..)
         | Action::Favorite(_)
         | Action::OutfitImage(_)
         | Action::OutfitSnapshot(_)

@@ -10,8 +10,7 @@
 //! of the frame (`CursorIcon::None`), like the camera's hold, so that egui
 //! shows it again by itself when the hide ends.
 
-use super::App;
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::WindowEvent;
 
 /// How far (px) the pointer must move from where it was hidden to count as
 /// moved: the system repeats the last position now and then.
@@ -20,7 +19,7 @@ const MOVE_PX: f32 = 0.5;
 /// Where the pointer was hidden by typing, if it is.
 #[derive(Debug, Default)]
 pub(super) struct TypingPointer {
-    at: Option<(f32, f32)>,
+    at: Option<((f32, f32), egui::Id)>,
 }
 
 impl TypingPointer {
@@ -31,20 +30,30 @@ impl TypingPointer {
     /// A character was typed with the pointer at `cursor`. `enabled` is asked
     /// only when the pointer is shown, so a system setting that changes is
     /// followed at the next hide. True when the pointer has just vanished.
-    pub(super) fn typed(&mut self, cursor: (f32, f32), enabled: impl FnOnce() -> bool) -> bool {
-        if self.at.is_some() || !enabled() {
+    fn typed(&mut self, cursor: (f32, f32), field: egui::Id, enabled: impl FnOnce() -> bool) -> bool {
+        if self.at.is_some_and(|(_, owner)| owner == field) {
             return false;
         }
-        self.at = Some(cursor);
-        true
+        self.at = enabled().then_some((cursor, field));
+        self.hidden()
     }
 
     /// The pointer is now at `to`. True when that shows it again.
-    pub(super) fn moved(&mut self, to: (f32, f32)) -> bool {
+    fn moved(&mut self, to: (f32, f32)) -> bool {
         match self.at {
-            Some(from) if (to.0 - from.0).abs() > MOVE_PX || (to.1 - from.1).abs() > MOVE_PX => self.show(),
+            Some((from, _)) if (to.0 - from.0).abs() > MOVE_PX || (to.1 - from.1).abs() > MOVE_PX => self.show(),
             _ => false,
         }
+    }
+
+    /// A field can lose focus without the window losing it (Tab, Escape, or a closed floater).
+    pub(super) fn hidden_for(&mut self, ctx: &egui::Context) -> bool {
+        if let Some((_, field)) = self.at
+            && !ctx.memory(|memory| memory.has_focus(field))
+        {
+            self.show();
+        }
+        self.hidden()
     }
 
     /// Show the pointer whatever it did. True when it was hidden.
@@ -73,41 +82,33 @@ fn vanish_enabled() -> bool {
     true
 }
 
-impl App {
-    /// Once per window event, before the others: typing hides the pointer, a
-    /// move, the focus or the window's edge show it.
-    pub(super) fn typing_pointer_event(&mut self, event: &WindowEvent) {
+/// Observe the text egui-winit delivered after shortcut and IME handling.
+pub(super) fn inserts_text(event: &egui::Event) -> bool {
+    match event {
+        egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Preedit { text, .. } | egui::ImeEvent::Commit(text)) => !text.is_empty(),
+        _ => false,
+    }
+}
+
+impl TypingPointer {
+    pub(super) fn window_event(&mut self, event: &WindowEvent) {
         match event {
-            WindowEvent::KeyboardInput { event: ke, .. }
-                if ke.state == ElementState::Pressed && super::alt_graph::produces_text(&ke.logical_key, ke.text.as_deref()) =>
-            {
-                self.hide_pointer_for_typing();
-            }
-            // (a composition in progress, as LLTextEditor::updatePreedit)
-            WindowEvent::Ime(Ime::Commit(_)) => self.hide_pointer_for_typing(),
-            WindowEvent::Ime(Ime::Preedit(text, _)) if !text.is_empty() => self.hide_pointer_for_typing(),
             WindowEvent::CursorMoved { position, .. } => {
-                self.typing_pointer.moved((position.x as f32, position.y as f32));
+                self.moved((position.x as f32, position.y as f32));
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(_) => {
-                self.typing_pointer.show();
+                self.show();
             }
             _ => {}
         }
     }
 
-    fn hide_pointer_for_typing(&mut self) {
-        // the camera's hold owns the pointer; a scripted demo must not hide
-        // the real one of someone using the PC (AURORA_DEMO_CLICKS)
-        if self.cursor_hold.held() || self.clicks.scripted() || !self.egui_ctx.text_edit_focused() {
-            return;
-        }
-        let Some(g) = &mut self.gfx else {
-            return;
-        };
-        if self.typing_pointer.typed(self.cursor_pos, vanish_enabled) {
-            // the windows stop seeing it: a hover under it goes
-            g.egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
+    pub(super) fn on_text(&mut self, ctx: &egui::Context, cursor: (f32, f32), events: &mut Vec<egui::Event>) {
+        if ctx.text_edit_focused()
+            && let Some(field) = ctx.memory(|memory| memory.focused())
+            && self.typed(cursor, field, vanish_enabled)
+        {
+            events.push(egui::Event::PointerGone);
         }
     }
 }
@@ -117,31 +118,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_inserted_text_and_nonempty_composition_hide_the_pointer() {
+        use egui::{Event, ImeEvent};
+        for text in ["@", "\u{e9}", "\u{3042}"] {
+            assert!(inserts_text(&Event::Text(text.into())));
+            assert!(inserts_text(&Event::Ime(ImeEvent::Preedit {
+                text: text.into(),
+                active_range_chars: None,
+            })));
+            assert!(inserts_text(&Event::Ime(ImeEvent::Commit(text.into()))));
+        }
+        for event in [
+            Event::Copy,
+            Event::Cut,
+            Event::Paste("clipboard".into()),
+            Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            Event::Ime(ImeEvent::Commit(String::new())),
+            Event::Ime(ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
+        ] {
+            assert!(!inserts_text(&event));
+        }
+    }
+
+    #[test]
+    fn leaving_the_text_field_shows_the_pointer_without_mouse_motion() {
+        let ctx = egui::Context::default();
+        let first = egui::Id::unique("first field");
+        let second = egui::Id::unique("second field");
+        let mut p = TypingPointer::default();
+        ctx.memory_mut(|m| m.request_focus(first));
+        assert!(p.typed((10.0, 10.0), first, || true));
+        assert!(p.hidden_for(&ctx));
+        ctx.memory_mut(|m| m.request_focus(second));
+        assert!(!p.hidden_for(&ctx));
+        assert!(p.typed((10.0, 10.0), second, || true));
+        ctx.memory_mut(|m| m.surrender_focus(second));
+        assert!(!p.hidden_for(&ctx));
+    }
+
+    #[test]
+    fn a_focused_editor_drops_hover_once_if_the_platform_enables_hiding() {
+        let ctx = egui::Context::default();
+        let mut draft = String::new();
+        let mut pointer = TypingPointer::default();
+        let mut events = Vec::new();
+        pointer.on_text(&ctx, (5.0, 8.0), &mut events);
+        assert!(events.is_empty());
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.text_edit_singleline(&mut draft).request_focus();
+        });
+        pointer.on_text(&ctx, (5.0, 8.0), &mut events);
+        pointer.on_text(&ctx, (5.0, 8.0), &mut events);
+        assert_eq!(pointer.hidden_for(&ctx), vanish_enabled());
+        if pointer.hidden() {
+            assert!(matches!(events.as_slice(), [egui::Event::PointerGone]));
+        } else {
+            assert!(events.is_empty());
+        }
+    }
+
+    #[test]
     fn typing_hides_the_pointer_when_the_system_allows_it() {
         let mut p = TypingPointer::default();
-        assert!(p.typed((10.0, 10.0), || true));
+        assert!(p.typed((10.0, 10.0), egui::Id::NULL, || true));
         assert!(p.hidden());
     }
 
     #[test]
     fn typing_keeps_the_pointer_when_the_system_forbids_it() {
         let mut p = TypingPointer::default();
-        assert!(!p.typed((10.0, 10.0), || false));
+        assert!(!p.typed((10.0, 10.0), egui::Id::NULL, || false));
         assert!(!p.hidden());
     }
 
     #[test]
     fn a_hidden_pointer_does_not_ask_the_system_again() {
         let mut p = TypingPointer::default();
-        assert!(p.typed((10.0, 10.0), || true));
-        assert!(!p.typed((10.0, 10.0), || panic!("asked while hidden")));
+        assert!(p.typed((10.0, 10.0), egui::Id::NULL, || true));
+        assert!(!p.typed((10.0, 10.0), egui::Id::NULL, || panic!("asked while hidden")));
         assert!(p.hidden());
     }
 
     #[test]
     fn the_system_repeating_the_position_does_not_show_it() {
         let mut p = TypingPointer::default();
-        p.typed((10.0, 10.0), || true);
+        p.typed((10.0, 10.0), egui::Id::NULL, || true);
         assert!(!p.moved((10.0, 10.0)));
         assert!(!p.moved((10.3, 10.2)));
         assert!(p.hidden());
@@ -150,7 +220,7 @@ mod tests {
     #[test]
     fn a_real_move_shows_it_once() {
         let mut p = TypingPointer::default();
-        p.typed((10.0, 10.0), || true);
+        p.typed((10.0, 10.0), egui::Id::NULL, || true);
         assert!(p.moved((14.0, 10.0)));
         assert!(!p.hidden());
         assert!(!p.moved((20.0, 10.0)));
@@ -159,17 +229,24 @@ mod tests {
     #[test]
     fn the_focus_or_the_edge_shows_it() {
         let mut p = TypingPointer::default();
-        p.typed((10.0, 10.0), || true);
-        assert!(p.show());
-        assert!(!p.show());
-        assert!(!p.hidden());
+        for event in [
+            WindowEvent::Focused(false),
+            WindowEvent::Focused(true),
+            WindowEvent::CursorLeft {
+                device_id: winit::event::DeviceId::dummy(),
+            },
+        ] {
+            p.typed((10.0, 10.0), egui::Id::NULL, || true);
+            p.window_event(&event);
+            assert!(!p.hidden());
+        }
     }
 
     #[test]
     fn it_can_hide_again_after_a_move() {
         let mut p = TypingPointer::default();
-        p.typed((10.0, 10.0), || true);
+        p.typed((10.0, 10.0), egui::Id::NULL, || true);
         p.moved((50.0, 50.0));
-        assert!(p.typed((50.0, 50.0), || true));
+        assert!(p.typed((50.0, 50.0), egui::Id::NULL, || true));
     }
 }

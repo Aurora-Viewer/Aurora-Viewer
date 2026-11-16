@@ -740,7 +740,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -1245,7 +1246,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -1256,10 +1258,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1334,16 +1338,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1355,13 +1369,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1372,15 +1387,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
@@ -2205,32 +2219,60 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 
 /// Choice between a few options side by side, in one track: the chosen
 /// segment is lit, in the accent when its option is `accent` (Aurora's own
-/// look), in `raised` otherwise (a legacy look). Returns true when the
-/// selection changed.
+/// look), in `raised` otherwise (a legacy look). The lit face slides from
+/// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
+/// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_tall(ui, p, selected, options, SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
-    let mut changed = false;
+    let mut rects = Vec::with_capacity(widths.len());
     let mut x = track.left() + SEGMENT_PAD;
-    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
+    for w in &widths {
+        rects.push(egui::Rect::from_min_size(
             egui::pos2(x, track.top() + SEGMENT_PAD),
-            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
-        );
-        x += widths[i];
+            Vec2::new(*w, track.height() - SEGMENT_PAD * 2.0),
+        ));
+        x += w;
+    }
+    // the lit face, its edges sliding from the segment chosen before (kept
+    // from the track's left, so that moving the window does not slide it)
+    if let Some(chosen) = rects.get(*selected) {
+        let id = ui.scope_id().with(("segmented-slide", options.len(), options.first().map(|o| o.0)));
+        let time = ui.style().animation_time;
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), chosen.left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), chosen.right() - track.left(), time);
+        let face = if options[*selected].1 { p.violet } else { p.raised };
+        let lit = egui::Rect::from_x_y_ranges(track.left() + left..=track.left() + right, chosen.y_range());
+        ui.painter().rect_filled(lit, inner_radius(ui.visuals()), face);
+    }
+    let mut changed = false;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
         let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
         let sel = *selected == i;
-        let (face, text) = match (sel, *accent) {
-            (true, true) => (Some(p.violet), p.on_accent),
-            (true, false) => (Some(p.raised), p.ink),
-            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
-            (false, _) => (None, p.muted),
+        let text = match (sel, *accent) {
+            (true, true) => p.on_accent,
+            (true, false) => p.ink,
+            (false, _) if resp.hovered() => p.ink,
+            (false, _) => p.muted,
         };
-        if let Some(face) = face {
-            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        if !sel && resp.hovered() {
+            ui.painter()
+                .rect_filled(rect, inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5));
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);

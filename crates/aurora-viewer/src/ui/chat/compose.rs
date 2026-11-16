@@ -190,7 +190,7 @@ pub(super) fn show(
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
                         let field = output.response.response;
                         // the hint of the keys hides the last line while typing (#3211)
-                        if has_text && field.has_focus() {
+                        if !draft.is_empty() && field.has_focus() {
                             field
                         } else {
                             field.on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))

@@ -58,6 +58,7 @@ mod color_picker;
 mod contents_copy;
 mod context_menu;
 mod controls;
+mod conversation_log;
 mod crash_state;
 mod cursor_hold;
 mod derender;
@@ -138,6 +139,7 @@ mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
 mod rlva;
+mod rlva_selftest;
 mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
@@ -148,6 +150,7 @@ mod shape_editor;
 mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
+mod spinning_cat;
 mod stand_fidget;
 mod stand_fly;
 mod stream_list;
@@ -162,6 +165,7 @@ mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
+mod wearable_favorites;
 mod world_click_demo;
 mod worn_demo;
 
@@ -422,6 +426,8 @@ pub struct App {
     window_icon: Option<winit::window::Icon>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
+    /// The RLVa self-test (Dev Toolbox T1, development builds only).
+    rlva_selftest: rlva_selftest::SelfTest,
     native_anchor: crate::movement::movelock::Controller,
     anchor_stands: crate::ao::anchor::StandCheck,
     /// Keep the verified standing set through an asynchronous stand-up reply.
@@ -717,6 +723,8 @@ pub struct App {
     empty_lists: DrawLists,
     quit_at: Option<Instant>,
     exit_prompt: ui::exit::ExitPrompt,
+    /// The spinning cat behind the Konami code (`crate::oiia`).
+    oiia: crate::oiia::Oiia,
     /// saves the window layout shortly after it changes (ui/layout.rs)
     layout_autosave: ui::layout::Autosave,
     loading_stage: String,
@@ -806,6 +814,7 @@ pub struct App {
     frame_count: u64,
     demo_rlva_frame: Option<u64>,
     rlva_login: crate::world::rlva::login::State,
+    rlva_minimap: rlva::HiddenMinimap,
     named_teleport: teleport_lookup::NamedTeleport,
     /// Refresh rate of the screen the window is on, followed while it runs.
     screen_rate: crate::screen_rate::ScreenRate,
@@ -904,12 +913,16 @@ pub struct App {
     bumps_ui: ui::bumps::BumpsUi,
     /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
     voice_controls_ui: ui::voice_controls::VoiceControlsUi,
+    /// The Omnifilter Rules Editor (`ui/omnifilter.rs`).
+    omnifilter_ui: ui::omnifilter::OmnifilterUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
     grid_status: crate::grid_status::GridStatus,
     grid_status_listed: bool,
     grid_status_was_open: bool,
+    /// The conversation log's window (`app/conversation_log.rs`).
+    conversation_log_ui: ui::conversation_log::ConversationLogUi,
     about: about::About,
     /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
     uninstall: uninstall::Uninstall,
@@ -1566,6 +1579,12 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        // AURORA_DEMO_OMNIFILTER: on, on the demo's rules, for this run
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && let Some(omnifilter) = crate::demo::omnifilter::settings()
+        {
+            settings.omnifilter = omnifilter;
+        }
         external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
@@ -1688,9 +1707,15 @@ impl App {
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
+                // OmnifilterEngine::init (the demo's rules are its own)
+                match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
+                    Some(sets) => w.omnifilter = crate::omnifilter::Engine::with_sets(sets),
+                    None => w.omnifilter.load(crate::omnifilter::user_file()),
+                }
                 w
             },
             bridge_runtime: Default::default(),
+            rlva_selftest: Default::default(),
             native_anchor: Default::default(),
             anchor_stands: Default::default(),
             anchor_pose: None,
@@ -1852,6 +1877,7 @@ impl App {
             empty_lists: DrawLists::default(),
             quit_at: None,
             exit_prompt: Default::default(),
+            oiia: Default::default(),
             layout_autosave: Default::default(),
             loading_stage: String::new(),
             move_complete_at: None,
@@ -1895,6 +1921,7 @@ impl App {
             loading_target: 0.0,
             frame_count: 0,
             demo_rlva_frame: None,
+            rlva_minimap: Default::default(),
             rlva_login: if std::env::var("AURORA_DEMO").as_deref() == Ok("1") {
                 Default::default()
             } else {
@@ -1968,9 +1995,11 @@ impl App {
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
             voice_controls_ui: Default::default(),
+            omnifilter_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
+            conversation_log_ui: Default::default(),
             about: Default::default(),
             uninstall: Default::default(),
             stream_titles: Default::default(),
@@ -2233,18 +2262,17 @@ impl App {
                 return;
             }
         }
-        self.world.rlva_prepare_outfit(&mut cmd, actor);
-        if !actor.is_nil() && !self.world.rlva_normalize_teleport(&mut cmd) {
-            return;
-        }
-        if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
-            self.world.rlva_filter_teleport_offer(to);
-        }
-        let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
-        if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
-            self.world
-                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            return;
+        let outcome = self.world.rlva_send_boundary(&mut cmd, actor);
+        // (the self-test reads the answer to the command it just sent)
+        self.rlva_selftest.runner.boundary(outcome, &cmd);
+        match outcome {
+            crate::world::rlva::Boundary::Send => {}
+            crate::world::rlva::Boundary::Dropped => return,
+            crate::world::rlva::Boundary::Refused => {
+                self.world
+                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                return;
+            }
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
@@ -2253,16 +2281,7 @@ impl App {
         if let NetCommand::Build(aurora_net::build::BuildCmd::Transform { handle, updates }) = &cmd {
             self.world.objects.note_sent_transforms(*handle, updates, Instant::now());
         }
-        self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
-        self.world.note_outfit_command(&cmd);
-        self.world.rlva.note_sit_command(&cmd, actor);
-        if self.world.rlva.enabled()
-            && let NetCommand::RezAttachments(items) = &mut cmd
-        {
-            for item in items {
-                item.add = true;
-            }
-        }
+        self.world.rlva_note_sent(&mut cmd, actor, Instant::now());
         self.world.rlva_filter_lure(&mut cmd);
         let cmd = if let NetCommand::Chat {
             message,
@@ -2294,7 +2313,7 @@ impl App {
                 }
             }
         }
-        if self.demo && self.bridge_demo_command(&cmd) {
+        if self.demo && (self.rlva_selftest_demo_command(&cmd) || self.bridge_demo_command(&cmd)) {
             return;
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
@@ -3098,6 +3117,7 @@ impl App {
             // the demo never reads the PC's real Legacy Viewer folders: its
             // import scenario starts its own import on its own files
             import_at_login: s.log_import_at_login && !self.demo,
+            log_conversations: s.log_conversations,
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
@@ -3291,6 +3311,7 @@ impl App {
         self.settings.save();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        self.world.omnifilter.save_before_exit();
         for entry in &self.imports.entries {
             if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
                 draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -3335,8 +3356,24 @@ impl App {
         self.portal_journey = None;
         self.portal_ask = None;
         self.portal_demo_peer = None;
+        // its teleport belongs to the session that held it
+        self.suitcase_ask = None;
         self.follow_recovery = None;
+        // a question left open belongs to its session: a yes in the next one
+        // would act on another session's objects
+        self.delete_confirm = None;
+        self.moderation_ask = None;
+        self.god_kick_ask = None;
+        self.group_chat_confirm = None;
+        self.object_menu = Default::default();
+        self.place_confirm = None;
+        self.places_ui.forget_question();
+        self.url_confirm = None;
         self.inventory_ui = Default::default();
+        // the contact sets' windows, Quick sort's queue and the choices hold
+        // the last account's residents and sets: a relog as another account
+        // must not save them into its sets
+        self.contacts_ui = Default::default();
         self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -3416,6 +3453,8 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
+        // and the conversation log's filter and selection
+        self.conversation_log_ui = Default::default();
         self.chat_import_closed();
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
@@ -3493,6 +3532,11 @@ impl App {
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
+            return;
+        }
+        // (demo mode hands the answers to the app directly: the self-test's
+        // own are seen here too)
+        if self.rlva_selftest.runner.event(&mut self.world, &ev) {
             return;
         }
         if self.bridge_runtime.event(&mut self.world, &ev, Instant::now()) {
@@ -5124,6 +5168,7 @@ impl App {
             return;
         };
         match action {
+            _ if self.rlva_refuses_shortcut(action) => {}
             Action::Fly => self.toggle_fly(),
             Action::FlyOverride => self.toggle_fly_override(),
             Action::Flycam => self.toggle_joystick_flycam(),
@@ -6075,6 +6120,11 @@ impl App {
         // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
         // for the run)
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+        // FSShowMutedChatHistory (AURORA_DEMO_MUTED_CHAT=…:<mode>: for the run)
+        w.blocked_chat = match crate::demo::muted_chat::scene() {
+            Some((_, Some(mode))) if self.demo => mode,
+            _ => self.settings.blocked_chat,
+        };
         // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
@@ -6916,6 +6966,8 @@ impl App {
         }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        // a rule changed just before closing is kept, as at a logout
+        self.world.omnifilter.save_before_exit();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();
@@ -6968,7 +7020,9 @@ impl App {
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
+        // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
+        self.world.chat_log.save_conversations(true);
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
@@ -7361,9 +7415,14 @@ impl App {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0.0, |d| d.as_secs_f64());
             let profiles = &self.world.profiles;
-            events.extend(self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
+            let alerts = self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
                 profiles.get(id).and_then(|p| ui::people::age_days(p, today))
-            }));
+            });
+            // FSRadarEntry::checkAge (fsradarentry.cpp): under @shownames an
+            // age that gets known counts as alerted, and says nothing
+            if !self.world.rlva.has("shownames") {
+                events.extend(alerts);
+            }
         }
         // the alerts to scripts: ScriptDialogReply from ourselves, a chat on
         // a negative channel that reaches our attachments
@@ -8910,8 +8969,11 @@ impl App {
             self.world.agent.record_jump_input(now);
         }
         // agent_jump (indra/newview/llviewerinput.cpp) takes off through
-        // LLAgent::setFlying, which refuses where LLAgent::canFly says no
+        // LLAgent::setFlying, which refuses where LLAgent::canFly says no.
+        // upGrabbed (llTakeControls CONTROL_UP, pass_on false) still sends
+        // the hold to the script but must not start automatic fly.
         if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
+            && !self.world.script_controls.up_grabbed()
             && self.movement_runtime.native_fly_allowed()
             && !self.world.agent.flying
             && !self.world.agent.seated
@@ -9156,6 +9218,9 @@ impl App {
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            ContactsAction::RosterProfile(id) => {
+                self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+            }
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
             ContactsAction::SendTeleportOffer { to, message } => {
                 let cmd = self.world.offer_teleport(to, &message);
@@ -9230,6 +9295,7 @@ impl App {
         wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
+        wanted.extend(self.conversation_log_ui.wanted_pics.drain());
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -9284,6 +9350,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.conversation_log_ui.wanted_images.drain());
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
@@ -9979,6 +10046,11 @@ impl App {
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
         }
+        // AURORA_DEMO_WEARABLE_FAVORITES: seeded once the demo inventory
+        // has arrived (its root listing would drop the folders added before)
+        if self.demo && self.frame_count == 300 {
+            self.demo_wearable_favorites();
+        }
         self.outfit_portrait_demo();
         self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
@@ -10179,9 +10251,7 @@ impl App {
         while !still && let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
-            if let Some(app_ev) = self.bridge_runtime.receive(&mut self.world, ev, Instant::now(), sent) {
-                self.on_app_event(app_ev);
-            }
+            self.receive_event(ev, sent);
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             if now.duration_since(t_ev) > Duration::from_millis(8) {
@@ -10210,6 +10280,10 @@ impl App {
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
+            // the weather's memory of the ground (snow, wet, footprints)
+            if let Some(gfx) = &mut self.gfx {
+                gfx.renderer.shift_world(shift);
+            }
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
@@ -10227,6 +10301,10 @@ impl App {
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::alpha_sort::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::snow_roof::tick(&mut self.world, self.frame_count);
+            if let Some((eye, at)) = crate::demo::snow_roof::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
@@ -10257,6 +10335,10 @@ impl App {
             if let Some(e) = crate::demo::sound_reverb::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
+            // AURORA_DEMO_MUTED_CHAT: the blocked resident among Nova's lines
+            if let Some(e) = crate::demo::muted_chat::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
             // AURORA_DEMO_CHAT_RANGE: near and far speakers around us
             if let Some(e) = crate::demo::chat_range::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
@@ -10277,6 +10359,7 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        self.world.omnifilter_frame(self.settings.omnifilter, Instant::now());
         if self.in_world() {
             self.sync_friends_only();
             self.step_gestures();
@@ -10298,6 +10381,11 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            // a new account's outfit: worn like the Welcome Pack's folders
+            if let Some(outfit) = self.world.outfit.take_initial_outfit() {
+                self.welcome_wears
+                    .push(vec![avatar_welcome::initial_command(outfit)], Instant::now());
+            }
             let allow_links = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && self.inventory_ui.pending.is_none();
             for command in self.world.update_attachment_inventory(Instant::now(), allow_links) {
                 if let NetCommand::EditInventory { request, .. } = &command {
@@ -10487,7 +10575,9 @@ impl App {
             self.camera.vr_body_offset(self.vr_body_follow.offset());
         }
         self.apply_local_imports(&mut gfx.renderer);
-        self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
+        self.wearable_ui
+            .preview
+            .apply(&mut self.world, &mut self.scene, &mut gfx.renderer, Some(&self.egui_ctx));
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
             self.send(command);
         }
@@ -10760,6 +10850,7 @@ impl App {
         self.update_voice();
         self.update_radar();
         self.update_bridge();
+        self.update_rlva_selftest();
         self.update_region_restart();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| {
@@ -11490,6 +11581,7 @@ impl App {
                 world_clock(),
                 !self.settings.reduce_motion,
             );
+            self.spinning_cat_frame(&mut gfx.renderer, dt);
             self.frame_profile.lap(Lap::Extras);
             let overlays = self.settings.world_overlays;
             self.scene
@@ -11525,6 +11617,7 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            self.scene.spinning_cat.append(&mut self.scene.lists);
             // the build tools' holograms: where Place on surface would put
             // the selection, or a move's (scene/build_hologram.rs)
             {
@@ -12215,7 +12308,8 @@ impl App {
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            None => self.live_look((w, h), focus),
+            // the spinning cat's colours, when the photo mode shows no look
+            None => self.live_look((w, h), focus).or_else(|| self.oiia.look(w, h)),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -12725,7 +12819,10 @@ impl App {
                 if let Some(cmd) = self.interactions.hover_request(target) {
                     self.send(cmd);
                 }
-                if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
+                // less what RLVa refuses, measured at the hovered point
+                let point = self.look_hover.map(|(_, p)| p);
+                let ray = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1);
+                if let Some(action) = self.hover_cursor_action(idx, point, ray) {
                     if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
                         log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
                     }
@@ -12793,7 +12890,7 @@ impl App {
                 full.platform_output.cursor_image = None;
             }
         }
-        if self.typing_pointer.hidden() {
+        if self.typing_pointer.hidden_for(&self.egui_ctx) {
             // typing in a field (#3211): egui shows the pointer again by
             // itself once this stops, at the next move
             full.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -13054,7 +13151,12 @@ impl App {
         } else {
             &self.empty_lists
         };
-        gfx.renderer.set_rain_surfaces(raining);
+        // (not once quitting: out of the world the weather is the user's own,
+        // and rain there would compile a pipeline set the closing renderer
+        // has to wait for)
+        if !self.exit_prompt.quitting() {
+            gfx.renderer.set_rain_surfaces(raining);
+        }
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
@@ -13470,6 +13572,17 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::omnifilter::on() {
+            if self.frame_count == crate::demo::omnifilter::OPEN {
+                ui::widgets::open_floater(&self.egui_ctx, ui::omnifilter::WINDOW, &mut self.panels.omnifilter);
+            }
+            let agent = self.world.agent_id;
+            for event in crate::demo::omnifilter::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::object_im::settings().is_some() {
             let agent = self.world.agent_id;
             for event in crate::demo::object_im::events(self.frame_count, agent) {
@@ -13573,7 +13686,8 @@ impl App {
                 self.panels.appearance = false;
                 if mode.starts_with("config") {
                     self.panels.chat = false;
-                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                    self.contacts_ui
+                        .configure_set_at(aurora_i18n::tr!("demo-family"), ui::contacts::EditorTab::Behaviour);
                 } else {
                     self.panels.chat = true;
                 }
@@ -13634,6 +13748,22 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+        }
+        // AURORA_DEMO_CONV_OPTIONS: the group, the conference, Tess's IM
+        if self.demo && crate::demo::conv_options::scene().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::conv_options::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            crate::demo::conv_options::own_lines(&mut self.world, self.frame_count);
+            if self.frame_count == crate::demo::conv_options::SHOW_AT
+                && let Some(id) = crate::demo::conv_options::scene().and_then(|s| s.show)
+            {
+                self.panels.chat = true;
+                self.chat_ui.open(id);
             }
         }
         if self.demo
@@ -15580,7 +15710,7 @@ impl App {
             }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
             BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
-            BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
+            BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(self.world.hud_zoom_min(), 1.0),
             BarAction::None => {}
             BarAction::IkEdit => {
                 self.ik_editor.toggle();
@@ -15605,6 +15735,9 @@ impl App {
             }
             BarAction::Build(t) => {
                 match t {
+                    // LLToolMgr::buildEnabledOrActive: under @edit and @rez
+                    // the window does not open; an open one still closes
+                    _ if !self.build.open && !self.world.rlva_can_build() => {}
                     1 => self.build.open_build(crate::build::Tool::Edit),
                     2 => self.build.open_build(crate::build::Tool::Create),
                     3 => self.build.open_build(crate::build::Tool::Land),
@@ -15741,7 +15874,10 @@ impl App {
                 self.settings.world_overlays = overlays;
                 self.settings.save();
             }
-            BarAction::ShowTransparency => self.settings.debug.show_alpha = !self.settings.debug.show_alpha,
+            // LLViewHighlightTransparent (llviewermenu.cpp): off stays off under a restriction
+            BarAction::ShowTransparency => {
+                self.settings.debug.show_alpha = !self.settings.debug.show_alpha && self.rlva_can_highlight_transparent()
+            }
             BarAction::RenderTypes(hidden, particles) => {
                 self.settings.debug.hidden_types = hidden;
                 if self.settings.world_overlays.hide_particles != particles {
@@ -15767,6 +15903,8 @@ impl App {
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
+            // LLLocationInputCtrl::onAddLandmarkButtonClicked: nothing under @showloc
+            BarAction::LandmarkStar(_) if self.world.rlva.has("showloc") => {}
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -16906,6 +17044,7 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
@@ -17084,6 +17223,9 @@ impl App {
         if let Some(folders) = res.import_legacy_logs.take() {
             self.chat_import_start(folders);
         }
+        if res.clear_conversation_log {
+            self.world.chat_log.clear_conversations();
+        }
         if res.erase_chat_logs {
             self.options_ui.chat_log_status = if self.world.chat_log.busy() {
                 aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned()
@@ -17171,6 +17313,17 @@ impl App {
         let sit_locked = !self.world.rlva_allows_command(&NetCommand::OneShotControl(sit), uuid::Uuid::nil());
         ui.ctx()
             .data_mut(|data| data.insert_temp(ui::bars::rlva_sit_locked_id(), sit_locked));
+        let build_locked = !self.build.open && !self.world.rlva_can_build();
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(ui::bars::rlva_build_locked_id(), build_locked));
+        // the Fly button and menu entry: `toggle_fly`'s own answer on the
+        // ground; World › Environment while @setenv holds the environment
+        let fly_locked = !self.world.agent.flying && !crate::autopilot::can_takeoff(&self.world);
+        let env_locked = self.world.rlva.has("setenv");
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(ui::bars::fly_locked_id(), fly_locked);
+            data.insert_temp(ui::bars::rlva_env_locked_id(), env_locked);
+        });
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
@@ -17356,7 +17509,8 @@ impl App {
             }
             Screen::Loading { since } => {
                 let stats = self.scene.textures.stats;
-                let region = self.world.region_name();
+                // (hidden if a restriction restored at login asks for it: @showloc)
+                let region = self.world.rlva_region_label();
                 let terrain = self.world.terrain_progress();
                 let base = if self.world.movement_complete { 0.55 } else { 0.35 };
                 let raw = base + terrain * 0.35 + (stats.loaded as f32 / stats.total.max(1) as f32) * 0.1;
@@ -17620,7 +17774,8 @@ impl App {
                     crate::demo::floating_text::guides(&ctx, &self.world, &self.scene);
                 }
                 t = self.ui_parts.lap(Part::UiTags, t);
-                let parcel_landmark = self.parcel_landmark();
+                // (no landmark of this parcel under @showloc: its name is the place's)
+                let parcel_landmark = self.parcel_landmark().filter(|_| !self.world.rlva.has("showloc"));
                 self.follow_favorites_access();
                 let favorites_shown = ui::bars::favorites::take_shown(&ctx);
                 let here = parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
@@ -17729,8 +17884,8 @@ impl App {
                     } else {
                         crate::slurl::make(&self.world.region_name(), self.world.agent.position)
                     },
-                    tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
-                    tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
+                    tp_back: self.world.tp_history.back_name(),
+                    tp_forward: self.world.tp_history.forward_name(),
                     tp_session: self.world.tp_history.session(),
                     landmarks: location_landmarks,
                     status: self.world.status.modes(),
@@ -18125,6 +18280,8 @@ impl App {
                     sides,
                 );
                 area = room;
+                // a bar's button or menu entry opens its window this very frame
+                rlva::keep_windows_closed(&self.world.rlva, &mut self.panels);
                 // without the bars, the windows keep the room they left
                 if chrome.top && chrome.bottom {
                     self.interface.last_room = Some((area, bottom_top));
@@ -18530,6 +18687,18 @@ impl App {
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
+                // the Legacy Viewer's conversation options, read by the tabs
+                // and the lines drawn after this (AURORA_DEMO_CONV_OPTIONS=…:on
+                // turns them all on for the run, nothing saved)
+                let mut conversation_options = self.settings.conversation_options;
+                if self.demo {
+                    crate::demo::conv_options::force(&mut conversation_options);
+                }
+                ui::chat::conversation_options::publish(conversation_options);
+                // FSOpenIMContainerOnOfflineMessage
+                if std::mem::take(&mut self.world.social.offline_ims) && conversation_options.open_on_offline {
+                    crate::ui::notifications::open_conversations(&ctx, &mut open);
+                }
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 self.chat_ui.follow_column_setting(self.settings.chat_column_collapsed);
                 self.chat_ui.own_windows = self.settings.conversations_own_windows
@@ -18881,7 +19050,13 @@ impl App {
                     log::warn!("cannot open the transcripts folder: {e}");
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                contact_actions.extend(ui::contacts::dialog_windows(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.contacts_ui,
+                    &self.avatar_pics,
+                ));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -18949,6 +19124,9 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        ui::people::PeopleAction::RosterProfile(id) => {
+                            self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+                        }
                         ui::people::PeopleAction::ZoomRefused { name, why } => {
                             let meters = |d: f32| aurora_i18n::number(f64::from(d), 0);
                             let text = match why {
@@ -18972,6 +19150,9 @@ impl App {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }
                         ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
+                        ui::people::PeopleAction::ConversationLog => {
+                            ui::widgets::toggle_floater(&ctx, ui::conversation_log::WINDOW, &mut self.panels.conversation_log)
+                        }
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
                             if let Err(e) = self.world.block(uuid::Uuid::nil(), &name, crate::world::mutes::MuteType::ByName) {
@@ -19087,6 +19268,7 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                self.wearable_favorites_window(&ctx, &p);
                 self.outfit_portrait_window(&ctx, &p);
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
@@ -19456,6 +19638,14 @@ impl App {
                         self.open_web_link(u, None);
                     }
                 }
+                // an Omnifilter rule's "Gotopage" (callback_load_url ->
+                // LLWeb::loadURL): web links only, through the same link
+                // checks and browser routing as a click on "Go to page"
+                for u in self.world.take_omnifilter_urls() {
+                    if u.starts_with("https://") || u.starts_with("http://") {
+                        self.open_web_link(u, None);
+                    }
+                }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
@@ -19592,6 +19782,14 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                self.omnifilter_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world.omnifilter,
+                    &mut self.settings,
+                    &mut self.panels.omnifilter,
+                );
+                self.conversation_log_window(&ctx, &p);
                 self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
                     &ctx,
@@ -19981,7 +20179,8 @@ impl App {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
                         ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
-                        ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
+                        // LLNetMap::handleRightMouseDown (llnetmap.cpp): no World Map under @showworldmap
+                        ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map |= !self.world.rlva.has("showworldmap"),
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
                             ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
@@ -20041,6 +20240,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.rlva_selftest_window(&ctx, &p);
                 self.about_window(&ctx, &p, renderer);
                 self.sysinfo_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
@@ -20080,6 +20280,7 @@ impl App {
                 }
                 let mut open = self.panels.environment;
                 let mut lighting = self.panels.personal_lighting;
+                self.env_ui.rlva_locked = self.world.rlva.has("setenv") || self.world.rlva.has("setsphere");
                 let env_actions = self.env_ui.show_selector(
                     &ctx,
                     &p,
@@ -20145,13 +20346,8 @@ impl App {
                     // a screen fading out says what it said when the fade began
                     let text = o.leaving.take().unwrap_or_else(|| {
                         // the banner names the region; its arrival point is one of its facts
-                        let (dest, point) = ui::loading::split_destination(&o.dest);
-                        let arrived = o.loading_end || o.arrived.is_some() || dest.is_empty();
-                        let name = if dest.is_empty() {
-                            self.world.region_name()
-                        } else {
-                            dest.to_owned()
-                        };
+                        let arrived = o.loading_end || o.arrived.is_some() || ui::loading::split_destination(&o.dest).0.is_empty();
+                        let (name, point) = ui::loading::banner_place(&self.world, &o.dest);
                         let stage = if o.loading_end {
                             // the line the loading screen ended on
                             let stats = self.scene.textures.stats;
@@ -20221,6 +20417,21 @@ impl App {
             self.net.runtime(),
         );
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+        // The spinning cat: its warning first, then Stop while it plays.
+        if self.oiia.warning() && !self.spinning_cat_video() {
+            // No video, no show: the code's window says why.
+            if ui::spinning_cat::unavailable(&ctx, &p) {
+                self.oiia.decline();
+            }
+        } else if self.oiia.warning() {
+            match ui::spinning_cat::warning(&ctx, &p) {
+                Some(true) => self.start_spinning_cat(None),
+                Some(false) => self.oiia.decline(),
+                None => {}
+            }
+        } else if self.oiia.playing() && ui::spinning_cat::stop(&ctx, &p) {
+            self.oiia.stop();
+        }
         self.ui_parts.lap(Part::UiRest, t);
         a
     }
@@ -20394,8 +20605,14 @@ impl ApplicationHandler for App {
             }
         };
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
+        // The native Window menu makes Cmd+M minimize and Ctrl+Cmd+F enter
+        // full screen before the viewer's own shortcuts see them
+        // (mac_window_menu.rs).
         #[cfg(target_os = "macos")]
-        crate::mac_quit::route_quit_to_close();
+        {
+            crate::mac_quit::route_quit_to_close();
+            crate::mac_window_menu::install();
+        }
         sync_auto_render_scale(&mut self.settings, window.scale_factor());
         let created = self.open_renderer(&window);
         let renderer = match created {
@@ -21051,8 +21268,44 @@ impl ApplicationHandler for App {
                         self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
                         self.settings.classic_name_tags = std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-legacy");
                     }
+                    use crate::demo::people::SetsScene;
+                    match crate::demo::people::sets_scene() {
+                        Some(SetsScene::Editor { tab, badges, marker }) => {
+                            self.contacts_ui.configure_set_at(aurora_i18n::tr!("demo-family"), tab);
+                            self.contacts_ui.demo_editor(badges, marker);
+                        }
+                        Some(SetsScene::ThinEditor) => {
+                            self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                            let work = ui::layout::work_area(&self.egui_ctx);
+                            ui::widgets::place_floater(
+                                &self.egui_ctx,
+                                "contact_set_config",
+                                work.center() - egui::vec2(280.0, 360.0),
+                                egui::vec2(560.0, 720.0),
+                            );
+                        }
+                        Some(SetsScene::QuickSort) => {
+                            self.contacts_ui.set_choice = Some(crate::world::contact_sets::NO_SETS.to_owned());
+                            self.people_ui.select(Vec::new());
+                            self.contacts_ui.open_quick_sort(&self.world);
+                        }
+                        Some(SetsScene::Options) => self.contacts_ui.open_set_options(),
+                        Some(SetsScene::Select) => self
+                            .people_ui
+                            .select(vec![crate::demo::people::NOVA, crate::demo::people::ORION_EXAMPLE]),
+                        None => {}
+                    }
                 }
-                self.panels.people = true;
+                // the windows of a set scene stand alone, People closed
+                self.panels.people = !matches!(
+                    crate::demo::people::sets_scene(),
+                    Some(
+                        crate::demo::people::SetsScene::Editor { .. }
+                            | crate::demo::people::SetsScene::ThinEditor
+                            | crate::demo::people::SetsScene::QuickSort
+                            | crate::demo::people::SetsScene::Options
+                    )
+                );
                 self.panels.people_tab = crate::demo::people::tab();
                 self.panels.inventory = false;
                 self.panels.chat = false;
@@ -21428,6 +21681,13 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;
             }
+            // AURORA_DEMO_CONV_OPTIONS=<style>[:on]: the window closed (the
+            // offline messages open it with the option), at a known size
+            if let Some(scene) = crate::demo::conv_options::scene() {
+                self.panels.perf = false;
+                self.chat_ui.demo_style = Some(scene.style);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+            }
             // AURORA_DEMO_GIFS=open|klipy|sent|menu|nokey|net: the GIF picker of
             // the friend's conversation (#932), with AURORA_DEMO_CONV or alone
             if let Some(mode) = crate::demo::gifs_scenario() {
@@ -21457,6 +21717,19 @@ impl ApplicationHandler for App {
                 self.panels.chat = scene.style.is_some();
                 if let Some(style) = scene.style {
                     self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
+                    self.chat_ui.demo_style = Some(style);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+                }
+            }
+            // AURORA_DEMO_MUTED_CHAT=<style>|lines[:mode]: the same, for the
+            // blocked resident's lines
+            if let Some((style, _)) = crate::demo::muted_chat::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = style.is_some();
+                if let Some(style) = style {
+                    self.chat_ui.selected = None;
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
@@ -21775,6 +22048,10 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_CONV_OPTIONS: Nova's conversation and its history
+            if crate::demo::conv_options::scene().is_some() {
+                crate::demo::conv_options::lines(&mut self.world);
             }
             // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {
@@ -22210,6 +22487,8 @@ impl ApplicationHandler for App {
                         | "filters"
                         | "preferences"
                         | "recent"
+                        | "recent-date"
+                        | "aurora-recent-date"
                         | "worn"
                         | "filtered"
                         | "large"
@@ -22393,6 +22672,45 @@ impl ApplicationHandler for App {
                     }
                     if view == "recent" {
                         self.inventory_ui.tab = 2;
+                    }
+                    if matches!(view.as_str(), "recent-date" | "aurora-recent-date") {
+                        // The Recent tab under a Date rule of the advanced
+                        // search. The filter items are dated a day apart
+                        // (seed_view: an hour apart): since the last logout
+                        // (a day, on a first launch) lists two of them, the
+                        // rule "newer than 5 days" six.
+                        use ui::inventory::smart::{Field, Group, Node, Rule, SmartQuery};
+                        use ui::inventory::view::{Age, SearchField};
+                        let time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs() as i64);
+                        let parent = uuid::Uuid::from_u128(8000);
+                        for it in self
+                            .world
+                            .inventory
+                            .items
+                            .values_mut()
+                            .filter(|it| it.parent == parent && it.id.as_u128() >= 8100 && !matches!(it.asset_type, 24 | 25))
+                        {
+                            it.created_at = time - (it.id.as_u128() as i64 - 8100) * 86_400;
+                        }
+                        self.world.inventory.generation += 1;
+                        self.inventory_ui.tab = 2;
+                        self.inventory_ui.enter_advanced(SearchField::Name);
+                        if let Some(query) = self.inventory_ui.smart_query() {
+                            *query = SmartQuery {
+                                root: Group {
+                                    nodes: vec![Node::Rule(Rule {
+                                        age: Age::Newer,
+                                        hours: 5 * 24,
+                                        ..Rule::of(Field::Date)
+                                    })],
+                                    ..Group::default()
+                                },
+                            };
+                        }
+                        // the classic layout edits the rules in the Filters floater
+                        self.inventory_ui.filters_open = view == "recent-date";
                     }
                     if view.ends_with("received-sort") || view.ends_with("received-sort-name") {
                         crate::world::inventory::demo::seed_received_sort(&mut self.world.inventory, self.world.agent_id);
@@ -23248,7 +23566,7 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
-        self.typing_pointer_event(&event);
+        self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
         // here, with no release to come. Like egui-winit, and like
@@ -23281,6 +23599,7 @@ impl ApplicationHandler for App {
 
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
+        let pending_alt_chars = self.alt_text.len();
         if self.alt_code_key(&event) {
             return;
         }
@@ -23323,6 +23642,8 @@ impl ApplicationHandler for App {
         // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
         // it never hovers, clicks or scrolls the windows (#1343)
         let held_pointer = self.cursor_hold.held() && cursor_hold::held_from_ui(&event);
+        // Repeated position reports must not put egui's hover back while typing.
+        let stationary_hidden_pointer = self.typing_pointer.hidden() && matches!(event, WindowEvent::CursorMoved { .. });
         // AltGr's shortcut key must not also reach egui as a plain key:
         // for example G would snap a selection while Ctrl+Alt+G runs.
         // Releases still clear any key pressed before AltGr was held.
@@ -23381,14 +23702,23 @@ impl ApplicationHandler for App {
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || web_tab || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
-            egui_winit::EventResponse {
-                consumed: false,
-                repaint: true,
-            }
-        } else {
-            g.egui_state.on_window_event(&g.window, &event)
-        };
+        let first_event = g.egui_state.egui_input().events.len();
+        let resp =
+            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
+                egui_winit::EventResponse {
+                    consumed: false,
+                    repaint: true,
+                }
+            } else {
+                g.egui_state.on_window_event(&g.window, &event)
+            };
+        let events = &mut g.egui_state.egui_input_mut().events;
+        if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
+            && !self.cursor_hold.held()
+            && !self.clicks.scripted()
+        {
+            self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+        }
         match &event {
             WindowEvent::CloseRequested => {
                 self.request_exit();
@@ -23497,6 +23827,11 @@ impl ApplicationHandler for App {
                     let pressed = ke.state == ElementState::Pressed;
                     let mods = self.key_mods(ke);
                     let altgr_text = self.altgr_text_input(ke);
+                    // The spinning cat watches for its code (crate::oiia):
+                    // the keys go on to do what they do.
+                    if pressed && !ke.repeat {
+                        self.spinning_cat_key(code, &ke.logical_key);
+                    }
                     // The color dialog and an emoji picker own Escape before
                     // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
@@ -23510,6 +23845,11 @@ impl ApplicationHandler for App {
                             || self.chat_ui.previews.image_window_open()
                             || ui::emoji::picker_open(&self.egui_ctx))
                     {
+                        return;
+                    }
+                    // Escape ends the spinning cat's show, and nothing else.
+                    if pressed && code == KeyCode::Escape && self.oiia.playing() {
+                        self.oiia.stop();
                         return;
                     }
                     // learn the keyboard layout for the shortcut labels
