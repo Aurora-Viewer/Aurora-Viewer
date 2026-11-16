@@ -12,7 +12,8 @@ use super::*;
 /// including while Aurora's explorer has swapped its flat tree into `plain`.
 pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
     // The explorer lists one folder flat (the Legacy Viewer's single folder
-    // mode): its folders never open in place, so Left and Right stay unused.
+    // mode): its folders never open in place, so Left and Right only end the
+    // word typed.
     let explorer = st.aurora.is_some_and(|frame| frame.explorer);
     st.shown_order = if filtered {
         ShownOrder::Results
@@ -59,6 +60,12 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
                 && !modifiers.command
             {
                 let arrow = match key {
+                    // unused by the explorer, but they still end the word typed, as
+                    // LLFolderView::handleKeyHere clears mSearchString on KEY_LEFT/KEY_RIGHT
+                    egui::Key::ArrowLeft | egui::Key::ArrowRight if explorer => {
+                        input.push(Typed::Reset);
+                        return true;
+                    }
                     egui::Key::ArrowUp => Arrow::Up,
                     egui::Key::ArrowDown => Arrow::Down,
                     egui::Key::ArrowLeft if !explorer => Arrow::Left,
