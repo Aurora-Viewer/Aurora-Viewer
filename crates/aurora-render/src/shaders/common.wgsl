@@ -133,6 +133,8 @@ struct Frame {
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
+    dry_count: vec4<u32>,       // x how many of dry hold a dry volume (dry_volume.rs; 0: the camera is not in one); yzw unused
+    dry: array<vec4<f32>, 32>,  // dry volumes, 4 per volume: rows 0..2 render space to the unit shape, row 3 x the shape (0 box, 1 cylinder, 2 sphere)
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -1199,7 +1201,79 @@ fn water_fog_segment(delta:vec3<f32>,kd:f32,start_depth:f32,end_depth:f32)->Wate
     return WaterFog(radiance*(vec3<f32>(1.0)-transmission),transmission);
 }
 
+// Dry volumes (dry_volume.rs, Aurora's own): invisible "occlude water"
+// prims the camera stands in below the water line. The view is drawn as in
+// air; the water's fog starts where the line of sight leaves them.
+const MAX_DRY:u32=8u;
+
+fn dry_camera() -> bool {
+    return frame.dry_count.x>0u && !in_reflection_pass();
+}
+
+fn dry_slab(o:f32,d:f32,span:vec2<f32>)->vec2<f32> {
+    if(abs(d)<1e-8){return select(vec2<f32>(1.0,-1.0),span,abs(o)<=1.0);}
+    let a=(-1.0-o)/d;let b=(1.0-o)/d;
+    return vec2<f32>(max(span.x,min(a,b)),min(span.y,max(a,b)));
+}
+
+// |o + t d| <= 1: a sphere, or a circle when the z parts are zero.
+fn dry_round(o:vec3<f32>,d:vec3<f32>,span:vec2<f32>)->vec2<f32> {
+    let a=dot(d,d);let b=dot(o,d);let c=dot(o,o)-1.0;
+    if(a<1e-12){return select(vec2<f32>(1.0,-1.0),span,c<=0.0);}
+    let disc=b*b-a*c;
+    if(disc<0.0){return vec2<f32>(1.0,-1.0);}
+    let s=sqrt(disc);
+    return vec2<f32>(max(span.x,(-b-s)/a),min(span.y,(-b+s)/a));
+}
+
+// DryVolume::span: the part (t in, t out) of origin + t * delta inside volume i.
+fn dry_span(i:u32,origin:vec3<f32>,delta:vec3<f32>)->vec2<f32> {
+    let r0=frame.dry[i*4u];let r1=frame.dry[i*4u+1u];let r2=frame.dry[i*4u+2u];
+    let o=vec3<f32>(dot(r0.xyz,origin)+r0.w,dot(r1.xyz,origin)+r1.w,dot(r2.xyz,origin)+r2.w);
+    let d=vec3<f32>(dot(r0.xyz,delta),dot(r1.xyz,delta),dot(r2.xyz,delta));
+    let shape=frame.dry[i*4u+3u].x;
+    let wide=vec2<f32>(-1e30,1e30);
+    if(shape>1.5){return dry_round(o,d,wide);}
+    let along=dry_slab(o.z,d.z,wide);
+    if(shape>0.5){return dry_round(vec3<f32>(o.xy,0.0),vec3<f32>(d.xy,0.0),along);}
+    return dry_slab(o.y,d.y,dry_slab(o.x,d.x,along));
+}
+
+// dry_volume::exit: how far along pos_rel (0..1, 1 or more: all of it) the
+// view stays dry, going from volume to volume while they touch.
+fn dry_exit(pos_rel:vec3<f32>)->f32 {
+    let origin=frame.camera_pos.xyz;
+    let n=min(frame.dry_count.x,MAX_DRY);
+    var t=0.0;
+    for(var hop=0u;hop<n;hop++) {
+        var next=t;
+        for(var i=0u;i<n;i++) {
+            let s=dry_span(i,origin,pos_rel);
+            if(s.x<=t+1e-5 && s.y>next){next=s.y;}
+        }
+        if(next<=t || next>=1.0){t=next;break;}
+        t=next;
+    }
+    return t;
+}
+
+// The water's fog seen from a dry volume: from where the line of sight
+// leaves the volumes to its end, the part of it under the water line.
+fn dry_water_fog_view(pos_rel:vec3<f32>,kd:f32)->WaterFog {
+    let clear=WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));
+    let t=dry_exit(pos_rel);
+    if(t>=1.0){return clear;}
+    let depth=camera_water_level()-frame.camera_pos.z;
+    var start=pos_rel*max(t,0.0);
+    var end=pos_rel;
+    if(start.z>=depth && end.z>=depth){return clear;}
+    if(end.z>depth){end=start+(end-start)*((depth-start.z)/(end.z-start.z));}
+    else if(start.z>depth){start=start+(end-start)*((depth-start.z)/(end.z-start.z));}
+    return water_fog_segment(end-start,kd,max(depth-start.z,0.0),max(depth-end.z,0.0));
+}
+
 fn water_fog_view(pos_rel:vec3<f32>,kd:f32)->WaterFog {
+    if(dry_camera()) {return dry_water_fog_view(pos_rel,kd);}
     if(!water_fx_on(256u)) {
         let legacy=legacy_water_fog_view(pos_rel,kd);
         return WaterFog(legacy.rgb,vec3<f32>(legacy.a));
@@ -1219,7 +1293,15 @@ fn water_fog_view(pos_rel:vec3<f32>,kd:f32)->WaterFog {
     return water_fog_segment(end-start,kd,max(depth-start.z,0.0),max(depth-end.z,0.0));
 }
 
+// The camera is in the water: below the water line and not in a dry volume.
+// The fog, the rain, the sky and the light follow this.
 fn camera_underwater() -> bool {
+    return camera_submerged() && !dry_camera();
+}
+
+// The camera is below the water line, dry volume or not: what the shape of
+// the view depends on (the surface seen from under it, bubbles and spray).
+fn camera_submerged() -> bool {
     if(in_reflection_pass()) { return false; }
     let depth = frame.cam_up.w-frame.camera_pos.z;
     // Outside the bounded wake height the side is already known. Ordinary
@@ -1279,7 +1361,7 @@ fn water_fogs_source(world_pos: vec3<f32>) -> bool {
 // absorption, which is tuned on it), the plain one from above, as
 // LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
 fn water_source_density() -> f32 {
-    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || dry_camera() || water_fx_on(256u));
 }
 
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {

@@ -21,6 +21,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod draw_limits;
 pub mod drawn;
+pub mod dry_volumes;
 pub mod fetch_priority;
 pub(crate) mod flexible;
 mod foot_scope;

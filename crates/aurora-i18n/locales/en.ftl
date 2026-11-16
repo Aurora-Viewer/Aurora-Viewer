@@ -3920,6 +3920,8 @@ demo-spammer = Spammer
 demo-shadow = Shadow
 demo-noisy-seller = Noisy seller
 build-ui-object-phantom = Phantom
+build-ui-object-dry-interior-too-long = The description is too long to add the Dry interior tag (127 bytes at most).
+build-ui-object-dry-interior = Dry interior
 common-favorites = Favorites
 ui-sound-window-closed = Window closed
 ui-sound-window-opened = Window opened
@@ -9875,6 +9877,7 @@ build-options-group-owned = Include group-owned objects
 build-options-hidden-selection = Show hidden selection
 build-options-light-radius = Show light radius for selection
 build-options-probe-volumes = Show reflection probe volumes
+build-options-dry-volumes = Show dry interiors
 build-compact-undo = Undo (Ctrl+Z)
 build-compact-redo = Redo (Ctrl+Y)
 build-compact-duplicate = Duplicate
@@ -13018,6 +13021,8 @@ water-effects-interactions = Object and avatar ripples / wakes
 water-effects-caustics = Underwater caustics
 water-effects-splashes = Splashes and spray
 water-effects-bubbles = Underwater bubbles
+water-effects-dry-occluders = Dry interiors
+water-effects-dry-occluders-help = Below the water line, inside an object marked Dry interior (Build › Object), the view is dry: no underwater fog inside, and the water seen through its walls keeps its fog. Only on your screen.
 
 water-effects-medium = Medium
 

@@ -687,6 +687,15 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
     }));
     let root_ok = editable && is_root;
+    // "Dry interior" (Aurora's own, scene/dry_volumes.rs): the `[dry]` tag
+    // in the description of the object the name and description go to
+    let targets = tool.prop_targets(world);
+    let dry_description = targets
+        .first()
+        .and_then(|&i| world.objects.get(i))
+        .and_then(|o| tool.props.get(&o.full_id))
+        .map(|pr| pr.description.clone());
+    let dry_ok = targets.len() == 1 && dry_description.is_some() && targets.iter().all(|&i| tool.can_modify(world, i));
     let checks = [
         (
             aurora_i18n::tr!("build-ui-object-locked"),
@@ -712,8 +721,14 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             false,
             root_ok && !flexible,
         ),
+        (
+            aurora_i18n::tr!("build-ui-object-dry-interior"),
+            dry_description.as_deref().is_some_and(crate::scene::dry_volumes::has_tag),
+            false,
+            dry_ok,
+        ),
     ];
-    let mut changes = [None; 4];
+    let mut changes = [None; 5];
     let mut column = |ui: &mut egui::Ui, indices: &[usize]| {
         for &index in indices {
             let (caption, value, mixed, enabled) = checks[index];
@@ -721,12 +736,22 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         }
     };
     if super::legacy::active(ui) {
-        column(ui, &[0, 1, 2, 3]);
+        column(ui, &[0, 1, 2, 3, 4]);
     } else {
         ui.columns(2, |columns| {
             column(&mut columns[0], &[0, 1]);
-            column(&mut columns[1], &[2, 3]);
+            column(&mut columns[1], &[2, 3, 4]);
         });
+    }
+    if let Some(value) = changes[4]
+        && let Some(description) = &dry_description
+    {
+        let next = crate::scene::dry_volumes::with_tag(description, value);
+        if next.len() > 127 {
+            tool.status = aurora_i18n::tr!("build-ui-object-dry-interior-too-long").into();
+        } else {
+            tool.set_name(world, &next, true);
+        }
     }
     if let Some(value) = changes[0] {
         tool.set_perm(world, perm_field::OWNER, !value, perm::MOVE | perm::MODIFY);

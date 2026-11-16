@@ -221,6 +221,11 @@ struct FrameU {
     /// x: how far the snow lying is drawn (m), whatever falls
     /// (`RainLook::snow_distance`); yzw unused.
     snow_far: [f32; 4],
+    /// x: how many of `dry` hold a dry volume (0: the camera is not in
+    /// one); yzw unused.
+    dry_count: [u32; 4],
+    /// The dry volumes (`DryVolume::uniform`), four vec4 each.
+    dry: [[f32; 4]; crate::dry_volume::MAX_DRY_VOLUMES * 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -7295,6 +7300,11 @@ impl Backend {
         u.lightning = f.rain_look.lightning;
         u.aurora = f.rain_look.aurora;
         u.snow_far = [f.rain_look.snow_distance, 0.0, 0.0, 0.0];
+        let dry = &f.dry_volumes[..f.dry_volumes.len().min(crate::dry_volume::MAX_DRY_VOLUMES)];
+        u.dry_count = [dry.len() as u32, 0, 0, 0];
+        for (slot, volume) in u.dry.as_chunks_mut::<4>().0.iter_mut().zip(dry) {
+            *slot = volume.uniform();
+        }
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,

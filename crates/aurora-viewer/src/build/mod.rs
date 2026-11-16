@@ -183,6 +183,10 @@ pub struct BuildSettings {
     /// RenderReflectionProbeVolumes: off at each start (Persist=0).
     #[serde(skip)]
     pub show_probe_volumes: bool,
+    /// Outlines of the dry interiors (scene/dry_volumes.rs), as the probe
+    /// volumes; off at each start.
+    #[serde(skip)]
+    pub show_dry_volumes: bool,
     /// Create tool: shape (index in `shapes::SHAPES`).
     pub create_shape: usize,
     /// CreateToolKeepSelected.
@@ -444,6 +448,7 @@ pub struct MenuOptions {
     pub hidden_selection: bool,
     pub light_radius: bool,
     pub probe_volumes: bool,
+    pub dry_volumes: bool,
 }
 
 impl MenuOptions {
@@ -460,6 +465,7 @@ impl MenuOptions {
             hidden_selection: s.show_hidden_selection,
             light_radius: s.show_light_radius,
             probe_volumes: s.show_probe_volumes,
+            dry_volumes: s.show_dry_volumes,
         }
     }
 
@@ -475,6 +481,7 @@ impl MenuOptions {
         s.show_hidden_selection = self.hidden_selection;
         s.show_light_radius = self.light_radius;
         s.show_probe_volumes = self.probe_volumes;
+        s.show_dry_volumes = self.dry_volumes;
     }
 }
 
@@ -746,6 +753,7 @@ impl Default for BuildSettings {
             show_hidden_selection: false,
             show_light_radius: false,
             show_probe_volumes: false,
+            show_dry_volumes: false,
             create_shape: 0,
             keep_tool: false,
             rez_under_land_group: true,
@@ -976,6 +984,10 @@ pub struct BuildTool {
     pub tab: usize,
     /// Last message for the floater's status line.
     pub status: String,
+    /// Descriptions this tool set, (object, new description), for the
+    /// dry-interior detector (scene/dry_volumes.rs) to learn at once
+    /// instead of when the object's properties come back.
+    pub described: Vec<(Uuid, String)>,
     last_frame: Option<Instant>,
 }
 
@@ -1030,6 +1042,7 @@ impl Default for BuildTool {
             rect: None,
             tab: 6,
             status: String::new(),
+            described: Vec::new(),
             last_frame: None,
         }
     }
@@ -2759,6 +2772,37 @@ impl BuildTool {
             let scale = o.visual_scale();
             for [a, b] in draw::probe_volume_edges(pos, rot, scale, probe.flags & 1 != 0) {
                 p.line(a, b, pal.teal, 1.0);
+            }
+        }
+    }
+
+    /// The dry interiors (scene/dry_volumes.rs), outlined like the probe
+    /// volumes, in the shape the dry test gives them. Aurora's own.
+    pub fn draw_dry_volumes(
+        &self,
+        ctx: &egui::Context,
+        pal: &crate::theme::Palette,
+        world: &World,
+        s: &BuildSettings,
+        dry: &crate::scene::dry_volumes::DryVolumes,
+    ) {
+        if !s.show_dry_volumes || self.select_type(world) == SelectType::Hud {
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("build_dry_volumes")));
+        let cam = self.cam;
+        let p = draw::Painter3d::new(painter, &cam, *pal);
+        let now = Instant::now();
+        for (idx, o) in world.objects.iter() {
+            if !dry.is_dry(o) || !world.parcel_object_visible(idx) {
+                continue;
+            }
+            let Some((pos, rot, false)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            let shape = crate::scene::dry_volumes::shape_of(o);
+            for [a, b] in draw::dry_volume_edges(pos, rot, o.visual_scale(), shape) {
+                p.line(a, b, pal.amber, 1.0);
             }
         }
     }

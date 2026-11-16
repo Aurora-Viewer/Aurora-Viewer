@@ -25,6 +25,7 @@ mod device_lost;
 pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
+pub mod dry_volume;
 mod exposure;
 pub mod frame_priority;
 mod fsr;
@@ -848,7 +849,8 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
         let source = format!(
             r#"
 struct FogFrame {{camera_pos:vec4<f32>,params:vec4<f32>,water_params:vec4<f32>,water_fog:vec4<f32>,
-    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>}};
+    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>,
+    dry_count:vec4<u32>,dry:array<vec4<f32>,32>}};
 var<private> enhanced:bool;
 var<private> fine_wake:f32;
 var<private> reflection:bool;

@@ -11,6 +11,9 @@ use std::sync::{
 };
 use uuid::Uuid;
 
+/// The `dry-room` scenario's invisible box, marked Dry interior (demo `prim` id 99562).
+pub const DRY_ROOM_BOX: Uuid = Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | 99562);
+
 pub const CONTACT_ANIM: Uuid = Uuid::from_u128(0x9950_2aa0_0000_0000_0000_0000_0000_0001);
 
 pub fn mode() -> Option<&'static str> {
@@ -71,7 +74,10 @@ pub fn update(
         }
     }
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
-        let (eye, target) = if mode.contains("exclusion") {
+        let (eye, target) = if mode.contains("dry-room") {
+            // inside the underwater room, looking out of its window
+            (Vec3::new(28.0, 113.4, 16.4), Vec3::new(40.0, 114.6, 16.6))
+        } else if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
         } else if mode.contains("alpha-layers") || mode.contains("alpha-cross") {
             (Vec3::new(46.0, 117.0, 24.0), Vec3::new(56.0, 130.0, 19.5))
@@ -181,6 +187,85 @@ pub fn update(
         0,
         0,
     );
+    if mode.contains("dry-room") {
+        // An underwater room (scene/dry_volumes.rs): walls with a window to
+        // the east, filled by an invisible box marked Dry interior
+        // (`DRY_ROOM_BOX`, tagged by the app). Inside, no underwater fog;
+        // the pillars outside keep theirs.
+        // `dry-room-control`: the same box not marked (still under water).
+        // `dry-room-half`: the box fills the south half only, where the
+        // camera stands: the north half of the room (left) is under water.
+        let sand = [0.78, 0.7, 0.55, 1.0];
+        let wall = [0.85, 0.85, 0.88, 1.0];
+        for (id, pos, scale, color) in [
+            (99550, Vec3::new(30.0, 114.0, 14.9), Vec3::new(6.4, 6.4, 0.2), sand),
+            (99551, Vec3::new(30.0, 114.0, 18.1), Vec3::new(6.4, 6.4, 0.2), wall),
+            (99552, Vec3::new(26.9, 114.0, 16.5), Vec3::new(0.2, 6.4, 3.4), wall),
+            (99553, Vec3::new(30.0, 117.1, 16.5), Vec3::new(6.4, 0.2, 3.4), wall),
+            (99554, Vec3::new(30.0, 110.9, 16.5), Vec3::new(6.4, 0.2, 3.4), wall),
+            // the east wall around a 3 x 1.6 m window
+            (99555, Vec3::new(33.1, 114.0, 15.35), Vec3::new(0.2, 6.4, 0.9), wall),
+            (99556, Vec3::new(33.1, 114.0, 17.75), Vec3::new(0.2, 6.4, 0.7), wall),
+            (99557, Vec3::new(33.1, 111.65, 16.6), Vec3::new(0.2, 1.7, 1.6), wall),
+            (99558, Vec3::new(33.1, 116.35, 16.6), Vec3::new(0.2, 1.7, 1.6), wall),
+            // a table inside, pillars 7 and 19 m outside the window
+            (
+                99559,
+                Vec3::new(29.0, 112.6, 15.4),
+                Vec3::new(1.0, 1.0, 0.8),
+                [0.85, 0.15, 0.1, 1.0],
+            ),
+            (
+                99560,
+                Vec3::new(40.0, 114.5, 16.5),
+                Vec3::new(1.0, 1.0, 4.0),
+                [0.95, 0.55, 0.05, 1.0],
+            ),
+            (
+                99561,
+                Vec3::new(52.0, 116.0, 16.5),
+                Vec3::new(1.0, 1.0, 4.0),
+                [0.95, 0.85, 0.1, 1.0],
+            ),
+        ] {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                box_shape,
+                super::te(color, 0, false, 0.0),
+                Default::default(),
+                "",
+            ));
+        }
+        let mut te = super::te([1.0; 4], 0, false, 0.0);
+        for face in &mut Arc::make_mut(&mut te).faces {
+            face.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+        }
+        objects.push(super::prim(
+            99562,
+            if mode.contains("dry-room-half") {
+                Vec3::new(30.0, 112.5, 16.5)
+            } else {
+                Vec3::new(30.0, 114.0, 16.5)
+            },
+            Quat::IDENTITY,
+            if mode.contains("dry-room-half") {
+                Vec3::new(6.0, 3.0, 3.0)
+            } else {
+                Vec3::new(6.0, 6.0, 3.0)
+            },
+            box_shape,
+            te,
+            Default::default(),
+            "",
+        ));
+        if let Some(handle) = world.main_region {
+            world.apply(NetEvent::ObjectUpdates { handle, objects });
+        }
+        return changed;
+    }
     if mode.contains("exclusion") {
         // Matched floors remain visible through an invisible face above water
         // (left) and below water (right). Only the left surface must hide water.

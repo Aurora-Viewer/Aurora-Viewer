@@ -1733,6 +1733,10 @@ pub struct Settings {
     pub gtao_quality: u8,
     /// Local visual water, independent of simulator physics.
     pub water_effects: WaterEffectsSettings,
+    /// Inside an object marked Dry interior, below the water line, the view
+    /// is dry: no underwater fog in it, the water's fog beyond its
+    /// walls (scene/dry_volumes.rs). Aurora's own, on by default.
+    pub dry_water_occluders: bool,
     /// With GTAO: screen-space indirect light (a visibility bitmask and one
     /// bounce of light from the surfaces around). Aurora's own, off by
     /// default.
@@ -2695,6 +2699,7 @@ impl Default for Settings {
             ao_method: 0,
             gtao_quality: 2,
             water_effects: WaterEffectsSettings::default(),
+            dry_water_occluders: true,
             screen_indirect_light: false,
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,

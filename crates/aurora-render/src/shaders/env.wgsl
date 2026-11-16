@@ -595,7 +595,7 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
     }
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     col += lightning_glow(dir);
-    if (camera_underwater()) {
+    if (camera_underwater() || dry_camera()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
         col = col * wf.transmission + wf.color;
     }
@@ -1269,7 +1269,9 @@ fn water_dielectric(cos_i:f32)->f32 {
 }
 
 fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
-    let fog=water_fog_segment(surface-frame.camera_pos.xyz,frame.water_normal.w,max(camera_water_level()-frame.camera_pos.z,0.0),0.0);
+    var fog=water_fog_segment(surface-frame.camera_pos.xyz,frame.water_normal.w,max(camera_water_level()-frame.camera_pos.z,0.0),0.0);
+    // from a dry volume, only the water between its wall and the surface
+    if(dry_camera()){fog=water_fog_view(surface-frame.camera_pos.xyz,frame.water_normal.w);}
     if(!water_fx_on(512u)) {
         // The disabled/master-off path keeps inexpensive baseline transparency.
         let clip=frame.view_proj*vec4<f32>(surface,1.0);
@@ -1633,7 +1635,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     color = clamp(select(color, vec3<f32>(0.0), color != color), vec3<f32>(0.0), vec3<f32>(1.0));
     // The upper face is viewed through air. Opaque source water fog was
     // removed above; do not add another fictitious submerged interval here.
-    if(camera_underwater()) {
+    // (From a dry volume under the water, the upper face only shows where
+    // the surface is seen edge-on: it takes the water's fog from the wall.)
+    if(camera_submerged()) {
         let fog=water_fog_view(rel,frame.water_normal.w);
         color=color*fog.transmission+fog.color;
     } else {
@@ -1877,12 +1881,12 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
 }
 @fragment
 fn fs_water_particle(in: WaterParticleOut) -> @location(0) vec4<f32> {
-    if(!camera_underwater() && in.world.z<in.level){discard;}
+    if(!camera_submerged() && in.world.z<in.level){discard;}
     return water_particle_color(in);
 }
 @fragment
 fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
-    if(camera_underwater() || in.world.z>=in.level){discard;}
+    if(camera_submerged() || in.world.z>=in.level){discard;}
     return water_particle_color(in);
 }
 
@@ -2199,7 +2203,7 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
 // around (no glass: it scatters the light instead of bending it).
 fn snow_flake(in: RainOut, soft: f32) -> vec4<f32> {
     if (in.life <= 0.001) { discard; }
-    if (in.world.z < frame.params.y || camera_underwater()) { discard; }
+    if (in.world.z < frame.params.y || camera_submerged()) { discard; }
     let d = length(in.uv);
     var alpha = (1.0 - smoothstep(0.35, 1.0, d)) * in.life * 0.85;
     if (alpha <= 0.002) { discard; }
@@ -2227,7 +2231,7 @@ fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
     if (snowing()) { return snow_flake(in, soft); }
     if (in.life <= 0.001) { discard; }
     // no rain under the water, nor seen from under it
-    if (in.world.z < frame.params.y || camera_underwater()) { discard; }
+    if (in.world.z < frame.params.y || camera_submerged()) { discard; }
     // a thin cylinder of water seen from the side: its normal sweeps from
     // the side to the camera across the streak; its ends taper
     let across = in.uv.x;
@@ -3653,7 +3657,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
 @fragment
 fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
     let heavy = frame.rain.x;
-    if (heavy <= 0.0 || camera_underwater()) { discard; }
+    if (heavy <= 0.0 || camera_submerged()) { discard; }
     let uv = screen_uv(in.clip.xy);
     let cam = frame.camera_pos.xyz;
     let d = normalize(world_from_depth(uv, 0.5) - cam);

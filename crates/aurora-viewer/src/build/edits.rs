@@ -627,6 +627,7 @@ impl BuildTool {
                 }
             }
             if description {
+                self.described.push((o.full_id, name.to_owned()));
                 description_targets.push(idx);
             } else {
                 name_targets.push(idx);

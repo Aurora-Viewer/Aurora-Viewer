@@ -1679,6 +1679,10 @@ pub struct FrameParams {
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
     pub water_height: f32,
+    /// The dry volumes (dry_volume.rs) around a camera that stands in one
+    /// below the water line, at most `MAX_DRY_VOLUMES`; empty otherwise
+    /// (the ordinary underwater view).
+    pub dry_volumes: Vec<crate::dry_volume::DryVolume>,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
