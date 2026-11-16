@@ -530,6 +530,16 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id == super::super::animation_explorer::WINDOW {
         return "run";
     }
+    // the Build › Pathfinding entries' icons (ui/bars.rs)
+    if id == super::super::pathfinding::LINKSETS_WINDOW {
+        return "list-details";
+    }
+    if id == super::super::pathfinding::CHARACTERS_WINDOW {
+        return "walk";
+    }
+    if id == super::super::pathfinding::console::WINDOW {
+        return "route";
+    }
     match id {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
