@@ -341,9 +341,10 @@ impl HistoryStorage {
 
     /// A history kept in memory only (the demo's).
     pub fn in_memory(items: Vec<HistoryItem>) -> HistoryStorage {
-        let mut storage = HistoryStorage::default();
-        storage.items = items;
-        storage
+        HistoryStorage {
+            items,
+            ..Default::default()
+        }
     }
 
     /// LLTeleportHistoryStorage::addItem: the same title within 5 m replaces
