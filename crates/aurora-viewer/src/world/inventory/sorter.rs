@@ -1255,8 +1255,9 @@ pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
 
 /// A product's folder: an unpacked delivery, a fatpack with its HUD and
 /// card. It is never opened: it moves whole or stays. It is a folder of the
-/// user's (not one Auto-sort made) whose name reads as a product or a store,
-/// or that holds no folder of its own.
+/// user's (not one Auto-sort made) whose name has a store's tag or name, or
+/// names one product (never a shelf: `My Shoes`, `Dresses 2024`), or that
+/// holds only versions of it (bodies, Squish, its name again).
 ///
 /// The sorter's folder names (`reserved`) are worked out once by the caller,
 /// for loops over thousands of folders.
@@ -1319,7 +1320,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // tag, a store and what it is (`Velmora - Hex Dress`), or what it
         // is with its versions inside (`Hex Dress` holding `Maitreya`,
         // `Reborn`, `Hex Dress Legacy`, `Squish`)
-        tagged || store_named && named || named && versions_only(inv, f, name)
+        tagged || store_named && named || versions_only(inv, f, name)
     } else {
         // a folder of items alone is a product when its name says what or
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
@@ -1338,18 +1339,21 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
         return false;
     }
     let product = words(name);
-    f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
+    // at least one version of a body or of the product itself (a folder of
+    // HUDs and textures alone says nothing)
+    let mut versions = false;
+    let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
         // the product's name again, word for word (`Hex Dress Legacy`)
-        (sub_words.starts_with(&product) || sub_words.ends_with(&product))
-            || read.body.is_some()
-            || read.squish
-            || read.waifus
-            // a fatpack's own folders
-            || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
-    })
+        let named = sub_words.starts_with(&product) || sub_words.ends_with(&product);
+        let version = named || read.body.is_some() || read.squish || read.waifus;
+        versions |= version;
+        // a fatpack's own folders
+        version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
+    });
+    all && versions
 }
 
 /// The folders a product's delivery holds beside its body versions.
@@ -1358,7 +1362,7 @@ const VERSION_WORDS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 22] = [
+const SHELF_WORDS: [&str; 34] = [
     "my",
     "old",
     "new",
@@ -1381,6 +1385,18 @@ const SHELF_WORDS: [&str; 22] = [
     "unpacked",
     "temp",
     "sorted",
+    "favorite",
+    "favourite",
+    "gacha",
+    "hunt",
+    "gift",
+    "gifts",
+    "freebie",
+    "freebies",
+    "summer",
+    "winter",
+    "spring",
+    "autumn",
 ];
 
 /// A name with a word of its own beyond kinds, bodies, shelf words and
@@ -1392,7 +1408,9 @@ fn names_a_product(name: &str) -> bool {
         !is_kind(w)
             && !SHELF_WORDS.contains(&w.as_str())
             && !w.chars().all(|c| c.is_ascii_digit())
-            && body(std::slice::from_ref(w)).is_none()
+            // a body's own name (`maitreya`), not a word some bodies share
+            // with products (`venus`, `freya`, `lara`)
+            && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().any(|s| s == w))
     })
 }
 

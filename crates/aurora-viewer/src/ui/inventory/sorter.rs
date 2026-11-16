@@ -1013,6 +1013,9 @@ impl State {
     /// goes away (logout): Undo and Resume find it at the next session.
     fn flush(&mut self) {
         if let Some(job) = self.job.as_mut() {
+            // (an Undo records only what went back: its run forgets what it
+            // records from the run it undid)
+            let unsure = job.unsure_entries();
             // the batch on its way may have been applied: journaled too, as
             // Undo leaves an entry still where it was
             let flying = job.in_flight.iter().flat_map(|b| b.moves.iter()).map(|m| sorter::journal::Entry {
@@ -1023,8 +1026,13 @@ impl State {
                 to: None,
             });
             let mut confirmed = std::mem::take(&mut job.confirmed);
-            confirmed.extend(flying);
-            confirmed.extend(job.unsure_entries());
+            if job.undoes.is_none() {
+                confirmed.extend(flying);
+                confirmed.extend(unsure);
+            }
+            // the run to resume written with what is left now, not the copy
+            // kept since the run was twice as long
+            job.unfinished_len = None;
             // a move resent while unsure is both on its way and unsure
             let mut seen = HashSet::new();
             confirmed.retain(|e| seen.insert(e.id));
@@ -1536,8 +1544,12 @@ pub(super) fn show(
                 // entry still where it was), never lost from Undo
                 let mut last = placed(inv, std::mem::take(&mut job.confirmed));
                 // (a move still unsure at the end comes from a batch counted
-                // as failed already)
-                last.extend(job.unsure_entries());
+                // as failed already). An Undo records only what went back:
+                // its run forgets what it records from the run it undid
+                let unsure = job.unsure_entries();
+                if job.undoes.is_none() {
+                    last.extend(unsure);
+                }
                 state.journal.record_in(run, last);
                 state.job = None;
                 // only a run that moved something (or a resume) ends the run

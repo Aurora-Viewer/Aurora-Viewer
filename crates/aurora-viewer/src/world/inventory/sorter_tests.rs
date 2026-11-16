@@ -600,6 +600,22 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     assert!(moved.contains(&id(81)) && moved.contains(&id(85)), "products move whole");
     assert!(moved.contains(&id(201)), "a loose item of Stuff is sorted");
     assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
+    // a product named with a word some bodies share (Venus), and a store's
+    // delivery whose name says no kind: never opened
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 86, 1, "Venus Dress");
+    add_item(&mut inv, 207, 86, "Venus Dress Maitreya", 0);
+    add_folder(&mut inv, 87, 1, "Velmora - Aphrodite");
+    add_folder(&mut inv, 88, 87, "Aphrodite Maitreya");
+    add_folder(&mut inv, 89, 87, "Aphrodite Legacy");
+    add_item(&mut inv, 208, 87, "Aphrodite HUD", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(moved.contains(&id(86)) && !moved.contains(&id(207)), "Venus Dress moves whole");
+    assert!(
+        ![88, 89, 208].iter().any(|n| moved.contains(&id(*n))),
+        "the delivery is never opened"
+    );
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");
