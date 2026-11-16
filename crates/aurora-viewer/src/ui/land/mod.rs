@@ -187,6 +187,8 @@ struct View {
     handle: RegionHandle,
     region: Option<RegionView>,
     agent: Uuid,
+    /// We hold a god level: every parcel is ours to edit.
+    god: bool,
     groups: Vec<GroupMembership>,
     /// The selection is in the agent's region.
     same_region: bool,
@@ -211,6 +213,7 @@ impl View {
         AgentRights {
             id: self.agent,
             groups: &self.groups,
+            god: self.god,
         }
     }
 
@@ -375,6 +378,7 @@ impl LandUi {
                 &AgentRights {
                     id: world.agent_id,
                     groups: &world.groups.groups,
+                    god: world.god_level > 0,
                 },
                 crate::world::land::powers::LAND_CHANGE_IDENTITY,
             )
@@ -743,7 +747,8 @@ impl LandUi {
             r.info.as_ref().map(|i| RegionView {
                 name: i.name.clone(),
                 owner: i.owner,
-                estate_manager: i.is_estate_manager,
+                // LLViewerRegion::canManageEstate counts a god
+                estate_manager: i.is_estate_manager || world.god_level > 0,
                 product: i.product_name.clone(),
                 sim_access: i.sim_access,
                 flags: i.region_flags,
@@ -756,6 +761,7 @@ impl LandUi {
             handle,
             region,
             agent: world.agent_id,
+            god: world.god_level > 0,
             groups: world.groups.groups.clone(),
             same_region: world.main_region == Some(handle),
             now: now_secs(),

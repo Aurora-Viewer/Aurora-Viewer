@@ -12,7 +12,7 @@ fn body_texts_with(world: &World, w: &mut Window, width: f32, friend_rights: boo
     let p = crate::theme::Theme::default().palette();
     let ctx = egui::Context::default();
     let mut emoji = Emoji::load();
-    let browser = crate::media::browser_settings(std::path::Path::new("."), "fr");
+    let browser = crate::media::browser_settings(std::path::Path::new("."), "fr", &Default::default());
     let web = WebContext {
         paths: None,
         browser: &browser,
@@ -448,7 +448,7 @@ impl PhotoFixture {
 
     fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         self.time += 1.0 / 60.0;
-        let browser = crate::media::browser_settings(std::path::Path::new("."), "en");
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "en", &Default::default());
         let web = WebContext {
             paths: None,
             browser: &browser,

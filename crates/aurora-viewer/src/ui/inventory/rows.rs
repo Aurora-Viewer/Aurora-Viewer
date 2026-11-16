@@ -225,6 +225,15 @@ impl PlainTree {
     }
 }
 
+/// Where Collapse leaves the list: back at its top, with the top folders in
+/// sight, rather than at the end of a long list of them (the Legacy
+/// Viewer's `LLFolderView::closeAllFolders` keeps the offset). An
+/// inventory update held at the old place no longer brings it back.
+pub(super) fn top_after_collapse(st: &mut InventoryUi) -> f32 {
+    st.scroll_hold = None;
+    0.0
+}
+
 /// The plain tree in its scroll area, `root` shown as the first row or not
 /// (folder windows list its contents only).
 #[allow(clippy::too_many_arguments)]
@@ -247,13 +256,17 @@ pub(super) fn scroll(
         st.plain.persist(ui.ctx(), egui::Id::unique("inventory_open_folders"));
     }
     st.view.prepare(inv, prefs.sort_for(st.tab));
-    if let Some(open) = st.expand_all.take() {
+    let collapsed = st.expand_all.take().is_some_and(|open| {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
-    }
+        !open
+    });
     // Back from a search: where the list was; else the place `list` gives it
     // (a revealed row below wins).
     let restore = st.scroll_restore.take();
     let mut offset = st.plain_scroll_restore.take().or(restore);
+    if collapsed {
+        offset = Some(top_after_collapse(st));
+    }
     // The root opens the first time it is shown, scrolled to the top.
     if show_root && st.roots_seen.insert(root) {
         st.plain.set_open(root, true);

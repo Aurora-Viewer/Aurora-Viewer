@@ -61,7 +61,9 @@ impl App {
                 .look_hover
                 .and_then(|(idx, point)| tips::subject_at(&self.world, idx, point).map(|s| (s, point))),
         }
-        .filter(|(subject, _)| tips::subject_enabled(*subject, &settings));
+        .filter(|(subject, _)| tips::subject_enabled(*subject, &settings))
+        // what RLVa leaves no tip: nothing is asked about it either
+        .filter(|(subject, point)| tips::rlva_allows(&self.world, *subject, *point));
         let subject = hovered.map(|(s, _)| (s, s.key(&self.hover_tips.parcels)));
         // the parcel under a bare ground point, or under the subject for the
         // readout's second line (setHoverParcel)
@@ -111,8 +113,11 @@ impl App {
             Subject::Avatar { idx, id } => self.world.objects.get(idx).is_some_and(|o| o.full_id == id),
             Subject::Land { .. } => true,
         };
-        if !alive {
+        // a tip already up when a restriction arrives goes with it
+        if !alive || !tips::rlva_allows(&self.world, shown.subject, self.hover_tips.point) {
             self.hover_tips.timing.hide();
+            self.hover_tips.rect = None;
+            self.hover_tips.last = None;
             return None;
         }
         // ObjectPropertiesFamily of the hovered root (LLSelectMgr::setHoverObject)
@@ -193,6 +198,7 @@ impl App {
 
     /// ParcelProperties of the hovered parcel.
     pub(super) fn on_hover_parcel(&mut self, handle: aurora_net::RegionHandle, parcel: std::sync::Arc<aurora_net::ParcelInfo>) {
+        self.world.note_seen_parcel(handle, parcel.clone());
         self.hover_tips.parcels.on_parcel(handle, parcel);
     }
 }

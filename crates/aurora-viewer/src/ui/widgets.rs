@@ -41,6 +41,7 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod text_field;
+mod tracks;
 mod unread;
 mod volume;
 mod workspace;
@@ -49,9 +50,14 @@ pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    search_box,
+    reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
+    search_text_edit_with_margin,
 };
 pub use text_field::text_field;
+pub use tracks::{
+    TRACK_INSET, TrackFace, TrackLit, button_track, help_tag, icon_track, labelled_choice, paint_tile_button, track_button,
+    wide_button_track,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -59,8 +65,9 @@ pub use workspace::{
     navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
-    organization_header, organization_section, organization_typography, overlay, overlay_frame, paint_world_label,
+    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
+    organization_typography, overlay, overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -189,11 +196,41 @@ pub(crate) fn faux_bold_offset(ui: &egui::Ui) -> Option<Vec2> {
     Some(Vec2::new(ppp.round().max(1.0) / ppp, 0.0))
 }
 
+/// A floater's inner margin around its body (neither `flush_body` nor
+/// `framed_header`, not minimized), and the width of its outline.
+const FLOATER_MARGIN: egui::Margin = egui::Margin {
+    left: 10,
+    right: 10,
+    top: 5,
+    bottom: 10,
+};
+const FLOATER_STROKE: f32 = 1.0;
+/// The title row's least height, its title's size, and the room left
+/// between the divider under it and the body.
+const TITLE_ROW_MIN: f32 = 28.0;
+const TITLE_SIZE: f32 = 14.0;
+const UNDER_DIVIDER: f32 = 5.0;
 /// What a floater has above and below its body besides its title: the
 /// margins of its frame and its outline.
-const BODY_CHROME: f32 = 17.0;
+const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+
+/// What a floater of the usual layout (title row and divider, no status
+/// row, neither `flush_body` nor `framed_header`) adds around its body:
+/// its margins and outline across; down, those with the title row and the
+/// divider under it. A window whose minimum follows its body adds this.
+pub fn floater_chrome(ctx: &egui::Context) -> Vec2 {
+    let gap = ctx.global_style().spacing.item_spacing.y;
+    let title = ctx
+        .fonts_mut(|f| f.row_height(&egui::FontId::proportional(TITLE_SIZE)))
+        .max(TITLE_ROW_MIN);
+    let m = FLOATER_MARGIN;
+    Vec2::new(
+        m.leftf() + m.rightf() + 2.0 * FLOATER_STROKE,
+        BODY_CHROME + title + gap + DIVIDER_ROOM + gap + UNDER_DIVIDER,
+    )
+}
 
 /// `pos` moved so that a window of `size` placed there stands inside `area`
 /// (its top left corner first, when it is larger).
@@ -239,18 +276,185 @@ fn title_in_reach(
     (asked.is_some() || kept != pos).then_some(kept)
 }
 
+/// LLSpinCtrl::onUpBtn / onDownBtn (indra/llui/llspinctrl.cpp): Alt ×10,
+/// else Ctrl ×0.1, else Shift ×0.01.
+pub(crate) fn spin_key_scale(modifiers: egui::Modifiers) -> f32 {
+    if modifiers.alt {
+        10.0
+    } else if modifiers.ctrl {
+        0.1
+    } else if modifiers.shift {
+        0.01
+    } else {
+        1.0
+    }
+}
+
+/// clamp_precision (indra/llui/llspinctrl.cpp): an arrow or wheel step is
+/// rounded to the field's decimals, so a step finer than the field shows
+/// (Ctrl or Shift on a 0-decimal field) changes nothing instead of leaving
+/// a hidden fraction. In f64, ten at a time like the Legacy Viewer, with
+/// halves rounded up (ll_round: floor(x + 0.5)).
+pub(crate) fn clamp_precision(value: f32, decimals: usize) -> f32 {
+    let mut v = f64::from(value);
+    for _ in 0..decimals {
+        v *= 10.0;
+    }
+    v = (v + 0.5).floor();
+    for _ in 0..decimals {
+        v /= 10.0;
+    }
+    v as f32
+}
+
+/// Points of a trackpad flick that make one notch. Same grain as the shape
+/// editor's category wheel.
+const WHEEL_POINTS_PER_NOTCH: f32 = 55.0;
+
+#[derive(Clone, Copy)]
+struct WheelRemainder(f32);
+
+pub(crate) struct WheelSteps {
+    /// Modifier-scaled notches. Positive raises.
+    pub scaled: f32,
+    /// The same notches, each rounded to an integer. Ctrl and Shift become
+    /// no step on an integer field.
+    pub integer: i32,
+}
+
+impl WheelSteps {
+    fn none() -> Self {
+        Self { scaled: 0.0, integer: 0 }
+    }
+}
+
+/// Notches of the wheel over `rect`. Positive raises. Shared by the
+/// build spinners and the colour picker's number fields (both LLSpinCtrl).
+///
+/// LLSpinCtrl::handleScrollWheel (indra/llui/llspinctrl.cpp) calls onDownBtn
+/// for a positive click count and onUpBtn for a negative one, and returns
+/// true so the panel does not also scroll. The Legacy Viewer negates the
+/// platform wheel (llwindowsdl2.cpp), so rolling it up raises the value.
+/// winit reports that roll as a positive delta.y. Each whole notch is scaled
+/// like onUpBtn. While the pointer stays on an enabled field the smoothed
+/// scroll is eaten, including the frames after the notch, so the build panel
+/// does not creep. A disabled field leaves the wheel to the panel. `apply`
+/// is false while a typed draft or a drag owns the value: the wheel is still
+/// eaten, and it does not change the number.
+pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, apply: bool) -> WheelSteps {
+    let key = id.with("spinner_wheel_remainder");
+    let hovered = ui.is_enabled() && ui.rect_contains_pointer(rect);
+    if !hovered {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    ui.input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
+    if !apply {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    let mut remainder = ui.data(|d| d.get_temp::<WheelRemainder>(key)).map(|kept| kept.0).unwrap_or(0.0);
+    let mut scaled = 0.0f32;
+    let mut integer = 0i32;
+    ui.input(|input| {
+        for event in &input.events {
+            let egui::Event::MouseWheel {
+                unit, delta, modifiers, ..
+            } = event
+            else {
+                continue;
+            };
+            if delta.y == 0.0 || !delta.y.is_finite() {
+                continue;
+            }
+            let notches = delta.y
+                / match unit {
+                    egui::MouseWheelUnit::Point => WHEEL_POINTS_PER_NOTCH,
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => 1.0,
+                };
+            if !notches.is_finite() {
+                continue;
+            }
+            remainder += notches;
+            let whole = remainder.trunc().clamp(-100.0, 100.0);
+            remainder -= whole;
+            if whole != 0.0 {
+                let scale = spin_key_scale(*modifiers);
+                scaled += whole * scale;
+                integer = integer.saturating_add((whole as i32).saturating_mul(scale.round() as i32));
+            }
+        }
+    });
+    if remainder == 0.0 {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+    } else {
+        ui.data_mut(|d| d.insert_temp(key, WheelRemainder(remainder)));
+    }
+    WheelSteps { scaled, integer }
+}
+
+/// LLButton held_down_delay (widgets/button.xml), in seconds.
+const ARROW_HOLD_DELAY: f64 = 0.5;
+/// Repeats after the delay. LLButton::handleHover fires every frame; a
+/// fixed interval is the same pace at any refresh rate.
+const ARROW_HOLD_EVERY: f64 = 0.05;
+/// A stalled frame must not dump a long hold as one jump.
+const ARROW_HOLD_BURST: u32 = 20;
+
+/// How many repeats a hold has earned. The first is at half a second, then
+/// one more every 50 ms.
+pub(crate) fn arrow_hold_repeats(held_for: f64) -> u32 {
+    if !held_for.is_finite() || held_for < ARROW_HOLD_DELAY {
+        return 0;
+    }
+    // Count in whole milliseconds. `(t - 0.5) / 0.05` is not exact in f64:
+    // `0.10 / 0.05` is 1.999…, and floor would skip the repeat that just came due.
+    let elapsed_ms = ((held_for - ARROW_HOLD_DELAY) * 1000.0).round();
+    if !elapsed_ms.is_finite() || elapsed_ms < 0.0 {
+        return 1;
+    }
+    let steps = (elapsed_ms / (ARROW_HOLD_EVERY * 1000.0)).floor();
+    let steps = if steps >= u32::MAX as f64 { u32::MAX } else { steps as u32 };
+    steps.saturating_add(1)
+}
+
+#[derive(Clone, Copy)]
+struct ArrowHold {
+    since: f64,
+    emitted: u32,
+}
+
 /// Two compact increment buttons beside numeric fields (LLSpinCtrl).
 /// Uses theme faces and Tabler glyphs, and inherits disabled state.
-pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
-    let mut step = 0;
+///
+/// widgets/spinner.xml sets tab_stop="false" on both buttons. `Sense::CLICK`
+/// is clickable and not focusable, so Tab moves from the field to the next
+/// field. A hold repeats onUpBtn/onDownBtn: LLButton::handleHover
+/// (indra/llui/llbutton.cpp) fires the held callback every frame after
+/// held_down_delay, and handleMouseUp steps once more on release. Repeating
+/// every frame is one step per rendered frame, so a high refresh rate runs
+/// away with the value. The repeat here is every 50 ms: the same pace on
+/// every machine, and still a quick walk. The first step stays the release,
+/// so a short click is one step. Dragging off the button ends the repeat.
+/// The release counts only when the press and the release are both on the
+/// button. egui forgets a click-only widget after 0.8 s or 6 px of travel
+/// (`is_pointer_button_down_on` and `clicked()` both go false while the
+/// button is still held). A held arrow outlasts that window, so the repeat
+/// is our own timer and the release step is the button coming up with the
+/// pointer still on it, the same moment as handleMouseUp.
+pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i32 {
+    let mut step = 0i32;
+    let now = ui.input(|i| i.time);
+    let enabled = ui.is_enabled();
     ui.allocate_ui_with_layout(Vec2::new(13.0, height), egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_max_width(13.0);
         ui.spacing_mut().item_spacing.y = 0.0;
         for (direction, name, label) in [
-            (1, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
+            (1i32, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
             (-1, "caret-down-filled", aurora_i18n::tr!("numeric-decrease")),
         ] {
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::click());
+            // Not focusable: see the function comment and widgets/spinner.xml.
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::CLICK);
             let visuals = ui.style().interact(&response);
             ui.painter().rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
             if let Some(icon) = super::icons::global(name) {
@@ -261,10 +465,54 @@ pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
                     visuals.fg_stroke.color,
                 );
             }
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-            if response.on_hover_text(label).clicked() {
-                step = direction;
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+            let response = response.on_hover_text(label);
+            if !enabled {
+                continue;
             }
+            let id = response.id.with("spin_arrow_hold");
+            let pointer_here = ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
+            let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+            let tracked = ui.data(|d| d.get_temp::<ArrowHold>(id));
+            // is_pointer_button_down_on stays true while a fresh press is
+            // dragged outside the widget, and it goes false once egui's click
+            // window ends. The hold stops when the pointer leaves. One we
+            // already started keeps going for as long as the button is down.
+            let holding = primary_down && pointer_here && (response.is_pointer_button_down_on() || tracked.is_some());
+            let mut repeats = 0u32;
+            let mut release_step = false;
+            if holding {
+                let mut hold = tracked.unwrap_or(ArrowHold { since: now, emitted: 0 });
+                let due = arrow_hold_repeats(now - hold.since);
+                repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                // Drop repeats a stalled frame would have piled up, so the
+                // value does not fast-forward when the window wakes.
+                hold.emitted = due;
+                let until = if due == 0 {
+                    ARROW_HOLD_DELAY - (now - hold.since)
+                } else {
+                    let into = (now - hold.since - ARROW_HOLD_DELAY).rem_euclid(ARROW_HOLD_EVERY);
+                    ARROW_HOLD_EVERY - into
+                };
+                ui.ctx().request_repaint_after_secs(until.max(0.0) as f32);
+                ui.data_mut(|d| d.insert_temp(id, hold));
+            } else if let Some(hold) = tracked {
+                // Released on the button: the repeat that came due, then one
+                // more step. Leaving while the button is still down just stops.
+                if pointer_here && !primary_down {
+                    let due = arrow_hold_repeats(now - hold.since);
+                    repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                    release_step = true;
+                }
+                ui.data_mut(|d| d.remove::<ArrowHold>(id));
+            } else if response.clicked() {
+                // Press and release in the same frame, before a hold existed.
+                release_step = true;
+            }
+            if release_step {
+                step += direction;
+            }
+            step += direction * repeats as i32;
         }
     });
     step
@@ -277,9 +525,13 @@ pub struct Floater<'a> {
     pub header_status: Vec<(&'static str, String, Color32)>,
     /// A text action at the right end of the secondary header row.
     pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A single-line detail row inside the expanded title section.
+    pub header_summary: Option<egui::WidgetText>,
+    pub header_summary_action: Option<&'a mut bool>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -337,7 +589,10 @@ impl<'a> Floater<'a> {
             title: title.into(),
             header_status: Vec::new(),
             header_status_action: None,
+            header_summary: None,
+            header_summary_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -389,6 +644,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -479,7 +740,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -508,16 +770,20 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
+        let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
+        let shadow = ctx.global_style().visuals.window_shadow;
         let frame = egui::Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(
-                p.panel.r(),
-                p.panel.g(),
-                p.panel.b(),
-                p.panel_alpha,
+            .fill(super::surface_opacity::frame_fill(
+                p,
+                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+                opacity,
             ))
-            .stroke(border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
-            .shadow(ctx.global_style().visuals.window_shadow)
+            .shadow(egui::Shadow {
+                color: shadow.color.gamma_multiply(opacity),
+                ..shadow
+            })
             .inner_margin(if self.framed_header.is_some() {
                 egui::Margin::ZERO
             } else if self.flush_body {
@@ -527,13 +793,14 @@ impl<'a> Floater<'a> {
                     top: if minimized && !compact { 4 } else { 5 },
                     bottom: if minimized && !compact { 4 } else { 0 },
                 }
-            } else {
+            } else if minimized && !compact {
                 egui::Margin {
-                    left: 10,
-                    right: 10,
-                    top: if minimized && !compact { 4 } else { 5 },
-                    bottom: if minimized && !compact { 4 } else { 10 },
+                    top: 4,
+                    bottom: 4,
+                    ..FLOATER_MARGIN
                 }
+            } else {
+                FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
         // Ctrl+Shift+W closes every window.
@@ -696,6 +963,8 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
+            let mut primary_title_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -705,8 +974,8 @@ impl<'a> Floater<'a> {
                     ui.spacing_mut().interact_size.y = 20.0;
                 }
                 let title_row = ui.horizontal(|ui| {
-                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
-                    let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
+                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { TITLE_ROW_MIN });
+                    let title = RichText::new(&self.title).size(TITLE_SIZE).strong().color(p.ink);
                     // a fixed floater is as wide as its title; a resizable one
                     // cuts a long title short before the buttons (LLFloater
                     // titles end with an ellipsis)
@@ -768,13 +1037,15 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
                     });
                 });
-                if !self.header_status.is_empty() || self.header_status_action.is_some() {
+                primary_title_rect = Some(title_row.response.rect);
+                if (!minimized || compact) && (!self.header_status.is_empty() || self.header_status_action.is_some()) {
                     let status = |ui: &mut egui::Ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
@@ -806,6 +1077,24 @@ impl<'a> Floater<'a> {
                         status(ui);
                     }
                 }
+                if (!minimized || compact)
+                    && let Some(summary) = &self.header_summary
+                {
+                    let full_text = summary.text().to_owned();
+                    let sense = if self.header_summary_action.is_some() {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    };
+                    if ui
+                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                        .on_hover_text(full_text)
+                        .clicked()
+                        && let Some(clicked) = &mut self.header_summary_action
+                    {
+                        **clicked = true;
+                    }
+                }
                 title_row
             };
             let flush = self.flush_body;
@@ -829,22 +1118,30 @@ impl<'a> Floater<'a> {
             } else {
                 header_content(ui).response
             };
-            let mut title_rect = header.rect;
+            // Secondary header controls own their clicks; only the title row
+            // is the window's double-click target.
+            let mut title_rect = primary_title_rect.unwrap_or(header.rect);
             if framed_header.is_some() {
                 ui.painter().hline(header.rect.x_range(), header.rect.bottom(), divider_stroke(p));
             }
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);
-                ui.add_space(5.0);
+                ui.add_space(UNDER_DIVIDER);
                 out = Some(body(ui));
             } else if !minimized {
                 if flush {
@@ -855,7 +1152,7 @@ impl<'a> Floater<'a> {
                             .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
                         divider(ui, p);
-                        ui.add_space(5.0);
+                        ui.add_space(UNDER_DIVIDER);
                     }
                 }
                 if scrolls {
@@ -888,12 +1185,14 @@ impl<'a> Floater<'a> {
             }
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
-                workspace::finish_glass(
+                super::surface_opacity::fade_after(ctx, painter.layer_id(), slot, p, opacity);
+                workspace::finish_glass_faded(
                     &painter.with_clip_rect(response.response.rect),
                     slot,
                     response.response.rect,
                     p,
                     radius,
+                    opacity,
                 );
             }
             if !minimized {
@@ -947,7 +1246,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -958,10 +1258,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1036,16 +1338,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1057,13 +1369,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1074,15 +1387,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
@@ -1516,12 +1828,14 @@ pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
     }
 }
 
+/// The room a `divider` takes across its line.
+const DIVIDER_ROOM: f32 = 6.0;
+
 /// Thin line between two zones of a window, across the layout (horizontal in
 /// a column, vertical in a row), in the room of egui's separator: a window
 /// keeps its layout. Not for buttons or toolbar items: their spacing and the
 /// pill of the hovered one tell them apart. A menu uses `menu::separator`.
 pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    const ROOM: f32 = 6.0;
     let across = !ui.layout().main_dir().is_horizontal();
     let available = if ui.is_sizing_pass() {
         Vec2::ZERO
@@ -1529,9 +1843,9 @@ pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
         ui.available_size_before_wrap()
     };
     let size = if across {
-        Vec2::new(available.x, ROOM)
+        Vec2::new(available.x, DIVIDER_ROOM)
     } else {
-        Vec2::new(ROOM, available.y)
+        Vec2::new(DIVIDER_ROOM, available.y)
     };
     let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -1588,6 +1902,25 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
     painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.on_accent } else { p.muted });
     resp
+}
+
+/// Compact padding for values adjoining construction controls.
+const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
+pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
+
+/// A non-interactive value with the same neutral face as the adjoining buttons.
+pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
+    let label = label.into();
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = READOUT_PADDING;
+            let face = ui.visuals().widgets.inactive;
+            ui.visuals_mut().widgets.noninteractive = face;
+            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
+        })
+        .inner;
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
+    response
 }
 
 /// Check box of the interface, with the contract of `ui.checkbox`: the
@@ -1757,8 +2090,27 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     .inner
 }
 
+/// [`switch_labeled`] in a narrow column: the label wraps onto more lines
+/// instead of running past the column's edge (a long translation, a larger
+/// font), the switch beside its first line. It wraps within what is shown:
+/// a wider row above can stretch the column past its clip.
+pub fn switch_labeled_wrapped(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let room = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+    ui.horizontal_top(|ui| {
+        ui.set_max_width(room);
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).wrap().sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
+}
+
 /// Custom-painted controls follow an explicit font override in their UI scope.
-fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
+pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
     ui.style()
         .override_font_id
         .clone()
@@ -1867,32 +2219,60 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 
 /// Choice between a few options side by side, in one track: the chosen
 /// segment is lit, in the accent when its option is `accent` (Aurora's own
-/// look), in `raised` otherwise (a legacy look). Returns true when the
-/// selection changed.
+/// look), in `raised` otherwise (a legacy look). The lit face slides from
+/// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
+/// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_tall(ui, p, selected, options, SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
-    let mut changed = false;
+    let mut rects = Vec::with_capacity(widths.len());
     let mut x = track.left() + SEGMENT_PAD;
-    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
+    for w in &widths {
+        rects.push(egui::Rect::from_min_size(
             egui::pos2(x, track.top() + SEGMENT_PAD),
-            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
-        );
-        x += widths[i];
+            Vec2::new(*w, track.height() - SEGMENT_PAD * 2.0),
+        ));
+        x += w;
+    }
+    // the lit face, its edges sliding from the segment chosen before (kept
+    // from the track's left, so that moving the window does not slide it)
+    if let Some(chosen) = rects.get(*selected) {
+        let id = ui.scope_id().with(("segmented-slide", options.len(), options.first().map(|o| o.0)));
+        let time = ui.style().animation_time;
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), chosen.left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), chosen.right() - track.left(), time);
+        let face = if options[*selected].1 { p.violet } else { p.raised };
+        let lit = egui::Rect::from_x_y_ranges(track.left() + left..=track.left() + right, chosen.y_range());
+        ui.painter().rect_filled(lit, inner_radius(ui.visuals()), face);
+    }
+    let mut changed = false;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
         let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
         let sel = *selected == i;
-        let (face, text) = match (sel, *accent) {
-            (true, true) => (Some(p.violet), p.on_accent),
-            (true, false) => (Some(p.raised), p.ink),
-            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
-            (false, _) => (None, p.muted),
+        let text = match (sel, *accent) {
+            (true, true) => p.on_accent,
+            (true, false) => p.ink,
+            (false, _) if resp.hovered() => p.ink,
+            (false, _) => p.muted,
         };
-        if let Some(face) = face {
-            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        if !sel && resp.hovered() {
+            ui.painter()
+                .rect_filled(rect, inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5));
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
@@ -1999,8 +2379,8 @@ pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
     ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
-pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
+pub fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    search_text_edit(ui, p, text, |edit| edit.hint_text(hint).desired_width(width))
 }
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).
@@ -2062,7 +2442,7 @@ fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
 
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    text_button(ui, p, label, None)
+    text_button(ui, p.ink, label, None)
 }
 
 /// A light toolbar action using the same gray/active underline as the tabs.
@@ -2114,14 +2494,51 @@ pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    text_button(ui, p, label, Some(size)).on_hover_text(label)
+    text_button(ui, p.ink, label, Some(size)).on_hover_text(label)
 }
 
-fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
+/// The initial Enter action of a confirmation with no text field. Give its
+/// visible default real focus so the first Tab advances from that button.
+pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    let hint = modal_keys::show_default_hint(ui);
+    ui.scope(|ui| {
+        if hint {
+            let active = ui.visuals().widgets.active;
+            ui.visuals_mut().widgets.inactive = active;
+            ui.visuals_mut().widgets.hovered = active;
+        }
+        let ink = if hint { p.on_accent } else { p.ink };
+        let mut response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        // Keep the modal's opening-Enter guard when its default gains focus:
+        // egui otherwise turns held-key repeats into focused-button clicks.
+        if ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            response.flags.remove(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
+        if hint && response.enabled() && ui.memory(|m| m.allows_interaction(response.layer_id)) {
+            response.request_focus();
+        }
+        modal_keys::default_button(response)
+    })
+    .inner
+}
+
+fn text_button(ui: &mut egui::Ui, ink: Color32, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
     // The theme gives every button its plain filled face.
-    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(p.ink));
+    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(ink));
     match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => {
@@ -2917,6 +3334,63 @@ pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
     painter.galley(pos, galley, color);
 }
 
+/// A row of a window's rail (Places, Appearance's showcase): icon, name,
+/// count; `depth` indents a sub-folder. The chosen row takes the accent's
+/// wash, a hovered one the raised face.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let radius = ui.visuals().window_corner_radius;
+    if on {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised);
+    }
+    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), Vec2::splat(16.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            if on && tint == p.muted { p.violet_pale } else { tint },
+        );
+    }
+    let one_line = |text: &str, size: f32, color: Color32, width: f32| {
+        let mut job =
+            egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(size), color));
+        job.wrap = egui::text::TextWrapping {
+            max_width: width.max(1.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        ui.painter().layout_job(job)
+    };
+    let num = count.map(|n| one_line(&n.to_string(), 11.5, p.muted, 40.0));
+    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+    let ink = if tint == p.violet_light { tint } else { p.ink };
+    let g = one_line(label, 13.0, ink, rect.right() - num_w - x - 25.0);
+    paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
+    if let Some(g) = num {
+        let w = g.size().x;
+        paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
+    }
+    resp
+}
+
 /// The margin that puts the capitals of a text field in `font` in the middle
 /// of the field (the human's choice of 2026-10-22): egui centres the text's
 /// row, whose room for descenders leaves the letters high (Inter at 13
@@ -3148,6 +3622,23 @@ pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content:
         None => egui::Button::new(tip),
     };
     super::menu::button(ui, p, button, content).on_hover_text(tip);
+}
+
+#[cfg(test)]
+mod spin_arrow_tests {
+    use super::arrow_hold_repeats;
+
+    #[test]
+    fn arrow_hold_repeats_lands_on_the_50_ms_marks() {
+        assert_eq!(arrow_hold_repeats(0.49), 0);
+        assert_eq!(arrow_hold_repeats(0.50), 1);
+        assert_eq!(arrow_hold_repeats(0.54), 1);
+        assert_eq!(arrow_hold_repeats(0.55), 2);
+        // 0.10 / 0.05 is 1.999… in f64. The repeat at 0.60 s must still count.
+        assert_eq!(arrow_hold_repeats(0.60), 3);
+        assert_eq!(arrow_hold_repeats(0.90), 9);
+        assert_eq!(arrow_hold_repeats(f64::NAN), 0);
+    }
 }
 
 #[cfg(test)]

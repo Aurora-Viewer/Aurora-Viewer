@@ -157,7 +157,7 @@ pub struct RadarSettings {
     /// The seven UISndRadar* sounds all play: a mirror of the preferences
     /// (set by the app each frame, written back when the menu changes it),
     /// not a setting of its own. An Aurora entry: the Legacy Viewer sets
-    /// them one by one in Preferences › Chat › Radar only.
+    /// them one by one in Preferences â€º Chat â€º Radar only.
     #[serde(skip)]
     pub alert_sounds: bool,
     /// RadarEnterChannelAlert / RadarLeaveChannelAlert: the arrivals and
@@ -232,6 +232,9 @@ pub struct RadarData<'a> {
     /// Voice participants: level and speaking.
     pub voice: &'a HashMap<Uuid, (f32, bool)>,
     pub draw_distance: f32,
+    /// Logged in to Second Life (not OpenSim): a double click zooms on an
+    /// avatar at any distance (LLAvatarActions::canZoomIn).
+    pub second_life: bool,
     /// Clock of the radar's sweeps.
     pub now: f64,
     /// Profile pictures the viewer holds.
@@ -241,9 +244,14 @@ pub struct RadarData<'a> {
 /// Name of an avatar in the radar and its alerts (FSRadarEntry::getRadarName):
 /// with both names, a display name that is only the username is not repeated.
 pub fn radar_name(world: &World, id: &Uuid, format: u8) -> String {
+    // under @shownames every avatar of the radar is anonymous, the
+    // exceptions of the restriction included
+    if names_hidden(world) {
+        return world.rlva_anonymous(*id).display_name.clone();
+    }
     let names = &world.social.avatar_names;
     let Some(name) = names.get(id) else {
-        return world.person_name(id).unwrap_or_else(|| "…".into());
+        return world.person_name(id).unwrap_or_else(|| "â€¦".into());
     };
     let user = name.user_name_for_display(&names.options);
     let display = &name.display_name;
@@ -254,6 +262,37 @@ pub fn radar_name(world: &World, id: &Uuid, format: u8) -> String {
         2 | 3 => user,
         _ => display.clone(),
     }
+}
+
+/// @shownames in the radar: FSRadarEntry::getRadarName anonymises every row,
+/// FSRadar::updateRadarList blanks the notes, writes "---" for the age and
+/// leaves the friends' names plain, FSRadarEntry::checkAge gives no age
+/// alert, FSPanelRadar::updateButtons greys the friendship offer and the
+/// gear, and FSRadarListCtrl::handleRightMouseDown opens no menu.
+pub(super) fn names_hidden(world: &World) -> bool {
+    world.rlva.has("shownames")
+}
+
+/// @shownearby empties the list: FSPanelRadar::updateList writes why as the
+/// list's comment, and FSRadar::updateRadarList dashes the counters.
+pub(super) fn nearby_hidden(world: &World) -> bool {
+    world.rlva.has("shownearby")
+}
+
+/// The line of an empty list: why, when a restriction empties it.
+pub(super) fn empty_text(world: &World) -> &'static str {
+    if nearby_hidden(world) {
+        aurora_i18n::tr!("rlva-blocked-nearby")
+    } else {
+        aurora_i18n::tr!("radar-empty")
+    }
+}
+
+/// The mini-map of the list is drawn: its option is on and @showminimap is
+/// not set (RlvUIEnabler::onToggleShowMinimap, rlvui.cpp, hides the
+/// "minimaplayout" panel of the people panel and of the radar).
+pub(super) fn shows_minimap(world: &World, settings: &RadarSettings) -> bool {
+    settings.show_minimap && !world.rlva.has("showminimap")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -291,6 +330,59 @@ pub(super) struct Row {
     pub loaded: bool,
     /// In a region a teleport left behind: faded until it leaves the list.
     pub left_behind: bool,
+    /// Under @shownames ([`names_hidden`]): nothing of the row tells who it is.
+    pub anonymous: bool,
+}
+
+/// Whether a double click sends the camera to an avatar of the list
+/// (FSRadar::zoomAvatar, LLAvatarActions::canZoomIn). A drawn avatar is
+/// followed at once. One known only by its radar position is reached there
+/// and followed once it is drawn (the app waits for it), as the Legacy Viewer
+/// zooms on the radar entry's global position. On Second Life any distance
+/// is reached: the simulator sends what is around the camera, so the avatar
+/// arrives once the camera is there. On OpenSim an avatar beyond the draw
+/// distance is refused (RenderFarClip), as the Legacy Viewer does. Without a
+/// height there is no point to look at: refused on both, where the Legacy
+/// Viewer would look at the 1020 m placeholder height.
+pub(super) fn zoom_on(loaded: bool, range: Option<f32>, draw_distance: f32, second_life: bool) -> Result<(), super::ZoomRefusal> {
+    use super::ZoomRefusal;
+    if loaded {
+        return Ok(());
+    }
+    match range {
+        None => Err(ZoomRefusal::Unplaced),
+        Some(range) if !second_life && range > draw_distance => Err(ZoomRefusal::BeyondDrawDistance { range, draw_distance }),
+        Some(_) => Ok(()),
+    }
+}
+
+/// Seconds during which more double clicks on the same refused row say
+/// nothing more.
+const ZOOM_REFUSAL_QUIET: f64 = 10.0;
+
+/// The double click of a row, in either look: the camera goes to the avatar,
+/// or the chat says once why it cannot.
+pub(super) fn zoom_from_list(ui: &egui::Ui, st: &mut PeopleUi, row: &Row, data: &RadarData, actions: &mut Vec<PeopleAction>) {
+    match zoom_on(row.loaded, row.range, data.draw_distance, data.second_life) {
+        Ok(()) => {
+            st.zoom_refused = None;
+            context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
+        }
+        Err(why) => {
+            let now = ui.input(|i| i.time);
+            if st
+                .zoom_refused
+                .is_some_and(|(id, at)| id == row.id && now - at < ZOOM_REFUSAL_QUIET)
+            {
+                return;
+            }
+            st.zoom_refused = Some((row.id, now));
+            actions.push(PeopleAction::ZoomRefused {
+                name: row.name.clone(),
+                why,
+            });
+        }
+    }
 }
 
 /// Age in days of a profile, when it tells it (also for the age alert).
@@ -309,10 +401,11 @@ fn unix_now() -> f64 {
 
 /// The avatars of the list, filtered and in the order chosen.
 pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
-    if world.rlva.has("shownearby") {
+    if nearby_hidden(world) {
         return Vec::new();
     }
     let settings = &*data.settings;
+    let anonymous = names_hidden(world);
     let today = unix_now();
     let mut rows: Vec<Row> = data
         .radar
@@ -326,7 +419,14 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 return None;
             }
             let name = radar_name(world, &e.id, settings.name_format);
-            if !super::matches_name(world, &e.id, &name, filter) {
+            // (an anonymous row is found by what it shows only: its other
+            // names would tell an exception of @shownames apart)
+            let found = if anonymous {
+                filter.is_empty() || name.to_lowercase().contains(filter)
+            } else {
+                super::matches_name(world, crate::world::names::NameScope::World, &e.id, &name, filter)
+            };
+            if !found {
                 return None;
             }
             let profile = world.profiles.get(&e.id);
@@ -338,13 +438,14 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
             };
             let age = match profile {
                 None => Age::Unknown,
+                _ if anonymous => Age::Unknown,
                 Some(p) if p.hide_age == Some(true) => Age::Hidden,
                 Some(p) => age_days(p, today).map_or(Age::Unknown, Age::Days),
             };
             Some(Row {
                 id: e.id,
                 name,
-                friend: world.social.is_friend(&e.id),
+                friend: !anonymous && world.social.is_friend(&e.id),
                 muted,
                 // a blocked resident shows no voice state (FSRadarEntry)
                 voice: data.voice.get(&e.id).filter(|_| !muted).map(|(_, speaking)| *speaking),
@@ -352,12 +453,13 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 typing: e.typing,
                 sitting: e.sitting,
                 payment,
-                note: profile.and_then(|p| p.notes.clone()).unwrap_or_default(),
+                note: profile.filter(|_| !anonymous).and_then(|p| p.notes.clone()).unwrap_or_default(),
                 age,
                 seen: (data.now - e.first_seen).max(0.0),
                 range: e.range,
                 loaded: e.loaded,
                 left_behind: e.left_behind,
+                anonymous,
             })
         })
         .collect();
@@ -391,15 +493,10 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
     rows
 }
 
-/// Color of a range (and of a name colored by distance): within the chat,
-/// within a shout, farther.
+/// Color of a range (and of a name colored by distance), shared with the
+/// name tags.
 fn range_color(p: &Palette, range: Option<f32>) -> Color32 {
-    let r = chat_ranges();
-    match range {
-        Some(d) if d <= r.say => p.success,
-        Some(d) if d <= r.shout => p.ink,
-        _ => p.muted,
-    }
+    crate::ui::colors::range_color(p, range)
 }
 
 /// "h:mm:ss" since the first sighting.
@@ -449,7 +546,7 @@ fn cells(settings: &RadarSettings, row: Rect) -> Vec<(Column, Rect)> {
         .collect()
 }
 
-fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: (usize, usize, usize), list: egui::Id) {
+fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: Option<(usize, usize, usize)>, list: egui::Id) {
     // the columns over those of the rows, left of the list's scroll bar
     let columns = widgets::header_width(ui, list);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
@@ -463,13 +560,12 @@ fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: 
         let mut tip = column.title().to_owned();
         match column {
             Column::Name => {
-                let (total, region, chat) = counts;
-                let text = aurora_i18n::tr!(
-                    "radar-name-header",
-                    total = format!("{total}"),
-                    region = format!("{region}"),
-                    chat = format!("{chat}")
-                );
+                // no counts under @shownearby: dashes, as mAvatarStats
+                let [total, region, chat] = match counts {
+                    Some((total, region, chat)) => [total, region, chat].map(|n| n.to_string()),
+                    None => std::array::from_fn(|_| "-".to_owned()),
+                };
+                let text = aurora_i18n::tr!("radar-name-header", total = total, region = region, chat = chat);
                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
                 widgets::paint_elided(ui, &text, left, cell.width() - 24.0, font.clone(), color);
                 tip = aurora_i18n::tr!("radar-name-header-tip").to_owned();
@@ -537,7 +633,11 @@ fn paint_row(
                 // the profile picture first (not in Firestorm's radar, asked
                 // by the human), then the name
                 let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
-                widgets::avatar_picture(ui, p, picture, data.pics.get(&row.id), &row.name, row.muted);
+                // (a profile picture would name an anonymous row; so would
+                // its mark, which `ring` leaves out)
+                let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+                widgets::avatar_picture(ui, p, picture, face, &row.name, row.muted);
+                crate::ui::avatar_marks::ring(ui, world, &row.id, picture, false);
                 let cell = cell.with_min_x(picture.right());
                 // friends in bold, blocked residents in italics
                 let mut format = egui::TextFormat {
@@ -628,6 +728,7 @@ fn paint_row(
                 }
             }
             Column::Age => match row.age {
+                _ if row.anonymous => text_right(ui, "---".to_owned(), cell, 12.0, p.muted_dim, false),
                 Age::Unknown => {}
                 Age::Hidden => text_right(ui, aurora_i18n::tr!("radar-age-hidden").to_owned(), cell, 12.0, p.muted_dim, false),
                 Age::Days(days) => {
@@ -819,7 +920,8 @@ pub fn tab(
     let line = Vec2::new(ui.available_width(), TOOL);
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let can_befriend = first.is_some_and(|id| !world.social.is_friend(&id));
+        let anonymous = names_hidden(world);
+        let can_befriend = !anonymous && first.is_some_and(|id| !world.social.is_friend(&id));
         let add = ui
             .add_enabled(can_befriend, tool_button(p, "user-plus", can_befriend))
             .on_hover_text(aurora_i18n::tr!("radar-add-friend"));
@@ -833,7 +935,7 @@ pub fn tab(
             p,
             "settings-filled",
             aurora_i18n::tr!("radar-selection-menu"),
-            first.is_some(),
+            first.is_some() && !anonymous,
             |ui| {
                 if st.radar_selected.len() > 1 {
                     context::avatars_menu(ui, p, world, &st.radar_selected);
@@ -845,36 +947,49 @@ pub fn tab(
         tool_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("radar-options"), true, |ui| {
             options_menu(ui, p, data.settings, blocked);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
-    if data.settings.show_minimap {
+    if shows_minimap(world, data.settings) {
         ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
         ui.add_space(4.0);
     }
     let filter = st.filter.trim().to_lowercase();
     let list = rows(world, data, &filter);
     let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
-    let counts = (
-        data.radar.total,
-        list.iter().filter(|r| r.same_region).count(),
-        list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
-    );
+    let anonymous = names_hidden(world);
+    let counts = (!nearby_hidden(world)).then(|| {
+        (
+            data.radar.total,
+            list.iter().filter(|r| r.same_region).count(),
+            list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
+        )
+    });
     let rows_id = ui.scope_id().with("radar_list");
     header(ui, p, data.settings, counts, rows_id);
     let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
         if list.is_empty() {
             ui.add_space(8.0);
-            ui.label(egui::RichText::new(aurora_i18n::tr!("radar-empty")).size(12.0).color(p.muted));
+            ui.label(egui::RichText::new(empty_text(world)).size(12.0).color(p.muted));
         }
         let radius = ui.visuals().window_corner_radius;
         for row in &list {
             // dragged onto a conversation, the resident joins it
             let (rect, resp) = super::rows::allocate(ui, row.id, Vec2::new(ui.available_width(), 22.0));
+            widgets::reveal_search_selection(
+                ui,
+                &resp,
+                st.radar_anchor
+                    .filter(|id| st.radar_selected.contains(id))
+                    .or_else(|| st.radar_selected.last().copied())
+                    == Some(row.id),
+            );
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
-                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                if !anonymous {
+                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                }
                 continue;
             }
             let selected = st.radar_selected.contains(&row.id);
@@ -883,7 +998,7 @@ pub fn tab(
             } else if resp.hovered() {
                 ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
             }
-            if !data.pics.contains_key(&row.id) {
+            if !anonymous && !data.pics.contains_key(&row.id) {
                 st.want_pic(row.id, ui.input(|i| i.time));
             }
             let pointer = resp.hover_pos();
@@ -904,17 +1019,15 @@ pub fn tab(
                 st.radar_selected = vec![row.id];
                 st.radar_anchor = Some(row.id);
             }
-            // double click: the camera goes to the avatar and follows it, when it is drawn
+            // double click: the camera goes to the avatar and follows it
             // (LLAvatarActions::zoomIn)
             if resp.double_clicked() {
-                if row.loaded {
-                    context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
-                } else {
-                    actions.push(PeopleAction::TooFarToZoom);
-                }
+                zoom_from_list(ui, st, row, data, actions);
             }
             // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
-            super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+            if !anonymous {
+                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+            }
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);
             }
@@ -927,6 +1040,37 @@ pub fn tab(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_double_click_reaches_an_avatar_not_drawn_yet_within_the_draw_distance() {
+        use super::super::ZoomRefusal;
+        for second_life in [false, true] {
+            // drawn: always followed
+            assert_eq!(zoom_on(true, Some(300.0), 160.0, second_life), Ok(()));
+            assert_eq!(zoom_on(true, None, 160.0, second_life), Ok(()));
+            // 120 m, draw distance 160 m, not drawn yet
+            assert_eq!(zoom_on(false, Some(120.0), 160.0, second_life), Ok(()));
+            assert_eq!(zoom_on(false, Some(160.0), 160.0, second_life), Ok(()));
+            // no height: no point to look at
+            assert_eq!(zoom_on(false, None, 160.0, second_life), Err(ZoomRefusal::Unplaced));
+        }
+        // beyond the draw distance: refused on OpenSim only
+        assert_eq!(
+            zoom_on(false, Some(300.0), 160.0, false),
+            Err(ZoomRefusal::BeyondDrawDistance {
+                range: 300.0,
+                draw_distance: 160.0
+            })
+        );
+    }
+
+    #[test]
+    fn a_double_click_reaches_an_avatar_at_any_distance_on_second_life() {
+        // the simulator sends what is around the camera
+        // (LLAvatarActions::canZoomIn: "special case for SL")
+        assert_eq!(zoom_on(false, Some(300.0), 160.0, true), Ok(()));
+        assert_eq!(zoom_on(false, Some(4000.0), 64.0, true), Ok(()));
+    }
+
     fn name_filter_world() -> (World, Radar) {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.social.avatar_names.on_display_names(
@@ -934,7 +1078,7 @@ mod tests {
                 aurora_net::AvatarNameData {
                     id: Uuid::from_u128(1),
                     username: "jane.doe".into(),
-                    display_name: "Étoile ✧".into(),
+                    display_name: "Ã‰toile âœ§".into(),
                     legacy_first: "Jane".into(),
                     legacy_last: "Doe".into(),
                     ..Default::default()
@@ -983,6 +1127,7 @@ mod tests {
             settings: &mut settings,
             voice: &HashMap::new(),
             draw_distance: 96.0,
+            second_life: true,
             now: 0.0,
             pics: &HashMap::new(),
         };
@@ -998,7 +1143,7 @@ mod tests {
     fn people_name_filter_matches_all_names_in_every_radar_format() {
         let (mut world, radar) = name_filter_world();
         for format in 0..=3 {
-            for query in ["  JANE DOE  ", "JaNe.DoE", "doe", "ÉTOILE", "✧"] {
+            for query in ["  JANE DOE  ", "JaNe.DoE", "doe", "Ã‰TOILE", "âœ§"] {
                 assert_eq!(
                     filtered_ids(&world, &radar, format, query),
                     vec![Uuid::from_u128(1)],
@@ -1023,6 +1168,87 @@ mod tests {
         }
     }
 
+    fn restrict(world: &mut World, commands: &str) {
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: Uuid::from_u128(99),
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: commands.into(),
+        }));
+    }
+
+    fn all_rows(world: &World, radar: &Radar, filter: &str) -> Vec<Row> {
+        let mut settings = RadarSettings::default();
+        let data = RadarData {
+            radar,
+            settings: &mut settings,
+            voice: &HashMap::new(),
+            draw_distance: 96.0,
+            second_life: true,
+            now: 0.0,
+            pics: &HashMap::new(),
+        };
+        rows(world, &data, filter)
+    }
+
+    /// FSRadarEntry::getRadarName and FSRadar::updateRadarList under
+    /// @shownames: every row is anonymous, the restriction's exceptions too.
+    #[test]
+    fn rlva_shownames_leaves_nothing_of_a_row_that_tells_who_it_is() {
+        let (mut world, radar) = name_filter_world();
+        let friend = Uuid::from_u128(1);
+        world.social.form_friendship(friend);
+        assert!(
+            all_rows(&world, &radar, "")
+                .iter()
+                .any(|row| row.id == friend && row.friend && !row.anonymous)
+        );
+        restrict(&mut world, &format!("@shownames=n,shownames:{friend}=add"));
+        assert!(names_hidden(&world) && !nearby_hidden(&world));
+        let listed = all_rows(&world, &radar, "");
+        assert_eq!(listed.len(), 3, "the avatars stay listed");
+        let real = ["jane", "doe", "toile", "exampleuser", "another name"];
+        for row in &listed {
+            assert!(row.anonymous && !row.friend && row.note.is_empty());
+            assert_eq!(row.age, Age::Unknown);
+            for format in 0..=3 {
+                let shown = radar_name(&world, &row.id, format).to_lowercase();
+                assert!(
+                    !shown.is_empty() && !real.iter().any(|name| shown.contains(name)),
+                    "{format}: {shown}"
+                );
+            }
+        }
+        // the search never finds a row by the names it hides
+        for query in ["jane.doe", "jane doe", "exampleuser", "another name"] {
+            assert!(all_rows(&world, &radar, query).is_empty(), "{query}");
+        }
+    }
+
+    /// FSPanelRadar::updateList (`blocked_nearby`) and
+    /// RlvUIEnabler::onToggleShowMinimap ("minimaplayout").
+    #[test]
+    fn rlva_shownearby_empties_the_list_and_showminimap_hides_its_map() {
+        let (mut world, radar) = name_filter_world();
+        let in_any_language = |key: &'static str, text: &str| ["en", "fr", "ja"].iter().any(|l| aurora_i18n::text_in(l, key) == text);
+        let settings = RadarSettings {
+            show_minimap: true,
+            ..Default::default()
+        };
+        assert!(shows_minimap(&world, &settings));
+        assert!(in_any_language("radar-empty", empty_text(&world)));
+        restrict(&mut world, "@shownearby=n,showminimap=n");
+        assert!(all_rows(&world, &radar, "").is_empty());
+        assert!(in_any_language("rlva-blocked-nearby", empty_text(&world)));
+        assert!(!in_any_language("radar-empty", empty_text(&world)));
+        assert!(!shows_minimap(&world, &settings));
+    }
+
     #[test]
     fn people_name_filter_keeps_aliases_and_account_identity() {
         let (mut world, radar) = name_filter_world();
@@ -1032,7 +1258,7 @@ mod tests {
             assert_eq!(filtered_ids(&world, &radar, 0, query), vec![id]);
         }
         assert!(
-            filtered_ids(&world, &radar, 0, "étoile").is_empty(),
+            filtered_ids(&world, &radar, 0, "Ã©toile").is_empty(),
             "an alias still replaces the chosen display name"
         );
     }
@@ -1044,7 +1270,7 @@ mod tests {
         world.social.avatar_names.set_aliases(HashMap::from([(id, "Best friend".into())]));
         world.social.avatar_names.set_rlva_privacy(true, Default::default());
         for format in 0..=3 {
-            for query in ["jane doe", "jane.doe", "étoile", "best friend"] {
+            for query in ["jane doe", "jane.doe", "Ã©toile", "best friend"] {
                 assert!(filtered_ids(&world, &radar, format, query).is_empty());
             }
             let anonymous = radar_name(&world, &id, format);
