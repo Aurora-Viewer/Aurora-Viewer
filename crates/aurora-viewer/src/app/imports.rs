@@ -1115,7 +1115,7 @@ impl App {
         }
         self.imports.local_uploads = pending;
         if !self.imports.local_uploads.is_empty() {
-            self.egui_ctx.request_repaint();
+            self.egui_ctx.request_repaint_after(Duration::from_millis(33));
         }
         let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
         for (asset, slot) in previous_slots {

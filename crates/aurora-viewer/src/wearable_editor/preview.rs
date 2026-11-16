@@ -163,8 +163,10 @@ impl Preview {
             return commands;
         }
         let mut values = Vec::new();
+        let mut draft_linked = false;
         for item in worn {
             let value = if item.id == draft.item.id {
+                draft_linked = true;
                 Some(draft.edited.clone())
             } else {
                 self.assets.get(&(item.id, item.asset_id)).cloned()
@@ -176,7 +178,7 @@ impl Preview {
                 return commands;
             }
         }
-        if !values.iter().any(|v| v.kind == draft.edited.kind) {
+        if !draft_linked {
             values.push(draft.edited.clone());
         }
         let mut sources = HashMap::new();
@@ -241,7 +243,7 @@ impl Preview {
         let wake = ctx.cloned();
         scene.jobs.execute(move || {
             let start = Instant::now();
-            let result = prepare(generation, &token, &pool, &lib, &base, kind, values, sources, &tx);
+            let result = prepare(generation, &token, &pool, &lib, &base, kind, values, sources, &tx, wake.as_ref());
             if token.load(Ordering::Relaxed) == generation {
                 if let Err(reason) = result {
                     let _ = tx.send(Reply::Failed(generation, reason));
@@ -249,9 +251,10 @@ impl Preview {
                     let _ = tx.send(Reply::Done(generation));
                 }
                 log::debug!("wearable preview: generation {generation}, {} ms", start.elapsed().as_millis());
-                if let Some(wake) = wake {
-                    wake.request_repaint();
-                }
+            }
+            drop(tx);
+            if let Some(wake) = wake {
+                wake.request_repaint();
             }
         });
         commands
@@ -349,10 +352,10 @@ impl Preview {
             self.published = std::mem::take(&mut self.prepared);
             self.completed = false;
         }
-        if (!self.waiting.is_empty() || self.receiver.is_some())
+        if !self.waiting.is_empty()
             && let Some(ctx) = ctx
         {
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(33));
         }
     }
 }
@@ -368,6 +371,7 @@ fn prepare(
     values: Vec<Wearable>,
     sources: HashMap<Uuid, PreviewSource>,
     tx: &crossbeam_channel::Sender<Reply>,
+    wake: Option<&egui::Context>,
 ) -> Result<(), String> {
     use rayon::prelude::*;
     let defs = bake::definitions()?;
@@ -444,6 +448,9 @@ fn prepare(
             .is_err()
         {
             return Ok(());
+        }
+        if let Some(wake) = wake {
+            wake.request_repaint();
         }
     }
     Ok(())
@@ -540,6 +547,45 @@ mod tests {
     }
 
     #[test]
+    fn a_pending_tattoo_still_previews_beside_another_inventory_item_of_the_same_kind() {
+        let (mut world, mut state, id) = super::super::tests::fixture(14);
+        let draft_texture = Uuid::new_v4();
+        world.local_assets.insert(draft_texture, ("edited-tattoo.png".into(), false));
+        assert!(state.set_texture(&world, 26, draft_texture));
+        assert!(state.save(&world, None).is_some());
+
+        let cof = crate::world::appearance::cof(&world.inventory).expect("current outfit");
+        let link = world
+            .inventory
+            .items
+            .values()
+            .find(|item| item.parent == cof && item.asset_type == 24 && item.asset_id == id)
+            .expect("edited tattoo link")
+            .id;
+        world.inventory.remove(&[link]);
+        state.update(&mut world);
+        let draft = state.draft.as_ref().expect("pending save keeps the edited tattoo open");
+        assert!(!super::super::worn(&world, id));
+
+        let other_texture = Uuid::new_v4();
+        for item in world.inventory.items.values().filter(|item| matches!(item.asset_type, 5 | 13)) {
+            let bytes = crate::world::inventory::wearable::create((item.flags & 0xff) as u8, &item.name, world.agent_id).expect("wearable");
+            let mut value = Wearable::parse(&bytes).expect("asset");
+            if item.flags & 0xff == 14 && item.id != id {
+                value.textures.insert(26, other_texture);
+            }
+            state.preview.cache(item.id, item.asset_id, value);
+        }
+        let mut scene = Scene::new(
+            std::env::temp_dir().join(format!("aurora-pending-tattoo-{}", Uuid::new_v4())),
+            world.avatar_lib.clone(),
+        );
+        state.preview.update(&world, &mut scene, draft, None);
+        assert!(state.preview.wanted.contains(&draft_texture));
+        assert!(state.preview.wanted.contains(&other_texture));
+    }
+
+    #[test]
     fn local_skin_and_universal_layer_reload_rebakes_and_requests_repaint() {
         // Issue #3173: local texture reload for Skin (kind 1) and Universal (kind 16).
         for (kind, slot) in [(1u8, 0u32), (1u8, 5u32), (16u8, 29u32), (16u8, 30u32)] {
@@ -576,6 +622,15 @@ mod tests {
                 state.preview.sources.contains_key(&id),
                 "local texture is included in bake input sources"
             );
+            // The demo outfit's other worn maps must also be ready for the debounce to run.
+            for &texture in state.preview.wanted.iter().filter(|texture| **texture != id) {
+                scene.textures.set_local_pixels(texture, image([255; 4]));
+            }
+            state.preview.update(&world, &mut scene, draft, None);
+            let (tx, rx) = crossbeam_channel::unbounded();
+            ctx.set_repaint_observer(move |info| {
+                tx.send(info.delay).expect("repaint observer");
+            });
             let initial_gen = state.preview.generation.load(Ordering::Relaxed);
 
             // Simulate local file update (new pixels with same UUID)
@@ -586,10 +641,8 @@ mod tests {
                 new_gen > initial_gen,
                 "local texture reload triggers invalidation and increments generation for kind {kind}"
             );
-            assert!(
-                ctx.has_requested_repaint(),
-                "repaint is requested to complete debounced rebake for kind {kind}"
-            );
+            let delay = rx.try_recv().expect("the reload schedules its own repaint");
+            assert!(!delay.is_zero() && delay <= Duration::from_millis(140));
 
             state.close(&mut world);
         }
