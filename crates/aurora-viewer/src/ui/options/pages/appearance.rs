@@ -267,12 +267,9 @@ fn font(cx: &mut Cx) {
                 // the row is reached by any search that finds it: the list
                 // comes from a thread, or that key would stall the window
                 let Some(list) = &st.system_fonts else {
+                    let salt = ui.scope_id().with("system-font");
                     ui.add_enabled_ui(false, |ui| {
-                        egui::ComboBox::from_id_salt(ui.scope_id().with("system-font"))
-                            .width(COMBO_W)
-                            .selected_text(tr!("ui-options-system-fonts-searching"))
-                            .truncate()
-                            .show_ui(ui, |_| {});
+                        system_font_combo(salt, tr!("ui-options-system-fonts-searching").to_owned()).show_ui(ui, |_| {});
                     });
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
                     return false;
