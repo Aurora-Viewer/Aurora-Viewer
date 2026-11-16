@@ -1598,15 +1598,34 @@ impl KeyBindings {
     }
 
     fn move_defaults(&mut self, before: &Self, after: &Self) {
+        // Vacate every unchanged default that is moving before placing any
+        // of them. This also frees the destinations of a swap or longer cycle.
+        let mut moves = Vec::new();
         for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
+            let saved = self.get(*action);
             for slot in 0..2 {
                 let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
                     continue;
                 };
-                if old == new || self.get(*action)[slot].as_ref() != Some(old) || !self.rivals(*action, new).is_empty() {
-                    continue;
+                if old != new && saved[slot].as_ref() == Some(old) {
+                    self.set(*action, slot, None);
+                    moves.push((*action, slot, old, new));
                 }
-                self.set(*action, slot, Some(new.clone()));
+            }
+        }
+
+        // Keep the first default when two want the same free key. A blocked
+        // move takes its old key back, which can in turn block an earlier move.
+        loop {
+            let count = moves.len();
+            moves.retain(|&(action, slot, old, new)| {
+                let available = self.rivals(action, new).is_empty();
+                let target = if available { new } else { old };
+                self.set(action, slot, Some(target.clone()));
+                available
+            });
+            if moves.len() == count {
+                break;
             }
         }
     }
@@ -2832,6 +2851,68 @@ mod tests {
         let mut kb = KeyBindings::us_places(fr.movement_keys());
         kb.follow_letters_of(&fr);
         assert_eq!(kb, KeyBindings::for_layout(&fr));
+    }
+
+    fn camera_defaults(keys: [KeyCode; 4]) -> KeyBindings {
+        let actions = [Action::CamPanLeft, Action::CamPanRight, Action::CamPanUp, Action::CamPanDown];
+        KeyBindings {
+            map: actions
+                .into_iter()
+                .zip(keys)
+                .map(|(action, code)| (action, [k(code), None]))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn layout_defaults_can_swap_or_cycle_in_either_direction() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        for keys in [[K::KeyT, K::KeyR, K::KeyU, K::KeyJ], [K::KeyT, K::KeyU, K::KeyR, K::KeyJ]] {
+            let after = camera_defaults(keys);
+            let mut saved = before.clone();
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&after, &before);
+            assert_eq!(saved, before);
+        }
+    }
+
+    #[test]
+    fn a_reserved_key_blocks_its_chain_and_preserves_custom_and_cleared_slots() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyT, K::KeyU, K::KeyV, K::KeyK]);
+        let mut saved = before.clone();
+        saved.set(Action::Inventory, 1, k(K::KeyV));
+        let mut expected = saved.clone();
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
+
+        for replacement in [None, k(K::F12)] {
+            let mut saved = before.clone();
+            saved.set(Action::CamPanRight, 0, replacement.clone());
+            let mut expected = after.clone();
+            expected.set(Action::CamPanRight, 0, replacement);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, expected);
+        }
+    }
+
+    #[test]
+    fn the_first_default_keeps_a_free_key_when_two_want_it() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyV, K::KeyV, K::KeyU, K::KeyK]);
+        let mut expected = before.clone();
+        expected.set(Action::CamPanLeft, 0, k(K::KeyV));
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        let mut saved = before.clone();
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
     }
 
     /// A key's label learned from a key press gives way to the new
