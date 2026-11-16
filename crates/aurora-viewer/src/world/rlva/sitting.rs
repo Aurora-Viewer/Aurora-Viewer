@@ -59,7 +59,7 @@ impl World {
 
     /// getsitid reports the seat's root linkset, whereas notifications name
     /// the actual parent prim. Both remain independent of location privacy.
-    pub(super) fn rlva_sit_id(&self) -> Uuid {
+    pub(crate) fn rlva_sit_id(&self) -> Uuid {
         if !self.agent.seated {
             return Uuid::nil();
         }

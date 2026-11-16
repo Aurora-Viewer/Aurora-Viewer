@@ -84,11 +84,38 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             | "note-landmark"
             | "note-copy"
             | "note-menu-right"
+            | "note-rez"
     ) {
         return Vec::new();
     }
     let Some(item) = st.preview else { return Vec::new() };
     let editor = egui::Id::unique(("inventory_document_text", st.ui_id, item));
+    // note-rez: the embedded object dragged out of the text from frame 650,
+    // released over the world at frame 680 (RezObjectFromNotecard)
+    if mode == "note-rez" {
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", '\u{100002}')))) else {
+            return Vec::new();
+        };
+        let start = rect.center();
+        let screen = ctx.content_rect();
+        let target = egui::pos2(screen.right() - screen.width() * 0.12, screen.bottom() - screen.height() * 0.3);
+        let pos = match frame {
+            650 => start,
+            651..=679 => start + (target - start) * ((frame - 650) as f32 / 30.0),
+            680 => target,
+            _ => return Vec::new(),
+        };
+        let mut events = vec![egui::Event::PointerMoved(pos)];
+        if matches!(frame, 650 | 680) {
+            events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: frame == 650,
+                modifiers: Default::default(),
+            });
+        }
+        return events;
+    }
     if mode == "note-drop" {
         let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))) else {
             return Vec::new();

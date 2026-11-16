@@ -436,7 +436,10 @@ impl Session<'_> {
         match c {
             BuildCmd::RezInventory(rez) => {
                 if rez.ray_start.is_finite() && rez.ray_end.is_finite() {
-                    self.send(addr, &rez.message(agent_id, session_id), true);
+                    match rez.notecard {
+                        Some(from) => self.send(addr, &rez.notecard_message(agent_id, session_id, from), true),
+                        None => self.send(addr, &rez.message(agent_id, session_id), true),
+                    }
                 }
             }
             BuildCmd::SetPhysicsParams {

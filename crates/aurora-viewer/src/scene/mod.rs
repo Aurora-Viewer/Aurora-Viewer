@@ -62,6 +62,7 @@ mod sculpt_watch;
 mod selection_demo;
 pub mod settings;
 pub mod shape;
+mod shelter_hold;
 mod shown_bakes;
 mod skin_binds;
 pub mod snow_detail;
@@ -461,8 +462,12 @@ pub struct ObjGpu {
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
     pub first_person_hidden: bool,
-    /// Physical (FLAGS_USE_PHYSICS): out of the rain's shelter map.
+    /// Out of the rain's shelter map (`Scene::moves_for_shelter`): physical
+    /// (FLAGS_USE_PHYSICS), moving, or moved a while ago.
     pub physical: bool,
+    /// Its own pose at its last sync, and the hold its last move started
+    /// (shelter_hold.rs).
+    shelter: shelter_hold::ShelterPose,
     /// Reflection probe flagged as a mirror (box); listed in
     /// `Scene::mirror_objects`.
     pub mirror: bool,
@@ -885,6 +890,10 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// Session-only keyframe animation rate for every avatar and animesh.
+    pub animation_speed: f32,
+    /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
+    pub slow_motion_animations: bool,
     pub ground_avatar_feet: bool,
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
@@ -1009,6 +1018,9 @@ pub struct Scene {
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
+    /// When the objects a move of their own holds out of the rain's shelter
+    /// map come back into it (shelter_hold.rs).
+    shelter_holds: shelter_hold::Holds,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -1612,6 +1624,8 @@ impl Scene {
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
@@ -1670,6 +1684,7 @@ impl Scene {
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
             mirror_objects: Default::default(),
+            shelter_holds: Default::default(),
             selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
@@ -2335,6 +2350,7 @@ impl Scene {
         self.gpu = gpus;
         self.removals.clear();
         self.removal_pending.clear();
+        self.shelter_holds.clear();
         self.slot_users.clear();
         self.pick.reset();
         self.list_index.reset();
@@ -2995,6 +3011,9 @@ impl Scene {
         let now = self.held_at.unwrap_or_else(Instant::now);
         let n = world.objects.slots.len();
         let agent = world.agent_id;
+        // what a move of its own held out of the rain's shelter map comes
+        // back into it: its linkset synced once more, which finds it still
+        self.end_shelter_holds(world, now);
         // objects changed since the last frame
         let mut touched = std::mem::take(&mut self.touched_tmp);
         world.objects.take_touched(&mut touched);
@@ -3433,7 +3452,7 @@ impl Scene {
         self.note_light(world, idx);
         let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
         // (as `sync_object`: what moves is out of the rain's shelter map)
-        let physical = world.objects.get(idx).is_some_and(|o| o.update_flags & 1 != 0) || Self::linkset_moving(world, idx);
+        let physical = self.note_shelter_pose(world, idx, m.xf.2);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
@@ -3738,15 +3757,15 @@ impl Scene {
             },
             own: hud || wearer.is_some_and(|(id, _)| id == world.agent_id),
         };
+        // FLAGS_USE_PHYSICS, moving now or a while ago (`moves_for_shelter`):
+        // the snow is laid where it stands from the ground's memory, so on
+        // what moves it slid over it
+        let moving = self.note_shelter_pose(world, idx, hud);
         let g = &mut self.gpu[idx];
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
-        // FLAGS_USE_PHYSICS, or moving now (its linkset reported with a
-        // velocity or a spin: keyframed motion, a scripted walker): the
-        // snow is laid where it stands from the ground's memory, so on what
-        // moves it slid over it
-        g.physical = o.update_flags & 1 != 0 || Self::linkset_moving(world, idx);
+        g.physical = moving;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -4342,14 +4361,66 @@ impl Scene {
         self.gpu[idx] = g;
     }
 
-    /// Whether object `idx` or a prim it is linked to (up to its root) was
-    /// last reported moving or turning.
-    fn linkset_moving(world: &World, mut idx: usize) -> bool {
+    /// The pose object `idx`'s own data gives at this sync (a move of its
+    /// own starts a hold, shelter_hold.rs), and whether it is out of the
+    /// rain's shelter map (`moves_for_shelter`). A HUD is never in it.
+    fn note_shelter_pose(&mut self, world: &World, idx: usize, hud: bool) -> bool {
+        let now = self.held_at.unwrap_or_else(Instant::now);
+        if !hud
+            && let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get_mut(idx))
+            && g.shelter.note(o.position, o.rotation, now)
+            && let Some(end) = g.shelter.end()
+        {
+            self.shelter_holds.push(end, idx);
+        }
+        Self::moves_for_shelter(world, &self.gpu, idx, now)
+    }
+
+    /// The holds that ended by `now`: those objects and what is linked to
+    /// them are synced once more, which puts them back into the shelter map
+    /// (an object moved again since waits for its new end).
+    fn end_shelter_holds(&mut self, world: &World, now: Instant) {
+        while let Some(idx) = self.shelter_holds.pop_due(now) {
+            let Some(g) = self.gpu.get_mut(idx) else {
+                continue;
+            };
+            match g.shelter.due(now) {
+                shelter_hold::Due::Later(end) => self.shelter_holds.push(end, idx),
+                shelter_hold::Due::Stale => {}
+                shelter_hold::Due::Ended => {
+                    // (a linkset is 256 prims at most; attachments hang a
+                    // level deeper)
+                    let mut linked = vec![idx];
+                    let mut seen = 0;
+                    while let Some(i) = linked.pop()
+                        && seen < 1024
+                    {
+                        seen += 1;
+                        self.sets.dirty.insert(i);
+                        if let Some(o) = world.objects.get(i) {
+                            linked.extend_from_slice(world.objects.children_of(&o.key));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether object `idx` moves as far as the rain's shelter map is
+    /// concerned, it or a prim it is linked to (up to its root): physical
+    /// (FLAGS_USE_PHYSICS), drawn moving (`Object::has_motion`: a reported
+    /// velocity or spin however slow, a correction fading; the same test as
+    /// the drawing's, where a threshold of its own left a slow spin in the
+    /// map), or moved by its own data a while ago (`ShelterPose::held`: a
+    /// rotation a script steps carries no motion). The map is drawn from
+    /// what stands still: what moves in it lays its old shape under the
+    /// snow and the rain, in the map's squares (#3642).
+    pub(super) fn moves_for_shelter(world: &World, gpu: &[ObjGpu], mut idx: usize, now: Instant) -> bool {
         for _ in 0..16 {
             let Some(o) = world.objects.get(idx) else {
                 return false;
             };
-            if o.velocity.length_squared() > 1e-4 || o.angular_velocity.length_squared() > 1e-4 {
+            if o.update_flags & 1 != 0 || o.has_motion() || gpu.get(idx).is_some_and(|g| g.shelter.held(now)) {
                 return true;
             }
             let Some(parent) = world.objects.parent_of(o) else {
@@ -4752,14 +4823,15 @@ impl Scene {
                     record: c.record,
                     bounds: [0.0; 4],
                 };
-                if shadows {
-                    self.lists.terrain_shadow_casters.push(ShadowCaster {
-                        cmd,
-                        center,
-                        radius: c.radius,
-                        alpha: r.surface.masked,
-                    });
-                }
+                // with the shadows off too: the rain's shelter map takes the
+                // terrain (deep snow stands on what it holds, and found no
+                // ground on bare land; only it draws them then)
+                self.lists.terrain_shadow_casters.push(ShadowCaster {
+                    cmd,
+                    center,
+                    radius: c.radius,
+                    alpha: r.surface.masked,
+                });
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
@@ -5157,19 +5229,31 @@ impl Scene {
             // Rigged meshes retain their attachment order. For ordinary faces,
             // use the exact placement written to the GPU, including this frame's
             // moving/worn anchor, without visiting the world's parent chain.
-            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
-                .then(|| {
-                    let record = renderer.records.get(g.faces.first()?.record)?;
-                    let mut model = Mat4::from_cols_array_2d(&record.model);
-                    if let Some(anchor) = record.anchor() {
-                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
-                    }
-                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
-                        return None;
-                    };
-                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
-                })
-                .flatten();
+            let face_place = ((face_sort || under_water_plane.is_some())
+                && in_view
+                && !g.rigged
+                && !g.is_avatar
+                && g.faces.iter().any(|f| f.pass == Pass::Blend))
+            .then(|| {
+                let record = renderer.records.get(g.faces.first()?.record)?;
+                let mut model = Mat4::from_cols_array_2d(&record.model);
+                if let Some(anchor) = record.anchor() {
+                    model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                }
+                let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                    return None;
+                };
+                Some((model, geom))
+            })
+            .flatten();
+            let face_depth = face_place
+                .filter(|_| face_sort)
+                .map(|(model, geom)| (blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom));
+            // the side of the water each face lies on, from its own height
+            // where its vertices are known (`water_sides_of`)
+            let face_height = face_place
+                .filter(|_| under_water_plane.is_some())
+                .map(|(model, geom)| (blend_order::FaceHeight::new(model), geom));
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -5317,7 +5401,13 @@ impl Scene {
                             face: f.te_index,
                             rig,
                         };
-                        let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
+                        let height = face_height.as_ref().and_then(|(height, geom)| {
+                            geom.pick_faces
+                                .get(f.te_index as usize)?
+                                .as_ref()
+                                .map(|face| height.of(face.bounds))
+                        });
+                        let (after, before) = blend_order::water_sides_of(sc.z, sr, height, under_water_plane);
                         if before {
                             l.blend_under.push(entry);
                         }
@@ -5587,22 +5677,6 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera; the
-    /// sync of the same frame uploads their joint palettes
-    /// (`update_anchors`). Only our avatar reports timed animation stops
-    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    /// Objects our avatar wears (HUDs left out): a step of the teleport and
-    /// crossing timelines (AURORA_PROFILE).
-    pub fn own_attachment_count(&self) -> usize {
-        let Some(own) = self.agent_idx else {
-            return 0;
-        };
-        self.gpu
-            .iter()
-            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
-            .count()
-    }
-
     /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
     /// one walk over the objects, every 10 s.
     pub fn avatar_sample(&self) -> AvatarSample {
@@ -5643,6 +5717,10 @@ impl Scene {
         s
     }
 
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
@@ -5762,6 +5840,10 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_time_factor(
+                anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
+                now,
+            );
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
@@ -5980,6 +6062,9 @@ impl Scene {
         }
         self.palettes = pal;
         for (_, motions, _, owner, _, physics) in work.drain(..) {
+            if owner == world.agent_id {
+                world.ik_edit_base.clone_from(&motions.ik.edit_base);
+            }
             self.motions.insert(owner, motions);
             if let Some(job) = physics {
                 self.physics.insert(owner, job.state);

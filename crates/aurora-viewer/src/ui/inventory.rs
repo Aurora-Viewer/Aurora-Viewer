@@ -258,7 +258,7 @@ pub struct Facts {
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
-    pub rlva: crate::world::rlva::WearLocks,
+    pub rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
@@ -442,6 +442,16 @@ pub struct InvDrag(pub Uuid);
 /// A single folder dragged to inventory or Marketplace listings.
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
+
+/// An object embedded in an open notecard, dragged out of its text
+/// (LLViewerTextEditor::handleHover, SOURCE_NOTECARD): the editor and the
+/// notecard that hold it, and its marker in the text.
+#[derive(Debug, Clone, Copy)]
+pub struct NotecardDrag {
+    pub editor: Uuid,
+    pub notecard: Uuid,
+    pub marker: char,
+}
 
 pub(crate) struct WorldDrag {
     pub item: Uuid,

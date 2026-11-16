@@ -344,12 +344,19 @@ fn item_row(
             crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
         );
         let script = item.asset_type == AT_LSL_TEXT;
+        let preview =
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_allowed(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7;
-            let no_open = if can_open {
+            // LLTaskInvFVBridge::buildContextMenu: the scripts and notecards
+            // of an attachment that cannot be taken off stay closed.
+            let closed = (script || item.asset_type == 7) && world.rlva_locked_attachment(idx);
+            let can_open = (script || item.asset_type == 7 || preview) && !closed;
+            let no_open = if closed {
+                aurora_i18n::tr!("rlva-blocked")
+            } else if can_open {
                 ""
             } else {
                 aurora_i18n::tr!("build-ui-contents-opening-items-inside-an-object-is-not-available-yet")
@@ -413,7 +420,7 @@ fn item_row(
                     object: object_id,
                     item: item.item_id,
                 });
-            } else if item.asset_type == 7 {
+            } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
