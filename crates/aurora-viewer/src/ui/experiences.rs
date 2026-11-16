@@ -99,6 +99,11 @@ impl ExperiencesUi {
             egui::pos2(screen.center().x - 260.0, screen.center().y - 200.0),
             Vec2::new(520.0, 400.0),
         )
+        // its tabs' contents differ (lists, the search, the log): egui kept
+        // the widest any of them measured, a fraction of a point more at
+        // each switch, and the window grew for good, even while being
+        // shrunk
+        .steady_size()
         .show(ctx, p, open, |ui| {
             let names = [
                 aurora_i18n::tr!("ui-experiences-allowed"),
@@ -678,6 +683,50 @@ mod tests {
         assert_eq!((area.right(), area.width(), area.height()), (810.0, CARD_BANNER_MAX, 56.0));
         let small = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(200.0, 56.0));
         assert_eq!(banner_area(small).width(), 200.0 * CARD_BANNER_SHARE);
+    }
+
+    /// A list tab keeps the window's size too: its cards are as wide as the
+    /// list, and the tabs row may be wider than a narrow window.
+    #[test]
+    fn a_list_tab_keeps_the_window_size() {
+        let world = || {
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let ids: Vec<Uuid> = (1..=12).map(Uuid::from_u128).collect();
+            for (n, id) in ids.iter().enumerate() {
+                world.experiences.details.insert(
+                    *id,
+                    ExperienceDetails {
+                        id: *id,
+                        name: format!("Experience number {n} with a rather long name, Environment Experience - Landscapes Unlimited"),
+                        maturity: [13, 21, 42][n % 3],
+                        ..Default::default()
+                    },
+                );
+            }
+            for kind in TABS {
+                world.experiences.lists.insert(kind, Some(ids.clone()));
+            }
+            world
+        };
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(520.0, 400.0), Vec2::new(360.0, 300.0)],
+            "Experience number 0 with a rather long name, Environment Experience - Landscapes Unlimited",
+            || {
+                let ui = ExperiencesUi {
+                    tab: 1,
+                    shown: true,
+                    ..ExperiencesUi::default()
+                };
+                (ui, world(), 0usize)
+            },
+            |(ui, world, frame), ctx, p| {
+                // every tab in turn, the search and the events included
+                ui.tab = (*frame / 3) % (LOG_TAB + 1);
+                *frame += 1;
+                ui.show(ctx, p, world, &mut true, &HashMap::new())
+            },
+        );
     }
 
     #[test]

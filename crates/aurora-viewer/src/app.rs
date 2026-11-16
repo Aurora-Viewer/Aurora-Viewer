@@ -19876,6 +19876,7 @@ impl App {
                     profile_base: profile_base.as_deref(),
                 };
                 self.profile_ui.prepare_photos(&ctx, &mut self.scene, &self.world);
+                self.experience_profile_ui.prepare_banner(&ctx, &mut self.scene, &self.world);
                 let acts = self.profile_ui.show(
                     &ctx,
                     &p,

@@ -261,14 +261,6 @@ impl Drag {
     }
 }
 
-/// The rect of a window that keeps its body at `ratio` (width over height),
-/// `chrome` around it, while `edge` drags it from `start` to `rect`, at
-/// every frame of the drag (#941): a side drives the other dimension, a
-/// corner follows the axis the pointer changed the most (relative to the
-/// size it started from). The edges opposite the dragged ones stay where
-/// they were; a side grows the other dimension away from the window's top
-/// or left. The size stays between `minimum` and the room `bounds` leaves
-/// on the sides that move, both taken on the ratio.
 /// [`Drag::cap_width`]: the dragged side brought back to `max` from the
 /// other one.
 fn cap_width(mut rect: Rect, edge: Edge, max: f32) -> Rect {
@@ -283,6 +275,14 @@ fn cap_width(mut rect: Rect, edge: Edge, max: f32) -> Rect {
     rect
 }
 
+/// The rect of a window that keeps its body at `ratio` (width over height),
+/// `chrome` around it, while `edge` drags it from `start` to `rect`, at
+/// every frame of the drag (#941): a side drives the other dimension, a
+/// corner follows the axis the pointer changed the most (relative to the
+/// size it started from). The edges opposite the dragged ones stay where
+/// they were; a side grows the other dimension away from the window's top
+/// or left. The size stays between `minimum` and the room `bounds` leaves
+/// on the sides that move, both taken on the ratio.
 fn aspect_rect(start: Rect, rect: Rect, edge: Edge, ratio: f32, chrome: Vec2, minimum: Vec2, bounds: Rect) -> Rect {
     let ratio = ratio.clamp(0.2, 5.0);
     let body = (rect.size() - chrome).max(Vec2::splat(1.0));

@@ -17,6 +17,7 @@
 //! footer under the scrolled details.
 
 use super::menu;
+use super::texture_library::texture_view::ImageView;
 use super::texture_picker::TexturePicker;
 use super::widgets::{self, ActionKind, Floater, action_button_if, flat_button};
 use crate::theme::Palette;
@@ -110,6 +111,12 @@ pub struct ExperienceProfileUi {
     pub wanted_pics: HashSet<Uuid>,
     /// Groups whose profile was asked, for their insignia (once each).
     asked_groups: HashSet<Uuid>,
+    /// The banner at full resolution, decoded on the scene's workers like a
+    /// profile's photo (`prepare_banner`): the interface copies stop at
+    /// 256 pixels, blurred across a window-wide banner.
+    banner: Option<(Uuid, ImageView)>,
+    /// How many physical pixels wide the banner was last drawn.
+    banner_px: f32,
 }
 
 impl ExperienceProfileUi {
@@ -220,6 +227,34 @@ impl ExperienceProfileUi {
         widgets::size_floater(ctx, WINDOW, EDIT_SIZE);
     }
 
+    /// The banner of the profile on screen, at the size it is drawn
+    /// (`ProfileUi::prepare_photos` does the same for a photo); dropped
+    /// with the window.
+    pub(crate) fn prepare_banner(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene, world: &World) {
+        let logo = world
+            .experiences
+            .profile
+            .and_then(|id| world.experiences.details.get(&id))
+            .map_or(Uuid::nil(), |d| d.logo);
+        if logo.is_nil() {
+            self.banner = None;
+            return;
+        }
+        if self.banner.as_ref().is_none_or(|(asset, _)| *asset != logo) {
+            self.banner = Some((logo, ImageView::default()));
+        }
+        if let Some((_, view)) = &mut self.banner {
+            // the size it is drawn, before the first frame a usual window's
+            let px = if self.banner_px > 0.0 {
+                self.banner_px
+            } else {
+                VIEW_SIZE.x * ctx.pixels_per_point()
+            };
+            scene.textures.note_usage_boosted(&logo, px);
+            view.prepare(ctx, logo, scene);
+        }
+    }
+
     fn leave_edit(&mut self, ctx: &egui::Context) {
         if self.edit.take().is_some() {
             widgets::size_floater(ctx, WINDOW, VIEW_SIZE);
@@ -312,7 +347,14 @@ impl ExperienceProfileUi {
             // never so tall that the details have no room left: past that,
             // a band around its middle (cropped, not squashed)
             let most = (ui.available_height() - DETAILS_ROOM).max(MIN_BANNER);
-            banner(ui, p, pics.images.get(&d.logo), most);
+            // full resolution once decoded, the interface copy until then
+            let full = self
+                .banner
+                .as_ref()
+                .filter(|(asset, _)| *asset == d.logo)
+                .and_then(|(_, view)| view.image.clone());
+            let drawn = banner(ui, p, full.as_ref().or_else(|| pics.images.get(&d.logo)), most);
+            self.banner_px = drawn.width() * ui.ctx().pixels_per_point();
         }
         let (mut list, footer) = widgets::above_footer(ui);
         egui::ScrollArea::vertical()
@@ -841,8 +883,9 @@ fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 /// The banner across the window, in the Legacy Viewer's shape; its room
-/// is kept while it loads, so the profile does not jump.
-fn banner(ui: &mut egui::Ui, p: &Palette, texture: Option<&egui::TextureHandle>, most: f32) {
+/// is kept while it loads, so the profile does not jump. Returns where it
+/// was drawn.
+fn banner(ui: &mut egui::Ui, p: &Palette, texture: Option<&egui::TextureHandle>, most: f32) -> Rect {
     let width = ui.available_width();
     let full = width / BANNER_ASPECT;
     let height = full.min(most).round();
@@ -856,6 +899,7 @@ fn banner(ui: &mut egui::Ui, p: &Palette, texture: Option<&egui::TextureHandle>,
             ui.painter().rect_filled(rect, 0.0, p.bar);
         }
     }
+    rect
 }
 
 /// The part of the banner shown when only `share` of its height fits: a
