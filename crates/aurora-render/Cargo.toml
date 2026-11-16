@@ -21,6 +21,11 @@ thiserror = "2.0.21"
 uuid = "1.27.0"
 # counters: bytes of the live textures and buffers, for the memory budget (vram.rs)
 wgpu = { version = "30.0.1", features = ["counters"] }
+# naga at wgpu's version (one copy in Cargo.lock): the sample-mask SPIR-V
+# workaround (spirv_fix.rs) writes the shader itself; `spirv` gives the
+# opcodes its rewrite reads
+naga = { version = "30.0.1", features = ["wgsl-in", "spv-out"] }
+spirv = "0.4"
 bcdec_rs = "0.2.0"
 intel_tex_2 = "0.5.0"
 
@@ -58,7 +63,9 @@ openxr = "0.22"
 xr-static-loader = ["openxr/static"]
 
 [dev-dependencies]
-naga = { version = "30", features = ["wgsl-in", "spv-out", "msl-out"] }
+# (`hlsl-out` and `msl-out` serve the tests that check the other writers of
+# the sample mask route, oit_stochastic.rs)
+naga = { version = "30.0.1", features = ["wgsl-in", "spv-out", "msl-out", "hlsl-out"] }
 aurora-assets = { path = "../aurora-assets" }
 rayon = "1.12.0"
 

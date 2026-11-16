@@ -66,6 +66,8 @@ pub struct Asset {
     active: bool,
     model: usize,
     use_scale: bool,
+    #[serde(default)]
+    scene: bool,
     texture_target: usize,
     camera: [f32; 3],
     pan: [f32; 2],
@@ -136,6 +138,7 @@ impl Asset {
             active: entry.local_published || entry.local_restore_active,
             model: entry.local_model,
             use_scale: entry.local_use_scale,
+            scene: entry.local_scene,
             texture_target: entry.texture_target,
             camera: [entry.view.yaw, entry.view.pitch, entry.view.distance],
             pan: entry.view.pan,
@@ -154,6 +157,7 @@ impl Asset {
         entry.local_restore_active = self.active;
         entry.local_model = self.model;
         entry.local_use_scale = self.use_scale;
+        entry.local_scene = self.scene;
         entry.texture_target = self.texture_target.min(9);
         [entry.view.yaw, entry.view.pitch, entry.view.distance] = self.camera;
         entry.view.pan = self.pan;
@@ -547,6 +551,7 @@ impl Imports {
                     entry.local_published || entry.local_restore_active,
                     entry.local_model,
                     entry.local_use_scale,
+                    entry.local_scene,
                     entry.texture_target,
                 ),
                 (
@@ -1102,6 +1107,8 @@ mod tests {
         assert_eq!(draft.lods[1].error, 0.037);
         assert!(draft.lods[1].error_mode);
         assert_eq!(draft.preview_lod, 1);
+        assert!(restarted.entries[2].local_scene, "remember the complete-file choice");
+        assert!(restarted.local_targets[&object].scene, "restore the complete-file binding");
         assert_eq!(restarted.local_targets[&object].entry, ids[2]);
         assert_eq!(restarted.local_appearance_targets[&(object, Some(1))].entry(), ids[1]);
         let other = restored(path.clone(), &other_grid, &jobs);

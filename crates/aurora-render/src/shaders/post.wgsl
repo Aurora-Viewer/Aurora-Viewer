@@ -27,13 +27,16 @@ struct PostParams {
     auto_exposure: f32,
     // a cut-out photo (FrameParams::cutout): the scene's alpha holds what
     // shows through each pixel; 1: the photo, straight color and coverage,
-    // 2: the live view, over a checkerboard
+    // 2: the live view, over a checkerboard, 3: the live view, over the
+    // key color
     cutout: f32,
     _pad: f32,
     // the part of the photo this frame draws, in fractions of the photo
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
+    // the key color of a cut-out live view (FrameParams::cutout_key), linear
+    cutout_key: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -336,7 +339,11 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
         m = vec3<f32>(clamp(a * 10.0, 0.0, 1.0), clamp(a * 2.0, 0.0, 1.0), l * 0.5);
     }
     var alpha = 1.0;
-    if (post.cutout > 1.5) {
+    if (post.cutout > 2.5) {
+        // the live view against a key color (a green screen to film
+        // against): what is left empty shows that color, flat
+        m = mix(post.cutout_key.rgb, m, cutout_cover(in.uv));
+    } else if (post.cutout > 1.5) {
         // the live view: what the photo leaves empty shows as a checkerboard
         let cell = vec2<u32>(in.clip.xy / 12.0);
         let light = ((cell.x + cell.y) & 1u) == 0u;
