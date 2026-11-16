@@ -32,8 +32,8 @@ pub const DN_REMOVED: &str = "--- ---";
 
 /// Alpha of a non-friend's color (COLOR_DAMPENING).
 const COLOR_DAMPENING: f32 = 0.8;
-/// LLColor4::grey.
-const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+/// LLColor4::grey, the default colour of a new account's sets.
+pub(crate) const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContactSet {
