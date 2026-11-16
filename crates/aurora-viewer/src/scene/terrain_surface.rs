@@ -210,8 +210,44 @@ fn layer_record(material: &PbrMaterial, override_: TerrainTransform, slots: [u32
     }
 }
 
+/// The resident's region wins first; remaining regions use distance to
+/// their footprint, so a large neighbouring region is not penalized by its size.
+fn terrain_region_order(world: &World, eye: Vec3) -> Vec<u64> {
+    let mut priorities: Vec<_> = world
+        .regions
+        .iter()
+        .filter_map(|(&handle, region)| {
+            let offset = world.region_offset(handle)?;
+            let local = (eye - offset).truncate();
+            let size = glam::Vec2::new(region.heightmap.size_x as f32, region.heightmap.size_y as f32);
+            let distance = local.distance_squared(local.clamp(glam::Vec2::ZERO, size));
+            Some((handle, Some(handle) != world.main_region, distance))
+        })
+        .collect();
+    priorities.sort_unstable_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)).then_with(|| a.0.cmp(&b.0)));
+    priorities.into_iter().map(|p| p.0).collect()
+}
+
+/// Only the next batch is sorted, even on a large region with thousands
+/// of dirty chunks. Horizontal distance does not need unbuilt height bounds.
+fn terrain_chunk_order(heightmap: &terrain::Heightmap, dirty: &HashSet<u32>, eye: Vec3) -> Vec<u32> {
+    let mut chunks: Vec<_> = dirty.iter().copied().collect();
+    let columns = (heightmap.size_x / CHUNK_CELLS).max(1);
+    let distance = |index: u32| {
+        let center = glam::Vec2::new((index % columns) as f32 + 0.5, (index / columns) as f32 + 0.5) * CHUNK_CELLS as f32;
+        center.distance_squared(eye.truncate())
+    };
+    let compare = |a: &u32, b: &u32| distance(*a).total_cmp(&distance(*b)).then_with(|| a.cmp(b));
+    if chunks.len() > 8 {
+        chunks.select_nth_unstable_by(8, compare);
+        chunks.truncate(8);
+    }
+    chunks.sort_unstable_by(compare);
+    chunks
+}
+
 impl Scene {
-    pub(super) fn sync_terrain(&mut self, renderer: &mut Renderer, world: &mut World) {
+    pub(super) fn sync_terrain(&mut self, renderer: &mut Renderer, world: &mut World, eye: Vec3) {
         let stale: Vec<_> = self.regions.keys().filter(|h| !world.regions.contains_key(h)).copied().collect();
         for h in stale {
             if let Some(region) = self.regions.remove(&h) {
@@ -222,10 +258,15 @@ impl Scene {
                 region.surface.free(renderer, &mut self.textures);
             }
         }
-        let handles: Vec<_> = world.regions.keys().copied().collect();
+        let handles = terrain_region_order(world, eye);
         let mut built = 0;
         for handle in handles {
             let Some(offset) = world.region_offset(handle) else { continue };
+            let edges = world
+                .regions
+                .get(&handle)
+                .is_some_and(|r| !r.dirty_chunks.is_empty() && built <= 6)
+                .then(|| world.terrain_edge_heights(handle));
             let Some(region) = world.regions.get_mut(&handle) else { continue };
             let Some(info) = region.info.clone() else { continue };
             let comp = Composition {
@@ -270,9 +311,10 @@ impl Scene {
             if region.dirty_chunks.is_empty() || built > 6 {
                 continue;
             }
-            let chunks: Vec<_> = region.dirty_chunks.iter().copied().take(8).collect();
+            let chunks = terrain_chunk_order(&region.heightmap, &region.dirty_chunks, eye - offset);
             for index in chunks {
-                let (vertices, frames, indices) = terrain::build_chunk(&region.heightmap, &comp, index);
+                let Some(edges) = edges.as_ref() else { break };
+                let (vertices, frames, indices) = terrain::build_chunk(&region.heightmap, &comp, index, edges);
                 // Terrain reuses the parallel frame bytes without enabling skinning.
                 let Some(alloc) = renderer.upload_skinned_mesh(&vertices, &frames, &indices) else {
                     continue;
@@ -285,12 +327,11 @@ impl Scene {
                 }
                 let cx = region.heightmap.size_x / CHUNK_CELLS;
                 let half = CHUNK_CELLS as f32 * 0.5;
-                let center = offset
-                    + Vec3::new(
-                        (index % cx * CHUNK_CELLS) as f32 + half,
-                        (index / cx * CHUNK_CELLS) as f32 + half,
-                        (zmin + zmax) * 0.5,
-                    );
+                let center = Vec3::new(
+                    (index % cx * CHUNK_CELLS) as f32 + half,
+                    (index / cx * CHUNK_CELLS) as f32 + half,
+                    (zmin + zmax) * 0.5,
+                );
                 let radius = Vec3::new(half, half, (zmax - zmin) * 0.5).length();
                 let record = renderer.records.alloc(record);
                 if let Some(old) = gpu.chunks.insert(
@@ -362,5 +403,143 @@ mod tests {
         .record(Vec3::new(256.0, 0.0, 0.0));
         assert_eq!(parent.tex, [21, 22, 23, 24]);
         assert_eq!(parent.flags[0], flags::PBR | flags::TERRAIN);
+    }
+}
+
+#[cfg(test)]
+mod crossing_tests {
+    use super::*;
+    use aurora_net::NetEvent;
+
+    fn fixture() -> (Scene, World, [u64; 3]) {
+        let library = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        let mut info = crate::demo::events()
+            .into_iter()
+            .find_map(|event| match event {
+                NetEvent::RegionHandshake(info) => Some((*info).clone()),
+                _ => None,
+            })
+            .unwrap();
+        let handles = [info.handle, info.handle + (256_u64 << 32), info.handle + (512_u64 << 32)];
+        for &handle in &handles {
+            info.handle = handle;
+            world.apply(NetEvent::RegionHandshake(Arc::new(info.clone())));
+        }
+        // a new neighbour also marks the edge it shares (#2465): clear every
+        // region once all are known, so each test starts with no pending work
+        for &handle in &handles {
+            world.regions.get_mut(&handle).unwrap().dirty_chunks.clear();
+        }
+        world.main_region = Some(handles[0]);
+        let mut scene = Scene::new(Default::default(), library);
+        scene.last_origin = world.main_origin();
+        for &handle in &handles {
+            let chunks = (0..64)
+                .map(|index| {
+                    (
+                        index,
+                        TerrainChunk {
+                            alloc: MeshAlloc {
+                                vertex_offset: index * 100,
+                                vertex_count: 64,
+                                index_offset: index * 200,
+                                index_count: 96,
+                            },
+                            record: index + 1,
+                            center: Vec3::new((index % 8 * 32 + 16) as f32, (index / 8 * 32 + 16) as f32, 20.0),
+                            radius: 24.0,
+                        },
+                    )
+                })
+                .collect();
+            scene.regions.insert(
+                handle,
+                RegionGpu {
+                    chunks,
+                    surface: Default::default(),
+                    offset: world.region_offset(handle).unwrap(),
+                },
+            );
+        }
+        (scene, world, handles)
+    }
+
+    fn cross(scene: &mut Scene, world: &mut World, handle: u64) {
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(12.0, 128.0, 33.0),
+            look_at: Vec3::X,
+        });
+        assert!(scene.update_origin(world));
+    }
+
+    #[test]
+    fn terrain_crossing_keeps_every_mesh_and_record_across_repeated_origin_changes() {
+        let (mut scene, mut world, handles) = fixture();
+        for next in [handles[1], handles[2], handles[0]] {
+            cross(&mut scene, &mut world, next);
+            for &handle in &handles {
+                let region = &scene.regions[&handle];
+                assert_eq!(region.chunks.len(), 64, "already drawn terrain must not disappear while rebuilding");
+                let offset = world.region_offset(handle).unwrap();
+                for (&index, chunk) in &region.chunks {
+                    assert_eq!(chunk.alloc.vertex_offset, index * 100);
+                    assert_eq!(chunk.record, index + 1);
+                    assert_eq!(chunk.world_center(offset), chunk.center + offset);
+                }
+            }
+            assert!(!scene.update_origin(&mut world), "unchanged origin is a no-op");
+        }
+    }
+
+    #[test]
+    fn terrain_crossing_does_not_turn_existing_dirty_work_into_a_full_rebuild() {
+        let (mut scene, mut world, handles) = fixture();
+        world.regions.get_mut(&handles[0]).unwrap().dirty_chunks.extend([3, 17]);
+        cross(&mut scene, &mut world, handles[1]);
+        assert_eq!(world.regions[&handles[0]].dirty_chunks, HashSet::from([3, 17]));
+        assert!(world.regions[&handles[1]].dirty_chunks.is_empty());
+        assert!(world.regions[&handles[2]].dirty_chunks.is_empty());
+    }
+
+    #[test]
+    fn terrain_crossing_bounds_follow_the_current_offset_without_accumulating_shifts() {
+        let (scene, _, handles) = fixture();
+        let chunk = &scene.regions[&handles[0]].chunks[&0];
+        let local = Vec3::new(16.0, 16.0, 20.0);
+        for offset in [Vec3::ZERO, Vec3::new(-256.0, 512.0, 0.0), Vec3::ZERO] {
+            assert_eq!(chunk.world_center(offset), local + offset);
+        }
+        assert_eq!(chunk.center, local);
+    }
+
+    #[test]
+    fn terrain_crossing_missing_geometry_prioritizes_agent_region_then_camera_distance() {
+        let (_, mut world, handles) = fixture();
+        let eye = Vec3::new(700.0, 128.0, 30.0);
+        assert_eq!(terrain_region_order(&world, eye), [handles[0], handles[2], handles[1]]);
+        // A large neighbour containing the camera is measured to its footprint.
+        world.regions.get_mut(&handles[1]).unwrap().heightmap = terrain::Heightmap::new(512, 512);
+        assert_eq!(terrain_region_order(&world, eye), [handles[0], handles[1], handles[2]]);
+        let heightmap = terrain::Heightmap::new(256, 256);
+        let dirty = (0..64).collect();
+        assert_eq!(
+            terrain_chunk_order(&heightmap, &dirty, Vec3::new(240.0, 240.0, 30.0)),
+            [63, 55, 62, 54, 47, 61, 46, 53]
+        );
+        assert_eq!(dirty.len(), 64, "sorting must not consume queued updates");
+        assert!(terrain_chunk_order(&heightmap, &HashSet::new(), Vec3::ZERO).is_empty());
+    }
+    #[test]
+    fn terrain_crossing_fresh_renderer_requeues_heightmaps_after_gpu_recovery() {
+        let (mut scene, mut world, handles) = fixture();
+        // clear/forget_gpu frees the old allocations and forgets the origin.
+        scene.regions.clear();
+        scene.last_origin = None;
+        assert!(scene.update_origin(&mut world));
+        for handle in handles {
+            assert_eq!(world.regions[&handle].dirty_chunks, (0..64).collect::<HashSet<u32>>());
+        }
     }
 }

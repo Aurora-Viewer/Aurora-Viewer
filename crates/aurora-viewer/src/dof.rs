@@ -254,15 +254,69 @@ pub fn distance_along(eye: glam::Vec3, at: glam::Vec3, point: glam::Vec3) -> f32
     at.normalize_or_zero().dot(point - eye)
 }
 
-/// The lens of a frame.
-pub fn lens(s: &Settings, focus: f32, fov_y: f32, height: u32, window_height: u32, debug: bool) -> aurora_render::DepthOfField {
-    let focal = focal_length_at(s, fov_y);
+/// The image a lens is worked out for: the window's frame, or a photo,
+/// which is the part of the window's view its proportions frame
+/// (`Camera::photo_proj`), drawn at its own size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    /// The camera's vertical field of view (radians): its zoom, which the
+    /// focal length follows.
+    pub camera_fov_y: f32,
+    /// The angle the image spans from top to bottom (radians), as renderDoF
+    /// measures a pixel (the field of view over the height: the same angle
+    /// for every row), and its height (pixels).
+    pub fov_y: f32,
+    pub height: u32,
+    /// How many of the window's rows the image covers: what the largest
+    /// circle, set in window pixels, scales by.
+    pub window_rows: f32,
+}
+
+impl View {
+    /// The window's own frame, `height` pixels high.
+    pub fn window(camera_fov_y: f32, height: u32) -> View {
+        View {
+            camera_fov_y,
+            fov_y: camera_fov_y,
+            height,
+            window_rows: height.max(1) as f32,
+        }
+    }
+
+    /// A photo of `aspect`, `height` pixels high, taken from a `window`
+    /// (pixels): narrower than the window it keeps the window's height of
+    /// view, wider its width, so it covers fewer of its rows
+    /// (`Camera::photo_proj`, `snapshot::viewfinder_scale`). Its rows span
+    /// the window's angle per row: each of its pixels is the share of a
+    /// window pixel it covers, the blur the same in both.
+    pub fn photo(camera_fov_y: f32, window: (u32, u32), aspect: f32, height: u32) -> View {
+        let (ww, wh) = (window.0.max(1) as f32, window.1.max(1) as f32);
+        let (aspect, window_aspect) = (aspect.max(0.1), (ww / wh).max(0.1));
+        let crop = (window_aspect / aspect).min(1.0);
+        View {
+            camera_fov_y,
+            fov_y: camera_fov_y * crop,
+            height,
+            window_rows: wh * crop,
+        }
+    }
+}
+
+/// The lens of a frame. A photo cropped from the window keeps the
+/// window's lens: the focal length follows the camera's zoom, not the
+/// crop's narrower view (which read as a longer lens and blurred the photo
+/// more than the view it was framed in), and the blur is measured in the
+/// photo's own pixels.
+pub fn lens(s: &Settings, focus: f32, view: View, debug: bool) -> aurora_render::DepthOfField {
+    let focal = focal_length_at(s, view.camera_fov_y);
     aurora_render::DepthOfField {
-        coc_scale: coc_scale(focal, s.f_number, focus, fov_y, height),
+        coc_scale: coc_scale(focal, s.f_number, focus, view.fov_y, view.height),
         focus,
         focus_far: focus,
-        // FIRE-13989: the same blur in an image of any size
-        max_coc: s.max_coc * height as f32 / window_height.max(1) as f32,
+        // FIRE-13989: the same blur in an image of any size (the largest
+        // circle is in window pixels: as many times larger as the photo
+        // has pixels for each of the window's rows it covers)
+        max_coc: s.max_coc * view.height as f32 / view.window_rows.max(1.0),
         samples: s.samples(),
         debug,
         peaking: None,
@@ -331,9 +385,58 @@ mod tests {
     fn the_largest_circle_scales_with_the_image() {
         let s = Settings::default();
         let fov = 60f32.to_radians();
-        assert!((lens(&s, 5.0, fov, 1080, 1080, false).max_coc - 10.0).abs() < 1e-4);
-        assert!((lens(&s, 5.0, fov, 4320, 1080, false).max_coc - 40.0).abs() < 1e-4);
-        assert_eq!(lens(&s, 5.0, fov, 1080, 1080, false).samples, 61);
+        let window = View::window(fov, 1080);
+        assert!((lens(&s, 5.0, window, false).max_coc - 10.0).abs() < 1e-4);
+        let photo = View::photo(fov, (1920, 1080), 1920.0 / 1080.0, 4320);
+        assert!((lens(&s, 5.0, photo, false).max_coc - 40.0).abs() < 1e-4);
+        assert_eq!(lens(&s, 5.0, window, false).samples, 61);
+    }
+
+    /// The blur of a point, as a share of the image's height.
+    fn blur_share(s: &Settings, view: View, focus: f32, z: f32) -> f32 {
+        let l = lens(s, focus, view, false);
+        coc(l.coc_scale, focus, z, f32::MAX) / view.height as f32
+    }
+
+    #[test]
+    fn a_photo_wider_than_the_window_blurs_like_the_view_it_was_framed_in() {
+        // f/1.8 close up: the eyes at 0.78 m in focus, the nose 10 cm nearer
+        let s = Settings {
+            f_number: 1.8,
+            ..Settings::default()
+        };
+        let fov = 60f32.to_radians();
+        let (focus, nose) = (0.78, 0.68);
+        // a 16:10 window and a wider photo (3840 x 2054): the photo is the
+        // middle band of the window's view
+        let window = View::window(fov, 1200);
+        let photo = View::photo(fov, (1920, 1200), 3840.0 / 2054.0, 2054);
+        assert!(photo.fov_y < fov);
+        assert!((photo.window_rows - 1920.0 * 2054.0 / 3840.0).abs() < 1e-2);
+        // the nose's blur, in pixels of the window's view, is the same in the
+        // window and in the photo (each of the window's pixels is photo.height
+        // / window_rows of the photo's)
+        let live = blur_share(&s, window, focus, nose) * window.height as f32;
+        let shot = blur_share(&s, photo, focus, nose) * photo.window_rows;
+        assert!((shot / live - 1.0).abs() < 2e-3, "live {live} px, photo {shot} px");
+        // the same focal length as the window's, not a longer one
+        assert!((focal_length_at(&s, photo.camera_fov_y) - focal_length_at(&s, fov)).abs() < 1e-4);
+        // the largest circle grows with the photo's pixels per window row
+        let ratio = lens(&s, focus, photo, false).max_coc / lens(&s, focus, window, false).max_coc;
+        assert!((ratio - photo.height as f32 / photo.window_rows).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_photo_narrower_than_the_window_keeps_its_height_of_view() {
+        let fov = 60f32.to_radians();
+        let photo = View::photo(fov, (1920, 1080), 0.8, 2160);
+        assert_eq!(photo.fov_y, fov);
+        assert_eq!(photo.window_rows, 1080.0);
+        let s = Settings::default();
+        let window = View::window(fov, 1080);
+        // twice the pixels, twice the blur in pixels: the same share
+        let (a, b) = (blur_share(&s, window, 5.0, 2.0), blur_share(&s, photo, 5.0, 2.0));
+        assert!((a / b - 1.0).abs() < 1e-3);
     }
 
     #[test]

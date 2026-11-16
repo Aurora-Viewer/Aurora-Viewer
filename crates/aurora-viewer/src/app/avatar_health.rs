@@ -14,8 +14,8 @@
 //! - The customise animation (LLAgentCamera::changeCameraToCustomizeAvatar
 //!   in indra/newview/llagentcamera.cpp, LLAgent::endAnimationUpdateUI in
 //!   indra/newview/llagent.cpp): when the camera frames our avatar for
-//!   editing its appearance (AppearanceCameraMovement, on by default; the
-//!   shape editor always does), our avatar stands up and
+//!   editing its appearance (AppearanceCameraMovement, on by default),
+//!   our avatar stands up and
 //!   ANIM_AGENT_CUSTOMIZE plays; leaving stops it and plays
 //!   ANIM_AGENT_CUSTOMIZE_DONE.
 //!
@@ -69,7 +69,12 @@ impl App {
     /// Viewer never enters customise mode for it. With the customise
     /// animation turned off (an Aurora choice), our avatar keeps its pose.
     pub(super) fn update_avatar_health(&mut self) {
-        let editing = (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation;
+        // LLAgentCamera::changeCameraToCustomizeAvatar (llagentcamera.cpp)
+        // returns before anything when RLVa keeps the avatar seated
+        // (RlvActions::canStand): no forced stand, no customise mode.
+        let held = self.world.agent.is_sitting() && self.world.rlva.has("unsit");
+        let editing =
+            (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation && !held;
         if editing && !self.avatar_health.customizing {
             // changeCameraToCustomizeAvatar: "force stand up" first
             // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)
@@ -94,6 +99,7 @@ impl App {
             self.shape_ui.camera_pending |= self.shape_ui.open;
             self.wearable_ui.camera_pending |= self.wearable_ui.open;
         }
+        self.sync_appearance_camera();
         if self.demo && self.frame_count == 600 {
             match std::env::var("AURORA_DEMO_AVATAR_HEALTH").as_deref() {
                 Ok("undeform") => self.undeform_avatar(),

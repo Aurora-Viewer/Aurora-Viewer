@@ -7,6 +7,8 @@ use super::super::cx::{Cx, field};
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.track(&field!(inventory.filter_defaults));
+    cx.track(&field!(inventory.tab_filter_defaults));
     cx.group(tr!("ui-options-sorting"), |cx| {
         cx.choice(
             tr!("ui-inventory-controls-display-order"),
@@ -34,6 +36,12 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
         cx.toggle(
+            tr!("inventory-hover-tooltips"),
+            tr!("inventory-hover-tooltips-help"),
+            &field!(inventory.show_hover_tooltips),
+        );
+        // pictures on hover work with the text tooltips off (#3008)
+        cx.toggle(
             tr!("inventory-hover-pictures"),
             tr!("inventory-hover-pictures-help"),
             &field!(inventory.thumbnail_tooltips),
@@ -59,6 +67,11 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-worn-tab"), "", &field!(inventory.show_worn));
         cx.toggle(tr!("ui-inventory-controls-favorites-tab"), "", &field!(inventory.show_favorites));
         cx.toggle(
+            tr!("inventory-favorites-show-parent-folders"),
+            tr!("inventory-favorites-show-parent-folders-help"),
+            &field!(inventory.favorites_show_parent_folders),
+        );
+        cx.toggle(
             tr!("ui-inventory-controls-separate-search-in-each-tab"),
             "",
             &field!(inventory.separate_searches),
@@ -79,6 +92,13 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("task-transfer-preferences"), |cx| {
         cx.toggle(tr!("task-transfer-warn-move"), "", &field!(inventory.warn_task_move));
         cx.toggle(tr!("task-transfer-warn-scripted"), "", &field!(inventory.warn_scripted_task_move));
+    });
+    cx.group(tr!("ui-options-before-acting"), |cx| {
+        cx.toggle(
+            tr!("ui-options-confirm-inventory-delete"),
+            tr!("ui-options-confirm-inventory-delete-help"),
+            &field!(inventory.confirm_delete),
+        );
     });
     cx.group(tr!("ui-inventory-controls-also-search-in"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-library"), "", &field!(inventory.search_library));

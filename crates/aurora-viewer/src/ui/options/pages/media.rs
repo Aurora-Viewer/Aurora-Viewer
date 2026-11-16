@@ -37,6 +37,26 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-the-first-click-goes-directly-to-the-page-when"),
             &field!(media.first_click_interact),
         );
+        // MediaFirstClickInteract's kinds (panel_preferences_sound.xml,
+        // media_first_click_*)
+        let off = !cx.s.media.first_click_interact;
+        cx.subs(off, |cx| {
+            cx.toggle(tr!("ui-options-first-click-hud"), "", &field!(media.first_click.hud));
+            cx.toggle(tr!("ui-options-first-click-own"), "", &field!(media.first_click.own));
+            cx.toggle(tr!("ui-options-first-click-friend"), "", &field!(media.first_click.friend));
+            cx.toggle(tr!("ui-options-first-click-group"), "", &field!(media.first_click.group));
+            cx.toggle(
+                tr!("ui-options-first-click-land"),
+                tr!("ui-options-first-click-land-help"),
+                &field!(media.first_click.land),
+            );
+            cx.toggle(tr!("ui-options-first-click-any"), "", &field!(media.first_click.any));
+            cx.toggle(
+                tr!("ui-options-first-click-all-faces"),
+                tr!("ui-options-first-click-all-faces-help"),
+                &field!(media.first_click.all_faces),
+            );
+        });
         cx.toggle(
             tr!("ui-options-hud-media"),
             tr!("ui-options-auto-play-hud-media-mediaautoplayhuds"),
@@ -118,6 +138,8 @@ pub fn page(cx: &mut Cx) {
             use crate::media::pack::PackState;
             let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
             // plugins found: their folder; otherwise where Aurora's pack stands
+            // (`retry`: the button that asks for the download, Download or
+            // Retry)
             let (status, download, retry) = if !st.media_plugins.is_empty() {
                 let text = tr!(
                     "status-active-player-s",
@@ -142,25 +164,26 @@ pub fn page(cx: &mut Cx) {
                         None,
                         !matches!(failure, aurora_updater::Failure::Unsupported),
                     ),
-                    PackState::Idle | PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
+                    // not downloaded: never asked, or "Not now" on the card
+                    PackState::Idle => (
+                        tr!("media-plugins-not-downloaded", size = crate::ui::web_view::pack_megabytes()).to_string(),
+                        None,
+                        true,
+                    ),
+                    PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
                 }
             };
             if let Some(fraction) = download {
                 widgets::progress(ui, &p, "media_pack", fraction, SLIDER_W + 60.0, &status, None);
                 return false;
             }
-            if retry
-                && widgets::action_button(
-                    ui,
-                    &p,
-                    "refresh",
-                    tr!("media-plugins-retry"),
-                    widgets::ActionKind::Flat,
-                    egui::vec2(0.0, 24.0),
-                )
-                .clicked()
-            {
-                st.media_pack_retry = true;
+            let (icon, label) = if matches!(st.media_pack, PackState::Idle) {
+                ("download-filled", tr!("media-plugins-download"))
+            } else {
+                ("refresh", tr!("media-plugins-retry"))
+            };
+            if retry && widgets::action_button(ui, &p, icon, label, widgets::ActionKind::Flat, egui::vec2(0.0, 24.0)).clicked() {
+                st.media_pack_download = true;
             }
             // the path of a folder, of any length: cut to the row (whole on
             // hover)

@@ -5,7 +5,7 @@
 //! LGPL 2.1): same tokens, delimiters and string escapes. Parsing stops after
 //! the first value; trailing bytes (the sender's NUL) are ignored.
 
-use crate::{Llsd, LlsdError, Map};
+use crate::{Budget, Llsd, LlsdError, MAP_ENTRY_COST, Map, VALUE_COST};
 use uuid::Uuid;
 
 const MAX_DEPTH: usize = 128;
@@ -13,6 +13,7 @@ const MAX_DEPTH: usize = 128;
 struct Parser<'a> {
     data: &'a [u8],
     pos: usize,
+    budget: Budget,
 }
 
 impl<'a> Parser<'a> {
@@ -110,14 +111,21 @@ impl<'a> Parser<'a> {
             b'l' => {
                 self.pos += 1;
                 let d = self.next()?;
-                Llsd::Uri(self.delimited(d)?)
+                let uri = self.delimited(d)?;
+                self.budget.charge(uri.len())?;
+                Llsd::Uri(uri)
             }
             b'd' => {
                 self.pos += 1;
                 let d = self.next()?;
                 Llsd::Date(crate::xml_llsd::parse_date(&self.delimited(d)?))
             }
-            b'b' => Llsd::Binary(self.binary()?),
+            b'b' => {
+                // decoded payloads are never longer than their text
+                let bin = self.binary()?;
+                self.budget.charge(bin.len())?;
+                Llsd::Binary(bin)
+            }
             _ => return Err(LlsdError::Invalid("notation: unexpected character")),
         })
     }
@@ -136,6 +144,7 @@ impl<'a> Parser<'a> {
                     return Ok(Llsd::Map(m));
                 }
                 b'"' | b'\'' | b's' => {
+                    self.budget.charge(MAP_ENTRY_COST)?;
                     let key = self.string()?;
                     while self.peek().is_some_and(|c| c.is_ascii_whitespace() || c == b':') {
                         self.pos += 1;
@@ -159,20 +168,29 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 return Ok(Llsd::Array(a));
             }
+            // grow by doubling, charging the slots before reserving them
+            if a.len() == a.capacity() {
+                let more = a.capacity().max(4);
+                self.budget.charge_values(more)?;
+                a.reserve_exact(more);
+            }
             a.push(self.value(depth)?);
         }
     }
 
-    /// `"..."`, `'...'` (escaped) or `s(len)"raw"` (deserialize_string).
+    /// `"..."`, `'...'` (escaped) or `s(len)"raw"` (deserialize_string),
+    /// charged to the budget.
     fn string(&mut self) -> Result<String, LlsdError> {
-        match self.next()? {
-            d @ (b'"' | b'\'') => self.delimited(d),
+        let s = match self.next()? {
+            d @ (b'"' | b'\'') => self.delimited(d)?,
             b's' => {
                 let raw = self.sized()?;
-                Ok(String::from_utf8_lossy(raw).into_owned())
+                String::from_utf8_lossy(raw).into_owned()
             }
-            _ => Err(LlsdError::Invalid("notation string")),
-        }
+            _ => return Err(LlsdError::Invalid("notation string")),
+        };
+        self.budget.charge(s.len())?;
+        Ok(s)
     }
 
     /// `(len)"raw bytes"` after the type letter.
@@ -292,9 +310,16 @@ fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Parse the first LLSD notation value of `data`.
+/// Parse the first LLSD notation value of `data`, within the same budget
+/// of estimated heap as [`crate::from_binary`].
 pub fn from_notation(data: &[u8]) -> Result<Llsd, LlsdError> {
-    Parser { data, pos: 0 }.value(MAX_DEPTH)
+    let mut p = Parser {
+        data,
+        pos: 0,
+        budget: Budget::for_input(data.len()),
+    };
+    p.budget.charge(VALUE_COST)?;
+    p.value(MAX_DEPTH)
 }
 
 /// One-line LLSD notation of a value, like LLSDNotationFormatter without
@@ -416,6 +441,21 @@ mod tests {
             from_notation(b"{ \"k\" : [ ] , s(1)\"z\":! }").unwrap().get("k"),
             &Llsd::Array(vec![])
         );
+    }
+
+    #[test]
+    fn the_tree_stays_within_its_budget() {
+        let run = |n: usize| {
+            let mut t = vec![b'['];
+            t.resize(n + 1, b'!');
+            t.push(b']');
+            t
+        };
+        assert_eq!(from_notation(&run(1000)).unwrap().len(), 1000);
+        assert!(matches!(from_notation(&run(1 << 20)), Err(LlsdError::TooLarge)));
+        // named keys and real values stay well inside it
+        let doc = (0..20_000).map(|i| format!("'k{i}':r{i}.5")).collect::<Vec<_>>().join(",");
+        assert_eq!(from_notation(format!("{{{doc}}}").as_bytes()).unwrap().len(), 20_000);
     }
 
     #[test]

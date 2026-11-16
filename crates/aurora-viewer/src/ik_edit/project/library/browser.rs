@@ -80,11 +80,9 @@ impl Editor {
             });
         }
         ui.add_space(ui.spacing().item_spacing.y);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.project.library.filter)
-                .hint_text(aurora_i18n::tr!("ik-library-search"))
-                .desired_width(f32::INFINITY),
-        );
+        crate::ui::widgets::search_text_edit(ui, p, &mut self.project.library.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("ik-library-search")).desired_width(f32::INFINITY)
+        });
         let filter = self.project.library.filter.to_lowercase();
         let entries: Vec<_> = self
             .project
@@ -105,7 +103,7 @@ impl Editor {
                     ui.push_id(entry.id, |ui| {
                         ui.horizontal(|ui| {
                             let name_width = (ui.available_width() - 5.0 * (26.0 + ui.spacing().item_spacing.x)).max(40.0);
-                            if ui
+                            let response = ui
                                 .add_enabled_ui(enabled, |ui| {
                                     ui.add_sized(
                                         egui::vec2(name_width, 30.0),
@@ -113,9 +111,9 @@ impl Editor {
                                     )
                                 })
                                 .inner
-                                .on_hover_text(&entry.name)
-                                .clicked()
-                            {
+                                .on_hover_text(&entry.name);
+                            widgets::reveal_search_selection(ui, &response, selected);
+                            if response.clicked() {
                                 self.select_library_project(entry.id);
                             }
                             for (icon, key, kind) in [
@@ -141,10 +139,12 @@ impl Editor {
                                         "pencil-filled" => self.begin_library_row_edit(&entry, EditKind::Rename),
                                         "copy-filled" => self.begin_library_row_edit(&entry, EditKind::Duplicate),
                                         "file-export" => {
-                                            self.project.library.command = Some(Command::Manage(entry.id, Management::File));
+                                            self.project.library.command =
+                                                Some(Command::Manage(entry.id, Management::File(Default::default())));
                                         }
                                         "note" => {
-                                            self.project.library.command = Some(Command::Manage(entry.id, Management::Notecard));
+                                            self.project.library.command =
+                                                Some(Command::Manage(entry.id, Management::Notecard(Default::default())));
                                         }
                                         _ => {
                                             self.begin_project_creation();

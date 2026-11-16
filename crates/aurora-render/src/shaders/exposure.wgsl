@@ -8,8 +8,6 @@
 // uniforms.
 
 struct Params {
-    // the inverse of the frame's view-projection (unjittered)
-    inv_view_proj: mat4x4<f32>,
     // x seconds since the last update, y RenderDiffuseLuminanceScale,
     // z 1: add the glow, w 1: start from the target (no easing)
     a: vec4<f32>,
@@ -43,20 +41,12 @@ fn cell_luminance(cell: vec2<u32>) -> f32 {
     let uv = (vec2<f32>(cell) + 0.5) / GRID * 0.6 + vec2<f32>(0.2, 0.3);
     let px = min(vec2<u32>(uv * vec2<f32>(dims)), dims - vec2<u32>(1u));
     var c = textureLoad(scene, px, 0).rgb;
-    // RenderDiffuseLuminanceScale on everything but the sky, so that a
-    // bright sky does not darken the ground too much. The Legacy Viewer
-    // reads the G-buffer's sky flags; here a pixel the depth prepass left
-    // empty above the horizon is sky (below it: water, the far fog)
-    let d = textureLoad(depth, px, 0);
-    var sky = false;
-    if (d <= 0.0) {
-        let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-        let near = p.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
-        let far = p.inv_view_proj * vec4<f32>(ndc, 0.5, 1.0);
-        let dir = far.xyz / far.w - near.xyz / near.w;
-        sky = dir.z >= 0.0;
-    }
-    if (!sky) {
+    // RenderDiffuseLuminanceScale on everything but what no surface wrote
+    // (luminanceF.glsl): the Legacy Viewer reads the G-buffer's flags, cleared
+    // to 1, GBUFFER_FLAG_HAS_HDRI (LLViewerDisplay's glClearColor(1, 0, 1, 1)),
+    // and the sky's flag; water writes no G-buffer. So the sky and the open sea,
+    // empty in the depth prepass here, count in full
+    if (textureLoad(depth, px, 0) > 0.0) {
         c *= p.a.y;
     }
     if (p.a.z > 0.5) {
@@ -96,7 +86,13 @@ fn cs_exposure(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invo
     let average = partial[0] / (GRID * GRID);
     let max_l = max(p.b.x, 1e-4);
     let l = clamp(average, 0.0, max_l) / max_l;
-    let goal = mix(p.b.z, p.b.y, l * l);
+    var goal = mix(p.b.z, p.b.y, l * l);
+    // An Aurora difference, on purpose: a truly dark scene stays dark, where the
+    // Legacy Viewer lifts it to its highest exposure. Dim interiors and daylight
+    // keep the Legacy Viewer's exposure. Not on a sky without exposure (range 1)
+    if (p.b.z > 1.0) {
+        goal *= mix(0.4, 1.0, smoothstep(0.003, 0.015, average));
+    }
     // USE_LAST_EXPOSURE: eased towards with the speed of
     // RenderDynamicExposureSpeedError / SpeedTarget
     let prev = state[0];

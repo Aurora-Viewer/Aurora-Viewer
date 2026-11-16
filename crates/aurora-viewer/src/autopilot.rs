@@ -122,6 +122,38 @@ pub fn takes_ground_double_click(p: Press) -> bool {
     p.double && !p.alt && !p.ctrl && !p.shift && !p.build && !p.on_avatar
 }
 
+/// The prim the second press of a double click landed on, as
+/// LLToolPie::teleportToClickedLocation (indra/newview/lltoolpie.cpp) sees it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ObjectPick {
+    /// The prim's own click action is Sit (`objp->getClickAction()`), or the
+    /// press would sit on it.
+    pub sit: bool,
+    /// It has a click action or a touch script (`has_click_action`: not
+    /// Disabled).
+    pub click_action: bool,
+    /// A HUD attachment, or our own avatar or a prim we wear ("Don't teleport
+    /// to self").
+    pub hud_or_self: bool,
+}
+
+/// teleportToClickedLocation's rule for an object pick
+/// (FSAllowDoubleClickOnScriptedObjects as `allow_scripted`): never a HUD nor
+/// ourselves; a prim with a click action only when the setting allows it and
+/// that action is not Sit. The Legacy Viewer gates the teleport only
+/// (`walkToClickedLocation` takes any object); Aurora gates Walk and Run the
+/// same way, as the setting's label says.
+pub fn object_takes_double_click(pick: ObjectPick, allow_scripted: bool) -> bool {
+    !pick.hud_or_self && ((allow_scripted && !pick.sit) || !pick.click_action)
+}
+
+/// The Legacy Viewer checks the picked global position, not the
+/// region-local point (`mPosGlobal.isExactlyZero()`).
+pub fn non_zero_global_pick(origin: Option<(u32, u32)>, point: Vec3) -> bool {
+    let Some((x, y)) = origin else { return false };
+    point.is_finite() && glam::DVec3::new(x as f64 + point.x as f64, y as f64 + point.y as f64, point.z as f64) != glam::DVec3::ZERO
+}
+
 /// AU_FLAGS_CLIENT_AUTOPILOT of `AgentUpdate` (send_agent_update).
 pub const AU_FLAGS_CLIENT_AUTOPILOT: u8 = 0x02;
 /// AU_FLAGS_HIDETITLE: the simulator hides our group title from everyone
@@ -773,6 +805,7 @@ pub(crate) fn can_fly_for_join(world: &crate::world::World) -> bool {
             && !world.rlva.has("fly")
             && world.main_region.is_some()
             && (world.fly_override
+                || world.god_level > 0
                 || world
                     .main()
                     .and_then(|r| r.info.as_ref())
@@ -787,20 +820,17 @@ fn can_takeoff_with_unknown_policy(world: &crate::world::World, allow_unknown: b
 }
 
 /// The land part of LLAgent::canFly (indra/newview/llagent.cpp): the fly
-/// override first, then the region's no-fly, then the parcel's, which its
+/// override and a god first, then the region's no-fly, then the parcel's, which its
 /// owner and the owning group's flight managers may ignore. RLVa @fly and
 /// sitting are the callers' (they come before the override there too).
 /// `unknown_region` / `unknown_parcel`: the answer while that policy has
 /// not arrived yet.
 pub(crate) fn land_allows_flight(world: &crate::world::World, unknown_region: bool, unknown_parcel: bool) -> bool {
-    use crate::world::land::{AgentRights, owned_by_agent, powers};
-    if world.fly_override {
+    use crate::world::land::{owned_by_agent, powers};
+    if world.fly_override || world.god_level > 0 {
         return true;
     }
-    let rights = AgentRights {
-        id: world.agent_id,
-        groups: &world.groups.groups,
-    };
+    let rights = world.agent_rights();
     world
         .main()
         .and_then(|r| r.info.as_ref())
@@ -899,6 +929,43 @@ mod tests {
         assert!(!takes_ground_double_click(Press { shift: true, ..plain }));
         assert!(!takes_ground_double_click(Press { build: true, ..plain }));
         assert!(!takes_ground_double_click(Press { on_avatar: true, ..plain }));
+    }
+
+    #[test]
+    fn scripted_object_double_click_matches_legacy_eligibility() {
+        let scripted = ObjectPick {
+            click_action: true,
+            ..Default::default()
+        };
+        let plain = ObjectPick::default();
+        // a touch script or a click action: only with the setting on
+        assert!(object_takes_double_click(scripted, true));
+        assert!(!object_takes_double_click(scripted, false));
+        // no click action (or Disabled): whatever the setting
+        assert!(object_takes_double_click(plain, true));
+        assert!(object_takes_double_click(plain, false));
+        // a Sit prim, also once we sit on it and it lost its one-click Sit
+        let seat = ObjectPick { sit: true, ..scripted };
+        assert!(!object_takes_double_click(seat, true));
+        assert!(!object_takes_double_click(seat, false));
+        assert!(!non_zero_global_pick(Some((0, 0)), Vec3::ZERO));
+        assert!(non_zero_global_pick(Some((256, 0)), Vec3::ZERO));
+        assert!(!non_zero_global_pick(None, Vec3::ONE));
+    }
+
+    #[test]
+    fn a_double_click_never_takes_our_own_attachments_or_huds() {
+        // "Don't teleport to self": a scripted collar, bracelet or HUD we
+        // wear keeps its touch, with or without a click action
+        for click_action in [false, true] {
+            let worn = ObjectPick {
+                click_action,
+                hud_or_self: true,
+                ..Default::default()
+            };
+            assert!(!object_takes_double_click(worn, true));
+            assert!(!object_takes_double_click(worn, false));
+        }
     }
 
     #[test]

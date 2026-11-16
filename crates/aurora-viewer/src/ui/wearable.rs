@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 pub enum Action {
     Save(Option<String>),
+    Appearance(super::shape::AppearanceAction),
 }
 
 fn group_label(group: &str) -> &'static str {
@@ -90,6 +91,7 @@ pub fn show(
     world: &mut World,
     st: &mut State,
     images: &HashMap<Uuid, egui::TextureHandle>,
+    controls: super::shape::AppearanceControls,
 ) -> Vec<Action> {
     if !st.open {
         return Vec::new();
@@ -100,6 +102,16 @@ pub fn show(
     let mut cancel = false;
     let mut choose = None;
     let mut dropped = None;
+    let mut import = false;
+    let mut export = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
+    if let Some(message) = st.xml_export.poll() {
+        st.message = message;
+    }
     let mut floater = widgets::Floater::new(
         "wearable_editor",
         aurora_i18n::tr!("wearable-title"),
@@ -122,8 +134,20 @@ pub fn show(
         let picking = st.picker.open;
         let modify = draft.can_modify(world);
         let local = editor::has_local_textures(world, draft);
-        let copy = draft.can_copy(world) && (modify || !draft.dirty()) && !local && !picking;
-        ui.label(RichText::new(&draft.item.name).strong().size(16.0));
+        let copy = draft.can_copy(world) && (modify || !draft.dirty()) && !picking;
+        (import, export) = super::shape::name_row(
+            ui,
+            p,
+            None,
+            RichText::new(&draft.item.name).strong().size(16.0),
+            modify && !busy && !picking && !st.xml.busy(),
+            draft.can_export_xml(world) && !picking && !st.xml_export.busy(),
+        );
+        actions.extend(
+            super::shape::appearance_controls(ui, p, controls)
+                .into_iter()
+                .map(Action::Appearance),
+        );
         if !modify {
             ui.label(RichText::new(aurora_i18n::tr!("wearable-readonly")).color(p.warn));
         }
@@ -134,7 +158,7 @@ pub fn show(
             ui.label(RichText::new(aurora_i18n::tr!("wearable-preview-unavailable")).color(p.warn));
         }
         if local {
-            ui.label(RichText::new(aurora_i18n::tr!("wearable-local-preview")).color(p.warn));
+            ui.label(RichText::new(aurora_i18n::tr!("wearable-local-preview")).color(p.muted));
         }
         let rest = ui.available_rect_before_wrap();
         ui.allocate_rect(rest, egui::Sense::hover());
@@ -171,7 +195,7 @@ pub fn show(
                     aurora_i18n::tr!("common-save"),
                     ActionKind::Primary,
                     size,
-                    modify && draft.dirty() && !local && !picking,
+                    modify && draft.dirty() && !picking,
                 );
                 if cfg!(test) {
                     ui.ctx()
@@ -323,6 +347,17 @@ pub fn show(
             });
         });
     });
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
+    }
+    if export && let Some(draft) = &st.draft {
+        st.message.clear();
+        let allowed = draft.can_export_xml(world);
+        if let Err(message) = st.xml_export.start(ctx, draft, allowed, &world.avatar_lib.shape_params) {
+            st.message = message;
+        }
+    }
     if let Some(slot) = choose {
         st.open_picker(world, slot);
     }
@@ -337,8 +372,11 @@ pub fn show(
     } else if let Some(texture) = st.picker.take_preview() {
         changed |= st.preview_picker(world, texture);
     }
-    if let Some((slot, texture)) = dropped {
-        changed |= st.set_texture(world, slot, texture);
+    if let Some((slot, texture)) = dropped
+        && st.set_texture(world, slot, texture)
+    {
+        st.dismiss_picker();
+        changed = true;
     }
     st.wanted_images.extend(st.picker.wanted_images.drain());
     if changed {
@@ -383,11 +421,11 @@ pub fn show(
     }
     if st.close_confirmation {
         let mut discard = false;
-        let local = st.picker.open || st.draft.as_ref().is_some_and(|draft| editor::has_local_textures(world, draft));
+        let picking = st.picker.open;
         widgets::Modal::new(egui::Id::unique("wearable_unsaved")).show(ctx, |ui| {
             ui.label(aurora_i18n::tr!("wearable-unsaved"));
             ui.horizontal(|ui| {
-                if widgets::default_button(ui.add_enabled(!local, egui::Button::new(aurora_i18n::tr!("common-save")))).clicked() {
+                if widgets::default_button(ui.add_enabled(!picking, egui::Button::new(aurora_i18n::tr!("common-save")))).clicked() {
                     st.close_after_save = true;
                     st.close_confirmation = false;
                     actions.push(Action::Save(None));
@@ -424,7 +462,14 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state, &HashMap::new());
+                actions = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    world,
+                    state,
+                    &HashMap::new(),
+                    crate::ui::shape::AppearanceControls { camera: true, pose: true },
+                );
             },
         );
         output.textures_delta.clear();
@@ -674,11 +719,12 @@ mod tests {
     }
 
     /// An inventory texture released on a slot's row sets it, like the
-    /// picker (#1291); a folder, a no-copy texture, a read-only layer or a
-    /// release beside the row leave the slot as it was.
+    /// picker (#1291), whatever its rights (a no-copy, no-transfer texture
+    /// too, as init_texture_ctrl's PERM_NONE filter allows); a folder, a
+    /// read-only layer or a release beside the row leave the slot as it was.
     #[test]
     fn an_inventory_texture_dropped_on_a_texture_row_sets_the_slot() {
-        use crate::world::inventory::actions::{COPY, MODIFY};
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
         let (mut world, mut state, id) = crate::wearable_editor::tests::fixture(4);
         let slot = editor::slots(4)[0];
         let (item, asset) = (Uuid::from_u128(54001), Uuid::from_u128(54002));
@@ -700,12 +746,7 @@ mod tests {
         drop_on(&ctx, &mut world, &mut state, root, None);
         assert_eq!(slot_texture(&state), before, "beside the row, or a folder");
 
-        world.inventory.items.get_mut(&item).expect("texture").owner_mask &= !COPY;
-        drop_on(&ctx, &mut world, &mut state, item, None);
-        assert_eq!(slot_texture(&state), before, "no-copy texture");
-        assert_eq!(state.message, aurora_i18n::tr!("wearable-texture-permissions"));
-        world.inventory.items.get_mut(&item).expect("texture").owner_mask |= COPY;
-
+        world.inventory.items.get_mut(&item).expect("texture").owner_mask &= !(COPY | TRANSFER);
         world.inventory.items.get_mut(&id).expect("layer").owner_mask &= !MODIFY;
         drop_on(&ctx, &mut world, &mut state, item, None);
         assert_eq!(slot_texture(&state), before, "read-only layer");
@@ -759,6 +800,7 @@ mod tests {
                     .edited
                     .textures
                     .insert(editor::slots(kind)[0], Uuid::from_u128(777));
+                world.local_assets.insert(Uuid::from_u128(777), ("Local texture".into(), false));
                 let ctx = egui::Context::default();
                 ctx.set_zoom_factor(scale);
                 for _ in 0..3 {

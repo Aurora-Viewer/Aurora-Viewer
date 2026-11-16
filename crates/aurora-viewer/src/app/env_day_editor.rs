@@ -58,7 +58,7 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = name), true));
                 return true;
             };
-            let rights = Rights::from_item(it.owner_mask, doc.flags());
+            let rights = Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, &it), doc.flags());
             if rights.save {
                 doc.set_name(&it.name);
                 doc.set_flags(rights.flags(doc.flags()));
@@ -77,21 +77,28 @@ impl App {
         let mut out = Vec::new();
         // onAssetLoadedForInsertion: settings that cannot be transferred or
         // copied make the edited day no-transfer, after SettingsMakeNoTrans
-        let restricted = self
-            .world
-            .inventory
-            .items
-            .get(&item)
-            .is_some_and(|it| it.owner_mask & 0x2000 == 0 || it.owner_mask & 0x8000 == 0);
+        let restricted = self.world.inventory.items.get(&item).is_some_and(|it| {
+            let mask = crate::world::inventory::actions::held(&self.world.inventory, it);
+            mask & 0x2000 == 0 || mask & 0x8000 == 0
+        });
         let edited_no_trans = match self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id)) {
-            Some(it) => it.owner_mask & 0x2000 == 0,
+            Some(it) => crate::world::inventory::actions::held(&self.world.inventory, it) & 0x2000 == 0,
             None => self.day_editor.doc.as_ref().is_some_and(|d| d.flags() & FLAG_NOTRANS != 0),
         };
         let make_no_trans = restricted && !edited_no_trans;
         // the question's "ignore": its default answer, Yes, without asking
         let ask = make_no_trans && self.settings.confirm_no_transfer_settings;
         match (purpose, result) {
-            (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data) {
+            (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data).map(|mut frame| {
+                // its weather as its inventory item's name gives it (a code
+                // typed there by hand is not in the asset)
+                if let Some(it) = self.world.inventory.items.get(&item)
+                    && crate::weather::region::SkyWeather::from_name(&it.name).is_some()
+                {
+                    frame.set_name(&it.name);
+                }
+                frame
+            }) {
                 Some(frame) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Frame(frame)),
                 Some(frame) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Frame(frame), &mut out),
                 Some(frame) => self.day_editor.put_loaded_frame(&frame, &mut out),
@@ -185,7 +192,15 @@ impl App {
                 DayAction::SaveAs(name) => self.day_editor_save(Some(name)),
                 DayAction::ApplyLocal => {
                     if let Some(day) = self.day_editor.rendered().cloned() {
+                        let (length, offset) = (day.length, day.offset);
                         self.world.eep.apply_local_day(day);
+                        // its Aurora Weather (the ground track's) with it
+                        let weather = self
+                            .day_editor
+                            .doc
+                            .as_ref()
+                            .and_then(|d| crate::weather::region::RegionDay::read(&d.to_llsd(), 0, length, offset));
+                        self.world.eep.set_local_weather(weather);
                         self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-applied").into(), false));
                     }
                 }
@@ -212,6 +227,13 @@ impl App {
         if self.day_editor.saving.is_some() {
             return;
         }
+        // a day whose key frames carry weather says so by its name's code
+        // (the inventory's [Aurora Weather] tag reads the name; the skies'
+        // codes are inside the day)
+        let settings = doc.to_llsd();
+        let name = crate::weather::region::day_name_for(doc.name(), &settings);
+        doc.set_name(&name);
+        let new_name = new_name.map(|n| crate::weather::region::day_name_for(&n, &settings));
         let request = Uuid::new_v4();
         let item = self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
         match (new_name, item) {
@@ -232,20 +254,40 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-copied").into(), false));
             }
             (None, Some(it)) => {
+                // renamed too when saved over with another name, as
+                // LLSettingsVOBase::updateInventoryItem does (update_name)
+                self.rename_settings_item(&it, doc.name());
                 self.day_editor.saving = Some(request);
                 self.send(NetCommand::SaveInventoryContent {
                     request,
                     item: it.id,
                     asset_type: 56,
+                    lua: false,
                     data: doc.to_asset(),
                 });
             }
             (name, it) => {
+                let rights = self.day_editor.rights;
+                if !(rights.save && rights.copy) {
+                    // the menu entry is off: a direct call stops here
+                    return;
+                }
                 let inv = &self.world.inventory;
                 let settings_folder = crate::world::inventory::actions::system(inv, 56).unwrap_or(inv.root);
                 let own = it.as_ref().filter(|it| !crate::world::inventory::actions::library(inv, it.id));
                 let parent = own.map_or(settings_folder, |it| it.parent);
-                let next_owner_mask = own.map(|it| it.next_owner_mask);
+                // without transfer at the source, the new item's next owner
+                // gets none either (the defaults otherwise)
+                let next_owner_mask = match own {
+                    Some(it) => Some(rights.next_owner_mask(it.next_owner_mask)),
+                    None if !rights.transfer => self
+                        .settings
+                        .inventory
+                        .creation_permissions
+                        .for_item(aurora_net::inventory::operations::NewItem::Settings(2))
+                        .map(|p| rights.next_owner_mask(p.next_owner)),
+                    None => None,
+                };
                 let name = name.unwrap_or_else(|| doc.name().to_owned());
                 doc.set_name(&name);
                 self.day_editor.saving = Some(request);
@@ -264,9 +306,19 @@ impl App {
     pub(super) fn day_editor_saved(&mut self, result: Result<aurora_net::inventory::InvItem, String>) {
         self.day_editor.saving = None;
         match result {
-            Ok(it) => {
+            Ok(mut it) => {
+                if self.day_editor.item == Some(it.id)
+                    && let Some(doc) = &self.day_editor.doc
+                {
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
+                }
                 self.world.inventory.add_items(vec![it.clone()]);
-                self.day_editor.saved(it.id, &it.name, Rights::from_item(it.owner_mask, 0));
+                self.day_editor.saved(
+                    it.id,
+                    &it.name,
+                    Rights::from_item(crate::world::inventory::actions::agent_mask(&it, self.world.agent_id), 0),
+                );
                 log::info!("day cycle saved: {} ({})", it.name, it.asset_id);
             }
             Err(e) => {

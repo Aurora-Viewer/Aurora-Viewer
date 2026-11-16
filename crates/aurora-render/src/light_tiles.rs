@@ -17,7 +17,7 @@
 //! keep the whole list ([`LightSets::whole`]).
 //!
 //! The reflection probes of a fragment are found the same way, in sets of
-//! their own ([`bin_spheres`], `probes::tiles`).
+//! their own of up to 256 members (`probes::tiles`, with [`reach`]).
 
 use crate::types::PointLight;
 use bytemuck::{Pod, Zeroable};
@@ -99,7 +99,8 @@ impl LightSets {
 
     /// Member `i` in every set: what reaches every fragment whatever its
     /// extent says.
-    pub fn hold_everywhere(&mut self, i: usize) {
+    #[cfg(test)]
+    fn hold_everywhere(&mut self, i: usize) {
         let (word, bit) = (i / 32 % 2, 1u32 << (i % 32));
         for pair in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
             pair[word] |= bit;
@@ -108,7 +109,7 @@ impl LightSets {
     }
 
     /// The members a fragment at pixel (`x`, `y`) and `depth` walks, as the
-    /// shaders find them (`light_set`, `probe_tiles` in common.wgsl).
+    /// shaders find them (`light_set`, `probe_word` in common.wgsl).
     #[cfg(test)]
     pub(crate) fn at(&self, x: f32, y: f32, depth: f32) -> u64 {
         if self.mode[0] == 0 {
@@ -133,18 +134,18 @@ fn words(set: u64) -> [u32; 2] {
 }
 
 /// The slice of a depth, as `light_walk` finds it in the shaders.
-fn slice_of(depth: f32) -> usize {
+pub(crate) fn slice_of(depth: f32) -> usize {
     let s = ((depth.max(SLICE_NEAR) / SLICE_NEAR).log2() * SLICES_PER_OCTAVE).floor();
     (s.max(0.0) as usize).min(SLICES - 1)
 }
 
 /// What a light may reach of the view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Reach {
+pub(crate) struct Reach {
     /// Columns `x[0]..=x[1]`, rows `y[0]..=y[1]`, slices `z[0]..=z[1]`.
-    x: [usize; 2],
-    y: [usize; 2],
-    z: [usize; 2],
+    pub x: [usize; 2],
+    pub y: [usize; 2],
+    pub z: [usize; 2],
 }
 
 /// The columns, rows and slices a light may reach on a screen of `size`
@@ -156,7 +157,7 @@ struct Reach {
 /// of that convex piece enclose on screen every point of the sphere that can
 /// be drawn. A light around the camera takes the whole screen, one beside
 /// it its side of the screen, one behind it nothing.
-fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32; 2], position: Vec3, radius: f32) -> Option<Reach> {
+pub(crate) fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32; 2], position: Vec3, radius: f32) -> Option<Reach> {
     const WHOLE: [usize; 2] = [0, TILES - 1];
     // (a hair wider than the radius the shaders compare distances with)
     let r = radius * 1.001 + 1e-3;
@@ -234,18 +235,11 @@ fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32; 2], posit
 /// list (its first [`LIGHTS`]), the screen `size` in pixels, the camera at
 /// `eye` (the position the shaders measure depths from).
 pub fn bin(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], lights: &[PointLight]) -> LightSets {
-    bin_spheres(view, proj, eye, size, lights.iter().map(|l| (l.position, l.radius)))
-}
-
-/// The sets of the main view for members that each reach the fragments of
-/// a sphere (centre, radius) and no other: the first [`LIGHTS`] of
-/// `spheres`, in their order.
-pub fn bin_spheres(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], spheres: impl IntoIterator<Item = (Vec3, f32)>) -> LightSets {
     let size = [size[0].max(1) as f32, size[1].max(1) as f32];
-    let forward = view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::X);
+    let forward = view_forward(view);
     let (mut columns, mut rows, mut slices) = ([0u64; TILES], [0u64; TILES], [0u64; SLICES]);
-    for (i, (position, radius)) in spheres.into_iter().take(LIGHTS).enumerate() {
-        let Some(reach) = reach(view, proj, eye, forward, size, position, radius) else {
+    for (i, light) in lights.iter().take(LIGHTS).enumerate() {
+        let Some(reach) = reach(view, proj, eye, forward, size, light.position, light.radius) else {
             continue;
         };
         for (sets, [from, to]) in [(&mut columns[..], reach.x), (&mut rows[..], reach.y), (&mut slices[..], reach.z)] {
@@ -268,6 +262,11 @@ pub fn bin_spheres(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], spheres: i
     out.rows = pack(&rows);
     out.slices = pack(&slices);
     out
+}
+
+/// The camera's forward axis, along which the fragments' depths are measured.
+pub(crate) fn view_forward(view: Mat4) -> Vec3 {
+    view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::X)
 }
 
 // (the three tables share `pack`)

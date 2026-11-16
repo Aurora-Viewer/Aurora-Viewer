@@ -66,25 +66,27 @@ fn every_remaining_wearable_loads_and_saves_its_real_kind_and_texture_slots() {
 }
 
 #[test]
-fn texture_edits_are_dirty_preserve_other_slots_and_require_real_inventory_rights() {
+fn texture_edits_are_dirty_preserve_other_slots_and_require_an_inventory_texture() {
     let (mut world, mut state, id) = fixture(14);
     let original = state.draft.as_ref().expect("draft").original.textures.clone();
     let asset = Uuid::from_u128(50000);
-    assert!(!state.set_texture(&world, 26, asset));
+    assert!(!state.set_texture(&world, 26, asset), "an id with no inventory texture");
+    assert_eq!(state.message, aurora_i18n::tr!("wearable-texture-inventory"));
+    let mut notecard = world.inventory.items[&id].clone();
+    notecard.id = Uuid::from_u128(50002);
+    notecard.asset_id = asset;
+    notecard.asset_type = 7;
+    notecard.inv_type = 7;
+    world.inventory.add_items(vec![notecard]);
+    assert!(!state.set_texture(&world, 26, asset), "an item that is not a texture");
     let mut texture = world.inventory.items[&id].clone();
     texture.id = Uuid::from_u128(50001);
     texture.asset_id = asset;
     texture.asset_type = 0;
     texture.inv_type = 0;
     texture.owner_mask = crate::world::inventory::actions::COPY;
-    world.inventory.add_items(vec![texture.clone()]);
-    assert!(
-        !state.set_texture(&world, 26, asset),
-        "transferable clothing needs a transferable texture"
-    );
-    texture.owner_mask |= crate::world::inventory::actions::TRANSFER;
     world.inventory.add_items(vec![texture]);
-    assert!(state.set_texture(&world, 26, asset));
+    assert!(state.set_texture(&world, 26, asset), "no-transfer texture on transferable clothing");
     assert!(!state.set_texture(&world, 99, asset), "unrelated slots stay untouched");
     assert!(state.draft.as_ref().expect("draft").dirty());
     let NetCommand::SaveWearable { data, .. } = state.save(&world, None).expect("save") else {
@@ -96,9 +98,57 @@ fn texture_edits_are_dirty_preserve_other_slots_and_require_real_inventory_right
     assert_eq!(saved.textures[&28], original[&28]);
 }
 
+/// init_texture_ctrl (indra/newview/llpaneleditwearable.cpp) filters the
+/// wearable swatches with PERM_NONE: every inventory texture the agent has
+/// fits, whatever its rights, on transferable and no-transfer clothing alike.
 #[test]
-fn local_wearable_textures_preview_without_becoming_server_assets() {
-    for kind in [1, 4, 13, 14, 16] {
+fn every_inventory_texture_fits_whatever_its_rights() {
+    use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
+    let (agent, other, library) = (Uuid::from_u128(42), Uuid::from_u128(77), Uuid::from_u128(78));
+    let cases: [(&str, Uuid, bool, u32, u32); 8] = [
+        ("the owner's", agent, false, COPY | MODIFY, 0),
+        ("group-owned", other, true, FULL, COPY),
+        ("someone else's", other, false, FULL, 0),
+        ("a Library item", library, false, FULL, COPY | TRANSFER),
+        ("no copy", agent, false, MODIFY | TRANSFER, 0),
+        ("no transfer", agent, false, COPY | MODIFY, 0),
+        ("no modify", agent, false, COPY | TRANSFER, 0),
+        ("full permissions", agent, false, FULL, 0),
+    ];
+    for transferable in [true, false] {
+        for (n, (label, owner, group_owned, owner_mask, everyone_mask)) in cases.into_iter().enumerate() {
+            let (mut world, mut state, id) = fixture(16);
+            if !transferable {
+                let layer = world.inventory.items.get_mut(&id).expect("layer");
+                layer.base_mask &= !TRANSFER;
+                layer.owner_mask &= !TRANSFER;
+                state.draft.as_mut().expect("draft").item.base_mask &= !TRANSFER;
+            }
+            let asset = Uuid::from_u128(51000 + n as u128);
+            let mut texture = world.inventory.items[&id].clone();
+            texture.id = Uuid::from_u128(52000 + n as u128);
+            texture.asset_id = asset;
+            texture.asset_type = 0;
+            texture.inv_type = 0;
+            texture.owner = owner;
+            texture.group_owned = group_owned;
+            texture.owner_mask = owner_mask;
+            texture.everyone_mask = everyone_mask;
+            world.inventory.add_items(vec![texture]);
+            let slot = slots(16)[0];
+            assert!(
+                state.set_texture(&world, slot, asset),
+                "{label} (transferable layer: {transferable})"
+            );
+            assert!(state.message.is_empty(), "{label}");
+            assert!(state.save(&world, None).is_some(), "{label} saves");
+        }
+    }
+}
+
+#[test]
+fn local_wearable_textures_save_their_references_and_failed_saves_keep_the_draft() {
+    for kind in (1..=14).chain([16]) {
         let (mut world, mut state, _) = fixture(kind);
         let local = Uuid::new_v4();
         let material = Uuid::new_v4();
@@ -110,9 +160,20 @@ fn local_wearable_textures_preview_without_becoming_server_assets() {
             assert!(state.set_texture(&world, slot, local));
         }
         assert!(state.draft.as_ref().expect("draft").dirty());
-        assert!(state.save(&world, None).is_none());
-        assert!(state.save(&world, Some("Local copy".into())).is_none());
-        assert_eq!(state.message, aurora_i18n::tr!("wearable-local-preview"));
+        for name in [None, Some(String::from("Local copy"))] {
+            let NetCommand::SaveWearable {
+                request, data, copy_name, ..
+            } = state.save(&world, name.clone()).expect("local save")
+            else {
+                panic!("wearable save")
+            };
+            assert_eq!(copy_name, name);
+            let encoded = Wearable::parse(&data).unwrap();
+            assert_eq!(encoded.kind, kind);
+            assert!(slots(kind).iter().all(|slot| encoded.textures.get(slot) == Some(&local)));
+            assert!(state.saved(&mut world, request, Err("Save failed".into())).is_none());
+            assert!(state.draft.as_ref().unwrap().dirty());
+        }
         assert!(state.draft.as_ref().expect("draft").pending.is_none());
         if kind == 13 {
             let slot = slots(kind)[0];
@@ -137,6 +198,59 @@ fn local_wearable_textures_preview_without_becoming_server_assets() {
         assert_eq!(state.draft.as_ref().expect("draft").edited.textures, original);
         assert!(state.save(&world, None).is_some(), "removing the local file restores savable slots");
     }
+}
+
+#[test]
+fn saved_local_skin_and_layer_references_reopen_and_removed_files_fall_back() {
+    for kind in [1, 14, 16] {
+        let (mut world, mut state, item) = fixture(kind);
+        let local = Uuid::new_v4();
+        world.local_assets.insert(local, ("Local texture".into(), false));
+        for slot in slots(kind) {
+            assert!(state.set_texture(&world, *slot, local));
+        }
+        let NetCommand::SaveWearable { request, data, .. } = state.save(&world, None).unwrap() else {
+            panic!("save")
+        };
+        let mut updated = world.inventory.items[&item].clone();
+        updated.asset_id = Uuid::new_v4();
+        let asset = updated.asset_id;
+        assert_eq!(state.saved(&mut world, request, Ok(updated)), Some((item, item)));
+        assert!(!state.draft.as_ref().unwrap().dirty());
+        state.close(&mut world);
+        assert!(state.open_item(&mut world, item).is_some());
+        assert!(state.loaded(&mut world, item, asset, &Ok(data)));
+        assert!(has_local_textures(&world, state.draft.as_ref().unwrap()));
+        world.local_assets.remove(&local);
+        state.update(&mut world);
+        let draft = state.draft.as_ref().unwrap();
+        assert!(draft.edited.textures.values().all(|texture| *texture != local));
+        assert!(state.save(&world, None).is_some());
+    }
+}
+
+#[test]
+fn removing_a_local_file_during_save_preserves_the_acknowledged_asset() {
+    let (mut world, mut state, item) = fixture(14);
+    let local = Uuid::new_v4();
+    world.local_assets.insert(local, ("Local texture".into(), false));
+    let slot = slots(14)[0];
+    assert!(state.set_texture(&world, slot, local));
+    let NetCommand::SaveWearable { request, data, .. } = state.save(&world, None).unwrap() else {
+        panic!("save")
+    };
+    world.local_assets.remove(&local);
+    state.update(&mut world);
+    assert_eq!(state.draft.as_ref().unwrap().edited.textures[&slot], local);
+    let mut updated = world.inventory.items[&item].clone();
+    updated.asset_id = Uuid::new_v4();
+    assert_eq!(state.saved(&mut world, request, Ok(updated)), Some((item, item)));
+    state.update(&mut world);
+    let draft = state.draft.as_ref().unwrap();
+    assert_eq!(draft.original.textures, Wearable::parse(&data).unwrap().textures);
+    assert_ne!(draft.edited.textures[&slot], local);
+    assert!(draft.dirty(), "the removal still needs to be saved after the first reply");
+    assert!(state.save(&world, None).is_some());
 }
 
 #[test]
@@ -251,7 +365,7 @@ fn lost_modify_copy_rights_stale_assets_and_removed_layers_cannot_be_saved() {
 }
 
 #[test]
-fn texture_permissions_are_checked_again_when_saving_after_the_picker_closes() {
+fn the_inventory_texture_is_checked_again_when_saving_after_the_picker_closes() {
     let (mut world, mut state, id) = fixture(14);
     let texture_id = Uuid::from_u128(54001);
     let asset = Uuid::from_u128(54002);
@@ -262,7 +376,11 @@ fn texture_permissions_are_checked_again_when_saving_after_the_picker_closes() {
     world.inventory.add_items(vec![texture]);
     assert!(state.set_texture(&world, 26, asset));
     world.inventory.items.get_mut(&texture_id).expect("texture").owner_mask = 0;
-    assert!(state.save(&world, None).is_none());
+    assert!(state.save(&world, None).is_some(), "rights never block a texture");
+    state.draft.as_mut().expect("draft").pending = None;
+    world.inventory.items.remove(&texture_id).expect("texture");
+    assert!(state.save(&world, None).is_none(), "a texture gone from the inventory");
+    assert_eq!(state.message, aurora_i18n::tr!("wearable-texture-inventory"));
     assert!(state.draft.as_ref().expect("draft").pending.is_none());
 }
 

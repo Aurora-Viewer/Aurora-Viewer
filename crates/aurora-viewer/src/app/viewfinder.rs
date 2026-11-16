@@ -26,10 +26,13 @@ impl App {
     /// The HUDs show (and take clicks): Preferences' switch and, in
     /// immersive mode, its button (#1190); a HUD locked by RLVa keeps them
     /// shown; in the viewfinder the photo's own, so that the screen shows
-    /// what the photo will hold.
+    /// what the photo will hold; none while the Director's track plays
+    /// with "Hide HUDs" (a HUD locked by RLVa still shows).
     pub(super) fn huds_shown(&self) -> bool {
         let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
-        (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (wanted || self.world.rlva_has_locked_hud())
+            && (!self.viewfinder_on() || self.settings.snapshot.huds)
+            && !self.director_hides_huds()
     }
 
     fn vf_now(&self) -> f64 {
@@ -501,7 +504,11 @@ impl App {
         if !self.viewfinder_on() || self.camera.mouselook() || self.alt || self.object_view {
             return false;
         }
-        if self.ctrl && !self.shift {
+        let poser_owns = self.ik_editor.open && self.ik_editor.poser_owns_pointer();
+        // not over the part a poser's Ctrl + click opens (nor a handle):
+        // passed to the world as a plain click, the press would act on the
+        // avatar under it and move the camera; the poser check below keeps it
+        if self.ctrl && !self.shift && !poser_owns {
             // The viewfinder's interaction shortcut acts like an ordinary
             // left click (LLToolPie::handleMouseDown, indra/newview/lltoolpie.cpp).
             // Object actions and HUDs reject Ctrl, so consume it before the
@@ -517,12 +524,16 @@ impl App {
             v.help = false;
             return true;
         }
-        // A poser handle or a shown HUD under the pointer keeps the press
+        if !self.build.selection.is_empty() {
+            self.build.deselect_all(&self.world);
+            self.flush_build();
+        }
+        // A poser handle, IK manipulator or shown HUD under the pointer keeps the press
         // (#1389): the Legacy Viewer's snapshot floater takes no scene
         // clicks, so a HUD's poses and the poser stay usable while framing.
         // The world's press path then decides between the two, as outside
         // the viewfinder.
-        if (self.ik_editor.open && self.ik_editor.poser_owns_pointer())
+        if (self.ik_editor.open && self.ik_editor.manipulator_owns_pointer())
             || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some())
         {
             return false;
@@ -992,7 +1003,7 @@ impl App {
         let ev = vf::ev_of(self.photo_exposure(), s.exposure);
         let dir = (self.camera.target - self.camera.position).normalize_or_zero();
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
-        let review = self.photo_review();
+        let review = self.photo_reel_card();
         let (af_key, menu_key, first_key) = self.vf_keys();
         let (isolate_rows, isolate_hover) = self.photo_isolate_rows();
         // an object anchor holds the object the camera is on, until one is
@@ -1003,6 +1014,9 @@ impl App {
         }
         let preset_object = self.snapshots.vf.preset_form.object.map(|id| self.photo_isolate_name(&id).0);
         let first_allowed = self.settings.camera.enable_mouselook;
+        // (the stack only opens the quick view: no destination, no clock)
+        let no_time = |_: i64| String::new();
+        let reel = self.snapshots.reel.view(&[], &no_time);
         let frame = Frame {
             now,
             photo,
@@ -1018,7 +1032,8 @@ impl App {
             zone,
             pitch,
             histogram: renderer.histogram.as_deref(),
-            review: review.as_ref().map(|(t, l, k)| (t, l.clone(), k.clone())),
+            still: self.settings.reduce_motion,
+            review: review.as_ref(),
             first_person: self.camera.mouselook(),
             first_person_allowed: first_allowed,
             base_exposure: self.settings.exposure,
@@ -1035,6 +1050,7 @@ impl App {
             presets: &self.settings.camera_shots,
             preset_object,
             posing: self.ik_editor.open && self.ik_editor.posing(),
+            reel: &reel,
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
@@ -1093,9 +1109,11 @@ impl App {
                 Out::Preset(o) => self.vf_preset(o, ctx.pixels_per_point()),
                 Out::Poser => {
                     if self.ik_editor.toggle_poser() {
-                        crate::ui::widgets::open_floater(ctx, "poser", &mut self.ik_editor.open);
+                        let window = self.ik_editor.poser_window(&self.settings.poser);
+                        crate::ui::widgets::open_floater(ctx, window, &mut self.ik_editor.open);
                     }
                 }
+                Out::Reel(a) => self.photo_reel_action(a, renderer),
                 Out::Exit => self.panels.snapshot = false,
             }
         }
@@ -1167,6 +1185,75 @@ enum VfSound {
     Tick,
     /// A lens ring's detent.
     Click,
+}
+
+/// What a key does while a dialog (any modal: a pose request…) is open over
+/// the photo mode, which reads its keys through egui.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BehindDialog {
+    /// Enter pressed: the dialog's key (it answers the dialog), so it must
+    /// not also take a photo nor reach anything else.
+    Answer,
+    /// Enter let go: the shutter's half press ends without a photo, as a
+    /// cancel does, so the next press focuses again instead of firing with
+    /// the old focus.
+    ReleaseShutter,
+    /// Any other key: not the viewfinder's (its menu, help, AF and lens wait
+    /// behind the dialog), but its usual handling, as outside the photo
+    /// mode: a push-to-talk or movement key let go must still be heard.
+    Usual,
+}
+
+/// `BehindDialog` for a key, or None when the viewfinder handles it as
+/// usual (no viewfinder, or no dialog open over it).
+pub(super) fn behind_dialog(viewfinder_on: bool, dialog_open: bool, shutter: bool, pressed: bool) -> Option<BehindDialog> {
+    if !viewfinder_on || !dialog_open {
+        return None;
+    }
+    Some(match (shutter, pressed) {
+        (true, true) => BehindDialog::Answer,
+        (true, false) => BehindDialog::ReleaseShutter,
+        (false, _) => BehindDialog::Usual,
+    })
+}
+
+impl App {
+    /// The photo mode's keys while a dialog is open over it
+    /// (`behind_dialog`), the shutter's release applied.
+    pub(super) fn viewfinder_behind_dialog(&mut self, code: KeyCode, pressed: bool) -> Option<BehindDialog> {
+        let dialog = self.egui_ctx.memory(|m| m.top_modal_layer()).is_some();
+        let shutter = matches!(code, KeyCode::Enter | KeyCode::NumpadEnter);
+        let behind = behind_dialog(self.viewfinder_on(), dialog, shutter, pressed);
+        if behind == Some(BehindDialog::ReleaseShutter) {
+            self.snapshots.vf.pressed = false;
+        }
+        behind
+    }
+}
+
+#[cfg(test)]
+mod behind_dialog_tests {
+    use super::{BehindDialog, behind_dialog};
+
+    #[test]
+    fn a_dialog_over_the_photo_mode_takes_enter_lets_the_shutter_go_and_leaves_other_keys_their_usual_handling() {
+        // no dialog, or no photo mode: the viewfinder's own keys as usual
+        for (on, dialog) in [(true, false), (false, true), (false, false)] {
+            for shutter in [true, false] {
+                for pressed in [true, false] {
+                    assert_eq!(behind_dialog(on, dialog, shutter, pressed), None);
+                }
+            }
+        }
+        // a dialog over the photo mode: Enter answers it, no photo
+        assert_eq!(behind_dialog(true, true, true, true), Some(BehindDialog::Answer));
+        // Enter let go behind it: the half press ends, no photo
+        assert_eq!(behind_dialog(true, true, true, false), Some(BehindDialog::ReleaseShutter));
+        // any other key, pressed or let go (push to talk, movement): its
+        // usual handling, only the viewfinder's own actions skipped
+        assert_eq!(behind_dialog(true, true, false, true), Some(BehindDialog::Usual));
+        assert_eq!(behind_dialog(true, true, false, false), Some(BehindDialog::Usual));
+    }
 }
 
 #[cfg(test)]
