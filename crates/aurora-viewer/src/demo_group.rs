@@ -102,6 +102,7 @@ fn group_experience() -> ExperienceDetails {
         owner: DEMO_LOUP,
         group: DEMO_GROUP1,
         slurl: "secondlife://Aurora%20D%C3%A9mo/64/200/24".into(),
+        ..Default::default()
     }
 }
 

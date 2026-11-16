@@ -163,7 +163,7 @@ fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
     assert!(w.rlva.receive(&restriction));
     assert_eq!(
         crate::ui::remote_object::hidden_owner(&w, &o).as_deref(),
-        Some(rlva::privacy::anonymous(VENDOR).display_name.as_str())
+        Some(w.rlva_anonymous(VENDOR).display_name.as_str())
     );
     o.group_owned = true;
     assert_eq!(crate::ui::remote_object::hidden_owner(&w, &o), None);

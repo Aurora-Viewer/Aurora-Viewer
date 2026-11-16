@@ -1104,19 +1104,21 @@ impl ObjectStore {
             return;
         };
         let clock = self.report_clock(key.region, received);
-        let hud = self.worn_on_hud(idx);
         let reported = Transform {
             position: Some(t.position),
             rotation: Some(t.rotation),
             scale: None,
         };
         let sent = self.sent_edits.filter(key, reported, now);
+        let snap_hud = self.snap_hud_root_report(idx, t.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        // A HUD shows a report at once: pages on the faces of a turning
-        // cube flip instantly in the Legacy Viewer, with no fade.
-        let drawn = (!hud).then(|| o.predicted(now, clock));
+        let drawn = (!snap_hud).then(|| o.predicted(now, clock));
+        if snap_hud {
+            // A terse update can move a still-resizing body attachment onto the HUD.
+            o.scale_correction = None;
+        }
         let angular_rotation = o.retained_angular_rotation(clock, t.rotation, t.angular_velocity, o.update_flags);
         o.apply_terse(t);
         o.angular_rotation = angular_rotation;
@@ -1134,7 +1136,6 @@ impl ObjectStore {
         self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
-        let hud = self.worn_on_hud(idx);
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -1150,10 +1151,11 @@ impl ObjectStore {
             };
             self.sent_edits.filter(key, reported, now)
         };
+        let snap_hud = self.snap_hud_root_report(idx, u.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let mut drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
+        let mut drawn = (!moved_frame && !snap_hud).then(|| o.predicted(now, clock));
         let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
         let angular_rotation = if o.full_id == u.full_id {
             o.retained_angular_rotation(clock, u.rotation, u.angular_velocity, u.update_flags)
@@ -1788,6 +1790,18 @@ impl ObjectStore {
             idx = parent;
         }
         false
+    }
+
+    /// LLVOAvatar::resetHUDAttachments marks a HUD root undamped every frame.
+    /// Never interpolate between body and HUD coordinates on a change of point,
+    /// even when the avatar stays the parent. Child prims still damp (#3369).
+    fn snap_hud_root_report(&self, idx: usize, state: u8) -> bool {
+        let Some(o) = self.get(idx) else {
+            return false;
+        };
+        let hud_points = 31..=38;
+        (hud_points.contains(&o.attachment_point()) || hud_points.contains(&state.rotate_left(4)))
+            && self.parent_of(o).and_then(|parent| self.get(parent)).is_some_and(Object::is_avatar)
     }
 }
 
@@ -2797,12 +2811,62 @@ mod tests {
     }
 
     #[test]
-    fn a_hud_page_turns_at_once_while_a_worn_object_fades() {
+    fn moving_a_root_between_the_body_and_hud_drops_old_pose_and_scale_corrections() {
+        let now = Instant::now();
+        let half = now + Duration::from_millis(60);
+        for terse_to_hud in [false, true] {
+            let mut store = ObjectStore::default();
+            store.upsert_at(1, update(10, AVATAR, ""), Some(now));
+            let mut root = update(20, PRIM, "");
+            root.parent_id = 10;
+            root.state = 2u8.rotate_left(4);
+            let idx = store.upsert_at(1, root.clone(), Some(now));
+            root.scale = Vec3::splat(2.0);
+            store.upsert_at(1, root.clone(), Some(now));
+            near(store.get(idx).unwrap().visual_scale_at(half), Vec3::splat(1.5));
+
+            // An attachment point can change while the same avatar stays its parent.
+            root.state = 31u8.rotate_left(4);
+            root.position = Vec3::X * 0.2;
+            root.rotation = Quat::from_rotation_z(0.5);
+            if terse_to_hud {
+                let mut report = terse(20, root.position, Vec3::ZERO);
+                report.is_avatar = false;
+                report.state = root.state;
+                report.rotation = root.rotation;
+                store.apply_terse_at(idx, &report, Some(half));
+            } else {
+                store.upsert_at(1, root.clone(), Some(half));
+            }
+            let object = store.get(idx).unwrap();
+            let (position, rotation) = store.predicted(object, half);
+            near(position, root.position);
+            assert!(rotation.abs_diff_eq(root.rotation, 1e-5));
+            near(object.visual_scale_at(half), root.scale);
+
+            root.state = 2u8.rotate_left(4);
+            root.position = Vec3::X * 0.4;
+            store.upsert_at(1, root.clone(), Some(half));
+            near(store.predicted(store.get(idx).unwrap(), half).0, root.position);
+            // Subsequent changes on the body use the ordinary 60 ms half-life.
+            root.position = Vec3::X * 0.6;
+            store.upsert_at(1, root, Some(half));
+            near(
+                store.predicted(store.get(idx).unwrap(), half + Duration::from_millis(60)).0,
+                Vec3::X * 0.5,
+            );
+        }
+    }
+
+    /// A report of a HUD linkset's root prim shows at once; the prims below
+    /// it fade, as they do on the body (#3369).
+    #[test]
+    fn a_report_shows_a_hud_linkset_root_at_once_and_damps_its_children() {
         let mut s = ObjectStore::default();
         s.upsert(1, update(10, AVATAR, ""));
         let now = Instant::now();
         let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        for (point, root_id, fades) in [(31u8, 20, false), (2u8, 40, true)] {
+        for (point, root_id, root_fades) in [(31u8, 20u32, false), (2u8, 40u32, true)] {
             let mut root = update(root_id, PRIM, "");
             root.parent_id = 10;
             root.state = point.rotate_left(4);
@@ -2810,19 +2874,16 @@ mod tests {
             let mut cube = update(root_id + 1, PRIM, "");
             cube.parent_id = root_id;
             let cube_idx = s.upsert(1, cube.clone());
-            // The HUD page changes immediately; body-worn prims damp size
-            // and rotation together (llSetLinkPrimitiveParamsFast).
+            // llSetLinkPrimitiveParamsFast turns the card and grows it at once
             cube.rotation = quarter;
             cube.scale *= 2.0;
-            let reported_scale = cube.scale;
             s.upsert(1, cube);
             let o = s.get(cube_idx).expect("cube");
-            let drawn = s.predicted(o, now).1;
-            assert_eq!(o.correction.is_some(), fades, "point {point}");
-            assert_eq!(o.scale_correction.is_some(), fades, "scale at point {point}");
-            assert_eq!(o.visual_scale_at(now) == reported_scale, !fades, "scale at point {point}");
-            assert_eq!(drawn.abs_diff_eq(quarter, 1e-4), !fades, "point {point}: {drawn:?}");
-            // the HUD root itself turns at once too
+            assert!(o.correction.is_some() && o.scale_correction.is_some(), "point {point}");
+            near(o.visual_scale_at(now), Vec3::ONE);
+            assert!(s.predicted(o, now).1.abs_diff_eq(Quat::IDENTITY, 1e-4), "point {point}");
+            // a terse report that turns the root of the linkset: shown at once
+            // on a HUD, faded on the body
             let root_idx = s
                 .index_of(&ObjKey {
                     region: 1,
@@ -2833,12 +2894,27 @@ mod tests {
                 root_idx,
                 &TerseUpdate {
                     rotation: quarter,
+                    // the wire carries the attachment point on a terse report too
+                    state: point.rotate_left(4),
                     is_avatar: false,
                     ..terse(root_id, Vec3::ZERO, Vec3::ZERO)
                 },
             );
             let root = s.get(root_idx).expect("root");
-            assert_eq!(root.correction.is_some(), fades, "root at point {point}");
+            assert_eq!(root.correction.is_some(), root_fades, "root at point {point}");
+            let shown = if root_fades { Quat::IDENTITY } else { quarter };
+            assert!(s.predicted(root, now).1.abs_diff_eq(shown, 1e-4), "root at point {point}");
+            // the whole report, pose and size, shows at once on a HUD
+            let mut grown = update(root_id, PRIM, "");
+            grown.parent_id = 10;
+            grown.state = point.rotate_left(4);
+            grown.rotation = quarter;
+            grown.scale *= 2.0;
+            s.upsert(1, grown);
+            let root = s.get(root_idx).expect("root");
+            let grown_to = if root_fades { Vec3::ONE } else { Vec3::ONE * 2.0 };
+            near(root.visual_scale_at(now), grown_to);
+            assert_eq!(root.scale_correction.is_some(), root_fades, "size at point {point}");
         }
     }
 

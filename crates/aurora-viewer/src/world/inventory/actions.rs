@@ -133,6 +133,19 @@ pub fn held_for(inv: &Inventory, item: &InvItem, god_level: u8) -> u32 {
     with_god(held(inv, item), god_level)
 }
 
+/// Whether a texture may become an experience's logo (the profile's Edit
+/// tab): none, or a texture the agent holds with full permissions. Stricter
+/// than the Legacy Viewer, whose logo picker takes any texture: the logo is
+/// shown to everyone who opens the experience, so only a texture its
+/// creator let go entirely (copy, modify and transfer) goes there.
+pub fn experience_logo_allowed(inv: &Inventory, asset: Uuid) -> bool {
+    asset.is_nil()
+        || inv
+            .items
+            .values()
+            .any(|it| it.asset_id == asset && it.asset_type == 0 && held(inv, it) & FULL == FULL)
+}
+
 /// Whether an asset UUID met outside its inventory item (a material map)
 /// may be shown: a built-in texture, or an item of the inventory holding it
 /// with full permissions, like the UUID field of LLFloaterTexturePicker
