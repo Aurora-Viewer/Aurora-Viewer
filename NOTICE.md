@@ -101,7 +101,7 @@ GPL-3.0-or-later as described above.
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
-| Pose stand, `newview/fsfloaterposestand.cpp`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
+| Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Bundled assets
 
@@ -374,8 +374,8 @@ SOFTWARE.
 
 The pose stand (`crates/aurora-viewer/src/pose_stand.rs`,
 `ui/pose_stand.rs`, `app/pose_stand.rs`) is a port of the Legacy Viewer's
-`newview/fsfloaterposestand.cpp`, `fspose.cpp` and `fspose.h`, which are not
-LGPL: their author released them under the Beer-Ware Licence (Revision 42),
+`newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp` and
+`fspose.h`, which are not LGPL: their author released them under the Beer-Ware Licence (Revision 42),
 whose only condition is to retain this notice, kept here and at the top of
 the three Aurora files:
 
