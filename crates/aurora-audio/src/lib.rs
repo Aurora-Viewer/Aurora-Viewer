@@ -52,11 +52,11 @@ use parking_lot::Mutex;
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
 pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
-pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
+pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE, MAX_RATE, MIN_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use reverb::ReverbParams;
-pub use stream::StreamStatus;
+pub use stream::{StreamError, StreamStatus};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -236,10 +236,9 @@ impl AudioEngine {
     /// the same id): mono, looped or not, with (left, right) gains updated
     /// by [`AudioEngine::world_gain`] as the listener or the source moves.
     pub fn play_world(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: (f32, f32)) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(
+            WorldVoice::new(id, ch, clip.samples.clone(), looped, gain).starting_at(clip.start),
+        ));
     }
 
     /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
@@ -247,7 +246,7 @@ impl AudioEngine {
     /// direction in the listener's frame (x to the right, y ahead, z up),
     /// updated by [`AudioEngine::world_binaural`].
     pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
-        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction).starting_at(clip.start);
         let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
     }
 
@@ -281,6 +280,14 @@ impl AudioEngine {
         let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
     }
 
+    /// Playback rate of a world sound, its Doppler shift: above 1 higher
+    /// (coming closer), below 1 lower (going away), within
+    /// [`MIN_RATE`]..[`MAX_RATE`]. Glides over a buffer; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_rate(&self, id: u64, rate: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldRate(id, rate));
+    }
+
     /// The reverb of the surroundings on with these parameters (they glide
     /// there), or off (`None`: its output fades out, then the mix is the dry
     /// one, bit for bit).
@@ -301,10 +308,9 @@ impl AudioEngine {
 
     /// Plays a one-shot sound on `ch` with an extra per-sound `gain` (0..=1).
     pub fn play_clip(&self, ch: Channel, clip: &SoundClip, gain: f32) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayClip(ClipVoice::new(ch, clip.samples.clone(), gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayClip(
+            ClipVoice::new(ch, clip.samples.clone(), gain).starting_at(clip.start),
+        ));
     }
 }
 

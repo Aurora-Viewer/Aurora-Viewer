@@ -71,6 +71,10 @@ pub struct WorldMapUi {
     /// Pointer the zoom keeps fixed, relative to the view center.
     zoom_pivot: Option<Vec2>,
     was_open: bool,
+    focus_search: bool,
+    /// The next opening comes from a script (llMapDestination) without
+    /// BEACON_FOCUS_MAP: it must not take the keyboard.
+    opened_by_script: bool,
     tiles_complete: bool,
     search: String,
     selected: Option<(u32, u32)>,
@@ -86,6 +90,9 @@ pub struct WorldMapUi {
     pub want_folders: HashSet<Uuid>,
     /// AURORA_DEMO_MAP=legacy: the side panel without touching the setting.
     pub demo_style: Option<WorldMapStyle>,
+    /// The teleport history's days in the drawer: the zone of Places
+    /// (`tp_history_zone`), set by the app before each frame.
+    pub history_zone: crate::settings::HistoryZone,
 }
 
 impl Default for WorldMapUi {
@@ -98,6 +105,8 @@ impl Default for WorldMapUi {
             target_zoom: -1.0,
             zoom_pivot: None,
             was_open: false,
+            focus_search: false,
+            opened_by_script: false,
             tiles_complete: false,
             search: String::new(),
             selected: None,
@@ -108,6 +117,7 @@ impl Default for WorldMapUi {
             wanted_pics: HashSet::new(),
             want_folders: HashSet::new(),
             demo_style: None,
+            history_zone: crate::settings::HistoryZone::default(),
         }
     }
 }
@@ -141,6 +151,12 @@ struct MapInput {
 }
 
 impl WorldMapUi {
+    /// The map is about to open for a script (llMapDestination) without
+    /// BEACON_FOCUS_MAP: its search does not take the keyboard.
+    pub fn open_for_script(&mut self) {
+        self.opened_by_script = true;
+    }
+
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
     pub fn demo_search(&mut self, world: &mut World, text: &str) {
         self.search = text.to_owned();
@@ -189,11 +205,16 @@ impl WorldMapUi {
         let mut actions = Vec::new();
         if !*open {
             self.was_open = false;
+            self.focus_search = false;
             return actions;
         }
         if !self.was_open {
-            // LLFloaterWorldMap::onOpen: back on our position, items reloaded
+            // LLFloaterWorldMap::onOpen: back on our position, items reloaded,
+            // and the location editor takes the keyboard when the floater
+            // opens focused: always for the user (toolbar, menus, Ctrl+M, "show
+            // on map"), with BEACON_FOCUS_MAP for a script
             self.was_open = true;
+            self.focus_search = !std::mem::take(&mut self.opened_by_script);
             self.pan = Vec2::ZERO;
             self.target_pan = Vec2::ZERO;
             self.zoom = (opts.world_scale.max(1.0) / 256.0).log2().clamp(ZOOM_MIN, ZOOM_MAX);
@@ -650,7 +671,8 @@ impl WorldMapUi {
                 None
             };
             let teleport = resp.double_clicked() && opts.world_double_click_tp;
-            let z = world.agent.position.z;
+            // a god arrives at 200 m (GODLY_TELEPORT_HEIGHT, LLWorldMapView)
+            let z = if world.god_level > 0 { 200.0 } else { world.agent.position.z };
             match item.filter(|h| !matches!(h.1, ItemKind::Infohub | ItemKind::Telehub)) {
                 Some((_, kind, i)) => {
                     let ty = item_type(kind);
@@ -920,12 +942,19 @@ impl WorldMapUi {
         ui.add_space(4.0);
         let mut go = false;
         ui.horizontal(|ui| {
-            let r = widgets::search_field(
-                ui,
-                &mut self.search,
-                aurora_i18n::tr!("ui-worldmap-regions-by-name"),
-                ui.available_width() - 84.0,
-            );
+            // asked by id before the field is drawn, so that it has the
+            // keyboard in the very frame it takes it; not in the window's
+            // sizing pass (its first frame), whose widgets cannot keep it
+            if self.focus_search && !ui.is_sizing_pass() {
+                self.focus_search = false;
+                ui.memory_mut(|m| m.request_focus(side_search_id()));
+            }
+            let width = ui.available_width() - 84.0;
+            let r = widgets::search_text_edit(ui, p, &mut self.search, |edit| {
+                edit.id(side_search_id())
+                    .hint_text(aurora_i18n::tr!("ui-worldmap-regions-by-name"))
+                    .desired_width(width)
+            });
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 go = true;
             }
@@ -977,7 +1006,7 @@ impl WorldMapUi {
                                 } else {
                                     format!("{name}  ·  {}", access_label(*access))
                                 };
-                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                                widgets::search_list_item(ui, sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
                             })
                             .inner;
                         if clicked {
@@ -1590,6 +1619,11 @@ mod coordinate_tests {
     }
 }
 
+/// The side panel layout's region search.
+fn side_search_id() -> egui::Id {
+    egui::Id::unique("worldmap-side-search")
+}
+
 /// Where the side column's position footer keeps its measured height.
 fn side_footer_id() -> egui::Id {
     egui::Id::unique("worldmap-position-height")
@@ -1890,5 +1924,139 @@ mod size_tests {
             "narrowed by the drag: {rect:?} then {last:?}"
         );
         assert_eq!(last.left(), rect.left(), "the left edge stays");
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    struct Bench {
+        ctx: egui::Context,
+        map: WorldMapUi,
+        world: World,
+        tiles: MapTiles,
+        camera: MapCamera,
+        settings: MapSettings,
+        images: HashMap<Uuid, egui::TextureHandle>,
+        avatars: HashMap<Uuid, egui::TextureHandle>,
+        style: WorldMapStyle,
+        time: f64,
+    }
+
+    impl Bench {
+        fn new(style: WorldMapStyle) -> Self {
+            let mut world = World::new(Arc::new(AvatarLibrary::load()));
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            let mut bench = Self {
+                ctx: egui::Context::default(),
+                map: WorldMapUi::default(),
+                world,
+                tiles: MapTiles::new(),
+                camera: MapCamera {
+                    pos: glam::Vec3::new(128.0, 128.0, 70.0),
+                    dir: glam::Vec3::X,
+                    hfov: 1.0,
+                    far: 128.0,
+                },
+                settings: MapSettings::default(),
+                images: HashMap::new(),
+                avatars: HashMap::new(),
+                style,
+                time: 0.0,
+            };
+            bench.frame(false, vec![]);
+            bench
+        }
+
+        fn frame(&mut self, open: bool, events: Vec<egui::Event>) {
+            self.time += 0.1;
+            let ctx = self.ctx.clone();
+            let p = crate::theme::Theme::default().palette();
+            let pictures = MapPictures {
+                images: &self.images,
+                avatars: &self.avatars,
+            };
+            let mut open = open;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1000.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |_| {
+                    self.map.show(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &mut self.tiles,
+                        &self.camera,
+                        &mut self.settings,
+                        self.style,
+                        &pictures,
+                        &mut open,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+
+        /// The search of the map's layout.
+        fn query(&self) -> &str {
+            match self.style {
+                WorldMapStyle::Legacy => &self.map.search,
+                WorldMapStyle::Aurora => &self.map.ov.query,
+            }
+        }
+    }
+
+    #[test]
+    fn opening_the_map_focuses_search_and_types_in_both_layouts() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // opened by the user (toolbar, menu, Ctrl+M); the side panel
+            // window's first frame is a sizing pass
+            bench.frame(true, vec![]);
+            bench.frame(true, vec![]);
+            let search = match style {
+                WorldMapStyle::Legacy => side_search_id(),
+                WorldMapStyle::Aurora => overlay::search_id(),
+            };
+            assert!(
+                bench.ctx.memory(|memory| memory.has_focus(search)),
+                "map search should receive focus for {style:?}"
+            );
+            bench.frame(true, vec![egui::Event::Text("ab".into())]);
+            assert_eq!(bench.query(), "ab", "typed text should reach {style:?} map search");
+        }
+    }
+
+    #[test]
+    fn programmatic_map_open_does_not_take_keyboard_focus() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // llMapDestination without BEACON_FOCUS_MAP
+            bench.map.open_for_script();
+            bench.frame(true, vec![]);
+            assert!(
+                bench.ctx.memory(|memory| memory.focused().is_none()),
+                "a programmatic {style:?} map open must not take focus"
+            );
+            bench.frame(true, vec![egui::Event::Text("ab".into())]);
+            assert_eq!(bench.query(), "", "typed text must not reach {style:?} map search");
+        }
+    }
+
+    #[test]
+    fn a_later_user_opening_takes_the_keyboard_again() {
+        let mut bench = Bench::new(WorldMapStyle::Aurora);
+        bench.map.open_for_script();
+        bench.frame(true, vec![]);
+        bench.frame(false, vec![]);
+        bench.frame(true, vec![]);
+        assert!(bench.ctx.memory(|memory| memory.has_focus(overlay::search_id())));
     }
 }

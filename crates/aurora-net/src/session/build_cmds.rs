@@ -9,12 +9,15 @@ use aurora_msg::msgs::{self, *};
 use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
 use std::ops::Range;
 
+/// The capability of LLViewerObject::createInventoryItem.
+const CREATE_TASK_ITEM: &str = "CreateTaskInventoryItem";
+
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
-const MAX_PER_PACKET: usize = 254;
+pub(super) const MAX_PER_PACKET: usize = 254;
 
 /// Keep variable-length object-name and description messages within the UDP
 /// packet limit as well as the protocol's block-count limit.
-fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
+pub(super) fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
     while start < items.len() {
@@ -28,7 +31,7 @@ fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize)
     ranges
 }
 
-fn encoded_packet_len<M: Msg>(message: &M) -> usize {
+pub(super) fn encoded_packet_len<M: Msg>(message: &M) -> usize {
     let mut bytes = Vec::new();
     aurora_msg::build_packet(message, 0, true, false, &[], &mut bytes);
     bytes.len()
@@ -414,12 +417,17 @@ impl Session<'_> {
     fn on_build_more(&mut self, c: BuildCmd) {
         let (agent_id, session_id) = (self.agent_id(), self.session_id());
         let Some(addr) = build_handle(&c).and_then(|h| self.sim_for_handle(h)) else {
-            if let BuildCmd::Cap { tag, cap, .. } = c {
+            let failed = match c {
+                BuildCmd::Cap { tag, cap, .. } => Some((tag, cap)),
+                BuildCmd::CreateTaskItem { tag, .. } => Some((tag, CREATE_TASK_ITEM.to_owned())),
+                _ => None,
+            };
+            if let Some((tag, cap)) = failed {
                 emit(
                     self.sh,
                     NetEvent::CapReply {
                         tag,
-                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap.to_string())),
+                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap)),
                     },
                 );
             }
@@ -428,7 +436,10 @@ impl Session<'_> {
         match c {
             BuildCmd::RezInventory(rez) => {
                 if rez.ray_start.is_finite() && rez.ray_end.is_finite() {
-                    self.send(addr, &rez.message(agent_id, session_id), true);
+                    match rez.notecard {
+                        Some(from) => self.send(addr, &rez.notecard_message(agent_id, session_id, from), true),
+                        None => self.send(addr, &rez.message(agent_id, session_id), true),
+                    }
                 }
             }
             BuildCmd::SetPhysicsParams {
@@ -831,6 +842,17 @@ impl Session<'_> {
                 m.script.item_id = item_id;
                 self.send(addr, &m, true);
             }
+            BuildCmd::CreateTaskItem { handle, item, tag } => {
+                // an LLSD POST, answered like the other region capabilities
+                let body = crate::task_inventory::create_item_body(&item);
+                self.on_build_more(BuildCmd::Cap {
+                    handle,
+                    cap: CREATE_TASK_ITEM.into(),
+                    put: false,
+                    body,
+                    tag,
+                });
+            }
             BuildCmd::Cap { cap, put, body, tag, .. } => {
                 let url = self.sims.get(&addr).and_then(|s| s.caps.get(&cap).cloned());
                 let Some(url) = url else {
@@ -870,7 +892,7 @@ impl Session<'_> {
                     object_id: m.script.object_id,
                     item_id: m.script.item_id,
                     running: m.script.running,
-                    mono: None,
+                    compile: None,
                 },
             );
         } else {
@@ -902,7 +924,8 @@ impl Session<'_> {
                     .collect();
                 emit(self.sh, NetEvent::PhysicsProperties(list));
             }
-            // the event queue form carries the Mono flag (LLLiveLSLEditor)
+            // the event queue form carries the Mono, Luau and LuauLanguage
+            // flags (LLLiveLSLEditor::processScriptRunningReply)
             "ScriptRunningReply" => {
                 let s = &b["Script"][0];
                 emit(
@@ -911,7 +934,13 @@ impl Session<'_> {
                         object_id: s["ObjectID"].as_uuid(),
                         item_id: s["ItemID"].as_uuid(),
                         running: s["Running"].as_bool(),
-                        mono: s.has("Mono").then(|| s["Mono"].as_bool()),
+                        compile: (s.has("Mono") || s.has("Luau")).then(|| {
+                            crate::scripts::CompileTarget::from_running(
+                                s["Mono"].as_bool(),
+                                s["Luau"].as_bool(),
+                                s["LuauLanguage"].as_bool(),
+                            )
+                        }),
                     },
                 );
             }
@@ -948,6 +977,7 @@ fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
         | BuildCmd::MoveTaskInventory { handle, .. }
         | BuildCmd::UpdateTaskInventory { handle, .. }
         | BuildCmd::RezScript { handle, .. }
+        | BuildCmd::CreateTaskItem { handle, .. }
         | BuildCmd::ScriptReset { handle, .. }
         | BuildCmd::SetScriptRunning { handle, .. }
         | BuildCmd::GetScriptRunning { handle, .. }
@@ -978,6 +1008,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             category: b.category,
             inventory_serial: b.inventory_serial,
             folder_id: b.folder_id,
+            from_task_id: b.from_task_id,
             name: field_str(&b.name),
             description: field_str(&b.description),
             touch_name: field_str(&b.touch_name),

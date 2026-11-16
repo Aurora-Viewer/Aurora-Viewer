@@ -309,12 +309,11 @@ pub(super) fn pane(
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.add(
-                egui::TextEdit::singleline(q)
-                    .id(find::filter_id(st.selected))
+            crate::ui::widgets::search_text_edit(ui, p, q, |edit| {
+                edit.id(find::filter_id(st.selected))
                     .hint_text(aurora_i18n::tr!("ui-chat-filter"))
-                    .desired_width(width - 24.0),
-            );
+                    .desired_width(width - 24.0)
+            });
         });
     }
     let conv_input = egui::Id::unique(("conv_input", st.selected));
@@ -604,7 +603,8 @@ impl NewLines {
                 .max(first);
             // (without the focus, what is shown is not seen yet)
             self.seen.insert(conv, from);
-            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own());
+            // (a blocked resident's line, kept in the history, is no news)
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own() || l.blocked);
             match (from..next).find(|&seq| !mine(seq)) {
                 Some(seq) => {
                     self.at.insert(conv, seq);

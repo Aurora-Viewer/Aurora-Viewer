@@ -156,6 +156,7 @@ impl World {
             owner_id: source,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: self.agent.position,
             from_name: String::new(),
             message: text.to_owned(),

@@ -40,6 +40,7 @@ fn say(name: &str, source: Uuid, text: &str) -> NetEvent {
         owner_id: Uuid::nil(),
         source_type: aurora_net::ChatSourceType::Agent,
         chat_type: aurora_net::ChatType::Normal,
+        region: Some(crate::demo::HANDLE),
         position: glam::Vec3::ZERO,
         message: text.into(),
     })

@@ -121,7 +121,7 @@ pub struct Constraint {
 /// The animation with its constraints. A file that ends before them or holds
 /// a malformed one still plays its keyframes, without constraints.
 pub fn parse_animation_with_constraints(data: &[u8]) -> Result<(Animation, Vec<Constraint>), AssetError> {
-    let (animation, length) = parse(data, false)?;
+    let (animation, Layout { length, .. }) = parse(data, false)?;
     let constraints = data
         .get(length..)
         .and_then(|tail| read_constraints(tail, animation.joints.len()))
@@ -181,21 +181,121 @@ pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {
 /// sends what LLKeyframeMotion::deserialize read back through dumpToFile, so
 /// it never holds a priority above 6 nor anything past the last constraint.
 pub fn prepare_animation_upload(data: &[u8]) -> Result<(Animation, Vec<u8>), AssetError> {
-    let (animation, length) = parse_upload(data)?;
+    let (animation, Layout { length, .. }) = parse_upload(data)?;
     let mut bytes = data[..length].to_vec();
     bytes[4..8].copy_from_slice(&animation.base_priority.to_le_bytes());
     Ok((animation, bytes))
 }
 
-fn parse_upload(data: &[u8]) -> Result<(Animation, usize), AssetError> {
+/// A joint's priority once the animation's base priority moves from `from` to
+/// `to`. Port of LLKeyframeMotion::setPriority (indra/llcharacter/
+/// llkeyframemotion.cpp): every joint moves by the same delta, because
+/// LLKeyframeMotion::deserialize blends each joint at its own priority and
+/// the base priority alone changes nothing for them. Two differences, both
+/// so that the chosen priority is the one that plays: the clamp stops at 6,
+/// Aurora's priority range, not HIGHEST_PRIORITY (4); and a joint stored as
+/// USE_MOTION_PRIORITY (-1) stays so, as it already follows the base priority.
+/// An unchanged base priority leaves every joint as the file has it (an
+/// ADDITIVE_PRIORITY joint, 7, included).
+pub fn shift_joint_priority(joint: i32, from: i32, to: i32) -> i32 {
+    if joint == -1 || from == to {
+        joint
+    } else {
+        joint.saturating_add(to - from).clamp(0, 6)
+    }
+}
+
+/// The joint priorities a native file uploads with once its base priority is
+/// `base_priority`, in joint order, from the file's own values: the import
+/// preview shows what `rewrite_animation_upload` will send, without drifting
+/// when the priority is changed several times.
+pub fn native_joint_priorities(data: &[u8], base_priority: i32) -> Result<Vec<i32>, AssetError> {
+    let (original, _) = parse_upload(data)?;
+    Ok(original
+        .joints
+        .iter()
+        .map(|joint| shift_joint_priority(joint.priority, original.base_priority, base_priority))
+        .collect())
+}
+
+/// Encode edited import metadata while preserving the validated native motion
+/// payload (joint keys and constraints) byte for byte. Only the joint
+/// priorities change, with the base priority (`shift_joint_priority`);
+/// `edited.joints` is not read.
+pub fn rewrite_animation_upload(data: &[u8], edited: &Animation) -> Result<Vec<u8>, AssetError> {
+    let (
+        original,
+        Layout {
+            length,
+            body: body_offset,
+            joint_priorities,
+        },
+    ) = parse_upload(data)?;
+    if !(-1..=6).contains(&edited.base_priority)
+        || !edited.duration.is_finite()
+        || edited.duration != original.duration
+        || edited.emote_name.len() > 512
+        || edited.emote_name.as_bytes().contains(&0)
+        || ![edited.loop_in, edited.loop_out]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0 && *value <= edited.duration)
+        || ![edited.ease_in, edited.ease_out]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
+        || edited.hand_pose > 14
+    {
+        return Err(AssetError::invalid("animation upload metadata"));
+    }
+
+    let mut bytes = Vec::with_capacity(length + edited.emote_name.len().saturating_sub(original.emote_name.len()));
+    bytes.extend_from_slice(&data[..4]);
+    bytes.extend_from_slice(&edited.base_priority.to_le_bytes());
+    bytes.extend_from_slice(&edited.duration.to_le_bytes());
+    if edited.emote_name == original.emote_name {
+        let emote = &data[12..body_offset];
+        let end = emote
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| AssetError::invalid("animation emote name"))?;
+        bytes.extend_from_slice(&emote[..end]);
+    } else {
+        bytes.extend_from_slice(edited.emote_name.as_bytes());
+    }
+    bytes.push(0);
+    bytes.extend_from_slice(&edited.loop_in.to_le_bytes());
+    bytes.extend_from_slice(&edited.loop_out.to_le_bytes());
+    bytes.extend_from_slice(&(i32::from(edited.looping)).to_le_bytes());
+    bytes.extend_from_slice(&edited.ease_in.to_le_bytes());
+    bytes.extend_from_slice(&edited.ease_out.to_le_bytes());
+    bytes.extend_from_slice(&edited.hand_pose.to_le_bytes());
+    let header = bytes.len();
+    bytes.extend_from_slice(&data[body_offset..length]);
+    for (joint, at) in original.joints.iter().zip(joint_priorities) {
+        let at = header + (at - body_offset);
+        let priority = shift_joint_priority(joint.priority, original.base_priority, edited.base_priority);
+        bytes[at..at + 4].copy_from_slice(&priority.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+/// Where the parts of a native file sit: `length` bytes were read, the joint
+/// block starts at `body`, and each joint's priority is at the offsets of
+/// `joint_priorities`, in joint order.
+struct Layout {
+    length: usize,
+    body: usize,
+    joint_priorities: Vec<usize>,
+}
+
+fn parse_upload(data: &[u8]) -> Result<(Animation, Layout), AssetError> {
     if data.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("animation file"));
     }
     parse(data, true)
 }
 
-/// The animation and the number of bytes it was read from.
-fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
+/// The animation and where its parts sit in `data`.
+fn parse(data: &[u8], upload: bool) -> Result<(Animation, Layout), AssetError> {
     let mut r = ByteReader::new(data);
     let version = r.u16("version")?;
     let sub_version = r.u16("sub_version")?;
@@ -227,17 +327,21 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
     let hand_pose = r.u32("hand_pose")?;
     // LLKeyframeMotion::deserialize accepts finite loop/ease values, including
     // exporter -1 markers when looping is disabled. Bounds are normalized only
-    // for sampling; native uploads keep the original bytes. NUM_HAND_POSES is 14.
+    // for sampling; a native upload writes the normalized values back
+    // (rewrite_animation_upload). NUM_HAND_POSES is 14.
     if upload && hand_pose > 14 {
         return Err(AssetError::invalid("animation hand pose"));
     }
+    let body_offset = r.pos();
     let num_joints = r.u32("num_joints")? as usize;
     if num_joints > MAX_JOINTS || (upload && num_joints > 216) {
         return Err(AssetError::invalid("too many joints"));
     }
     let mut joints = Vec::with_capacity(num_joints);
+    let mut joint_priorities = Vec::with_capacity(num_joints);
     for _ in 0..num_joints {
         let joint_name = cstring(&mut r)?;
+        joint_priorities.push(r.pos());
         let priority = r.i32("joint_priority")?;
         let nrot = r.i32("num_rot_keys")?;
         if nrot < 0 || nrot as usize > MAX_KEYS {
@@ -356,7 +460,14 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
         hand_pose,
         joints,
     };
-    Ok((animation, data.len() - r.remaining()))
+    Ok((
+        animation,
+        Layout {
+            length: data.len() - r.remaining(),
+            body: body_offset,
+            joint_priorities,
+        },
+    ))
 }
 
 /// When a loop ends itself in the Legacy Viewer: LLKeyframeMotion::onUpdate
@@ -366,34 +477,50 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
 /// there (LLKeyframeMotion::deserialize), so a loop-out past the duration,
 /// or a loop-in past it, makes a "loop" play once (#2869). Returns the
 /// elapsed time after which that happens, or `None` for a real loop.
+///
+/// The Legacy Viewer only sees the looped time of its frames, so the loop
+/// ends when a frame falls in the part of the loop that lies past the
+/// duration. A part of a frame or more is met on the first pass; one of
+/// rounding width is practically never met and the animation loops for
+/// good, as walks and runs saved with a loop-out a hair past their duration
+/// do (#3311). `LOOP_END_TOLERANCE` separates the two, whatever our frame
+/// rate.
 fn legacy_loop_end(duration: f32, loop_in: f32, loop_out: f32) -> Option<f32> {
     if duration <= 0.0 {
         return None;
     }
-    if loop_out > duration {
-        // before loop_out the looped time is the elapsed time itself
-        return Some(duration);
-    }
     if loop_out >= loop_in {
-        // wraps inside [loop_in, loop_out) or holds loop_out: never past
-        return None;
+        // looped time in [0, loop_out], the elapsed time itself on the
+        // first pass: past the duration over (duration, loop_out]
+        return (loop_out - duration > LOOP_END_TOLERANCE).then_some(duration);
     }
     // loop_in > loop_out: fmod by a negative span, looped time in
     // [loop_in, 2 loop_in - loop_out)
     let past = duration - loop_in;
     if past < 0.0 {
-        Some(loop_out.max(0.0))
-    } else if past < loop_in - loop_out {
+        // every looped frame is past the duration
+        Some(loop_out.clamp(0.0, duration))
+    } else if (loop_in - loop_out) - past > LOOP_END_TOLERANCE {
         Some((loop_out + past).max(0.0))
     } else {
         None
     }
 }
 
+/// Widest part of a loop past the duration that still loops, in seconds
+/// (`legacy_loop_end`). Exporter rounding stays under it: half a millisecond
+/// for times written to three decimals, far less for float rounding. The
+/// nearest authored case, a loop point one key frame late, is 8 ms at
+/// 120 frames per second.
+const LOOP_END_TOLERANCE: f32 = 0.001;
+
 impl Animation {
     /// Local animation time for an animation started `elapsed` seconds ago.
     /// Port of LLKeyframeMotion::onUpdate; keep the introduction and the
     /// first passage through loop_out. Only key sampling narrows to f32.
+    /// Loop points saved the wrong way round (loop_out before loop_in) loop
+    /// as the Legacy Viewer's fmod makes them: from loop_in, over the length
+    /// between the two, not frozen on loop_out.
     /// A loop that ends itself (`ends_after`) never wraps: its raw loop-out
     /// lies past the duration, so the Legacy Viewer's time runs straight to
     /// the end and, once stopped, holds the last frame (#2869). With
@@ -405,7 +532,8 @@ impl Animation {
         }
         let (a, b) = (f64::from(self.loop_in), f64::from(self.loop_out));
         if self.looping && self.ends_after.is_none() && elapsed > b {
-            if b > a { a + (elapsed - b).rem_euclid(b - a) } else { b }
+            // fmod keeps the sign of the dividend (elapsed - b > 0): `%`
+            if b == a { b } else { a + (elapsed - b) % (b - a) }
         } else {
             elapsed.max(0.0).min(f64::from(self.duration))
         }
@@ -605,6 +733,79 @@ mod tests {
     }
 
     #[test]
+    fn native_upload_metadata_changes_preserve_keys_and_constraints() {
+        let mut bytes = build();
+        let constraint_tail = bytes.len() - 4;
+        bytes.truncate(constraint_tail);
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend([1, 0]);
+        bytes.extend(b"HEAD\0\0\0\0\0\0\0\0\0\0\0\0");
+        bytes.extend([0u8; 12]);
+        bytes.extend(b"GROUND\0\0\0\0\0\0\0\0\0\0");
+        bytes.extend([0u8; 40]);
+
+        let original = parse_animation_upload(&bytes).expect("valid source animation");
+        let mut edited = original.clone();
+        edited.base_priority = 5;
+        edited.emote_name = "Imported motion".into();
+        edited.looping = false;
+        edited.loop_in = 0.25;
+        edited.loop_out = 1.75;
+        edited.ease_in = 0.1;
+        edited.ease_out = 0.2;
+        edited.hand_pose = 4;
+
+        let rewritten = rewrite_animation_upload(&bytes, &edited).expect("metadata is valid");
+        let parsed = parse_animation_upload(&rewritten).expect("rewritten animation remains valid");
+        // The source joint is at 3 like its base: it follows the base to 5,
+        // as LLKeyframeMotion::setPriority moves it, so the motion blends at
+        // the chosen priority in-world.
+        assert_eq!(native_joint_priorities(&bytes, 5).expect("priorities"), [5]);
+        for joint in &mut edited.joints {
+            joint.priority = 5;
+        }
+        assert_eq!(parsed, edited);
+        let mut tracks = original.joints.clone();
+        tracks[0].priority = 5;
+        assert_eq!(parsed.joints, tracks, "only the joint priority changes");
+        assert_eq!(
+            parse_animation_with_constraints(&rewritten).expect("constraints remain valid").1,
+            parse_animation_with_constraints(&bytes).expect("source constraints").1,
+        );
+        assert_eq!(rewrite_animation_upload(&rewritten, &parsed).expect("stable metadata"), rewritten);
+        assert_eq!(rewrite_animation_upload(&bytes, &original).expect("same metadata"), bytes);
+    }
+
+    #[test]
+    fn native_joint_priorities_follow_the_base_priority() {
+        assert_eq!(shift_joint_priority(3, 3, 5), 5);
+        assert_eq!(shift_joint_priority(2, 4, 1), 0, "clamped at LOW_PRIORITY");
+        assert_eq!(shift_joint_priority(5, 3, 6), 6, "clamped at Aurora's top priority");
+        assert_eq!(shift_joint_priority(-1, 3, 6), -1, "USE_MOTION_PRIORITY follows the base");
+        assert_eq!(shift_joint_priority(2, -1, 4), 6, "from a base of USE_MOTION_PRIORITY");
+        assert_eq!(shift_joint_priority(7, 4, 4), 7, "an unchanged base keeps ADDITIVE_PRIORITY");
+
+        // A joint above its base keeps its lead; the shift is always from the
+        // file's values, so 3 → 6 → 3 gives the joint back its own priority.
+        let mut bytes = build();
+        let joint = 13 + 24 + 4 + b"mShoulderLeft\0".len();
+        assert_eq!(&bytes[joint..joint + 4], &3i32.to_le_bytes());
+        bytes[joint..joint + 4].copy_from_slice(&4i32.to_le_bytes());
+        let original = parse_animation_upload(&bytes).expect("joint above its base");
+        assert_eq!(native_joint_priorities(&bytes, 5).expect("priorities"), [6]);
+        let mut edited = original.clone();
+        edited.base_priority = 6;
+        let raised = rewrite_animation_upload(&bytes, &edited).expect("raised");
+        assert_eq!(parse_animation_upload(&raised).expect("raised").joints[0].priority, 6);
+        edited.base_priority = 3;
+        let back = rewrite_animation_upload(&bytes, &edited).expect("back");
+        assert_eq!(back, bytes);
+        edited.base_priority = 0;
+        let lowered = rewrite_animation_upload(&bytes, &edited).expect("lowered");
+        assert_eq!(parse_animation_upload(&lowered).expect("lowered").joints[0].priority, 1);
+    }
+
+    #[test]
     fn native_upload_accepts_finite_exporter_loop_markers() {
         let mut bytes = build();
         bytes[13..17].copy_from_slice(&(-1.0f32).to_le_bytes());
@@ -739,8 +940,10 @@ mod tests {
         assert!((a.local_time(2.0) - 1.0).abs() < 1e-12);
         a.loop_out = a.loop_in;
         assert_eq!(a.local_time(100.0), 0.5);
+        // reversed points: loop_in + fmod(t - loop_out, loop_out - loop_in)
         a.loop_out = 0.0;
-        assert_eq!(a.local_time(100.0), 0.0);
+        assert_eq!(a.local_time(100.0), 0.5);
+        assert!((a.local_time(100.2) - 0.7).abs() < 1e-9);
         a.loop_in = 0.0;
         a.loop_out = 0.000005;
         let span = f64::from(a.loop_out);
@@ -775,6 +978,50 @@ mod tests {
         let a = parse_animation(&data).expect("loop past its duration");
         assert!(a.looping);
         assert_eq!((a.loop_out, a.ends_after), (a.duration, Some(a.duration)));
+    }
+
+    /// A walk or a run saved with its loop-out a hair past its duration
+    /// loops for good: the Legacy Viewer would need a frame inside that
+    /// hair to end it (#3311).
+    #[test]
+    fn a_loop_out_a_hair_past_the_duration_still_loops() {
+        // one float step, then a time an exporter rounded to three decimals
+        for (duration, loop_out) in [(3.75f32, 3.75f32.next_up()), (3.7333, 3.734), (1.56, 1.5605)] {
+            assert_eq!(legacy_loop_end(duration, 0.0, loop_out), None, "{duration}: loop-out {loop_out}");
+            assert_eq!(legacy_loop_end(duration, 0.5, loop_out), None, "{duration}: loop-out {loop_out}");
+        }
+        // a few milliseconds are met within a few passes: plays once
+        assert_eq!(legacy_loop_end(3.75, 0.0, 3.752), Some(3.75));
+        assert_eq!(legacy_loop_end(3.75, 0.0, 3.75 + 1.0 / 120.0), Some(3.75));
+        // reversed points: the same hair past the duration at the far end
+        assert_eq!(legacy_loop_end(4.1667, 2.0835, 0.0), None);
+        assert_eq!(legacy_loop_end(4.1667, 2.09, 0.0), Some(4.1667 - 2.09));
+        // a loop-in past the duration ends on the first wrap, however close
+        assert_eq!(legacy_loop_end(1.0, 1.0f32.next_up(), 0.5), Some(0.5));
+        // the parsed animation wraps at its duration and never ends itself
+        let mut data = build();
+        data[17..21].copy_from_slice(&2.0f32.next_up().to_le_bytes());
+        let a = parse_animation(&data).expect("loop-out a float step past the duration");
+        assert!(a.looping);
+        assert_eq!((a.loop_out, a.ends_after), (a.duration, None));
+        assert!((a.local_time(5.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reversed_loop_points_hold_the_second_half_not_the_first_frame() {
+        // a worn hand pose saved with loop in 2.083 s and loop out 0 (4.167 s
+        // long): the Legacy Viewer plays 2.083..4.167, a held arm, never its
+        // rest pose at 0
+        let mut a = parse_animation(&build()).expect("animation");
+        a.duration = 4.167;
+        a.loop_in = 2.083;
+        a.loop_out = 0.0;
+        for elapsed in [0.01, 1.0, 3.0, 10.0, 1000.0] {
+            let t = a.local_time(elapsed);
+            assert!((2.083..4.167).contains(&t), "{elapsed} s gives {t}");
+        }
+        let (start, end) = (f64::from(a.loop_in), f64::from(a.loop_out));
+        assert!((a.local_time(10.0) - (start + (10.0 - end) % (end - start))).abs() < 1e-9);
     }
 
     #[test]

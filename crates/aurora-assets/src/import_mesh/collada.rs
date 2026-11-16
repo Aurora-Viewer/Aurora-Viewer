@@ -108,8 +108,18 @@ impl FloatSource {
     fn parse(element: &Element) -> Result<Self, AssetError> {
         let array = child(element, "float_array").ok_or_else(|| AssetError::invalid("Collada source has no floats"))?;
         let values = numbers(&array.text())?;
-        if count(array, "count", values.len())? != values.len() {
-            return Err(AssetError::invalid("Collada float count"));
+        // The Legacy Viewer reads the values the array holds
+        // (`domListOfFloats::getCount`, LLDAELoader in
+        // indra/llprimitive/lldaeloader.cpp) and never its count attribute:
+        // some exporters write count="0" on a full bind-pose array. The
+        // accessor check below still refuses an array too short for its use.
+        let declared = count(array, "count", values.len())?;
+        if declared != values.len() {
+            log::warn!(
+                "Collada float_array {:?} declares {declared} values and holds {}; using the values it holds",
+                array.attr("id").unwrap_or_default(),
+                values.len()
+            );
         }
         let accessor = descendant(element, "accessor").ok_or_else(|| AssetError::invalid("Collada source accessor"))?;
         let stride = count(accessor, "stride", 1)?;

@@ -48,7 +48,7 @@ pub fn take_native_key(key: &NativeKey, code: KeyCode, mods: Mods, down: &mut Ha
 #[derive(Clone, Default)]
 struct State {
     shown: Vec<(Id, u64)>,
-    /// Windows outside the frontmost list (the mini-map). Close All only.
+    /// Surfaces outside the frontmost list, such as a script prompt. Close All only.
     extra: Vec<(Id, u64)>,
     target: Option<(Id, u64)>,
     all: bool,
@@ -333,23 +333,23 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_w_closes_registered_extra_surface_without_reply_path() {
-        let mut frames = Frames::new();
+    fn only_close_all_closes_a_registered_script_prompt_without_replying() {
         let id = Id::NULL.with(("script_prompt", 41_u64));
-        let mut closed = false;
-        let all = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
-        frames.run(Vec::new(), |ui| {
-            let ctx = ui.ctx().clone();
-            begin(&ctx);
-            shown_extra(&ctx, id);
-        });
-        frames.run(vec![key(egui::Key::W, all)], |ui| {
-            let ctx = ui.ctx().clone();
-            begin(&ctx);
-            shown_extra(&ctx, id);
-            closed |= take(&ctx, id);
-        });
-        assert!(closed);
+        let command = egui::Modifiers::COMMAND;
+        for (mods, should_close) in [(command, false), (command | egui::Modifiers::SHIFT, true)] {
+            let mut frames = Frames::new();
+            frames.run(Vec::new(), |ui| {
+                begin(ui.ctx());
+                shown_extra(ui.ctx(), id);
+            });
+            let mut closed = false;
+            frames.run(vec![key(egui::Key::W, mods)], |ui| {
+                begin(ui.ctx());
+                shown_extra(ui.ctx(), id);
+                closed |= take(ui.ctx(), id);
+            });
+            assert_eq!(closed, should_close);
+        }
     }
 
     #[test]
@@ -379,41 +379,43 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_w_closes_a_window_ctrl_w_does_not_pick() {
-        let mut frames = Frames::new();
-        let map = Id::unique("map");
-        let mut closed = false;
-        let frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut bool| {
-            frames.run(events, |ui| {
-                let ctx = ui.ctx().clone();
-                begin(&ctx);
-                if take(&ctx, map) {
-                    *closed = true;
-                }
-                shown_extra(&ctx, map);
-            });
+    fn the_real_minimap_closes_only_while_visible_including_in_mouselook() {
+        use crate::ui::widgets::{HideKeep, hide_windows};
+        let world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let p = crate::theme::Theme::default().palette();
+        let cam = crate::ui::minimap::MapCamera {
+            pos: glam::Vec3::ZERO,
+            dir: glam::Vec3::Y,
+            hfov: 1.0,
+            far: 128.0,
         };
-        frame(&mut frames, Vec::new(), &mut closed);
-        frame(&mut frames, vec![key(egui::Key::W, egui::Modifiers::COMMAND)], &mut closed);
-        assert!(!closed, "Ctrl+W leaves the mini-map");
-        // release W, or the next press is a repeat and does not close again
-        frame(
-            &mut frames,
-            vec![egui::Event::Key {
-                key: egui::Key::W,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-            &mut closed,
-        );
-        frame(
-            &mut frames,
-            vec![key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)],
-            &mut closed,
-        );
-        assert!(closed);
+        for keep in [None, Some(HideKeep::Mouselook), Some(HideKeep::Chat), Some(HideKeep::None)] {
+            let visible = matches!(keep, None | Some(HideKeep::Mouselook));
+            for mods in [egui::Modifiers::COMMAND, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT] {
+                let mut frames = Frames::new();
+                let mut map = crate::ui::minimap::MiniMap::default();
+                let mut tiles = crate::ui::map_tiles::MapTiles::new();
+                let mut options = crate::settings::MapSettings::default();
+                let mut open = true;
+                let mut frame = |frames: &mut Frames, events, open: &mut bool| {
+                    let mut key_left = false;
+                    frames.run(events, |ui| {
+                        begin(ui.ctx());
+                        key_left = w_left(ui.ctx());
+                        map.window(ui.ctx(), &p, &world, &mut tiles, &cam, &mut options, open);
+                    });
+                    key_left
+                };
+                frame(&mut frames, Vec::new(), &mut open);
+                if let Some(keep) = keep {
+                    hide_windows(&frames.ctx, true, keep);
+                }
+                frame(&mut frames, Vec::new(), &mut open);
+                let key_left = frame(&mut frames, vec![key(egui::Key::W, mods)], &mut open);
+                assert_eq!(open, !visible, "a hidden map must survive either shortcut");
+                assert_eq!(key_left, !visible, "a hidden map must leave the key for the focused widget");
+            }
+        }
     }
 
     #[test]

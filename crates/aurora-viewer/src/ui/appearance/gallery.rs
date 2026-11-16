@@ -93,7 +93,7 @@ fn outfit_list(inv: &Inventory, id: Uuid) -> Option<Vec<CopyItem>> {
         link.name.clone_from(&item.name);
         true
     });
-    super::items::sort_links(inv, &mut links, false);
+    super::items::sort_links(inv, &mut links);
     (!links.is_empty()).then(|| {
         links
             .into_iter()
@@ -169,227 +169,255 @@ pub(super) fn context_menu(
     actions: &mut Vec<Action>,
     new_parts: bool,
 ) {
-    menu::context_menu(response, p, |ui| {
-        let inv = &world.inventory;
-        let Some(folder) = inv.folders.get(&id) else { return };
-        let worn = super::items::worn_items(world);
-        // LLAppearanceMgr::getCanReplaceCOF / getCanAddToCOF /
-        // getCanRemoveFromCOF: an RLVa lock on the outfit folder greys them.
-        let locks = world.rlva_wear_locks();
-        let locked = |id: Uuid, mut rules: MenuRules| {
-            rules.replace &= locks.folder_allows(id, true);
-            rules.add &= locks.folder_allows(id, true);
-            rules.remove &= locks.folder_allows(id, false);
-            rules
-        };
-        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id).map(|rules| locked(id, rules)) else {
-            return;
-        };
-        let outfits = st.shown_outfits(inv);
-        let selection = st.outfit_selection.ordered(&outfits);
-        let multiple = selection.len() > 1;
-        let all_rules: Option<Vec<_>> = selection
-            .iter()
-            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id).map(|rules| locked(*id, rules)))
-            .collect();
-        let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
-            && selection.iter().all(|id| model::complete(inv, *id));
-        let enabled = |single, test: fn(&MenuRules) -> bool| {
-            if multiple {
-                ready && all_rules.as_ref().is_some_and(|rules| rules.iter().any(test))
-            } else {
-                single
-            }
-        };
-        if menu::item_if(
-            ui,
-            p,
-            "shirt-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
-            enabled(rules.replace, |rule| rule.replace),
-        ) {
-            actions.push(st.wear_selection(&outfits, false));
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "plus",
-            aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
-            enabled(rules.add, |rule| rule.add),
-        ) {
-            actions.push(st.wear_selection(&outfits, true));
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "minus",
-            aurora_i18n::tr!("ui-appearance-gallery-take-off"),
-            enabled(rules.remove, |rule| rule.remove),
-        ) {
-            actions.push(if multiple {
-                Action::RemoveOutfits(selection.clone())
-            } else {
-                Action::RemoveOutfit(id)
-            });
-        }
-        if multiple {
-            if ready {
-                menu::separator(ui, p);
-                super::folders::move_menu(ui, p, inv, st, &selection, actions);
-            }
-            return;
-        }
-        menu::separator(ui, p);
-        // LLOutfitContextMenu's Outfit.Thumbnail
-        if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
-            actions.push(Action::OutfitImage(id));
-        }
-        // the quick way to know an outfit again: no window, no preview (#2716)
-        if menu::item_if(
-            ui,
-            p,
-            "camera-filled",
-            aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
-            rules.folder,
-        ) {
-            actions.push(Action::OutfitSnapshot(id));
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "star-filled",
-            if rules.favorite {
-                aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
-            } else {
-                aurora_i18n::tr!("common-add-to-favorites")
-            },
-            rules.folder,
-        ) {
-            actions.push(Action::Category(id, Update::Favorite(!rules.favorite)));
-        }
-        if rules.current
-            && menu::item_if(
-                ui,
-                p,
-                "edit-filled",
-                aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"),
-                rules.folder,
-            )
-        {
-            st.open(0, true);
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "pencil-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
-            rules.folder,
-        ) {
-            st.gallery.rename = Some((id, folder.info.name.clone()));
-            st.gallery.focus = true;
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "device-floppy-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
-            rules.save,
-        ) {
-            st.gallery.confirm = Some((id, false));
-        }
-        // an Aurora addition, with the groups of My Outfits (#1002)
-        if rules.folder {
-            super::folders::move_menu(ui, p, inv, st, &[id], actions);
-        }
-        menu::separator(ui, p);
-        let list = outfit_list(inv, id);
-        if let Some(items) = &list {
-            for item in items {
-                world.social.avatar_names.want(&item.creator);
-            }
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "clipboard-text-filled",
-            aurora_i18n::tr!("inventory-copy-outfit-list"),
-            list.is_some(),
-        ) && let Some(items) = list
-        {
-            st.gallery.copy = Some(OutfitCopy {
-                session: (world.agent_id, inv.root),
-                items,
-                started: ui.input(|i| i.time),
-            });
-            finish_copy(ui.ctx(), world, st);
-        }
-        if let Some(enabled) = rules.delete
-            && menu::item_if(
-                ui,
-                p,
-                "trash-filled",
-                aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
-                enabled,
-            )
-        {
-            st.gallery.confirm = Some((id, true));
-        }
-        if !new_parts {
-            return;
-        }
-        menu::separator(ui, p);
-        menu::submenu(
-            ui,
-            p,
-            "shirt-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
-            true,
-            |ui| {
-                for label in [
-                    aurora_i18n::tr!("common-new-shirt"),
-                    aurora_i18n::tr!("ui-appearance-gallery-new-pants"),
-                    aurora_i18n::tr!("common-new-shoes"),
-                    aurora_i18n::tr!("common-new-socks"),
-                    aurora_i18n::tr!("common-new-jacket"),
-                    aurora_i18n::tr!("common-new-skirt"),
-                    aurora_i18n::tr!("common-new-gloves"),
-                    aurora_i18n::tr!("ui-appearance-gallery-new-t-shirt"),
-                    aurora_i18n::tr!("ui-appearance-gallery-new-underwear"),
-                    aurora_i18n::tr!("ui-appearance-gallery-new-alpha-layer"),
-                ] {
-                    menu::todo(ui, p, "shirt-filled", label);
-                }
-                // created, worn, then edited (wear_and_edit_cb)
-                if menu::item_if(
-                    ui,
-                    p,
-                    "shirt-filled",
-                    aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
-                    st.pending.is_none(),
-                ) {
-                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::NewPhysics);
-                }
-                menu::todo(ui, p, "shirt-filled", aurora_i18n::tr!("common-new-tattoo"));
-            },
-        );
-        menu::submenu(
-            ui,
-            p,
-            "man-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
-            true,
-            |ui| {
-                for label in [
-                    aurora_i18n::tr!("common-new-shape"),
-                    aurora_i18n::tr!("common-new-skin"),
-                    aurora_i18n::tr!("common-new-hair"),
-                    aurora_i18n::tr!("common-new-eyes"),
-                ] {
-                    menu::todo(ui, p, "man-filled", label);
-                }
-            },
-        );
+    menu::context_menu(response, p, |ui| menu_body(ui, p, world, st, id, actions, new_parts));
+}
+
+/// The same menu opened by a click on the showcase preview's "More
+/// actions" button.
+pub(super) fn dropdown(response: &egui::Response, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>) {
+    menu::dropdown(response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        menu_body(ui, p, world, st, id, actions, true);
     });
+}
+
+/// Whether the outfit's list can be copied now (its items loaded).
+pub(super) fn can_copy_list(inv: &Inventory, id: Uuid) -> bool {
+    outfit_list(inv, id).is_some()
+}
+
+/// "Copy outfit list to clipboard" of the outfit `id`: the names and
+/// creators of its items, once their names are known (`finish_copy`).
+pub(super) fn copy_list(ctx: &egui::Context, world: &World, st: &mut AppearanceUi, id: Uuid) {
+    let inv = &world.inventory;
+    if let Some(items) = outfit_list(inv, id) {
+        for item in &items {
+            world.social.avatar_names.want(&item.creator);
+        }
+        st.gallery.copy = Some(OutfitCopy {
+            session: (world.agent_id, inv.root),
+            items,
+            started: ctx.input(|i| i.time),
+        });
+        finish_copy(ctx, world, st);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>, new_parts: bool) {
+    let inv = &world.inventory;
+    let Some(folder) = inv.folders.get(&id) else { return };
+    let worn = super::items::worn_items(world);
+    // LLAppearanceMgr::getCanReplaceCOF / getCanAddToCOF /
+    // getCanRemoveFromCOF: an RLVa lock on the outfit folder greys them.
+    let locks = world.rlva_wear_locks();
+    let locked = |id: Uuid, mut rules: MenuRules| {
+        rules.replace &= locks.folder_allows(id, true);
+        rules.add &= locks.folder_allows(id, true);
+        rules.remove &= locks.folder_allows(id, false);
+        rules
+    };
+    let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id).map(|rules| locked(id, rules)) else {
+        return;
+    };
+    let outfits = st.shown_outfits(inv);
+    let selection = st.outfit_selection.ordered(&outfits);
+    let multiple = selection.len() > 1;
+    let all_rules: Option<Vec<_>> = selection
+        .iter()
+        .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id).map(|rules| locked(*id, rules)))
+        .collect();
+    let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
+        && selection.iter().all(|id| model::complete(inv, *id));
+    let enabled = |single, test: fn(&MenuRules) -> bool| {
+        if multiple {
+            ready && all_rules.as_ref().is_some_and(|rules| rules.iter().any(test))
+        } else {
+            single
+        }
+    };
+    if menu::item_if(
+        ui,
+        p,
+        "shirt-filled",
+        aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
+        enabled(rules.replace, |rule| rule.replace),
+    ) {
+        actions.push(st.wear_selection(&outfits, false));
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "plus",
+        aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
+        enabled(rules.add, |rule| rule.add),
+    ) {
+        actions.push(st.wear_selection(&outfits, true));
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "minus",
+        aurora_i18n::tr!("ui-appearance-gallery-take-off"),
+        enabled(rules.remove, |rule| rule.remove),
+    ) {
+        actions.push(if multiple {
+            Action::RemoveOutfits(selection.clone())
+        } else {
+            Action::RemoveOutfit(id)
+        });
+    }
+    if multiple {
+        if ready {
+            menu::separator(ui, p);
+            super::folders::move_menu(ui, p, inv, st, &selection, actions);
+        }
+        return;
+    }
+    menu::separator(ui, p);
+    // LLOutfitContextMenu's Outfit.Thumbnail
+    if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
+        actions.push(Action::OutfitImage(id));
+    }
+    // the quick way to know an outfit again: no window, no preview (#2716)
+    if menu::item_if(
+        ui,
+        p,
+        "camera-filled",
+        aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
+        rules.folder,
+    ) {
+        actions.push(Action::OutfitSnapshot(id));
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "star-filled",
+        if rules.favorite {
+            aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
+        } else {
+            aurora_i18n::tr!("common-add-to-favorites")
+        },
+        rules.folder,
+    ) {
+        actions.push(Action::Category(id, Update::Favorite(!rules.favorite)));
+    }
+    if rules.current
+        && menu::item_if(
+            ui,
+            p,
+            "edit-filled",
+            aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"),
+            rules.folder,
+        )
+    {
+        // back from editing, the gallery or the list it came from
+        st.open(st.tab, true);
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "pencil-filled",
+        aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
+        rules.folder,
+    ) {
+        st.gallery.rename = Some((id, folder.info.name.clone()));
+        st.gallery.focus = true;
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "device-floppy-filled",
+        aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+        rules.save,
+    ) {
+        st.gallery.confirm = Some((id, false));
+    }
+    // an Aurora addition, with the groups of My Outfits (#1002)
+    if rules.folder {
+        super::folders::move_menu(ui, p, inv, st, &[id], actions);
+    }
+    menu::separator(ui, p);
+    let list = outfit_list(inv, id);
+    if let Some(items) = &list {
+        for item in items {
+            world.social.avatar_names.want(&item.creator);
+        }
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "clipboard-text-filled",
+        aurora_i18n::tr!("inventory-copy-outfit-list"),
+        list.is_some(),
+    ) {
+        copy_list(ui.ctx(), world, st, id);
+    }
+    if let Some(enabled) = rules.delete
+        && menu::item_if(
+            ui,
+            p,
+            "trash-filled",
+            aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
+            enabled,
+        )
+    {
+        st.gallery.confirm = Some((id, true));
+    }
+    if !new_parts {
+        return;
+    }
+    menu::separator(ui, p);
+    menu::submenu(
+        ui,
+        p,
+        "shirt-filled",
+        aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
+        true,
+        |ui| {
+            for label in [
+                aurora_i18n::tr!("common-new-shirt"),
+                aurora_i18n::tr!("ui-appearance-gallery-new-pants"),
+                aurora_i18n::tr!("common-new-shoes"),
+                aurora_i18n::tr!("common-new-socks"),
+                aurora_i18n::tr!("common-new-jacket"),
+                aurora_i18n::tr!("common-new-skirt"),
+                aurora_i18n::tr!("common-new-gloves"),
+                aurora_i18n::tr!("ui-appearance-gallery-new-t-shirt"),
+                aurora_i18n::tr!("ui-appearance-gallery-new-underwear"),
+                aurora_i18n::tr!("ui-appearance-gallery-new-alpha-layer"),
+            ] {
+                menu::todo(ui, p, "shirt-filled", label);
+            }
+            // created, worn, then edited (wear_and_edit_cb)
+            if menu::item_if(
+                ui,
+                p,
+                "shirt-filled",
+                aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
+                st.pending.is_none(),
+            ) {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::NewPhysics);
+            }
+            menu::todo(ui, p, "shirt-filled", aurora_i18n::tr!("common-new-tattoo"));
+        },
+    );
+    menu::submenu(
+        ui,
+        p,
+        "man-filled",
+        aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
+        true,
+        |ui| {
+            for label in [
+                aurora_i18n::tr!("common-new-shape"),
+                aurora_i18n::tr!("common-new-skin"),
+                aurora_i18n::tr!("common-new-hair"),
+                aurora_i18n::tr!("common-new-eyes"),
+            ] {
+                menu::todo(ui, p, "man-filled", label);
+            }
+        },
+    );
 }
 
 pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
