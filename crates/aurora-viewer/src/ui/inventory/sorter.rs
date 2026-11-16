@@ -76,9 +76,11 @@ enum Pick {
 struct Picker {
     pick: Pick,
     filter: String,
-    /// Every eligible folder and its path, built once per inventory change.
-    rows: Vec<(Uuid, String)>,
+    /// Every eligible folder, its path and the path in lowercase, built
+    /// again after an inventory change at most once a second.
+    rows: Vec<(Uuid, String, String)>,
     generation: u64,
+    built: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -537,6 +539,10 @@ struct TrashJob {
     /// Since when the batch on its way has been taken and its delete still
     /// pending: a delete that never ends does not hold the run forever.
     taken_at: Option<Instant>,
+    /// The request that took the batch on its way, and whether it was
+    /// answered (`finish_sorter`).
+    request: Option<Uuid>,
+    answered: bool,
 }
 
 impl TrashJob {
@@ -554,6 +560,8 @@ impl TrashJob {
             unsure_seen: None,
             run: None,
             taken_at: None,
+            request: None,
+            answered: false,
         }
     }
 }
@@ -1278,13 +1286,39 @@ impl InventoryUi {
             }
             ours
         }
-        claim(&mut self.sorter, request, change) || self.windows.iter_mut().any(|w| claim(&mut w.state.sorter, request, change))
+        // a Clean up Trash batch: the run's own request, matched by its first
+        // entry like a sort's
+        fn claim_trash(state: &mut State, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
+            let Some(trash) = state.trash.as_mut() else { return false };
+            let Some(first) = trash.in_flight.as_ref().and_then(|(batch, _, _)| batch.first().map(|(id, _)| *id)) else {
+                return false;
+            };
+            let ours = trash.request.is_none()
+                && change
+                    .operations
+                    .iter()
+                    .any(|op| matches!(op, aurora_net::inventory::operations::Operation::Patch { id, .. } if *id == first));
+            if ours {
+                trash.request = Some(request);
+                trash.answered = false;
+            }
+            ours
+        }
+        claim(&mut self.sorter, request, change)
+            || self.windows.iter_mut().any(|w| claim(&mut w.state.sorter, request, change))
+            || claim_trash(&mut self.sorter, request, change)
+            || self.windows.iter_mut().any(|w| claim_trash(&mut w.state.sorter, request, change))
     }
 
     /// The result of `request`: completes the sorter batch that took it.
     /// `unread`: moves of the batch whose place the server's answer does not
     /// give; None (a failed request) is the whole batch.
     pub(crate) fn finish_sorter(&mut self, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
+        for state in std::iter::once(&mut self.sorter).chain(self.windows.iter_mut().map(|w| &mut w.state.sorter)) {
+            if let Some(trash) = state.trash.as_mut().filter(|t| t.request == Some(request)) {
+                trash.answered = true;
+            }
+        }
         fn finish(state: &mut State, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
             let ours = state
                 .job
@@ -1459,40 +1493,44 @@ pub(super) fn show(
         // a folder excluded during the run: its moves still queued stay
         // (the next batch's are checked, a few hundred at most); a folder
         // listed in My folders since, or holding one, is not moved whole
-        if !prefs.sorter.excluded.is_empty() || !prefs.sorter.own.is_empty() {
-            let own = sorter::own_folders(inv, &prefs.sorter);
-            // a folder holding an excluded one stays too: it would carry it
-            let base = job.base_id;
-            let out: Vec<usize> = (0..job.queue.len().min(sorter::BATCH * 2))
-                .filter(|&i| {
-                    let m = &job.queue[i];
-                    // (into an excluded folder neither: a rule's, or one on
-                    // the way below the sort folder)
-                    let into_excluded = match &m.to {
-                        sorter::Dest::Folder(t) => prefs.sorter.excludes(inv, *t),
-                        sorter::Dest::Path(p) => base.is_some_and(|b| sorter::path_excluded(inv, b, p, &prefs.sorter)),
-                        sorter::Dest::PreTrash => false,
-                    };
-                    // (a snapshot's restore honours exclusions like a sort)
-                    let sorts = !m.restore || m.snapshot;
-                    !m.restore && m.folder && own.contains(&m.id)
-                        || sorts && into_excluded
-                        || sorts
-                            && (prefs.sorter.excludes(inv, m.id)
-                                || m.folder
-                                    && prefs
-                                        .sorter
-                                        .excluded
-                                        .iter()
-                                        .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
-                })
-                .collect();
-            for &i in out.iter().rev() {
-                job.queue.remove(i);
-            }
-            job.skipped += out.len();
+        // (the sort folder a first run makes: known once it exists, so an
+        // exclusion below it counts)
+        if job.base_id.is_none() {
+            job.base_id = sorter::child(inv, inv.root, &job.base);
         }
-        match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped) {
+        let checks = !prefs.sorter.excluded.is_empty() || !prefs.sorter.own.is_empty();
+        let own = if checks {
+            sorter::own_folders(inv, &prefs.sorter)
+        } else {
+            Default::default()
+        };
+        let base = job.base_id;
+        let options = &prefs.sorter;
+        // a folder holding an excluded one stays too: it would carry it
+        let refused = |inv: &Inventory, m: &Move| {
+            if !checks {
+                return false;
+            }
+            // (into an excluded folder neither: a rule's, or one on the way
+            // below the sort folder)
+            let into_excluded = match &m.to {
+                sorter::Dest::Folder(t) => options.excludes(inv, *t),
+                sorter::Dest::Path(p) => base.is_some_and(|b| sorter::path_excluded(inv, b, p, options)),
+                sorter::Dest::PreTrash => false,
+            };
+            // (a snapshot's restore honours exclusions like a sort)
+            let sorts = !m.restore || m.snapshot;
+            !m.restore && m.folder && own.contains(&m.id)
+                || sorts && into_excluded
+                || sorts
+                    && (options.excludes(inv, m.id)
+                        || m.folder
+                            && options
+                                .excluded
+                                .iter()
+                                .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
+        };
+        match sorter::step_with(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped, &refused) {
             Step::Change(change, moves) => {
                 job.in_flight = Some(InFlight {
                     moves,
@@ -1641,18 +1679,22 @@ pub(super) fn show(
         // changes, never every frame.
         // (not looked at while a run goes: nothing is planned then)
         Source::Saved(..) if busy => true,
+        // (once loaded, it stays so: a 400,000-move run is not read again at
+        // every change)
         Source::Saved(moves, _) => match state.source_loaded {
-            Some((generation, loaded)) if generation == inv.generation => loaded,
+            Some((generation, loaded)) if generation == inv.generation || loaded => loaded,
             _ => {
-                let mut read: HashSet<Uuid> = moves.iter().map(|m| m.from).collect();
                 // a run's move in or of a folder excluded now is kept: its
                 // folders are never read (an Undo puts back what it moved)
                 let excluded =
                     |m: &Move| !(m.restore && !m.snapshot) && (prefs.sorter.excludes(inv, m.id) || prefs.sorter.excludes(inv, m.from));
-                read.retain(|from| moves.iter().any(|m| m.from == *from && !excluded(m)));
-                for m in moves.iter().filter(|m| m.folder && !excluded(m)) {
-                    let undo = m.restore && !m.snapshot;
-                    read.extend(sorter::unloaded_below(inv, m.id, if undo { &[] } else { &prefs.sorter.excluded }));
+                let mut read: HashSet<Uuid> = HashSet::new();
+                for m in moves.iter().filter(|m| !excluded(m)) {
+                    read.insert(m.from);
+                    if m.folder {
+                        let undo = m.restore && !m.snapshot;
+                        read.extend(sorter::unloaded_below(inv, m.id, if undo { &[] } else { &prefs.sorter.excluded }));
+                    }
                 }
                 let loaded = ask_for(inv, read);
                 state.source_loaded = Some((inv.generation, loaded));
@@ -2404,8 +2446,7 @@ fn send_trash_batch(
     actions: &mut Vec<InvAction>,
     free: bool,
 ) {
-    let deleting = st.pending_delete.is_some();
-    let free = free && !deleting && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
+    let free = free && st.pending_delete.is_none() && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
     let now = Instant::now();
     if st.sorter.trash.as_ref().is_some_and(|trash| !trash.begun) {
         // a Trash run starts: its journal, and a snapshot of the layout first
@@ -2421,8 +2462,10 @@ fn send_trash_batch(
     // over; never taken (another change went first), back in the queue.
     if let Some((batch, frames, taken)) = trash.in_flight.as_mut() {
         *frames += 1;
-        *taken |= deleting;
-        let stuck = *taken && deleting && trash.taken_at.get_or_insert(now).elapsed() > 4 * TRASH_SHOW_LIMIT;
+        *taken |= trash.request.is_some();
+        // (answered: the request's reply came, `finish_sorter`)
+        let deleting = *taken && !trash.answered;
+        let stuck = deleting && trash.taken_at.get_or_insert(now).elapsed() > 4 * TRASH_SHOW_LIMIT;
         if stuck {
             log::warn!(
                 "auto-sort: a Trash batch's delete did not end in {} s",
@@ -2431,6 +2474,8 @@ fn send_trash_batch(
         }
         if *taken && !deleting || stuck {
             trash.taken_at = None;
+            trash.request = None;
+            trash.answered = false;
             // what the delete really did is read from the inventory: each
             // entry counts once it shows in the Trash (below), a little
             // after the request if need be
@@ -2525,9 +2570,11 @@ fn send_trash_batch(
     // saw it, nowhere hands-off, nothing worn or locked. What changed is
     // skipped and reported, never sent.
     let holds_worn = crate::world::inventory::actions::worn_ancestors(inv, worn);
+    // (a folder listed in My folders since, or holding one, never goes whole)
+    let own = sorter::own_folders(inv, &prefs.sorter);
     let batch: Vec<Uuid> = picked
         .iter()
-        .filter(|(id, from)| sorter::trash_ready(inv, *id, *from, &prefs.sorter, &prefs.protected, &holds_worn))
+        .filter(|(id, from)| !own.contains(id) && sorter::trash_ready(inv, *id, *from, &prefs.sorter, &prefs.protected, &holds_worn))
         .map(|(id, _)| *id)
         .collect();
     trash.skipped += picked.len() - batch.len();
@@ -2539,7 +2586,9 @@ fn send_trash_batch(
         .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
         .and_then(|trash| rules::move_selection(inv, &batch, trash, &prefs.protected, worn));
     match change {
-        Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::new(inv, st, &batch, change)))),
+        // the ordinary delete path, never tied to the window's selection: a
+        // long Clean up leaves the user's selection and scroll alone
+        Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::new(inv, st, &batch, change).detached()))),
         Err(reason) => {
             // this batch cannot go: counted as failed, the run goes on to
             // its summary
@@ -3274,11 +3323,7 @@ fn cleanup_tab(
     }
     // what goes: all rows but the few unticked (never a pass over every row
     // per frame)
-    let kept: Vec<&sorter::CleanupRow> = if skipped.is_empty() {
-        Vec::new()
-    } else {
-        plan.rows.iter().filter(|r| skipped.contains(&r.id)).collect()
-    };
+    let kept: Vec<&sorter::CleanupRow> = plan.rows_of(skipped).collect();
     let going_count = plan.rows.len() - kept.len();
     let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
     ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())).strong());
@@ -4081,6 +4126,7 @@ impl Picker {
             filter: String::new(),
             rows: Vec::new(),
             generation: u64::MAX,
+            built: None,
         }
     }
 }
@@ -4090,25 +4136,31 @@ impl Picker {
 fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     let state = &mut st.sorter;
     let Some(picker) = state.picker.as_mut() else { return };
-    if picker.generation != inv.generation {
+    if picker.generation != inv.generation && picker.built.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1)) {
         let pick = picker.pick;
         let own_ok = sorter::own_check(inv, &prefs.sorter);
-        let mut rows: Vec<(Uuid, String)> = inv
+        let target_ok = sorter::target_check(inv);
+        let mut rows: Vec<(Uuid, String, String)> = inv
             .folders
             .values()
             .filter(|f| !f.library)
             .map(|f| f.info.id)
             .filter(|id| match pick {
                 Pick::Source => sorter::source_allowed(inv, *id),
-                Pick::Rule(_) => sorter::target_allowed(inv, *id) && !prefs.sorter.excludes(inv, *id),
+                Pick::Rule(_) => target_ok(*id) && !prefs.sorter.excludes(inv, *id),
                 Pick::Exclude => *id != inv.root && !sorter::untouchable(inv, *id),
                 Pick::Own => own_ok(*id),
             })
-            .map(|id| (id, sorter::folder_path(inv, id)))
+            .map(|id| {
+                let path = sorter::folder_path(inv, id);
+                let lower = path.to_lowercase();
+                (id, path, lower)
+            })
             .collect();
-        rows.sort_by_cached_key(|(_, path)| crate::natural_order::key(path));
+        rows.sort_by_cached_key(|(_, path, _)| crate::natural_order::key(path));
         picker.rows = rows;
         picker.generation = inv.generation;
+        picker.built = Some(Instant::now());
     }
     let mut open = true;
     let mut chosen = None;
@@ -4134,10 +4186,10 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
         ui.add_space(4.0);
         let query = picker.filter.trim().to_lowercase();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for (id, path) in picker
+            for (id, path, _) in picker
                 .rows
                 .iter()
-                .filter(|(_, path)| query.is_empty() || path.to_lowercase().contains(&query))
+                .filter(|(_, _, lower)| query.is_empty() || lower.contains(&query))
                 .take(400)
             {
                 // the ink of the Move to picker's rows, not the accent:

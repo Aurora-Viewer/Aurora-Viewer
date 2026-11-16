@@ -1065,6 +1065,18 @@ fn in_default_folder(inv: &Inventory, id: Uuid) -> bool {
 
 /// `id` is the Pre-Trash folder or inside it: what is there is on its way
 /// to the Trash, never a place to file things.
+/// [`target_allowed`] for many folders: the Pre-Trash folders are found
+/// once (the picker asks for every folder).
+pub fn target_check(inv: &Inventory) -> impl Fn(Uuid) -> bool + '_ {
+    let waiting = pre_trash_folders(inv);
+    move |id| {
+        folder_open(inv, id)
+            && actions::destination(inv, id)
+            && !waiting.iter().any(|p| id == *p || actions::under(inv, id, *p))
+            && !in_default_folder(inv, id)
+    }
+}
+
 fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
     pre_trash_folders(inv).iter().any(|p| id == *p || actions::under(inv, id, *p))
 }
@@ -2925,6 +2937,10 @@ pub struct CleanupPlan {
     pub cutoff: i64,
     /// Folders not loaded yet: the window asks for them, the list fills in.
     pub unfetched: Vec<Uuid>,
+    /// Where each group ends in `rows`, worked out once with the plan.
+    pub ends: Vec<usize>,
+    /// Each row's place in `rows`, by id.
+    pub index: HashMap<Uuid, usize>,
 }
 
 impl CleanupRow {
@@ -2943,7 +2959,13 @@ impl CleanupRow {
 impl CleanupPlan {
     /// The rows by group, each one slice of `rows`.
     pub fn groups(&self) -> impl Iterator<Item = &[CleanupRow]> {
-        self.rows.chunk_by(|a, b| a.group() == b.group())
+        let starts = std::iter::once(0).chain(self.ends.iter().copied());
+        starts.zip(self.ends.iter().copied()).map(|(a, b)| &self.rows[a..b])
+    }
+
+    /// The rows of `ids` (the few unticked), without a pass over every row.
+    pub fn rows_of<'a>(&'a self, ids: &'a HashSet<Uuid>) -> impl Iterator<Item = &'a CleanupRow> + 'a {
+        ids.iter().filter_map(|id| self.index.get(id).and_then(|i| self.rows.get(*i)))
     }
 
     /// The moves to Pre-Trash of the rows not in `skipped`.
@@ -3111,6 +3133,10 @@ pub fn plan_cleanup(
             .then_with(|| a.name.cmp(&b.name))
     });
     plan.items = plan.rows.iter().map(|r| r.items).sum();
+    plan.ends = (1..=plan.rows.len())
+        .filter(|&i| i == plan.rows.len() || plan.rows[i].group() != plan.rows[i - 1].group())
+        .collect();
+    plan.index = plan.rows.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
     plan
 }
 
@@ -3376,6 +3402,7 @@ pub enum Step {
 /// reused; a missing one is created in the same mutation under a new id
 /// that later operations name. Entries that can no longer move (worn,
 /// deleted, moved away from its folder meanwhile) are dropped.
+#[cfg(test)]
 pub fn step(
     inv: &mut Inventory,
     base_name: &str,
@@ -3383,6 +3410,21 @@ pub fn step(
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
     skipped: &mut usize,
+) -> Step {
+    step_with(inv, base_name, queue, protected, worn, skipped, &|_, _| false)
+}
+
+/// [`step`], with what the window refuses since the run was planned (a
+/// folder excluded, or listed in My folders, during the run): every move
+/// the batch takes is checked, however many stale ones it skips first.
+pub fn step_with(
+    inv: &mut Inventory,
+    base_name: &str,
+    queue: &mut VecDeque<Move>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    skipped: &mut usize,
+    refused: &dyn Fn(&Inventory, &Move) -> bool,
 ) -> Step {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut change = Mutation::default();
@@ -3447,7 +3489,7 @@ pub fn step(
             } else {
                 movable(inv, next.id, protected, &holds_worn)
             };
-        if !still_here {
+        if !still_here || refused(inv, next) {
             queue.pop_front();
             *skipped += 1;
             continue;

@@ -2409,6 +2409,20 @@ pub fn show(
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+            // (its Auto-sort run goes on to its end, its window too)
+            if w.state.sorter.active() {
+                sorter::show(
+                    ctx,
+                    p,
+                    &mut world.inventory,
+                    &mut w.state,
+                    prefs,
+                    &sorter_worn,
+                    facts.agent,
+                    sorter_hold,
+                    &mut actions,
+                );
+            }
             continue;
         }
         w.state.ui_id = w.id;

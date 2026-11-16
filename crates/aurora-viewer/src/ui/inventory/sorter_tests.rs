@@ -385,6 +385,8 @@ fn a_trash_batch_counts_what_reached_the_trash() {
         3,
         true,
     ));
+    trash.request = Some(Uuid::from_u128(77));
+    trash.answered = true;
     st.sorter.trash = Some(trash);
     let prefs = InventoryPreferences::default();
     let mut actions = Vec::new();
@@ -550,4 +552,32 @@ fn a_trash_batch_is_never_sent_twice() {
     assert_eq!(trash.unsure.len(), 1, "waited for, not put back");
     assert_eq!(trash.queue.len(), 1, "the next batch waits");
     assert!(actions.is_empty(), "nothing sent again");
+}
+
+/// A Clean up Trash batch is its own request: claimed by its first entry,
+/// answered by its reply, and never tied to a window's selection.
+#[test]
+fn a_trash_batch_is_tracked_by_its_own_request() {
+    let mut st = InventoryUi::default();
+    let mut trash = TrashJob::new(Vec::new());
+    trash.in_flight = Some((vec![(Uuid::from_u128(9000), Uuid::from_u128(2))], 0, false));
+    st.sorter.trash = Some(trash);
+    let change = aurora_net::inventory::operations::Mutation {
+        operations: vec![aurora_net::inventory::operations::Operation::Patch {
+            id: Uuid::from_u128(9000),
+            folder: false,
+            body: aurora_llsd::llsd_map! { "parent_id" => Uuid::from_u128(14) },
+        }],
+        ..Default::default()
+    };
+    let request = Uuid::from_u128(77);
+    assert!(st.claim_sorter_request(request, &change));
+    st.finish_sorter(request, None, Some(&[]));
+    let trash = st.sorter.trash.as_ref().expect("the job goes on");
+    assert_eq!((trash.request, trash.answered), (Some(request), true));
+    // the delete follows no window
+    let inv = Inventory::default();
+    let deletion = super::super::DeleteRequest::new(&inv, &st, &[Uuid::from_u128(9000)], change).detached();
+    st.begin_delete(request, deletion.selection);
+    assert!(st.pending_delete.is_none(), "the window's selection is left alone");
 }
