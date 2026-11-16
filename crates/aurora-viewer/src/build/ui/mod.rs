@@ -315,7 +315,7 @@ pub struct FloaterState {
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
-const UUID_COPY_FEEDBACK_SECONDS: f64 = 1.6;
+const UUID_COPY_FEEDBACK_SECONDS: f64 = 0.8;
 
 /// The header shows a confirmation briefly; a second click restarts it.
 fn uuid_copy_feedback(copied: Option<(f64, usize)>, now: f64) -> Option<usize> {
@@ -908,8 +908,8 @@ mod copy_feedback_tests {
         assert_eq!(uuid_copy_feedback(None, 10.0), None);
         assert_eq!(uuid_copy_feedback(Some((10.0, 0)), 10.0), None);
         assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 10.0), Some(1));
-        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 11.5), Some(3));
-        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 11.7), None);
+        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 10.5), Some(3));
+        assert_eq!(uuid_copy_feedback(Some((10.0, 3)), 10.9), None);
         assert_eq!(uuid_copy_feedback(Some((10.0, 1)), 9.9), None);
     }
 }
