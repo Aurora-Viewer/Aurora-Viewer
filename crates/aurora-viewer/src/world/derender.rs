@@ -180,6 +180,16 @@ pub fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The lists whose write was refused: tried again (`save_retry`), once more
+/// at exit, and read from here by a login meanwhile.
+/// FSAssetBlacklist::saveBlacklist writes once and warns.
+static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("aurora-asset-blacklist", "asset blacklist");
+
+/// The viewer closing: a list still owed is tried once more.
+pub fn save_before_exit() {
+    OWED.finish();
+}
+
 impl Derender {
     /// FSAssetBlacklist::loadBlacklist: the account's permanent entries.
     pub fn load(path: PathBuf) -> Self {
@@ -187,7 +197,8 @@ impl Derender {
             path: Some(path.clone()),
             ..Derender::default()
         };
-        let bytes = match std::fs::read(&path) {
+        // a list whose last write was refused is read from memory
+        let bytes = match OWED.owed(&path).map_or_else(|| std::fs::read(&path), Ok) {
             Ok(bytes) => bytes,
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound {
@@ -261,11 +272,8 @@ impl Derender {
             data.insert("asset_permanent".into(), Llsd::from(true));
             map.insert(mask(*id).to_string(), Llsd::Map(data));
         }
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = crate::atomic_file::write(path, &aurora_llsd::to_xml(&Llsd::Map(map))) {
-            log::warn!("asset blacklist not saved: {e}");
+        if let Err(e) = OWED.write(path, aurora_llsd::to_xml(&Llsd::Map(map))) {
+            log::warn!("asset blacklist not saved ({e}); kept, tried again later");
         }
     }
 

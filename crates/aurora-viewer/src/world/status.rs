@@ -349,13 +349,20 @@ impl World {
         });
         if on {
             self.status.away_since = Some(Instant::now());
-            if self.status.cfg.sit_when_away && !self.agent.is_sitting() {
+            // LLAgent::setAFK (llagent.cpp): no sit under @sit, so nothing
+            // is asked that the send would refuse with a notice
+            if self.status.cfg.sit_when_away && !self.agent.is_sitting() && !self.rlva.has("sit") {
                 self.groups.out.push(NetCommand::OneShotControl(control::SIT_ON_GROUND));
                 self.status.afk_sitting = true;
             }
         } else {
             self.status.away_since = None;
-            if std::mem::take(&mut self.status.afk_sitting) && self.status.cfg.sit_when_away && self.agent.ground_sit {
+            // LLAgent::clearAFK: the avatar stays seated under @unsit
+            if std::mem::take(&mut self.status.afk_sitting)
+                && self.status.cfg.sit_when_away
+                && self.agent.ground_sit
+                && !self.rlva.has("unsit")
+            {
                 self.groups.out.push(NetCommand::OneShotControl(control::STAND_UP));
             }
         }

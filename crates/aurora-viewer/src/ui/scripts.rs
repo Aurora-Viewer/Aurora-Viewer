@@ -69,6 +69,8 @@ struct PendingSave {
 
 pub struct Editor {
     pub target: ScriptTarget,
+    /// Inventory list that opened this editor, if any.
+    pub(crate) inventory_owner: Option<egui::Id>,
     pub name: String,
     pub source: String,
     highlighter: syntax::Highlighter,
@@ -202,6 +204,12 @@ impl Editors {
     /// `backup::INTERVAL`, off the frame thread.
     pub fn back_up(&mut self) {
         self.back_up_now(false);
+    }
+
+    /// The viewer closing: as [`Self::back_up`], and a copy whose last
+    /// write was refused is tried again now rather than at the interval.
+    pub fn back_up_before_exit(&mut self) {
+        self.back_up_now(backup::any_refused());
     }
 
     fn back_up_now(&mut self, force: bool) {
@@ -498,6 +506,7 @@ impl Editors {
         let request = can_read.then(Uuid::new_v4);
         self.documents.push(Editor {
             target,
+            inventory_owner: None,
             name,
             source: String::new(),
             highlighter: syntax::Highlighter::default(),
@@ -855,7 +864,14 @@ impl Editors {
                 }
             }
         }
-        self.documents.retain(|e| !e.closed);
+        self.documents.retain(|e| {
+            if e.closed
+                && let Some(owner) = e.inventory_owner
+            {
+                crate::ui::inventory::return_focus_to(ctx, owner);
+            }
+            !e.closed
+        });
         focus::find(ctx, &mut self.documents, &mut self.panels.search);
         // Draw the singleton after every editor has handled its commands. A
         // search opened in a later document must not also draw on the old one.

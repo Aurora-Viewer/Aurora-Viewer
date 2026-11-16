@@ -3,10 +3,12 @@
 //! (indra/newview/fslslbridge.cpp, originally LGPL 2.1).
 use super::{World, inventory::FetchState};
 use aurora_net::bridge::{Ack, Command, Endpoint, Motion};
-use aurora_net::build::{BuildCmd, TaskItem, perm};
+use aurora_net::build::{BuildCmd, TaskItem};
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
-use aurora_net::scripts::{ScriptOptions, ScriptTarget};
-use aurora_net::{AttachRequest, ChatMessage, ChatSourceType, ChatType, NetCommand, NetEvent};
+use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand, NetEvent};
+// (the tests build their own requests and uploads)
+#[cfg(test)]
+use aurora_net::{AttachRequest, scripts::ScriptTarget};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -16,6 +18,9 @@ pub const FOLDER: &str = "#Aurora";
 pub const SUBFOLDER: &str = "Aurora Bridge";
 const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
+/// Center 2, where both viewers wear their bridge (FS_BRIDGE_POINT,
+/// fslslbridge.h).
+pub(crate) const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
 const VERSION: &str = "1.41";
@@ -37,7 +42,8 @@ const LEGACY_DISCOVERY_CHANNEL: i32 = -184735219;
 /// with its old version and gets updated well before its own 60 s detach.
 const LEGACY_DISCOVERY_AFTER: Duration = Duration::from_secs(10);
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
-const ROCK: &str = "Rock - medium, round";
+pub(crate) mod factory;
+const ROCK: &str = factory::ROCK;
 const SOURCE: &str = include_str!("bridge/bridge.lsl");
 // Read-only services (radar heights, script and object information) run in a
 // second script: Mono gives each script 64 KB, and the controller has little left.
@@ -74,6 +80,50 @@ mod tests;
 /// each rez, so the channel changes with every login and is never a fixed
 /// one that any listener could watch. The bridge scripts compute the same
 /// value: `-0x10000000 - (integer)("0x" + llGetSubString((string)key, 0, 6))`.
+/// The agent's own folder `name`, directly under the inventory root.
+fn root_folder(inv: &super::inventory::Inventory, name: &str) -> Option<Uuid> {
+    inv.folders.get(&inv.root)?.children.iter().copied().find(|id| {
+        inv.folders
+            .get(id)
+            .is_some_and(|f| f.info.parent == inv.root && f.info.name == name && !f.library)
+    })
+}
+
+/// FS_BRIDGE_NAME (fslslbridge.h) with its exact version syntax: a chat tag
+/// or a similarly named ordinary HUD is not the Legacy Viewer's bridge.
+fn legacy_bridge_name(name: &str) -> bool {
+    name.strip_prefix("#Firestorm LSL Bridge v")
+        .and_then(|v| v.split_once('.'))
+        .is_some_and(|(major, minor)| {
+            [major, minor]
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// Whether the inventory item is a viewer's scripting bridge: ours in
+/// `#Aurora`, or the one the Legacy Viewer left worn, in `#Firestorm`. The
+/// name alone is not enough: the agent owns it and it lies under the
+/// viewer's own folder. RLVa leaves such an object out of what the avatar
+/// wears on `point` (FSLSLBridge::isBridgeValid and getAttachedID, used by
+/// RlvHandler::onGetAttach and RlvForceWear::isForceDetachable).
+pub(crate) fn viewer_bridge(world: &World, item: Uuid, point: u8) -> bool {
+    let inv = &world.inventory;
+    point == POINT
+        && inv.items.get(&item).is_some_and(|entry| {
+            let folder = if entry.name == NAME {
+                FOLDER
+            } else if legacy_bridge_name(&entry.name) {
+                "#Firestorm"
+            } else {
+                return false;
+            };
+            entry.owner == world.agent_id
+                && entry.asset_type == 6
+                && root_folder(inv, folder).is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
+        })
+}
+
 pub(crate) fn private_channel(key: Uuid) -> i32 {
     // The first seven hex digits of the key's text form: 28 bits.
     -0x1000_0000 - (key.as_u128() >> 100) as i32
@@ -571,13 +621,7 @@ impl Bridge {
         }
         self.own_poll = Some(now);
         let inv = &world.inventory;
-        let folder = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == FOLDER && !f.library)
-            })
-        });
+        let folder = root_folder(inv, FOLDER);
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let ours = item == self.item
@@ -629,18 +673,11 @@ impl Bridge {
         let Some(item) = world.inventory.items.get(&self.item) else {
             return;
         };
-        self.commands.push(NetCommand::RezAttachments(vec![AttachRequest {
-            item_id: item.id,
-            owner_id: world.agent_id,
-            point: 31,
-            add: true,
-            flags: item.flags,
-            group_mask: item.group_mask,
-            everyone_mask: item.everyone_mask,
-            next_owner_mask: item.next_owner_mask,
-            name: item.name.clone(),
-            desc: item.desc.clone(),
-        }]));
+        self.commands.push(NetCommand::RezAttachments(vec![factory::attach_request(
+            item,
+            world.agent_id,
+            POINT,
+        )]));
         self.enter(phase, now);
     }
     fn detach_firestorm(&mut self, world: &World, now: Instant) {
@@ -652,35 +689,23 @@ impl Bridge {
         }
         self.firestorm_poll = Some(now);
         let inv = &world.inventory;
-        let Some(folder) = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == "#Firestorm" && !f.library)
-            })
-        }) else {
+        let Some(folder) = root_folder(inv, "#Firestorm") else {
             return;
         };
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let Some(entry) = inv.items.get(&item) else { continue };
             // FS_BRIDGE_NAME and FS_BRIDGE_POINT (fslslbridge.h). Exact
-            // version syntax, inventory ancestry and a worn root are required;
-            // a chat tag or a similarly named ordinary HUD is insufficient.
-            let version = entry.name.strip_prefix("#Firestorm LSL Bridge v").and_then(|v| v.split_once('.'));
+            // version syntax, inventory ancestry and a worn root are required.
             if entry.owner != world.agent_id
                 || entry.asset_type != 6
-                || !version.is_some_and(|(major, minor)| {
-                    [major, minor]
-                        .iter()
-                        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-                })
+                || !legacy_bridge_name(&entry.name)
                 || !super::inventory::actions::under(inv, item, folder)
             {
                 continue;
             }
             if let Some(root) = world.worn_attachment(&item).and_then(|i| world.objects.get(i))
-                && root.attachment_point() == 31
+                && root.attachment_point() == POINT
                 && self.firestorm_detached.insert(root.full_id)
             {
                 detach.push(item);
@@ -1198,54 +1223,28 @@ impl Bridge {
                 if self.phase == Phase::Copy {
                     return;
                 }
-                // Library layouts vary. Search its metadata only, with no
-                // more than eight folder requests in flight, never user folders.
-                let library: Vec<_> = inv.folders.values().filter(|f| f.library).map(|f| f.info.id).collect();
-                let rock = library
-                    .iter()
-                    .filter_map(|id| inv.folders.get(id))
-                    .flat_map(|f| f.items.iter())
-                    .filter_map(|id| inv.items.get(id))
-                    .find(|i| {
-                        i.name == ROCK && i.asset_type == 6 && i.owner_mask & (perm::COPY | perm::MODIFY) == (perm::COPY | perm::MODIFY)
-                    })
-                    .cloned();
-                if let Some(rock) = rock {
-                    self.mutate(
-                        Mutation {
-                            copies: vec![CopyItem {
-                                item: rock.id,
-                                owner: inv.lib_owner,
-                                parent: folder,
-                                name: NAME.into(),
-                            }],
-                            refresh: vec![folder],
-                            ..Default::default()
-                        },
-                        Phase::Copy,
-                        now,
-                    );
-                } else if !library.is_empty()
-                    && library
-                        .iter()
-                        .all(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetched))
-                {
-                    self.fail(aurora_i18n::tr!("bridge-library-missing").into());
-                } else {
-                    let in_flight = library
-                        .iter()
-                        .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching))
-                        .count();
-                    let mut waiting: Vec<_> = library
-                        .iter()
-                        .filter_map(|id| inv.folders.get(id))
-                        .filter(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
-                        .map(|f| (f.info.name != "Objects" && !f.info.name.contains("Rock"), f.info.id))
-                        .collect();
-                    waiting.sort_unstable();
-                    for (_, id) in waiting.into_iter().take(8usize.saturating_sub(in_flight)) {
-                        inv.request(id);
+                // (the search of the Library is shared with the RLVa
+                // self-test's controller: bridge/factory.rs)
+                match factory::library_object(inv, ROCK) {
+                    factory::LibraryObject::Found(rock) => {
+                        let owner = inv.lib_owner;
+                        self.mutate(
+                            Mutation {
+                                copies: vec![CopyItem {
+                                    item: rock.id,
+                                    owner,
+                                    parent: folder,
+                                    name: NAME.into(),
+                                }],
+                                refresh: vec![folder],
+                                ..Default::default()
+                            },
+                            Phase::Copy,
+                            now,
+                        );
                     }
+                    factory::LibraryObject::Missing => self.fail(aurora_i18n::tr!("bridge-library-missing").into()),
+                    factory::LibraryObject::Waiting => {}
                 }
             }
             Phase::Attach | Phase::Restore => {
@@ -1528,17 +1527,13 @@ impl Bridge {
                     let folder = self.folder.to_string();
                     let mut upload = |item: Uuid, source: &str| {
                         let request = Uuid::new_v4();
-                        self.commands.push(NetCommand::SaveScript {
+                        self.commands.push(factory::save_script(
                             request,
-                            target: ScriptTarget { object: *object, item },
-                            handle: root.key.region,
-                            options: ScriptOptions {
-                                compile: aurora_net::scripts::CompileTarget::Mono,
-                                running: true,
-                                experience: Uuid::nil(),
-                            },
-                            source: source.replace("__FOLDER__", &folder),
-                        });
+                            root.key.region,
+                            *object,
+                            item,
+                            source.replace("__FOLDER__", &folder),
+                        ));
                         request
                     };
                     let controller = upload(script, SOURCE);
@@ -1555,25 +1550,15 @@ impl Bridge {
                     // indra/newview/llviewerobject.cpp), even for attachments.
                     for name in [NAME, QUERY_NAME, ik::NAME] {
                         if find(name).is_none() {
-                            self.commands.push(NetCommand::Build(BuildCmd::RezScript {
-                                handle: root.key.region,
-                                local_id: root.key.local_id,
-                                enabled: false,
-                                group_id: world.groups.active,
-                                item: Box::new(TaskItem {
-                                    parent_id: *object,
-                                    creator_id: world.agent_id,
-                                    owner_id: world.agent_id,
-                                    base_mask: 0x7fff_ffff,
-                                    owner_mask: 0x7fff_ffff,
-                                    next_owner_mask: perm::COPY | perm::MODIFY | perm::MOVE,
-                                    asset_type: 10,
-                                    inv_type: 10,
-                                    name: name.into(),
-                                    description: "Aurora's private bridge".into(),
-                                    ..Default::default()
-                                }),
-                            }));
+                            self.commands.push(factory::rez_script(
+                                root.key.region,
+                                root.key.local_id,
+                                *object,
+                                world.agent_id,
+                                world.groups.active,
+                                name,
+                                "Aurora's private bridge",
+                            ));
                         }
                     }
                     self.enter(Phase::Script, now);

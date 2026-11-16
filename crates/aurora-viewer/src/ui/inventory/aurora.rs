@@ -1022,7 +1022,7 @@ mod tests {
             assert!(
                 h.actions
                     .iter()
-                    .any(|a| matches!(a, InvAction::Preview(id) if *id == Uuid::from_u128(8103))),
+                    .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103))),
                 "{width} px"
             );
             if width >= 800.0 {

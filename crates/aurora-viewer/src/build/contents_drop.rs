@@ -131,14 +131,7 @@ pub(crate) fn worn_paste_refused(world: &World, idx: usize, item: Option<Uuid>) 
 /// take off, which refuses every inventory drop (willObjectAcceptInventory,
 /// gRlvAttachmentLocks.isLockedAttachment on the root).
 pub(crate) fn attachment_locked(world: &World, idx: usize) -> bool {
-    let Some((root, true)) = linkset(world, idx) else {
-        return false;
-    };
-    world
-        .objects
-        .get(root)
-        .and_then(|o| world.rlva_attachment_item(o.full_id))
-        .is_some_and(|item| !world.rlva_can_remove(item, Uuid::nil()))
+    world.rlva_locked_attachment(idx)
 }
 
 /// What a refusal of `worn_refused` says: the immediate filter's reason for
@@ -199,7 +192,8 @@ pub fn surface_allowed(world: &World, idx: usize) -> Result<(), &'static str> {
 
 /// willObjectAcceptInventory for the prim `idx`: a volume whose linkset you
 /// may modify, or that allows inventory drops (scripts always need Modify),
-/// and an item its owner may receive; never an attachment RLVa locks.
+/// and an item its owner may receive; never an attachment RLVa locks, nor the
+/// seat the agent is held on under @unsit or @sittp (ACCEPT_NO_LOCKED).
 pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     let (root, attached) = linkset(world, idx).ok_or("rez-no-surface")?;
@@ -213,7 +207,7 @@ pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static
         || item.asset_type == AT_LSL_TEXT && root.update_flags & OBJECT_MODIFY == 0
         // the server does not support an item in the world and in inventory at once
         || attached && item.base_mask & UNRESTRICTED != UNRESTRICTED
-        || attached && attachment_locked(world, idx)
+        || world.rlva_contents_locked(idx)
     {
         return Err("rez-contents-denied");
     }

@@ -160,24 +160,29 @@ path traversals, links, Windows duplicates, reserved files and archives
 exceeding the size limits, in the ZIP as in the tar.gz; the tar.gz accepts
 only regular files and folders, never a link, a device node or a sparse
 file, and keeps the permission bits of the archive without setuid. The
-staging is done next to the installation, on the same volume. The
-installation refuses repositories, build trees, folder links, folders
-containing files foreign to the package, and a viewer without its
-executable bit.
+staging is done next to the installation, on the same volume. Only the
+package's own entries are replaced (the viewer, `assets`, the notices,
+`aurora-install.json`): whatever else the folder holds, a shortcut or the
+user's notes, stays where it is. A folder without `aurora-install.json`
+(the viewer copied alone, onto the Desktop for example) has only the
+viewer's executable replaced. Links among those entries, and a folder at the
+root of a drive, are refused, as is a viewer without its executable bit.
+Development builds never update.
 
 After the agreement to restart, a copy of the viewer acts as a helper
 outside the installed folder. It waits for the end of the parent (a Windows
 handle, or the parent's `/proc` entry on Linux, with its start time so that a
-reused PID is not taken for it), takes a lock, backs up the old folder and
-puts the new one in place. The arguments are kept. The new instance signals
-a presented frame; the backup is then deleted. If it exits or shows nothing
-for 90 seconds, the old version is restored and restarted with a message.
-The errors offer the release page.
+reused PID is not taken for it), takes a lock, moves the old package entries
+into the backup and puts the new ones in place. The arguments are kept. The
+new instance signals a presented frame; the backup is then deleted. If it
+exits or shows nothing for 90 seconds, the old version is restored and
+restarted with a message. The errors offer the release page.
 
 Where the folder cannot be replaced, the viewer does not try: a sandbox owns
 it as a read-only package (Flatpak, Snap, AppImage), or the account cannot
-write beside it (a system package installed by root). The window then says so
-and links the release page, for the package manager or the bundle to update.
+write beside it (a system package installed by root). The window then says
+so and links the release page, for the package manager or the bundle to
+update.
 
 Settings, layout, accounts and cache are outside the replaced folder. If the
 policy requires it, the helper moves the cache and/or `settings.json` to a

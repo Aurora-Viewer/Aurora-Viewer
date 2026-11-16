@@ -67,6 +67,14 @@ impl Editor {
         Frame::subject(world, id)
     }
     pub fn pose_layers(&mut self, world: &World) -> std::collections::HashMap<Uuid, Arc<SubjectPose>> {
+        self.pose_layers_with_base(world, |_| None)
+    }
+
+    pub fn pose_layers_with_base(
+        &mut self,
+        world: &World,
+        mut base_for: impl FnMut(Uuid) -> Option<Arc<crate::scene::anim::SkeletonBase>>,
+    ) -> std::collections::HashMap<Uuid, Arc<SubjectPose>> {
         if !self.poser.active {
             return Default::default();
         }
@@ -84,6 +92,11 @@ impl Editor {
             && let Some(pose) = SubjectPose::capture(&world.avatar_lib.rig, &frame)
         {
             self.poser.sessions.insert(self.poser.subject, data::Session::new(pose));
+        }
+        for (id, session) in &mut self.poser.sessions {
+            if let Some(base) = base_for(*id) {
+                session.rebase(base);
+            }
         }
         self.poser
             .sessions

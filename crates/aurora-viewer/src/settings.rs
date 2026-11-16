@@ -976,6 +976,14 @@ pub struct Settings {
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
     /// off, the bar lets go after sending.
     pub chat_keep_focus: bool,
+    /// Aurora extension, Enter toggles typing: Enter on an empty field gives
+    /// the keyboard back to the world in every conversation too (IMs and
+    /// group chats), not only in the nearby chat. Off by default.
+    pub chat_enter_toggles: bool,
+    /// Aurora extension, Enter returns to the last chat field used: from the
+    /// world, Enter focuses the conversation last talked in when its window
+    /// is open, instead of always the chat bar. Off by default.
+    pub chat_enter_last_field: bool,
     /// The nearby chat fields complete a gesture's trigger after `/`, with
     /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).
     pub chat_gesture_autocomplete: bool,
@@ -1231,6 +1239,9 @@ pub struct Settings {
     pub hide_object_returns: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
+    /// The Omnifilter on or off and its rule set in use (OmnifilterEnabled,
+    /// OmnifilterRuleSetID); the rules are in `omnifilter.xml`.
+    pub omnifilter: crate::omnifilter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
@@ -1888,7 +1899,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 39;
+const SETTINGS_VERSION: u32 = 40;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2411,6 +2422,8 @@ impl Default for Settings {
             blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
             chat_keep_focus: true,
+            chat_enter_toggles: false,
+            chat_enter_last_field: false,
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             colon_emote: false,
@@ -2495,6 +2508,7 @@ impl Default for Settings {
             sim_version_alert: false,
             hide_object_returns: false,
             object_im_filter: Default::default(),
+            omnifilter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
@@ -3364,6 +3378,18 @@ impl Settings {
             // sorted order of these levels
             crate::graphics_presets::upgrade_blend_order(&mut self);
         }
+        if self.settings_version < 40 {
+            // Only the exact former Recent default migrates; preserve other combinations.
+            // Keep historical values explicit so future defaults cannot change this migration.
+            let former = crate::ui::inventory::view::Sort {
+                by_date: true,
+                folders_by_name: false,
+                system_first: true,
+            };
+            if self.inventory.recent_sort == former {
+                self.inventory.recent_sort.system_first = false;
+            }
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3818,6 +3844,16 @@ impl Settings {
     }
 }
 
+/// How the minimap displays avatar names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MiniAvatarNameFormat {
+    Display,
+    Legacy,
+    #[default]
+    DisplayAndLegacy,
+    LegacyAndDisplay,
+}
+
 /// Mini-map (LLNetMap) and world map (LLFloaterWorldMap) options, with the
 /// Firestorm defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3825,6 +3861,8 @@ impl Settings {
 pub struct MapSettings {
     /// MiniMapScale: pixels per region, 32..4096.
     pub mini_scale: f32,
+    /// Avatar name format in minimap tooltips and avatar menus.
+    pub mini_avatar_name_format: MiniAvatarNameFormat,
     /// MiniMapRotate: camera direction at the top (else north).
     pub mini_rotate: bool,
     /// MiniMapObjects.
@@ -3872,6 +3910,7 @@ impl Default for MapSettings {
     fn default() -> Self {
         MapSettings {
             mini_scale: 128.0,
+            mini_avatar_name_format: MiniAvatarNameFormat::DisplayAndLegacy,
             // forced to north-up at the first login (llnetmap.cpp)
             mini_rotate: false,
             mini_objects: true,
@@ -4888,6 +4927,66 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    #[test]
+    fn recent_sort_migration_changes_only_the_former_default_and_only_once() {
+        use crate::ui::inventory::view::Sort;
+        let former = Sort {
+            by_date: true,
+            folders_by_name: false,
+            system_first: true,
+        };
+        for version in [39, 40] {
+            for by_date in [false, true] {
+                for folders_by_name in [false, true] {
+                    for system_first in [false, true] {
+                        let chosen = Sort {
+                            by_date,
+                            folders_by_name,
+                            system_first,
+                        };
+                        let mut saved = Settings {
+                            settings_version: version,
+                            ..Default::default()
+                        };
+                        saved.inventory.recent_sort = chosen;
+                        saved.inventory.sort = chosen;
+                        saved.inventory.received_sort = chosen;
+                        let json = serde_json::to_string(&saved).expect("save settings");
+                        let loaded = serde_json::from_str::<Settings>(&json).expect("load settings").sanitized();
+                        let expected = if version < 40 && chosen == former {
+                            Sort {
+                                system_first: false,
+                                ..chosen
+                            }
+                        } else {
+                            chosen
+                        };
+                        assert_eq!(loaded.inventory.recent_sort, expected, "version {version}, {chosen:?}");
+                        assert_eq!(loaded.inventory.sort, chosen, "main sort stays untouched");
+                        assert_eq!(loaded.inventory.received_sort, chosen, "Received sort stays untouched");
+                        assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+                        let json = serde_json::to_string(&loaded).expect("save migrated settings");
+                        let reloaded = serde_json::from_str::<Settings>(&json).expect("reload settings").sanitized();
+                        assert_eq!(reloaded.inventory.recent_sort, expected, "migration is not repeated");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recent_sort_missing_from_old_settings_gets_the_new_default() {
+        let loaded = serde_json::from_str::<Settings>(r#"{"settings_version":39,"inventory":{}}"#)
+            .expect("old settings without Recent sort")
+            .sanitized();
+        assert_eq!(loaded.inventory.recent_sort, Settings::default().inventory.recent_sort);
+        assert!(loaded.inventory.recent_sort.by_date);
+        assert!(!loaded.inventory.recent_sort.folders_by_name);
+        assert!(!loaded.inventory.recent_sort.system_first);
+        assert_eq!(loaded.inventory.sort, Settings::default().inventory.sort);
+        assert_eq!(loaded.inventory.received_sort, Settings::default().inventory.received_sort);
     }
 
     /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the

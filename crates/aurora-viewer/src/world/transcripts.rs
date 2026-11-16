@@ -763,7 +763,7 @@ mod tests {
         w.social.session_mut(Uuid::from_u128(0xC0C0));
         w.poll_transcripts();
         assert_eq!(w.chat_log.conversations.list.len(), 2);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     fn im(from: Uuid, name: &str, text: &str) -> InstantMessage {
@@ -1001,7 +1001,7 @@ mod tests {
         w.chat_log.append(&stem, t0 - Duration::from_secs(3600), "Jane Doe", "old news");
         w.chat_log.append(&stem, t0, "Jane Doe", "same minute, in the file");
         assert!(w.chat_log.flush(WAIT));
-        w.start_group_chat(group);
+        w.start_group_chat(group, false);
         let unix = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
         let line = |time: u32, text: &str| HistoryLine {
             from_id: jane,
@@ -1051,8 +1051,9 @@ mod tests {
         settle(&mut w);
         let line = &w.social.ims[0].lines[0];
         // "(Saved <date>) " then the text; shown and written as received now
-        assert!(line.text.ends_with(") see you tomorrow"), "{}", line.text);
-        assert!(line.text.starts_with('(') && line.text.contains("09:30") && line.text.contains("2026"));
+        // (the brackets and the date's order are the language's)
+        let saved = line.text.strip_suffix(" see you tomorrow").unwrap_or_default();
+        assert!(saved.contains("09:30") && saved.contains("2026"), "{}", line.text);
         assert!(line.time > sent + Duration::from_secs(3600));
         assert_eq!(line.origin, Origin::Live);
         assert_eq!(w.social.ims[0].unread, 1);
@@ -1345,7 +1346,13 @@ mod tests {
         let jane = Uuid::from_u128(2);
         let bob = Uuid::from_u128(3);
         let mut w = world(&root, Uuid::from_u128(1));
-        let link = |id: Uuid| format!("secondlife:///app/agent/{id}/completename");
+        // the notice names the avatar where the language puts the name
+        let offer = |id: Uuid| {
+            aurora_i18n::tr!(
+                "common-teleport-offer-sent",
+                name = format!("secondlife:///app/agent/{id}/completename")
+            )
+        };
         // a conversation with Jane is open: the notice goes in it, not unread
         w.on_im(im(jane, "Jane Doe", "hello"));
         let unread = w.social.ims[0].unread;
@@ -1353,7 +1360,7 @@ mod tests {
         let s = &w.social.ims[0];
         let notice = s.lines.back().unwrap();
         assert!(notice.kind == ChatKind::System);
-        assert!(notice.text.ends_with(&link(jane)), "{}", notice.text);
+        assert!(notice.text.ends_with(&offer(jane)), "{}", notice.text);
         assert_eq!(s.unread, unread);
         // none with Bob: none opens, the notice is only in his transcript
         w.social.names.insert(bob, "Bob Builder".into());
@@ -1364,7 +1371,7 @@ mod tests {
         let bob_file = file_texts(&w, "Bob Builder");
         assert_eq!(bob_file.len(), 1);
         assert_eq!(bob_file[0].0, format::SYSTEM_FROM);
-        assert!(bob_file[0].1.ends_with(&link(bob)), "{}", bob_file[0].1);
+        assert!(bob_file[0].1.ends_with(&offer(bob)), "{}", bob_file[0].1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 2);
         clean(&w, &root);
     }

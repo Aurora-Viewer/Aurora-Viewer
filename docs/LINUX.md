@@ -122,12 +122,27 @@ viewer's folder.
 | Logs, media plugins | `~/.local/share/auroraviewer` |
 
 The viewer must own its folder: it replaces it from the folder above, and
-only files of the package may sit in it. A folder it cannot write to (a
-system-wide installation made by root) or a sandbox that mounts the package
-read-only (Flatpak, Snap, AppImage) is refused rather than forced: the update
-window says so and links the release page, for the package manager or the
-bundle to update. Aurora asks for no elevation, and an installation updated by
-such a tool keeps working: the viewer only offers the new version.
+only the package's own entries are moved, so your own files beside it stay
+where they are. A folder it cannot write to (a system-wide installation made
+by root) or a sandbox that mounts the package read-only (Flatpak, Snap,
+AppImage) is refused rather than forced: the update window says so and links
+the release page, for the package manager or the bundle to update. Aurora
+asks for no elevation, and an installation updated by such a tool keeps
+working: the viewer only offers the new version.
+
+## Saved passwords
+
+"Remember password" and the 30-day two-factor choice keep what they save in
+your desktop's wallet, through the Secret Service: KWallet, GNOME Keyring,
+KeePassXC with its Secret Service integration on, or any other provider of
+`org.freedesktop.secrets`. If none answers the first time the viewer reaches
+the wallet, which can be at the login itself, nothing is saved, in a file or
+anywhere else, until the viewer restarts.
+
+For a password, the chat says so after the login and "Remember password"
+turns itself off: start a wallet, restart the viewer and turn it on again.
+The two-factor choice gives no such message: the viewer asks for the code
+again at the next login.
 
 ## Second Life links
 
@@ -173,6 +188,18 @@ cargo build --release -p aurora-viewer
 On Debian and Ubuntu, the build packages are `build-essential cmake clang
 pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev`, with
 Rust from [rustup.rs](https://rustup.rs).
+
+To work on the code with an AI agent, also install the search tools the
+agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools"):
+ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; on Windows the
+Aurora tools install them.
+
+```bash
+sudo pacman -S --needed ripgrep fd jq ast-grep
+```
+
+On Debian and Ubuntu: `sudo apt install ripgrep fd-find jq` (`fd` is named
+`fdfind` there), and `cargo install ast-grep --locked`.
 
 ## Reporting a problem
 

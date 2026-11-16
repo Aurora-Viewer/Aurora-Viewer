@@ -156,6 +156,17 @@ pub enum MediaEvent {
     DebugMessage(String),
 }
 
+impl MediaEvent {
+    /// CEF marks a no-follow navigation as clicked when it has a user gesture.
+    /// The viewer's web windows and world media apply the same rule to links.
+    pub fn clicked_url(&self) -> Option<&str> {
+        match self {
+            Self::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
+            _ => None,
+        }
+    }
+}
+
 /// Dirty rectangle, in plugin coordinates (OpenGL style when
 /// `coords_opengl`: bottom > top is swapped so that top >= bottom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

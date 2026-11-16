@@ -566,7 +566,21 @@ impl App {
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
+        self.open_script_from(target, None);
+    }
+
+    pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
+            return;
+        }
+        // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
+        // of an attachment that cannot be taken off stay closed.
+        if self
+            .world
+            .objects
+            .index_of_uuid(&target.object)
+            .is_some_and(|i| self.world.rlva_locked_attachment(i))
+        {
             return;
         }
         if task_script_refused(&self.build, &self.world, target.object) {
@@ -577,10 +591,13 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self
+        let request = self
             .script_editors
-            .open(target, info.name, info.can_read, info.can_edit, info.flags)
-        {
+            .open(target, info.name, info.can_read, info.can_edit, info.flags);
+        if let Some(editor) = self.script_editors.documents.iter_mut().find(|e| e.target == target) {
+            editor.inventory_owner = owner;
+        }
+        if let Some(request) = request {
             // an SLua script, or one that may become one: its keywords are
             // read while the source loads, not on the frame that draws it
             if aurora_net::scripts::is_slua_item(info.flags) || self.world.main().is_some_and(|r| r.lua_scripts) {
