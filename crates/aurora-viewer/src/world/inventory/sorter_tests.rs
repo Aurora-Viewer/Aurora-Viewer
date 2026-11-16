@@ -2155,7 +2155,8 @@ fn a_resumed_run_honours_folders_excluded_since() {
 fn status_tags_apostrophes_bodies_and_accents_are_read_right() {
     assert_eq!(store("(Mesh) Sweater"), None);
     assert_eq!(store("[DEMO] Velvet Gown"), None);
-    assert_eq!(words("Women's Boots"), vec!["womens", "boots"]);
+    // both ways: its parts (rules written before) and the joined word
+    assert_eq!(words("Women's Boots"), vec!["women", "s", "womens", "boots"]);
     assert_eq!(sorted_as("Hourglass Vase", 6, &[]), cat(Category::Decor));
     assert_eq!(sorted_as("Bed with 50 poses", 6, &[]), cat(Category::Furniture));
     assert_eq!(split_path("Robes d'été/Café"), vec!["Robes d'ete".to_owned(), "Cafe".to_owned()]);
@@ -2226,4 +2227,99 @@ fn pre_trash_rules_compare_by_words_and_where_they_look() {
         vec![true],
         "a stale folder on a Pre-Trash rule is ignored"
     );
+}
+
+fn move_to(inv: &Inventory, at: u128, to: Dest) -> Move {
+    Move {
+        id: id(at),
+        folder: inv.folders.contains_key(&id(at)),
+        name: String::new(),
+        from: actions::parent(inv, id(at)).expect("a parent"),
+        to,
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+    }
+}
+
+/// One batch never carries an entry into Pre-Trash's tree by the back door:
+/// an item sent into a folder that the same batch sends to Pre-Trash waits
+/// for the next batch, where its destination is checked as it then is.
+#[test]
+fn one_batch_never_slips_an_entry_into_pre_trash() {
+    let mut inv = fixture(&["Velvet chair"]);
+    add_folder(&mut inv, 70, OBJECTS, "demo freebies");
+    add_folder(&mut inv, 71, 70, "sub");
+    let mut queue: VecDeque<Move> = [move_to(&inv, 100, Dest::Folder(id(71))), move_to(&inv, 70, Dest::PreTrash)].into();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    let Step::Change(_, sent) = step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped) else {
+        panic!("a batch")
+    };
+    assert_eq!(sent.len(), 1, "the folder waits for the next batch");
+    assert_eq!(queue.len(), 1);
+}
+
+/// A folder sent to My Inventory's root never takes a name the viewer or
+/// Auto-sort reads there.
+#[test]
+fn a_folder_never_lands_at_the_root_with_a_viewer_name() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Archive");
+    add_folder(&mut inv, 71, 70, "#RLV");
+    let mut queue: VecDeque<Move> = [move_to(&inv, 71, Dest::Folder(id(1)))].into();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    assert!(matches!(
+        step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped),
+        Step::Done
+    ));
+    assert_eq!(skipped, 1);
+}
+
+/// A folder whose contents are not loaded never moves or goes to the Trash
+/// whole (a worn item could be inside, unseen): it is asked for and waits.
+#[test]
+fn a_folder_not_loaded_waits_before_it_moves_whole() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Ryu Jeans - FATPACK");
+    add_folder(&mut inv, 71, 70, "Colors");
+    if let Some(f) = inv.folders.get_mut(&id(71)) {
+        f.state = FetchState::Unknown;
+    }
+    let prefs = Preferences {
+        folders: true,
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    assert!(plan.moves.iter().all(|m| m.id != id(70)));
+    assert!(plan.unfetched.contains(&id(71)), "asked for");
+    let holds = actions::worn_ancestors(&inv, &HashSet::new());
+    assert!(!trash_ready(&inv, id(70), id(OBJECTS), &prefs, &HashSet::new(), &holds));
+}
+
+/// A restore move only goes back to a folder: one read from a run file
+/// edited by hand cannot send something along a path or to Pre-Trash.
+#[test]
+fn a_restore_never_goes_along_a_path_or_to_pre_trash() {
+    let mut inv = fixture(&["Velvet Sofa"]);
+    let mut odd = move_to(&inv, 100, Dest::PreTrash);
+    odd.restore = true;
+    let mut queue: VecDeque<Move> = [odd].into();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    assert!(matches!(
+        step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped),
+        Step::Done
+    ));
+    assert_eq!(skipped, 1);
+}
+
+/// Two store names with no Latin letter are compared as written, never as
+/// two empty names.
+#[test]
+fn stores_with_no_latin_letter_compare_as_written() {
+    assert!(!same_store("Котик", "Мишка"));
+    assert!(same_store("Котик", "котик"));
+    assert!(same_store("Café", "Cafe"));
 }

@@ -72,6 +72,12 @@ pub struct Journal {
 impl Journal {
     /// A new run, the oldest dropped past [`RUNS`]; its id.
     pub fn begin(&mut self, kind: RunKind, at: i64) -> u64 {
+        self.begin_keeping(kind, at, None)
+    }
+
+    /// A new run; the run `keep` (one an Undo is putting back) is never the
+    /// one dropped to keep the last five.
+    fn begin_keeping(&mut self, kind: RunKind, at: i64, keep: Option<u64>) -> u64 {
         let id = self.runs.iter().map(|run| run.id).max().unwrap_or(0).max(self.last_id) + 1;
         self.last_id = id;
         // a run that moved nothing (stopped at once, everything skipped or
@@ -85,9 +91,26 @@ impl Journal {
             undoes: None,
         });
         while self.runs.len() > RUNS {
-            self.runs.pop_front();
+            let Some(oldest) = self.runs.iter().position(|run| Some(run.id) != keep && run.id != id) else {
+                break;
+            };
+            self.runs.remove(oldest);
         }
         id
+    }
+
+    /// Every Undo run of `undone` (this session's, a stopped session's, one
+    /// started afresh instead of resumed) forgotten with what it put back.
+    pub fn forget_undos_of(&mut self, undone: u64) {
+        let undos: Vec<u64> = self
+            .runs
+            .iter()
+            .filter(|run| run.undoes == Some(undone))
+            .map(|run| run.id)
+            .collect();
+        for undo in undos {
+            self.forget_undone(undo, undone);
+        }
     }
 
     /// Runs read from an older file have no id: numbered in order.
@@ -117,7 +140,7 @@ impl Journal {
 
     /// An Undo of the run `undone` begins; its id.
     pub fn begin_undo(&mut self, at: i64, undone: u64) -> u64 {
-        let id = self.begin(RunKind::Move, at);
+        let id = self.begin_keeping(RunKind::Move, at, Some(undone));
         if let Some(run) = self.runs.iter_mut().find(|run| run.id == id) {
             run.undoes = Some(undone);
         }

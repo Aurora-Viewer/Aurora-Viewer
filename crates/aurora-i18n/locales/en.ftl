@@ -14420,6 +14420,11 @@ inventory-sorter-rules-hint = Your rules come first, from the top: the first one
 inventory-sorter-rule-words = When the name has
 inventory-sorter-rule-folder = Folder path, such as Home/Chairs
 inventory-sorter-menu-entries = Auto-sort
+inventory-sorter-undo-stays = { $count ->
+    [one] 1 entry stays where it is: moved on by hand, gone, or in a place Auto-sort may not touch.
+   *[other] { $count } entries stay where they are: moved on by hand, gone, or in a place Auto-sort may not touch.
+    }
+inventory-sorter-undo-nothing = Nothing of the last runs can be put back: their entries were moved on by hand, are gone, or are in places Auto-sort may not touch.
 inventory-sorter-busy-elsewhere = Auto-sort is already running in another inventory window: wait for it to finish there.
 inventory-sorter-trash-gone = (no longer in the inventory)
 inventory-sorter-trash-more = …and { $count } more

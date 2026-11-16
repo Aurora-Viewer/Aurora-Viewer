@@ -416,7 +416,7 @@ fn same_rule(a: &Rule, b: &Rule) -> bool {
     if a.pre_trash || b.pre_trash {
         // a Pre-Trash rule has no folder: its words, where it looks and
         // whether it is on make it
-        return same_words && a.pre_trash == b.pre_trash && a.skip_sorted == b.skip_sorted && a.enabled == b.enabled;
+        return same_words && a.pre_trash == b.pre_trash && a.skip_sorted == b.skip_sorted;
     }
     same_words && a.target == b.target && super::split_path(&a.folder) == super::split_path(&b.folder)
 }

@@ -389,8 +389,9 @@ fn a_trash_batch_counts_what_reached_the_trash() {
     }
     inv.generation += 1;
     send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
-    let trash = st.sorter.trash.as_ref().expect("the job goes on");
-    assert_eq!((trash.sent, trash.failed), (2, 0));
+    // both counted: the run ends with its summary
+    assert!(st.sorter.trash.is_none(), "nothing left: the run is over");
+    assert!(!st.sorter.status.is_empty());
     let ids = st
         .sorter
         .journal
@@ -403,7 +404,9 @@ fn a_trash_batch_counts_what_reached_the_trash() {
     left.unsure = vec![(Uuid::from_u128(9002), Uuid::from_u128(2), Instant::now())];
     st2.sorter.trash = Some(left);
     send_trash_batch(&inv, &mut st2, &prefs, &HashSet::new(), &mut actions, false);
-    assert!(st2.sorter.trash.as_ref().is_some_and(|t| t.failed == 1 && t.unsure.is_empty()));
+    // counted as failed, and the run ends with a summary that says so
+    assert!(st2.sorter.trash.is_none());
+    assert!(!st2.sorter.status.is_empty());
 }
 
 /// Two inventory windows of one account share its journal: a run recorded

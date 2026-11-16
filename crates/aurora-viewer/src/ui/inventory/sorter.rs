@@ -284,10 +284,6 @@ impl SharedJournal {
     fn begin(&self, kind: sorter::journal::RunKind, at: i64) -> u64 {
         self.with(|j| j.begin(kind, at))
     }
-
-    fn forget_undone(&self, undo: u64, undone: u64) {
-        self.with(|j| j.forget_undone(undo, undone));
-    }
 }
 
 /// A window that stopped saying its run is going (closed, gone) for this
@@ -649,6 +645,17 @@ impl State {
         self.journal = SharedJournal::of(agent, || match j::load(&j::journal_path(&dir)) {
             Ok(journal) => journal,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::Other
+                ) =>
+            {
+                // busy or not allowed now: an empty journal for this session,
+                // the file left as it is
+                log::warn!("auto-sort: the journal could not be read now: {error}");
+                Default::default()
+            }
             Err(error) => {
                 // kept aside, never written over: the history stays for a
                 // newer viewer or a look by hand
@@ -729,10 +736,11 @@ impl State {
             _ => sorter::journal::Snapshot::take(inv, at, account),
         };
         let path = sorter::journal::snapshot_path(&dir, at);
-        // two in the same second share a file: listed once
-        if !self.snapshots.iter().any(|(_, listed)| *listed == path) {
-            self.snapshots.insert(0, (at, path));
+        // one in this second already: it is the layout before both runs
+        if self.snapshots.iter().any(|(_, listed)| *listed == path) || path.exists() {
+            return;
         }
+        self.snapshots.insert(0, (at, path));
         self.snapshots.truncate(sorter::journal::SNAPSHOTS);
         in_order(move || {
             use sorter::journal as j;
@@ -1160,24 +1168,26 @@ pub(super) fn show(
                     aurora_i18n::tr!("inventory-sorter-done", count = job.done)
                 };
                 let restoring = job.restoring;
+                let done = job.done;
                 let run = job.run;
                 let undoes = job.undoes;
                 let earlier = std::mem::take(&mut job.earlier_runs);
                 let last = placed(inv, std::mem::take(&mut job.confirmed));
                 state.journal.record_in(run, last);
                 state.job = None;
-                state.job_just_ended = true;
+                // only a run that moved something (or a resume) ends the run
+                // to resume; one stopped at once leaves an older one alone
+                state.job_just_ended = done > 0 || restoring == Some(Restoring::Resume);
                 state.journal.release(state.window);
                 state.preview = None;
                 state.cleanup = None;
                 if let Some(undone) = undoes {
-                    // the undo's own runs (this session's and a stopped
-                    // session's) go, and from the run it undid only the
-                    // entries they put back: what could not go back is
-                    // still there to undo
-                    for own in earlier.into_iter().chain(run) {
-                        state.journal.forget_undone(own, undone);
-                    }
+                    // every Undo run of it goes (this session's, a stopped
+                    // session's, one begun afresh), and from the run it undid
+                    // only the entries they put back: what could not go back
+                    // is still there to undo
+                    let _ = (earlier, run);
+                    state.journal.with(|j| j.forget_undos_of(undone));
                 }
                 if restoring == Some(Restoring::Resume) {
                     state.unfinished = None;
@@ -1206,7 +1216,21 @@ pub(super) fn show(
             }
             loaded
         }
-        Source::Entries(_) | Source::Saved(..) => true,
+        Source::Entries(_) => true,
+        // saved moves (Undo, a layout, a run to resume) are read where their
+        // entries were: each such folder is loaded first, else a move whose
+        // entry is not known yet would be dropped from the run
+        Source::Saved(moves, _) => {
+            let mut loaded = true;
+            let mut asked = HashSet::new();
+            for m in moves.iter() {
+                if asked.insert(m.from) && inv.folders.get(&m.from).is_some_and(|f| f.state != FetchState::Fetched) {
+                    inv.request(m.from);
+                    loaded = false;
+                }
+            }
+            loaded
+        }
         Source::Whole => {
             let mut loaded = true;
             for id in sorter::whole_sources(inv, &prefs.sorter) {
@@ -2004,12 +2028,15 @@ fn send_trash_batch(
         }
     }
     let Some(trash) = st.sorter.trash.as_mut() else { return };
+    // nothing left: the summary, whatever the inventory is doing (a delete
+    // that never ends no longer holds the run)
+    let over = trash.queue.is_empty() && trash.unsure.is_empty() && trash.in_flight.is_none();
     // one batch at a time: the next goes once the last one's entries are
     // all seen in the Trash or counted
-    if !free || trash.next_at.is_some_and(|at| now < at) || !trash.unsure.is_empty() {
+    if !over && (!free || trash.next_at.is_some_and(|at| now < at) || !trash.unsure.is_empty()) {
         return;
     }
-    if trash.queue.is_empty() && trash.unsure.is_empty() {
+    if over {
         st.sorter.status = if trash.failed > 0 {
             aurora_i18n::tr!(
                 "inventory-sorter-done-failed",
@@ -2380,7 +2407,11 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
         }
         if let (Restoring::Resume, Some(unfinished)) = (restoring, &state.unfinished) {
             // the sort folder as it is named now, else as it was
-            let renamed = unfinished.base_id.and_then(|id| inv.folders.get(&id)).map(|f| f.info.name.clone());
+            let renamed = unfinished
+                .base_id
+                .and_then(|id| inv.folders.get(&id))
+                .filter(|f| f.info.parent == inv.root && sorter::folder_open(inv, f.info.id))
+                .map(|f| f.info.name.clone());
             job.base = renamed.unwrap_or_else(|| unfinished.base.clone());
             job.base_id = unfinished.base_id;
             job.undoes = unfinished.undoes;
@@ -2984,9 +3015,21 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
     if let Some(unfinished) = &state.unfinished {
         let label = aurora_i18n::tr!("inventory-sorter-resume-run", count = unfinished.moves.len());
         if action_button(ui, p, "player-play-filled", &label, ActionKind::Primary, size).clicked() {
-            let moves = std::sync::Arc::new(unfinished.moves.clone());
-            state.set_source(Source::Saved(moves, Restoring::Resume));
-            state.tab = PREVIEW;
+            // read again: the run may have been ended by another window
+            let fresh = state.account_dir().and_then(|dir| {
+                sorter::journal::load::<sorter::journal::Unfinished>(&sorter::journal::unfinished_path(&dir))
+                    .ok()
+                    .filter(|u| !u.moves.is_empty())
+            });
+            match fresh {
+                Some(unfinished) => {
+                    let moves = std::sync::Arc::new(unfinished.moves.clone());
+                    state.unfinished = Some(unfinished);
+                    state.set_source(Source::Saved(moves, Restoring::Resume));
+                    state.tab = PREVIEW;
+                }
+                None => state.unfinished = None,
+            }
         }
     }
     let exists = |id: Uuid| inv.items.contains_key(&id) || inv.folders.contains_key(&id);
@@ -2998,16 +3041,31 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             let date = snapshot_date(at);
             let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = count, date = date.as_str());
             if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
-                let (moves, _) = state
-                    .journal
-                    .with(|j| {
-                        j.last_undoable(exists)
-                            .map(|run| sorter::journal::undo_moves(inv, run, &protected, worn))
-                    })
-                    .unwrap_or_default();
-                state.undoing = state.journal.with(|j| j.last_undoable(exists).map(|run| run.id));
-                state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
-                state.tab = PREVIEW;
+                // the newest run with something that can go back: a run whose
+                // entries all stay (moved on by hand, in a place locked
+                // since) never blocks an older one
+                let found = state.journal.with(|j| {
+                    let mut stayed = 0;
+                    for run in j.runs.iter().rev().filter(|run| run.undoes.is_none() && !run.entries.is_empty()) {
+                        let (moves, skipped) = sorter::journal::undo_moves(inv, run, &protected, worn);
+                        if !moves.is_empty() {
+                            return Some((run.id, moves, skipped + stayed));
+                        }
+                        stayed += skipped;
+                    }
+                    None
+                });
+                match found {
+                    Some((run, moves, skipped)) => {
+                        state.undoing = Some(run);
+                        state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
+                        state.tab = PREVIEW;
+                        if skipped > 0 {
+                            state.status = aurora_i18n::tr!("inventory-sorter-undo-stays", count = skipped);
+                        }
+                    }
+                    None => state.status = aurora_i18n::tr!("inventory-sorter-undo-nothing").into(),
+                }
             }
         }
         None => {

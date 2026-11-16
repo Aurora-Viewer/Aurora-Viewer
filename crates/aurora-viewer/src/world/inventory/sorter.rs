@@ -274,6 +274,17 @@ pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
     child(inv, inv.root, &pre_trash_name()).or_else(|| pre_trash_names().iter().find_map(|name| child(inv, inv.root, name)))
 }
 
+/// Two store names are one store: as folder names when both have one,
+/// else as written (two Cyrillic names never match as two empty ones).
+fn same_store(a: &str, b: &str) -> bool {
+    let (x, y) = (inventory_name(a.trim(), ""), inventory_name(b.trim(), ""));
+    if x.is_empty() || y.is_empty() {
+        a.trim().to_lowercase() == b.trim().to_lowercase()
+    } else {
+        x.eq_ignore_ascii_case(&y)
+    }
+}
+
 /// Every Pre-Trash folder: the one in use, and those made in another
 /// language at the root (never read as a source, never taken whole).
 /// Worked out once per plan, never per entry.
@@ -483,12 +494,20 @@ pub struct Classified {
 /// The lowercase words of a name: creators separate them with anything
 /// (`.SB.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Maze`).
 pub fn words(name: &str) -> Vec<String> {
-    // an apostrophe joins (`Women's` is one word, not `women` and `s`)
-    let name: String = name.chars().filter(|c| !matches!(c, '\'' | '’')).collect();
-    name.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+    // a word with an apostrophe is read both ways: its parts (`kat`, `s`,
+    // as rules written before matched it) then the joined word (`kats`,
+    // `womens`), so `women's boots` still reads `womens boots`
+    let mut out = Vec::new();
+    for chunk in name.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\'' | '’')) {
+        let parts: Vec<String> = chunk.split(['\'', '’']).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
+        if parts.len() > 1 {
+            out.extend(parts.iter().cloned());
+            out.push(parts.concat());
+        } else {
+            out.extend(parts);
+        }
+    }
+    out
 }
 
 /// `phrase` (one or more words) appears in `words`, whole words in order.
@@ -631,7 +650,13 @@ pub fn split_path(path: &str) -> Vec<String> {
     path.split(['/', '\\'])
         .filter_map(|part| actions::clean_name(part).ok())
         // accents first (`Robes d'été` → `Robes d'ete`), never `?`
-        .map(|part| inventory_name(&crate::text_validation::generated_name(&inventory_name(&part, ""), 63), ""))
+        .map(|part| {
+            // accents become letters; a part with letters the table lacks
+            // (`Ładne rzeczy`) is kept as it is rather than dropped
+            let latin = inventory_name(&part, "");
+            let part = if latin.is_empty() { part } else { latin };
+            inventory_name(&crate::text_validation::generated_name(&part, 63), "")
+        })
         .filter(|part| !part.is_empty())
         // a rule's path is a few folders, never a hundred nested ones
         .take(MAX_PATH_DEPTH)
@@ -716,9 +741,7 @@ pub fn target_by(
     }
     if found.category.is_none()
         && let Some(shop) = &shop
-        && let Some(hint) = hints
-            .iter()
-            .find(|h| h.creator.is_none() && inventory_name(h.store.trim(), "").eq_ignore_ascii_case(&inventory_name(shop.trim(), "")))
+        && let Some(hint) = hints.iter().find(|h| h.creator.is_none() && same_store(&h.store, shop))
     {
         found.category = Some(hint.category);
     }
@@ -743,7 +766,12 @@ pub fn target_by(
     path.extend(found.category.map(category_folder));
     // By store (`stores`): below the category, or in Stores when the name
     // says nothing else.
-    if stores && let Some(shop) = shop {
+    // a creator hint names a store on purpose: its folder is made even with
+    // the store option off
+    let hinted = by_creator.is_some_and(|h| !h.store.trim().is_empty());
+    if (stores || hinted)
+        && let Some(shop) = shop
+    {
         // a store name with no letter the inventory keeps (`[桜屋]`) gets
         // no folder of its own, and no bare Stores folder either
         let shop = inventory_name(&shop, "");
@@ -858,14 +886,25 @@ pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
 /// `id` is the Pre-Trash folder or inside it: what is there is on its way
 /// to the Trash, never a place to file things.
 fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
-    pre_trash(inv).is_some_and(|p| id == p || actions::under(inv, id, p))
+    pre_trash_folders(inv).iter().any(|p| id == *p || actions::under(inv, id, *p))
 }
 
 /// Where Undo or a snapshot may put an entry back: any rule destination,
 /// and the Pre-Trash folder itself (undoing "Move to Trash" puts its
 /// entries back there, where the user left them).
 pub fn restore_target_allowed(inv: &Inventory, id: Uuid) -> bool {
-    target_allowed(inv, id) || pre_trash(inv) == Some(id) && folder_open(inv, id) && actions::destination(inv, id)
+    target_allowed(inv, id)
+        || pre_trash(inv) == Some(id) && folder_open(inv, id) && actions::destination(inv, id)
+        // the ordinary default folder an entry came from (Animations,
+        // Clothing…), locked again since the run: putting it back is a drag
+        // back where it was. Never the critical ones (the Trash, outfits,
+        // Marketplace…), which are not unlockable.
+        || inv.folders.get(&id).is_some_and(|f| {
+            !f.library
+                && f.info.parent == inv.root
+                && (unlockable(f.info.type_default) || f.info.type_default == LOST_AND_FOUND)
+                && actions::destination(inv, id)
+        })
 }
 
 /// A folder below `id` that Auto-sort may not carry along when `id` moves
@@ -873,6 +912,10 @@ pub fn restore_target_allowed(inv: &Inventory, id: Uuid) -> bool {
 /// stock folder…), a viewer folder, or one the user excluded.
 fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
     let Some(top) = inv.folders.get(&id) else { return false };
+    // not loaded: a worn item or a typed folder could be inside, unseen
+    if top.state != FetchState::Fetched {
+        return true;
+    }
     let mut stack: Vec<Uuid> = top.children.clone();
     let mut seen = HashSet::new();
     while let Some(child) = stack.pop() {
@@ -880,12 +923,32 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
             continue;
         }
         let Some(f) = inv.folders.get(&child) else { continue };
-        if f.info.type_default != -1 || f.library || excluded.contains(&child) {
+        if f.info.type_default != -1 || f.library || excluded.contains(&child) || f.state != FetchState::Fetched {
             return true;
         }
         stack.extend(f.children.iter().copied());
     }
     false
+}
+
+/// The folders below `id` (itself included) not loaded yet: a folder moves
+/// whole once they are, so they are asked for.
+fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    let mut stack = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(folder) = stack.pop() {
+        if !seen.insert(folder) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&folder) else { continue };
+        if f.state != FetchState::Fetched {
+            out.push(folder);
+            continue;
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    out
 }
 
 /// One entry to move.
@@ -1083,7 +1146,10 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
     }
     let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
     let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
-    plan.unfetched = scan.unfetched;
+    // both lists of folders to load: the plan's own and the scan's
+    plan.unfetched.extend(scan.unfetched);
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
     if let Some(root) = inv.folders.get(&inv.root) {
         for id in &root.children {
             if let Some(f) = inv.folders.get(id)
@@ -1512,7 +1578,10 @@ pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &Hash
     let entries = contents(inv, source, prefs, prefs.folders);
     let scan = pre_trash_scan(inv, prefs, source, protected, worn);
     let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
-    plan.unfetched = scan.unfetched;
+    // both lists of folders to load: the plan's own and the scan's
+    plan.unfetched.extend(scan.unfetched);
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
     plan
 }
 
@@ -2120,6 +2189,16 @@ fn plan_with(
             plan.kept_list.push((name, Kept::Protected));
             continue;
         }
+        if is_folder {
+            let unloaded = unloaded_below(inv, id);
+            if !unloaded.is_empty() {
+                // moved whole once all it holds is loaded (and seen not worn)
+                plan.unfetched.extend(unloaded);
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Protected));
+                continue;
+            }
+        }
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) && !holds_closed(inv, id, &prefs.excluded) {
             let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
             let creator = if by_creator { creator_of(inv, id) } else { None };
@@ -2226,10 +2305,16 @@ pub fn step(
     let base_ok = !base_refused(base_name);
     // the nearest existing folder above each folder made in this batch
     let mut anchor: HashMap<Uuid, Uuid> = HashMap::new();
+    // what this batch moves and where it sends, for the moves after
+    let mut sent_folders: Vec<Uuid> = Vec::new();
+    let mut used: Vec<Uuid> = Vec::new();
     'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
         let still_here = actions::parent(inv, next.id) == Some(next.from)
             && inv.folders.contains_key(&next.id) == next.folder
+            // a restore goes back to a folder, never along a path or to
+            // Pre-Trash (a run file edited by hand cannot make it)
+            && (!next.restore || matches!(next.to, Dest::Folder(_)))
             && if next.restore {
                 restorable(inv, next.id, protected, &holds_worn)
             } else {
@@ -2330,7 +2415,35 @@ pub fn step(
             fresh.insert(id);
             parent = id;
         }
+        // One batch is applied all at once: a move whose way goes through a
+        // folder this batch moves, or a folder holding a place this batch
+        // sends to, waits for the next batch, where it is checked against
+        // the inventory as it then is (never into Pre-Trash's tree or into
+        // itself by the back door).
+        if let Some(next) = queue.front() {
+            let through_moved = walked
+                .iter()
+                .any(|w| sent_folders.iter().any(|s| *w == *s || actions::under(inv, *w, *s)));
+            let holds_used = next.folder && used.iter().any(|u| *u == next.id || actions::under(inv, *u, next.id));
+            if (through_moved || holds_used) && !change.operations.is_empty() {
+                break 'moves;
+            }
+        }
         let Some(m) = queue.pop_front() else { break };
+        // a folder sent to the root never takes a name the viewer or Auto-sort
+        // reads there (#RLV, Pre-Trash, the sort folder…)
+        if m.folder
+            && parent == inv.root
+            && inv.folders.get(&m.id).is_some_and(|f| {
+                let name = f.info.name.trim();
+                base_refused(name)
+                    || name.eq_ignore_ascii_case(base_name)
+                    || default_base_names().iter().any(|n| n.eq_ignore_ascii_case(name))
+            })
+        {
+            *skipped += 1;
+            continue;
+        }
         // into itself, or into a folder made inside itself: every existing
         // folder on the way is checked, a new one has none of its own
         let into_itself = walked.iter().any(|w| *w == m.id || actions::under(inv, *w, m.id));
@@ -2361,6 +2474,10 @@ pub fn step(
             body: llsd_map! { "parent_id" => parent },
         });
         change.refresh.push(parent);
+        if m.folder {
+            sent_folders.push(m.id);
+        }
+        used.extend(walked.iter().copied());
         sent.push(m);
     }
     if change.operations.is_empty() {

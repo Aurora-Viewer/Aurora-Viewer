@@ -472,3 +472,25 @@ fn undo_leaves_what_was_moved_by_hand_after_the_run() {
     assert!(moves.iter().all(|m| m.id != moved));
     assert!(skipped >= 1);
 }
+
+/// The run an Undo is putting back is never the one dropped to keep the
+/// last five, and every Undo run of it is forgotten at its end.
+#[test]
+fn an_undone_run_is_kept_while_it_is_undone() {
+    let mut journal = Journal::default();
+    let oldest = journal.begin(RunKind::Move, 1);
+    journal.record_in(oldest, [entry(1), entry(2)]);
+    for at in 2..(RUNS as i64 + 1) {
+        let run = journal.begin(RunKind::Move, at);
+        journal.record_in(run, [entry(100 + at as u128)]);
+    }
+    let undo = journal.begin_undo(50, oldest);
+    assert!(journal.runs.iter().any(|r| r.id == oldest), "kept while undone");
+    journal.record_in(undo, [entry(1)]);
+    // a second Undo of it, begun afresh instead of resumed
+    let again = journal.begin_undo(60, oldest);
+    journal.record_in(again, [entry(2)]);
+    journal.forget_undos_of(oldest);
+    assert!(journal.runs.iter().all(|r| r.undoes.is_none()));
+    assert!(journal.runs.iter().all(|r| r.id != oldest), "all of it went back");
+}

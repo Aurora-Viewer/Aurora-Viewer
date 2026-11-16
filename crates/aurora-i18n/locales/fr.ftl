@@ -14425,6 +14425,11 @@ inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : l
 inventory-sorter-rule-words = Quand le nom contient
 inventory-sorter-rule-folder = Chemin du dossier, par exemple Maison/Chaises
 inventory-sorter-menu-entries = Tri automatique
+inventory-sorter-undo-stays = { $count ->
+    [one] 1 élément reste où il est : déplacé à la main depuis, disparu, ou dans un endroit que le tri automatique ne touche pas.
+   *[other] { $count } éléments restent où ils sont : déplacés à la main depuis, disparus, ou dans un endroit que le tri automatique ne touche pas.
+    }
+inventory-sorter-undo-nothing = Rien des derniers tris ne peut être remis en place : leurs éléments ont été déplacés à la main, ont disparu, ou sont dans des endroits que le tri automatique ne touche pas.
 inventory-sorter-busy-elsewhere = Le tri automatique tourne déjà dans une autre fenêtre d’inventaire : attendez qu’il y termine.
 inventory-sorter-trash-gone = (n’est plus dans l’inventaire)
 inventory-sorter-trash-more = …et { $count } de plus
