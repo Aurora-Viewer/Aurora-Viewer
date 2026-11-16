@@ -37,11 +37,13 @@ pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
+pub mod conversation_log;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
+pub mod director;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -97,6 +99,7 @@ pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
 pub mod parcel_icons;
@@ -120,6 +123,7 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;
@@ -132,6 +136,7 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
 pub mod stand_fly;
 pub mod stream_title;
@@ -168,6 +173,8 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Favorite Wearables window (`ui/appearance/wearable_favorites.rs`).
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -229,8 +236,15 @@ pub struct Panels {
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
+    /// The Director (toolbar `director`): its window and its timeline.
+    pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
+    pub omnifilter: bool,
+    /// The conversation log (toolbar `conversation_log`, Communicate ›
+    /// Conversation log…).
+    pub conversation_log: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -261,6 +275,7 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
@@ -300,7 +315,10 @@ impl Panels {
             avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
+            director: false,
             voice_controls: false,
+            omnifilter: false,
+            conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,

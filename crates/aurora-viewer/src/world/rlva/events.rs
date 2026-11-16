@@ -4,25 +4,35 @@
 use super::{super::World, Rlva};
 use uuid::Uuid;
 
+/// rlvParseNotifyOption (rlvhandler.cpp): the channel, then an optional
+/// filter; a third token makes the option invalid.
 pub(super) fn notification_option(option: &str) -> Option<(i32, &str)> {
-    let (channel, filter) = option.split_once(';').unwrap_or((option, ""));
-    let channel = channel.parse::<i32>().ok()?;
-    (channel > 0 && channel != i32::MAX).then_some((channel, filter))
+    let mut tokens = option.split(';');
+    let channel = tokens.next()?.parse::<i32>().ok()?;
+    let filter = tokens.next().unwrap_or_default();
+    (tokens.next().is_none() && channel > 0 && channel != i32::MAX).then_some((channel, filter))
 }
 
 impl Rlva {
-    /// The reference also notifies about rejected and duplicate commands.
-    /// Only the behaviour/option part is tested against the subscription.
+    /// An event (worn, attached, sat…): the whole text is tested against
+    /// each subscription (RlvBehaviourNotifyHandler::sendNotification).
     pub fn notify(&mut self, text: &str) {
-        let subject = text.split_once('=').map_or(text, |(name, _)| name).to_ascii_lowercase();
+        self.notify_command(text, "");
+    }
+
+    /// The reference also notifies about rejected and duplicate commands.
+    /// Only `subject`, the behaviour and its option, is tested against the
+    /// subscription; `suffix` (`=n`, `=y`) follows it untested.
+    pub(super) fn notify_command(&mut self, subject: &str, suffix: &str) {
+        let tested = subject.to_ascii_lowercase();
         let channels: Vec<_> = self
             .rules_for("notify", Uuid::nil())
             .filter_map(|(_, option)| notification_option(option))
-            .filter(|(_, filter)| subject.contains(&filter.to_ascii_lowercase()))
+            .filter(|(_, filter)| tested.contains(&filter.to_ascii_lowercase()))
             .map(|(channel, _)| channel)
             .collect();
         for channel in channels {
-            self.reply(channel, "notify", format!("/{text}"));
+            self.reply(channel, "notify", format!("/{subject}{suffix}"));
         }
     }
 
@@ -32,6 +42,67 @@ impl Rlva {
 }
 
 impl World {
+    /// After an OwnerSay stored rules: whether their issuers are known
+    /// objects (`Rlva::resolve_sources`).
+    pub(crate) fn rlva_resolve_sources(&mut self) {
+        let objects = &self.objects;
+        self.rlva.resolve_sources(|id| objects.index_of_uuid(&id).is_some());
+    }
+
+    /// RlvHandler::onDetach (rlvhandler.cpp), which LLVOAvatarSelf::
+    /// detachObject (llvoavatarself.cpp) calls when one of our attachments is
+    /// killed: the restrictions of every object rooted on it are cleared at
+    /// once, and the listeners told. Run on a kill that is applied, before
+    /// the objects leave the store: a kill ignored during a teleport or sent
+    /// by a region we left (`World::kill_is_ignored`) keeps the attachment and
+    /// its rules, and one dropped to the ground is not killed and keeps them
+    /// too, as in the Legacy Viewer.
+    pub(crate) fn rlva_attachment_killed(&mut self, idx: usize) {
+        if !self.rlva.enabled() {
+            return;
+        }
+        let Some(root) = self.objects.get(idx).filter(|o| !o.is_avatar()) else {
+            return;
+        };
+        let ours = self
+            .objects
+            .parent_of(root)
+            .and_then(|p| self.objects.get(p))
+            .is_some_and(|p| p.is_avatar() && p.full_id == self.agent_id);
+        if !ours {
+            return;
+        }
+        let item = root.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(root.full_id);
+        // The wear a forced batch asked for had arrived, since it leaves: it
+        // is no longer on its way, and a new forced wear of the same object
+        // is a new request (LLAttachmentsMgr::onAttachmentArrived forgets
+        // the request at the arrival, llattachmentsmgr.cpp).
+        self.rlva.requested_wears.remove(&item);
+        let mut gone: std::collections::BTreeSet<Uuid> = self
+            .objects
+            .subtree(idx)
+            .into_iter()
+            .filter_map(|i| self.objects.get(i).map(|o| o.full_id))
+            .collect();
+        // A child prim can be killed before its root (the note in onDetach,
+        // which matches on the remembered m_idRoot): the watchdog remembers
+        // which attachment each issuer belonged to.
+        gone.extend(
+            self.rlva
+                .watchdog
+                .sources
+                .iter()
+                .filter(|(_, worn)| **worn == item)
+                .map(|(source, _)| *source),
+        );
+        // (onDetach walks the objects that hold restrictions: a prim that
+        // holds none keeps the commands it has queued)
+        gone.retain(|source| self.rlva.rules.contains_key(source));
+        for source in gone {
+            self.rlva.release(source);
+        }
+    }
+
     /// The return is delayed until the seat parent has gone, as onSitOrStand
     /// does in the reference. A failed sit must never trigger a teleport.
     pub fn rlva_update_stand(&mut self) {

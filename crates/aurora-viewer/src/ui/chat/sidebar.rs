@@ -77,11 +77,14 @@ pub(super) fn section(world: &World, id: &Uuid) -> Section {
 }
 
 /// The sections from top to bottom: the sets shown apart (highest
-/// priority first), the private messages, the groups, the conferences.
+/// priority first), the private messages, the groups, the conferences; the
+/// kinds in the order of Preferences › Chat when the tabs are ordered by
+/// kind (`conversation_options::section_kinds`).
 fn sections(world: &World) -> impl Iterator<Item = Section> {
+    let kinds = super::conversation_options::section_kinds(&super::conversation_options::current());
     (0..world.contact_sets.chat_sections().len())
         .map(Section::Set)
-        .chain([Kind::Private, Kind::Group, Kind::Conference].map(Section::Kind))
+        .chain(kinds.map(Section::Kind))
 }
 
 /// The insignia of a group conversation's group: our membership's, else
@@ -99,7 +102,7 @@ pub(crate) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
 /// A group's picture over the square `rect`: its insignia cropped square on
 /// the theme's radius, else the `users-group` glyph (of side `glyph`) on a
 /// raised square, as People › Groups draws it.
-pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
+pub(crate) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
     match insignia {
         Some(t) => crate::ui::widgets::square_picture(ui, rect, t),
         None => {
@@ -455,7 +458,7 @@ pub(super) fn show(
                     let e = Entry {
                         icon,
                         name_color: if kind == Kind::Private {
-                            world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
+                            world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color)
                         } else {
                             None
                         },
@@ -513,7 +516,7 @@ pub(super) fn show(
                         st.wanted_pics.insert(id);
                         let e = Entry {
                             icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
-                            name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
+                            name_color: world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),
@@ -664,7 +667,8 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
         return t;
     }
     let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
-    match world.chat.iter().rev().find(|l| !l.kind.is_notice()) {
+    // (never a blocked resident's line)
+    match world.chat.iter().rev().find(|l| !l.kind.is_notice() && !l.blocked) {
         Some(l) => format!("{near} · {}", preview(world, l, true)),
         None => near,
     }
@@ -771,10 +775,20 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
 }
 
 pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
-    if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
-        return world.social.display_name_of(id);
+    let names = &world.social.avatar_names;
+    if kind == Kind::Private
+        && let Some(name) = names.get(id)
+    {
+        // FSIMTabNameFormat (Preferences › Chat), the display name by default
+        let format = super::conversation_options::current().tab_names;
+        return super::conversation_options::tab_name(name, &names.options, format);
     }
     world.session_title(id)
+}
+
+/// The name on a conversation's tab or window: `entry_name` for its kind.
+pub(super) fn tab_title(world: &World, id: &Uuid) -> String {
+    entry_name(world, id, kind(world, id))
 }
 
 /// The head of a section (a conversation is started from the button beside
