@@ -214,7 +214,8 @@ What a run does:
   `~AuroraSelfTest seat` within 3 m in front of the avatar, sits the avatar
   on one, takes off and lands once, then deletes its own prims (to the
   Trash). The avatar ends where the simulator stands it up, beside the
-  seat. It acts on these prims only. Its cases are skipped where the
+  seat: `@standtp` is held over the sit and released before the avatar
+  stands, so that no return teleport is sent. It acts on these prims only. Its cases are skipped where the
   parcel does not let the avatar build, or when the avatar sits or flies at
   the start.
 - **The end**, also after a failure, a timeout, **Stop**, RLVa switched

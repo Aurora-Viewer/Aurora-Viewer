@@ -47,6 +47,13 @@ impl World {
         self.rlva_note_attachment_command(command, actor, now);
         self.note_outfit_command(command);
         self.rlva.note_sit_command(command, actor);
+        // handle_object_sit (llviewermenu.cpp) and RlvForceHandler<RLV_BHVR_SIT>
+        // (rlvhandler.cpp), setSitSource: a sit asked while @standtp is held,
+        // by hand or by a script, records where the avatar stood. Standing
+        // up brings it back there (rlva_update_stand).
+        if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
+            self.rlva.stand_origin = self.main_region.map(|h| (h, self.agent.position));
+        }
         if self.rlva.enabled()
             && let NetCommand::RezAttachments(items) = command
         {

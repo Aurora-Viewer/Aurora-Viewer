@@ -35,12 +35,18 @@ pub(crate) fn enabled(world: &crate::world::World) -> bool {
     world.script_controls.any() && allowed(true, world.rlva_has_locked_attachment())
 }
 
+/// Whether the command itself goes through: it has the entry's RLVa guard,
+/// for the paths that do not go through the menu (search, shortcuts).
+pub(crate) fn command_allowed(world: &crate::world::World) -> bool {
+    !world.rlva_has_locked_attachment()
+}
+
 impl App {
     /// Tools.ReleaseKeys: refused while RLVa locks an attachment, as the
     /// entry is greyed then; sent even when no control is held, as the
     /// Legacy Viewer does.
     pub(super) fn release_keys(&mut self) {
-        if self.world.rlva_has_locked_attachment() {
+        if !command_allowed(&self.world) {
             log::info!("release keys: refused, RLVa locks an attachment");
             return;
         }
@@ -127,5 +133,39 @@ mod tests {
         say(&mut world, "@remattach=n");
         world.rlva_configure(false);
         assert!(enabled(&world));
+    }
+
+    /// RlvFolderLocks::getLockedItems (rlvlocks.cpp): an attachment worn
+    /// through a link in a locked #RLV folder is locked too (#2677).
+    #[test]
+    fn an_attachment_held_by_a_link_in_a_locked_folder_greys_the_entry_out() {
+        let crate::world::rlva::link_lock_tests::Linked { mut world, issuer, .. } = crate::world::rlva::link_lock_tests::linked();
+        world.apply(NetEvent::ScriptControlChange(vec![(true, DEMO_TAKEN, false)]));
+        let say = |world: &mut crate::world::World, text: &str| {
+            let chat = aurora_net::ChatMessage {
+                from_name: "RLVa test object".to_owned(),
+                source_id: issuer,
+                owner_id: uuid::Uuid::nil(),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.into(),
+            };
+            assert!(world.rlva.receive(&chat));
+        };
+        assert!(enabled(&world) && command_allowed(&world));
+        // the folder of the link, the body itself is outside #RLV
+        for lock in ["@detachthis:Body/Mesh", "@detachallthis:Body"] {
+            say(&mut world, &format!("{lock}=n"));
+            assert!(!enabled(&world), "{lock}");
+            assert!(!command_allowed(&world), "{lock}");
+            say(&mut world, &format!("{lock}=y"));
+            assert!(enabled(&world), "{lock} released");
+            assert!(command_allowed(&world), "{lock} released");
+        }
+        // a locked folder that holds nothing worn, nor a link to it
+        say(&mut world, "@detachthis:Spare=n");
+        assert!(enabled(&world) && command_allowed(&world));
     }
 }
