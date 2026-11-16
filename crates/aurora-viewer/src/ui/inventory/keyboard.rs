@@ -463,8 +463,10 @@ mod tests {
     fn enter_rejects_the_whole_selection_when_a_marketplace_link_cannot_be_worn() {
         use aurora_net::inventory::{InvFolder, InvItem};
         let id = Uuid::from_u128;
-        let mut inv = Inventory::default();
-        inv.root = id(1);
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
         inv.created_folders(vec![
             InvFolder {
                 id: inv.root,
