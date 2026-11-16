@@ -973,7 +973,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         } else {
             aurora_i18n::tr!("common-fly")
         };
-        if menu::item(ui, p, "plane-tilt-filled", fly) {
+        // enable_fly_land (indra/newview/llviewermenu.cpp): no takeoff under
+        // @fly or over a land without flight; landing is never refused
+        let grounded = ui.ctx().data(|d| d.get_temp::<bool>(fly_locked_id())).unwrap_or(false);
+        if menu::item_if(ui, p, "plane-tilt-filled", fly, st.flying || !grounded) {
             *action = BarAction::ToggleFly;
         }
         // menu_viewer.xml: Fly Override (FSAlwaysFly), beside the flight
@@ -1325,6 +1328,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
         });
         menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
+            // menu_viewer.xml, RLV.EnableIfNot setenv: every entry here is
+            // greyed while RLVa holds the environment
+            let free = !ui.ctx().data(|d| d.get_temp::<bool>(rlva_env_locked_id())).unwrap_or(false);
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
             if menu::check_keys(
@@ -1333,7 +1339,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 "world-filled",
                 aurora_i18n::tr!("ui-bars-use-shared-environments"),
                 shared,
-                true,
+                free,
                 &st.env_keys[0],
             ) {
                 panels.time_of_day = 0;
@@ -1351,17 +1357,17 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             let labels = time_of_day();
             for i in crate::world::env::TIME_OF_DAY_ORDER {
                 let n = i as usize;
-                if menu::check_keys(ui, p, icons[n], labels[n], panels.time_of_day == i, true, &st.env_keys[n]) {
+                if menu::check_keys(ui, p, icons[n], labels[n], panels.time_of_day == i, free, &st.env_keys[n]) {
                     panels.time_of_day = i;
                 }
             }
             menu::separator(ui, p);
             // Firestorm's quick preferences lists, and World > Environment >
             // Personal Lighting...
-            if menu::item(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker")) {
+            if menu::item_if(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker"), free) {
                 panels.environment = true;
             }
-            if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
+            if menu::item_if(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting"), free) {
                 panels.personal_lighting = true;
             }
             // Aurora's own: the weather beside the lighting it rides on
@@ -1376,7 +1382,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 (SettingsKind::Water, "droplet-filled", aurora_i18n::tr!("ui-bars-new-water")),
                 (SettingsKind::Day, "sunset-2-filled", aurora_i18n::tr!("ui-bars-new-day-cycle")),
             ] {
-                if menu::item(ui, p, icon, label) {
+                if menu::item_if(ui, p, icon, label, free) {
                     *action = BarAction::NewEnvironment(kind);
                 }
             }
@@ -1744,7 +1750,8 @@ fn build_menu(
         (2, "circle-plus-filled", aurora_i18n::tr!("ui-bars-create-prims-ctrl-4")),
         (3, "mountain-filled", aurora_i18n::tr!("ui-bars-edit-land-ctrl-5")),
     ] {
-        if menu::item(ui, p, icon, label) {
+        let locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_build_locked_id())).unwrap_or(false);
+        if menu::item_if(ui, p, icon, label, !locked) {
             *action = BarAction::Build(mode);
         }
     }
@@ -2518,7 +2525,10 @@ pub fn top_bars(
                                 } else {
                                     ui.add_space((ui.available_width() - STAR_W).max(0.0));
                                 }
-                                if let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref()) {
+                                // LLLocationInputCtrl::updateAddLandmarkButton: no star under @showloc
+                                if !st.location_hidden
+                                    && let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref())
+                                {
                                     action = BarAction::LandmarkStar(star);
                                 }
                             });
@@ -2739,6 +2749,27 @@ pub(crate) fn tool_button_id(command: &str) -> egui::Id {
 /// action (@sit standing, @unsit seated), so it is greyed.
 pub(crate) fn rlva_sit_locked_id() -> egui::Id {
     egui::Id::unique("rlva-sit-locked")
+}
+
+/// Set by the app every frame: on the ground with no takeoff allowed (RLVa's
+/// @fly, a land without flight, seated: LLAgent::enableFlying), so the Fly
+/// button and the menu's Fly are greyed. Never set in flight: landing stays.
+pub(crate) fn fly_locked_id() -> egui::Id {
+    egui::Id::unique("fly-locked")
+}
+
+/// Set by the app every frame: RLVa holds the environment (@setenv), so the
+/// entries of World › Environment are greyed (menu_viewer.xml,
+/// RLV.EnableIfNot setenv).
+pub(crate) fn rlva_env_locked_id() -> egui::Id {
+    egui::Id::unique("rlva-env-locked")
+}
+
+/// Set by the app every frame: the build window is closed and RLVa keeps it
+/// so (@edit and @rez together, LLToolMgr::buildEnabledOrActive), so the
+/// Build button and the Build menu's tools are greyed.
+pub(crate) fn rlva_build_locked_id() -> egui::Id {
+    egui::Id::unique("rlva-build-locked")
 }
 
 /// The size of a toolbar button and of its icon: Firestorm's full-width bar
@@ -3498,7 +3529,9 @@ pub(crate) fn toolbar_row(
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::unique("bars_favorites_grid_open");
         let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
-        let rlva_locked = b.command == "sit" && ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
+        let rlva_locked = b.command == "sit" && ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false)
+            || b.command == "build" && ui.ctx().data(|d| d.get_temp::<bool>(rlva_build_locked_id())).unwrap_or(false)
+            || b.command == "fly" && ui.ctx().data(|d| d.get_temp::<bool>(fly_locked_id())).unwrap_or(false);
         let response = tool_button(
             ui,
             p,
