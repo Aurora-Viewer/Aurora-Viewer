@@ -814,6 +814,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn labelled_links_stay_plain_and_a_literal_url_keeps_its_utf8_byte_range() {
+        for label in ["café", "www.a.test"] {
+            let prefix = format!("Île [https://b.test {label}] 茶 ");
+            let url = "https://c.test/été";
+            let name = format!("{prefix}{url}!");
+            assert_eq!(link_runs(&name), vec![(prefix.as_str(), None), (url, Some(url)), ("!", None)]);
+        }
+    }
+
     /// A name without an address is one plain run.
     #[test]
     fn a_name_without_a_link_is_one_run() {

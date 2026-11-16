@@ -1128,23 +1128,13 @@ pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
 /// and agent links stay text there.
 pub(crate) fn web_links(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
     let mut out = Vec::new();
-    let mut rest = text;
-    let mut base = 0;
-    while !rest.is_empty() {
-        let Some((i, len, seg)) = next_link(rest) else { break };
-        if len == 0 {
-            break;
+    for (start, len, seg) in link_spans(text) {
+        let Seg::Url(url) = seg else { continue };
+        let range = start..start + len;
+        // A bracketed link may resolve to its URL. Only the literal address is clickable here.
+        if text.get(range.clone()) == Some(url) {
+            out.push((range, url));
         }
-        if let Seg::Url(url) = seg {
-            let start = base + i;
-            let end = start + len;
-            // a labelled link shows its label, not the address: leave it text
-            if text.get(start..end) == Some(url) {
-                out.push((start..end, url));
-            }
-        }
-        base += i + len;
-        rest = &rest[i + len..];
     }
     out
 }
