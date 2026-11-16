@@ -11,8 +11,11 @@
 //! The lock keeps a target in the centre of the view: a joint of an avatar
 //! (ours or another: the neck of a dancer), or an object. Live, it turns
 //! the user's own camera wherever they move it, with no keyframe at all; a
-//! keyframe taken meanwhile is locked too, and the playback locks the view
-//! where its keyframes say so (`Track::lock_weight`).
+//! keyframe taken meanwhile is locked too. Played, the whole track is
+//! locked while the lock is on, whenever its keyframes were taken (a user
+//! who turns it on after laying the path expects the playback to follow the
+//! target); with the lock off, the view locks where the keyframes say so
+//! (`Track::lock_weight`).
 
 use crate::camera::track::{self, Pose, Track};
 use glam::Vec3;
@@ -103,7 +106,7 @@ pub enum Target {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Lock {
     /// The user's own camera is locked on the target, and so is a keyframe
-    /// taken meanwhile.
+    /// taken meanwhile and the whole track when it plays.
     pub on: bool,
     pub target: Target,
     pub joint: Joint,
@@ -411,17 +414,34 @@ impl Director {
         }
     }
 
+    /// How much the played view is locked on the target at `time`, from 0
+    /// to 1: wholly while the lock is on, else as much as the keyframes
+    /// around `time` are locked.
+    pub fn lock_weight(&self, time: f32) -> f32 {
+        if self.lock.on { 1.0 } else { self.track.lock_weight(time) }
+    }
+
+    /// The view at keyframe `index` turns to the target when it is played.
+    pub fn key_locked(&self, index: usize) -> bool {
+        self.lock.on || self.track.keys().get(index).is_some_and(|key| key.locked)
+    }
+
+    /// Something asks for the lock's target: the live lock or a keyframe.
+    pub fn wants_target(&self) -> bool {
+        self.lock.on || self.track.keys().iter().any(|key| key.locked)
+    }
+
     /// The view the track gives the camera now: while it plays or the
     /// playhead is held. `None`: the user's own camera. With the lock's
-    /// `target` (where it is now), the view turns to it as much as the
-    /// keyframes around the playhead are locked.
+    /// `target` (where it is now), the view turns to it as much as it is
+    /// locked there (`lock_weight`).
     pub fn view(&self, target: Option<Vec3>) -> Option<Pose> {
         let pose = match self.mode {
             Mode::Editing => return None,
             Mode::Scrubbing | Mode::Playing { .. } => self.track.sample(self.time)?,
         };
         let pose = match target {
-            Some(target) => pose.aimed(target, self.track.lock_weight(self.time)),
+            Some(target) => pose.aimed(target, self.lock_weight(self.time)),
             None => pose,
         };
         Some(track::hand_held(pose, self.time, self.shake))
@@ -711,6 +731,36 @@ mod tests {
         assert!((0.3..0.999).contains(&towards(&d)), "turning to it in between");
         // without a target to find (the avatar left), the track's own view
         assert!(d.view(None).expect("view").forward().dot(Vec3::X) > 0.999);
+    }
+
+    #[test]
+    fn the_lock_turned_on_after_the_keyframes_locks_the_whole_playback() {
+        // the path laid first, the lock turned on afterwards: no keyframe
+        // of it is locked, yet the playback follows the target throughout
+        let mut d = three();
+        assert!(!d.wants_target());
+        d.lock.on = true;
+        assert!(d.wants_target());
+        assert!(d.track.keys().iter().all(|key| !key.locked));
+        assert!((0..3).all(|index| d.key_locked(index)));
+        let target = Vec3::new(10.0, 50.0, 20.0);
+        for time in [0.0, 1.5, 3.0, 4.5, 6.0] {
+            d.scrub(time);
+            assert_eq!(d.lock_weight(time), 1.0);
+            let pose = d.view(Some(target)).expect("view");
+            assert!(
+                pose.forward().dot((target - pose.position).normalize()) > 0.999,
+                "locked at {time} s"
+            );
+        }
+        // off again: the keyframes say, and none is locked
+        d.lock.on = false;
+        assert!(!d.key_locked(1));
+        d.scrub(3.0);
+        assert_eq!(d.lock_weight(3.0), 0.0);
+        let pose = d.view(Some(target)).expect("view");
+        assert!(pose.forward().dot((target - pose.position).normalize()) < 0.999);
+        assert!(!d.key_locked(99));
     }
 
     #[test]

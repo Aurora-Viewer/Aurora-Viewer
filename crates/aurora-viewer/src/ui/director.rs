@@ -432,7 +432,7 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
         ui.add(slider).on_hover_text(aurora_i18n::tr!("director-lock-smoothing-tip"));
     });
     // a lock that is asked for and finds nothing says so: the view is free
-    let wanted = d.lock.on || d.track.keys().iter().any(|key| key.locked);
+    let wanted = d.wants_target();
     if live.restricted {
         ui.label(RichText::new(aurora_i18n::tr!("director-restricted")).size(12.0).color(p.warn));
     } else if wanted && live.target.is_none() {
@@ -852,11 +852,21 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     {
         d.track.set_rest(index, rest);
     }
-    let mut locked = key.locked;
-    if widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("director-key-locked"))
-        .on_hover_text(aurora_i18n::tr!("director-key-locked-tip"))
-        .changed()
-    {
+    // while the lock is on, every keyframe is played locked: shown ticked,
+    // its own choice kept for when the lock goes off
+    let mut locked = d.key_locked(index);
+    let lock_on = d.lock.on;
+    let response = ui
+        .add_enabled_ui(!lock_on, |ui| {
+            widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("director-key-locked"))
+        })
+        .inner;
+    let tip = if lock_on {
+        aurora_i18n::tr!("director-key-locked-by-lock-tip")
+    } else {
+        aurora_i18n::tr!("director-key-locked-tip")
+    };
+    if response.on_hover_text(tip).on_disabled_hover_text(tip).changed() && !lock_on {
         d.track.set_locked(index, locked);
     }
     ui.horizontal(|ui| {
@@ -1076,7 +1086,11 @@ fn paint_key(painter: &egui::Painter, center: Pos2, half: f32, color: Color32) {
 pub fn timeline(ctx: &egui::Context, p: &Palette, d: &mut Director, bottom_top: f32, live: &Live, actions: &mut Vec<Action>) -> f32 {
     let room = super::layout::work_area(ctx);
     let width = (room.width() - 2.0 * STRIP_GAP).clamp(320.0, STRIP_MAX_W);
-    let area = egui::Area::new(Id::unique("director_timeline"))
+    let id = Id::unique("director_timeline");
+    // under the windows, but a click on it, between its buttons included, is
+    // its own: never the world's (a walk, or the avatar stood up)
+    widgets::solid_background(ctx, id);
+    let area = egui::Area::new(id)
         .order(egui::Order::Background)
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(room.center().x.round(), (bottom_top - STRIP_GAP).round()))
@@ -1494,7 +1508,7 @@ pub fn world(
         let color = if selected { p.violet_light } else { p.ink };
         let stroke = Stroke::new(if selected { 2.0 } else { 1.5 }, color);
         let shown = match target {
-            Some(point) if key.locked => key.pose.aimed(point, 1.0),
+            Some(point) if d.key_locked(index) => key.pose.aimed(point, 1.0),
             _ => key.pose,
         };
         for (a, b) in camera_edges(&shown, aspect) {
@@ -1511,7 +1525,10 @@ pub fn world(
         let above = at - egui::vec2(0.0, 9.0);
         painter.text(above + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, &label, font.clone(), p.bar);
         painter.text(above, Align2::CENTER_BOTTOM, &label, font, color);
-        let response = egui::Area::new(Id::unique(("director_world_key", index)))
+        let id = Id::unique(("director_world_key", index));
+        // (a click on it is the keyframe's: never a walk to where it is)
+        widgets::solid_background(ctx, id);
+        let response = egui::Area::new(id)
             .order(egui::Order::Background)
             .pivot(Align2::CENTER_CENTER)
             .fixed_pos(at)

@@ -117,7 +117,17 @@ impl App {
     /// The HUDs go with the interface while the track plays, unless RLVa
     /// keeps one shown.
     pub(super) fn director_hides_huds(&self) -> bool {
-        (self.director.d.playing() || self.director.recording.is_some()) && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+        (self.director.d.playing() || self.director_filming()) && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+    }
+
+    /// A film is being recorded, of the track or of the live view: the world
+    /// is drawn alone, as while the track plays. The windows stay for the
+    /// live view (the film takes the 3D view before them), but the name
+    /// tags, the lock's ring, the guides and every other mark laid on the
+    /// world are drawn into that view (to be hidden behind what is nearer)
+    /// and would be filmed with it.
+    pub(super) fn director_filming(&self) -> bool {
+        self.director.recording.is_some()
     }
 
     /// The film being recorded keeps the transparency of the isolation's
@@ -494,7 +504,7 @@ impl App {
         // where the lock's target is, when the live camera or a keyframe
         // asks for it: followed smoothly, found again at once after a loss
         let lock = self.director.d.lock;
-        let wanted = open && !self.director_restricted() && (lock.on || self.director.d.track.keys().iter().any(|key| key.locked));
+        let wanted = open && !self.director_restricted() && self.director.d.wants_target();
         self.director.aim = wanted
             .then(|| self.director_target())
             .flatten()
@@ -874,8 +884,10 @@ impl App {
     /// AURORA_DEMO_DIRECTOR: once in the world, the window opened on a
     /// track of four keyframes around our avatar; `play` plays it at once,
     /// without a start delay; `lock` locks the view on our avatar's neck,
-    /// live and at the two middle keyframes, in a 2.39:1 frame with the
-    /// rule of thirds; `green` shows our avatar alone on a green screen.
+    /// live and all along the track (its two middle keyframes are locked
+    /// too: their own choice, for when the lock is turned off), in a 2.39:1
+    /// frame with the rule of thirds; `green` shows our avatar alone on a
+    /// green screen.
     fn director_demo(&mut self) {
         if !self.demo {
             return;
