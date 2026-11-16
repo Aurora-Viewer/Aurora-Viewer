@@ -244,14 +244,10 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
             (true, None, Some(it)) => it.name.as_str(),
             _ => entry.name.as_str(),
         };
-        moves.push(restore_move(
-            entry.id,
-            folder.is_some(),
-            name,
-            now,
-            entry.from,
-            targets.label(entry.from),
-        ));
+        let mut back = restore_move(entry.id, folder.is_some(), name, now, entry.from, targets.label(entry.from));
+        // only an Undo of a Trash run takes entries out of the Trash
+        back.from_trash = run.kind == RunKind::Trash;
+        moves.push(back);
     }
     moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
     (moves, skipped)
@@ -267,6 +263,7 @@ fn restore_move(id: Uuid, folder: bool, name: &str, from: Uuid, to: Uuid, label:
         label,
         unpacker: false,
         restore: true,
+        from_trash: false,
     }
 }
 

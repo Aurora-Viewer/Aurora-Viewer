@@ -1136,6 +1136,11 @@ pub struct Move {
     /// by the hands-off rule, which still guards where it goes.
     #[serde(default)]
     pub restore: bool,
+    /// An Undo of a Trash run: the only move ever allowed to take an entry
+    /// out of the Trash (a sort's Undo or a layout leaves what is in the
+    /// Trash now where it is).
+    #[serde(default)]
+    pub from_trash: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1320,7 +1325,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // tag, a store and what it is (`Velmora - Hex Dress`), or what it
         // is with its versions inside (`Hex Dress` holding `Maitreya`,
         // `Reborn`, `Hex Dress Legacy`, `Squish`)
-        tagged || store_named && named || versions_only(inv, f, name, named)
+        tagged || store_named && named || versions_only(inv, f, name, named || store_named)
     } else {
         // a folder of items alone is a product when its name says what or
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
@@ -1351,7 +1356,9 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
         let named_again = sub_words.iter().any(|w| own.contains(w));
-        let version = named_again || read.body.is_some() || read.squish || read.waifus;
+        // a body's or a head's version (`Lelutka`, `Catwa EvoX`), Squish,
+        // Waifus, or the product's own name again
+        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) || read.squish || read.waifus;
         versions |= version;
         // a fatpack's own folders
         version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
@@ -1378,7 +1385,7 @@ fn product_words(name: &str) -> Vec<String> {
 }
 
 /// The folders a product's delivery holds beside its body versions.
-const VERSION_WORDS: [&str; 22] = [
+const VERSION_WORDS: [&str; 28] = [
     "hud",
     "huds",
     "textures",
@@ -1401,10 +1408,16 @@ const VERSION_WORDS: [&str; 22] = [
     "sizes",
     "alpha",
     "alphas",
+    "bom",
+    "omega",
+    "applier",
+    "appliers",
+    "body",
+    "head",
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 37] = [
+const SHELF_WORDS: [&str; 48] = [
     "my",
     "old",
     "new",
@@ -1442,6 +1455,17 @@ const SHELF_WORDS: [&str; 37] = [
     "clothes",
     "clothing",
     "bodies",
+    "party",
+    "casual",
+    "formal",
+    "evening",
+    "everyday",
+    "cute",
+    "sexy",
+    "beach",
+    "holiday",
+    "halloween",
+    "christmas",
 ];
 
 /// A name with a word of its own beyond kinds, bodies, shelf words and
@@ -1722,6 +1746,11 @@ pub fn show_in(inv: &mut Inventory, id: Uuid, folder: bool, parent: Uuid) {
     }
 }
 
+/// `id` is in the Trash, at any depth.
+fn in_trash(inv: &Inventory, id: Uuid) -> bool {
+    actions::system(inv, 14).is_some_and(|t| actions::under(inv, id, t))
+}
+
 /// Lost and Found, semi-protected: closed unless its switch is on.
 const LOST_AND_FOUND: i32 = 16;
 
@@ -1872,12 +1901,14 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
             plan.kept_list.push((m.name.clone(), Kept::Excluded));
             continue;
         }
-        let ok =
-            here && if m.restore {
+        let ok = here
+            && (!m.restore || m.from_trash || !in_trash(inv, m.id))
+            && if m.restore {
                 restorable(inv, m.id, protected, &holds_worn)
             } else {
                 movable(inv, m.id, protected, &holds_worn)
-            } && match m.to {
+            }
+            && match m.to {
                 Dest::Folder(target) if m.restore => restore_target_allowed(inv, target),
                 Dest::Folder(target) => target_allowed(inv, target),
                 Dest::Path(_) | Dest::PreTrash => true,
@@ -2413,6 +2444,7 @@ impl CleanupPlan {
                 label: pre_trash_name(),
                 unpacker: false,
                 restore: false,
+                from_trash: false,
             })
             .collect()
     }
@@ -2763,6 +2795,7 @@ fn plan_with(
             label,
             unpacker,
             restore: false,
+            from_trash: false,
         });
     }
     plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
@@ -2856,6 +2889,9 @@ pub fn step(
             // a restore goes back to a folder, never along a path or to
             // Pre-Trash (a run file edited by hand cannot make it)
             && (!next.restore || matches!(next.to, Dest::Folder(_)))
+            // out of the Trash: an Undo of a Trash run only (an entry trashed
+            // while a sort's Undo or a layout runs stays there)
+            && (!next.restore || next.from_trash || !in_trash(inv, next.id))
             && if next.restore {
                 restorable(inv, next.id, protected, &holds_worn)
             } else {

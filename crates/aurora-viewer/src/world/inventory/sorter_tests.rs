@@ -637,6 +637,24 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     );
     assert!(moved.contains(&id(73)) && moved.contains(&id(75)), "named deliveries move whole");
     assert!(!moved.contains(&id(78)), "Clothes is a shelf");
+    // a skin by its head versions, a store's delivery with its HUD folder,
+    // a shelf named for an occasion
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 60, 1, "Velmora - Ivy");
+    add_folder(&mut inv, 61, 60, "Lelutka");
+    add_folder(&mut inv, 62, 60, "Catwa");
+    add_folder(&mut inv, 63, 1, "Velmora - Aphrodite");
+    add_folder(&mut inv, 64, 63, "HUD");
+    add_item(&mut inv, 210, 63, "Aphrodite Maitreya", 0);
+    add_folder(&mut inv, 65, 1, "Party Dresses");
+    add_item(&mut inv, 211, 65, "Silk Gown", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        ![61, 62, 64, 210].iter().any(|n| moved.contains(&id(*n))),
+        "deliveries never opened"
+    );
+    assert!(!moved.contains(&id(65)) && moved.contains(&id(211)), "Party Dresses is a shelf");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");
@@ -1965,6 +1983,7 @@ fn move_of(inv: &Inventory, at: u128, to: Dest) -> Move {
         label: String::new(),
         unpacker: false,
         restore: false,
+        from_trash: false,
     }
 }
 
@@ -2249,6 +2268,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             label: String::new(),
             unpacker: false,
             restore: false,
+            from_trash: false,
         },
         Move {
             id: id(70),
@@ -2259,6 +2279,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             label: String::new(),
             unpacker: false,
             restore: false,
+            from_trash: false,
         },
     ];
     let prefs = Preferences {
@@ -2337,6 +2358,7 @@ fn exclusions_stop_a_resume_but_never_an_undo() {
         label: String::new(),
         unpacker: false,
         restore: true,
+        from_trash: false,
     };
     let prefs = Preferences {
         excluded: vec![id(50)],
@@ -2389,6 +2411,7 @@ fn move_to(inv: &Inventory, at: u128, to: Dest) -> Move {
         label: String::new(),
         unpacker: false,
         restore: false,
+        from_trash: false,
     }
 }
 

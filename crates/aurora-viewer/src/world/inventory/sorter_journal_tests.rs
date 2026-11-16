@@ -346,6 +346,7 @@ fn files_round_trip_and_snapshots_are_pruned() {
             label: "Pre-Trash".into(),
             unpacker: false,
             restore: false,
+            from_trash: false,
         }],
         base_id: None,
         undoes: None,
