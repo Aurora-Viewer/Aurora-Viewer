@@ -676,8 +676,40 @@ pub fn session() -> Vec<TpEntry> {
     ]
 }
 
-/// The demo's teleport history, oldest first, around now.
+/// `AURORA_DEMO_PLACES=history-big` or `history:big` / `history:n=4000`: a
+/// large saved history for the Places FPS case (#2955).
+fn parse_history_count(v: &str) -> Option<usize> {
+    let (tab, how) = v.split_once(':').unwrap_or((v, ""));
+    let tab = tab.trim();
+    if tab.eq_ignore_ascii_case("history-big") {
+        return Some(4_000);
+    }
+    if !tab.eq_ignore_ascii_case("history") && !tab.eq_ignore_ascii_case("historique") {
+        return None;
+    }
+    for w in how.split(',') {
+        let w = w.trim();
+        if w.eq_ignore_ascii_case("big") {
+            return Some(4_000);
+        }
+        if let Some(n) = w.strip_prefix("n=").or_else(|| w.strip_prefix("N="))
+            && let Ok(n) = n.parse::<usize>()
+            && n > 0
+        {
+            return Some(n.min(50_000));
+        }
+    }
+    None
+}
+
+/// The demo's teleport history, oldest first, around now. With
+/// `history-big` / `n=…`, thousands of entries (most older than a month) so
+/// Places › History can stress the list (#2955).
 pub fn history() -> Vec<HistoryItem> {
+    if let Some(n) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|mode| parse_history_count(&mode)) {
+        log::info!("demo teleport history: {n} entries (FPS stress)");
+        return history_many(n);
+    }
     const DAY: f64 = 86_400.0;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -716,6 +748,61 @@ pub fn history() -> Vec<HistoryItem> {
             3.0 * 3600.0,
         ),
     ]
+}
+
+/// Many history rows for FPS checks: mixed ages so every section fills, with
+/// most visits older than a month (the ones that used to tank FPS when open).
+fn history_many(n: usize) -> Vec<HistoryItem> {
+    const DAY: f64 = 86_400.0;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    let sims = demo_sims();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        // Spread: ~10% recent, ~20% this month, ~70% older (sections 7–8).
+        let ago_days = match i % 10 {
+            0 => ((i / 10) % 6) as f64,
+            1 | 2 => 6.0 + ((i / 10) % 20) as f64,
+            _ => 40.0 + (i % 500) as f64 * 0.5,
+        };
+        let s = &sims[i % sims.len()];
+        let x = 12.0 + ((i * 17) % 220) as f64;
+        let y = 12.0 + ((i * 29) % 220) as f64;
+        out.push(HistoryItem {
+            title: crate::world::tphistory::location_title(&aurora_i18n::tr!("demo-place-numbered-visit", number = format!("{i:04}")), s.2),
+            global: DVec3::new(s.0 as f64 * 256.0 + x, s.1 as f64 * 256.0 + y, 22.0),
+            date: now - ago_days * DAY,
+            slurl: String::new(),
+        });
+    }
+    out.sort_by(|a, b| a.date.total_cmp(&b.date));
+    out
+}
+
+#[cfg(test)]
+mod history_stress_tests {
+    use super::*;
+
+    #[test]
+    fn stress_count_is_limited_to_the_history_demo() {
+        assert_eq!(parse_history_count("history-big:classic"), Some(4_000));
+        assert_eq!(parse_history_count("history:wide,n=17"), Some(17));
+        assert_eq!(parse_history_count("history:n=999999"), Some(50_000));
+        assert_eq!(parse_history_count("history:n=0"), None);
+        assert_eq!(parse_history_count("landmarks:n=4000"), None);
+    }
+
+    #[test]
+    fn history_many_fills_old_sections() {
+        let items = history_many(4_000);
+        assert_eq!(items.len(), 4_000);
+        let now = items.last().unwrap().date;
+        let sections = crate::ui::places::history_sections(&items, "", now, 0.0);
+        assert_eq!(sections.len(), 9, "each day and both older sections are populated");
+        let old = sections.iter().filter(|(s, _)| *s >= 7).map(|(_, ix)| ix.len()).sum::<usize>();
+        assert!(old > 2_000, "most visits older than a month: {old}");
+    }
 }
 
 #[cfg(test)]

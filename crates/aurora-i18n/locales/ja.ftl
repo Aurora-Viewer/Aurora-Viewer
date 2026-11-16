@@ -2075,6 +2075,7 @@ ui-options-darkens-corners-and-contact-areas-ssao = 隅や接触部分を暗く�
 demo-place-wolf-s-workshop = ウルフのワークショップ
 demo-map-clubs = クラブ
 demo-map-walks = 散歩道
+demo-place-numbered-visit = 訪問 { $number }
 demo-map-markets = マーケット
 demo-map-outlets = アウトレット
 demo-map-beaches = ビーチ

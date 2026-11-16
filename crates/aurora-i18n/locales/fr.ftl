@@ -2096,6 +2096,7 @@ ui-options-darkens-corners-and-contact-areas-ssao = Assombrit les recoins et les
 demo-place-wolf-s-workshop = Atelier du Loup
 demo-map-clubs = Clubs
 demo-map-walks = Balades
+demo-place-numbered-visit = Visite { $number }
 demo-map-markets = Marchés
 demo-map-outlets = Magasins d'usine
 demo-map-beaches = Plages

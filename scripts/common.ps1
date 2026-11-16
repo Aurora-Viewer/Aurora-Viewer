@@ -47,16 +47,27 @@ function Get-IncrementalDirs([string]$Target) {
         Where-Object { Test-Path -LiteralPath $_ -PathType Container }
 }
 
-# --- Shared compiler cache (sccache) ------------------------------------------
-# Every worktree builds the same dependencies. When sccache is installed (the
-# Aurora tools install it), their compiled crates are kept in one folder next
-# to the repository (<root>\.sccache) and a new worktree takes them from
-# there. Cargo finds sccache through <root>\.cargo\config.toml, which covers
-# the main repository and every task of work\, whatever the command (check,
-# demo, tests). The scripts write that file while sccache is there and delete
-# it once it is gone: without sccache, Cargo builds as before.
+# --- Shared Cargo configuration: build gate and compiler cache -----------------
+# <root>\.cargo\config.toml covers the main repository and every task of
+# work\, whatever the command (check, demo, tests). The scripts write it with
+# what they find:
+#
+# - the build gate (crates/aurora-build-gate): Cargo runs every compiler
+#   through it, and a heavy crate waits there for a build slot. A cargo
+#   command typed by hand cannot go around it, unlike the slot of check.ps1
+#   (below). It is built here with rustc alone and kept in <root>\.cargo\.
+# - sccache, when it is installed (the Aurora tools install it): every
+#   worktree builds the same dependencies, and their compiled crates are kept
+#   in one folder next to the repository (<root>\.sccache), where a new
+#   worktree takes them. The gate hands the compiler over to it.
+#
+# With neither, the file is deleted: Cargo builds as before.
 
-$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache).'
+# The marker changed when the gate came: a script from before it does not
+# know the file as its own and leaves it alone, instead of writing the gate
+# out of it at each run of an older worktree.
+$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
+$BuildCacheMarkerBeforeGate = '# Written by the Aurora Viewer scripts (Sync-BuildCache).'
 
 function Find-Sccache {
     $cmd = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -66,33 +77,103 @@ function Find-Sccache {
         Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 
-# Writes or deletes <root>\.cargo\config.toml to match the installed sccache.
-# A file there that these scripts did not write is left alone. Size of the
-# cache: AURORA_BUILD_CACHE_SIZE (sccache format, 10G by default).
+# The build gate of this checkout: <root>\.cargo\aurora-build-gate-<hash>,
+# built at its first use. The name follows the source: a changed gate is a
+# new file, and a build started with the old one keeps it. Returns nothing
+# when it cannot be built (no rustc, compile error): the builds then run
+# without a gate.
+function Get-BuildGate([string]$Root) {
+    $repo = Split-Path $PSScriptRoot -Parent
+    $source = Join-Path $repo 'crates/aurora-build-gate/src/main.rs'
+    if (-not (Test-Path -LiteralPath $source)) { return }
+    $rustc = Get-Command rustc -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $rustc) { return }
+    # line endings aside: git may check the file out with CRLF
+    $text = [IO.File]::ReadAllText($source) -replace "`r`n", "`n"
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))[0..5] | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha.Dispose()
+    }
+    # $IsWindows is unset on Windows PowerShell 5.1; that edition is Windows.
+    $ext = ''
+    if (($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows) { $ext = '.exe' }
+    $dir = Join-Path $Root '.cargo'
+    $gate = Join-Path $dir "aurora-build-gate-$hash$ext"
+    if (-not (Test-Path -LiteralPath $gate)) {
+        # built apart: on Windows rustc leaves a .pdb next to the exe
+        $build = Join-Path ([IO.Path]::GetTempPath()) "aurora-build-gate-$PID"
+        New-Item -ItemType Directory -Force -Path $build, $dir | Out-Null
+        try {
+            $built = Join-Path $build "gate$ext"
+            # from the repository: rustup takes the toolchain of rust-toolchain.toml
+            Push-Location -LiteralPath $repo
+            try {
+                & $rustc.Source --edition 2024 -C opt-level=2 -C debuginfo=0 -o $built $source
+            } finally {
+                Pop-Location
+            }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Build gate not built (rustc, code $LASTEXITCODE): the builds run without it." -ForegroundColor Yellow
+                # not the result of the calling script
+                $global:LASTEXITCODE = 0
+                return
+            }
+            # another script may have built it in the meantime: keep that one
+            Move-Item -LiteralPath $built -Destination $gate -ErrorAction SilentlyContinue
+        } finally {
+            Remove-Item -LiteralPath $build -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path -LiteralPath $gate)) { return }
+    }
+    # A gate's date says when a script last chose it. One that none has
+    # chosen for a week is no longer the gate of a running build: delete it.
+    $now = Get-Date
+    $item = Get-Item -LiteralPath $gate
+    if ($item.LastWriteTime -lt $now.AddDays(-1)) { try { $item.LastWriteTime = $now } catch { } }
+    Get-ChildItem -LiteralPath $dir -File -Filter 'aurora-build-gate-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -ne $item.FullName -and $_.LastWriteTime -lt $now.AddDays(-7) } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    $gate
+}
+
+# Writes or deletes <root>\.cargo\config.toml to match the build gate and the
+# installed sccache. A file there that these scripts did not write is left
+# alone. Size of the cache: AURORA_BUILD_CACHE_SIZE (sccache format, 10G by
+# default).
 function Sync-BuildCache([string]$Root) {
     if (-not $Root) { $Root = (Get-AuroraPaths).Root }
     $file = Join-Path $Root '.cargo\config.toml'
-    if ((Test-Path -LiteralPath $file) -and -not (Select-String -LiteralPath $file -SimpleMatch $BuildCacheMarker -Quiet)) { return }
+    if ((Test-Path -LiteralPath $file) -and
+        -not (Select-String -LiteralPath $file -Pattern $BuildCacheMarker, $BuildCacheMarkerBeforeGate -SimpleMatch -Quiet)) { return }
     $sccache = Find-Sccache
-    if (-not $sccache) {
+    $gate = Get-BuildGate $Root
+    if (-not $sccache -and -not $gate) {
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
         return
     }
-    $size = if ($env:AURORA_BUILD_CACHE_SIZE) { $env:AURORA_BUILD_CACHE_SIZE } else { '10G' }
+    $wrapper = $sccache
+    if ($gate) { $wrapper = $gate }
     # TOML literal strings ('…'): the backslashes of the paths stay as they are
-    $text = @(
+    $lines = @(
         $BuildCacheMarker,
-        '# Deleted by them when sccache is uninstalled; see scripts/common.ps1.',
+        '# Deleted by them when neither the build gate nor sccache is there; see scripts/common.ps1.',
         '[build]',
-        "rustc-wrapper = '$sccache'",
-        '',
-        '[env]',
-        "SCCACHE_DIR = '$(Join-Path $Root '.sccache')'",
-        "SCCACHE_CACHE_SIZE = '$size'",
-        '# cache server unreachable: compile without it',
-        "SCCACHE_IGNORE_SERVER_IO_ERROR = '1'",
-        ''
-    ) -join "`n"
+        "rustc-wrapper = '$wrapper'"
+    )
+    if ($sccache) {
+        $size = if ($env:AURORA_BUILD_CACHE_SIZE) { $env:AURORA_BUILD_CACHE_SIZE } else { '10G' }
+        $lines += '', '[env]'
+        if ($gate) { $lines += '# the build gate hands the compiler over to sccache', "AURORA_GATE_NEXT = '$sccache'" }
+        $lines += @(
+            "SCCACHE_DIR = '$(Join-Path $Root '.sccache')'",
+            "SCCACHE_CACHE_SIZE = '$size'",
+            '# cache server unreachable: compile without it',
+            "SCCACHE_IGNORE_SERVER_IO_ERROR = '1'"
+        )
+    }
+    $text = ($lines + '') -join "`n"
     if ((Test-Path -LiteralPath $file) -and ([IO.File]::ReadAllText($file) -eq $text)) { return }
     New-Item -ItemType Directory -Force -Path (Split-Path $file) | Out-Null
     [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding $false))
@@ -103,6 +184,10 @@ function Sync-BuildCache([string]$Root) {
 # them end up slower than one after the other. A heavy build takes one of
 # AURORA_BUILD_SLOTS slots (2 by default) and waits for a free one. A slot is
 # a named mutex: the OS frees it if the script dies.
+#
+# These slots hold a whole run of check.ps1 (clippy, then the tests). The
+# build gate (above) has slots of its own for each compile of the viewer
+# crate, whatever the command that started it.
 #
 # Windows waits on every slot at once. PowerShell 7 on Linux and macOS cannot:
 # WaitAny of several named mutexes throws PlatformNotSupportedException.

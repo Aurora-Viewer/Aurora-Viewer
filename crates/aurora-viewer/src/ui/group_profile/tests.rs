@@ -205,7 +205,12 @@ fn managing_members_shows_invite_roles_and_donations() {
         let column = |key: &'static str| {
             texts
                 .iter()
-                .filter(|t| t.starts_with(&aurora_i18n::text(key).to_uppercase()))
+                // the head, maybe with a sort mark after a space (not
+                // Japanese 役割ごと, "by role", which starts with 役割)
+                .filter(|t| {
+                    t.strip_prefix(&aurora_i18n::text(key).to_uppercase())
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+                })
                 .count()
         };
         assert!(
