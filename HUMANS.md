@@ -271,6 +271,10 @@ see the news item in the viewer **before** merging, launch it with
    - they install sccache with winget (for your account), the compiler cache
      shared by the repository and the agents' tasks (see
      [Building and launching by hand](#building-and-launching-by-hand));
+   - they install ripgrep (`rg`), `fd`, `jq` and `ast-grep` with winget (for
+     your account): the search tools the agents are told to use
+     ([AGENTS.md](AGENTS.md), section 5, "Tools"). They are optional: one
+     that does not install is reported and nothing else stops;
    - they log you in to GitHub (`gh auth login`, in the browser) if needed,
      and set your git identity in the repository: your GitHub user name and
      your "noreply" address (your e-mail stays private).
@@ -373,6 +377,28 @@ Each choice also exists without the menu, for a script:
 `dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `prs`, `releases`,
 `reset`, `shortcut`, `claude`); `-DryRun` shows what `releases`, `reset` and
 `claude` would do without doing it.
+
+**Commands Claude Code refuses your agents.** The repository carries a
+Claude Code hook (`.claude/settings.json`, which runs
+`.claude/hooks/shell-rules.sh`). Claude Code reads it by itself in every
+session opened in the repository or in a task folder, once your `main` is up
+to date (Repair / update): there is nothing to install or to switch on.
+Before each shell command of an agent, it refuses the few that AGENTS.md
+forbids and names the command to use instead:
+
+| Refused | Why |
+|---|---|
+| A recursive `grep`, `findstr` or `Get-ChildItem \| Select-String`, once `rg` is installed | `rg` skips the build folders, the others read them (GB) |
+| `cargo test -p <crate>` | one crate alone builds its dependencies a second time; `cargo test --workspace <filter>` |
+| `cargo +<toolchain>` (except `cargo +nightly fuzz`, on Linux) | another toolchain recompiles everything |
+| `RUSTC_WRAPPER=…`, `--config build.rustc-wrapper…` | the wrapper the scripts set for every build of the PC would be skipped |
+
+It only sees the commands of the agents, never what you type in a terminal,
+and takes about 0.05 s per command. It runs in Git Bash, which comes with
+Git for Windows. A missing tool turns its rule off: nothing is refused for
+`grep` on a PC without `rg`. The other agents (Codex…) only have the rule
+written in AGENTS.md. `./scripts/test-agent-hook.ps1` (a step of
+`check.ps1`) tests it on a table of commands.
 
 ## The up-to-date viewer of `main`, in `--release`
 

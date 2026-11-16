@@ -304,6 +304,42 @@ Before each significant commit, and always before the PR:
   One crate alone resolves the features of its dependencies differently, and
   Cargo builds them a second time (about a minute, then again at the next
   `--workspace` build).
+- **Fast feedback is clippy, not a test build.** While you develop, check
+  that the code compiles and lints with
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`: it is
+  the command of `check.ps1`, takes 1.5 to 4 minutes and 3 to 8 GB, and
+  `check.ps1` reuses what it built (`cargo check` costs the same and is not
+  reused). A test build (`cargo test --workspace <filter>`) rebuilds the
+  viewer's whole test executable, about 9 minutes and 11 to 17 GB: run it
+  once the code compiles and lints, not after every edit.
+- **Tools.** "Repair / update" of `aurora-tools.cmd` installs `rg`
+  (ripgrep), `fd`, `jq` and `ast-grep`; Linux and macOS take them from
+  their packages ([docs/LINUX.md](docs/LINUX.md),
+  [docs/MACOS.md](docs/MACOS.md)). One that is missing is no reason to
+  stop: say so to your human and use what you have.
+  - **Search** text and files with your own search tools, or with `rg` and
+    `fd` in a shell, never with `grep -r`, `findstr` nor a recursive
+    `Get-ChildItem`: `rg` and `fd` skip what `.gitignore` names, where the
+    others read the GB of `target/`.
+  - **JSON** is filtered before you read it, with `jq` or `gh … --jq`: the
+    fields you need, not the whole reply.
+  - **A search or a rewrite by the shape of the code** (every call of a
+    function, the same change in many files) uses `ast-grep`
+    (`ast-grep -p '<pattern>' -l rust <folder>`): a regular expression
+    misses the calls split over several lines and matches the comments.
+  - **`cargo test` stays the test runner**, not `cargo nextest`: the run
+    takes seconds (the time is in the build), and the CI and `check.ps1` use
+    it.
+  - **Claude Code refuses the forbidden commands itself**, through the
+    hook of `.claude/settings.json` (`.claude/hooks/shell-rules.sh`): a
+    recursive `grep`, `findstr` or `Get-ChildItem | Select-String` where
+    `rg` is installed, `cargo test -p <crate>`, `cargo +<toolchain>`, and
+    an override of the compiler wrapper (`RUSTC_WRAPPER`,
+    `--config build.rustc-wrapper`; section 3). Its message names the
+    command to use: use it, do not reword the refused one to get it
+    through. If it refuses a command that breaks none of these rules, tell
+    your human. A rule that changes here changes in the hook and in its
+    test table (`scripts/test-agent-hook.ps1`) in the same PR.
 
 - **macOS code is built on GitHub only.** The agents' PCs build Windows;
   the Linux and macOS paths (`cfg(unix)`, `cfg(target_os = "macos")`, the
