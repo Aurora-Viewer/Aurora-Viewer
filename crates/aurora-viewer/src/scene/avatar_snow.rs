@@ -16,6 +16,22 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// The palette entry carrying `amount` of snow (0..1) to the shader, with
+/// the mark it needs to read it as snow (`aurora_render::AVATAR_SNOW_MARK`).
+/// No snow (none gathered, or "Snow on avatars" off) is an empty entry
+/// without the mark: the shader leaves the mesh as it is.
+pub fn palette_entry(amount: f32) -> [[f32; 4]; 4] {
+    if amount <= 0.0 {
+        return [[0.0; 4]; 4];
+    }
+    [
+        [amount, 0.0, 0.0, 0.0],
+        [0.0; 4],
+        [0.0; 4],
+        [0.0, 0.0, 0.0, aurora_render::AVATAR_SNOW_MARK],
+    ]
+}
+
 /// Only avatars this near the camera gather snow (m).
 const REACH: f32 = 64.0;
 /// How often each looks up for cover.
@@ -102,6 +118,20 @@ impl AvatarSnow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shader reads snow only from an entry the viewer marked: the
+    /// identity a palette starts with (1.0 where the amount goes) and a
+    /// joint's matrix are no snow; the amount sits where it reads it.
+    #[test]
+    fn only_a_marked_entry_is_snow() {
+        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
+        assert_ne!(identity[3][3], aurora_render::AVATAR_SNOW_MARK);
+        let e = palette_entry(0.4);
+        assert_eq!(e[3][3], aurora_render::AVATAR_SNOW_MARK);
+        assert_eq!(e[0][0], 0.4);
+        // no snow (or "Snow on avatars" off): unmarked, left alone
+        assert_ne!(palette_entry(0.0)[3][3], aurora_render::AVATAR_SNOW_MARK);
+    }
 
     #[test]
     fn snow_gathers_in_the_open_and_melts_under_cover_or_in_rain() {

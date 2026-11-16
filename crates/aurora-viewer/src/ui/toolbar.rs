@@ -270,6 +270,9 @@ pub struct ToolbarUi {
     /// The photo reel holds no photo (given by the app): its button is
     /// dimmed. And its quick view is open: the button is lit.
     pub photo_roll_empty: bool,
+    /// The grid has an Avatar Welcome Pack (given by the app): without one,
+    /// its button is dimmed (GridFeatureCheck avatar_picker).
+    pub avatar_welcome: bool,
     /// The grid has a Destination Guide (given by the app): without one,
     /// its button is dimmed (GridFeatureCheck destination_guide).
     pub destinations: bool,

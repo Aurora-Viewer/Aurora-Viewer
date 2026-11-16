@@ -84,7 +84,7 @@ impl World {
                     let name = if self.rlva_can_name(from) {
                         im.from_name.as_str()
                     } else {
-                        super::privacy::anonymous(from).display_name.as_str()
+                        self.rlva_anonymous(from).display_name.as_str()
                     };
                     self.system_message(aurora_i18n::tr!("rlva-im-ended-local", name = name));
                 }
@@ -130,7 +130,7 @@ impl World {
             let name = if self.rlva_can_name(from) {
                 im.from_name.as_str()
             } else {
-                super::privacy::anonymous(from).display_name.as_str()
+                self.rlva_anonymous(from).display_name.as_str()
             };
             let id = self.notifications.push(
                 Kind::Permissions,
@@ -221,6 +221,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: text.into()
         }));

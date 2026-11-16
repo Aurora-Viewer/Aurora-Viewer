@@ -112,6 +112,7 @@ fn key_label(k: &str) -> String {
         "ArrowRight" => aurora_i18n::tr!("keybinds-right-arrow"),
         "PageUp" => aurora_i18n::tr!("keybinds-previous-page"),
         "PageDown" => aurora_i18n::tr!("keybinds-next-page"),
+        // LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
         "Home" => aurora_i18n::tr!("keybinds-origin"),
         "End" => aurora_i18n::tr!("keybinds-end-2"),
         "Insert" => aurora_i18n::tr!("keybinds-insert"),
@@ -351,6 +352,10 @@ pub enum Action {
     /// (handle_look_at_selection, H and Shift+H).
     FocusSelection,
     ZoomSelection,
+    /// Advanced › Shortcuts › Look at Last Chatter (View.LookAtLastChatter,
+    /// menu_viewer.xml, `shortcut="control|\"`): the camera over our
+    /// shoulder, on the last resident or object heard.
+    LookAtLastChatter,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -372,6 +377,8 @@ pub enum Action {
     CamPanRight,
     CamPanUp,
     CamPanDown,
+    CamRollLeft,
+    CamRollRight,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -522,6 +529,8 @@ pub fn is_held(a: Action) -> bool {
             | Action::CamPanRight
             | Action::CamPanUp
             | Action::CamPanDown
+            | Action::CamRollLeft
+            | Action::CamRollRight
             | Action::HudDrag
     )
 }
@@ -560,6 +569,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
                     (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
                     (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
+                    (Action::LookAtLastChatter, aurora_i18n::tr!("keybinds-look-at-last-chatter")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -575,6 +585,8 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
                     (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
                     (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                    (Action::CamRollLeft, aurora_i18n::tr!("controls-roll-left")),
+                    (Action::CamRollRight, aurora_i18n::tr!("controls-roll-right")),
                 ],
             ),
             (
@@ -795,6 +807,8 @@ impl KeyBindings {
             // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
             (Action::FocusSelection, [k(K::KeyH), None]),
             (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
+            // menu_viewer.xml: Look at Last Chatter, shortcut="control|\"
+            (Action::LookAtLastChatter, [kmod(K::Backslash, true, false), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -816,6 +830,8 @@ impl KeyBindings {
             (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
+            (Action::CamRollLeft, [k(K::KeyR), None]),
+            (Action::CamRollRight, [k(K::KeyT), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
@@ -1518,6 +1534,26 @@ mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
 
+    /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
+    /// French keyboards print Début. Japanese keyboards print Home.
+    #[test]
+    fn the_home_key_is_labelled_home() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-origin"), "Début");
+        assert_eq!(key_label("Home"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-origin"));
+    }
+
+    /// LLKeyboard names KEY_END "End" (indra/llwindow/llkeyboard.cpp). Japanese
+    /// keyboards print End, as they print Home: 終了 read as "Quit".
+    #[test]
+    fn the_end_key_keeps_its_keyboard_name() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-end-2"), "Fin");
+        assert_eq!(key_label("End"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-end-2"));
+    }
+
     /// Space stops moving while held, as the Legacy Viewer's stop_moving;
     /// a settings file from before it keeps a Space the user gave to
     /// another action.
@@ -1724,6 +1760,61 @@ mod tests {
     }
 
     #[test]
+    fn camera_roll_defaults_hold_release_and_yield_to_modified_commands() {
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        for (action, code, command) in [
+            (Action::CamRollLeft, KeyCode::KeyR, Action::Rebake),
+            (Action::CamRollRight, KeyCode::KeyT, Action::ShowTransparency),
+        ] {
+            let input = Input::key(code);
+            assert_eq!(kb.get(action), [Some(Binding::plain(input.clone())), None]);
+            assert_eq!(kb.users(&Binding::plain(input.clone())), vec![action], "no other plain-key default");
+            let mut down = HashSet::new();
+            assert_eq!(kb.update_held_input(&mut down, &input, true, Mods::default()), None);
+            assert!(kb.held(action, &down, Mods::default()));
+            kb.update_held_input(&mut down, &input, false, Mods::default());
+            assert!(!kb.held(action, &down, Mods::default()));
+            let modified = Mods {
+                ctrl: true,
+                alt: true,
+                ..Default::default()
+            };
+            assert_eq!(kb.update_held_input(&mut down, &input, true, modified), Some(command));
+            assert!(!kb.held(action, &down, modified));
+            assert!(!kb.held(action, &down, Mods::default()));
+        }
+    }
+
+    #[test]
+    fn camera_roll_bindings_upgrade_without_replacing_custom_or_cleared_keys() {
+        for action in [Action::CamRollLeft, Action::CamRollRight] {
+            let mut kb = KeyBindings::default();
+            let defaults = kb.get(action);
+            kb.map.retain(|(a, _)| *a != action);
+            assert_eq!(kb.clone().sanitized().get(action), defaults);
+            kb.set(Action::CamPanUp, 0, defaults[0].clone());
+            let mut kb = kb.sanitized();
+            assert_eq!(kb.get(action), [None, None]);
+            assert_eq!(kb.get(Action::CamPanUp)[0], defaults[0]);
+            let binding = kalt(KeyCode::KeyB, false, false);
+            kb.set(action, 1, binding.clone());
+            let saved = serde_json::to_string(&kb).expect("save bindings");
+            let mut kb = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
+            assert_eq!(kb.get(action), [None, binding]);
+            assert!(kb.held(
+                action,
+                &HashSet::from([Input::key(KeyCode::KeyB)]),
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                }
+            ));
+            kb.set(action, 1, None);
+            assert_eq!(kb.sanitized().get(action), [None, None]);
+        }
+    }
+
+    #[test]
     fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
         let ctrl = Mods {
             ctrl: true,
@@ -1789,6 +1880,7 @@ mod tests {
             (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
             (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
             (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+            (KeyCode::Backslash, m(true, false, false), Action::LookAtLastChatter),
         ] {
             assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
             assert_eq!(

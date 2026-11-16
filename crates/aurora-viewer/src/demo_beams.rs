@@ -1,7 +1,9 @@
 //! Offline selection and give beams (`AURORA_DEMO_BEAMS`): another avatar
 //! edits a cube, its beam sent again every 0.25 s like the Legacy Viewer's
 //! idleUpdateTractorBeam, and gives to a second one now and then; `self`:
-//! we edit a cube of our own, `legacy`: the first with the Legacy look.
+//! we edit a cube of our own, `legacy`: the first with the Legacy look;
+//! `shape` (and `shape-legacy`): the first with a beam shape, one short
+//! beam per dot under a new id with each send (lggBeamMaps::fireCurrentBeams).
 
 use super::*;
 use crate::build::{BuildSettings, BuildTool, Tool};
@@ -20,6 +22,11 @@ const GIVE_FRAMES: u64 = 150;
 /// scenario's camera that faces the avatar.
 const OTHER_CLICK: Vec3 = Vec3::new(0.25, 0.05, 0.08);
 const SELF_CLICK: glam::DVec3 = glam::DVec3::new(-0.25, 0.0, 0.08);
+/// `shape`: the dots of the beam shape, around the point clicked (m), and
+/// how long each lives (lggBeamMaps: mDuration * 1.2).
+const SHAPE_DOTS: u32 = 24;
+const SHAPE_RADIUS: f64 = 0.35;
+const SHAPE_DURATION: f32 = 0.3;
 
 fn cube(local_id: u32, at: Vec3, color: [f32; 4]) -> ObjectUpdate {
     prim(
@@ -60,7 +67,7 @@ fn edited_id() -> Uuid {
 
 /// The style the scenario shows, if it asks for one.
 pub fn style(mode: &str) -> Option<Style> {
-    (mode == "legacy").then_some(Style::Legacy)
+    matches!(mode, "legacy" | "shape-legacy").then_some(Style::Legacy)
 }
 
 pub fn tick(world: &mut World, build: &mut BuildTool, settings: &mut BuildSettings, frame: u64, mode: &str) {
@@ -113,6 +120,24 @@ pub fn tick(world: &mut World, build: &mut BuildTool, settings: &mut BuildSettin
             color: COLOR,
             duration: SELECTION_DURATION,
         });
+        if mode.starts_with("shape") {
+            // a ring of dots around the point, each a beam of its own
+            for k in 0..SHAPE_DOTS {
+                let a = std::f64::consts::TAU * f64::from(k) / f64::from(SHAPE_DOTS);
+                world.apply(NetEvent::Beam {
+                    effect: Uuid::new_v4(),
+                    source: DEMO_LOUP,
+                    target: Uuid::nil(),
+                    position: [
+                        position[0],
+                        position[1] + SHAPE_RADIUS * a.cos(),
+                        position[2] + SHAPE_RADIUS * a.sin(),
+                    ],
+                    color: COLOR,
+                    duration: SHAPE_DURATION,
+                });
+            }
+        }
     }
     if (frame - 600) % GIVE_FRAMES == GIVE_FRAMES / 2 {
         world.apply(NetEvent::Beam {
@@ -152,5 +177,24 @@ mod tests {
         assert_eq!(edit.color, COLOR);
         // the give fired once by frame 675
         assert_eq!(world.beams.shown.len(), 2);
+    }
+
+    #[test]
+    fn a_beam_shape_shows_one_thread() {
+        let library = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(library);
+        for event in events() {
+            world.apply(event);
+        }
+        let mut build = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        for frame in 600..=640 {
+            tick(&mut world, &mut build, &mut settings, frame, "shape");
+        }
+        // the main beam and three sends of 24 dots, all from one hand
+        assert!(world.beams.shown.len() > 1 + SHAPE_DOTS as usize);
+        let leading: Vec<_> = world.beams.leading().collect();
+        assert_eq!(leading.len(), 1);
+        assert_eq!(*leading[0].0, Uuid::from_u128(9410));
     }
 }

@@ -6,6 +6,8 @@ use super::*;
 use aurora_render::{StagedTexture, StagingPool};
 use std::time::{Duration, Instant, SystemTime};
 
+pub(super) mod scene;
+
 pub struct Texture {
     pub id: Uuid,
     pub staged: StagedTexture,
@@ -19,6 +21,7 @@ pub struct Prepared {
     pub images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
     pub material: Option<PbrMaterial>,
     pub meshes: Vec<Mesh>,
+    pub scene_size: Option<glam::Vec3>,
 }
 pub struct Mesh {
     pub id: Uuid,
@@ -31,6 +34,23 @@ pub struct Target {
     pub entry: Uuid,
     pub model: usize,
     pub use_scale: bool,
+    #[serde(default)]
+    pub scene: bool,
+}
+impl Target {
+    pub fn mesh(&self, entry: &Entry) -> Option<(Uuid, Option<glam::Vec3>)> {
+        if self.scene {
+            Some((*entry.local_mesh_ids.last()?, Some(entry.local_scene_size?)))
+        } else {
+            // A reload with fewer models must not bind an old model index
+            // to the assembly appended after the individual assets.
+            let count = entry
+                .local_mesh_ids
+                .len()
+                .checked_sub(usize::from(entry.local_scene_size.is_some()))?;
+            Some((*entry.local_mesh_ids.get(..count)?.get(self.model)?, None))
+        }
+    }
 }
 pub struct Rez {
     pub entry: Uuid,
@@ -144,6 +164,7 @@ fn prepare(
         images: HashMap::new(),
         material: None,
         meshes: Vec::new(),
+        scene_size: None,
     };
     let mut textures = Vec::new();
     match source {
@@ -214,6 +235,26 @@ fn prepare(
                     skin,
                 });
             }
+            if scene::supported(draft) {
+                let (lods, size) = scene::assemble(draft, &models).map_err(|e| e.to_string())?;
+                let data = encode::local_asset(&lods).map_err(|e| e.to_string())?;
+                let header = aurora_assets::parse_mesh_header(&data).map_err(|e| e.to_string())?;
+                // Stable for this entry/revision, separate from every individual model.
+                let mut hash = Sha256::new();
+                hash.update(id.as_bytes());
+                hash.update(generation.to_le_bytes());
+                hash.update(b"local-scene");
+                let digest = hash.finalize();
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(&digest[..16]);
+                prepared.meshes.push(Mesh {
+                    id: Uuid::from_bytes(bytes),
+                    data: Arc::new(data),
+                    header,
+                    skin: None,
+                });
+                prepared.scene_size = Some(size);
+            }
         }
         _ => return Err(aurora_i18n::tr!("import-local-images-only").into()),
     }
@@ -260,6 +301,7 @@ impl Imports {
                         entry: entry_id,
                         model: draft.scene.instances.get(entry.local_model).map_or(0, |instance| instance.model),
                         use_scale,
+                        scene: entry.local_scene && scene::supported(draft),
                     },
                 );
                 return;
@@ -425,6 +467,7 @@ impl Imports {
             for id in entry.local_mesh_ids.drain(..) {
                 meshes.remove_local(&id);
             }
+            entry.local_scene_size = prepared.scene_size;
             for mesh in prepared.meshes {
                 entry.local_mesh_ids.push(mesh.id);
                 meshes.insert_local(mesh.id, mesh.data, mesh.header, mesh.skin);
@@ -772,6 +815,7 @@ mod tests {
         receive(&mut imports);
         assert!(imports.install_local_meshes(&mut streamer, &jobs));
         let original = imports.entries[0].local_mesh_ids[0];
+        let original_ids = imports.entries[0].local_mesh_ids.clone();
         assert!(streamer.meta(&original).is_some());
         assert!(imports.entries[0].local_published);
         assert!(!imports.entries[0].local_pending);
@@ -783,7 +827,7 @@ mod tests {
             !imports.install_local_meshes(&mut streamer, &jobs),
             "an obsolete result cannot replace the active mesh"
         );
-        assert_eq!(imports.entries[0].local_mesh_ids, [original]);
+        assert_eq!(imports.entries[0].local_mesh_ids, original_ids);
         assert!(
             !imports.entries[0].local_pending,
             "an obsolete result must not prevent a new request"
@@ -796,6 +840,10 @@ mod tests {
         assert_ne!(replacement, original);
         assert!(streamer.meta(&replacement).is_some());
         assert!(streamer.meta(&original).is_none(), "reloading retires the former local mesh");
+        assert!(
+            original_ids.iter().all(|id| streamer.meta(id).is_none()),
+            "retire the complete old assembly too"
+        );
         assert_eq!(imports.entries[0].local_generation, imports.entries[0].preview_generation);
         assert!(imports.local_uploads.is_empty());
     }
