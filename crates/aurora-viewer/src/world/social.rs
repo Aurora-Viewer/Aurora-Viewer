@@ -63,6 +63,10 @@ pub struct Social {
     pub ims: Vec<ImSession>,
     /// IM session to focus in the conversations window.
     pub focus_im: Option<Uuid>,
+    /// A message kept while we were offline arrived, for
+    /// FSOpenIMContainerOnOfflineMessage (LLIMMgr::addMessage): the app
+    /// takes it and opens the Conversations window with the option.
+    pub offline_ims: bool,
     /// Residents whose last word was an automatic response
     /// (IM_DO_NOT_DISTURB_AUTO_RESPONSE), until their next ordinary IM: a
     /// hint of do not disturb for their status dot (`ui/presence.rs`).
@@ -107,6 +111,13 @@ impl Social {
     /// Queue a name lookup (missing or expired name).
     pub fn want_name(&mut self, id: Uuid) {
         self.avatar_names.want(&id);
+    }
+
+    /// A teleport can be requested from anyone but a friend known to be
+    /// offline (LLAvatarActions::canRequestTeleport,
+    /// indra/newview/llavataractions.cpp).
+    pub fn can_request_teleport(&self, id: &Uuid) -> bool {
+        self.friends.iter().find(|f| f.id == *id).is_none_or(|f| f.online)
     }
 
     /// Complete name ("Jane Doe (janedoe)"), else the legacy name.
@@ -239,5 +250,29 @@ impl Social {
             .filter(|s| s.unread > 0)
             .max_by_key(|s| s.lines.back().map(|l| l.time))
             .map(|s| s.other)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only a friend known to be offline refuses: a resident who is no
+    /// friend has no known state, as in LLAvatarActions::canRequestTeleport.
+    #[test]
+    fn a_teleport_can_be_requested_from_all_but_an_offline_friend() {
+        let friend = |n, online| Friend {
+            id: Uuid::from_u128(n),
+            online,
+            rights_given: 0,
+            rights_has: 0,
+        };
+        let social = Social {
+            friends: vec![friend(1, true), friend(2, false)],
+            ..Social::default()
+        };
+        assert!(social.can_request_teleport(&Uuid::from_u128(1)));
+        assert!(!social.can_request_teleport(&Uuid::from_u128(2)));
+        assert!(social.can_request_teleport(&Uuid::from_u128(3)));
     }
 }

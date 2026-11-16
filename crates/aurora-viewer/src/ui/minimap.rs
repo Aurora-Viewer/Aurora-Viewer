@@ -153,8 +153,6 @@ pub struct MiniMap {
     objects: Option<Raster>,
     parcels: Option<Raster>,
     terrain: HashMap<RegionHandle, LocalTerrain>,
-    /// Avatars marked from the context menu (Mark ▸ color).
-    marks: HashMap<Uuid, Color32>,
     /// Right click: global position and avatars under the pointer.
     popup: Option<((f64, f64), Vec<Uuid>)>,
     /// Shift + drag pan in progress.
@@ -406,8 +404,17 @@ impl MiniMap {
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let default = default_rect(super::layout::work_area(ctx));
-        let frame = super::widgets::overlay_frame(ctx, p)
-            .fill(Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 168))
+        // its shadow lies under the whole map: it fades with the background
+        let opacity = super::surface_opacity::minimap();
+        let mut frame = super::widgets::overlay_frame(ctx, p);
+        frame.shadow.color = frame.shadow.color.gamma_multiply(opacity / super::surface_opacity::MINIMAP);
+        let frame = frame
+            .fill(Color32::from_rgba_unmultiplied(
+                p.panel.r(),
+                p.panel.g(),
+                p.panel.b(),
+                (opacity * 255.0).round() as u8,
+            ))
             .inner_margin(egui::Margin::same(2));
         // like the floaters, it keeps its corner when the viewer window
         // changes size and snaps to the other windows
@@ -622,18 +629,10 @@ impl MiniMap {
             if !rect.expand(dot_r).contains(sp) {
                 continue;
             }
+            // the mark first, then the contact set, then the relation
+            // (LLNetMap::getAvatarColor): the same in every mini-map
             let name = avatar_name(world, &id);
-            let col = self
-                .marks
-                .get(&id)
-                .copied()
-                .unwrap_or_else(|| super::colors::map_color(world, &id, &name));
-            let col = world
-                .contact_sets
-                .appearance(&id)
-                .minimap
-                .map(super::colors::set_color)
-                .unwrap_or(col);
+            let col = super::colors::map_color(world, &id, &name);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)
@@ -801,31 +800,8 @@ impl MiniMap {
                     context::request(ui.ctx(), CtxAction::ZoomAvatar(first));
                 }
                 menu::todo(ui, p, "eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
-                menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), true, |ui| {
-                    for (name, col) in [
-                        (aurora_i18n::tr!("ui-minimap-red"), Color32::from_rgb(186, 0, 31)),
-                        (aurora_i18n::tr!("ui-minimap-green"), Color32::from_rgb(0, 255, 0)),
-                        (aurora_i18n::tr!("ui-minimap-blue"), Color32::from_rgb(0, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-purple"), Color32::from_rgb(255, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-yellow"), Color32::from_rgb(255, 255, 201)),
-                    ] {
-                        if menu::swatch(ui, p, col, name) {
-                            for id in &avs {
-                                self.marks.insert(*id, col);
-                            }
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-marker")) {
-                        for id in &avs {
-                            self.marks.remove(id);
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-all-markers")) {
-                        self.marks.clear();
-                    }
-                });
+                // Mark ▸ (Minimap.Mark): the avatars under the pointer
+                super::avatar_marks::submenu(ui, p, world, &avs);
                 // "More…": the radar menu of the nearest avatar
                 menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
                     context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
@@ -1441,7 +1417,7 @@ pub(super) fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Pr
     (lo <= hi).then(|| [beacon_screen(a.lerp(b, lo), proj), beacon_screen(a.lerp(b, hi), proj)])
 }
 
-fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
+pub(super) fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
     if !clip.is_finite() || !inner.is_positive() {
         return None;
     }
@@ -1451,12 +1427,31 @@ fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) ->
             return Some((at, true, Vec2::ZERO));
         }
     }
-    // Camera-space x keeps its sign behind the camera too: the arrow
-    // indicates which way to turn. Straight behind defaults to the bottom.
+    let dir = edge_direction(clip, proj);
+    Some((edge_point(inner.center(), inner, dir), false, dir))
+}
+
+/// On the screen, the way toward a clip-space point, from the screen centre.
+/// Camera-space x keeps its sign behind the camera too: the arrow indicates
+/// which way to turn. Straight behind defaults to the bottom.
+pub(super) fn edge_direction(clip: glam::Vec4, proj: &super::hud::Projector) -> Vec2 {
     let v = vec2(clip.x * proj.width, -clip.y * proj.height);
-    let dir = if v.length_sq() > 1e-8 { v.normalized() } else { vec2(0.0, 1.0) };
-    let t = (inner.width() * 0.5 / dir.x.abs().max(1e-4)).min(inner.height() * 0.5 / dir.y.abs().max(1e-4));
-    Some((inner.center() + dir * t, false, dir))
+    if v.length_sq() > 1e-8 { v.normalized() } else { vec2(0.0, 1.0) }
+}
+
+/// Where the ray from `from` along `dir` leaves `inner`. `inner` need not
+/// be centred on `from`: the bars keep more of one side than of the other.
+pub(super) fn edge_point(from: Pos2, inner: Rect, dir: Vec2) -> Pos2 {
+    let from = from.clamp(inner.min, inner.max);
+    let reach = |d: f32, low: f32, high: f32, at: f32| {
+        if d > 0.0 {
+            (high - at) / d.max(1e-4)
+        } else {
+            (at - low) / (-d).max(1e-4)
+        }
+    };
+    let t = reach(dir.x, inner.left(), inner.right(), from.x).min(reach(dir.y, inner.top(), inner.bottom(), from.y));
+    from + dir * t
 }
 
 #[cfg(test)]
@@ -1513,6 +1508,23 @@ mod beacon_tests {
         assert!(!visible && at == inner.center_bottom());
         let (at, visible, _) = beacon_marker(Vec4::W, inner, &p).expect("visible marker");
         assert!(visible && at == inner.center());
+    }
+
+    #[test]
+    fn the_edge_point_leaves_a_rectangle_off_centre_along_its_ray() {
+        // a screen centred on 800,450 with bars taking more from the bottom
+        let inner = Rect::from_min_max(pos2(40.0, 60.0), pos2(1560.0, 700.0));
+        let from = pos2(800.0, 450.0);
+        assert_eq!(edge_point(from, inner, vec2(1.0, 0.0)), pos2(1560.0, 450.0));
+        assert_eq!(edge_point(from, inner, vec2(-1.0, 0.0)), pos2(40.0, 450.0));
+        assert_eq!(edge_point(from, inner, vec2(0.0, 1.0)), pos2(800.0, 700.0));
+        assert_eq!(edge_point(from, inner, vec2(0.0, -1.0)), pos2(800.0, 60.0));
+        let dir = vec2(1.0, 1.0).normalized();
+        let at = edge_point(from, inner, dir);
+        assert!((at.y - 700.0).abs() < 0.01 && (at.x - 1050.0).abs() < 0.01);
+        // the ray from the screen centre stays that ray
+        let on_ray = (at - from).normalized();
+        assert!((on_ray - dir).length() < 1e-4);
     }
 
     #[test]

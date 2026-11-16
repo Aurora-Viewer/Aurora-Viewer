@@ -1,7 +1,7 @@
-//! Click actions and held touches, following LLToolPie / LLToolGrabBase
-//! (Firestorm indra/newview, originally LGPL 2.1).
+//! Click actions and held touches, following Legacy Viewer LLToolPie / LLToolGrabBase
+//! (indra/newview, originally LGPL 2.1).
 use super::*;
-use crate::interaction::{self, Action, Contents, Held, Target};
+use crate::interaction::{self, Action, Contents, GrabMotion, Held, Target};
 
 /// A held touch on a surface the GPU alone poses asks for the drawn faces
 /// once per `ASK_EVERY`, `ASK_LEAD` before the next update falls due:
@@ -9,6 +9,16 @@ use crate::interaction::{self, Action, Contents, Held, Target};
 /// falls due, and the surface sent is at most that old.
 const ASK_LEAD: Duration = Duration::from_millis(34);
 const ASK_EVERY: Duration = Duration::from_millis(100);
+
+/// handle_object_sit uses the clicked prim's LLPickInfo::mObjectOffset,
+/// computed by LLAgentCamera::calcFocusOffset (indra/newview). Keep the
+/// clicked child origin and world axes; neither a root-relative offset nor
+/// an inverse object rotation belongs in AgentRequestSit.
+pub(super) fn object_sit_offset(world: &World, camera: &Camera, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Option<Vec3> {
+    let object = world.objects.get(idx)?;
+    let geometry = crate::camera::focus_object_geom(world, &object.full_id, Instant::now())?;
+    Some(camera.object_pick_offset(&geometry, point, ray))
+}
 
 impl App {
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
@@ -39,11 +49,11 @@ impl App {
         match target.action {
             Action::Disabled => {}
             Action::Sit => {
-                if let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, now, 0) {
+                if let Some(offset) = object_sit_offset(&self.world, &self.camera, idx, point, ray) {
                     self.send(NetCommand::RequestSit {
                         handle: target.key.region,
                         target: target.object,
-                        offset: rot.inverse() * (point - pos),
+                        offset,
                     });
                 }
             }
@@ -109,10 +119,19 @@ impl App {
                     .objects
                     .get(root)
                     .is_some_and(|o| o.parent_id == 0 && o.update_flags & 1 != 0 && o.update_flags & (1 << 8) != 0);
+                // A HUD's motion starts from its root in the HUD frame, where
+                // the scene poses it: LLViewerObject::getPositionGlobal
+                // (indra/newview/llviewerobject.cpp) adds the agent's region
+                // origin to a HUD's render position, and the region frame of
+                // the grab update takes that same origin away again
+                // (LLViewerRegion::getPosRegionFromGlobal), so the wearer's
+                // position is never part of a HUD's GrabPosition.
+                let start = pos;
                 self.interactions.held = Some(Held {
                     target,
                     offset,
-                    position: pos,
+                    position: start,
+                    grab_motion: (!physical).then(|| GrabMotion::new(start, self.camera.position, self.cursor_pos)),
                     surface,
                     shown: shown.is_some(),
                     drawn: None,
@@ -232,41 +251,40 @@ impl App {
                 .and_then(|ray| self.scene.left_touch_surface(&self.world, idx, ray))
                 .unwrap_or_default()
         };
-        if self.cursor_pos == h.cursor && surface == h.surface {
-            return;
-        }
         let Some(h) = self.interactions.held.as_mut() else { return };
-        if !self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
+        let hud = self.scene.gpu.get(idx).is_some_and(|g| g.hud);
+        let previous_position = h.position;
+        // Vertical dragging is Ctrl alone: `mask == MASK_VERTICAL`
+        // (MASK_CONTROL, indra/newview/lltoolmgr.h) in
+        // LLToolGrabBase::handleHoverNonPhysical and handleHoverActive, so
+        // Ctrl+Shift (MASK_SPIN) or Ctrl+Alt does not drag vertically.
+        let vertical = self.ctrl && !self.shift && !self.alt;
+        if let Some(motion) = h.grab_motion.as_mut() {
+            h.position = motion.update(
+                self.cursor_pos,
+                self.camera.position,
+                self.camera.forward(),
+                vertical,
+                self.egui_ctx.pixels_per_point(),
+            );
+        } else if !hud {
             let forward = self.camera.forward();
             let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
-            let vertical = forward.cross(left).normalize_or(Vec3::Z);
-            let y_axis = if self.ctrl {
-                vertical
-            } else {
-                left.cross(Vec3::Z).normalize_or(Vec3::X)
-            };
+            let up = forward.cross(left).normalize_or(Vec3::Z);
+            let y_axis = if vertical { up } else { left.cross(Vec3::Z).normalize_or(Vec3::X) };
             // LLToolGrab's 0.0075 m per logical pixel, with screen Y down.
             let ppp = self.egui_ctx.pixels_per_point().max(0.1);
             let dx = (self.cursor_pos.0 - h.cursor.0) / ppp;
             let dy = (h.cursor.1 - self.cursor_pos.1) / ppp;
             h.position += (left * (-dx) + y_axis * dy) * 0.0075;
         }
+        if self.cursor_pos == h.cursor && surface == h.surface && h.position == previous_position {
+            return;
+        }
         let Some(region) = self.world.region_offset(h.target.key.region) else {
             return;
         };
-        let cmd = NetCommand::ObjectGrabUpdate {
-            handle: h.target.key.region,
-            object: h.target.object,
-            offset: h.offset,
-            position: h.position
-                - if self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
-                    Vec3::ZERO
-                } else {
-                    region
-                },
-            elapsed_ms: h.last.elapsed().as_millis().min(u32::MAX as u128) as u32,
-            surface,
-        };
+        let cmd = grab_update_command(h, region, hud, surface, h.last.elapsed().as_millis().min(u32::MAX as u128) as u32);
         h.cursor = self.cursor_pos;
         h.surface = surface;
         h.last = Instant::now();
@@ -325,6 +343,20 @@ impl App {
     }
 }
 
+fn grab_update_command(held: &Held, region: Vec3, hud: bool, surface: aurora_net::TouchSurface, elapsed_ms: u32) -> NetCommand {
+    NetCommand::ObjectGrabUpdate {
+        handle: held.target.key.region,
+        object: held.target.object,
+        offset: held.offset,
+        // A HUD's position is in the HUD frame, which the region frame
+        // leaves as it is (see the start of the grab); a world object's is
+        // sent in its region's frame.
+        position: if hud { held.position } else { held.position - region },
+        elapsed_ms,
+        surface,
+    }
+}
+
 /// Whether a surface drawn at `point` on the ray (`origin`, unit `dir`)
 /// lies in front of a sphere the ray goes through: what is drawn there
 /// hides the sphere's object rather than missing it.
@@ -337,6 +369,160 @@ fn hidden_behind(origin: Vec3, dir: Vec3, point: Vec3, center: Vec3, radius: f32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_grab_moves_hud_and_world_points_in_camera_frame() {
+        let camera = Vec3::new(100.0, 200.0, 30.0);
+        let start = Vec3::new(104.0, 198.0, 31.0);
+        let mut grab = GrabMotion::new(start, camera, (10.0, 10.0));
+        let forward = Vec3::X;
+        let moved = grab.update((20.0, 10.0), camera, forward, false, 1.0);
+        assert!(moved.distance(start) > 0.07);
+        assert!((moved - start).z.abs() < 1e-6);
+
+        // A stationary cursor still follows the camera, as the Legacy
+        // Viewer computes camera position + the hidden camera-relative offset.
+        let translated = grab.update((20.0, 10.0), camera + Vec3::Y, forward, false, 1.0);
+        assert!(translated.distance(moved) > 0.99);
+    }
+
+    #[test]
+    fn virtual_grab_vertical_axis_and_ui_scale_are_respected() {
+        let mut horizontal = GrabMotion::new(Vec3::ZERO, Vec3::ZERO, (0.0, 0.0));
+        let mut vertical = horizontal;
+        let forward = Vec3::X;
+        let h = horizontal.update((0.0, -10.0), Vec3::ZERO, forward, false, 2.0);
+        let v = vertical.update((0.0, -10.0), Vec3::ZERO, forward, true, 2.0);
+        assert!(h.distance(v) > 0.05);
+        assert!(h.is_finite() && v.is_finite());
+    }
+
+    fn held_with(position: Vec3, grab_motion: Option<GrabMotion>) -> Held {
+        let key = crate::world::objects::ObjKey { region: 7, local_id: 2 };
+        let id = uuid::Uuid::nil();
+        let target = Target {
+            action: Action::Touch,
+            clicked: key,
+            clicked_id: id,
+            key,
+            object: id,
+            root: id,
+            menu: false,
+        };
+        Held {
+            target,
+            offset: Vec3::ZERO,
+            position,
+            grab_motion,
+            surface: aurora_net::TouchSurface::default(),
+            shown: false,
+            drawn: None,
+            asked: std::time::Instant::now(),
+            latest: (aurora_net::TouchSurface::default(), (12.0, 0.0)),
+            cursor: (12.0, 0.0),
+            last: std::time::Instant::now(),
+            physical: false,
+        }
+    }
+
+    fn sent_position(held: &Held, region: Vec3, hud: bool) -> Vec3 {
+        let NetCommand::ObjectGrabUpdate { position, .. } = grab_update_command(held, region, hud, held.surface, 100) else {
+            panic!("expected grab update")
+        };
+        position
+    }
+
+    #[test]
+    fn hud_grab_motion_is_sent_in_the_hud_frame() {
+        // A HUD's root sits in the HUD frame (a fraction of a metre from the
+        // screen joint), while the camera and the region are far away in the
+        // world: the drag moves the point, and nothing of the wearer's or the
+        // region's position gets into GrabPosition.
+        let camera = Vec3::new(128.0, 128.0, 27.0);
+        let start = Vec3::new(0.0, 0.25, -0.1);
+        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
+        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+        let position = sent_position(&held_with(moved, Some(motion)), Vec3::new(256.0, 512.0, 0.0), true);
+        assert_eq!(position, moved);
+        assert_ne!(position, start);
+        assert!(position.length() < 1.0, "a HUD grab point stays near the HUD: {position}");
+    }
+
+    #[test]
+    fn world_grab_motion_is_sent_in_the_region_frame() {
+        let camera = Vec3::new(100.0, 200.0, 30.0);
+        let start = Vec3::new(104.0, 198.0, 31.0);
+        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
+        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+        let region = Vec3::new(100.0, 190.0, 20.0);
+        let position = sent_position(&held_with(moved, Some(motion)), region, false);
+        assert_eq!(position, moved - region);
+        assert_ne!(position, start - region);
+    }
+
+    #[test]
+    fn sit_offsets_keep_world_axes_and_the_clicked_child_origin() {
+        use glam::Quat;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let origin = Vec3::new(100.0, 120.0, 30.0);
+        for linked in [false, true] {
+            for (turn, degrees) in [0.0_f32, 90.0, 180.0, 237.0].into_iter().enumerate() {
+                let rotation = Quat::from_rotation_z(degrees.to_radians());
+                // Distinct objects avoid interpolating one case's rotation
+                // into the next case while testing a stationary seat.
+                let local_id = 31000 + (u32::from(linked) * 4 + turn as u32) * 2;
+                let mut root = crate::demo::action_avatar(false);
+                root.local_id = local_id;
+                root.full_id = crate::demo::action_id(local_id);
+                root.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+                root.parent_id = 0;
+                root.position = origin;
+                root.rotation = rotation;
+                root.scale = Vec3::new(4.0, 1.0, 0.5);
+                root.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                    texture: uuid::Uuid::from_u128(31000),
+                    sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+                });
+                let mut seat = root.clone();
+                seat.local_id = local_id + 1;
+                seat.full_id = crate::demo::action_id(local_id + 1);
+                if linked {
+                    root.rotation = rotation * Quat::from_rotation_z(-0.4);
+                    root.position = origin - root.rotation * Vec3::new(3.0, -2.0, 1.0);
+                    seat.parent_id = root.local_id;
+                    seat.position = Vec3::new(3.0, -2.0, 1.0);
+                    seat.rotation = Quat::from_rotation_z(0.4);
+                }
+                world.apply(aurora_net::NetEvent::ObjectUpdates {
+                    handle,
+                    objects: vec![root, seat],
+                });
+                let idx = world.objects.index_of_uuid(&crate::demo::action_id(local_id + 1)).expect("seat");
+                let mut camera = Camera::default();
+                camera.position = origin + rotation * Vec3::new(0.0, -7.0, 4.0);
+                camera.target = origin;
+                for side in [-1.0, 1.0] {
+                    let point = origin + rotation * Vec3::new(side, -0.25, 0.25);
+                    let ray = (camera.position, (point - camera.position).normalize());
+                    let offset = object_sit_offset(&world, &camera, idx, point, Some(ray)).expect("offset");
+                    // calcFocusOffset intersects the cursor ray with the
+                    // seat's central XY plane at t=4/3.75; at this distance
+                    // its near-surface bias is zero. No scale division.
+                    let expected = rotation * Vec3::new(side * 16.0 / 15.0, 0.2, 0.0);
+                    assert!(
+                        offset.abs_diff_eq(expected, 1e-4),
+                        "linked={linked}, turn={degrees}, side={side}: {offset:?}"
+                    );
+                    let fallback = object_sit_offset(&world, &camera, idx, point, None).expect("offset without ray");
+                    assert!(fallback.abs_diff_eq(point - origin, 1e-4));
+                }
+            }
+        }
+    }
 
     #[test]
     fn a_surface_in_front_of_the_held_object_hides_it() {

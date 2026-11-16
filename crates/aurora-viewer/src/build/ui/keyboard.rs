@@ -147,7 +147,11 @@ impl Shortcut {
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
             Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),
-            Self::Link => tool.link(world),
+            Self::Link => {
+                if tool.can_link(world) {
+                    tool.link(world);
+                }
+            }
             Self::Unlink => tool.unlink(world),
             Self::EditLinked => {
                 let on = !settings.edit_linked;
