@@ -285,6 +285,11 @@ fn names_allowed(world: &World, id: &Uuid) -> bool {
     world.rlva_can_name(*id) && world.social.avatar_names.shows(crate::world::names::NameScope::World, id)
 }
 
+/// A saved mark, even its presence in a menu, can identify an anonymous dot.
+pub(super) fn can_mark(world: &World, id: &Uuid) -> bool {
+    names_allowed(world, id) && visible_avatar_name(world, id).is_some()
+}
+
 fn avatar_name(world: &World, id: &Uuid, format: MiniAvatarNameFormat) -> String {
     let Some(fallback) = visible_avatar_name(world, id) else {
         return "…".into();
@@ -1091,10 +1096,10 @@ impl MiniMap {
                 }
                 menu::todo(ui, p, "eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
                 // Mark ▸ (Minimap.Mark): the avatars under the pointer
-                super::avatar_marks::submenu(ui, p, world, &avs);
+                super::avatar_marks::submenu(ui, p, world, &avs, AvatarList::MiniMap);
                 // "More…": the radar menu of the nearest avatar
                 menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), can_show_names, |ui| {
-                    context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
+                    context::avatar_list_menu(ui, p, world, first, AvatarList::MiniMap)
                 });
                 menu::separator(ui, p);
             }

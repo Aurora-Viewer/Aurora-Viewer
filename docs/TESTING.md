@@ -8746,7 +8746,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_MAP=mini,names`**: the mini-map opens with a loaded avatar
   32 m west and a coarse-only resident 32 m east. The simulator supplies both
   display names. With north up, hover the western point for Luna's name;
-  hover the eastern one for an anonymous dot and check its context menu.
+  hover the eastern one for `…` and its distance. Only the western point
+  offers resident actions. To exercise marker privacy in the same session,
+  also set `AURORA_DEMO_RLVA=tools`. Mark Luna blue on the mini-map, then
+  open her custom marker colour. In the open RLVa console submit `@shownames=n`:
+  the picker closes, the dot becomes neutral and its marker controls are
+  unavailable. Submit `@shownames=y` to see her name and blue mark again.
 - **`AURORA_DEMO_MAP=search:<text>`**: the world map with the search
   already typed (`search:o` lists several demo regions). What to see: in the
   full-frame layout (the default), the suggestions grouped under the search:
