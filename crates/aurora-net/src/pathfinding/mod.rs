@@ -175,8 +175,23 @@ fn row(key: &str, value: &Llsd, kind: Kind) -> Option<Row> {
 /// `{ <id>: { … } }`. Empty entries are skipped (parseLinksetListData). A
 /// malformed entry is skipped and logged, not a failure of the whole list:
 /// the Legacy Viewer only asserts on it, and a region can hold thousands.
+/// A region with nothing to list may answer with an empty body: an empty
+/// list, as the Legacy Viewer's beginMap() iterates nothing.
 pub fn parse(data: &Llsd, kind: Kind) -> Result<Vec<Row>, Error> {
-    let map = data.as_map().filter(|map| map.len() <= MAX_ROWS).ok_or(Error::InvalidReply)?;
+    match data {
+        Llsd::Undef => return Ok(Vec::new()),
+        Llsd::Array(items) if items.is_empty() => return Ok(Vec::new()),
+        Llsd::String(text) if text.trim().is_empty() => return Ok(Vec::new()),
+        _ => {}
+    }
+    let Some(map) = data.as_map().filter(|map| map.len() <= MAX_ROWS) else {
+        let shape = data.as_map().map_or_else(
+            || format!("{data:?}").chars().take(80).collect::<String>(),
+            |map| format!("{} entries", map.len()),
+        );
+        log::warn!("pathfinding: {} reply not understood: {shape}", kind.capability());
+        return Err(Error::InvalidReply);
+    };
     let mut rows = Vec::with_capacity(map.len());
     let mut skipped = 0usize;
     for (key, value) in map {
@@ -286,6 +301,9 @@ mod tests {
             assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), [good], "{field}");
         }
         assert_eq!(parse(&Llsd::Integer(1), Kind::Objects), Err(Error::InvalidReply));
+        // a region with nothing to list may send an empty body
+        assert_eq!(parse(&Llsd::Undef, Kind::Characters), Ok(Vec::new()));
+        assert_eq!(parse(&Llsd::Array(Vec::new()), Kind::Characters), Ok(Vec::new()));
     }
 
     #[test]
