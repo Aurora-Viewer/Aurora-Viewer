@@ -267,6 +267,7 @@ const BEFORE: &[&str] = &[
     "mouse_sensitivity",
     "invert_mouse",
     "world_mouse_walk",
+    "mmo_mouse_buttons",
     "arrows_strafe",
     "arrow_keys_always_move",
     "letter_keys_move",
@@ -1904,6 +1905,41 @@ fn the_weather_lives_in_graphics_only() {
         .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
         .collect();
     assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}
+
+#[test]
+fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
+    // behind the puddles' cog, the wet ground's distance still acts with
+    // them off (the wet ground is drawn in any rain), their ice does not:
+    // the label's ink, found by a search for its own text (the tests may
+    // run in French)
+    let p = crate::theme::Theme::default().palette();
+    let ink = |label: &str| {
+        let mut s = Settings::default();
+        s.weather.puddles = false;
+        let d = Settings::default();
+        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+        let mut frames = Frames::new();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frames.shapes(Vec::new(), |ui| {
+                ui.set_width(700.0);
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Search, label);
+                // Sky and environment, where the weather is
+                run_page(&mut cx, Page::Graphics, Some(2));
+            });
+        }
+        shapes
+            .iter()
+            .find_map(|shape| match shape {
+                // a row behind a cog is found as "Puddles › <its label>"
+                egui::Shape::Text(t) if t.galley.text().ends_with(&format!("› {label}")) => Some(t.fallback_color),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the row {label}"))
+    };
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-distance")), p.ink, "the wet ground's distance");
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-ice")), p.muted, "the puddles' ice");
 }
 
 #[test]

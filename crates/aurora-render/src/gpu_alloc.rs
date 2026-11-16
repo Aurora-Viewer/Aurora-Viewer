@@ -158,9 +158,24 @@ fn say(error: &wgpu::Error) {
 /// Whether a scope's errors mean the memory ran out: wgpu said so, or an
 /// object came back invalid, which is all that shows of a failed allocation
 /// the driver reports as unexpected (see the module). Any other validation
-/// error is a bug of ours and retrying would not cure it.
+/// error is a bug of ours and retrying would not cure it: a shader the
+/// device refuses ("Entry point fs_blend_once at Fragment is invalid") had
+/// the renderer wait for free memory forever on every Mac (#3751).
 fn memory_refused(oom: Option<&str>, invalid: Option<&str>) -> bool {
-    oom.is_some() || invalid.is_some_and(|e| e.contains("is invalid"))
+    oom.is_some() || invalid.is_some_and(|e| e.lines().any(invalid_for_memory))
+}
+
+/// wgpu's words for an object it could not make ("Buffer with 'vertex
+/// arena' label is invalid"), for one memory may have refused: a shader
+/// module, and a pipeline made from it, are invalid only when the device
+/// does not take the shader (a pipeline the memory refuses says
+/// out-of-memory).
+fn invalid_for_memory(line: &str) -> bool {
+    let line = line.trim();
+    line.ends_with(" label is invalid")
+        && !["ShaderModule ", "RenderPipeline ", "ComputePipeline "]
+            .iter()
+            .any(|kind| line.starts_with(kind))
 }
 
 /// The error's reason (wgpu's text spreads over several lines, the last
@@ -710,6 +725,24 @@ mod tests {
         assert!(!memory_refused(None, None));
         // a wrong descriptor is ours: trying again would never end
         assert!(!memory_refused(None, Some("In Device::create_texture\n  Invalid usage flags")));
+        // nor is a shader the device does not take, nor what is made from
+        // it (#3751: the impostors' module on Metal)
+        let shader = "Validation Error\n\nCaused by:\n  In Device::create_shader_module, label = 'impostors'\n    \n    \
+                      Shader validation error: Entry point fs_blend_once at Fragment is invalid\n     \
+                      = Capability Capabilities(EARLY_DEPTH_TEST) is not supported\n";
+        assert!(!memory_refused(None, Some(shader)));
+        let pipeline = "Validation Error\n\nCaused by:\n  In Device::create_render_pipeline, label = 'impostor cards'\n    \
+                        Error matching ShaderStages(VERTEX) shader requirements against the pipeline\n      \
+                        ShaderModule with 'impostors' label is invalid\n";
+        assert!(!memory_refused(None, Some(pipeline)));
+        assert!(!memory_refused(None, Some("RenderPipeline with 'impostor cards' label is invalid")));
+        assert!(!memory_refused(
+            None,
+            Some("In Device::create_texture\n  Sample count 3 is invalid")
+        ));
+        // an object refused for memory, whatever its label
+        assert!(memory_refused(None, Some("Buffer with '' label is invalid")));
+        assert!(memory_refused(None, Some("BindGroup with 'frame' label is invalid")));
     }
 
     #[test]

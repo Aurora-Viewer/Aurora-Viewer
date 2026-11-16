@@ -23,7 +23,7 @@ pub(super) enum Command {
     BulkPermissions(Vec<Uuid>),
     Rename(Uuid),
     Image(Uuid),
-    Protect(Uuid),
+    Protect(Vec<Uuid>),
     FolderColor(Vec<Uuid>),
     Reload(Uuid),
     Window(Uuid),
@@ -748,20 +748,33 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             share,
             Command::Share(ids.clone()),
         );
-        if all || folder.is_some_and(|f| matches!(f.info.type_default, -1 | 47 | 54) && !f.library) {
+        let lockable: Vec<Uuid> = if all {
+            vec![id]
+        } else {
+            ids.iter()
+                .copied()
+                .filter(|fid| {
+                    inv.folders
+                        .get(fid)
+                        .is_some_and(|f| matches!(f.info.type_default, -1 | 47 | 54) && !f.library)
+                })
+                .collect()
+        };
+        if all || !lockable.is_empty() {
+            let all_locked = !lockable.is_empty() && lockable.iter().all(|fid| prefs.protected.contains(fid));
             c.add(
                 "protect-folder",
                 TEXT,
                 "lock-filled",
                 if all {
                     aurora_i18n::tr!("inventory-menu-editor-protect")
-                } else if prefs.protected.contains(&id) {
+                } else if all_locked {
                     aurora_i18n::tr!("ui-inventory-context-unlock")
                 } else {
                     aurora_i18n::tr!("ui-inventory-context-lock")
                 },
                 true,
-                Command::Protect(id),
+                Command::Protect(lockable),
             );
         }
         if prefs.folder_colors_enabled && (all || folder.is_some()) {
@@ -1235,9 +1248,23 @@ pub(super) fn execute(
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
-        Command::Protect(id) => {
-            if !prefs.protected.remove(&id) {
-                prefs.protected.insert(id);
+        Command::Protect(ids) => {
+            // The Legacy Viewer shows Protect and Unprotect as two entries, each
+            // acting on every selected folder: LLInventoryAction::doToSelected
+            // (indra/newview/llinventoryfunctions.cpp) calls LLFolderBridge's
+            // protect_folder / unprotect_folder (indra/newview/llinventorybridge.cpp,
+            // FIRE-29342) for each of them. Aurora keeps one toggle entry and
+            // applies it to the whole selection: all locked -> unlock them all,
+            // otherwise lock them all.
+            let all_locked = !ids.is_empty() && ids.iter().all(|id| prefs.protected.contains(id));
+            if all_locked {
+                for id in ids {
+                    prefs.protected.remove(&id);
+                }
+            } else {
+                for id in ids {
+                    prefs.protected.insert(id);
+                }
             }
         }
         Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
@@ -1612,5 +1639,117 @@ mod tests {
         let reopened: crate::settings::Settings = serde_json::from_str(&saved).unwrap();
         assert_eq!(reopened.inventory.context_menus, settings.inventory.context_menus);
         assert!(!reopened.inventory.context_menus.profiles.contains_key("type:photo"));
+    }
+
+    fn lockable_folder(id: Uuid, parent: Uuid) -> crate::world::inventory::Folder {
+        crate::world::inventory::Folder {
+            info: aurora_net::inventory::InvFolder {
+                id,
+                parent,
+                name: format!("Folder {id}"),
+                type_default: -1,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: crate::world::inventory::FetchState::Fetched,
+            library: false,
+        }
+    }
+
+    fn run_protect(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut catalog = build(inv, state.selected.unwrap_or(Uuid::nil()), state, prefs, &facts());
+            let entry = catalog.entries.iter().find(|e| e.id == "protect-folder").expect("protect-folder");
+            assert!(entry.enabled);
+            let Kind::Action(index) = entry.kind else { panic!("action entry") };
+            let command = catalog.commands[index].take().expect("command");
+            execute(command, ui, inv, state, prefs, &facts(), &mut actions);
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn protect_toggles_every_selected_lockable_folder() {
+        let mut inv = Inventory::default();
+        let a = Uuid::from_u128(9_001);
+        let b = Uuid::from_u128(9_002);
+        inv.folders.insert(a, lockable_folder(a, inv.root));
+        inv.folders.insert(b, lockable_folder(b, inv.root));
+        let mut prefs = InventoryPreferences::default();
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        // Every selected lockable folder is locked, like the Legacy Viewer's
+        // LLInventoryAction::doToSelected (indra/newview/llinventoryfunctions.cpp).
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&a) && prefs.protected.contains(&b));
+        let catalog = build(&inv, a, &state, &prefs, &facts());
+        let entry = catalog.entries.iter().find(|e| e.id == "protect-folder").unwrap();
+        assert_eq!(entry.label, aurora_i18n::tr!("ui-inventory-context-unlock"));
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(!prefs.protected.contains(&a) && !prefs.protected.contains(&b));
+    }
+
+    #[test]
+    fn protect_mixed_selection_locks_all_then_unlocks_all() {
+        let mut inv = Inventory::default();
+        let a = Uuid::from_u128(9_011);
+        let b = Uuid::from_u128(9_012);
+        inv.folders.insert(a, lockable_folder(a, inv.root));
+        inv.folders.insert(b, lockable_folder(b, inv.root));
+        let mut prefs = InventoryPreferences::default();
+        prefs.protected.insert(a);
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&a) && prefs.protected.contains(&b), "mixed -> lock all");
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(!prefs.protected.contains(&a) && !prefs.protected.contains(&b));
+    }
+
+    #[test]
+    fn protect_ignores_non_lockable_selection_members() {
+        let mut inv = inventory();
+        let folder = Uuid::from_u128(9_021);
+        inv.folders.insert(folder, lockable_folder(folder, inv.root));
+        let item = Uuid::from_u128(8100);
+        let system_folder = Uuid::from_u128(8002);
+        let library_folder = Uuid::from_u128(9_022);
+        inv.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: library_folder,
+                parent: inv.lib_root,
+                type_default: -1,
+                ..Default::default()
+            }],
+            true,
+        );
+        let mut prefs = InventoryPreferences::default();
+        let mut state = InventoryUi {
+            selected: Some(folder),
+            selection: HashSet::from([folder, item, system_folder, library_folder]),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+
+        run_protect(&ctx, &inv, &mut state, &mut prefs);
+        assert!(prefs.protected.contains(&folder));
+        assert!(!prefs.protected.contains(&item));
+        assert!(!prefs.protected.contains(&system_folder));
+        assert!(!prefs.protected.contains(&library_folder));
     }
 }

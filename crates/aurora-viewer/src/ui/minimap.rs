@@ -153,8 +153,6 @@ pub struct MiniMap {
     objects: Option<Raster>,
     parcels: Option<Raster>,
     terrain: HashMap<RegionHandle, LocalTerrain>,
-    /// Avatars marked from the context menu (Mark ▸ color).
-    marks: HashMap<Uuid, Color32>,
     /// Right click: global position and avatars under the pointer.
     popup: Option<((f64, f64), Vec<Uuid>)>,
     /// Shift + drag pan in progress.
@@ -395,13 +393,6 @@ impl MiniMap {
             return actions;
         }
         let id = egui::Id::unique("minimap");
-        // File › Close All Windows. Ctrl+W does not pick it: no title bar,
-        // so it is not in the frontmost floater list.
-        if super::close_key::take(ctx, id) {
-            *open = false;
-            return actions;
-        }
-        super::close_key::shown_extra(ctx, id);
         super::sound_cues::floater_shown(ctx, id);
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
@@ -429,7 +420,15 @@ impl MiniMap {
             default,
             vec2(64.0, 64.0),
             opts.mini_locked,
+            true,
             |ui| {
+                // The Legacy Viewer closes the frontmost visible floater, including
+                // LLFloaterMap in mouselook. A map hidden with the UI is kept open.
+                if super::close_key::take(ctx, id) {
+                    *open = false;
+                    return;
+                }
+                super::close_key::shown(ctx, id);
                 let size = ui.available_size().max(vec2(60.0, 60.0));
                 actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
             },
@@ -631,18 +630,11 @@ impl MiniMap {
             if !rect.expand(dot_r).contains(sp) {
                 continue;
             }
+            // the mark first, then the contact set, then the relation
+            // (LLNetMap::getAvatarColor): the same in every mini-map; the
+            // others' colour for a resident whose name RLVa hides
             let name = avatar_name(world, &id);
-            let col = self
-                .marks
-                .get(&id)
-                .copied()
-                .unwrap_or_else(|| super::colors::map_color(world, &id, &name));
-            let col = world
-                .contact_sets
-                .appearance(&id)
-                .minimap
-                .map(super::colors::set_color)
-                .unwrap_or(col);
+            let col = super::colors::map_color(world, &id, &name);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)
@@ -790,53 +782,41 @@ impl MiniMap {
                 ui.close();
                 return;
             };
+            // LLNetMap::handleRightMouseDown (llnetmap.cpp): RLVa @shownames
+            // greys the entries that lead to a resident's identity, for
+            // everyone under the pointer, excepted or not
+            let can_show_names = !world.rlva.has("shownames");
             if let Some(&first) = avs.first() {
                 if avs.len() == 1 {
-                    if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
+                    if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), can_show_names) {
                         actions.push(MiniMapAction::Profile(first));
                     }
                 } else {
                     // "View profile ▸" lists the avatars under the pointer
-                    menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true, |ui| {
-                        for id in &avs {
-                            if menu::item(ui, p, "user-filled", &avatar_name(world, id)) {
-                                actions.push(MiniMapAction::Profile(*id));
+                    menu::submenu(
+                        ui,
+                        p,
+                        "user-filled",
+                        aurora_i18n::tr!("common-view-profile"),
+                        can_show_names,
+                        |ui| {
+                            for id in &avs {
+                                if menu::item(ui, p, "user-filled", &avatar_name(world, id)) {
+                                    actions.push(MiniMapAction::Profile(*id));
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                 }
                 menu::todo(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"));
                 if menu::item(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2")) {
                     context::request(ui.ctx(), CtxAction::ZoomAvatar(first));
                 }
                 menu::todo(ui, p, "eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
-                menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), true, |ui| {
-                    for (name, col) in [
-                        (aurora_i18n::tr!("ui-minimap-red"), Color32::from_rgb(186, 0, 31)),
-                        (aurora_i18n::tr!("ui-minimap-green"), Color32::from_rgb(0, 255, 0)),
-                        (aurora_i18n::tr!("ui-minimap-blue"), Color32::from_rgb(0, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-purple"), Color32::from_rgb(255, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-yellow"), Color32::from_rgb(255, 255, 201)),
-                    ] {
-                        if menu::swatch(ui, p, col, name) {
-                            for id in &avs {
-                                self.marks.insert(*id, col);
-                            }
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-marker")) {
-                        for id in &avs {
-                            self.marks.remove(id);
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-all-markers")) {
-                        self.marks.clear();
-                    }
-                });
+                // Mark ▸ (Minimap.Mark): the avatars under the pointer
+                super::avatar_marks::submenu(ui, p, world, &avs);
                 // "More…": the radar menu of the nearest avatar
-                menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
+                menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), can_show_names, |ui| {
                     context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
                 });
                 menu::separator(ui, p);
@@ -1012,7 +992,8 @@ impl MiniMap {
                 actions.push(MiniMapAction::AboutLand(px, py));
             }
             menu::todo(ui, p, "map-pin-filled", aurora_i18n::tr!("common-place-profile"));
-            if menu::item(ui, p, "map", aurora_i18n::tr!("common-world-map")) {
+            // greyed with the world map itself (RLVa @showworldmap)
+            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-world-map"), !world.rlva.has("showworldmap")) {
                 actions.push(MiniMapAction::OpenWorldMap);
             }
             menu::separator(ui, p);
@@ -1485,6 +1466,47 @@ pub(super) fn edge_point(from: Pos2, inner: Rect, dir: Vec2) -> Pos2 {
     };
     let t = reach(dir.x, inner.left(), inner.right(), from.x).min(reach(dir.y, inner.top(), inner.bottom(), from.y));
     from + dir * t
+}
+
+#[cfg(test)]
+mod dot_tests {
+    use super::*;
+
+    #[test]
+    fn rlva_hidden_names_keep_the_others_dot_whatever_their_mark() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let (marked, stranger) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        world.avatar_marks.set(&[marked], [186, 0, 31]);
+        world.rlva_configure(true);
+        let dot = |world: &World, id: &Uuid| crate::ui::colors::map_color(world, id, "Somebody Else");
+        let red = dot(&world, &marked);
+        let plain = dot(&world, &stranger);
+        assert_ne!(plain, red);
+        let mut restrict = |command: String| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Dot fixture".into(),
+                source_id: Uuid::from_u128(4),
+                owner_id: world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: command,
+            }));
+            (
+                dot(&world, &marked),
+                dot(&world, &stranger),
+                world.rlva_shown_mark(&marked).is_some(),
+            )
+        };
+        assert_eq!(restrict("@shownames=n".into()), (plain, plain, false));
+        assert_eq!(
+            restrict(format!("@shownames:{marked}=add")),
+            (red, plain, true),
+            "an exception keeps its mark"
+        );
+    }
 }
 
 #[cfg(test)]

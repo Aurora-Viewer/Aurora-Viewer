@@ -255,6 +255,15 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-unmute-after-teleport-help"),
             &field!(audio.auto_unmute_sounds),
         );
+        // The Legacy Viewer's FMOD Doppler, fixed at 1 there
+        // (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp): a row here
+        cx.slider(
+            tr!("ui-options-sound-doppler"),
+            tr!("ui-options-sound-doppler-help"),
+            &field!(audio.doppler),
+            0.0..=2.0,
+            "",
+        );
         // The immersive sound (occlusion, 3D sound, reverb): Aurora's own and
         // experimental, marked as such.
         // Aurora's own (scene/sound_occlusion.rs): off, as in the Legacy Viewer
