@@ -815,6 +815,72 @@ impl Editor {
             if widgets::action_button(ui, palette, "exchange-filled", label, widgets::ActionKind::Flat, size).clicked() {
                 self.switch_person();
             }
+            // Person B moved on screen, never in their animation
+            ui.label(aurora_i18n::tr!("anim-couple-move"));
+            let (mut local, turn) = self.couple_place_local(world);
+            let mut degrees = turn.to_degrees();
+            let mut changed = false;
+            egui::Grid::new("couple-move").num_columns(2).show(ui, |ui| {
+                for (key, value) in [
+                    ("anim-couple-forward", &mut local.x),
+                    ("anim-couple-left", &mut local.y),
+                    ("anim-couple-up", &mut local.z),
+                ] {
+                    ui.label(aurora_i18n::text(key));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(value)
+                                .speed(0.01)
+                                .range(-20.0..=20.0)
+                                .suffix(" m")
+                                .fixed_decimals(2),
+                        )
+                        .changed();
+                    ui.end_row();
+                }
+                ui.label(aurora_i18n::tr!("anim-couple-turn"));
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut degrees)
+                            .speed(0.5)
+                            .range(-180.0..=180.0)
+                            .suffix("°")
+                            .fixed_decimals(0),
+                    )
+                    .changed();
+                ui.end_row();
+            });
+            if changed {
+                self.set_couple_place(world, local, degrees.to_radians());
+            }
+            ui.horizontal(|ui| {
+                let half = egui::vec2((size.x - ui.spacing().item_spacing.x) / 2.0, size.y);
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "users",
+                    aurora_i18n::tr!("anim-couple-face"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .on_hover_text(aurora_i18n::tr!("anim-couple-face-tip"))
+                .clicked()
+                {
+                    self.couple_face_to_face(world);
+                }
+                if widgets::action_button(
+                    ui,
+                    palette,
+                    "restore",
+                    aurora_i18n::tr!("anim-couple-reset-place"),
+                    widgets::ActionKind::Flat,
+                    half,
+                )
+                .clicked()
+                {
+                    self.set_couple_place(world, Vec3::ZERO, 0.0);
+                }
+            });
             if widgets::action_button(
                 ui,
                 palette,
@@ -848,6 +914,25 @@ impl Editor {
         peers.sort_by(|a, b| a.2.total_cmp(&b.2));
         if peers.is_empty() {
             ui.label(egui::RichText::new(aurora_i18n::tr!("poser-nearby-none")).color(palette.muted));
+        } else {
+            // say why an Ask goes nowhere, as the poser's subject menu does:
+            // the request travels through the bridge, ours and theirs
+            use crate::world::bridge::QueryState;
+            let bridge = self.poser_bridge();
+            let hint = match bridge {
+                QueryState::Ready => "anim-couple-ask-needs",
+                QueryState::Starting => "poser-bridge-starting",
+                QueryState::Silent => "poser-bridge-silent",
+                QueryState::Failed => "poser-bridge-failed",
+                QueryState::Detached => "poser-bridge-needed",
+                QueryState::Off => "poser-bridge-disabled",
+            };
+            let color = if bridge == QueryState::Ready {
+                palette.muted
+            } else {
+                palette.amber
+            };
+            ui.label(egui::RichText::new(aurora_i18n::text(hint)).color(color));
         }
         let mut chosen = None;
         for (id, name, distance) in peers.into_iter().take(12) {

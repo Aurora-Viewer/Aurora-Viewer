@@ -286,11 +286,22 @@ in one timeline:
    lists A's lanes, then B's, each under their name: A in violet, B in amber.
    The person set aside keeps showing their keys at the playhead; a click on
    their name or one of their lanes edits them, as does **Edit Person A / B**
-   on the Clip page. Each person has their own undo.
-3. **Save .anim** and **Export .bvh** write both people in the folder you
+   on the Clip page. The other person's joints show as dots in their
+   colour: a click on one edits them with that joint picked. Each person has
+   their own undo.
+3. **Move Person B** on the Clip page places B beside you on screen only:
+   forward, left and up in metres from your facing, and a turn. **Face to
+   face** stands B half a metre in front of you, facing you; **Reset place**
+   puts them back. Their animation does not change; the placement note
+   follows where you put them. Avatar Studio's Hover lifts both people.
+4. **Save .anim** and **Export .bvh** write both people in the folder you
    choose: `<name> A`, `<name> B` and `<name> placement.txt`, which gives B's
    position and turn from A, for the sit targets. **Prepare .anim import**
    uploads the person being edited.
+
+A request reaches Person B only if they wear the Aurora bridge, stand in
+your region, and their posing privacy allows you (Friends by default): the
+Clip page says when your own bridge is not ready.
 
 If Person B teleports away or logs off, they stay drawn as they were and can
 still be posed until couple mode ends. If they withdraw their consent, couple

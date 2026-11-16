@@ -11195,6 +11195,7 @@ impl App {
             self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             let partner = self.ik_editor.couple_partner();
             self.world.set_couple_partner(partner);
+            self.world.couple_place = self.ik_editor.couple_place();
             self.scene.ik_edit = self.ik_editor.request();
             self.scene.ik_edit_others.clear();
             // couple mode: the editor may work on Person B, and the person

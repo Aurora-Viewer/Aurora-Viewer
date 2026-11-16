@@ -53,6 +53,7 @@ anim-couple-switch = Cliquez pour animer cette personne
 anim-couple-partner-left = Mode couple terminé : la personne B n’est plus disponible. Son animation est gardée parmi les brouillons.
 anim-couple-title = Animation en couple
 anim-couple-hint = Animez deux personnes dans une seule ligne de temps. Choisissez la personne B parmi les résidents proches : elle accepte comme pour le Poser, et vous seul voyez la pose.
+anim-couple-ask-needs = La demande ne leur parvient que s'ils portent le bridge Aurora, se trouvent dans cette région et que leur confidentialité de pose vous l'autorise (Amis par défaut).
 anim-couple-partner = Personne B : { $name }
 anim-couple-use = Prendre comme B
 anim-couple-edit-a = Animer la personne A
@@ -60,6 +61,14 @@ anim-couple-edit-b = Animer la personne B
 anim-couple-end = Quitter le mode couple
 anim-couple-end-tip = Revenir à une seule personne. L’animation de la personne B reste parmi les brouillons.
 anim-couple-wait = Le mode couple attend la fin de la mise à jour de l’animation : réessayez dans un instant.
+anim-couple-move = Déplacer la personne B (sur votre écran seulement, pas dans l’animation)
+anim-couple-forward = Avant
+anim-couple-left = Gauche
+anim-couple-up = Haut
+anim-couple-turn = Rotation
+anim-couple-face = Face à face
+anim-couple-face-tip = Placer la personne B à un demi-mètre devant vous, face à vous
+anim-couple-reset-place = Rétablir la place
 anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
    *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne

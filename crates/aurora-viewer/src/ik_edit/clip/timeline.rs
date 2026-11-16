@@ -1350,7 +1350,7 @@ impl Editor {
                                 match row {
                                     Row::Track(track) => self.timeline_row(ui, palette, rig, frame, track, lanes),
                                     Row::Waiting(track) => self.timeline_waiting_row(ui, palette, track, lanes, editing_b == Some(false)),
-                                    Row::Person { b, edited } => self.timeline_person_row(ui, palette, *b, *edited, &partner_name),
+                                    Row::Person { b, edited } => self.timeline_person_row(ui, palette, *b, *edited, &partner_name, lanes),
                                 }
                             }
                         })
@@ -1608,8 +1608,19 @@ impl Editor {
 
     /// A person's name above their lanes in couple mode, in their colour;
     /// a click on the person set aside edits them.
-    fn timeline_person_row(&mut self, ui: &mut egui::Ui, palette: &Palette, b: bool, edited: bool, partner: &str) {
-        let (row, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
+    fn timeline_person_row(&mut self, ui: &mut egui::Ui, palette: &Palette, b: bool, edited: bool, partner: &str, lanes: Lanes) {
+        let (row, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click_and_drag());
+        // a drag across the name row moves the playhead too
+        if response.dragged()
+            && !self.clip.key_box_armed
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let lane = egui::Rect::from_min_max(egui::pos2(row.left() + lanes.name_width, row.top()), row.max);
+            let to = FrameScale::new(lane, lanes.start, lanes.end).frame_at(pointer.x);
+            if to != self.clip.frame {
+                self.clip_seek(to);
+            }
+        }
         let color = person_color(palette, b);
         if edited {
             ui.painter()
@@ -1647,7 +1658,7 @@ impl Editor {
         let response = ui.interact(
             row,
             egui::Id::unique(("avatar-studio-animation-timeline-waiting", track.bone)),
-            egui::Sense::click(),
+            egui::Sense::click_and_drag(),
         );
         ui.painter().text(
             egui::pos2(names.left() + 26.0, names.center().y),
@@ -1675,7 +1686,17 @@ impl Editor {
         for &key in visible {
             paint_key(ui.painter(), egui::pos2(scale.x(f64::from(key)), center), KEY_HALF, color);
         }
-        if response.hovered() {
+        // a drag over these lanes moves the playhead, as over any lane
+        if response.dragged()
+            && !self.clip.key_box_armed
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let to = scale.frame_at(pointer.x);
+            if to != self.clip.frame {
+                self.clip_seek(to);
+            }
+        }
+        if response.hovered() && !response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if response.on_hover_text(aurora_i18n::tr!("anim-couple-switch")).clicked() {

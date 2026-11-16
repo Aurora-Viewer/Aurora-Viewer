@@ -468,6 +468,10 @@ impl Editor {
     pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
         self.poser.bridge = state;
     }
+    /// The bridge's request state, for the couple mode's Ask list.
+    pub(in crate::ik_edit) fn poser_bridge(&self) -> crate::world::bridge::QueryState {
+        self.poser.bridge
+    }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);
     }

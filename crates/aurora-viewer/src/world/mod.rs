@@ -600,6 +600,10 @@ pub struct World {
     /// frame: when they teleport away or log off, they stay drawn as they
     /// were, with what they wear, until couple mode ends (`hold_partner`).
     pub couple_partner: Option<Uuid>,
+    /// Where the animation editor moved Person B on screen: a shift in the
+    /// region (metres) and a turn about their pelvis (radians). Their body
+    /// is drawn there; their animation and the simulator are untouched.
+    pub couple_place: (Vec3, f32),
     /// The partner's kills held meanwhile.
     held_partner: Vec<(ObjKey, Uuid)>,
     /// Interface sounds to play (drained by the app).
@@ -1032,6 +1036,7 @@ impl World {
             god_level: 0,
             held_kills: Vec::new(),
             couple_partner: None,
+            couple_place: (Vec3::ZERO, 0.0),
             held_partner: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1918,6 +1923,35 @@ impl World {
             }
         }
         now
+    }
+
+    /// The region-space move of Person B's body (`couple_place`), for a
+    /// body whose skeleton model is `model`: the turn goes about their
+    /// pelvis. Avatar Studio's Hover Height lifts B with the agent, so the
+    /// pair keeps its spacing. None for anyone else, or when B is not moved.
+    pub fn couple_shift(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        let lift = if self.avatar_studio { self.avatar_studio_lift } else { 0.0 };
+        self.couple_shift_lifted(id, model, lift)
+    }
+
+    /// `couple_shift` without the Studio's display lift: where B stands
+    /// for the couple's placement note, which leaves A's lift out too.
+    pub fn couple_move(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        self.couple_shift_lifted(id, model, 0.0)
+    }
+
+    fn couple_shift_lifted(&self, id: Uuid, model: glam::Mat4, lift: f32) -> Option<glam::Mat4> {
+        let (mut offset, yaw) = self.couple_place;
+        if lift.is_finite() {
+            offset.z += lift;
+        }
+        if self.couple_partner != Some(id) || (offset == Vec3::ZERO && yaw == 0.0) || !offset.is_finite() || !yaw.is_finite() {
+            return None;
+        }
+        let pelvis = model.transform_point3(self.avatar_lib.pelvis);
+        let shift =
+            glam::Mat4::from_translation(pelvis + offset) * glam::Mat4::from_rotation_z(yaw) * glam::Mat4::from_translation(-pelvis);
+        shift.is_finite().then_some(shift)
     }
 
     /// The animation editor's couple partner, each frame. A partner whose
@@ -7035,6 +7069,23 @@ mod motion_tests {
         assert!(!present(&world, 970));
         assert!(present(&world, 975));
         assert!(world.held_kills.is_empty());
+    }
+
+    #[test]
+    fn the_studio_hover_lifts_the_couple_partner_but_not_the_placement() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(981);
+        world.couple_partner = Some(partner);
+        let model = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        assert!(world.couple_shift(partner, model).is_none(), "nothing to move");
+        world.avatar_studio = true;
+        world.avatar_studio_lift = 0.4;
+        let shift = world.couple_shift(partner, model).expect("the hover lifts B");
+        assert!((shift.transform_point3(Vec3::ZERO) - Vec3::new(0.0, 0.0, 0.4)).length() < 1e-5);
+        assert!(world.couple_move(partner, model).is_none(), "the note leaves the lift out");
+        assert!(world.couple_shift(Uuid::from_u128(982), model).is_none(), "only the partner");
+        world.avatar_studio = false;
+        assert!(world.couple_shift(partner, model).is_none(), "no hover outside the Studio");
     }
 
     #[test]

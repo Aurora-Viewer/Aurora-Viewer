@@ -53,6 +53,7 @@ anim-couple-switch = Click to edit this person
 anim-couple-partner-left = Couple mode ended: Person B is no longer available. Their animation is kept among the drafts.
 anim-couple-title = Couple animation
 anim-couple-hint = Animate two people in one timeline. Pick Person B from the residents nearby: they accept as for the Poser, and only you see the pose.
+anim-couple-ask-needs = They see the request only if they wear the Aurora bridge, stand in this region, and their posing privacy allows you (Friends by default).
 anim-couple-partner = Person B: { $name }
 anim-couple-use = Use as B
 anim-couple-edit-a = Edit Person A
@@ -60,6 +61,14 @@ anim-couple-edit-b = Edit Person B
 anim-couple-end = End couple mode
 anim-couple-end-tip = Back to one person. Person B's animation stays among the drafts.
 anim-couple-wait = Couple mode waits for the animation to finish updating: try again in a moment.
+anim-couple-move = Move Person B (on your screen only, not in the animation)
+anim-couple-forward = Forward
+anim-couple-left = Left
+anim-couple-up = Up
+anim-couple-turn = Turn
+anim-couple-face = Face to face
+anim-couple-face-tip = Stand Person B half a metre in front of you, facing you
+anim-couple-reset-place = Reset place
 anim-timeline-keys-selected = { $count ->
     [one] { $count } key picked: drag it to move it, Delete removes it, right-click or Esc drops it
    *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, right-click or Esc drops them

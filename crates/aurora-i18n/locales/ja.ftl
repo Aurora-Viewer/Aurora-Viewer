@@ -53,6 +53,7 @@ anim-couple-switch = クリックしてこの人物を編集
 anim-couple-partner-left = カップルモードを終了しました。人物 B は利用できなくなりました。B のアニメーションは下書きに残してあります。
 anim-couple-title = カップルアニメーション
 anim-couple-hint = 1 つのタイムラインで 2 人をアニメートします。近くの住人から人物 B を選んでください。ポーザーと同じように相手が承諾し、ポーズはあなたにだけ見えます。
+anim-couple-ask-needs = 相手が Aurora ブリッジを装着し、同じリージョンにいて、ポーズのプライバシー設定があなたを許可している場合のみ、リクエストが届きます（初期設定はフレンドのみ）。
 anim-couple-partner = 人物 B：{ $name }
 anim-couple-use = B にする
 anim-couple-edit-a = 人物 A を編集
@@ -60,6 +61,14 @@ anim-couple-edit-b = 人物 B を編集
 anim-couple-end = カップルモードを終了
 anim-couple-end-tip = 1 人に戻ります。人物 B のアニメーションは下書きに残ります。
 anim-couple-wait = アニメーションの更新が終わるまでカップルモードは待機します。しばらくしてからもう一度お試しください。
+anim-couple-move = 人物 B を移動（あなたの画面だけで、アニメーションには含まれません）
+anim-couple-forward = 前
+anim-couple-left = 左
+anim-couple-up = 上
+anim-couple-turn = 回転
+anim-couple-face = 向かい合わせ
+anim-couple-face-tip = 人物 B をあなたの 0.5 m 前に、あなたの方を向けて立たせます
+anim-couple-reset-place = 位置をリセット
 anim-timeline-keys-selected = { $count ->
     [one] { $count }個のキーを選択中：ドラッグで移動、Deleteで削除、右クリックまたはEscで選択解除
    *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Ctrl+Cでコピー、Deleteで削除、右クリックまたはEscで選択解除

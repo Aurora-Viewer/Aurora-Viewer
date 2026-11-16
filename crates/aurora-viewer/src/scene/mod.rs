@@ -1440,6 +1440,14 @@ fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
     }
 }
 
+/// Move a displayed skeleton and its worn attachment anchors by `local`
+/// (skeleton space): the couple partner the animation editor placed.
+fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
+    for matrix in out.iter_mut().take(anim::ANCHOR_BASE) {
+        *matrix = (local * Mat4::from_cols_array_2d(matrix)).to_cols_array_2d();
+    }
+}
+
 impl Scene {
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
@@ -5981,6 +5989,13 @@ impl Scene {
             .copied()
             .map(|model| (model, model.transform_point3(world.avatar_lib.pelvis).z + self.studio_floor_offset));
         let physics_rig = self.physics_rig.clone();
+        // the animation editor's couple partner drawn where it moved them
+        // (`World::couple_shift`), in their skeleton's space
+        let couple_local = world.couple_partner.and_then(|id| {
+            let model = *world.avatar_models.get(&id)?;
+            let shift = world.couple_shift(id, model)?;
+            Some((id, model.inverse() * shift * model))
+        });
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
             for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
@@ -6007,6 +6022,9 @@ impl Scene {
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                     *dst = matrix.to_cols_array_2d();
                 }
+            }
+            if let Some((_, local)) = couple_local.filter(|(id, _)| id == owner) {
+                shift_display_pose(local, chunk);
             }
             if *owner == world.agent_id {
                 avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
@@ -6064,6 +6082,9 @@ impl Scene {
                     for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                         *dst = matrix.to_cols_array_2d();
                     }
+                }
+                if let Some((_, local)) = couple_local.filter(|(id, _)| id == owner) {
+                    shift_display_pose(local, chunk);
                 }
                 if *owner == world.agent_id {
                     avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);

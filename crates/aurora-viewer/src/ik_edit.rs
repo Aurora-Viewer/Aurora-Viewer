@@ -146,6 +146,12 @@ impl Frame {
             .zip(&rig.default_world_inv)
             .map(|(p, inverse)| model * *p * inverse.inverse())
             .collect();
+        // couple mode: Person B's body is drawn where the editor moved it
+        // (`World::couple_shift`); the move rides on the model, as below,
+        // so their recorded keys stay free of it
+        if let Some(shift) = world.couple_shift(subject, model) {
+            model = shift * model;
+        }
         // Avatar Studio's Hover Height lifts the stored pose for display
         // only. Carry the lift on the model instead: the joints stay where
         // the avatar shows, and everything read back in model space (bone
@@ -1113,6 +1119,8 @@ impl Editor {
             if !selected_pole {
                 self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
             }
+            // couple mode: the other person's joints, a click edits them
+            self.couple_waiting_handles(ctx, palette, world, proj, gizmo_owns || self.clip.waiting_source());
             let limb_list = if self.limb_controls {
                 limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
             } else {

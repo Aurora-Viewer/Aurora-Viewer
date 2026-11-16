@@ -326,6 +326,90 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     assert_eq!(editor.clip.frame, 20);
 }
 
+/// The playhead's frames while the pointer drags along the frame ruler,
+/// from a tenth to nine tenths of the lanes' width.
+pub(super) fn ruler_drag_frames(editor: &mut Editor, world: &World) -> Vec<u32> {
+    use crate::ui::widgets::elide_tests::Frames;
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let (baseline, y) = {
+        let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+        frames.run(Vec::new(), &mut draw);
+        let shapes = frames.shapes(Vec::new(), &mut draw);
+        let baseline = shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::LineSegment { points, .. } = shape else {
+                    return None;
+                };
+                ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(*points)
+            })
+            .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+            .expect("lane baseline");
+        // the ruler's middle: its visible range ("0–30") is written there
+        let y = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(text) if text.galley.text().contains('\u{2013}') => Some(text.visual_bounding_rect().center().y),
+                _ => None,
+            })
+            .expect("the ruler's range label");
+        (baseline, y)
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let at = |t: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * t, y);
+    let mut reached = Vec::new();
+    {
+        let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+        frames.run(vec![egui::Event::PointerMoved(at(0.1)), button(at(0.1), true)], &mut draw);
+    }
+    for step in 2..=9 {
+        {
+            let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+            frames.run(vec![egui::Event::PointerMoved(at(step as f32 / 10.0))], &mut draw);
+        }
+        reached.push(editor.clip.frame);
+    }
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+    frames.run(vec![button(at(0.9), false)], &mut draw);
+    reached
+}
+
+#[test]
+fn dragging_the_ruler_stops_on_every_frame_between_keys() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    let mut rotations = rig.local_rot.clone();
+    for key in [0, 30] {
+        rotations[head] = Quat::from_rotation_z(key as f32 * 0.01) * rig.local_rot[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), key, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let reached = ruler_drag_frames(&mut editor, &world);
+    assert!(reached.windows(2).all(|w| w[0] < w[1]), "{reached:?}");
+    assert!(reached.iter().any(|f| *f != 0 && *f != 30), "{reached:?}");
+}
+
 #[test]
 fn studio_timeline_scrolls_when_the_animation_has_many_tracks() {
     use crate::ui::widgets::elide_tests::Frames;
