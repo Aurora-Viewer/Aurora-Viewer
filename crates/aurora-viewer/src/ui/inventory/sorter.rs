@@ -548,9 +548,6 @@ struct TrashJob {
     /// Entries of a refused or unconfirmed batch to show back where they
     /// were (the inventory shows a move as soon as it is sent).
     put_back: Vec<(Uuid, Uuid)>,
-    /// Those entries: their folders are read again, and they are waited for
-    /// in the Trash as long as a sort's unsure moves.
-    slow: HashSet<Uuid>,
 }
 
 impl TrashJob {
@@ -571,7 +568,6 @@ impl TrashJob {
             request: None,
             answered: false,
             put_back: Vec::new(),
-            slow: HashSet::new(),
         }
     }
 }
@@ -1675,21 +1671,9 @@ pub(super) fn show(
         }
     }
     if let Some(trash) = st.sorter.trash.as_mut() {
-        let bin = rules::system(inv, 14);
         for (id, from) in std::mem::take(&mut trash.put_back) {
             let folder = inv.folders.contains_key(&id);
             sorter::show_in(inv, id, folder, from);
-            trash.slow.insert(id);
-            // (the server's own record is read again: a move it applied
-            // shows in the Trash once that folder is fetched)
-            for read in [Some(from), bin].into_iter().flatten() {
-                if let Some(f) = inv.folders.get_mut(&read)
-                    && f.state == crate::world::inventory::FetchState::Fetched
-                {
-                    f.state = crate::world::inventory::FetchState::Unknown;
-                }
-                inv.request(read);
-            }
         }
     }
     send_trash_batch(inv, st, prefs, worn, actions, free && !hold);
@@ -2532,7 +2516,7 @@ fn send_trash_batch(
             // after the request if need be
             trash
                 .unsure
-                .extend(batch.drain(..).map(|(id, from)| (id, from, now + trash_wait(&trash.slow, id))));
+                .extend(batch.drain(..).map(|(id, from)| (id, from, now + TRASH_SHOW_LIMIT)));
             trash.unsure_seen = None;
             trash.in_flight = None;
             trash.next_at = Some(now + PACE);
@@ -2544,7 +2528,7 @@ fn send_trash_batch(
             // failed (Clean up can be run again)
             trash
                 .unsure
-                .extend(batch.drain(..).map(|(id, from)| (id, from, now + trash_wait(&trash.slow, id))));
+                .extend(batch.drain(..).map(|(id, from)| (id, from, now + TRASH_SHOW_LIMIT)));
             trash.unsure_seen = None;
             trash.in_flight = None;
             trash.next_at = Some(now + PACE);
@@ -2569,15 +2553,12 @@ fn send_trash_batch(
             trash.failed += over.len();
         }
         trash.unsure = waiting;
-        // (the failed ones journaled all the same, like a sort's unsure
-        // moves: one the server moved after all is put back by Undo, one
-        // still where it was is left there)
-        if !went.is_empty() || !over.is_empty() {
+        if !went.is_empty() {
             trash.sent += went.len();
             let run = trash.run;
             st.sorter.journal.record_in(
                 run,
-                went.iter().chain(over.iter()).map(|(id, from, _)| sorter::journal::Entry {
+                went.iter().map(|(id, from, _)| sorter::journal::Entry {
                     id: *id,
                     folder: inv.folders.contains_key(id),
                     from: *from,
@@ -2669,13 +2650,6 @@ fn placed(inv: &Inventory, entries: Vec<sorter::journal::Entry>) -> Vec<sorter::
             e
         })
         .collect()
-}
-
-/// How long a Trash entry is waited for in the Trash: as long as a sort's
-/// unsure moves when its batch was refused or unconfirmed (its folders are
-/// read again first).
-fn trash_wait(slow: &HashSet<Uuid>, id: Uuid) -> std::time::Duration {
-    if slow.contains(&id) { UNSURE_LIMIT } else { TRASH_SHOW_LIMIT }
 }
 
 /// `id` is in the Trash (at any depth).
