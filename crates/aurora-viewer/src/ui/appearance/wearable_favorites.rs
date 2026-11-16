@@ -9,20 +9,33 @@
 //! menu of a row is the outfit rows' (LLWearableItemsList::ContextMenu)
 //! with Assign to Folder. The rules are in `world/wearable_favorites.rs`.
 
-use super::{Action, AppearanceUi, items, row, row_gap, selection};
+use super::{Action, AppearanceUi, items, selection};
 use crate::{
     theme::Palette,
-    ui::{inventory, menu, widgets},
+    ui::{icons, inventory, menu, widgets, widgets::reorder},
     world::{World, inventory::Inventory, wearable_favorites as model},
 };
-use aurora_net::inventory::operations::Mutation;
-use egui::{RichText, Vec2};
+use aurora_net::inventory::{InvItem, operations::Mutation};
+use egui::{FontId, Rect, RichText, Sense, Vec2, Widget as _};
 use model::SortOrder;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// The window's id (Floater.Toggle "fs_wearable_favorites").
 pub const WINDOW: &str = "wearable_favorites";
+
+/// The picture rows (from iGao's PR #3784): a square picture, the name and
+/// the attachment point under it.
+const PICTURE: f32 = 40.0;
+const ROW: f32 = 54.0;
+const WEAR_BUTTON: f32 = 28.0;
+/// How strongly a worn row is washed in violet (a selected row is 0.25).
+const WORN_WASH: f32 = 0.07;
+/// How long the line saying what a Wear or Take off asked for stays.
+const STATUS_SECONDS: f64 = 2.6;
+const STATUS_HEIGHT: f32 = 26.0;
+const TIP_PICTURE: f32 = 168.0;
+const TIP_WIDTH: f32 = 240.0;
 
 #[derive(Default)]
 pub(crate) struct State {
@@ -46,6 +59,14 @@ pub(crate) struct State {
     /// The import plan with the inventory generation and favorites folder it
     /// was built for: rebuilt only when the inventory changes.
     plan: Option<(u64, Option<Uuid>, Option<model::Import>)>,
+    /// The views' new custom orders (their folder, their originals), for
+    /// the app to keep in the settings (`take_reordered`).
+    reordered: Vec<(Uuid, Vec<Uuid>)>,
+    /// "Wearing Boots": what the last Wear or Take off asked, and when.
+    status: Option<(String, f64)>,
+    /// Where a row was let go: no tooltip until the pointer leaves that
+    /// spot, so that a drop does not end on a tooltip over the list.
+    quiet_at: Option<egui::Pos2>,
 }
 
 impl State {
@@ -65,6 +86,11 @@ impl State {
     #[cfg(test)]
     pub(crate) fn import_hidden(&self) -> bool {
         self.import_sent
+    }
+
+    /// The custom orders changed this frame: each view and its new order.
+    pub(crate) fn take_reordered(&mut self) -> Vec<(Uuid, Vec<Uuid>)> {
+        std::mem::take(&mut self.reordered)
     }
 }
 
@@ -118,7 +144,9 @@ pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool, brand
     Some(change)
 }
 
-/// Draw the window while `open`; `sort` is FSWearableFavoritesSortOrder.
+/// Draw the window while `open`; `sort` is FSWearableFavoritesSortOrder,
+/// `images` the decoded pictures, `orders` the account's custom orders.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -127,6 +155,8 @@ pub fn show(
     open: &mut bool,
     sort: &mut SortOrder,
     writable: bool,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    orders: Option<&model::Orders>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if !*open {
@@ -161,75 +191,69 @@ pub fn show(
         ui.add_space(4.0);
         import_bar(ui, p, inv, st, root, writable);
         let labels = items::worn_labels(world);
+        let points = world.worn_attachment_points();
+        let saved: &[Uuid] = match (orders, shown) {
+            (Some(orders), Some(view)) => orders.get(&view).map_or(&[], Vec::as_slice),
+            _ => &[],
+        };
         let mut rows = match (root, shown) {
             (Some(root), Some(shown)) => model::entries(inv, root, shown),
             _ => Vec::new(),
         };
-        model::sort(inv, &mut rows, *sort);
+        model::sort(inv, &mut rows, *sort, saved);
         let total = rows.len();
         let filter = st.wearable_favorites.filter.clone();
         rows.retain(|e| {
             inv.items
                 .get(&e.target)
-                .is_some_and(|it| model::matches(&filter, &it.name, labels.get(&e.target).map(String::as_str)))
+                .is_some_and(|it| model::matches(&filter, &it.name, labels.get(&e.target).map(String::as_str), &kind(it)))
         });
         let order: Vec<Uuid> = rows.iter().map(|e| e.link).collect();
         st.wearable_favorites.selection.retain(&order);
+        let sort_before = *sort;
         filter_bar(ui, p, inv, st, sort, &order, &mut actions);
         ui.add_space(4.0);
-        let list = egui::ScrollArea::vertical()
-            .id_salt("wearable_favorites_rows")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                for e in &rows {
-                    let Some(it) = inv.items.get(&e.target) else { continue };
-                    ui.push_id(("wearable_favorite", e.link), |ui| {
-                        let worn = labels.get(&e.target).map(String::as_str);
-                        let selected = st.wearable_favorites.selection.contains(e.link);
-                        let response = row(ui, p, it, "", selected, worn);
-                        if response.clicked() || response.secondary_clicked() {
-                            let modifiers = ui.input(|i| i.modifiers);
-                            st.wearable_favorites
-                                .selection
-                                .click(e.link, &order, modifiers, response.secondary_clicked());
-                        }
-                        if it.asset_type == 21 {
-                            // a gesture is activated or deactivated (the inventory's double click)
-                            if items::double_clicked(&response) {
-                                actions.push(Action::Gesture(vec![it.id], !world.active_gestures.contains(&it.id)));
-                            }
-                        } else {
-                            items::double_click(&response, world, it, worn.is_some(), &mut actions);
-                        }
-                        // the menu acts on the originals of the rows picked
-                        let picked: Vec<Uuid> = if st.wearable_favorites.selection.contains(e.link) {
-                            rows.iter()
-                                .filter(|r| st.wearable_favorites.selection.contains(r.link))
-                                .map(|r| r.target)
-                                .collect()
-                        } else {
-                            vec![e.target]
-                        };
-                        items::context_menu(&response, p, world, st, items::List::Favorites(&folders), it, &picked, &mut actions);
-                    });
-                    row_gap(ui);
-                }
-                if rows.is_empty() {
-                    let loading = shown.is_none_or(|shown| !model::loaded(inv, shown));
-                    let text = if total > 0 {
-                        aurora_i18n::tr!("wearable-favorites-no-match")
-                    } else if loading {
-                        aurora_i18n::tr!("common-loading-2")
-                    } else {
-                        aurora_i18n::tr!("wearable-favorites-empty")
-                    };
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(text).color(p.muted));
-                }
-            });
-        if let Some(to) = shown {
-            drop_zone(ui, p, inv, list.inner_rect, to, &mut actions);
+        let now = ui.input(|i| i.time);
+        let status = st.wearable_favorites.status.clone().filter(|(_, at)| now - at < STATUS_SECONDS);
+        let room = ui.available_size() - Vec2::new(0.0, if status.is_some() { STATUS_HEIGHT + 4.0 } else { 0.0 });
+        let list = ui
+            .allocate_ui(room, |ui| {
+                list_area(
+                    ui,
+                    p,
+                    world,
+                    st,
+                    images,
+                    &rows,
+                    &labels,
+                    &points,
+                    &folders,
+                    shown,
+                    total,
+                    sort,
+                    &mut actions,
+                )
+            })
+            .inner;
+        if let Some((text, at)) = status {
+            status_line(ui, p, &text);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64((STATUS_SECONDS - (now - at)).max(0.0)));
+        }
+        // Custom order chosen (the menu or a first drag): the other views
+        // keep the order they showed instead of falling back to the type's
+        if *sort == SortOrder::Custom
+            && sort_before != SortOrder::Custom
+            && let Some(root) = root
+        {
+            let views: Vec<Uuid> = std::iter::once(root).chain(folders.iter().map(|(id, _)| *id)).collect();
+            let fresh: HashSet<Uuid> = st.wearable_favorites.reordered.iter().map(|(view, _)| *view).collect();
+            let has = |view: Uuid| fresh.contains(&view) || orders.is_some_and(|o| o.contains_key(&view));
+            let seeds = model::seeded_orders(inv, root, &views, sort_before, has);
+            st.wearable_favorites.reordered.extend(seeds);
+        }
+        if let (Some(to), Some(list)) = (shown, list) {
+            drop_zone(ui, p, inv, st, list, to, *sort, &mut actions);
         }
     });
     dialogs(ctx, p, world, st, root, &folders, &mut actions);
@@ -393,6 +417,12 @@ fn filter_bar(
                         "hanger-2-filled",
                         aurora_i18n::tr!("wearable-favorites-sort-type"),
                     ),
+                    // Aurora's own: the order the rows were dragged into
+                    (
+                        SortOrder::Custom,
+                        "grip-vertical",
+                        aurora_i18n::tr!("wearable-favorites-sort-custom"),
+                    ),
                 ] {
                     if menu::check(ui, p, icon, label, *sort == order, true) {
                         *sort = order;
@@ -414,10 +444,201 @@ fn filter_bar(
     });
 }
 
+/// Where the list was drawn this frame, for a drop from the inventory: its
+/// rect, the place a drop would take in Custom order (`gap`), and the
+/// originals in the order shown.
+struct DropPlace {
+    rect: Rect,
+    gap: Option<usize>,
+    keys: Vec<Uuid>,
+}
+
+/// The picture rows (from iGao's PR #3784), dragged into a Custom order
+/// through `widgets::reorder`, with a Wear / Take off button on the hovered
+/// row, a tooltip with the picture larger, and the menu and double click of
+/// the window as before.
+#[allow(clippy::too_many_arguments)]
+fn list_area(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    rows: &[model::Entry],
+    labels: &HashMap<Uuid, String>,
+    points: &HashMap<Uuid, u8>,
+    folders: &[(Uuid, String)],
+    shown: Option<Uuid>,
+    total: usize,
+    sort: &mut SortOrder,
+    actions: &mut Vec<Action>,
+) -> Option<DropPlace> {
+    let inv = &world.inventory;
+    let keys: Vec<Uuid> = rows.iter().map(|e| e.target).collect();
+    let order: Vec<Uuid> = rows.iter().map(|e| e.link).collect();
+    // a drag sorts the whole view by hand: not while filtering a part of it
+    let draggable = shown.is_some() && st.wearable_favorites.filter.trim().is_empty();
+    let carried = shown
+        .and_then(|to| inventory::drag::carried_ids(ui.ctx()).map(|ids| model::droppable(inv, &ids, to)))
+        .unwrap_or_default();
+    let now = ui.input(|i| i.time);
+    let area = egui::ScrollArea::vertical()
+        .id_salt("wearable_favorites_rows")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let width = ui.available_width();
+            // the places, fixed: what the pointer clicks, drags and drops on
+            let responses: Vec<egui::Response> = rows
+                .iter()
+                .map(|_| ui.allocate_exact_size(Vec2::new(width, ROW), Sense::click_and_drag()).1)
+                .collect();
+            let pitch = ROW + ui.spacing().item_spacing.y;
+            let pointer_y = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|at| ui.clip_rect().contains(*at))
+                .map(|at| at.y);
+            // in Custom order, wearables carried from the inventory land
+            // where they are let go: the rows make room there
+            let gap = match (responses.first(), pointer_y) {
+                (Some(first), Some(y)) if *sort == SortOrder::Custom && draggable && !carried.is_empty() => {
+                    ui.allocate_space(Vec2::new(1.0, ROW));
+                    Some(reorder::insert_slot(y - ROW / 2.0, first.rect.top(), pitch, responses.len()))
+                }
+                _ => None,
+            };
+            let id = ui.make_persistent_id(("wearable_favorites_reorder", shown));
+            let layout = reorder::update(ui, id, &keys, &responses, draggable, gap);
+            // the first drag sorts by hand from the order shown (`show`
+            // keeps the other views' orders)
+            if layout.started.is_some() && *sort != SortOrder::Custom {
+                *sort = SortOrder::Custom;
+            }
+            if let (Some((from, to)), Some(view)) = (layout.moved, shown) {
+                st.wearable_favorites.reordered.push((view, model::moved(&keys, from, to)));
+            }
+            let pointer = ui.input(|i| i.pointer.hover_pos());
+            let fav = &mut st.wearable_favorites;
+            if layout.moved.is_some() {
+                fav.quiet_at = pointer;
+            } else if fav.quiet_at.is_some() && pointer != fav.quiet_at {
+                fav.quiet_at = None;
+            }
+            let quiet = layout.busy() || fav.quiet_at.is_some();
+            for (i, (e, response)) in rows.iter().zip(&responses).enumerate() {
+                let Some(it) = inv.items.get(&e.target) else {
+                    continue;
+                };
+                let picture = picture(inv, e);
+                if let Some(image) = picture {
+                    st.wanted_images.insert(image);
+                }
+                let texture = picture.and_then(|image| images.get(&image));
+                let worn = labels.get(&e.target).map(String::as_str);
+                let is_worn = worn.is_some();
+                let point = point(world, it, points.get(&it.id).copied());
+                let at = layout.rect(i, response.rect);
+                if layout.lifted == Some(i) {
+                    reorder::lifted_card(ui, p, id, at, |card| {
+                        paint_row(card, p, at, it, texture, is_worn, point.as_deref(), None);
+                    });
+                    continue;
+                }
+                let selected = st.wearable_favorites.selection.contains(e.link);
+                let face = if selected {
+                    Some(p.violet.gamma_multiply(0.25))
+                } else if response.hovered() && !layout.busy() {
+                    Some(p.raised)
+                } else if is_worn {
+                    // worn: a faint wash, the check says it at the end
+                    Some(p.violet.gamma_multiply(WORN_WASH))
+                } else {
+                    None
+                };
+                // the hovered row's Wear button takes the check's place
+                let toggle = (!layout.busy() && ui.rect_contains_pointer(at))
+                    .then(|| items::wear_toggle(world, it, is_worn))
+                    .flatten();
+                paint_row(ui, p, at, it, texture, is_worn && toggle.is_none(), point.as_deref(), face);
+                if response.clicked() || response.secondary_clicked() {
+                    let modifiers = ui.input(|i| i.modifiers);
+                    st.wearable_favorites
+                        .selection
+                        .click(e.link, &order, modifiers, response.secondary_clicked());
+                }
+                let asked = actions.len();
+                if it.asset_type == 21 {
+                    // a gesture is activated or deactivated (the inventory's double click)
+                    if items::double_clicked(response) {
+                        actions.push(Action::Gesture(vec![it.id], !world.active_gestures.contains(&it.id)));
+                    }
+                } else {
+                    items::double_click(response, world, it, is_worn, actions);
+                    // the same from a button on the hovered row, for those
+                    // who would not guess the double click (Aurora's own)
+                    if let Some(action) = toggle
+                        && wear_button(ui, p, at, it, is_worn)
+                    {
+                        actions.push(action);
+                    }
+                    if actions.len() > asked {
+                        st.wearable_favorites.status = Some((asked_status(it, is_worn), now));
+                    }
+                }
+                let response = if quiet {
+                    response.clone()
+                } else {
+                    response
+                        .clone()
+                        .on_hover_ui(|ui| tooltip(ui, p, inv, it, texture, worn, point.as_deref()))
+                };
+                // the menu acts on the originals of the rows picked
+                let picked: Vec<Uuid> = if st.wearable_favorites.selection.contains(e.link) {
+                    rows.iter()
+                        .filter(|r| st.wearable_favorites.selection.contains(r.link))
+                        .map(|r| r.target)
+                        .collect()
+                } else {
+                    vec![e.target]
+                };
+                items::context_menu(&response, p, world, st, items::List::Favorites(folders), it, &picked, actions);
+            }
+            if rows.is_empty() {
+                let loading = shown.is_none_or(|shown| !model::loaded(inv, shown));
+                let text = if total > 0 {
+                    aurora_i18n::tr!("wearable-favorites-no-match")
+                } else if loading {
+                    aurora_i18n::tr!("common-loading-2")
+                } else {
+                    aurora_i18n::tr!("wearable-favorites-empty")
+                };
+                ui.add_space(6.0);
+                ui.label(RichText::new(text).color(p.muted));
+            }
+            gap
+        });
+    shown.map(|_| DropPlace {
+        rect: area.inner_rect,
+        gap: area.inner,
+        keys,
+    })
+}
+
 /// FSWearableFavoritesItemsList::handleDragAndDrop: clothing, body parts
-/// and objects dragged from the inventory are linked in the folder shown.
-fn drop_zone(ui: &egui::Ui, p: &Palette, inv: &Inventory, rect: egui::Rect, to: Uuid, actions: &mut Vec<Action>) {
-    if !ui.rect_contains_pointer(rect) {
+/// and objects dragged from the inventory are linked in the folder shown;
+/// in Custom order they land where they are let go.
+#[allow(clippy::too_many_arguments)]
+fn drop_zone(
+    ui: &egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut AppearanceUi,
+    place: DropPlace,
+    to: Uuid,
+    sort: SortOrder,
+    actions: &mut Vec<Action>,
+) {
+    if !ui.rect_contains_pointer(place.rect) {
         return;
     }
     let Some(ids) = inventory::drag::carried_ids(ui.ctx()) else {
@@ -425,7 +646,7 @@ fn drop_zone(ui: &egui::Ui, p: &Palette, inv: &Inventory, rect: egui::Rect, to: 
     };
     let targets = model::droppable(inv, &ids, to);
     let allowed = !targets.is_empty();
-    inventory::tree::drop_outline(ui, p, rect, allowed);
+    inventory::tree::drop_outline(ui, p, place.rect, allowed);
     inventory::drag::feedback(
         ui.ctx(),
         if allowed {
@@ -438,8 +659,213 @@ fn drop_zone(ui: &egui::Ui, p: &Palette, inv: &Inventory, rect: egui::Rect, to: 
         egui::DragAndDrop::clear_payload(ui.ctx());
         if let Some(change) = model::link(inv, &targets, to) {
             actions.push(Action::Folders(change));
+            if sort == SortOrder::Custom
+                && let Some(at) = place.gap
+            {
+                st.wearable_favorites
+                    .reordered
+                    .push((to, model::inserted(&place.keys, at, &targets)));
+            }
         }
     }
+}
+
+/// "Shirt", "Object", "Gesture": the type the filter reads besides the
+/// title, and the tooltip's line.
+fn kind(it: &InvItem) -> String {
+    match it.asset_type {
+        5 | 13 => crate::world::appearance::wearables()
+            .get((it.flags & 0xff) as usize)
+            .map(|name| name.to_string())
+            .unwrap_or_default(),
+        21 => aurora_i18n::tr!("inventory-kind-gesture").into(),
+        _ => aurora_i18n::tr!("common-object").into(),
+    }
+}
+
+/// The picture of a favorite: the original's own inventory picture, else
+/// the link's (LLViewerInventoryItem::getThumbnailUUID); none while RLVa
+/// forbids previews, as the inventory's picture tooltips.
+fn picture(inv: &Inventory, entry: &model::Entry) -> Option<Uuid> {
+    if !inv.can_preview(0) {
+        return None;
+    }
+    [entry.target, entry.link]
+        .into_iter()
+        .filter_map(|id| inv.items.get(&id))
+        .map(|it| it.thumbnail)
+        .find(|id| !id.is_nil())
+}
+
+/// "Left Hand", "HUD : Top Right": the point an object is worn on, else
+/// its saved point; none for clothing, body parts, gestures and an object
+/// never attached. A row's second line.
+fn point(world: &World, it: &InvItem, worn_point: Option<u8>) -> Option<String> {
+    if it.asset_type != 6 {
+        return None;
+    }
+    let point = worn_point.or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))?;
+    let name = world
+        .avatar_lib
+        .attach_names
+        .get(&point)
+        .map(|name| items::point_name(name).to_owned())
+        .unwrap_or_else(|| aurora_i18n::tr!("attachment-point", point = point));
+    let hud = world.avatar_lib.attach_points.get(&point).is_some_and(|ap| ap.hud);
+    Some(format!("{}{name}", if hud { "HUD : " } else { "" }))
+}
+
+/// The row's Wear or Take off button at the right end of `row` (Detach for
+/// an object, as the menus say); true when clicked.
+fn wear_button(ui: &mut egui::Ui, p: &Palette, row: Rect, it: &InvItem, worn: bool) -> bool {
+    let (icon, tip) = match (worn, it.asset_type == 6) {
+        (false, _) => ("shirt-filled", aurora_i18n::tr!("common-wear")),
+        (true, true) => ("circle-x-filled", aurora_i18n::tr!("common-detach")),
+        (true, false) => ("circle-x-filled", aurora_i18n::tr!("inventory-take-off")),
+    };
+    let rect = Rect::from_center_size(
+        egui::pos2(row.right() - 6.0 - WEAR_BUTTON / 2.0, row.center().y),
+        Vec2::splat(WEAR_BUTTON),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let button = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(WEAR_BUTTON)).on_hover_text(tip);
+        // the second click of a double click asks nothing more: the worn
+        // state has not changed yet, so it would ask the same again
+        button.clicked() && !button.double_clicked()
+    })
+    .inner
+}
+
+/// "Wearing Boots", "Taking off Boots": the status line after the button or
+/// a double click.
+fn asked_status(it: &InvItem, worn: bool) -> String {
+    let name = it.name.clone();
+    if worn {
+        aurora_i18n::tr!("wearable-favorites-taking-off", name = name).to_string()
+    } else {
+        aurora_i18n::tr!("wearable-favorites-wearing", name = name).to_string()
+    }
+}
+
+/// What the last Wear or Take off asked for, at the bottom of the window,
+/// under the list and never over a row.
+fn status_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_HEIGHT), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.22));
+    widgets::paint_elided(
+        ui,
+        text,
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        rect.width() - 20.0,
+        FontId::proportional(12.0),
+        p.ink,
+    );
+}
+
+/// One picture row at `rect`: its face (selected, hovered, worn, none),
+/// the picture (or the type icon), the name, the attachment point below it
+/// when there is one, and a check at the right end when `check` (a worn
+/// row, unless its Wear button is shown there).
+#[allow(clippy::too_many_arguments)]
+fn paint_row(
+    ui: &egui::Ui,
+    p: &Palette,
+    rect: Rect,
+    it: &InvItem,
+    texture: Option<&egui::TextureHandle>,
+    check: bool,
+    point: Option<&str>,
+    face: Option<egui::Color32>,
+) {
+    let radius = ui.visuals().window_corner_radius;
+    if let Some(face) = face {
+        ui.painter().rect_filled(rect, radius, face);
+    }
+    let pic = Rect::from_center_size(egui::pos2(rect.left() + 6.0 + PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
+    ui.painter().rect_filled(pic, radius, p.field);
+    if let Some(t) = texture {
+        egui::Image::new(t)
+            .uv(crop_square(t.size_vec2()))
+            .corner_radius(radius)
+            .tint(widgets::PICTURE_TINT)
+            .paint_at(ui, pic);
+    } else if let Some(t) = icons::global(inventory::item_icon(it.asset_type, it.inv_type, it.flags)) {
+        let tint = inventory::item_icon_color(it.asset_type, it.inv_type, p);
+        egui::Image::new(&t)
+            .tint(tint)
+            .paint_at(ui, Rect::from_center_size(pic.center(), Vec2::splat(22.0)));
+    }
+    let left = pic.right() + 10.0;
+    let width = (rect.right() - left - WEAR_BUTTON - 10.0).max(20.0);
+    let name_font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let name = one_line(ui, &it.name, name_font, p.ink, width);
+    let sub = point.map(|point| one_line(ui, point, FontId::proportional(11.0), p.muted, width));
+    let height = name.size().y + sub.as_ref().map_or(0.0, |sub| sub.size().y + 2.0);
+    let top = rect.center().y - height / 2.0;
+    ui.painter().galley(egui::pos2(left, top), name.clone(), p.ink);
+    if let Some(sub) = sub {
+        ui.painter().galley(egui::pos2(left, top + name.size().y + 2.0), sub, p.muted);
+    }
+    if check && let Some(t) = icons::global("circle-check-filled") {
+        let center = egui::pos2(rect.right() - 6.0 - WEAR_BUTTON / 2.0, rect.center().y);
+        egui::Image::new(&t)
+            .tint(p.violet)
+            .paint_at(ui, Rect::from_center_size(center, Vec2::splat(15.0)));
+    }
+}
+
+fn one_line(ui: &egui::Ui, text: &str, font: FontId, color: egui::Color32, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font, color));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    ui.painter().layout_job(job)
+}
+
+/// The middle square of a picture, so that a wide or tall one fills the
+/// frame without being squeezed.
+fn crop_square(size: Vec2) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+    }
+    let side = size.x.min(size.y);
+    let (u, v) = (side / size.x, side / size.y);
+    Rect::from_min_size(egui::pos2((1.0 - u) / 2.0, (1.0 - v) / 2.0), Vec2::new(u, v))
+}
+
+/// The full name (wrapped), the picture larger, type and point, worn
+/// state and permissions: what a cut row cannot show.
+fn tooltip(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    it: &InvItem,
+    texture: Option<&egui::TextureHandle>,
+    worn: Option<&str>,
+    point: Option<&str>,
+) {
+    ui.set_max_width(TIP_WIDTH);
+    if let Some(t) = texture {
+        egui::Image::new(t)
+            .uv(crop_square(t.size_vec2()))
+            .corner_radius(ui.visuals().window_corner_radius)
+            .fit_to_exact_size(Vec2::splat(TIP_PICTURE))
+            .ui(ui);
+        ui.add_space(4.0);
+    }
+    ui.add(egui::Label::new(RichText::new(&it.name).color(p.ink).strong()).wrap());
+    let detail = match point {
+        Some(point) => format!("{} · {point}", kind(it)),
+        None => kind(it),
+    };
+    ui.label(RichText::new(detail).color(p.muted));
+    if let Some(worn) = worn {
+        ui.label(RichText::new(worn).color(p.violet));
+    }
+    widgets::divider(ui, p);
+    let held = crate::world::inventory::actions::held(inv, it);
+    let permissions = inventory::permissions::Permissions::new(held, it.next_owner_mask);
+    ui.label(RichText::new(permissions.tooltip()).color(p.muted).size(11.0));
 }
 
 /// The questions of New, Rename and Delete folder, and the refused name

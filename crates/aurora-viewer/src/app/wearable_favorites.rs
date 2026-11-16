@@ -18,9 +18,27 @@ impl App {
         let mut open = self.panels.wearable_favorites;
         let mut sort = self.settings.wearable_favorites_sort;
         let writable = (self.demo || self.world.inventory_writable()) && self.inventory_ui.pending.is_none();
-        let actions =
-            ui::appearance::wearable_favorites::show(ctx, p, &self.world, &mut self.appearance_ui, &mut open, &mut sort, writable);
+        let actions = ui::appearance::wearable_favorites::show(
+            ctx,
+            p,
+            &self.world,
+            &mut self.appearance_ui,
+            &mut open,
+            &mut sort,
+            writable,
+            &self.ui_images,
+            self.settings.wearable_favorites_order.get(&self.world.agent_id),
+        );
         self.panels.wearable_favorites = open;
+        // the custom orders dragged, kept per account
+        let reordered = self.appearance_ui.wearable_favorites.take_reordered();
+        if !reordered.is_empty() {
+            let orders = self.settings.wearable_favorites_order.entry(self.world.agent_id).or_default();
+            for (view, order) in reordered {
+                orders.insert(view, order);
+            }
+            self.settings.save();
+        }
         // the import is marked sent only once the inventory took it: a change
         // already pending discards it, and the button must stay
         self.appearance_ui
