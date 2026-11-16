@@ -175,6 +175,30 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-play-parcel-music-when-entering"),
             &field!(audio.music_autoplay),
         );
+        // FSFadeAudioStream, FSAudioMusicFadeIn / FSAudioMusicFadeOut
+        // (panel_preferences_sound.xml: 0 to 10 s)
+        cx.toggle(
+            tr!("ui-options-music-fade"),
+            tr!("ui-options-music-fade-help"),
+            &field!(audio.music_fade),
+        );
+        let off = !cx.s.audio.music_fade;
+        cx.subs(off, |cx| {
+            cx.slider(
+                tr!("ui-options-music-fade-in"),
+                tr!("ui-options-music-fade-in-help"),
+                &field!(audio.music_fade_in),
+                0.0..=10.0,
+                " s",
+            );
+            cx.slider(
+                tr!("ui-options-music-fade-out"),
+                tr!("ui-options-music-fade-out-help"),
+                &field!(audio.music_fade_out),
+                0.0..=10.0,
+                " s",
+            );
+        });
         // Legacy Viewer › Sound & Media: ShowStreamMetadata,
         // StreamMetadataAnnounceToChat / StreamMetadataAnnounceChannel
         use crate::settings::StreamTitleShow;
@@ -219,6 +243,26 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-gesture-sounds"),
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
+        );
+        // FSAutoUnmuteAmbient, FSAutoUnmuteSounds (panel_preferences_sound.xml)
+        cx.toggle(
+            tr!("ui-options-unmute-ambient-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_ambient),
+        );
+        cx.toggle(
+            tr!("ui-options-unmute-sounds-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_sounds),
+        );
+        // The Legacy Viewer's FMOD Doppler, fixed at 1 there
+        // (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp): a row here
+        cx.slider(
+            tr!("ui-options-sound-doppler"),
+            tr!("ui-options-sound-doppler-help"),
+            &field!(audio.doppler),
+            0.0..=2.0,
+            "",
         );
         // The immersive sound (occlusion, 3D sound, reverb): Aurora's own and
         // experimental, marked as such.

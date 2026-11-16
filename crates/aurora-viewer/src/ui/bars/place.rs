@@ -273,7 +273,10 @@ pub fn island(
     if let Some(a) = place(ui, p, icons, panels, st, loc, detail) {
         action = Some(a);
     }
-    if let Some(a) = star_slot(ui, p, icons, star, st) {
+    // LLLocationInputCtrl::updateAddLandmarkButton: no star under @showloc
+    if !st.location_hidden
+        && let Some(a) = star_slot(ui, p, icons, star, st)
+    {
         action = Some(BarAction::LandmarkStar(a));
     }
     action
@@ -489,8 +492,12 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             }
             ui.label(egui::RichText::new(sub.join(" · ")).size(12.0).color(p.muted));
         });
-        // the star: edits this parcel's landmark, or creates one
+        // the star: edits this parcel's landmark, or creates one (none
+        // under @showloc, as the island's)
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if st.location_hidden {
+                return;
+            }
             ui.add_space(4.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(SLOT), Sense::click());
             ui.painter().rect_filled(

@@ -45,6 +45,44 @@ use std::time::{Duration, Instant};
 /// mips is 22 MB), or 4 × 16 MB on a GPU with little memory.
 const CHUNKS: (usize, u64) = (8, 32 << 20);
 const CHUNKS_SMALL: (usize, u64) = (4, 16 << 20);
+/// Where the CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`):
+/// the total of the small pool, in chunks of the large one, so that the
+/// largest upload stays what it is on the same card with Resizable BAR.
+const CHUNKS_WINDOW: (usize, u64) = (2, 32 << 20);
+
+/// Which staging pool a GPU gets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolSize {
+    /// 8 × 32 MB.
+    Large,
+    /// 4 × 16 MB: a GPU with little memory (integrated, or under 4 GB).
+    Small,
+    /// 2 × 32 MB: a GPU with memory to spare whose mappable video memory
+    /// the large pool would fill alone (no Resizable BAR, #2171).
+    Window,
+}
+
+impl PoolSize {
+    /// The pool of a GPU: `vram_mb` its video memory, `mappable_mb` the
+    /// part of it the CPU can map (`vram::mappable_mb`), None when unknown.
+    pub fn choose(integrated: bool, vram_mb: Option<u64>, mappable_mb: Option<u64>) -> Self {
+        if integrated || vram_mb.is_some_and(|mb| mb < 4096) {
+            PoolSize::Small
+        } else if mappable_mb.is_some_and(|mb| mb < crate::vram::SMALL_MAPPABLE_MB) {
+            PoolSize::Window
+        } else {
+            PoolSize::Large
+        }
+    }
+
+    fn chunks(self) -> (usize, u64) {
+        match self {
+            PoolSize::Large => CHUNKS,
+            PoolSize::Small => CHUNKS_SMALL,
+            PoolSize::Window => CHUNKS_WINDOW,
+        }
+    }
+}
 /// When every chunk is in use, a job waits this long for one to come back
 /// (they do within a few frames) before keeping its data for a main-thread
 /// write: under a burst (thousands of textures decoded at once) the jobs
@@ -168,9 +206,13 @@ impl StagingPool {
 
     /// `small`: a GPU with little memory (integrated, or under 4 GB).
     pub fn new(device: &wgpu::Device, small: bool) -> Arc<Self> {
+        Self::sized(device, if small { PoolSize::Small } else { PoolSize::Large })
+    }
+
+    pub fn sized(device: &wgpu::Device, size: PoolSize) -> Arc<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let (count, chunk_bytes) = if small { CHUNKS_SMALL } else { CHUNKS };
+        let (count, chunk_bytes) = size.chunks();
         let free = (0..count)
             .map(|_| {
                 Arc::new(Chunk {
@@ -238,14 +280,48 @@ impl StagingPool {
     pub fn stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
         let size = align(size.max(4));
         let (chunk, offset) = self.allocate(size)?;
+        // One job writes at a time: staging memory is write-combined, and
+        // 30 jobs streaming into it at once stalled every thread of the
+        // process, the main one included (a 16 ms frame per wave of
+        // textures in AURORA_DEMO_STREAM). One writer still moves ~9 GB/s,
+        // far more than a region streams.
+        let turn = self.write_turn.lock().unwrap_or_else(|e| e.into_inner());
+        Self::write(chunk, offset, size, turn, fill)
+    }
+
+    /// [`stage`](Self::stage) for the main thread, which never waits for
+    /// the pool: None at once when a job holds the pool or the write turn,
+    /// or when no chunk has room now; the caller then writes directly.
+    pub fn try_stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
+        let size = align(size.max(4));
+        if size > self.chunk_bytes {
+            return None;
+        }
+        // the turn first, so that a region is never reserved and left
+        // unwritten (a job fills it for a few ms)
+        let turn = match self.write_turn.try_lock() {
+            Ok(t) => t,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        let (chunk, offset) = {
+            let mut s = self.try_lock()?;
+            self.receive(&mut s);
+            Self::take_room(&mut s, size)?
+        };
+        Self::write(chunk, offset, size, turn, fill)
+    }
+
+    /// Fill a reserved region, holding the write turn.
+    fn write(
+        chunk: Arc<Chunk>,
+        offset: u64,
+        size: u64,
+        _turn: std::sync::MutexGuard<'_, ()>,
+        fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>),
+    ) -> Option<Staged> {
         {
             let view = chunk.buffer.get_mapped_range_mut(offset..offset + size);
-            // One job writes at a time: staging memory is write-combined,
-            // and 30 jobs streaming into it at once stalled every thread of
-            // the process, the main one included (a 16 ms frame per wave of
-            // textures in AURORA_DEMO_STREAM). One writer still moves
-            // ~9 GB/s, far more than a region streams.
-            let _turn = self.write_turn.lock().unwrap_or_else(|e| e.into_inner());
             match view {
                 Ok(mut view) => fill(&mut view.slice(..)),
                 Err(e) => {
@@ -270,20 +346,8 @@ impl StagingPool {
             {
                 let mut s = self.lock();
                 self.receive(&mut s);
-                if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
-                    return Self::bump(&mut s, size);
-                }
-                // the next free chunk; with none, the open one stays open
-                // for smaller requests
-                if let Some(chunk) = s.free.pop() {
-                    if let Some(o) = s.open.replace(Open {
-                        chunk,
-                        offset: 0,
-                        frames: 0,
-                    }) {
-                        s.closed.push(o.chunk);
-                    }
-                    return Self::bump(&mut s, size);
+                if let Some(region) = Self::take_room(&mut s, size) {
+                    return Some(region);
                 }
             }
             // every chunk is in use: wait for one to come back
@@ -297,6 +361,24 @@ impl StagingPool {
                 }
             }
         }
+    }
+
+    /// A region of the open chunk, or of the next free one; None when
+    /// neither has room (the open one then stays open for smaller
+    /// requests).
+    fn take_room(s: &mut PoolState, size: u64) -> Option<(Arc<Chunk>, u64)> {
+        if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
+            return Self::bump(s, size);
+        }
+        let chunk = s.free.pop()?;
+        if let Some(o) = s.open.replace(Open {
+            chunk,
+            offset: 0,
+            frames: 0,
+        }) {
+            s.closed.push(o.chunk);
+        }
+        Self::bump(s, size)
     }
 
     /// A region of the open chunk (which has room for it).
@@ -499,13 +581,24 @@ impl StagedTexture {
     /// Stage tightly packed levels of `format` (level 0 first, sizes in
     /// texels); None when the pool is full or the data does not fit the sizes.
     pub fn with_format(pool: &StagingPool, format: TexelFormat, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
+        Self::staged(pool, format, mips, true)
+    }
+
+    /// [`new`](Self::new) for the main thread, which never waits for the
+    /// pool ([`StagingPool::try_stage`]).
+    pub fn try_new(pool: &StagingPool, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
+        Self::staged(pool, TexelFormat::Rgba8, mips, false)
+    }
+
+    fn staged(pool: &StagingPool, format: TexelFormat, mips: &[(u32, u32, &[u8])], wait: bool) -> Option<Self> {
         let usable = mips.iter().all(|(w, h, d)| d.len() as u64 >= format.level_bytes(*w, *h));
         if mips.is_empty() || !usable || !format.fits(mips[0].0, mips[0].1) {
             return None;
         }
         let (levels, size) = level_layout(format, mips.iter().map(|m| (m.0, m.1)));
         let data: Vec<&[u8]> = mips.iter().map(|m| m.2).collect();
-        let staged = pool.stage(size, |dst| write_levels(dst, format, &levels, &data))?;
+        let fill = |dst: &mut wgpu::WriteOnly<'_, [u8]>| write_levels(dst, format, &levels, &data);
+        let staged = if wait { pool.stage(size, fill) } else { pool.try_stage(size, fill) }?;
         Some(StagedTexture {
             format,
             levels,
@@ -587,8 +680,12 @@ pub struct UploadQueue {
 
 impl UploadQueue {
     pub fn new(device: &wgpu::Device, small: bool) -> Self {
+        Self::sized(device, if small { PoolSize::Small } else { PoolSize::Large })
+    }
+
+    pub fn sized(device: &wgpu::Device, size: PoolSize) -> Self {
         UploadQueue {
-            pool: StagingPool::new(device, small),
+            pool: StagingPool::sized(device, size),
             encoder: None,
         }
     }
@@ -709,6 +806,65 @@ impl FrameUploads {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pool of a GPU: small on little memory, 64 MB in full-size
+    /// chunks where only the mappable window is small (#2171), large
+    /// elsewhere and when the window is unknown.
+    #[test]
+    fn pool_size_follows_the_memory_the_cpu_can_map() {
+        // Resizable BAR, or no reading (macOS, no such memory type)
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(16_000)), PoolSize::Large);
+        assert_eq!(PoolSize::choose(false, Some(16_000), None), PoolSize::Large);
+        assert_eq!(PoolSize::choose(false, None, None), PoolSize::Large);
+        // no Resizable BAR: the window, up to the threshold
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(246)), PoolSize::Window);
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(0)), PoolSize::Window);
+        let limit = crate::vram::SMALL_MAPPABLE_MB;
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(limit - 1)), PoolSize::Window);
+        assert_eq!(PoolSize::choose(false, Some(16_000), Some(limit)), PoolSize::Large);
+        // little memory wins: these GPUs keep the pool they had
+        assert_eq!(PoolSize::choose(true, Some(16_000), Some(16_000)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(true, None, Some(246)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(false, Some(2048), Some(246)), PoolSize::Small);
+        assert_eq!(PoolSize::choose(false, Some(4096), Some(246)), PoolSize::Window);
+        // the window pool is the small one's total in the large one's
+        // chunks: a 2048² texture with its mips (22 MB) still fits one
+        let total = |size: PoolSize| size.chunks().0 as u64 * size.chunks().1;
+        assert_eq!(total(PoolSize::Window), total(PoolSize::Small));
+        assert_eq!(PoolSize::Window.chunks().1, PoolSize::Large.chunks().1);
+        assert!(PoolSize::Window.chunks().1 >= 2048 * 2048 * 4 * 4 / 3);
+        assert!(total(PoolSize::Window) << 2 <= 256 << 20);
+    }
+
+    /// The main thread's staging never waits: with every chunk in use, or
+    /// a job writing, it gives up at once where `stage` would wait 100 ms
+    /// (GPU test).
+    #[test]
+    #[ignore]
+    fn try_stage_gives_up_at_once() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let pool = StagingPool::new(&device, true);
+        assert!(pool.try_stage(64, |_| {}).is_some(), "room in the open chunk");
+        // a job holds the write turn
+        {
+            let _turn = pool.write_turn.lock().expect("turn");
+            assert!(pool.try_stage(64, |_| {}).is_none());
+        }
+        // every chunk taken, none returned
+        let chunk = 16 << 20;
+        let held: Vec<Staged> = std::iter::from_fn(|| pool.try_stage(chunk, |_| {})).take(64).collect();
+        assert!(!held.is_empty());
+        let start = Instant::now();
+        assert!(pool.try_stage(chunk, |_| {}).is_none());
+        assert!(start.elapsed() < STAGE_WAIT / 2, "it did not wait");
+        assert!(pool.try_stage(chunk + 4, |_| {}).is_none(), "larger than a chunk");
+    }
 
     /// After a device loss the viewer makes a new pool: what a job staged in
     /// the old one is told apart (GPU test).

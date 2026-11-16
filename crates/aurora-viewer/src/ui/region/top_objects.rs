@@ -236,7 +236,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
                     !waiting,
                 );
                 let w = ui.available_width().max(140.0);
-                let r = widgets::search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
+                let r = widgets::clearable_search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if filter.clicked() || enter && !waiting {
                     refresh(&mut s.top, v, world, true);
@@ -438,7 +438,8 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
         x += w;
     }
     let height = ui.available_height();
-    egui::ScrollArea::vertical()
+    let selected_row = rows.iter().position(|o| s.selected.contains(&o.task_id));
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 26.0)
         .id_salt("region_top_objects_list")
         .max_height(height)
         .min_scrolled_height(height)
