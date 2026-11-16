@@ -336,6 +336,14 @@ Before each significant commit, and always before the PR:
 - **Up-to-date dependencies**: we use the latest versions (stable Rust,
   crates). A new dependency must be maintained, under a GPL v3 compatible
   licence (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), and justified in the PR.
+- **One Rust version for everyone**: `rust-toolchain.toml` names it, and
+  rustup installs it by itself at the first Cargo command, on every PC and
+  in the CI. A new stable release comes in through its own pull request,
+  which changes that line (Dependabot opens it; it is handled like its
+  other PRs, section 13): never change it in a task's PR, and never build
+  with another toolchain (`cargo +…`, `RUSTUP_TOOLCHAIN`). After a pull that
+  changes it, the next build downloads the new version and recompiles
+  everything once.
 - **Every change to `Cargo.lock`** (a dependency added, removed or updated,
   Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
   commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in

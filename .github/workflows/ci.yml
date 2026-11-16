@@ -52,13 +52,12 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
-      # the runner's toolchain carries two more targets (gnu, i686) that
-      # every update would download again for nothing
+      # the version of rust-toolchain.toml, the same as on every PC: not the
+      # runner's own stable, which changes the day a release comes out
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add rustfmt clippy
       # caches are written from main only, and read by every PR and queue
       # run: PR caches would otherwise evict main's from the 10 GB quota.
@@ -122,7 +121,7 @@ jobs:
       - name: Rust stable
         if: steps.changes.outputs.needed == 'true'
         run: |
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add clippy
       # the key is named, not the job's: the old one holds clippy's output
       # only, and main, finding it, would never build the tests into it
@@ -248,8 +247,7 @@ jobs:
       - name: Rust stable
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
       # self-hosted: the build folder stays between runs, outside the
       # checkout (which `git clean` empties), and takes no cache; it is
       # emptied when the disk runs low
