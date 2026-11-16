@@ -90,7 +90,9 @@ impl Scene {
             let Some(g) = self.gpu.get(idx) else {
                 continue;
             };
-            if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() {
+            // (the bridge being set up is worn on a HUD point: neither drawn,
+            // nor counted in the view, nor picked)
+            if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() || world.concealed(idx) {
                 continue;
             }
             self.hud_own.push(idx);
@@ -175,6 +177,13 @@ impl Scene {
         )
     }
 
+    /// Press target and depth for HUD media and object actions. Invisible
+    /// buttons take the press; a plain alpha-zero media panel lets the next
+    /// HUD surface take it.
+    pub fn hud_click_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), false, picking::FacePick::HudClick)
+    }
+
     /// The HUD move gesture reaches IGNORE prims, but respects texture holes.
     pub fn hud_move_pick(&self, world: &World, cursor: (f32, f32)) -> Option<usize> {
         self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), true, picking::FacePick::HudMove)
@@ -213,7 +222,10 @@ impl Scene {
             };
             if !g.hud
                 || g.owner_avatar != Some(own)
-                || (!include_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || world.concealed(idx)
+                || (!include_hidden
+                    && !matches!(mode, picking::FacePick::Surface | picking::FacePick::HudClick)
+                    && g.faces.iter().all(|f| f.pass == Pass::Hidden))
                 || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
                 || !picking::ray_may_hit(g, ray)
             {
@@ -340,6 +352,30 @@ mod tests {
             [13, 12, 10],
             "independent of world camera and HUD viewport zoom"
         );
+    }
+
+    #[test]
+    fn the_bridge_being_set_up_is_neither_drawn_nor_picked() {
+        let (mut world, mut scene, idx) = layered_hud();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let avatar = world.objects.get(own).unwrap().key;
+        let item = Uuid::from_u128(0xB21D);
+        let o = world.objects.get_mut(idx).unwrap();
+        o.parent_id = avatar.local_id;
+        o.parent_region = avatar.region;
+        o.name_values = format!("AttachItemID STRING RW SV {item}");
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        assert_eq!(scene.hud_own, [idx]);
+
+        world.concealed_attachment = item;
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        // (the picks walk `hud_own`)
+        assert!(scene.hud_own.is_empty() && scene.lists.hud_view.is_none());
+        assert!(scene.lists.hud_blend.is_empty() && scene.lists.hud_opaque.is_empty());
+
+        world.concealed_attachment = Uuid::nil();
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+        assert_eq!(blended_records(&scene), [13, 12, 10]);
     }
 
     #[test]

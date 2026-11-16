@@ -314,6 +314,7 @@ mod tests {
             rect,
             at: Vec3::X * 10.0,
             normal: Vec3::X,
+            marker_slot: None,
         }
     }
 

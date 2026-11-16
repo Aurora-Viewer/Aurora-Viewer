@@ -49,6 +49,24 @@ impl Access {
         }
     }
 
+    /// What this access shuts out that `before` let in: `EXTERNALLY_VISIBLE`
+    /// when it goes from everyone to the lists only, and the public limits
+    /// (age, payment info, bots) it turns on while open to everyone. Each one
+    /// can send home whoever is in the estate and no longer qualifies, so
+    /// Apply confirms it first (stricter than the Legacy Viewer, which sends
+    /// it at once outside the Linden estates).
+    pub fn restrictions(self, before: Access) -> u64 {
+        let limits = ef::DENY_AGEUNVERIFIED | ef::DENY_ANONYMOUS | ef::DENY_BOTS;
+        if !self.has(ef::EXTERNALLY_VISIBLE) {
+            return if before.has(ef::EXTERNALLY_VISIBLE) {
+                ef::EXTERNALLY_VISIBLE
+            } else {
+                0
+            };
+        }
+        self.0 & !before.0 & limits
+    }
+
     /// The estate as callbackChangeLindenEstate sends it: these flags in its
     /// own, and no fixed sun any more ("we don't support fixed sun estates").
     pub fn applied_to(self, e: &EstateInfo) -> EstateInfo {
@@ -92,6 +110,36 @@ impl Changes for RegionDebug {
             self.skip_scripts != o.skip_scripts,
             self.skip_collisions != o.skip_collisions,
             self.skip_physics != o.skip_physics,
+        ]
+        .into_iter()
+        .filter(|c| *c)
+        .count()
+    }
+}
+
+impl Changes for aurora_net::open_region::OpenRegionSettings {
+    fn changes(&self, o: &Self) -> usize {
+        [
+            self.draw_distance != o.draw_distance,
+            self.force_draw_distance != o.force_draw_distance,
+            self.max_drag_distance != o.max_drag_distance,
+            self.max_prim_scale != o.max_prim_scale,
+            self.min_prim_scale != o.min_prim_scale,
+            self.max_phys_prim_scale != o.max_phys_prim_scale,
+            self.max_hollow_size != o.max_hollow_size,
+            self.min_hole_size != o.min_hole_size,
+            self.max_link_count != o.max_link_count,
+            self.max_link_count_phys != o.max_link_count_phys,
+            self.max_inventory_items_transfer != o.max_inventory_items_transfer,
+            self.terrain_detail_scale != o.terrain_detail_scale,
+            self.show_tags != o.show_tags,
+            self.max_groups != o.max_groups,
+            self.render_water != o.render_water,
+            self.allow_minimap != o.allow_minimap,
+            self.allow_physical_prims != o.allow_physical_prims,
+            self.enforce_max_build != o.enforce_max_build,
+            self.allow_parcel_windlight != o.allow_parcel_windlight,
+            self.enable_teen_mode != o.enable_teen_mode,
         ]
         .into_iter()
         .filter(|c| *c)
@@ -156,7 +204,7 @@ impl<T: Clone + PartialEq + Changes> Draft<T> {
 
     /// What the changes are measured against: the simulator's values, or
     /// what was sent and not answered yet.
-    fn base(&mut self, server: &T) -> T {
+    pub fn base(&mut self, server: &T) -> T {
         let edit = self.edit.take();
         let base = self.shown(server);
         self.edit = edit;
@@ -263,6 +311,32 @@ mod tests {
             ef::ALLOW_ENVIRONMENT_OVERRIDE | ef::ALLOW_VOICE,
             "other flags kept, fixed sun off"
         );
+    }
+
+    #[test]
+    fn restrictions_are_what_shuts_people_out() {
+        let open = Access(ef::EXTERNALLY_VISIBLE | ef::ALLOW_VOICE);
+        let lists = Access(ef::ALLOW_VOICE);
+        // everyone → the lists only
+        assert_eq!(lists.restrictions(open), ef::EXTERNALLY_VISIBLE);
+        // the lists only → everyone, or nothing restricted
+        assert_eq!(open.restrictions(lists), 0);
+        assert_eq!(lists.restrictions(lists), 0);
+        // a public limit turned on
+        let mut a = open;
+        a.set(ef::DENY_ANONYMOUS, true);
+        a.set(ef::DENY_BOTS, true);
+        assert_eq!(a.restrictions(open), ef::DENY_ANONYMOUS | ef::DENY_BOTS);
+        // turned off, or other switches: nobody shut out
+        assert_eq!(open.restrictions(a), 0);
+        let mut b = open;
+        b.set(ef::ALLOW_VOICE, false);
+        b.set(ef::ALLOW_DIRECT_TELEPORT, true);
+        assert_eq!(b.restrictions(open), 0);
+        // limits kept while going to the lists: the lists are what counts
+        let mut c = a;
+        c.set(ef::EXTERNALLY_VISIBLE, false);
+        assert_eq!(c.restrictions(a), ef::EXTERNALLY_VISIBLE);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use uuid::Uuid;
 /// What @version answers; About shows it too.
 pub const VERSION: &str = version::VERSION_NEW;
 
+mod boundary;
 pub mod camera;
 mod chat;
 mod collection;
@@ -26,6 +27,7 @@ mod events;
 mod force_wear;
 mod groups;
 mod im_queries;
+mod interaction;
 mod inventory;
 pub mod last_points;
 pub mod login;
@@ -45,6 +47,8 @@ mod wardrobe;
 pub mod watchdog;
 mod wear_locks;
 
+pub use boundary::Boundary;
+pub use inventory::{LAYERS, POINTS};
 pub use wear_locks::WearLocks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +66,8 @@ pub struct Command {
     pub option: String,
     pub strict: bool,
     pub param: Param,
+    /// `@setenv=n` was held when this force was queued.
+    pub environment_locked: bool,
 }
 
 impl Command {
@@ -89,6 +95,7 @@ impl Command {
             option: if param == Param::Clear { value } else { option }.to_owned(),
             strict,
             param,
+            environment_locked: false,
         })
     }
 
@@ -418,7 +425,10 @@ fn valid_option(c: &Command) -> bool {
         }
         "setcam_eyeoffset" | "setcam_focusoffset" => camera::vector(&c.option).is_some(),
         "fartouch" | "sittp" | "tplocal" => c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
-        "touchthis" | "editobj" => Uuid::parse_str(&c.option).is_ok(),
+        // RlvBehaviourGenericHandler<RLV_OPTION_EXCEPTION>::onCommand
+        // (rlvhandler.cpp) reads no option as the null key: the restriction
+        // is stored, @getstatus lists it, and it names no object.
+        "touchthis" | "editobj" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "setcam_textures" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "touchworld" | "touchattach" | "touchattachother" | "touchhud" | "edit" => {
             c.option.is_empty() || Uuid::parse_str(&c.option).is_ok()
@@ -430,7 +440,10 @@ fn valid_option(c: &Command) -> bool {
         "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" | "shownames" | "accepttp"
         | "accepttprequest" | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "showhovertext" => Uuid::parse_str(&c.option).is_ok(),
-        "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "sendimto" | "startimto" => Uuid::parse_str(&c.option).is_ok(),
+        // (the same null key, naming no one; not @sendimto, whose mere
+        // presence makes `rlva_can_send_session` check every session)
+        "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "startimto" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
+        "sendimto" => Uuid::parse_str(&c.option).is_ok(),
         "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v > 0),
         "redirchat" | "rediremote" => c.option.parse::<i32>().is_ok_and(|v| v > 0 && v != i32::MAX),
         _ => c.option.is_empty(),
@@ -449,6 +462,9 @@ pub struct Rlva {
     pub diagnostics: diagnostics::Diagnostics,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
+    /// The rules of each object in the order it issued them, as
+    /// RlvObject::m_Commands keeps them: what @getstatus lists.
+    issued: BTreeMap<Uuid, Vec<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
@@ -462,7 +478,7 @@ pub struct Rlva {
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
     pub(crate) locked_folders: inventory::LockedFoldersCache,
-    pub(crate) wear_folders: wear_locks::FolderSetsCache,
+    pub(crate) wear_locks: wear_locks::WearLocksCache,
     /// The point each object was last seen attached to, per account.
     pub last_points: last_points::LastPoints,
     pub recovery: Vec<NetCommand>,
@@ -545,6 +561,7 @@ impl Rlva {
         }
         self.enabled = enabled;
         self.rules.clear();
+        self.issued.clear();
         self.rename = Default::default();
         self.offers = Default::default();
         self.controllers = Default::default();
@@ -593,6 +610,7 @@ impl Rlva {
             self.environment_request = None;
         }
         self.lookups.remove(&source);
+        self.issued.remove(&source);
         if self.rules.remove(&source).is_some() {
             self.revision = self.revision.wrapping_add(1);
         }
@@ -604,16 +622,56 @@ impl Rlva {
         self.viewer.retain(|(id, _)| *id != source);
     }
 
+    /// An issuer that is gone, detached (RlvHandler::onDetach) or collected
+    /// (RlvHandler::onGC): both run processCommand(id, "clear", true)
+    /// (rlvhandler.cpp), which the @notify listeners of the other objects
+    /// hear as "/clear" (RlvBehaviourNotifyHandler::onCommand, rlvhelper.cpp).
+    pub fn release(&mut self, source: Uuid) {
+        let held = self.rules.contains_key(&source);
+        self.forget(source);
+        if held {
+            self.notify("clear");
+        }
+    }
+
+    /// The last rule of an issuer went: its RlvObject is erased
+    /// (RlvHandler::processCommand), and with it the order of its rules and
+    /// what the collector knew of it.
+    fn drop_if_empty(&mut self, source: Uuid) {
+        if self.rules.get(&source).is_some_and(BTreeSet::is_empty) {
+            self.rules.remove(&source);
+            self.issued.remove(&source);
+            self.lookups.remove(&source);
+        }
+    }
+
+    /// RlvObject::RlvObject (rlvhelper.cpp) looks its object up when its
+    /// first restriction is stored (m_fLookup), not at the first collection:
+    /// an issuer seen then and gone before that collection expires at once
+    /// instead of after twenty misses. Run when rules were just stored;
+    /// `collect` covers the issuers that came another way.
+    pub fn resolve_sources(&mut self, present: impl Fn(Uuid) -> bool) {
+        if self.lookups.len() == self.rules.len() {
+            return;
+        }
+        for &id in self.rules.keys() {
+            self.lookups.entry(id).or_insert_with(|| (present(id), 0));
+        }
+    }
+
     /// RlvHandler::onGC runs every 30 seconds. Unknown issuers get twenty
     /// lookup attempts; an object resolved once expires on its next absence.
     pub fn collect(&mut self, now: std::time::Instant, present: impl Fn(Uuid) -> bool) {
-        if !self.enabled || self.gc.is_some_and(|last| now.saturating_duration_since(last).as_secs() < 30) {
+        if !self.enabled {
+            return;
+        }
+        self.resolve_sources(&present);
+        if self.gc.is_some_and(|last| now.saturating_duration_since(last).as_secs() < 30) {
             return;
         }
         self.gc = Some(now);
         let mut expired = Vec::new();
-        for &id in self.rules.keys() {
-            let entry = self.lookups.entry(id).or_default();
+        for (&id, entry) in &mut self.lookups {
             if present(id) {
                 *entry = (true, 0);
             } else {
@@ -624,7 +682,7 @@ impl Rlva {
             }
         }
         for id in expired {
-            self.forget(id);
+            self.release(id);
         }
         self.lookups.retain(|id, _| self.rules.contains_key(id));
     }
@@ -666,11 +724,11 @@ impl Rlva {
         let message = chat.message[1..].to_ascii_lowercase();
         for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
-                let notify = matches!(command.param, Param::Add | Param::Remove | Param::Clear);
+                let notice = self.notice(chat.source_id, &command, text);
                 let outcome = self.process(chat.source_id, command);
                 self.trace(chat.source_id, text, outcome);
-                if notify {
-                    self.notify(text);
+                if let Some((subject, suffix)) = notice {
+                    self.notify_command(&subject, suffix);
                 }
             } else if !text.is_empty() {
                 self.trace(chat.source_id, text, diagnostics::Outcome::Rejected);
@@ -679,16 +737,54 @@ impl Rlva {
         true
     }
 
+    /// A blocked object (anything but a release) and a command disabled by a
+    /// setting: RlvHandler::processCommand (rlvhandler.cpp) returns
+    /// RLV_RET_FAILED_BLOCKED / RLV_RET_FAILED_DISABLED before it runs the
+    /// command or tells the @notify listeners.
+    fn refused(&self, source: Uuid, c: &Command) -> bool {
+        !self.controllers.accepts(source, c.param)
+            || (c.behaviour == "setenv" && matches!(c.param, Param::Add | Param::Remove) && !self.preferences.allow_environment_locks)
+    }
+
+    /// What the @notify listeners are told about a restriction command, as
+    /// the text the filters test and what follows it
+    /// (RlvBehaviourNotifyHandler::onCommand, rlvhelper.cpp). RlvCommand::
+    /// asString (rlvhelper.h) writes `@clear=<filter>` as "clear:<filter>".
+    /// Refused commands tell no one; the ones that fail later still do.
+    fn notice<'a>(&self, source: Uuid, c: &Command, text: &'a str) -> Option<(String, &'a str)> {
+        if self.refused(source, c) {
+            return None;
+        }
+        match c.param {
+            Param::Add | Param::Remove => Some((c.restriction(), text.find('=').map_or("", |at| &text[at..]))),
+            Param::Clear if c.option.is_empty() => Some(("clear".to_owned(), "")),
+            Param::Clear => Some((format!("clear:{}", c.option), "")),
+            Param::Force | Param::Reply(_) => None,
+        }
+    }
+
     fn process(&mut self, source: Uuid, c: Command) -> diagnostics::Outcome {
         use diagnostics::Outcome;
-        if !self.controllers.accepts(source, c.param)
-            || (c.behaviour == "setenv" && matches!(c.param, Param::Add | Param::Remove) && !self.preferences.allow_environment_locks)
+        if self.refused(source, &c)
             || (!self.preferences.command_available(&c.behaviour) && !matches!(c.param, Param::Remove | Param::Clear))
         {
             return Outcome::Rejected;
         }
         if effects::MODIFIERS.contains(&c.behaviour.as_str()) {
-            if c.param == Param::Force && !c.strict && self.rules.get(&source).is_some_and(|r| !r.is_empty()) {
+            // RlvBehaviourInfo::processModifier (rlvhelper.cpp): a modifier
+            // of a behaviour its object does not hold fails
+            // (RLV_RET_FAILED_UNHELDBEHAVIOUR); another rule is not enough,
+            // or a later @setoverlay=n would start from values set before it.
+            let base = if c.behaviour.starts_with("setoverlay_") {
+                "setoverlay"
+            } else {
+                "setsphere"
+            };
+            let held = self
+                .rules
+                .get(&source)
+                .is_some_and(|rs| rs.iter().any(|r| r.behaviour == base && r.option.is_empty()));
+            if c.param == Param::Force && !c.strict && held {
                 self.visuals.command(source, &c, std::time::Instant::now());
                 return Outcome::Processed;
             }
@@ -724,13 +820,19 @@ impl Rlva {
                     if rules.len() >= 256 && !rules.contains(&rule) {
                         return Outcome::Rejected;
                     }
-                    rules.insert(rule)
+                    let added = rules.insert(rule.clone());
+                    if added {
+                        self.issued.entry(source).or_default().push(rule);
+                    }
+                    added
                 } else {
-                    self.rules.get_mut(&source).is_some_and(|rules| rules.remove(&rule))
+                    let removed = self.rules.get_mut(&source).is_some_and(|rules| rules.remove(&rule));
+                    if removed && let Some(order) = self.issued.get_mut(&source) {
+                        order.retain(|r| *r != rule);
+                    }
+                    removed
                 };
-                if self.rules.get(&source).is_some_and(BTreeSet::is_empty) {
-                    self.rules.remove(&source);
-                }
+                self.drop_if_empty(source);
                 if changed {
                     self.revision = self.revision.wrapping_add(1);
                 } else {
@@ -749,18 +851,30 @@ impl Rlva {
                     if rules.len() != old {
                         self.revision = self.revision.wrapping_add(1);
                         outcome = Outcome::Processed;
+                        if let Some(order) = self.issued.get_mut(&source) {
+                            order.retain(|r| !rule_text(r).contains(&c.option));
+                        }
                     }
                 }
-                if self.rules.get(&source).is_some_and(BTreeSet::is_empty) {
-                    self.rules.remove(&source);
-                }
+                self.drop_if_empty(source);
             }
             Param::Force
                 if !c.strict
                     && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
                     && self.pending.len() < 256 =>
             {
-                self.pending.push((source, c));
+                // A foreign environment lock refuses the force when received.
+                // Releasing it before the queue drains must not revive that command.
+                if was_environment_locked && c.behaviour.starts_with("setenv_") && self.has_except("setenv", source) {
+                    return Outcome::Rejected;
+                }
+                self.pending.push((
+                    source,
+                    Command {
+                        environment_locked: was_environment_locked,
+                        ..c
+                    },
+                ));
                 outcome = Outcome::Queued;
             }
             Param::Reply(channel)
@@ -815,11 +929,16 @@ impl Rlva {
         }
     }
 
+    /// rlvParseGetStatusOption (rlvhandler.cpp): the filter, then the
+    /// separator; what follows a second `;` is ignored. Each object lists its
+    /// rules in the order it issued them (RlvObject::getStatusString,
+    /// rlvhelper.cpp), the objects in the order of their keys.
     fn status(&self, source: Option<Uuid>, option: &str) -> String {
-        let (filter, separator) = option.split_once(';').unwrap_or((option, "/"));
-        let separator = if separator.is_empty() { "/" } else { separator };
+        let mut tokens = option.split(';');
+        let filter = tokens.next().unwrap_or_default();
+        let separator = tokens.next().filter(|s| !s.is_empty()).unwrap_or("/");
         let rules: Vec<_> = self
-            .rules
+            .issued
             .iter()
             .filter(|(id, _)| source.is_none_or(|s| s == **id))
             .flat_map(|(_, r)| r.iter().map(rule_text))
@@ -859,7 +978,17 @@ impl Rlva {
         if !self.enabled {
             return false;
         }
-        let exception = |rs: &BTreeSet<Rule>| rs.iter().any(|r| r.behaviour == behaviour && r.option.eq_ignore_ascii_case(target));
+        // RlvBehaviourSendChannelHandler::onCommand (rlvhandler.cpp) stores
+        // the channel as a number: `@sendchannel:05=n` is channel 5.
+        let channel = matches!(behaviour, "sendchannel" | "sendchannel_except")
+            .then(|| target.parse::<i32>().ok())
+            .flatten();
+        let exception = |rs: &BTreeSet<Rule>| {
+            rs.iter().any(|r| {
+                r.behaviour == behaviour
+                    && (r.option.eq_ignore_ascii_case(target) || channel.is_some_and(|c| r.option.parse::<i32>() == Ok(c)))
+            })
+        };
         if !self.rules.values().any(exception) {
             return false;
         }
@@ -947,6 +1076,7 @@ fn rule_text(r: &Rule) -> String {
         option: r.option.clone(),
         strict: r.strict,
         param: Param::Add,
+        environment_locked: false,
     }
     .restriction()
 }
@@ -1000,6 +1130,29 @@ fn command_list_with(option: &str, preferences: &preferences::Preferences) -> St
     names.into_iter().collect::<Vec<_>>().join(separator)
 }
 
+/// RlvCommandOptionHelper::parseOption<bool> (rlvhelper.cpp): a number
+/// first, read as std::stoi does (leading digits) and valid as 0 or 1 only,
+/// then `true` / `false`.
+fn option_bool(text: &str) -> Option<bool> {
+    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let digits = &unsigned[..unsigned.bytes().take_while(u8::is_ascii_digit).count()];
+    if !digits.is_empty() {
+        return match digits.parse::<i32>() {
+            Ok(0) => Some(false),
+            Ok(1) if !text.starts_with('-') => Some(true),
+            _ => None,
+        };
+    }
+    if text.starts_with("true") {
+        Some(true)
+    } else if text.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 pub fn is_emote(text: &str) -> bool {
     text.starts_with("/me ") || text.starts_with("/me'")
 }
@@ -1007,3 +1160,7 @@ pub fn is_emote(text: &str) -> bool {
 #[cfg(test)]
 #[path = "rlva/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rlva/link_lock_tests.rs"]
+pub(crate) mod link_lock_tests;

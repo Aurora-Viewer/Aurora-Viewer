@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+pub mod doppler;
 pub mod history;
 
 #[cfg(test)]
@@ -125,6 +126,7 @@ struct Clip {
     /// 5 decoded once then dropped from memory (read again when wanted).
     state: u8,
     failures: u32,
+    gesture: bool,
     retry_at: Option<Instant>,
     /// Interface sound (or one made locally): never dropped from memory.
     kept: bool,
@@ -142,6 +144,8 @@ struct Playing {
     /// Direction last sent in the listener's frame, when rendered
     /// binaurally (3D sound for headphones); None when panned.
     direction: Option<Vec3>,
+    /// Doppler rate last sent (1 unshifted).
+    rate: f32,
 }
 
 /// Sound of an object (LLAudioSourceVO).
@@ -274,6 +278,9 @@ pub struct SoundManager {
     radius: HashMap<Uuid, f32>,
     /// The world sounds playing at a place, from the last update.
     audible: Vec<Audible>,
+    /// The Doppler shift's factor and the listener's velocity, set by the
+    /// app before each update.
+    pub doppler: doppler::Doppler,
 }
 
 /// The disk cache file of sound `id` in the store `cache_dir`.
@@ -321,6 +328,7 @@ impl SoundManager {
             next_voice: 1,
             radius: HashMap::new(),
             audible: Vec::new(),
+            doppler: Default::default(),
         }
     }
 
@@ -332,6 +340,7 @@ impl SoundManager {
                 clip: Some(Arc::new(clip)),
                 state: 3,
                 failures: 0,
+                gesture: false,
                 retry_at: None,
                 kept: true,
                 used: 0,
@@ -352,6 +361,24 @@ impl SoundManager {
         }
     }
 
+    /// LLGestureMgr::playGesture's priority sound preload. Re-rank an
+    /// existing queued download too, without sending a duplicate request.
+    pub fn preload_gesture(&mut self, id: Uuid, fetcher: &Fetcher) {
+        if id.is_nil() {
+            return;
+        }
+        self.want(id);
+        let clip = self.clips.get_mut(&id).expect("want registered the sound");
+        if !clip.gesture {
+            clip.gesture = true;
+            for (&key, asset) in &self.by_key {
+                if *asset == id {
+                    fetcher.reprioritise(key, urgent::GESTURE);
+                }
+            }
+        }
+    }
+
     /// An interface sound: wanted, and kept in memory once decoded.
     pub fn want_kept(&mut self, id: Uuid) {
         self.want(id);
@@ -360,8 +387,12 @@ impl SoundManager {
         }
     }
 
+    /// A cache miss still needs its first HTTP request; a failed download
+    /// lets the gesture continue, as LLGestureMgr::onAssetLoadComplete does.
     pub fn asset_settled(&self, id: &Uuid) -> bool {
-        self.clips.get(id).is_some_and(|entry| entry.state >= 3)
+        self.clips
+            .get(id)
+            .is_some_and(|entry| matches!(entry.state, 3 | 5) || (entry.state == 4 && entry.failures > 0))
     }
 
     fn ready(&mut self, id: &Uuid) -> Option<Arc<SoundClip>> {
@@ -553,10 +584,14 @@ impl SoundManager {
                 let tx = self.tx.clone();
                 let id = *id;
                 jobs.spawn(move || {
-                    let clip = crate::cache::read_touch(&path)
-                        .ok()
-                        .and_then(|d| SoundClip::decode(&d).ok())
-                        .map(Arc::new);
+                    // (a failed decode is a cache miss: the sound is downloaded)
+                    let clip = super::jobs::caught(|| {
+                        crate::cache::read_touch(&path)
+                            .ok()
+                            .and_then(|d| SoundClip::decode_asset(&d).ok())
+                            .map(Arc::new)
+                    })
+                    .flatten();
                     let _ = tx.send((id, clip, true));
                     JobResult::Done
                 });
@@ -573,7 +608,7 @@ impl SoundManager {
                     url: super::textures::asset_url(base, "sound_id", id),
                     range: None,
                     // sounds are small and late ones are useless
-                    priority: urgent::SOUND,
+                    priority: if c.gesture { urgent::GESTURE } else { urgent::SOUND },
                     lane: Lane::Urgent,
                     accept: "*/*",
                 });
@@ -633,7 +668,8 @@ impl SoundManager {
                 let path = cache_file(&self.cache_dir, &id);
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
-                    let clip = match SoundClip::decode(&d) {
+                    // (a failed decode counts as a failure: retried later)
+                    let clip = super::jobs::caught(|| match SoundClip::decode_asset(&d) {
                         Ok(c) => {
                             let _ = crate::cache::write(path, &d);
                             Some(Arc::new(c))
@@ -642,7 +678,8 @@ impl SoundManager {
                             log::debug!("sound {id}: {e}");
                             None
                         }
-                    };
+                    })
+                    .flatten();
                     let _ = tx.send((id, clip, false));
                     JobResult::Done
                 });
@@ -755,8 +792,8 @@ impl SoundManager {
         };
         let mut gone = Vec::new();
         // Candidates: (distance, kind, key, audio position, within cut-off,
-        // played at the listener).
-        let mut active: Vec<(f32, usize, Uuid, Vec3, bool, bool)> = Vec::new();
+        // played at the listener, velocity for the Doppler shift).
+        let mut active: Vec<(f32, usize, Uuid, Vec3, bool, bool, Vec3)> = Vec::new();
         for (id, s) in self.sources.iter_mut() {
             let Some((idx, pos, hud)) = pos_of(id) else {
                 gone.push(*id);
@@ -803,7 +840,8 @@ impl SoundManager {
             // position (getPosGlobal / updateMute, llaudiosourcevo.cpp).
             let within_radius = self.radius.get(id).is_none_or(|radius| origin.distance(l.pos) < *radius);
             let pos = if hud { l.pos } else { pos };
-            active.push((pos.distance(l.pos), 0, *id, pos, within_radius, hud));
+            let velocity = doppler::source_velocity(&world.objects, idx);
+            active.push((pos.distance(l.pos), 0, *id, pos, within_radius, hud, velocity));
         }
         for id in gone {
             if let Some(s) = self.sources.remove(&id)
@@ -829,13 +867,14 @@ impl SoundManager {
             false
         });
         for (i, t) in self.triggered.iter().enumerate() {
-            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true, false));
+            // (a triggered sound keeps a zero velocity, as LLAudioSource)
+            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true, false, Vec3::ZERO));
         }
         // the nearest within their cut-off radius play
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
         self.audible.clear();
-        for (_, kind, key, pos, within_radius, at_listener) in active {
+        for (_, kind, key, pos, within_radius, at_listener, velocity) in active {
             let (sound, gain, looped, playing, emitter) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
@@ -887,6 +926,16 @@ impl SoundManager {
                         // switched between panned and binaural
                         _ => true,
                     };
+                    let rate = self.doppler.rate(l.pos, pos, velocity, at_listener);
+                    if (p.rate - rate).abs() > doppler::RATE_RESEND {
+                        if let Some(e) = engine {
+                            e.world_rate(p.voice, rate);
+                        }
+                        p.rate = rate;
+                        if !resend {
+                            self.set_playing(kind, key, Some(p), false);
+                        }
+                    }
                     if resend {
                         if let Some(e) = engine {
                             match place {
@@ -912,10 +961,14 @@ impl SoundManager {
                     voices += 1;
                     let voice = self.next_voice;
                     self.next_voice += 1;
+                    let rate = self.doppler.rate(l.pos, pos, velocity, at_listener);
                     if let Some(e) = engine {
                         match place {
                             Placement::Panned(g) => e.play_world(voice, Channel::Sfx, &clip, looped, g),
                             Placement::Binaural(g, d) => e.play_world_binaural(voice, Channel::Sfx, &clip, looped, g, d.to_array()),
+                        }
+                        if rate != 1.0 {
+                            e.world_rate(voice, rate);
                         }
                     }
                     if !at_listener {
@@ -930,6 +983,7 @@ impl SoundManager {
                             Placement::Binaural(_, d) => Some(d),
                             Placement::Panned(_) => None,
                         },
+                        rate,
                     };
                     self.set_playing(kind, key, Some(p), false);
                 }
@@ -1066,6 +1120,7 @@ impl SoundManager {
                     length: Some(c.duration()),
                     gain: (1.0, 1.0),
                     direction: None,
+                    rate: 1.0,
                 });
             }
             true
@@ -1139,6 +1194,105 @@ fn same_seat(world: &World, source: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_sound_preload_waits_past_a_cache_miss() {
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-gesture-sound-preload-tests"));
+        let id = Uuid::from_u128(2931);
+        sounds.want(id);
+        assert!(!sounds.asset_settled(&id));
+        sounds.clips.get_mut(&id).expect("requested").state = 4;
+        assert!(!sounds.asset_settled(&id), "a cache miss still needs its HTTP request");
+        sounds.clips.get_mut(&id).expect("requested").failures = 1;
+        assert!(sounds.asset_settled(&id), "an actual failure must let the gesture continue");
+    }
+
+    /// Saturate the fetcher, then play a sound while crowd animations wait.
+    /// A fresh preload and an existing queued download must both take the
+    /// next free slot, without duplicate downloads (#2931).
+    #[test]
+    fn gesture_sound_download_passes_queued_crowd_animations() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        for already_queued in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+            let address = listener.local_addr().expect("address");
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let mut paths = Vec::new();
+                for index in 0..3 {
+                    let (mut stream, _) = listener.accept().expect("connection");
+                    stream.set_read_timeout(Some(Duration::from_secs(10))).expect("timeout");
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).expect("headers");
+                        headers.push(byte[0]);
+                    }
+                    paths.push(
+                        String::from_utf8(headers)
+                            .expect("HTTP")
+                            .lines()
+                            .next()
+                            .expect("request")
+                            .to_owned(),
+                    );
+                    if index == 0 {
+                        started_tx.send(()).expect("started");
+                        release_rx.recv_timeout(Duration::from_secs(10)).expect("release");
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .expect("reply");
+                }
+                paths
+            });
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let (fetcher, results) = Fetcher::new(
+                runtime.handle(),
+                reqwest::Client::builder().no_proxy().build().expect("HTTP"),
+                1,
+                Arc::new(aurora_net::stats::NetStats::default()),
+            );
+            let request = |key, path: &str, priority| FetchRequest {
+                key,
+                url: format!("http://{address}/{path}"),
+                range: None,
+                priority,
+                lane: Lane::Urgent,
+                accept: "*/*",
+            };
+            fetcher.request(request(1, "busy", urgent::ANIMATION));
+            started_rx.recv_timeout(Duration::from_secs(10)).expect("saturated");
+            fetcher.request(request(2, "crowd", urgent::ANIMATION));
+            let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-gesture-queue-tests"));
+            let id = Uuid::from_u128(2931);
+            sounds.want(id);
+            sounds.clips.get_mut(&id).expect("wanted").state = 4;
+            let (jobs, _) = Jobs::new();
+            let base = format!("http://{address}/asset");
+            if already_queued {
+                sounds.fetch(&jobs, &fetcher, Some(&base));
+            }
+            sounds.preload_gesture(id, &fetcher);
+            if !already_queued {
+                sounds.fetch(&jobs, &fetcher, Some(&base));
+            }
+            release_tx.send(()).expect("free the slot");
+            for _ in 0..3 {
+                assert!(results.recv_timeout(Duration::from_secs(10)).expect("result").data.is_ok());
+            }
+            let paths = server.join().expect("server");
+            assert!(paths[1].contains("sound_id="), "gesture waited behind crowd: {paths:?}");
+            assert!(paths[2].contains("/crowd "), "one gesture request only: {paths:?}");
+        }
+    }
 
     /// A sound decoded from the cache (not kept), wanted now.
     fn decoded(sounds: &mut SoundManager, id: Uuid, frames: usize) {
