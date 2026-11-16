@@ -1339,7 +1339,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let dist = length(to_l);
             let radius = lt.pos_radius.w;
             if (dist < radius) {
-                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w) * point_shadow(i, world_pos, n);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
                 let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
                 col += sc;

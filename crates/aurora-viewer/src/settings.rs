@@ -1730,6 +1730,12 @@ pub struct Settings {
     pub local_light_count: u32,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
+    /// Experimental: the strongest point lights are stopped by walls. Off,
+    /// they light through walls, as in the Legacy Viewer (multiPointLightF
+    /// has no shadow term). The worn lights never cast any.
+    pub point_shadows: bool,
+    /// How many of them, 1 to `MAX_POINT_SHADOWS`.
+    pub point_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
@@ -2886,6 +2892,8 @@ impl Default for Settings {
             others_attached_lights: true,
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
+            point_shadows: false,
+            point_shadow_limit: 1,
             contact_shadows: false,
             soft_shadows: false,
             shadow_softness: SHADOW_SOFTNESS,
@@ -3888,6 +3896,9 @@ impl Settings {
         self.projector_shadow_limit = self
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
+        self.point_shadow_limit = self
+            .point_shadow_limit
+            .clamp(1, aurora_render::projector_shadows::MAX_POINT_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
         if self.blend_order > crate::graphics_presets::BLEND_ORDER_STOCHASTIC {
             self.blend_order = crate::graphics_presets::BLEND_ORDER_FULL;
@@ -4226,6 +4237,11 @@ impl Settings {
             hdr: self.hdr_emissive,
             shadow_resolution: self.shadow_params().0,
             projector_shadow_limit: if self.projector_shadows { self.projector_shadow_limit } else { 0 },
+            point_shadow_limit: if self.point_shadows && self.shadow_quality > 0 {
+                self.point_shadow_limit
+            } else {
+                0
+            },
             ssao: self.ssao,
             ao_method: if self.ao_method == 1 {
                 AoMethod::Gtao {
@@ -4612,6 +4628,31 @@ mod tests {
                 let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
                 assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
             }
+        }
+    }
+
+    #[test]
+    fn point_shadows_are_an_opt_in_with_a_count_from_one() {
+        let settings = Settings::default();
+        assert!(!settings.point_shadows);
+        assert_eq!(settings.point_shadow_limit, 1);
+        assert_eq!(settings.render_settings().point_shadow_limit, 0, "off: no map is made");
+
+        let mut on = Settings {
+            point_shadows: true,
+            point_shadow_limit: 3,
+            ..Settings::default()
+        };
+        assert_eq!(on.render_settings().point_shadow_limit, 3);
+        on.shadow_quality = 0;
+        assert_eq!(on.render_settings().point_shadow_limit, 0, "without shadows neither");
+
+        for (saved, expected) in [(0, 1), (8, 8), (200, 8)] {
+            let loaded = Settings {
+                point_shadow_limit: saved,
+                ..Settings::default()
+            };
+            assert_eq!(loaded.sanitized().point_shadow_limit, expected);
         }
     }
 

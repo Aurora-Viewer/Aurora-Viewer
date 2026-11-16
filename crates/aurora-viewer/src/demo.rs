@@ -5321,6 +5321,133 @@ pub fn events() -> Vec<NetEvent> {
             ));
         }
     }
+    // AURORA_DEMO_POINT_SHADOW=1|orbit|window|glass: a warm point light behind a wall with
+    // a doorway, seen from the other side, and a blue one inside its own
+    // solid 80 cm prim with a post beside it. With AURORA_POINT_SHADOWS=2 the
+    // warm light only passes the doorway, the prim lets its own light out
+    // (projector_shadows.rs point_near) and the post casts a shadow.
+    if std::env::var_os("AURORA_DEMO_POINT_SHADOW").is_some() {
+        let (x, y) = (POINT_SHADOW_WALL.0, POINT_SHADOW_WALL.1);
+        let floor = height(x, y) + 0.3;
+        let plain = |c: [f32; 4]| te(c, 0, false, 0.0);
+        let light = |color: [f32; 4], radius| ExtraParams {
+            light: Some(LightParams {
+                color,
+                radius,
+                cutoff: 0.0,
+                falloff: 0.75,
+            }),
+            ..Default::default()
+        };
+        let mode = std::env::var("AURORA_DEMO_POINT_SHADOW").unwrap_or_default();
+        if mode.starts_with("window") || mode.starts_with("glass") {
+            // `window`: a wall with a mullioned window, a point light
+            // outside, the floor inside lit through it at a low angle;
+            // `glass` adds a blended pane (alpha 0.3), which shades the point
+            // light by half, without stripes (fs_shadow, point_shadow)
+            let (lo, hi) = (floor + 0.6, floor + 2.4);
+            let pieces = [
+                (9740, Vec3::new(x - 2.0, y, floor - 0.1), Vec3::new(14.0, 14.0, 0.2)),
+                (9741, Vec3::new(x, y - 4.25, floor + 1.75), Vec3::new(0.2, 5.5, 3.5)),
+                (9742, Vec3::new(x, y + 4.25, floor + 1.75), Vec3::new(0.2, 5.5, 3.5)),
+                (
+                    9743,
+                    Vec3::new(x, y, (hi + floor + 3.5) * 0.5),
+                    Vec3::new(0.2, 3.0, floor + 3.5 - hi),
+                ),
+                (9747, Vec3::new(x, y, (lo + floor) * 0.5), Vec3::new(0.2, 3.0, lo - floor)),
+                (9748, Vec3::new(x, y - 0.5, (lo + hi) * 0.5), Vec3::new(0.12, 0.08, hi - lo)),
+                (9749, Vec3::new(x, y + 0.5, (lo + hi) * 0.5), Vec3::new(0.12, 0.08, hi - lo)),
+                (9750, Vec3::new(x, y, floor + 1.6), Vec3::new(0.12, 3.0, 0.08)),
+            ];
+            for (id, at, size) in pieces {
+                add(prim(
+                    id,
+                    at,
+                    Quat::IDENTITY,
+                    size,
+                    boxp,
+                    plain([0.75, 0.74, 0.72, 1.0]),
+                    ExtraParams::default(),
+                    "",
+                ));
+            }
+            if mode.starts_with("glass") {
+                add(prim(
+                    9751,
+                    Vec3::new(x, y, (lo + hi) * 0.5),
+                    Quat::IDENTITY,
+                    Vec3::new(0.02, 3.0, hi - lo),
+                    boxp,
+                    plain([0.7, 0.8, 0.9, 0.3]),
+                    ExtraParams::default(),
+                    "",
+                ));
+            }
+            add(prim(
+                9744,
+                Vec3::new(x + 2.0, y + 0.8, floor + 2.6),
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                boxp,
+                plain([1.0, 0.95, 0.9, 1.0]),
+                light([1.0, 0.95, 0.85, 1.0], 12.0),
+                "",
+            ));
+        } else {
+            // floor, then the wall on each side of the doorway and above it
+            let walls = [
+                (9740, Vec3::new(x - 2.0, y, floor - 0.1), Vec3::new(14.0, 14.0, 0.2)),
+                (9741, Vec3::new(x, y - 3.5, floor + 1.75), Vec3::new(0.2, 5.0, 3.5)),
+                (9742, Vec3::new(x, y + 3.5, floor + 1.75), Vec3::new(0.2, 5.0, 3.5)),
+                (9743, Vec3::new(x, y, floor + 3.0), Vec3::new(0.2, 2.0, 1.0)),
+            ];
+            for (id, at, size) in walls {
+                add(prim(
+                    id,
+                    at,
+                    Quat::IDENTITY,
+                    size,
+                    boxp,
+                    plain([0.75, 0.74, 0.72, 1.0]),
+                    ExtraParams::default(),
+                    "",
+                ));
+            }
+            // the light behind the wall, its prim out of the view
+            add(prim(
+                9744,
+                Vec3::new(x + 2.5, y + 1.5, floor + 1.6),
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                boxp,
+                plain([1.0, 0.8, 0.5, 1.0]),
+                light([1.0, 0.7, 0.35, 1.0], 9.0),
+                "",
+            ));
+            // a large prim around a light of its own, then a post
+            add(prim(
+                9745,
+                Vec3::new(x - 5.0, y - 2.5, floor + 1.2),
+                Quat::IDENTITY,
+                Vec3::splat(0.8),
+                boxp,
+                plain([0.2, 0.25, 0.4, 1.0]),
+                light([0.35, 0.5, 1.0, 1.0], 5.0),
+                "",
+            ));
+            add(prim(
+                9746,
+                Vec3::new(x - 3.6, y - 2.5, floor + 1.0),
+                Quat::IDENTITY,
+                Vec3::new(0.3, 0.3, 2.0),
+                boxp,
+                plain([0.6, 0.6, 0.6, 1.0]),
+                ExtraParams::default(),
+                "",
+            ));
+        }
+    }
     // AURORA_DEMO_PROJECTOR=1|point: a projector (a light with a light
     // texture) 4.5 m from a wall, turned to it, another one above the
     // ground turned down, with ambiance, a pool light under a slab and an
@@ -9395,8 +9522,30 @@ pub fn projector_bench_done() -> bool {
         .is_some_and(|start| start.elapsed().as_secs() >= 50)
 }
 
+/// Where AURORA_DEMO_POINT_SHADOW builds: the middle of its wall.
+const POINT_SHADOW_WALL: (f32, f32) = (146.0, 114.0);
+
+/// Framing of AURORA_DEMO_POINT_SHADOW: the room side of the wall, fixed, or
+/// (`orbit`) swinging from side to side.
+fn point_shadow_camera(mode: &str, frame: u64) -> (Vec3, Vec3) {
+    let (x, y) = POINT_SHADOW_WALL;
+    let floor = height(x, y) + 0.3;
+    if mode.starts_with("window") || mode.starts_with("glass") {
+        return (Vec3::new(x - 4.5, y + 1.5, floor + 1.8), Vec3::new(x - 1.5, y - 0.3, floor));
+    }
+    let swing = if mode == "orbit" {
+        (frame.saturating_sub(700) as f32 * 0.02).sin() * 3.0
+    } else {
+        0.0
+    };
+    (Vec3::new(x - 8.0, y + swing, floor + 3.0), Vec3::new(x, y, floor + 0.8))
+}
+
 /// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
 pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    if let Ok(mode) = std::env::var("AURORA_DEMO_POINT_SHADOW") {
+        return Some(point_shadow_camera(&mode, frame));
+    }
     let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
     if !mode.starts_with("cluster") {
         return None;

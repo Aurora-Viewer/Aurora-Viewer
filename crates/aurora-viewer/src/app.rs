@@ -1700,6 +1700,10 @@ fn apply_test_overrides(settings: &mut Settings) {
     {
         settings.projector_shadow_limit = limit.clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
     }
+    if let Some(limit) = std::env::var("AURORA_POINT_SHADOWS").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.point_shadows = limit > 0;
+        settings.point_shadow_limit = limit.clamp(1, aurora_render::projector_shadows::MAX_POINT_SHADOWS as u8);
+    }
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
@@ -12953,7 +12957,8 @@ impl App {
             );
             t_part = Instant::now();
         }
-        let (lights, spot_shadows) = if in_world && studio_view.is_none() {
+        let (lights, spot_shadows, point_shadows) = if in_world && studio_view.is_none() {
+            let (projector_maps, point_maps) = gfx.renderer.shadow_budget();
             let view = crate::scene::lights::LightView {
                 eye: self.camera.position,
                 forward: self.camera.forward(),
@@ -12962,17 +12967,20 @@ impl App {
                 range: self.settings.draw_distance,
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.photo_shadow_quality() > 0,
-                projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
-                    Settings::shadow_params_of(self.photo_shadow_quality()).0,
-                    self.settings.projector_shadow_limit,
-                    gfx.renderer.max_texture_dimension(),
-                ),
+                // the renderer's settings carry the photo's shadow resolution
+                // (`snapshot::light::render_settings`), so its budget follows it
+                projector_shadow_limit: projector_maps,
+                point_shadow_limit: point_maps,
                 others_attached_lights: self.settings.others_attached_lights,
                 max_lights: self.settings.local_light_count as usize,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
-            (Vec::new(), [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS])
+            (
+                Vec::new(),
+                [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
+                [None; aurora_render::projector_shadows::MAX_POINT_SHADOWS],
+            )
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world && studio_view.is_none() {
@@ -13198,6 +13206,7 @@ impl App {
             shadow_intensity: photo_shadows.1,
             lights,
             spot_shadows,
+            point_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
             sky: aurora_render::SkyParams {
                 // the Clouds rendering type hidden: a cloud scale of zero

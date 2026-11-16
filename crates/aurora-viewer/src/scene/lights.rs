@@ -16,7 +16,7 @@
 
 use super::{CullView, Scene};
 use crate::world::World;
-use aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS;
+use aurora_render::projector_shadows::{MAX_POINT_SHADOWS, MAX_PROJECTOR_SHADOWS};
 use aurora_render::{PointLight, Projector, Renderer, SpotShadow};
 use glam::Vec3;
 use std::time::Instant;
@@ -48,6 +48,8 @@ pub struct LightView {
     /// Projectors cast shadows (the setting, with the sun's shadows on).
     pub projector_shadows: bool,
     pub projector_shadow_limit: u8,
+    /// Point lights that may cast shadows (0: none).
+    pub point_shadow_limit: u8,
     /// Keep lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
     /// Lights the frame keeps at most (Preferences › Graphics, "Maximum
@@ -67,6 +69,8 @@ struct Candidate {
     light: PointLight,
     /// A projector's texture, given a table slot once the light is kept.
     texture: Option<Uuid>,
+    /// Worn: a face light sits inside its avatar, which would swallow it.
+    worn: bool,
 }
 
 /// LLPipeline's calc_light_dist (pipeline.cpp): from the camera to the
@@ -105,6 +109,7 @@ pub struct Scratch {
     /// `Scene::light_objects`, copied: the loop borrows the scene.
     objects: Vec<usize>,
     shadow_map_count: usize,
+    point_map_count: usize,
 }
 
 /// Projectors that cast shadows and how far each has faded in:
@@ -186,6 +191,13 @@ fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView)
     (radius * 3f32.sqrt() / dist.max(1e-4)).atan()
 }
 
+/// Weight of a point light on the image: its apparent size, as `spot_priority`
+/// measures it, times the square root of its brightness (`targets` squares
+/// this, so a light counts by the light it sends).
+fn point_priority(light: &PointLight, view: &LightView) -> f32 {
+    spot_priority(light.position, Vec3::ZERO, light.radius / 1.5, view) * light.color.length().sqrt()
+}
+
 /// The avatar that wears the light, if any: a parent up its link is one
 /// (the attachment's root, or the prim itself; LLViewerObject::isAttachment).
 /// A seat's linkset and animesh are not worn: their avatars are children of
@@ -219,7 +231,11 @@ impl Scene {
         world: &World,
         renderer: &mut Renderer,
         view: &LightView,
-    ) -> (Vec<PointLight>, [Option<SpotShadow>; MAX_PROJECTOR_SHADOWS]) {
+    ) -> (
+        Vec<PointLight>,
+        [Option<SpotShadow>; MAX_PROJECTOR_SHADOWS],
+        [Option<SpotShadow>; MAX_POINT_SHADOWS],
+    ) {
         let eye = view.eye;
         let now = Instant::now();
         let Scratch {
@@ -227,6 +243,7 @@ impl Scene {
             mut projecting,
             mut objects,
             shadow_map_count,
+            point_map_count,
         } = std::mem::take(&mut self.light_scratch);
         // with no local light allowed, none is even looked at (the Legacy
         // Viewer's calcNearbyLights and renderDeferredLighting skip them all
@@ -251,12 +268,19 @@ impl Scene {
                 continue;
             }
             // the wearer is looked up only while a switch drops worn lights
-            // (with both on, every light is kept: no walk up its links)
+            // or point lights cast shadows (with both on and no point
+            // shadows, every light is kept: no walk up its links)
             // (the 360° snapshot's "Hide all avatars" also turns the worn
             // lights off, LLFloater360Capture's sRenderAttachedLights)
             let photo_attached = self.attached_lights && !world.photo_isolation.hide_avatars;
             let filtered = !photo_attached || !view.others_attached_lights;
-            if filtered && !light_visible(worn(world, o), world.agent_id, photo_attached, view.others_attached_lights) {
+            let wearer = if filtered || view.point_shadow_limit > 0 {
+                worn(world, o)
+            } else {
+                None
+            };
+            let is_worn = wearer.is_some();
+            if filtered && !light_visible(wearer, world.agent_id, photo_attached, view.others_attached_lights) {
                 continue;
             }
             let dist = light_dist(center, l.radius, eye);
@@ -297,6 +321,7 @@ impl Scene {
                     source_id: u32::try_from(idx + 1).unwrap_or(0),
                 },
                 texture,
+                worn: is_worn,
             });
         }
         select(&mut lights, view.max_lights);
@@ -348,6 +373,33 @@ impl Scene {
                 fade: slots.fade[k],
             })
         });
+        // the point lights that weigh most on what the camera sees
+        if view.point_shadow_limit > 0 {
+            let mut ranked: Vec<(f32, usize)> = lights
+                .iter()
+                .filter(|c| c.in_view && !c.worn && c.light.projector.is_none())
+                .map(|c| (point_priority(&c.light, view), c.idx))
+                .collect();
+            let limit = usize::from(view.point_shadow_limit).min(MAX_POINT_SHADOWS);
+            let targets = self.point_shadows.targets(&mut ranked, limit);
+            self.point_shadows.update(&targets[..limit], eye, view.dt);
+        } else {
+            self.point_shadows.clear();
+        }
+        let slots = &self.point_shadows;
+        let point_shadows = std::array::from_fn(|k| {
+            let idx = slots.lights.get(k).copied().flatten()?;
+            // a light just put on keeps no map while its slot fades out
+            let light = lights.iter().position(|c| c.idx == idx && !c.worn && c.light.projector.is_none())?;
+            Some(SpotShadow {
+                light: light as u32,
+                fade: slots.fade[k],
+            })
+        });
+        let point_active = point_shadows.iter().flatten().count();
+        if point_active != point_map_count {
+            log::info!("point light shadow maps active: {point_active}, limit {}", view.point_shadow_limit);
+        }
         let active = shadows.iter().flatten().count();
         if active != shadow_map_count {
             log::info!("projector shadow maps active: {active}, limit {}", view.projector_shadow_limit);
@@ -360,8 +412,9 @@ impl Scene {
             projecting,
             objects,
             shadow_map_count: active,
+            point_map_count: point_active,
         };
-        (list, shadows)
+        (list, shadows, point_shadows)
     }
 
     /// Texture table slot of the texture object `idx` projects, held while
@@ -557,6 +610,7 @@ mod tests {
             dt: 0.016,
             projector_shadows: true,
             projector_shadow_limit: 2,
+            point_shadow_limit: 0,
             others_attached_lights: true,
             max_lights: MAX_LIGHTS,
         }
@@ -577,6 +631,7 @@ mod tests {
                 source_id: 0,
             },
             texture: None,
+            worn: false,
         }
     }
 
