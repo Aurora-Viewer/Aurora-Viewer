@@ -1417,7 +1417,7 @@ const VERSION_WORDS: [&str; 28] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 37] = [
+const SHELF_WORDS: [&str; 39] = [
     "my",
     "old",
     "new",
@@ -1455,6 +1455,8 @@ const SHELF_WORDS: [&str; 37] = [
     "mesh",
     "faces",
     "body",
+    "avatars",
+    "face",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone
@@ -1484,8 +1486,27 @@ const OCCASION_WORDS: [&str; 15] = [
 fn names_a_product(name: &str) -> bool {
     let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
     let name_words = words(name);
-    // one thing named (`Dress`, `Sweater`), not a shelf of them (`Dresses`)
-    let singular_kind = name_words.iter().any(|w| is_kind(w) && !w.ends_with('s'));
+    // one thing named (`Dress`, `Sweater`), not a shelf of them (`Dresses`,
+    // `Tops`: the word less its `s` or `es` is a kind too)
+    let plural = |w: &String| {
+        let less = |n: usize| w.len() > n && is_kind(&w[..w.len() - n].to_owned());
+        w.ends_with("es") && less(2) || w.ends_with('s') && less(1)
+    };
+    // (a word with no plural, `Hair`, `Makeup`, `Decor`, names a kind of
+    // things: `Halloween Makeup` is a shelf)
+    let mass = [
+        "hair",
+        "makeup",
+        "jewelry",
+        "jewellery",
+        "lingerie",
+        "swimwear",
+        "sleepwear",
+        "decor",
+        "furniture",
+        "clutter",
+    ];
+    let singular_kind = name_words.iter().any(|w| is_kind(w) && !plural(w) && !mass.contains(&w.as_str()));
     name_words.iter().any(|w| {
         (singular_kind || !OCCASION_WORDS.contains(&w.as_str()))
             && !is_kind(w)
@@ -1758,6 +1779,22 @@ pub fn show_in(inv: &mut Inventory, id: Uuid, folder: bool, parent: Uuid) {
         moved.parent = parent;
         inv.server_updated(Vec::new(), vec![moved]);
     }
+}
+
+/// The sort folder or an existing folder of `path` below it is excluded.
+fn path_excluded(inv: &Inventory, base: Uuid, path: &[String], prefs: &Preferences) -> bool {
+    let mut at = base;
+    if prefs.excludes(inv, at) {
+        return true;
+    }
+    for part in path {
+        let Some(next) = child(inv, at, part) else { return false };
+        if prefs.excludes(inv, next) {
+            return true;
+        }
+        at = next;
+    }
+    false
 }
 
 /// `id` is in the Trash, at any depth.
@@ -2789,8 +2826,9 @@ fn plan_with(
             Dest::Folder(target) if *target == from || *target == id => continue,
             Dest::PreTrash if pre_trash_at == Some(from) || pre_trash_at == Some(id) => continue,
             Dest::PreTrash => pre_trash_label.clone(),
-            Dest::Path(_) if base.is_some_and(|base| prefs.excludes(inv, base)) => {
-                // the sort folder excluded: nothing is filed into it
+            Dest::Path(path) if base.is_some_and(|base| path_excluded(inv, base, path, prefs)) => {
+                // the sort folder, or a folder on the way, excluded: nothing
+                // is filed into it
                 plan.kept += 1;
                 plan.kept_list.push((name, Kept::Excluded));
                 continue;

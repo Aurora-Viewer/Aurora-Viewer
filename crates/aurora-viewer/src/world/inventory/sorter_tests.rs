@@ -659,6 +659,8 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 66, 1, "Christmas Sweater");
     add_item(&mut inv, 212, 66, "Christmas Sweater Maitreya", 0);
+    add_folder(&mut inv, 69, 1, "Party Dress");
+    add_item(&mut inv, 214, 69, "Party Dress Reborn", 0);
     add_folder(&mut inv, 67, 1, "Avatar");
     add_folder(&mut inv, 68, 67, "Lelutka");
     add_item(&mut inv, 213, 68, "Lelutka Head", 0);
