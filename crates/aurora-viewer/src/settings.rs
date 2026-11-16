@@ -1112,6 +1112,10 @@ pub struct Settings {
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
     /// Preferences > Chat, on).
     pub flash_unread_conversations: bool,
+    /// The button back to the latest messages over a conversation scrolled
+    /// away from its end (`ui/chat/latest.rs`, #558; on). The Legacy Viewer
+    /// has no such button.
+    pub chat_latest_button: bool,
     /// The Conversations button flashes when an IM, a group chat or a
     /// conference message arrives while the window is closed, then stays
     /// lit until it is opened; minimized, its bar flashes instead
@@ -2486,6 +2490,7 @@ impl Default for Settings {
             pie_opacity_override: false,
             pie_opacity: crate::ui::surface_opacity::PIE,
             flash_unread_conversations: true,
+            chat_latest_button: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
             announce_incoming_im: false,

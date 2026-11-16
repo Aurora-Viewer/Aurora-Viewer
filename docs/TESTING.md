@@ -6200,7 +6200,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out\|dock\|dock-hold` | Detached conversations and title-bar docking (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its new place, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_THUMBNAILS=bar\|top\|off` | The conversations' thumbnails beside the chat bar, at the top right or hidden, for the run (#1134) |
@@ -7784,8 +7784,10 @@ failure. Grid validation and any paid upload are performed by the human.
   at frame 760). Captures simulate logical focus without activating the
   native window or taking the user's keyboard. Capture frames 690, 740 and
   800 at `AURORA_FPS_LIMIT=60` for the initial order, the ghost under the
-  pointer with the entries moved apart where it lands, and the completed
-  move. `hold` never lets go: the ghost and the gap stay. `out` drops the
+  pointer with the entries slid out of its way where it lands, and the
+  completed move (frames 761 to 775 show the dropped entry gliding from
+  where it was let go into its place). `hold` never lets go: the ghost and
+  the room made for it stay. `out` drops the
   first conversation at the left of the Conversations window and `nearby`
   the nearby chat (#910): its own window opens where the ghost was let go,
   the ghost shows the Detach mark while it is outside the window. With
@@ -8218,11 +8220,15 @@ failure. Grid validation and any paid upload are performed by the human.
   including an empty line and emoji; `long` exceeds the four-row viewport.
   Combine with `AURORA_DEMO_CONV` to check Aurora, Compact, Bubbles and Legacy,
   private/group IMs and detached conversations. Paste paragraphs and use
-  Ctrl+Shift+Enter: preserve line breaks, replace selected text and support
-  undo without sending. Enter sends, Ctrl+Enter shouts in nearby chat and
-  Shift+Enter whispers only in nearby chat; in private, group and conference
-  conversations it leaves the draft, completion and focus unchanged. The
-  field wraps and grows to four rows, then scrolls;
+  Shift+Enter or Ctrl+Shift+Enter (the New line shortcut, in every
+  conversation): preserve line breaks, replace selected text and support
+  undo without sending. Enter sends; Shout and Whisper have no key until
+  one is set in Preferences › Controls › Shortcuts › Communication ›
+  Chat (while typing), and the Whisper key leaves an IM's draft, completion and focus
+  unchanged. A long conversation name in the placeholder ("Write to …")
+  ends with "…" on one line. The field wraps and grows to four rows (thirty in the Aurora and Compact
+  styles' box, within the window's room, its buttons level with the first
+  row and its scroll bar along the box's right edge), then scrolls;
   the dock stays in place, while the full Legacy bar reserves its taller
   layout. Conversation windows keep their size. Sending collapses the field.
   Capture at frame 750 or later. This fixture uses no grid or system clipboard.

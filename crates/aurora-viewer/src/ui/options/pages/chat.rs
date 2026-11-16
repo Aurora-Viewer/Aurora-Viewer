@@ -253,6 +253,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-flash-unread-hint"),
                     &field!(flash_unread_conversations),
                 );
+                // Aurora's button back to the latest messages (#558); the
+                // Legacy Viewer has none
+                cx.toggle(
+                    tr!("ui-options-chat-latest-button"),
+                    tr!("ui-options-chat-latest-button-hint"),
+                    &field!(chat_latest_button),
+                );
                 // "Flash chat toolbar button if a new IM arrives" (FSNotifyIMFlash)
                 cx.toggle(
                     tr!("ui-options-flash-conversations-button"),

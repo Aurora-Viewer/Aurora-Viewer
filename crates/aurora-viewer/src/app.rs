@@ -7787,8 +7787,21 @@ impl App {
         let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
+        // the chat fields' shortcuts are read from their key events: a
+        // binding the field could never see is refused (`chat_accepts`)
         if let Some(input) = input {
             let b = crate::keybinds::Binding::captured(input, mods);
+            if crate::keybinds::is_chat(action) && !crate::keybinds::chat_accepts(&b) {
+                // say why the old key stays, instead of a capture that
+                // seems to have missed the press
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("keybinds-chat-typing").to_owned(),
+                    aurora_i18n::tr!("keybinds-chat-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -12964,6 +12977,8 @@ impl App {
             self.sound_cues.pass_start(ui.ctx());
             // before any field reads its keys: Ctrl+W is the frontmost window's
             ui::close_key::begin(ui.ctx());
+            // the chat fields' shortcuts, as Preferences › Shortcuts set them
+            ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that
@@ -18512,6 +18527,7 @@ impl App {
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                self.chat_ui.hide_latest = !self.settings.chat_latest_button;
                 self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
                 self.chat_ui.enter_last_field = self.settings.chat_enter_last_field;
                 // the chat fields' suggestions (#980); the residents around
