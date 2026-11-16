@@ -63,9 +63,11 @@ fn rlva_vendor_payments_follow_buy_while_resident_payments_follow_pay() {
         message: String::new(),
     };
     command(&mut world.rlva, A, "@pay=n");
+    assert!(!world.rlva_can_pay());
     assert!(world.rlva_allows_command(&object, Uuid::nil()));
     assert!(!world.rlva_allows_command(&resident, Uuid::nil()));
     command(&mut world.rlva, A, "@pay=y,buy=n");
+    assert!(world.rlva_can_pay());
     assert!(!world.rlva_allows_command(&object, Uuid::nil()));
     assert!(world.rlva_allows_command(&resident, Uuid::nil()));
 }

@@ -839,7 +839,7 @@ impl App {
                     self.flush_build();
                 }
             }
-            CtxAction::PayResident(id) => self.pay_ui.open(id, false),
+            CtxAction::PayResident(id) => self.open_pay(id, false),
             CtxAction::Pay(id) | CtxAction::Buy(id) | CtxAction::Open(id) => {
                 let action = match act {
                     CtxAction::Pay(_) => Action::Pay,

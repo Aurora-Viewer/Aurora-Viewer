@@ -6,6 +6,12 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
+    /// Resident and group payments follow RLV `@pay`; object purchases use
+    /// the independent `@buy` restriction.
+    pub fn rlva_can_pay(&self) -> bool {
+        !self.rlva.has("pay")
+    }
+
     pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
         if !self.rlva.enabled() {
             return true;
