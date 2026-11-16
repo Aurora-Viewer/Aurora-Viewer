@@ -28,6 +28,10 @@
 //!   "Place on surface" on and holds the cursor over the target's top
 //!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
 //!   multi-rename: select multiple roots and apply the same name to all of them.
+//!   linkset-stretch: a linkset of ours in front of the agent (a box and a
+//!   plank turned 90 degrees), selected and stretched on one axis with
+//!   "Stretch linksets on one axis" on, then let go, so that Ctrl+Z / Ctrl+Y
+//!   can be tried on the stretched linkset: `linkset-stretch,0,0,fx,40,0`.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -62,6 +66,10 @@ pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
     LinkSetup(bool),
+    /// The two-prim linkset of `linkset-stretch`, ours, in front of the agent.
+    LinksetSetup,
+    /// "Stretch linksets on one axis" on or off.
+    StretchLinksets(bool),
     Link,
     SelectMany(Vec<usize>),
     RenameSelection(String),
@@ -352,7 +360,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let cycle = matches!(parts[0], "cycle" | "cycle-linked");
     let (t, m, land) = match parts[0] {
         "rotate" | "invisible-rotate" => (Tool::Edit, EditMode::Rotate, 6),
-        "stretch" | "invisible-stretch" => (Tool::Edit, EditMode::Stretch, 6),
+        "stretch" | "invisible-stretch" | "linkset-stretch" => (Tool::Edit, EditMode::Stretch, 6),
         "face" | "faces" | "faces-invisible" | "faces-ready" => (Tool::Edit, EditMode::Face, 6),
         "align" => (Tool::Edit, EditMode::Align, 6),
         "grab" => (Tool::Grab, EditMode::Move, 6),
@@ -651,6 +659,37 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     } else {
         frame
     };
+    // linkset-stretch,0,0,fx,40,0: our own two-prim linkset, selected with the
+    // setting on. The close view eases for up to a second, and a press during
+    // it misses the handle, so the grab waits for it at 330, where the common
+    // path presses at 250; the drag keeps the pointer on the handle and 470
+    // lets go, so the capture shows the stretched linkset and Ctrl+Z / Ctrl+Y
+    // can undo and redo it. Without a part, the linkset is only shown.
+    if parts[0] == "linkset-stretch" {
+        let part = handle.unwrap_or(Part::Face(0, true));
+        return match frame {
+            215 => vec![Step::Open(t, m, land), Step::StretchLinksets(true)],
+            220 => vec![Step::LinksetSetup],
+            227 => vec![Step::Focus(false)],
+            330 => {
+                let found = handle_px(tool, world, s, part);
+                if let Some((hx, hy)) = found {
+                    log::info!("demo build: grabbing {part:?} at {hx:.0},{hy:.0}");
+                }
+                found.map(|(hx, hy)| vec![Step::Cursor(hx, hy), Step::Press]).unwrap_or_default()
+            }
+            331..=370 if tool.manip.drag.is_some() => {
+                let k = (frame - 330) as f32 / 40.0;
+                let (x0, y0) = (x_start(tool), y_start(tool));
+                vec![Step::Cursor(x0 + dx * k, y0 + dy * k)]
+            }
+            // Held on the end of the drag, or the capture reads the real cursor
+            // and the stretch collapses (or blows up) before the screenshot.
+            371..=469 if tool.manip.drag.is_some() => vec![Step::Cursor(x_start(tool) + dx, y_start(tool) + dy)],
+            470 => vec![Step::Release],
+            _ => Vec::new(),
+        };
+    }
     match frame {
         215 => vec![Step::Open(t, m, land)],
         280 if parts[0] == "material-deselect" => vec![Step::CloseEditor],
@@ -711,6 +750,41 @@ fn y_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.1).unwrap_or(0.0)
 }
 
+/// The linkset of `linkset-stretch`, in front of the agent: a box and its
+/// child, a plank turned 90 degrees that sticks out of it, so stretching the
+/// linkset along +X must grow the plank's own Y (its width) and move it out
+/// with the box, never lengthen it.
+pub fn linkset_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings) {
+    let Some(handle) = world.main_region else { return };
+    // in the air, clear of the plaza, and centred by the script's focus
+    let root = world.agent.position + Vec3::new(5.0, 0.0, 3.0);
+    let mut objects = Vec::new();
+    for (local_id, parent, position, scale, turn) in [
+        (99760, 0, root, Vec3::new(2.0, 2.0, 2.0), 0.0f32),
+        (99761, 99760, Vec3::new(0.7, 0.0, 0.0), Vec3::new(2.8, 0.4, 0.4), 90.0),
+    ] {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = parent;
+        // a child's place and turn are its root's, as the simulator sends them
+        update.position = position;
+        update.rotation = glam::Quat::from_rotation_z(turn.to_radians());
+        update.scale = scale;
+        update.owner_id = world.agent_id;
+        update.extra = Default::default();
+        update.update_flags =
+            crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        objects.push(update);
+    }
+    world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+    tool.deselect_all(world);
+    if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(99760)) {
+        tool.click_select(world, settings, Some(index), false);
+    }
+}
+
 /// Two synthetic prims with different ObjectUpdate owner availability, as a
 /// rezzed mesh and new cubes can have. Selection properties supply both owners.
 pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, denied: bool) {
@@ -741,5 +815,42 @@ pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSetti
         if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
             tool.click_select(world, settings, Some(index), id == 99751);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// The scenario's linkset is one unit of two prims, its child turned a
+    /// quarter turn, ours to stretch.
+    #[test]
+    fn the_linkset_stretch_scenario_selects_a_linkset_with_a_turned_child() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        let settings = BuildSettings::default();
+        linkset_setup(&mut world, &mut tool, &settings);
+        let root = world.objects.index_of_uuid(&crate::demo::action_id(99760)).unwrap();
+        let family = super::super::family(&world, root);
+        assert_eq!(family.len(), 2, "a root and its child");
+        let object = world.objects.get(root).unwrap();
+        assert_eq!(tool.selection, [object.key], "selected as one linkset");
+        assert_eq!(super::super::select_type(&world, root), super::super::SelectType::World);
+        let child = world
+            .objects
+            .get(world.objects.index_of_uuid(&crate::demo::action_id(99761)).unwrap())
+            .unwrap();
+        assert_eq!(child.scale, Vec3::new(2.8, 0.4, 0.4));
+        let rel = object.rotation.inverse() * child.rotation;
+        assert!(rel.abs_diff_eq(glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-4));
+        // the plank sticks out of the box, across it
+        let now = Instant::now();
+        let bounds = super::super::bounds_of(&world, &tool.selection, false, now).unwrap();
+        assert!(bounds.half.y > 1.2, "the plank reaches out along +Y: {:?}", bounds.half);
     }
 }

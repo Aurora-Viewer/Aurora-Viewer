@@ -15067,6 +15067,13 @@ impl App {
                         crate::build::demo::link_setup(&mut self.world, &mut self.build, &self.settings.build, denied);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::LinksetSetup => {
+                        crate::build::demo::linkset_setup(&mut self.world, &mut self.build, &self.settings.build);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::StretchLinksets(on) => {
+                        self.settings.build.stretch_linksets = on;
+                    }
                     crate::build::demo::Step::Link => {
                         self.build.link(&mut self.world);
                         self.flush_build();
@@ -24298,12 +24305,7 @@ impl ApplicationHandler for App {
                 // when it turns into a drag (LLTool::handleAnyMouseClick:
                 // setKeyboardFocus(NULL)); egui lets it go on a click only
                 if pressed && !over_ui && self.in_world() {
-                    let typing = self.egui_ctx.text_edit_focused();
-                    self.egui_ctx.memory_mut(|m| {
-                        if let Some(id) = m.focused() {
-                            m.surrender_focus(id);
-                        }
-                    });
+                    let typing = self.surrender_world_keyboard();
                     // the field commits first, to what it was typed for
                     if typing {
                         self.press_while_typing();

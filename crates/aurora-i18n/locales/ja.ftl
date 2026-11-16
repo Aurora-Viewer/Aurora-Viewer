@@ -9773,6 +9773,7 @@ build-compact-previous = 前のパーツ／面（Ctrl＋,）
 build-compact-next = 次のパーツ／面（Ctrl＋.）
 build-compact-options = 操作のオプション
 build-compact-both-sides = 両側を引き伸ばす
+build-compact-stretch-linksets = リンクセットを1軸で伸縮する
 build-compact-stretch-textures = テクスチャを引き延ばす
 build-compact-root-axis = 軸をルートとして編集
 build-compact-highlight = ハイライトを表示

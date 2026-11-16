@@ -9824,6 +9824,7 @@ build-compact-previous = Partie / face précédente (Ctrl+,)
 build-compact-next = Partie / face suivante (Ctrl+.)
 build-compact-options = Options de manipulation
 build-compact-both-sides = Étirer les deux côtés
+build-compact-stretch-linksets = Étirer les ensembles liés sur un axe
 build-compact-stretch-textures = Étirer les textures
 build-compact-root-axis = Axe d’édition à la racine
 build-compact-highlight = Afficher le surlignage

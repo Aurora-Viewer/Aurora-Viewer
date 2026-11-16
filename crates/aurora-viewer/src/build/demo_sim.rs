@@ -27,6 +27,11 @@ pub struct DemoSim {
     /// The simulator's undo history of the edited objects (Ctrl+Z /
     /// Ctrl+Y): their placements before each edit, and those undone.
     history: HashMap<Uuid, History>,
+    /// Last placement the demo region accepted for each object, as a real
+    /// simulator stores it. Transform snapshots this rather than
+    /// `world.objects`, which already hold the viewer's local echo of the
+    /// same edit.
+    placement: HashMap<Uuid, Placement>,
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
@@ -43,6 +48,12 @@ type Placement = (glam::Vec3, glam::Quat, glam::Vec3);
 /// Updates of one object closer than this are one edit (a drag sends one
 /// a frame), as a simulator keeps one undo step for a drag.
 const EDIT_GAP: Duration = Duration::from_millis(400);
+
+/// Restating live numbers after a local echo is not a new edit: float noise
+/// from the Object tab must not push another undo step of the same pose.
+fn same_placement(a: Placement, b: Placement) -> bool {
+    a.0.abs_diff_eq(b.0, 1e-4) && a.1.abs_diff_eq(b.1, 0.001) && a.2.abs_diff_eq(b.2, 1e-4)
+}
 
 #[derive(Default)]
 struct History {
@@ -258,6 +269,27 @@ impl DemoSim {
         }
     }
 
+    fn remember_placement(&mut self, id: Uuid, position: glam::Vec3, rotation: glam::Quat, scale: glam::Vec3) {
+        self.placement.insert(id, (position, rotation, scale));
+    }
+
+    fn remember_world_if_new(&mut self, world: &World, id: Uuid) {
+        if self.placement.contains_key(&id) {
+            return;
+        }
+        let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
+            return;
+        };
+        self.remember_placement(id, o.position, o.rotation, o.scale);
+    }
+
+    fn object_updates(&mut self, handle: u64, objects: Vec<aurora_net::objects::ObjectUpdate>) -> NetEvent {
+        for o in &objects {
+            self.remember_placement(o.full_id, o.position, o.rotation, o.scale);
+        }
+        NetEvent::ObjectUpdates { handle, objects }
+    }
+
     /// Events a simulator would send back for a build command.
     /// The held reports whose round trip is over at `now`, in order.
     pub fn arrived(&mut self, now: Instant) -> Vec<NetEvent> {
@@ -275,10 +307,7 @@ impl DemoSim {
             BuildCmd::Add(p) => {
                 let object = crate::demo::build_rez(p);
                 self.rezzed_groups.insert(object.full_id, p.group_id);
-                vec![NetEvent::ObjectUpdates {
-                    handle: p.handle,
-                    objects: vec![object],
-                }]
+                vec![self.object_updates(p.handle, vec![object])]
             }
 
             BuildCmd::DeRez {
@@ -399,26 +428,29 @@ impl DemoSim {
                     let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
                         continue;
                     };
-                    let history = self.history.entry(id).or_default();
-                    let now = Instant::now();
-                    if history.last.is_none_or(|at| now - at > EDIT_GAP) {
-                        history.undo.push((o.position, o.rotation, o.scale));
-                        history.redo.clear();
+                    // The viewer has already written this edit locally. A real
+                    // region snapshots the placement it last accepted, not that echo.
+                    let before = self.placement.get(&id).copied().unwrap_or((o.position, o.rotation, o.scale));
+                    let after = (
+                        update.position.unwrap_or(before.0),
+                        update.rotation.unwrap_or(before.1),
+                        update.scale.unwrap_or(before.2),
+                    );
+                    if !same_placement(before, after) {
+                        let history = self.history.entry(id).or_default();
+                        let now = Instant::now();
+                        if history.last.is_none_or(|at| now - at > EDIT_GAP) {
+                            history.undo.push(before);
+                            history.redo.clear();
+                        }
+                        history.last = Some(now);
                     }
-                    history.last = Some(now);
+                    self.remember_placement(id, after.0, after.1, after.2);
                     let mut o = super::replace::demo_update(o);
-                    if let Some(p) = update.position {
-                        o.position = p;
-                    }
-                    if let Some(r) = update.rotation {
-                        o.rotation = r;
-                    }
-                    if let Some(s) = update.scale {
-                        o.scale = s;
-                    }
+                    (o.position, o.rotation, o.scale) = after;
                     objects.push(o);
                 }
-                let echo = NetEvent::ObjectUpdates { handle: *handle, objects };
+                let echo = self.object_updates(*handle, objects);
                 match echo_delay() {
                     Some(delay) => {
                         self.late_echoes.push_back((Instant::now() + delay, echo));
@@ -434,6 +466,7 @@ impl DemoSim {
                     let Some(o) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i)) else {
                         continue;
                     };
+                    let current = self.placement.get(id).copied().unwrap_or((o.position, o.rotation, o.scale));
                     let history = self.history.entry(*id).or_default();
                     let (from, to) = if redo {
                         (&mut history.redo, &mut history.undo)
@@ -443,13 +476,14 @@ impl DemoSim {
                     let Some((position, rotation, scale)) = from.pop() else {
                         continue;
                     };
-                    to.push((o.position, o.rotation, o.scale));
+                    to.push(current);
                     history.last = None;
+                    self.remember_placement(*id, position, rotation, scale);
                     let mut o = super::replace::demo_update(o);
                     (o.position, o.rotation, o.scale) = (position, rotation, scale);
                     objects.push(o);
                 }
-                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+                vec![self.object_updates(*handle, objects)]
             }
             BuildCmd::Delink { handle, local_ids } => {
                 let mut objects = Vec::new();
@@ -465,7 +499,7 @@ impl DemoSim {
                     o.rotation = r;
                     objects.push(o);
                 }
-                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+                vec![self.object_updates(*handle, objects)]
             }
             BuildCmd::Link { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
@@ -489,7 +523,7 @@ impl DemoSim {
                     o.rotation = if idx == root { or } else { r.inverse() * or };
                     objects.push(o);
                 }
-                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+                vec![self.object_updates(*handle, objects)]
             }
             BuildCmd::MoveTaskInventory {
                 handle,
@@ -583,13 +617,13 @@ impl DemoSim {
                     self.rezzed_from_task.insert(object.full_id, rez.from_task);
                 }
                 self.rezzed_groups.insert(object.full_id, rez.group);
-                vec![NetEvent::ObjectUpdates {
-                    handle: rez.handle,
-                    objects: vec![object],
-                }]
+                vec![self.object_updates(rez.handle, vec![object])]
             }
             BuildCmd::Select { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
+                for id in &ids {
+                    self.remember_world_if_new(world, *id);
+                }
                 self.reply_props(world, &ids)
             }
             BuildCmd::SetName { handle, local_ids, name } => {
@@ -924,5 +958,322 @@ impl DemoSim {
             "ModifyMaterialParams" => llsd_map! { "success" => true },
             _ => Llsd::Undef,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::build::TransformUpdate;
+    use glam::Vec3;
+    use std::sync::Arc;
+
+    fn world() -> World {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::selection_cycle_events()) {
+            world.apply(event);
+        }
+        world
+    }
+
+    fn apply(world: &mut World, sim: &mut DemoSim, cmd: BuildCmd) {
+        for event in sim.reply(world, &cmd) {
+            world.apply(event);
+        }
+    }
+
+    fn prim(world: &World, local_id: u32) -> (Uuid, u32, u64, Placement) {
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(local_id)).unwrap();
+        let o = world.objects.get(idx).unwrap();
+        (o.full_id, o.key.local_id, o.key.region, (o.position, o.rotation, o.scale))
+    }
+
+    /// The viewer writes a stretch locally before MultipleObjectUpdate. The
+    /// demo region must still restore the placement it accepted on Select,
+    /// so the first Ctrl+Z is not a no-op of the echoed size.
+    #[test]
+    fn the_first_undo_after_a_local_echo_restores_the_simulators_placement() {
+        let mut world = world();
+        let (id, local, handle, original) = prim(&world, 99610);
+        let mut sim = DemoSim::default();
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Select {
+                handle,
+                local_ids: vec![local],
+            },
+        );
+        let idx = world.objects.index_of_uuid(&id).unwrap();
+        world.objects.get_mut(idx).unwrap().position = original.0 + Vec3::X;
+        world.objects.get_mut(idx).unwrap().scale = original.2 * 2.0;
+        let echoed = {
+            let o = world.objects.get(idx).unwrap();
+            (o.position, o.rotation, o.scale)
+        };
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id: local,
+                    position: Some(echoed.0),
+                    rotation: Some(echoed.1),
+                    scale: Some(echoed.2),
+                    linked: false,
+                    uniform: false,
+                }],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.position.abs_diff_eq(original.0, 1e-5),
+            "first Ctrl+Z must restore the original, not the local echo {:?}",
+            o.position
+        );
+        assert!(o.scale.abs_diff_eq(original.2, 1e-5), "{:?}", o.scale);
+    }
+
+    /// Streaming updates inside EDIT_GAP stay one step: the first Ctrl+Z
+    /// restores the original, not a mid-drag size.
+    #[test]
+    fn streamed_transforms_undo_as_one_step_to_the_original() {
+        let mut world = world();
+        let (id, local, handle, original) = prim(&world, 99610);
+        let mut sim = DemoSim::default();
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Select {
+                handle,
+                local_ids: vec![local],
+            },
+        );
+        let idx = world.objects.index_of_uuid(&id).unwrap();
+        for factor in [1.5, 2.0] {
+            world.objects.get_mut(idx).unwrap().scale = original.2 * factor;
+            let scale = world.objects.get(idx).unwrap().scale;
+            apply(
+                &mut world,
+                &mut sim,
+                BuildCmd::Transform {
+                    handle,
+                    updates: vec![TransformUpdate {
+                        local_id: local,
+                        position: None,
+                        rotation: None,
+                        scale: Some(scale),
+                        linked: false,
+                        uniform: false,
+                    }],
+                },
+            );
+        }
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-5),
+            "merged drag must restore the original, not the mid-drag size {:?}",
+            o.scale
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-5),
+            "a second Ctrl+Z must not walk through mid-drag sizes {:?}",
+            o.scale
+        );
+    }
+
+    #[test]
+    fn a_linkset_stretch_echo_undoes_every_prim_on_the_first_ctrl_z() {
+        let mut world = world();
+        let mut tool = crate::build::BuildTool::default();
+        tool.open_build(crate::build::Tool::Edit);
+        let settings = crate::build::BuildSettings::default();
+        crate::build::demo::linkset_setup(&mut world, &mut tool, &settings);
+        let mut sim = DemoSim::default();
+        for cmd in std::mem::take(&mut tool.out) {
+            if let aurora_net::NetCommand::Build(cmd) = cmd {
+                apply(&mut world, &mut sim, cmd);
+            }
+        }
+        let root_id = crate::demo::action_id(99760);
+        let child_id = crate::demo::action_id(99761);
+        let root_idx = world.objects.index_of_uuid(&root_id).unwrap();
+        let child_idx = world.objects.index_of_uuid(&child_id).unwrap();
+        let root_orig = {
+            let o = world.objects.get(root_idx).unwrap();
+            (o.position, o.rotation, o.scale, o.key)
+        };
+        let child_orig = {
+            let o = world.objects.get(child_idx).unwrap();
+            (o.position, o.rotation, o.scale, o.key)
+        };
+        world.objects.get_mut(root_idx).unwrap().scale = Vec3::new(4.0, 2.0, 2.0);
+        world.objects.get_mut(root_idx).unwrap().position += Vec3::X;
+        world.objects.get_mut(child_idx).unwrap().position *= Vec3::new(2.0, 1.0, 1.0);
+        world.objects.get_mut(child_idx).unwrap().scale = Vec3::new(2.8, 0.8, 0.4);
+        let (root_echo, child_echo) = {
+            let root = world.objects.get(root_idx).unwrap();
+            let child = world.objects.get(child_idx).unwrap();
+            (
+                (root.position, root.rotation, root.scale),
+                (child.position, child.rotation, child.scale),
+            )
+        };
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle: root_orig.3.region,
+                updates: vec![
+                    TransformUpdate {
+                        local_id: root_orig.3.local_id,
+                        position: Some(root_echo.0),
+                        rotation: Some(root_echo.1),
+                        scale: Some(root_echo.2),
+                        linked: false,
+                        uniform: false,
+                    },
+                    TransformUpdate {
+                        local_id: child_orig.3.local_id,
+                        position: Some(child_echo.0),
+                        rotation: Some(child_echo.1),
+                        scale: Some(child_echo.2),
+                        linked: false,
+                        uniform: false,
+                    },
+                ],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle: root_orig.3.region,
+                ids: vec![root_id, child_id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let root = world.objects.get(root_idx).unwrap();
+        let child = world.objects.get(child_idx).unwrap();
+        assert!(
+            root.position.abs_diff_eq(root_orig.0, 1e-5) && root.scale.abs_diff_eq(root_orig.2, 1e-5),
+            "root {:?} {:?}",
+            root.position,
+            root.scale
+        );
+        assert!(
+            child.position.abs_diff_eq(child_orig.0, 1e-5) && child.scale.abs_diff_eq(child_orig.2, 1e-5),
+            "child {:?} {:?}",
+            child.position,
+            child.scale
+        );
+    }
+
+    /// Float noise from restating the live numbers is not a second undo step.
+    #[test]
+    fn a_restatement_of_the_stretched_pose_is_not_another_undo_step() {
+        let mut world = world();
+        let (id, local, handle, original) = prim(&world, 99610);
+        let mut sim = DemoSim::default();
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Select {
+                handle,
+                local_ids: vec![local],
+            },
+        );
+        let idx = world.objects.index_of_uuid(&id).unwrap();
+        world.objects.get_mut(idx).unwrap().scale = original.2 * 2.0;
+        let echoed = world.objects.get(idx).unwrap().scale;
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id: local,
+                    position: None,
+                    rotation: None,
+                    scale: Some(echoed),
+                    linked: false,
+                    uniform: false,
+                }],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id: local,
+                    position: None,
+                    rotation: None,
+                    scale: Some(echoed + Vec3::splat(1e-5)),
+                    linked: true,
+                    uniform: false,
+                }],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-4),
+            "first Ctrl+Z must restore the original, not walk a restatement {:?}",
+            o.scale
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-4),
+            "a second Ctrl+Z must not walk a restatement {:?}",
+            o.scale
+        );
     }
 }

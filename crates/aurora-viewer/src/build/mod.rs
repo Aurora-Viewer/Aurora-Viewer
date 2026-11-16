@@ -170,6 +170,11 @@ pub struct BuildSettings {
     pub scale_uniform: bool,
     /// ScaleStretchTextures.
     pub scale_stretch_textures: bool,
+    /// Aurora: the stretch tool's face handles also stretch a whole linkset
+    /// on one axis (`stretch_linksets`; off by default). The Legacy Viewer
+    /// shows those handles for a single prim only and scales a whole linkset
+    /// uniformly (UPD_LINKED_SETS).
+    pub stretch_linksets: bool,
     /// Keep the camera attached to the focused object while editing it.
     pub follow_edit_object: bool,
     /// RenderHighlightSelections.
@@ -741,6 +746,7 @@ impl Default for BuildSettings {
             edit_linked: false,
             scale_uniform: false,
             scale_stretch_textures: true,
+            stretch_linksets: false,
             follow_edit_object: false,
             show_highlight: true,
             show_hidden_selection: false,
@@ -944,6 +950,14 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
+    /// Pose the last recorded stretch-undo step went out with. The Object tab
+    /// restating the same numbers is not a later edit.
+    stretch_sent: Vec<StretchSent>,
+    /// Stretches and later Transforms of those prims, newest last: each
+    /// stretch names the children, a later move names the roots alone.
+    stretch_stack: Vec<StretchStep>,
+    /// Those steps already undone (simulator redo stack), newest last.
+    stretch_redo: Vec<StretchStep>,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
     /// Mesh-header estimates refreshed from the scene before editor input.
@@ -1013,6 +1027,9 @@ impl Default for BuildTool {
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
+            stretch_sent: Vec::new(),
+            stretch_stack: Vec::new(),
+            stretch_redo: Vec::new(),
             pending_link: None,
             link_triangles: HashMap::new(),
             link_properties: HashSet::new(),
@@ -1236,7 +1253,100 @@ pub fn grid_of(s: &BuildSettings, bounds: Option<&Bounds>, reference: Option<&Bo
 
 impl BuildTool {
     pub fn send(&mut self, c: BuildCmd) {
+        if let BuildCmd::Transform { handle, updates } = &c {
+            self.note_stretch_transform(*handle, updates);
+        }
         self.out.push(NetCommand::Build(c));
+    }
+
+    /// A one-axis linkset stretch sends each prim itself (no UPD_LINKED_SETS).
+    /// The simulator then holds an undo step per prim, so Ctrl+Z / Ctrl+Y name
+    /// every one. Each such stretch is its own step: a second stretch does not
+    /// replace the first, so two undos name the children twice. A later
+    /// Transform of those prims (a move) sits on top: the next undo names the
+    /// selection's roots alone (LLSelectMgr::undo, SEND_ONLY_ROOTS); the
+    /// stretch steps stay, so the undo after that names the children again.
+    /// Restating the numbers the last step already sent (the Object tab as the
+    /// drag ends) is not that later step. A later Transform after every stretch
+    /// has been undone drops the batch: the simulator has cleared that redo.
+    fn note_stretch_transform(&mut self, handle: RegionHandle, updates: &[TransformUpdate]) {
+        if self.restates_stretch(updates) {
+            return;
+        }
+        let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
+        if stretch {
+            let prims: Vec<ObjKey> = updates
+                .iter()
+                .map(|u| ObjKey {
+                    region: handle,
+                    local_id: u.local_id,
+                })
+                .collect();
+            self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
+            self.stretch_stack.push(StretchStep::Stretch(prims));
+            self.stretch_redo.clear();
+            return;
+        }
+        if self.touches_stretch(handle, updates) {
+            if self.stretch_stack.is_empty() {
+                self.stretch_sent.clear();
+                self.stretch_redo.clear();
+                return;
+            }
+            self.stretch_stack.push(StretchStep::Later);
+            self.stretch_redo.clear();
+            self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
+        }
+    }
+
+    fn restates_stretch(&self, updates: &[TransformUpdate]) -> bool {
+        !self.stretch_sent.is_empty()
+            && updates
+                .iter()
+                .all(|u| self.stretch_sent.iter().any(|sent| sent.local_id == u.local_id && sent.matches(u)))
+    }
+
+    fn touches_stretch(&self, handle: RegionHandle, updates: &[TransformUpdate]) -> bool {
+        self.last_stretch_prims(false)
+            .or_else(|| self.last_stretch_prims(true))
+            .is_some_and(|prims| {
+                updates
+                    .iter()
+                    .any(|u| prims.iter().any(|k| k.region == handle && k.local_id == u.local_id))
+            })
+    }
+
+    /// Prims of the stretch being undone or redone. Walks through a later
+    /// Transform, and into the other stack when that later step is the only
+    /// one on redo (the stretch itself is still on the undo stack).
+    fn last_stretch_prims(&self, redo: bool) -> Option<&[ObjKey]> {
+        let (primary, secondary) = if redo {
+            (self.stretch_redo.as_slice(), self.stretch_stack.as_slice())
+        } else {
+            (self.stretch_stack.as_slice(), self.stretch_redo.as_slice())
+        };
+        primary.iter().rev().chain(secondary.iter().rev()).find_map(|step| match step {
+            StretchStep::Stretch(prims) => Some(prims.as_slice()),
+            StretchStep::Later => None,
+        })
+    }
+
+    /// Prims Ctrl+Z / Ctrl+Y must name besides the selected roots: the children
+    /// of the stretch at the top of the stack (or redo stack).
+    fn stretch_name_prims(&self, redo: bool) -> Option<&[ObjKey]> {
+        match if redo {
+            self.stretch_redo.last()
+        } else {
+            self.stretch_stack.last()
+        } {
+            Some(StretchStep::Stretch(prims)) => Some(prims),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stretch_prims(&self) -> &[ObjKey] {
+        self.last_stretch_prims(false).unwrap_or(&[])
     }
 
     /// The edit manipulator in use, with the modifier keys of the Edit tool
@@ -1971,7 +2081,10 @@ impl BuildTool {
         self.costs_stale();
     }
 
-    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
+    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots
+    /// (LLSelectMgr::undo / redo, SEND_ONLY_ROOTS for a whole linkset), and of
+    /// the prims each one-axis linkset stretch changed beside them, once later
+    /// edits of those prims have been undone.
     pub fn undo(&mut self, world: &World, redo: bool) {
         let units: Vec<usize> = if self.selection_linked {
             self.highlighted(world).into_iter().map(|(i, _)| i).collect()
@@ -1979,9 +2092,49 @@ impl BuildTool {
             self.roots(world)
         };
         let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
-        for i in units {
+        for &i in &units {
             if let Some(o) = world.objects.get(i) {
                 by_region.entry(o.key.region).or_default().push(o.full_id);
+            }
+        }
+        let applies = !self.selection_linked
+            && self.last_stretch_prims(redo).is_some_and(|prims| {
+                prims
+                    .iter()
+                    .any(|key| world.objects.index_of(key).is_some_and(|idx| units.contains(&root_of(world, idx))))
+            });
+        // A linkset stretched on one axis has an undo step of its own on every
+        // prim: the roots alone would leave the children stretched, and a child
+        // turned 90 degrees cannot get its size back from the root's step.
+        // Each stretch is a step; later edits sit on top: name the roots until
+        // those are undone, then the children of that stretch again.
+        if applies && let Some(prims) = self.stretch_name_prims(redo) {
+            for key in prims {
+                let Some(idx) = world.objects.index_of(key) else {
+                    continue;
+                };
+                if !units.contains(&root_of(world, idx)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get(idx) else {
+                    continue;
+                };
+                let ids = by_region.entry(o.key.region).or_default();
+                if !ids.contains(&o.full_id) {
+                    ids.push(o.full_id);
+                }
+            }
+        }
+        if by_region.is_empty() {
+            return;
+        }
+        if applies {
+            if redo {
+                if let Some(step) = self.stretch_redo.pop() {
+                    self.stretch_stack.push(step);
+                }
+            } else if let Some(step) = self.stretch_stack.pop() {
+                self.stretch_redo.push(step);
             }
         }
         for (handle, ids) in by_region {
@@ -2835,6 +2988,9 @@ impl BuildTool {
     /// Apply typed values from the Object tab (position / size / rotation
     /// in region coordinates; LLPanelObject::sendPosition / sendScale / sendRotation).
     /// Changed locally at once; sent when `commit` (typed value, end of drag).
+    /// A 3D handle drag owns the selection: the spinners still show the live
+    /// values, but they must not write them back (they round, and a linked
+    /// restatement of the root would scale a one-axis stretch uniformly).
     pub fn set_transform(
         &mut self,
         world: &mut World,
@@ -2844,6 +3000,9 @@ impl BuildTool {
         rot: Option<Quat>,
         commit: bool,
     ) {
+        if self.manip.dragging() {
+            return;
+        }
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
         let mode = if size.is_some() { EditMode::Stretch } else { EditMode::Move };
@@ -2891,6 +3050,21 @@ impl BuildTool {
         };
         let limits = world.prim_limits();
         let scale = size.map(|v| limits.clamp3(v));
+        // LLPanelObject::sendPosition / sendScale / sendRotation send only a
+        // value that differs. A spinner restating the live numbers (rounded to
+        // the field's decimals) is not a new edit: sending it as UPD_LINKED_SETS
+        // of the root would drop a one-axis stretch's undo batch and rescale
+        // the children uniformly.
+        let eps = 0.6 * 10f32.powi(-(i32::from(s.decimal_precision.min(7))));
+        let eps = eps.max(1e-5);
+        if let Some(o) = world.objects.get(idx) {
+            let pos_same = pos.is_none() || local_pos.abs_diff_eq(o.position, eps);
+            let rot_same = rot.is_none() || local_rot.abs_diff_eq(o.rotation, 0.001);
+            let scale_same = scale.is_none_or(|sc| sc.abs_diff_eq(o.scale, eps));
+            if pos_same && rot_same && scale_same {
+                return;
+            }
+        }
         if let Some(o) = world.objects.get_mut(idx) {
             o.position = local_pos;
             o.rotation = local_rot;
@@ -2922,5 +3096,51 @@ impl BuildTool {
             handle: key.region,
             updates: vec![u],
         });
+    }
+}
+
+/// One step of the viewer's stretch undo grouping: a one-axis linkset stretch
+/// (name every prim) or a later Transform of those prims (roots only).
+#[derive(Clone)]
+enum StretchStep {
+    Stretch(Vec<ObjKey>),
+    Later,
+}
+
+/// One prim of a one-axis linkset stretch, as MultipleObjectUpdate sent it.
+struct StretchSent {
+    local_id: u32,
+    position: Option<Vec3>,
+    rotation: Option<Quat>,
+    scale: Option<Vec3>,
+}
+
+impl StretchSent {
+    fn from_update(u: &TransformUpdate) -> Self {
+        Self {
+            local_id: u.local_id,
+            position: u.position,
+            rotation: u.rotation,
+            scale: u.scale,
+        }
+    }
+
+    fn matches(&self, u: &TransformUpdate) -> bool {
+        const EPS: f32 = 1e-4;
+        close_opt(self.position, u.position, EPS) && close_quat(self.rotation, u.rotation) && close_opt(self.scale, u.scale, EPS)
+    }
+}
+
+fn close_opt(stored: Option<Vec3>, sent: Option<Vec3>, eps: f32) -> bool {
+    match sent {
+        None => true,
+        Some(v) => stored.is_some_and(|s| s.abs_diff_eq(v, eps)),
+    }
+}
+
+fn close_quat(stored: Option<Quat>, sent: Option<Quat>) -> bool {
+    match sent {
+        None => true,
+        Some(v) => stored.is_some_and(|s| s.abs_diff_eq(v, 0.001)),
     }
 }

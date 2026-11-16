@@ -642,6 +642,32 @@ fn snap_checkbox_and_inline_choices_fit_one_column_without_changing_row_height()
 }
 
 #[test]
+fn stretch_linksets_construction_setting_carries_the_experimental_mark() {
+    let mut i = Inspector::new();
+    i.tool.ui.layout.open = true;
+    settle(&mut i);
+    let (_, texts) = i.show(vec![]);
+    let label = aurora_i18n::tr!("build-compact-stretch-linksets");
+    let rect = texts.iter().find(|(text, _)| text == &label).unwrap().1;
+    let settings = i.ctx.memory(|m| m.area_rect(egui::Id::unique("construction-settings"))).unwrap();
+    assert!(settings.contains_rect(rect), "{rect:?} {settings:?}");
+    let hover = egui::pos2(rect.right() + 12.5, rect.center().y);
+    i.show(vec![egui::Event::PointerMoved(hover)]);
+    let mut painted = Vec::new();
+    for _ in 0..60 {
+        painted = i.show(vec![]).1;
+    }
+    let tip = aurora_i18n::tr!("ui-experimental-tip");
+    assert!(
+        painted.iter().any(|(text, _)| text == &tip),
+        "the experimental mark sits beside Stretch linksets: {painted:?}"
+    );
+    let before = i.settings.stretch_linksets;
+    click(&mut i, rect.center());
+    assert_eq!(i.settings.stretch_linksets, !before);
+}
+
+#[test]
 fn settings_follow_the_free_side_and_bottom_of_the_inspector() {
     let mut i = Inspector::new();
     i.tool.ui.layout.open = true;

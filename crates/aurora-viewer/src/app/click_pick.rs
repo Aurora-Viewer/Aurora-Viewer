@@ -381,14 +381,21 @@ impl App {
         self.clicks.running = Some(click);
         match click {
             Click::Press => {
+                self.surrender_world_keyboard();
                 if !self.build_mouse_down() && !self.clicks.waiting() {
                     self.world_press();
                 }
             }
             Click::Build => {
+                // Demo scripts press here, not through the window mouse path
+                // that already clears the keyboard (chat, a leftover spinner).
+                self.surrender_world_keyboard();
                 self.build_mouse_down();
             }
-            Click::World => self.world_press(),
+            Click::World => {
+                self.surrender_world_keyboard();
+                self.world_press();
+            }
             Click::Menu => self.world_menu(),
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
         }
@@ -597,6 +604,19 @@ impl App {
             }
             self.drain_held();
         }
+    }
+
+    /// LLTool::handleAnyMouseClick: a press in the world takes the keyboard
+    /// from the fields. Returns whether a text field had it, so the caller
+    /// can let that field commit before the world click runs.
+    pub(super) fn surrender_world_keyboard(&self) -> bool {
+        let typing = self.egui_ctx.text_edit_focused();
+        self.egui_ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        typing
     }
 
     /// A world press made while a text field had the keyboard: taken from
