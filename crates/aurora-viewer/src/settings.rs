@@ -2074,11 +2074,11 @@ impl Default for ColorSettings {
     }
 }
 
-/// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
-/// Music, Multimedia, Voice.
 /// Index of the voice channel in the audio settings (`audio_channels`).
 pub const VOICE_CHANNEL: usize = 6;
 
+/// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
+/// Music, Multimedia, Voice.
 pub fn audio_channels() -> [&'static str; 7] {
     [
         aurora_i18n::tr!("settings-main"),
