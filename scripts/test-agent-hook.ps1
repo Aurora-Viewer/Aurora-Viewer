@@ -80,8 +80,14 @@ function Invoke-Hook([string]$Json, [string]$PathDir, [string]$Project) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $p = [Diagnostics.Process]::Start($psi)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Json)
-    $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-    $p.StandardInput.Close()
+    # A hook that cannot start (the "missing" and "broken" cases) never reads
+    # its input: if its shell has already ended, the write fails with
+    # "Broken pipe". Its exit code is what the case checks.
+    try {
+        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $p.StandardInput.Close()
+    } catch [System.IO.IOException] {
+    }
     $out = $p.StandardOutput.ReadToEnd()
     $err = $p.StandardError.ReadToEnd()
     $p.WaitForExit()
@@ -207,6 +213,13 @@ try {
     } else {
         Set-Content -LiteralPath (Join-Path $withRg 'rg') -Value '#!/bin/sh'
         & chmod +x (Join-Path $withRg 'rg')
+        # The hook's command line starts `bash` from PATH, and PATH is only
+        # the stand-in folder: without bash in it the hook cannot start
+        # off Windows (Git's bash.exe finds it there). The hook needs
+        # nothing else: builtins only.
+        foreach ($d in $withRg, $withoutRg) {
+            New-Item -ItemType SymbolicLink -Path (Join-Path $d 'bash') -Target $bash | Out-Null
+        }
     }
     [IO.File]::WriteAllText((Join-Path $projects.broken '.claude/hooks/shell-rules.sh'), "if then (`n")
     foreach ($c in $cases) {

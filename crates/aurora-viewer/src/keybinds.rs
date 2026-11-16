@@ -12,11 +12,39 @@ use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
-/// A physical input: `Key("KeyW")`, `Mouse("Middle")`.
+/// A physical input: `Key("KeyW")`, `Mouse("Middle")`. The names are fixed
+/// identifiers, never translated: the label is `Input::label`'s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "SavedInput")]
 pub enum Input {
     Key(String),
     Mouse(String),
+}
+
+/// An [`Input`] as the settings file holds it. The mouse buttons used to be
+/// saved under their translated names, which Japanese wrote 中央, 戻る and
+/// 前進: those read back as the fixed names, whatever the language now.
+#[derive(Deserialize)]
+enum SavedInput {
+    Key(String),
+    Mouse(String),
+}
+
+impl From<SavedInput> for Input {
+    fn from(saved: SavedInput) -> Input {
+        match saved {
+            SavedInput::Key(key) => Input::Key(key),
+            SavedInput::Mouse(button) => Input::Mouse(
+                match button.as_str() {
+                    "中央" => "Middle",
+                    "戻る" => "Back",
+                    "前進" => "Forward",
+                    _ => return Input::Mouse(button),
+                }
+                .to_owned(),
+            ),
+        }
+    }
 }
 
 impl Input {
@@ -29,9 +57,9 @@ impl Input {
     pub fn mouse(b: MouseButton) -> Option<Input> {
         match b {
             MouseButton::Left | MouseButton::Right => None,
-            MouseButton::Middle => Some(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into())),
-            MouseButton::Back => Some(Input::Mouse(aurora_i18n::tr!("keybinds-back").into())),
-            MouseButton::Forward => Some(Input::Mouse(aurora_i18n::tr!("keybinds-forward").into())),
+            MouseButton::Middle => Some(Input::Mouse("Middle".into())),
+            MouseButton::Back => Some(Input::Mouse("Back".into())),
+            MouseButton::Forward => Some(Input::Mouse("Forward".into())),
             MouseButton::Other(n) => Some(Input::Mouse(format!("Other{n}"))),
         }
     }
@@ -836,10 +864,7 @@ impl KeyBindings {
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
             // SL default push-to-talk: middle mouse button
-            (
-                Action::PushToTalk,
-                [Some(Binding::plain(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into()))), None],
-            ),
+            (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
@@ -2531,6 +2556,24 @@ mod tests {
         assert!(kb.held(Action::Forward, &down, shift));
         assert!(kb.held(Action::PushToTalk, &down, Mods::default()));
         assert!(!kb.held(Action::Back, &down, shift));
+    }
+
+    #[test]
+    fn mouse_buttons_keep_fixed_names_and_old_japanese_ones_read_back() {
+        for (button, name) in [
+            (MouseButton::Middle, "Middle"),
+            (MouseButton::Back, "Back"),
+            (MouseButton::Forward, "Forward"),
+        ] {
+            assert_eq!(Input::mouse(button), Some(Input::Mouse(name.into())));
+        }
+        for (saved, name) in [("中央", "Middle"), ("戻る", "Back"), ("前進", "Forward"), ("Other9", "Other9")] {
+            let json = serde_json::to_string(&Input::Mouse(saved.into())).expect("save input");
+            let input: Input = serde_json::from_str(&json).expect("read input");
+            assert_eq!(input, Input::Mouse(name.into()));
+        }
+        let key: Input = serde_json::from_str(r#"{"Key":"KeyW"}"#).expect("read key");
+        assert_eq!(key, Input::Key("KeyW".into()));
     }
 
     #[test]

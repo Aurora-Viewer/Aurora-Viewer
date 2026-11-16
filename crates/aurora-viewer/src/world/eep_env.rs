@@ -370,6 +370,9 @@ pub struct EnvSelector {
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
     local_dirty: bool,
+    /// The user chose a local environment, or went back to the shared one,
+    /// since `take_local_choice`: a sky RLVa forced without a lock gives way.
+    local_choice: bool,
     /// FSEnvironmentManualTransitionTime (s): crossfade of manual changes.
     manual_transition: f32,
     /// Next local change without crossfade (TRANSITION_INSTANT).
@@ -817,8 +820,11 @@ impl EnvSelector {
         }
         self.pending.clear();
         if self.local.take().is_some() {
-            self.local_dirty = true;
+            self.note_local_choice();
         }
+        // a choice even with no local environment to drop: the shared one
+        // replaces a sky RLVa forced without a lock
+        self.local_choice = true;
         self.drop_preset();
     }
 
@@ -935,7 +941,7 @@ impl EnvSelector {
                 log::info!("local environment: day cycle {asset}");
                 self.local = Some(l);
                 self.drop_preset();
-                self.local_dirty = true;
+                self.note_local_choice();
             }
             Settings::Sky(s) => self.apply_sky(origin, *s),
             Settings::Water(w) => self.apply_water(origin, *w),
@@ -982,13 +988,13 @@ impl EnvSelector {
             }
             _ => self.drop_preset(),
         }
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     fn apply_water(&mut self, origin: LocalOrigin, water: WaterFrame) {
         log::info!("local environment: water {origin:?}");
         self.local_mut().water = Some((origin, water));
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// "Personal lighting" opens (LLFloaterEnvironmentAdjust::
@@ -1017,7 +1023,7 @@ impl EnvSelector {
         self.local = Some(l);
         self.instant_next = true;
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// The local sky "Personal lighting" edits (nothing without a local
@@ -1045,7 +1051,7 @@ impl EnvSelector {
         *sky = s;
         *origin = LocalOrigin::Personal(origin.rights());
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
         true
     }
 
@@ -1057,6 +1063,18 @@ impl EnvSelector {
     /// The local environment changed since the last call (to save it).
     pub fn take_local_dirty(&mut self) -> bool {
         std::mem::take(&mut self.local_dirty)
+    }
+
+    /// A choice changed the local environment: to save, and to tell RLVa.
+    fn note_local_choice(&mut self) {
+        self.local_dirty = true;
+        self.local_choice = true;
+    }
+
+    /// The user chose an environment since the last call, the shared one
+    /// included (`World::rlva_yield_environment`).
+    pub fn take_local_choice(&mut self) -> bool {
+        std::mem::take(&mut self.local_choice)
     }
 
     /// The local environment to keep for the next session
@@ -1222,7 +1240,7 @@ impl EnvSelector {
             self.preset_dropped = true;
         }
         self.pending.clear();
-        self.local_dirty = true;
+        self.note_local_choice();
         // the same light, now the user's: no crossfade
         self.instant_next = true;
         self.photo.set(PhotoChoice::default());
@@ -1240,7 +1258,7 @@ impl EnvSelector {
         self.drop_photo();
         self.clear_local();
         self.restore_local(data);
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// Restore the last session's local environment (loadFromSettings): the
@@ -1287,8 +1305,9 @@ impl EnvSelector {
             }
         }
         self.drain_pending();
-        // restoring is not a change to save again
+        // restoring is not a change to save again, nor a choice
         self.local_dirty = false;
+        self.local_choice = false;
     }
 
     /// The selected shared slot (getSelectedEnvironmentInstance below ENV_LOCAL).

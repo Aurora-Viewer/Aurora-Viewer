@@ -57,8 +57,16 @@ pub(crate) fn height(ctx: &Context, field: Id, minimum: f32) -> f32 {
 
 /// A field's placeholder at the interface's text size: only what is typed
 /// takes the chat's (`show`). Built from the field's parent `ui`.
-pub(super) fn hint(ui: &Ui, text: impl Into<String>) -> egui::RichText {
-    egui::RichText::new(text).size(egui::TextStyle::Body.resolve(ui.style()).size)
+/// The field's hint on one line, cut with "…" to the field's `width`: a
+/// multi-line field wraps its hint, and a long one (a Japanese hint at text
+/// size ×2) made the field taller than its window.
+pub(super) fn hint(ui: &Ui, text: impl Into<String>, width: f32) -> egui::WidgetText {
+    let text = egui::RichText::new(text)
+        .size(egui::TextStyle::Body.resolve(ui.style()).size)
+        .color(ui.visuals().weak_text_color());
+    // the field's margins on both sides
+    let room = width - 2.0 * ui.spacing().button_padding.x;
+    crate::ui::widgets::elided_galley(ui, text, room).into()
 }
 
 /// A wrapping editor with at most four visible rows. Its full galley feeds
