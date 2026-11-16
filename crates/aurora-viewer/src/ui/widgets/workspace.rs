@@ -532,7 +532,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     }
     // the Build › Pathfinding entries' icons (ui/bars.rs)
     if id == super::super::pathfinding::LINKSETS_WINDOW {
-        return "list-details";
+        return "list-details-filled";
     }
     if id == super::super::pathfinding::CHARACTERS_WINDOW {
         return "walk";

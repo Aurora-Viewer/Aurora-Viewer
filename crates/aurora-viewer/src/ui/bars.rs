@@ -1815,7 +1815,7 @@ fn build_menu(
     // windows open on the in-world selection
     let [pathfinding, rebake] = pathfinding;
     menu::submenu(ui, p, "route", aurora_i18n::tr!("pathfinding-menu"), pathfinding, |ui| {
-        if menu::item(ui, p, "list-details", aurora_i18n::tr!("pathfinding-menu-linksets")) {
+        if menu::item(ui, p, "list-details-filled", aurora_i18n::tr!("pathfinding-menu-linksets")) {
             *action = BarAction::Pathfinding(aurora_net::pathfinding::Kind::Objects);
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("pathfinding-menu-characters")) {
