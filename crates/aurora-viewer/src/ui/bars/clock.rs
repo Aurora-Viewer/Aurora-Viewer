@@ -388,20 +388,23 @@ mod tests {
     fn hours_in_24_and_12_hours() {
         // 2026-01-15 22:05:09 UTC
         let unix = 1_768_514_709;
+        // the catalogue's markers: the tests run in the system language
+        // ("AM" / "PM" in English and French, 午前 / 午後 in Japanese)
+        let (am, pm) = (aurora_i18n::tr!("ui-bars-clock-am"), aurora_i18n::tr!("ui-bars-clock-pm"));
         assert_eq!(hours(unix, 0, true, false), "22:05:09");
         assert_eq!(hours(unix, 0, false, false), "22:05");
-        assert_eq!(hours(unix, 0, false, true), "10:05 PM");
-        assert_eq!(hours(unix, 0, true, true), "10:05:09 PM");
+        assert_eq!(hours(unix, 0, false, true), format!("10:05 {pm}"));
+        assert_eq!(hours(unix, 0, true, true), format!("10:05:09 {pm}"));
         // in January SLT is PST, UTC-8
         let slt = offset(ClockZone::Slt, unix);
         assert_eq!(hours(unix, slt, false, false), "14:05");
-        assert_eq!(hours(unix, slt, false, true), "2:05 PM");
+        assert_eq!(hours(unix, slt, false, true), format!("2:05 {pm}"));
         // midnight and noon
-        assert_eq!(hours(unix, 2 * 3600 - 5 * 60 - 9, false, true), "12:00 AM");
-        assert_eq!(hours(unix, -10 * 3600 - 5 * 60 - 9, false, true), "12:00 PM");
+        assert_eq!(hours(unix, 2 * 3600 - 5 * 60 - 9, false, true), format!("12:00 {am}"));
+        assert_eq!(hours(unix, -10 * 3600 - 5 * 60 - 9, false, true), format!("12:00 {pm}"));
         // a positive offset past midnight wraps
         assert_eq!(hours(unix, 3 * 3600, false, false), "01:05");
-        assert_eq!(hours(unix, 3 * 3600, false, true), "1:05 AM");
+        assert_eq!(hours(unix, 3 * 3600, false, true), format!("1:05 {am}"));
     }
 
     #[test]

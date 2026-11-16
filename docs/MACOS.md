@@ -164,6 +164,11 @@ run `pwsh ./scripts/package-macos.ps1 -Exe target/release/aurora-viewer -Out "Au
 (PowerShell 7: `brew install powershell`). The same PowerShell runs the local
 checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 
+To work on the code with an AI agent, also install the search tools the
+agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools";
+optional, the Aurora tools install them on Windows):
+`brew install ripgrep fd jq ast-grep`.
+
 ## Signing (for the maintainers)
 
 The macOS job of the release workflow signs the application with the

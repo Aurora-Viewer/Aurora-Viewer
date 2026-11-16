@@ -271,6 +271,10 @@ see the news item in the viewer **before** merging, launch it with
    - they install sccache with winget (for your account), the compiler cache
      shared by the repository and the agents' tasks (see
      [Building and launching by hand](#building-and-launching-by-hand));
+   - they install ripgrep (`rg`), `fd`, `jq` and `ast-grep` with winget (for
+     your account): the search tools the agents are told to use
+     ([AGENTS.md](AGENTS.md), section 5, "Tools"). They are optional: one
+     that does not install is reported and nothing else stops;
    - they log you in to GitHub (`gh auth login`, in the browser) if needed,
      and set your git identity in the repository: your GitHub user name and
      your "noreply" address (your e-mail stays private).
@@ -374,6 +378,29 @@ Each choice also exists without the menu, for a script:
 `reset`, `shortcut`, `claude`); `-DryRun` shows what `releases`, `reset` and
 `claude` would do without doing it.
 
+**Commands Claude Code refuses your agents.** The repository carries a
+Claude Code hook (`.claude/settings.json`, which runs
+`.claude/hooks/shell-rules.sh`). Claude Code reads it by itself in every
+session opened in the repository or in a task folder, once your `main` is up
+to date (Repair / update): there is nothing to install or to switch on.
+Before each shell command of an agent, it refuses the few that AGENTS.md
+forbids and names the command to use instead:
+
+| Refused | Why |
+|---|---|
+| A recursive `grep`, `findstr` or `Get-ChildItem \| Select-String`, once `rg` is installed | `rg` skips the build folders, the others read them (GB) |
+| `cargo test -p <crate>` | one crate alone builds its dependencies a second time; `cargo test --workspace <filter>` |
+| `cargo +<toolchain>` (except `cargo +nightly fuzz`, on Linux) | another toolchain recompiles everything |
+| `RUSTC_WRAPPER=…`, `--config build.rustc-wrapper…` | they go around the build gate and the shared compiler cache |
+
+It only sees the commands of the agents, never what you type in a terminal,
+and takes about 0.05 s per command. It runs in Git Bash, which comes with
+Git for Windows. A missing tool turns its rule off: nothing is refused for
+`grep` on a PC without `rg`. A hook that cannot run (an older bash, a
+missing file) lets every command through. The other agents (Codex…) only
+have the rule written in AGENTS.md. `./scripts/test-agent-hook.ps1` (a step of
+`check.ps1`) tests it on a table of commands.
+
 ## The up-to-date viewer of `main`, in `--release`
 
 The **Release viewer** choice of the tools, or a double-click on
@@ -416,18 +443,27 @@ cargo run -p aurora-viewer
   in `.sccache\` in the project folder (10 GB at most; set
   `AURORA_BUILD_CACHE_SIZE`, for example `20G`, then run `check.ps1` or
   `new-task.ps1` again). Cargo finds it through `.cargo\config.toml` in the
-  project folder, which the scripts write while sccache is installed and
-  delete once it is uninstalled. To stop using it, uninstall sccache
-  (`winget uninstall Mozilla.sccache`), then run `check.ps1` once (until then
-  Cargo stops with "could not execute process"). The first build of a new
+  project folder, which the scripts write (with the build gate, below). To
+  stop using it, uninstall sccache (`winget uninstall Mozilla.sccache`),
+  then run `check.ps1` once (the builds go on without the cache in the
+  meantime). The first build of a new
   task takes about a third less processor time (seven crates in ten come from
   the cache; the others depend on a build script that writes into the
   task's own folder), and a task rebuilt after its `target\` was freed about
   half.
-- **One heavy build at a time.** `check.ps1` waits before clippy and the
-  tests while two other heavy builds already run on the PC ("Waiting for a
-  build slot…"): eight agents compiling at once each take every core and
-  all finish later. `AURORA_BUILD_SLOTS` changes the number (2 by default).
+- **Two heavy builds at a time.** One compile of the viewer crate takes 8 to
+  17 GB of memory: eight agents compiling at once ask for several times the
+  PC's memory, and all of them crawl in the page file. Two limits, each of
+  `AURORA_BUILD_SLOTS` slots (2 by default; set it to 1 if the PC still
+  swaps, before opening the agents' sessions, which read it at their start):
+  - the **build gate**: Cargo runs every compiler through
+    `aurora-build-gate` (`.cargo\` in the project folder, built by the
+    scripts), and a compile of the viewer crate waits there for a free slot,
+    whatever the command: `cargo test` or `cargo run` typed by an agent as
+    much as `check.ps1`. It waits without a message; the waiting builds are
+    the `aurora-build-gate-*` processes that have no `rustc` under them;
+  - `check.ps1` also waits before clippy and the tests while two others
+    already run ("Waiting for a build slot…").
 
 ### Disk space
 
