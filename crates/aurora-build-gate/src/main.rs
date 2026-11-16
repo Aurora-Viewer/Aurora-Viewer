@@ -14,7 +14,8 @@
 //! A slot is a locked file of the `build-slots` folder next to this program:
 //! the system frees it when this process ends, however it ends. The gate
 //! never fails a build of its own: when the slots cannot be used, the
-//! compiler runs without waiting, and when sccache is gone, without it.
+//! compiler runs without waiting, and when sccache cannot be started,
+//! without it.
 //!
 //! It prints nothing while it waits: Cargo keeps what a compiler writes and
 //! shows it again at every later build of the crate.
@@ -86,17 +87,24 @@ fn commands(rustc: &OsStr, arguments: &[OsString], next: Option<&OsStr>) -> Vec<
     list
 }
 
-/// Runs the first command whose program exists and waits for it. A next
-/// wrapper that is gone (sccache uninstalled or updated since the scripts
-/// last ran) does not stop the build: the compiler runs without it.
+/// Runs the first command that starts and waits for it. A next wrapper that
+/// cannot be started does not stop the build: the compiler runs without it,
+/// and that one compile is not cached. Two cases:
+///
+/// - sccache is gone (uninstalled or updated since the scripts last ran);
+/// - on Windows, the command line is just under the 32,767 characters the
+///   system takes. Cargo's own fits, so Cargo does not hand it over as an
+///   argument file; with the next wrapper's path in front, which is longer
+///   than this program's, it no longer fits (os error 206). Cargo 1.100
+///   names one `-L` folder per dependency, and whole crates now land there.
+///   The compiler alone always fits: its command is Cargo's, less this
+///   program's path.
 fn run(mut commands: Vec<Command>) -> io::Result<ExitStatus> {
-    let last = commands.len().saturating_sub(1);
     let mut result = Err(io::ErrorKind::NotFound.into());
-    for (index, command) in commands.iter_mut().enumerate() {
-        result = command.status();
-        let gone = matches!(&result, Err(error) if error.kind() == io::ErrorKind::NotFound);
-        if !gone || index == last {
-            break;
+    for command in &mut commands {
+        match command.spawn() {
+            Ok(mut child) => return child.wait(),
+            Err(error) => result = Err(error),
         }
     }
     result
@@ -305,6 +313,26 @@ mod tests {
         assert!(run(vec![Command::new(&gone), compiler]).unwrap().success());
         // the compiler itself missing is an error
         assert_eq!(run(vec![Command::new(&gone)]).unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_next_wrapper_the_system_refuses_does_not_stop_the_build() {
+        // a command line past what every system takes (32,767 characters on
+        // Windows, 128 KB for one argument on Linux, 1 MB in all on macOS):
+        // the program exists, and still cannot be started
+        let too_long = || {
+            let mut wrapper = Command::new(env::current_exe().unwrap());
+            wrapper.arg("x".repeat(4 << 20)).stdout(Stdio::null());
+            wrapper
+        };
+        let refused = too_long().status().unwrap_err();
+        assert_ne!(refused.kind(), io::ErrorKind::NotFound);
+        // stands for the compiler, whose own command line fits
+        let mut compiler = Command::new(env::current_exe().unwrap());
+        compiler.arg("--list").stdout(Stdio::null());
+        assert!(run(vec![too_long(), compiler]).unwrap().success());
+        // nothing after it to run: the system's refusal is the error
+        assert_eq!(run(vec![too_long()]).unwrap_err().kind(), refused.kind());
     }
 
     #[test]
