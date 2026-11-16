@@ -686,6 +686,9 @@ pub struct Settings {
     pub draw_distance_stepping: bool,
     /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
     pub draw_distance_stepping_interval: u32,
+    /// Hide the skyboxes far above or below the camera, and the avatars in
+    /// them (`world::sky_visibility`; an Aurora addition, on).
+    pub hide_skyboxes: bool,
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
@@ -2287,6 +2290,7 @@ impl Default for Settings {
             draw_distance: 96.0,
             draw_distance_stepping: false,
             draw_distance_stepping_interval: 20,
+            hide_skyboxes: true,
             draw_stepping: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),

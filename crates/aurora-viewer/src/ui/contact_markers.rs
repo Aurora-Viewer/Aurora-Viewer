@@ -86,7 +86,7 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
         }
         let Some(marker) = marked(world, &o.full_id) else { continue };
         seen.insert(o.full_id);
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        if !world.object_shown(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
             continue;
         }
         let Some((position, _, _)) = Scene::object_transform(world, idx, now, 0) else {

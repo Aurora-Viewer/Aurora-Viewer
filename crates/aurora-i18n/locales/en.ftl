@@ -15091,6 +15091,8 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
+ui-options-hide-skyboxes = Hide skyboxes at other heights
+ui-options-hide-skyboxes-hint = Builds floating high above the ground, and the people in them, are hidden while your camera is far above or below them. Bring the camera to their height, or open the build tools, to see them.
 
 ui-options-camera-vr-view-first-person = First Person
 

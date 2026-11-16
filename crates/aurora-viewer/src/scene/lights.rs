@@ -235,7 +235,7 @@ impl Scene {
             objects.extend(self.light_objects.iter().copied());
         }
         for idx in objects.drain(..) {
-            if !world.parcel_object_visible(idx) {
+            if !world.object_shown(idx) {
                 continue;
             }
             let Some(o) = world.objects.get(idx) else {

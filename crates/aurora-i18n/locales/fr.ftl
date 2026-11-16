@@ -15100,6 +15100,8 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+ui-options-hide-skyboxes = Masquer les skyboxes à d'autres hauteurs
+ui-options-hide-skyboxes-hint = Les constructions qui flottent haut au-dessus du sol, et les personnes qui s'y trouvent, sont masquées tant que votre caméra est loin au-dessus ou au-dessous d'elles. Amenez la caméra à leur hauteur, ou ouvrez les outils de construction, pour les voir.
 
 
 vr-preferences-title = VR

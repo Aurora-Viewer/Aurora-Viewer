@@ -411,7 +411,7 @@ impl ParticleManager {
             let blocked = (!s.cloud && filters.hides(s.object, s.owner))
                 || previewed == Some(*id)
                 || world.particles_blocked(&s.owner)
-                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx))
+                || idx.is_some_and(|idx| !world.object_shown(idx) || !crate::snapshot::isolate::object_visible(world, idx))
                 // RenderAttachedParticles off: what avatars wear emits
                 // nothing (LLViewerPartSim::updateSimulation, isAttachment)
                 || (!attached && idx.and_then(|i| world.objects.get(i)).is_some_and(|o| o.is_attachment()));

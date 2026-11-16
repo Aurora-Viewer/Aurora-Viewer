@@ -79,7 +79,7 @@ impl Scene {
                     continue;
                 };
                 let (scale, light) = l;
-                if world.parcel_object_visible(idx)
+                if world.object_shown(idx)
                     && let Some((pos, rot, false)) = Scene::object_transform(world, idx, now, 0)
                 {
                     let radius = scale.length() * 0.5;
@@ -100,7 +100,7 @@ impl Scene {
                         let kinds: Vec<_> = s.kinds(o, s.particles && self.particles.beacon_source(&o.full_id)).collect();
                         if !kinds.is_empty()
                             && let Some(idx) = world.objects.index_of(&o.key)
-                            && world.parcel_object_visible(idx)
+                            && world.object_shown(idx)
                             && let Some((pos, _, false)) = Scene::object_transform(world, idx, now, 0)
                         {
                             let radius = o.scale.length() * 0.5;
@@ -121,7 +121,7 @@ impl Scene {
             }
             if s.sound {
                 for (idx, pos) in self.sounds.beacon_sources(world, now) {
-                    if idx.is_some_and(|idx| !world.parcel_object_visible(idx)) {
+                    if idx.is_some_and(|idx| !world.object_shown(idx)) {
                         continue;
                     }
                     if s.highlights

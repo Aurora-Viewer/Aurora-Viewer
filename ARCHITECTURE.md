@@ -977,6 +977,19 @@ Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
+`world/sky_visibility.rs` hides the skyboxes seen from other heights (Preferences
+› Graphics, on by default, an Aurora addition). Each frame, before the scene
+sync, it measures the linksets that arrived or changed (and a rolling slice of
+the others): a linkset floats when its lowest point is 100 m above the ground or
+water under its root; a moving or physical one never does. A floating linkset is
+hidden while the camera is more than 60 m above or below its vertical extent,
+and shows again within 50 m. Avatars are their own linksets, seated ones follow
+their seat, worn objects their wearer; ours, our seat and everything while the
+build tools are open stay shown. `World::object_shown` combines it with the
+parcel isolation, so what it hides takes the same release path; the roots whose
+state changed are synced again with their subtrees (`Scene::sync_sky_changes`).
+`demo_skyboxes.rs` is its offline scene.
+
 `world/sound_parcels.rs` applies the current parcel's bitmap/`SOUND_LOCAL` flag
 and the source region's `ParcelOverlay` sound flag to world audio, independently
 of camera position, visual parcel isolation and About Land's selection. Attached

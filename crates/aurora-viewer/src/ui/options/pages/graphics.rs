@@ -485,6 +485,12 @@ fn quality(cx: &mut Cx) {
             tr!("ui-options-draw-distance-stepping-hint"),
             &field!(draw_distance_stepping),
         );
+        // world::sky_visibility (an Aurora addition)
+        cx.keywords("skybox sky platform vertical altitude").toggle(
+            tr!("ui-options-hide-skyboxes"),
+            tr!("ui-options-hide-skyboxes-hint"),
+            &field!(hide_skyboxes),
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),

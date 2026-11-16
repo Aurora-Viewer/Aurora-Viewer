@@ -472,7 +472,7 @@ impl SyncCtx<'_> {
     /// moment (what a check of its detail level would want); None when it
     /// cannot be placed.
     pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
-        if !self.world.parcel_object_visible(idx) {
+        if !self.world.object_shown(idx) {
             return Some(None);
         }
         let (pos, _, hud) = self.transform(idx)?;
@@ -494,7 +494,7 @@ impl SyncCtx<'_> {
     pub(super) fn plan(&self, idx: usize) -> Plan {
         let world = self.world;
         let none = Plan::Full { xf: None, interim: None };
-        if !world.parcel_object_visible(idx) {
+        if !world.object_shown(idx) {
             return none;
         }
         let Some(o) = world.objects.get(idx) else {

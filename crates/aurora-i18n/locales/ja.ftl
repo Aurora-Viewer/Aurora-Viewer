@@ -14996,6 +14996,8 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+ui-options-hide-skyboxes = 別の高さのスカイボックスを隠す
+ui-options-hide-skyboxes-hint = 地面から高く浮かんでいる建物と、その中にいる人は、カメラがそこから大きく上または下にある間は表示されません。見るには、カメラをその高さまで動かすか、建築ツールを開いてください。
 
 
 vr-preferences-title = VR
