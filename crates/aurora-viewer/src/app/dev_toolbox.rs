@@ -9,6 +9,7 @@ use crate::dev_toolbox::anonymize::{self, Resident};
 use crate::dev_toolbox::tools::{self, Kind, Layout};
 use crate::dev_toolbox::{self, Target};
 use crate::ui::dev_toolbox::{Action, Health};
+use crate::world::inventory::asset_ids::AssetIds;
 use aurora_i18n::tr;
 use aurora_render::Renderer;
 use std::collections::HashMap;
@@ -425,9 +426,9 @@ impl App {
                     None
                 }
             }
-            "J3" => Some(warnings_text(50)),
+            "J3" => Some(warnings_text(50, &AssetIds::diagnostics(&self.world))),
             "J4" => Some(self.system_text(renderer)),
-            "J5" => Some(tool_output_text()),
+            "J5" => Some(tool_output_text(&AssetIds::diagnostics(&self.world))),
             "J8" => {
                 let edit = self.ik_editor.request();
                 Some(
@@ -446,7 +447,7 @@ impl App {
             "N2" => Some(self.region_text()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
-            "L3" => Some(warnings_text(20)),
+            "L3" => Some(warnings_text(20, &AssetIds::diagnostics(&self.world))),
             "N3" => Some(self.loads_text(renderer)),
             _ => None,
         };
@@ -858,8 +859,9 @@ fn short(id: &Uuid) -> String {
     format!("{}…{}", &s[..4], &s[s.len() - 4..])
 }
 
-/// J3 / L3: the last warnings and errors.
-fn warnings_text(n: usize) -> String {
+/// J3 / L3: the last warnings and errors, their ids through the rule of
+/// the Dev Toolbox's texts (`AssetIds::hide_in`).
+fn warnings_text(n: usize, ids: &AssetIds) -> String {
     let warnings = crate::logging::recent_warnings(n);
     if warnings.is_empty() {
         return tr!("dev-toolbox-no-warning").to_string();
@@ -867,20 +869,21 @@ fn warnings_text(n: usize) -> String {
     let mut out = String::new();
     for w in warnings {
         let level = if w.level == log::Level::Error { "ERROR" } else { "WARN" };
-        let _ = writeln!(out, "{} {level} {}", w.clock, w.text);
+        let _ = writeln!(out, "{} {level} {}", w.clock, ids.hide_in(&w.text));
     }
     out
 }
 
-/// J5: what the diagnostics turned on wrote in the last minute.
-fn tool_output_text() -> String {
+/// J5: what the diagnostics turned on wrote in the last minute, their ids
+/// as in `warnings_text`.
+fn tool_output_text(ids: &AssetIds) -> String {
     let lines = crate::logging::tool_lines(TOOL_OUTPUT_FOR);
     if lines.is_empty() {
         return tr!("dev-toolbox-no-tool-output").to_string();
     }
     let mut out = String::new();
     for (tool, line) in lines {
-        let _ = writeln!(out, "{} [{tool}] {}", line.clock, line.text);
+        let _ = writeln!(out, "{} [{tool}] {}", line.clock, ids.hide_in(&line.text));
     }
     out
 }

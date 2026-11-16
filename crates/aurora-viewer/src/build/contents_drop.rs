@@ -116,6 +116,17 @@ pub(crate) fn worn_refused(world: &World, idx: usize, item: &InvItem) -> bool {
     linkset(world, idx).is_some_and(|(_, worn)| worn) && (!worn_rights(item, world.agent_id) || attachment_locked(world, idx))
 }
 
+/// [`worn_refused`] for the Texture tab's paste: the inventory item a pasted
+/// id goes through (`texture_copy::Availability::item`), when it has one and
+/// the prim `idx` refuses it. Stricter than the Legacy Viewer, whose paste
+/// (FSPanelFace::onPasteTexture, then handleDropMaterialProtections) asks
+/// willObjectAcceptInventory of a no-copy item only: the paste applies the
+/// item as a drop does, so it asks what a drop asks.
+pub(crate) fn worn_paste_refused(world: &World, idx: usize, item: Option<Uuid>) -> Option<&InvItem> {
+    item.and_then(|id| world.inventory.items.get(&id))
+        .filter(|it| worn_refused(world, idx, it))
+}
+
 /// RLVa: whether the prim `idx` belongs to a worn object the user may not
 /// take off, which refuses every inventory drop (willObjectAcceptInventory,
 /// gRlvAttachmentLocks.isLockedAttachment on the root).
