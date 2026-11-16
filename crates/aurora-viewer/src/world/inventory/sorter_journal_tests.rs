@@ -132,6 +132,7 @@ fn an_undo_forgets_only_what_it_put_back() {
     let run = journal.begin(RunKind::Move, 20);
     journal.record_in(run, [entry(2), entry(3), entry(4)]);
     let other = journal.begin(RunKind::Trash, 20);
+    journal.record_in(other, [entry(9)]);
     // a partial undo of `run`: two of three put back
     let undo = journal.begin(RunKind::Move, 30);
     journal.record_in(undo, [entry(2), entry(3)]);
@@ -393,4 +394,22 @@ fn undo_survives_everything_that_changed_since() {
     send(&mut inv, moves);
     assert_eq!(inv.items[&id(102)].parent, id(10));
     assert_eq!(inv.items[&id(101)].parent, id(11), "a Move run's undo leaves the Trash alone");
+}
+
+/// A run that moved nothing never pushes a real one out of the last five,
+/// and an id is never given twice, even after runs are forgotten.
+#[test]
+fn empty_runs_never_push_real_ones_out_and_ids_never_repeat() {
+    let mut journal = Journal::default();
+    let real = journal.begin(RunKind::Move, 1);
+    journal.record_in(real, [entry(1)]);
+    for at in 2..20 {
+        journal.begin(RunKind::Move, at);
+    }
+    assert!(journal.runs.iter().any(|r| r.id == real), "the real run is still there");
+    let undo = journal.begin(RunKind::Move, 30);
+    journal.record_in(undo, [entry(1)]);
+    journal.forget_undone(undo, real);
+    let next = journal.begin(RunKind::Move, 40);
+    assert!(next > undo && next > real, "ids never repeat");
 }

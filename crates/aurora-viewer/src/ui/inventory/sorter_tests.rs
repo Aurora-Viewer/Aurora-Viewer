@@ -387,6 +387,7 @@ fn a_trash_batch_counts_what_reached_the_trash() {
     if let Some(it) = inv.items.get_mut(&Uuid::from_u128(9001)) {
         it.parent = Uuid::from_u128(14);
     }
+    inv.generation += 1;
     send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
     let trash = st.sorter.trash.as_ref().expect("the job goes on");
     assert_eq!((trash.sent, trash.failed), (2, 0));
@@ -399,8 +400,7 @@ fn a_trash_batch_counts_what_reached_the_trash() {
     let mut st2 = InventoryUi::default();
     let mut left = TrashJob::new(Vec::new());
     left.begun = true;
-    left.unsure = vec![(Uuid::from_u128(9002), Uuid::from_u128(2))];
-    left.unsure_until = Some(Instant::now());
+    left.unsure = vec![(Uuid::from_u128(9002), Uuid::from_u128(2), Instant::now())];
     st2.sorter.trash = Some(left);
     send_trash_batch(&inv, &mut st2, &prefs, &HashSet::new(), &mut actions, false);
     assert!(st2.sorter.trash.as_ref().is_some_and(|t| t.failed == 1 && t.unsure.is_empty()));
@@ -478,4 +478,24 @@ fn one_run_at_a_time_per_account() {
     journal.claim(a);
     assert!(busy_elsewhere(&mut state));
     assert!(!state.status.is_empty(), "the window says why");
+}
+
+/// A Trash batch the window did not see taken (its pending delete cleared
+/// by a closed window) is never sent again: its entries are waited for in
+/// the Trash, and nothing is sent until they are counted.
+#[test]
+fn a_trash_batch_is_never_sent_twice() {
+    let inv = Inventory::default();
+    let mut st = InventoryUi::default();
+    let mut trash = TrashJob::new(vec![(Uuid::from_u128(9010), Uuid::from_u128(2))]);
+    trash.begun = true;
+    trash.in_flight = Some((vec![(Uuid::from_u128(9000), Uuid::from_u128(2))], 3, false));
+    st.sorter.trash = Some(trash);
+    let prefs = InventoryPreferences::default();
+    let mut actions = Vec::new();
+    send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, true);
+    let trash = st.sorter.trash.as_ref().expect("the job goes on");
+    assert_eq!(trash.unsure.len(), 1, "waited for, not put back");
+    assert_eq!(trash.queue.len(), 1, "the next batch waits");
+    assert!(actions.is_empty(), "nothing sent again");
 }

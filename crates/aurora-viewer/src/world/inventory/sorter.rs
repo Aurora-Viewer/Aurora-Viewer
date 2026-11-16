@@ -274,6 +274,32 @@ pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
     child(inv, inv.root, &pre_trash_name()).or_else(|| pre_trash_names().iter().find_map(|name| child(inv, inv.root, name)))
 }
 
+/// Every Pre-Trash folder: the one in use, and those made in another
+/// language at the root (never read as a source, never taken whole).
+/// Worked out once per plan, never per entry.
+pub fn pre_trash_folders(inv: &Inventory) -> HashSet<Uuid> {
+    let in_use = pre_trash_name();
+    let mut found: HashSet<Uuid> = inv
+        .folders
+        .get(&inv.root)
+        .map(|root| {
+            root.children
+                .iter()
+                .copied()
+                .filter(|id| {
+                    inv.folders.get(id).is_some_and(|f| {
+                        let name = f.info.name.trim();
+                        f.info.type_default == -1
+                            && (name.eq_ignore_ascii_case(&in_use) || pre_trash_names().iter().any(|n| name.eq_ignore_ascii_case(n)))
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.extend(pre_trash(inv));
+    found
+}
+
 /// The sort folder, when it exists: by its name; for the default name, in
 /// the language in use, else in another one the viewer speaks (a folder
 /// named by the user is only ever that name).
@@ -968,6 +994,7 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
         sources.extend(root.children.iter().copied().filter(|id| {
             Some(*id) != places.base
                 && Some(*id) != places.waiting
+                && !places.pre_trash.contains(id)
                 && folder_open(inv, *id)
                 && !prefs.excludes(inv, *id)
                 && inv
@@ -985,6 +1012,8 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
 struct Places {
     base: Option<Uuid>,
     waiting: Option<Uuid>,
+    /// Every Pre-Trash folder, other languages' included.
+    pre_trash: HashSet<Uuid>,
     reserved: HashSet<String>,
 }
 
@@ -993,6 +1022,7 @@ impl Places {
         Self {
             base: base_folder(inv, prefs),
             waiting: pre_trash(inv),
+            pre_trash: pre_trash_folders(inv),
             reserved: sorter_folder_names(prefs),
         }
     }
@@ -1257,16 +1287,24 @@ pub fn restorable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_wo
         && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
         && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
         && !protected.iter().any(|p| actions::under(inv, *p, id))
+        // an outfit or another typed folder inside never travels with it
+        && !holds_closed(inv, id, &[])
 }
 
 /// The preview of saved moves (Undo, a snapshot's layout, a run to resume):
 /// each re-checked against the inventory now, what can no longer go is
 /// listed as kept.
-pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut plan = Plan::default();
     for m in moves {
         let here = actions::parent(inv, m.id) == Some(m.from);
+        // a folder excluded since (or an entry in one) stays, like any sort's
+        if here && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Excluded));
+            continue;
+        }
         let ok =
             here && if m.restore {
                 restorable(inv, m.id, protected, &holds_worn)
@@ -1413,7 +1451,7 @@ fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &Ha
         // a locked folder keeps all it holds, and a folder holding a locked
         // one never moves whole with it
         && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
-        && !protected.iter().any(|p| actions::under(inv, *p, id))
+        && (!inv.folders.contains_key(&id) || !protected.iter().any(|p| actions::under(inv, *p, id)))
         // an outfit, a stock folder or any other typed folder inside never
         // travels with it
         && !holds_closed(inv, id, &[])
@@ -1511,11 +1549,13 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
     let reserved = sorter_folder_names(prefs);
     let holds_worn = actions::worn_ancestors(inv, worn);
     let pre_trash_at = pre_trash(inv);
+    let waiting_all = pre_trash_folders(inv);
     let closed = |id: Uuid| {
         inv.folders
             .get(&id)
             .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
             || Some(id) == pre_trash_at
+            || waiting_all.contains(&id)
             || protected.contains(&id)
             || prefs.excludes(inv, id)
             || !folder_open(inv, id)
@@ -1545,7 +1585,8 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
                 continue;
             }
             let name = f.info.name.trim();
-            let system = f.info.type_default != -1;
+            // the sort folder itself is never one entry to take whole
+            let system = f.info.type_default != -1 || Some(*sub) == base;
             let made = reserved.contains(&name.to_lowercase())
                 || prefs.stores && in_sorted(*sub) && store(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
             if !system && !made && movable(inv, *sub, protected, &holds_worn) {
@@ -1816,11 +1857,13 @@ pub fn plan_cleanup(
     let reserved = sorter_folder_names(prefs);
     let holds_worn = actions::worn_ancestors(inv, worn);
     let pre_trash_at = pre_trash(inv);
+    let waiting_all = pre_trash_folders(inv);
     let closed = |id: Uuid| {
         inv.folders
             .get(&id)
             .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
             || Some(id) == pre_trash_at
+            || waiting_all.contains(&id)
             || protected.contains(&id)
             || prefs.excludes(inv, id)
             || !folder_open(inv, id)
@@ -1859,7 +1902,8 @@ pub fn plan_cleanup(
                 continue;
             }
             let name = f.info.name.trim();
-            let system = f.info.type_default != -1;
+            // the sort folder itself is never one entry to take whole
+            let system = f.info.type_default != -1 || Some(*sub) == base;
             let made = reserved.contains(&name.to_lowercase());
             // an empty folder (nothing at any depth), the user's or one
             // Auto-sort made, never the sort folder itself
@@ -2029,6 +2073,7 @@ fn plan_with(
     // in the sort folder's tree, the "Everywhere except Sorted" rules are
     // left out
     let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !(r.pre_trash && r.skip_sorted)).cloned().collect();
+    let waiting_all = pre_trash_folders(inv);
     // only read who made an entry when a creator hint can use it
     let by_creator = prefs.store_hints.iter().any(|h| h.creator.is_some());
     let mut candidates = Vec::new();
@@ -2041,6 +2086,12 @@ fn plan_with(
         let Some(from) = actions::parent(inv, id) else { continue };
         if filtered && !kind_wanted(prefs, asset_type) {
             // a kind left out of the sort stays where it is, unlisted
+            continue;
+        }
+        if Some(id) == base || waiting_all.contains(&id) {
+            // the sort folder or Pre-Trash, chosen by hand: they stay
+            plan.kept += 1;
+            plan.kept_list.push((name, Kept::Protected));
             continue;
         }
         if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) && !holds_closed(inv, id, &prefs.excluded) {

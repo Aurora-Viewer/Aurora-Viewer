@@ -55,12 +55,20 @@ pub struct Run {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Journal {
     pub runs: VecDeque<Run>,
+    /// The last id given: ids are never given twice, even after a run is
+    /// forgotten (a stale Undo then never touches a newer run).
+    #[serde(default)]
+    pub last_id: u64,
 }
 
 impl Journal {
     /// A new run, the oldest dropped past [`RUNS`]; its id.
     pub fn begin(&mut self, kind: RunKind, at: i64) -> u64 {
-        let id = self.runs.iter().map(|run| run.id).max().unwrap_or(0) + 1;
+        let id = self.runs.iter().map(|run| run.id).max().unwrap_or(0).max(self.last_id) + 1;
+        self.last_id = id;
+        // a run that moved nothing (stopped at once, everything skipped or
+        // refused) never pushes a real one out of the last five
+        self.runs.retain(|run| !run.entries.is_empty());
         self.runs.push_back(Run {
             id,
             at,
@@ -75,11 +83,12 @@ impl Journal {
 
     /// Runs read from an older file have no id: numbered in order.
     pub fn number_runs(&mut self) {
-        let mut next = self.runs.iter().map(|run| run.id).max().unwrap_or(0);
+        let mut next = self.runs.iter().map(|run| run.id).max().unwrap_or(0).max(self.last_id);
         for run in self.runs.iter_mut().filter(|run| run.id == 0) {
             next += 1;
             run.id = next;
         }
+        self.last_id = next;
     }
 
     /// Confirmed moves of the run `id` (nothing when it was dropped).

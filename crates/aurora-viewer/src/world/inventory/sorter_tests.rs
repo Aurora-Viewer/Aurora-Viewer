@@ -2073,3 +2073,76 @@ fn the_sort_and_pre_trash_folders_are_found_in_another_language() {
     };
     assert_eq!(base_folder(&inv, &named), None);
 }
+
+/// After a change of language, Clean up and the Pre-Trash scan never take
+/// the old-language sort folder (or an old Pre-Trash) whole, however old
+/// all it holds is.
+#[test]
+fn clean_up_never_takes_the_sort_folder_whole_after_a_change_of_language() {
+    let mut inv = fixture(&[]);
+    let sorted_fr = inventory_name(aurora_i18n::text_in("fr", "inventory-sorter-default-base"), "Sorted");
+    let pre_trash_fr = inventory_name(aurora_i18n::text_in("fr", "inventory-sorter-pre-trash"), "Pre-Trash");
+    add_folder(&mut inv, 50, 1, &sorted_fr);
+    add_folder(&mut inv, 51, 50, "Furniture");
+    add_item(&mut inv, 52, 51, "Old chair", OLD);
+    add_item(&mut inv, 53, 50, "Old lamp", OLD);
+    add_folder(&mut inv, 60, 1, &pre_trash_fr);
+    add_item(&mut inv, 61, 60, "Old freebie", OLD);
+    let prefs = Preferences {
+        cleanup: Cleanup {
+            include_sorted: true,
+            ..before_2020()
+        },
+        ..Default::default()
+    };
+    let plan = plan_cleanup(&inv, &prefs, &prefs.cleanup, id(1), today(), &HashSet::new(), &HashSet::new());
+    assert!(plan.rows.iter().all(|r| r.id != id(50) && r.id != id(60)), "never whole");
+    assert!(plan.rows.iter().all(|r| r.id != id(61)), "Pre-Trash is never read");
+    let rule = Preferences {
+        rules: vec![Rule {
+            words: sorted_fr.to_lowercase(),
+            mode: Match::Any,
+            pre_trash: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let scan = pre_trash_scan(&inv, &rule, id(1), &HashSet::new(), &HashSet::new());
+    assert!(!scan.found.contains(&id(50)));
+}
+
+/// A resumed run or a layout restore leaves what was excluded since.
+#[test]
+fn a_resumed_run_honours_folders_excluded_since() {
+    let mut inv = fixture(&["Velvet Sofa"]);
+    add_folder(&mut inv, 70, OBJECTS, "Keep this - FATPACK");
+    let moves = vec![
+        Move {
+            id: id(100),
+            folder: false,
+            name: "Velvet Sofa".into(),
+            from: id(OBJECTS),
+            to: Dest::Path(vec!["Furniture".into()]),
+            label: String::new(),
+            unpacker: false,
+            restore: false,
+        },
+        Move {
+            id: id(70),
+            folder: true,
+            name: "Keep this - FATPACK".into(),
+            from: id(OBJECTS),
+            to: Dest::Path(vec!["Outfits".into()]),
+            label: String::new(),
+            unpacker: false,
+            restore: false,
+        },
+    ];
+    let prefs = Preferences {
+        excluded: vec![id(70)],
+        ..Default::default()
+    };
+    let plan = plan_saved(&inv, &moves, &prefs, &HashSet::new(), &HashSet::new());
+    assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id(100)]);
+    assert!(plan.kept_list.iter().any(|(_, why)| *why == Kept::Excluded));
+}

@@ -150,6 +150,9 @@ pub(super) struct State {
     undoing: Option<u64>,
     /// This window, for the account's one run at a time.
     window: Uuid,
+    /// A sort job ended this frame: its save removes the run to resume.
+    /// No other save (a Trash run's, another window's) touches that file.
+    job_just_ended: bool,
     /// The rules and hints the Share window's boxes were ticked for: when
     /// they change while it is open, its boxes are unticked again.
     shared_for: Option<(Vec<Rule>, Vec<sorter::StoreHint>)>,
@@ -260,6 +263,7 @@ impl SharedJournal {
         }
     }
 
+    #[cfg(test)]
     fn holds(&self, window: Uuid) -> bool {
         self.runner().is_some_and(|(other, _)| other == window)
     }
@@ -372,8 +376,10 @@ struct TrashJob {
     /// Entries of a finished delete request not seen in the Trash yet, and
     /// until when they are waited for (the inventory may show the move a
     /// little after the request is over).
-    unsure: Vec<(Uuid, Uuid)>,
-    unsure_until: Option<Instant>,
+    unsure: Vec<(Uuid, Uuid, Instant)>,
+    /// The inventory generation `unsure` was last read at: read again only
+    /// when it changed or an entry's wait is over.
+    unsure_seen: Option<u64>,
     /// Its run in the journal.
     run: Option<u64>,
 }
@@ -390,7 +396,7 @@ impl TrashJob {
             next_at: None,
             begun: false,
             unsure: Vec::new(),
-            unsure_until: None,
+            unsure_seen: None,
             run: None,
         }
     }
@@ -643,7 +649,7 @@ impl State {
         let journal = self.journal.with(|j| j.clone());
         // only the window whose run is going (or just ended) writes or
         // removes the run to resume: another one's save leaves it alone
-        let owns_run = self.job.is_some() || self.journal.holds(self.window);
+        let owns_run = self.job.is_some() || std::mem::take(&mut self.job_just_ended);
         let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
             base: job.base.clone(),
             moves: job
@@ -716,6 +722,8 @@ impl State {
         if self.unsaved > 0 || self.job.is_some() {
             self.save_progress();
         }
+        // the window and its state go: its run no longer holds the account
+        self.journal.release(self.window);
     }
 
     pub(super) fn active(&self) -> bool {
@@ -752,7 +760,8 @@ impl InventoryUi {
     pub(crate) fn add_creator_hint(&mut self, prefs: &mut sorter::Preferences, hint: sorter::StoreHint) {
         match prefs.store_hints.iter_mut().find(|h| h.creator == hint.creator) {
             Some(mine) => {
-                if !hint.creator_name.is_empty() {
+                // a name still loading ("…") never replaces a known one
+                if !hint.creator_name.is_empty() && hint.creator_name != "…" {
                     mine.creator_name = hint.creator_name;
                 }
             }
@@ -995,8 +1004,11 @@ pub(super) fn show(
         });
         if dropped && let Some(batch) = job.in_flight.take() {
             if job.stopping {
-                // stopped: what was never taken is not sent later
+                // stopped: what was never taken is not sent later, and is
+                // skipped, not unsure any more
                 job.skipped += batch.moves.len();
+                job.unsure
+                    .retain(|(m, failed, _)| *failed || !batch.moves.iter().any(|b| b.id == m.id));
             } else {
                 job.requeue(batch.moves);
             }
@@ -1012,6 +1024,11 @@ pub(super) fn show(
             }
             state.submitted = false;
         }
+    }
+    // a refused batch the server applied after all: done, not resent (before
+    // the journal takes this frame's confirmed moves, so none is left out)
+    if let Some(job) = state.job.as_mut() {
+        job.settle(inv);
     }
     // The journal takes what the server confirmed; saved every few batches
     // with the moves still to send, so a run the viewer stops can resume.
@@ -1037,10 +1054,6 @@ pub(super) fn show(
     }
     if state.unsaved >= SAVE_EVERY {
         state.save_progress();
-    }
-    // a refused batch the server applied after all: done, not resent
-    if let Some(job) = state.job.as_mut() {
-        job.settle(inv);
     }
     // paused or held, a destination's wait starts again afterwards: the
     // pause is not counted against it
@@ -1104,7 +1117,11 @@ pub(super) fn show(
                 };
                 let restoring = job.restoring;
                 let run = job.run;
+                let last = std::mem::take(&mut job.confirmed);
+                state.journal.record_in(run, last);
                 state.job = None;
+                state.job_just_ended = true;
+                state.journal.release(state.window);
                 state.preview = None;
                 state.cleanup = None;
                 if restoring == Some(Restoring::Undo)
@@ -1197,7 +1214,7 @@ pub(super) fn show(
                 Source::Folder(id) => sorter::plan(inv, *id, &options, &protected, &worn),
                 Source::Entries(ids) => sorter::plan_entries(inv, ids, &options, &protected, &worn),
                 Source::Whole => sorter::plan_whole(inv, &options, &protected, &worn),
-                Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &protected, &worn),
+                Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &options, &protected, &worn),
             }
         };
         if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
@@ -1431,6 +1448,10 @@ pub(super) fn show(
     if !open {
         state.picker = None;
         state.confirm = None;
+        state.share = None;
+        state.shared_for = None;
+        state.import = None;
+        state.vocab_check = None;
     }
     picker(ctx, p, inv, st, prefs);
     share_window(ctx, p, st, &prefs.sorter);
@@ -1540,7 +1561,15 @@ fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &
     // the boxes stand by row: rules or hints added, removed or moved while
     // Share is open would shift a tick onto another rule, so a change
     // unticks everything (nothing private goes out by mistake)
-    let now = (prefs.rules.clone(), prefs.store_hints.clone());
+    let hints: Vec<sorter::StoreHint> = prefs
+        .store_hints
+        .iter()
+        .map(|h| sorter::StoreHint {
+            creator_name: String::new(),
+            ..h.clone()
+        })
+        .collect();
+    let now = (prefs.rules.clone(), hints);
     match &st.sorter.shared_for {
         Some(seen) if *seen == now => {}
         Some(_) => {
@@ -1656,6 +1685,7 @@ fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &
     }
     if !open {
         st.sorter.share = None;
+        st.sorter.shared_for = None;
     }
 }
 
@@ -1861,44 +1891,51 @@ fn send_trash_batch(
             // what the delete really did is read from the inventory: each
             // entry counts once it shows in the Trash (below), a little
             // after the request if need be
-            trash.unsure.append(batch);
-            trash.unsure_until = Some(now + TRASH_SHOW_LIMIT);
+            trash
+                .unsure
+                .extend(batch.drain(..).map(|(id, from)| (id, from, now + TRASH_SHOW_LIMIT)));
+            trash.unsure_seen = None;
             trash.in_flight = None;
             trash.next_at = Some(now + PACE);
         } else if !*taken && *frames > 2 {
-            // never taken (another change went first): what is in the Trash
-            // already went another way and counts; the rest goes back
-            let bin = rules::system(inv, 14);
-            let (went, back): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = batch.drain(..).partition(|(id, _)| in_bin(inv, bin, *id));
-            trash.unsure.extend(went);
-            for entry in back.into_iter().rev() {
-                trash.queue.push_front(entry);
-            }
+            // not seen taken: the inventory window may have cleared its
+            // pending delete before this frame (closed, another row clicked).
+            // A delete is never sent twice: its entries are waited for in the
+            // Trash like a finished one, and those that never show count as
+            // failed (Clean up can be run again)
+            trash
+                .unsure
+                .extend(batch.drain(..).map(|(id, from)| (id, from, now + TRASH_SHOW_LIMIT)));
+            trash.unsure_seen = None;
             trash.in_flight = None;
+            trash.next_at = Some(now + PACE);
         } else {
             return;
         }
     }
     // entries seen in the Trash: sent and journaled (for Undo); still
     // elsewhere once the wait is over: the delete left them, a failure
-    if !trash.unsure.is_empty() {
+    let due = trash.unsure.iter().any(|(_, _, until)| now >= *until);
+    if !trash.unsure.is_empty() && (due || trash.unsure_seen != Some(inv.generation)) {
+        trash.unsure_seen = Some(inv.generation);
         let bin = rules::system(inv, 14);
-        let (went, waiting): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = std::mem::take(&mut trash.unsure)
+        let (went, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut trash.unsure)
             .into_iter()
-            .partition(|(id, _)| in_bin(inv, bin, *id));
-        let over = trash.unsure_until.is_none_or(|until| now >= until);
-        if over && !waiting.is_empty() {
-            log::warn!("auto-sort: a Trash batch left {} entries where they were", waiting.len());
-            trash.failed += waiting.len();
-        } else {
-            trash.unsure = waiting;
+            .partition(|(id, _, _)| in_bin(inv, bin, *id));
+        // each entry is waited for on its own: one left by its delete
+        // counts as failed once its own wait is over
+        let (over, waiting): (Vec<_>, Vec<_>) = rest.into_iter().partition(|(_, _, until)| now >= *until);
+        if !over.is_empty() {
+            log::warn!("auto-sort: a Trash batch left {} entries where they were", over.len());
+            trash.failed += over.len();
         }
+        trash.unsure = waiting;
         if !went.is_empty() {
             trash.sent += went.len();
             let run = trash.run;
             st.sorter.journal.record_in(
                 run,
-                went.iter().map(|(id, from)| sorter::journal::Entry {
+                went.iter().map(|(id, from, _)| sorter::journal::Entry {
                     id: *id,
                     folder: inv.folders.contains_key(id),
                     from: *from,
@@ -1909,7 +1946,9 @@ fn send_trash_batch(
         }
     }
     let Some(trash) = st.sorter.trash.as_mut() else { return };
-    if !free || trash.next_at.is_some_and(|at| now < at) {
+    // one batch at a time: the next goes once the last one's entries are
+    // all seen in the Trash or counted
+    if !free || trash.next_at.is_some_and(|at| now < at) || !trash.unsure.is_empty() {
         return;
     }
     if trash.queue.is_empty() && trash.unsure.is_empty() {
@@ -1928,6 +1967,7 @@ fn send_trash_batch(
         st.sorter.trash = None;
         st.sorter.cleanup = None;
         st.sorter.skipped.clear();
+        st.sorter.journal.release(st.sorter.window);
         return;
     }
     let take = trash.queue.len().min(TRASH_BATCH);
@@ -1952,8 +1992,15 @@ fn send_trash_batch(
     match change {
         Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::new(inv, st, &batch, change)))),
         Err(reason) => {
+            // this batch cannot go: counted as failed, the run goes on to
+            // its summary
+            log::warn!("auto-sort: a Trash batch could not be sent: {reason}");
             st.sorter.status = reason;
-            st.sorter.trash = None;
+            if let Some(trash) = st.sorter.trash.as_mut() {
+                trash.failed += batch.len();
+                trash.in_flight = None;
+                trash.next_at = Some(now + PACE);
+            }
         }
     }
 }
