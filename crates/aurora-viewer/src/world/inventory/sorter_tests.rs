@@ -768,6 +768,22 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
         "deliveries never opened"
     );
     assert!(!moved.contains(&id(131)), "Builds is a shelf");
+    // a named delivery with subfolders no list knows stays whole
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 140, 1, "Animesh Corgi Pet");
+    add_folder(&mut inv, 141, 140, "Food");
+    add_folder(&mut inv, 142, 140, "Manual");
+    add_folder(&mut inv, 143, 1, "Desert Eagle Gun");
+    add_folder(&mut inv, 144, 143, "Holster");
+    add_folder(&mut inv, 145, 1, "Velmora");
+    add_folder(&mut inv, 146, 145, "Velmora - Hex Dress");
+    add_folder(&mut inv, 147, 145, "Velmora - Ivy Boots");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(![141, 142, 144].iter().any(|n| moved.contains(&id(*n))), "deliveries never opened");
+    // (a store's shelf named only for the store stays whole in place: its
+    // deliveries are never opened either)
+    assert!(!moved.contains(&id(145)), "a store's shelf never moves");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

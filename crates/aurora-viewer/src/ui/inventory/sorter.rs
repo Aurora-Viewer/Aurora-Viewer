@@ -103,6 +103,9 @@ pub(super) struct State {
     /// Clean up's list, kept until the inventory, its choices, the source or
     /// the day change.
     cleanup: Option<(u64, sorter::Cleanup, Uuid, i64, CleanupPlan)>,
+    /// The excluded folders Clean up's list was made with: an exclusion
+    /// since makes it again.
+    cleanup_excluded: Vec<Uuid>,
     /// Clean up's rows unchecked: they stay.
     skipped: HashSet<Uuid>,
     /// Clean up's entries on their way to the Trash, a batch at a time.
@@ -1090,6 +1093,9 @@ impl State {
             self.preview = None;
             self.status.clear();
             self.source_loaded = None;
+            // an Undo waiting for its folders is given up with its source
+            self.undo_waiting = None;
+            self.undo_folders.clear();
         }
         self.source = Some(source);
     }
@@ -1746,6 +1752,7 @@ pub(super) fn show(
     {
         state.to_request.extend(plan.unfetched.iter().copied());
         state.cleanup = Some((task.generation, choices, from, day, plan));
+        state.cleanup_excluded.clone_from(&prefs.sorter.excluded);
     }
     if state.tab == CLEANUP && !busy && state.cleaning.is_none() {
         let now = std::time::SystemTime::now()
@@ -1757,7 +1764,7 @@ pub(super) fn show(
             && state.cleaned_at.is_none_or(|at| instant.duration_since(at) >= REPLAN);
         let stale = state.cleanup.as_ref().is_none_or(|(generation, choices, from, at, _)| {
             *choices != prefs.sorter.cleanup || *from != cleanup_source || *at != day || *generation != inv.generation && settled
-        });
+        }) || state.cleanup_excluded != prefs.sorter.excluded;
         if stale {
             state.cleaned_at = Some(instant);
             let make = {
@@ -1771,6 +1778,7 @@ pub(super) fn show(
                 let plan = make(inv);
                 state.to_request.extend(plan.unfetched.iter().copied());
                 state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
+                state.cleanup_excluded.clone_from(&prefs.sorter.excluded);
             }
         }
     }

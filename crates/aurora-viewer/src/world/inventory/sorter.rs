@@ -1330,7 +1330,10 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // tag, a store and what it is (`Velmora - Hex Dress`), or what it
         // is with its versions inside (`Hex Dress` holding `Maitreya`,
         // `Reborn`, `Hex Dress Legacy`, `Squish`)
-        tagged || store_named && named || versions_only(inv, f, name, named || store_named)
+        tagged
+            || store_named && named
+            || versions_only(inv, f, name, named || store_named)
+            || delivery_by_default(inv, f, name, named, store_named)
     } else {
         // a folder of items alone is a product when its name says what or
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
@@ -1338,6 +1341,117 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // Shoes`, `Old Hair`, `Reborn Stuff`)
         tagged || store_named || named && names_a_product(name)
     }
+}
+
+/// Kinds sold as one product though written as many (`Winter Boots`): an
+/// occasion beside them still names a product.
+const SOLD_AS_MANY: [&str; 14] = [
+    "shoes",
+    "boots",
+    "heels",
+    "sandals",
+    "sneakers",
+    "stockings",
+    "socks",
+    "tights",
+    "pants",
+    "shorts",
+    "jeans",
+    "leggings",
+    "gloves",
+    "earrings",
+];
+
+/// Kinds with no plural (`Hair`, `Makeup`): never one thing named.
+const MASS_KINDS: [&str; 10] = [
+    "hair",
+    "makeup",
+    "jewelry",
+    "jewellery",
+    "lingerie",
+    "swimwear",
+    "sleepwear",
+    "decor",
+    "furniture",
+    "clutter",
+];
+
+/// Folders a user marks a shelf of their own with: a folder of folders so
+/// named is never kept whole as one product.
+const SHELF_MARKERS: [&str; 17] = [
+    "stuff",
+    "misc",
+    "my",
+    "various",
+    "random",
+    "unpacked",
+    "unboxed",
+    "temp",
+    "sorted",
+    "backup",
+    "inventory",
+    "saved",
+    "favorites",
+    "favourites",
+    "others",
+    "other",
+    "i",
+];
+
+/// A folder of folders named for one product is a delivery unless it shows
+/// a shelf's sign: a folder of unknown subfolders (`Animesh Corgi Pet`
+/// holding `Food`, `Toys`, `Manual`) stays whole, never scattered. The
+/// signs: every subfolder a plural kind (`Fantasy` holding `Heads`,
+/// `Skins`), a subfolder that is a delivery itself (a store's shelf), an
+/// occasion and a plural kind (`Party Dresses`), or a shelf word (`Stuff`).
+fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bool, store_named: bool) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let name_words = words(name);
+    let occasion = name_words.iter().any(|w| OCCASION_WORDS.contains(&w.as_str()));
+    // one thing named (`Kimono Set`, `Old Hat 2009`)
+    let singular_kind = named
+        && name_words
+            .iter()
+            .any(|w| is_kind(w) && !plural_kind(w) && !MASS_KINDS.contains(&w.as_str()))
+        && !name_words.iter().any(|w| plural_kind(w))
+        && !occasion;
+    if !(names_a_product(name) || store_named || singular_kind) {
+        return false;
+    }
+    if name_words.iter().any(|w| SHELF_MARKERS.contains(&w.as_str())) {
+        return false;
+    }
+    let own = product_words(name);
+    let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
+    let kind_only = |sub_words: &[String]| {
+        !sub_words.is_empty()
+            && (is_kind(&sub_words.join(" ")) || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w)))
+    };
+    let named_seen = subs.iter().any(|s| words(s.info.name.trim()).iter().any(|w| own.contains(w)));
+    let by_kind = subs.iter().all(|s| kind_only(&words(s.info.name.trim())))
+        && subs.iter().any(|s| words(s.info.name.trim()).iter().any(|w| plural_kind(w)))
+        && !(named && named_seen);
+    // a subfolder that is a delivery of its own: a store's shelf
+    let holds_deliveries = subs.iter().any(|s| {
+        let sub = s.info.name.trim();
+        if store(sub).is_some() {
+            return true;
+        }
+        let read = classify(sub, -1, 0);
+        read.body.is_none()
+            && read.category.is_some_and(|c| {
+                !matches!(
+                    c,
+                    Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
+                )
+            })
+            && names_a_product(sub)
+            && product_words(sub)
+                .iter()
+                .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
+    });
+    let occasion_shelf = occasion && name_words.iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str()));
+    !(by_kind || holds_deliveries || occasion_shelf)
 }
 
 /// Every subfolder of `f` is a version of the product named `name`: a body,
@@ -1357,22 +1471,6 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // an occasion beside a plural kind is a shelf (`Party Dresses`,
     // `Christmas Sweaters`), unless that kind is a pair or a set sold as one
     // product (`Winter Boots`, `Summer Shorts`)
-    const SOLD_AS_MANY: [&str; 14] = [
-        "shoes",
-        "boots",
-        "heels",
-        "sandals",
-        "sneakers",
-        "stockings",
-        "socks",
-        "tights",
-        "pants",
-        "shorts",
-        "jeans",
-        "leggings",
-        "gloves",
-        "earrings",
-    ];
     if occasion && words(name).iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str())) {
         return false;
     }
