@@ -147,10 +147,14 @@ impl Held {
     }
 }
 
-/// The most each setting goes to (the top of its range in Aurora; Firestorm
-/// allows a draw distance of 1,024 m and a LOD factor of 8 by hand, Aurora
-/// draws up to 512 m and 4). Every avatar is drawn in full (no impostor up
-/// to Aurora's 100, no complexity limit): a photo shows people as they are.
+/// The most each setting goes to. The draw distance stays at 512 m on
+/// purpose, below Aurora's 1,024 m (the Legacy Viewer's slider): every metre
+/// beyond grows the ground's buffers by area ([`GROUND_BYTES_PER_M2`]), and a
+/// boost must not run a photo out of video memory; a user already at 1,024 m
+/// keeps it, since a boost never lowers a setting. The LOD factor goes to 4
+/// (the Legacy Viewer allows 8 by hand). Every avatar is drawn in full (no
+/// impostor up to Aurora's 100, no complexity limit): a photo shows people as
+/// they are.
 fn photo_maxima() -> Values {
     Values {
         draw_distance: 512.0,
@@ -176,7 +180,7 @@ fn photo_maxima() -> Values {
 /// samples the GPU supports up to 8).
 pub const MSAA_8X: u8 = 4;
 
-/// The boosted values: each one at Aurora's most, never lower than the
+/// The boosted values: each one at the photo maxima, never lower than the
 /// user's (an unlimited complexity stays unlimited), the anti-aliasing at
 /// MSAA 8x. The particles, the screen-space reflections, the sharpening, the
 /// glow and Aurora's effects (bloom, contact shadows, indirect light) stay

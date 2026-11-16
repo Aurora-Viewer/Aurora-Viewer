@@ -286,21 +286,30 @@ pub(super) fn show(
     let hot = hovered.filter(|&index| current.get(index).is_some_and(|e| e.enabled));
     let mut primary_released = false;
     let mut secondary_released = false;
-    let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    // OverridePieColors and PieMenuOpacity (PieMenu::draw)
+    let override_opacity = crate::ui::surface_opacity::pie();
+    let alpha = override_opacity.map_or(p.panel_alpha, |o| (f32::from(p.panel_alpha) * o).round() as u8);
+    let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha);
+    // The pie takes the pointer on its square only, transparent corners
+    // included, like the PieMenu view's rect (indra/newview/piemenu.cpp).
+    // A press elsewhere goes to what lies under it, a floater or the world
+    // (a right-click there opens a fresh menu at the new target), and its
+    // release closes the pie: LLMenuHolderGL::handleMouseDown and
+    // handleRightMouseDown (indra/llui/llmenugl.cpp) hide the menus without
+    // handling the click.
+    let square = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
     egui::Area::new(egui::Id::unique("world_pie_menu"))
         .order(egui::Order::Foreground)
-        .fixed_pos(screen.min)
+        .fixed_pos(square.min)
         .movable(false)
         .show(ctx, |ui| {
-            // A modal input surface prevents clicks or drags reaching the world
-            // or another floater, including the menu's transparent corners.
-            let response = ui.allocate_rect(screen, Sense::click_and_drag());
+            let response = ui.allocate_rect(square, Sense::click_and_drag());
             ui.ctx().move_to_top(ui.layer_id());
             let painter = ui.painter();
             if p.panel_alpha < 255 {
                 // a square with fully rounded corners is the disc
-                let disc = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
-                painter.add(aurora_render::glass_panel(disc, radius, Color32::TRANSPARENT));
+                let blur = override_opacity.map_or(1.0, |o| o * o);
+                painter.add(aurora_render::glass_panel_faded(square, radius, Color32::TRANSPARENT, blur));
             }
             for index in 0..SLICES {
                 ring_segment(
@@ -490,6 +499,29 @@ mod tests {
             pie_path: Vec::new(),
             pie_input_frame: None,
         })
+    }
+
+    #[test]
+    fn the_pie_takes_the_pointer_on_its_square_only() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
+        let (center, radius) = geometry(screen, egui::pos2(400.0, 400.0));
+        let on_pie = |pos: Pos2| ctx.layer_id_at(pos).is_some_and(|layer| layer.order == egui::Order::Foreground);
+        // a slice, the center and a transparent corner of the square
+        assert!(on_pie(center + egui::vec2(radius * 0.6, 0.0)));
+        assert!(on_pie(center));
+        assert!(on_pie(center - egui::Vec2::splat(radius - 2.0)));
+        // beyond the square: a floater or the world under it gets the press
+        assert!(!on_pie(center + egui::vec2(radius + 20.0, 0.0)));
+        assert!(!on_pie(egui::pos2(1200.0, 850.0)));
+        // its release still closes the pie
+        click(&ctx, &mut menu, &facts, egui::pos2(1200.0, 850.0), egui::PointerButton::Primary);
+        assert!(menu.is_none());
+        assert!(super::super::take_requests(&ctx).is_empty());
     }
 
     #[test]

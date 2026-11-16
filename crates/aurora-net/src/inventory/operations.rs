@@ -974,6 +974,30 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
     Ok(bytes)
 }
 
+/// The first POST of a content save: a script names its compile target.
+fn content_body(item: Uuid, kind: i32, lua: bool) -> Llsd {
+    let mut body = llsd_map! { "item_id" => item };
+    if kind == 10 {
+        let target = if lua {
+            crate::scripts::CompileTarget::Luau
+        } else {
+            crate::scripts::CompileTarget::Mono
+        };
+        body.insert("target", Llsd::String(target.name().into()));
+    }
+    body
+}
+
+/// What `save_content` refuses in a material before anything is sent: more
+/// than 1 MiB, or an asset that does not parse. A new material's upload runs
+/// it before its inventory item is created, so a refusal leaves no empty item.
+pub fn material_content_check(data: &[u8]) -> Result<(), String> {
+    if data.len() > 1024 * 1024 {
+        return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
+    }
+    aurora_assets::parse_material_asset(data).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// LLPreviewNotecard::saveIfNeeded / LLPreviewLSL::saveIfNeeded:
 /// capability negotiation, binary POST to the returned uploader, then re-read.
 pub async fn save_content(
@@ -985,6 +1009,25 @@ pub async fn save_content(
     kind: i32,
     data: Vec<u8>,
 ) -> Result<InvItem, String> {
+    save_content_for(http, cap, fetch, owner, item, kind, false, data).await
+}
+
+/// [`save_content`], for a script written in Lua when `lua`: compiled for
+/// "luau", the only target of a Lua source (LLPreviewLSL::saveIfNeeded).
+#[allow(clippy::too_many_arguments)]
+pub async fn save_content_for(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch: &str,
+    owner: Uuid,
+    item: Uuid,
+    kind: i32,
+    lua: bool,
+    data: Vec<u8>,
+) -> Result<InvItem, String> {
+    if kind == 57 {
+        material_content_check(&data)?;
+    }
     if data.len() > 1024 * 1024 {
         return Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").into());
     }
@@ -994,14 +1037,7 @@ pub async fn save_content(
     if kind == 21 {
         aurora_assets::gesture::Gesture::decode(&data).map_err(|_| aurora_i18n::tr!("gesture-invalid").to_owned())?;
     }
-    if kind == 57 {
-        aurora_assets::parse_material_asset(&data).map_err(|e| e.to_string())?;
-    }
-    let mut body = llsd_map! { "item_id" => item };
-    if kind == 10 {
-        body.insert("target", Llsd::String("mono".into()));
-    }
-    let ack = upload_content(http, cap, &body, data).await?;
+    let ack = upload_content(http, cap, &content_body(item, kind, lua), data).await?;
     if kind == 10 && !crate::scripts::compile_ok(&ack) {
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
@@ -1090,6 +1126,20 @@ async fn upload_content(http: &reqwest::Client, cap: &str, body: &Llsd, data: Ve
 mod tests {
     use super::*;
     use crate::outfits::tests::server;
+
+    #[test]
+    fn a_material_is_checked_before_anything_is_sent() {
+        let valid = aurora_assets::PbrMaterial::default()
+            .encode_asset()
+            .expect("default material encodes");
+        assert_eq!(material_content_check(&valid), Ok(()));
+        assert_eq!(
+            material_content_check(&vec![b' '; 1024 * 1024 + 1]),
+            Err(aurora_i18n::tr!("inventory-operations-the-document-is-too-large").to_string())
+        );
+        assert!(material_content_check(b"not a material").is_err());
+        assert!(material_content_check(&[]).is_err());
+    }
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
     }
@@ -1504,6 +1554,14 @@ mod tests {
             refresh: vec![id(1), id(100)],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_lua_script_saved_from_the_inventory_compiles_for_luau() {
+        let item = Uuid::from_u128(5);
+        assert_eq!(content_body(item, 10, false)["target"].as_str(), "mono");
+        assert_eq!(content_body(item, 10, true)["target"].as_str(), "luau");
+        assert!(content_body(item, 7, true).as_map().expect("map").get("target").is_none());
     }
 
     #[test]

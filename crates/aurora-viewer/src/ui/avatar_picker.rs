@@ -15,10 +15,18 @@ const NEAR_ME_RANGE: f32 = 162.0;
 /// floater_avatar_picker.xml).
 const LIST_H: f32 = 250.0;
 
-// tab 0: search by name
+/// Search by name.
+const TAB_SEARCH: usize = 0;
 const TAB_FRIENDS: usize = 1;
 const TAB_NEAR: usize = 2;
 const TAB_UUID: usize = 3;
+
+/// The tab to show for the one asked: RLVa @shownames closes "Nearby",
+/// which lists who is around by name, and falls back to the search by name
+/// (LLFloaterAvatarPicker::onList, llfloateravatarpicker.cpp).
+fn open_tab(tab: usize, nearby_allowed: bool) -> usize {
+    if tab == TAB_NEAR && !nearby_allowed { TAB_SEARCH } else { tab }
+}
 
 #[derive(Default)]
 pub struct AvatarPicker {
@@ -43,7 +51,7 @@ impl AvatarPicker {
     /// Start on the search by name with `query` typed (a search begun
     /// elsewhere, such as the Conversations column).
     pub fn set_query(&mut self, query: &str) {
-        self.tab = 0;
+        self.tab = TAB_SEARCH;
         query.clone_into(&mut self.query);
     }
 
@@ -65,6 +73,8 @@ impl AvatarPicker {
         .fixed()
         .show(ctx, p, &mut open, |ui| {
             let before = self.tab;
+            let nearby_allowed = !world.rlva.has("shownames");
+            self.tab = open_tab(self.tab, nearby_allowed);
             widgets::tabs(
                 ui,
                 p,
@@ -72,7 +82,7 @@ impl AvatarPicker {
                 &[
                     (aurora_i18n::tr!("ui-avatar-picker-search"), true),
                     (aurora_i18n::tr!("common-friends"), true),
-                    (aurora_i18n::tr!("common-nearby"), true),
+                    (aurora_i18n::tr!("common-nearby"), nearby_allowed),
                     (aurora_i18n::tr!("ui-avatar-picker-by-uuid"), true),
                 ],
             );
@@ -118,7 +128,10 @@ impl AvatarPicker {
                             .color(p.muted),
                     );
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
+                        let r = {
+                            let width = ui.available_width();
+                            crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| edit.desired_width(width - 60.0))
+                        };
                         let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         // LLFloaterAvatarPicker::onBtnFind: at least 3 characters
                         ui.add_enabled_ui(self.query.trim().chars().count() >= 3, |ui| {
@@ -173,6 +186,7 @@ impl AvatarPicker {
                             let sel = self.selected.contains(id);
                             // the whole row is selected, like LLScrollListCtrl
                             let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
+                            widgets::reveal_search_selection(ui, &r, self.selected.last() == Some(id));
                             if sel {
                                 ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
                             } else if r.hovered() {
@@ -232,5 +246,21 @@ impl AvatarPicker {
             self.open = false;
         }
         chosen
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rlva_shownames_leaves_the_nearby_tab_for_the_search() {
+        for tab in [TAB_SEARCH, TAB_FRIENDS, TAB_NEAR, TAB_UUID] {
+            assert_eq!(open_tab(tab, true), tab);
+        }
+        assert_eq!(open_tab(TAB_NEAR, false), TAB_SEARCH);
+        for tab in [TAB_SEARCH, TAB_FRIENDS, TAB_UUID] {
+            assert_eq!(open_tab(tab, false), tab, "the other tabs stay open");
+        }
     }
 }

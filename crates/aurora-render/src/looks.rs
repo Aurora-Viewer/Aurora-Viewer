@@ -973,6 +973,17 @@ impl Looks {
         });
     }
 
+    /// The images let go now (refused by a full video memory).
+    pub(crate) fn release(&mut self) {
+        self.targets = None;
+    }
+
+    /// Whether `prepare` would make new images.
+    pub(crate) fn needs_targets(&self, format: wgpu::TextureFormat, size: (u32, u32)) -> bool {
+        let size = (size.0.max(1), size.1.max(1));
+        self.targets.as_ref().is_none_or(|t| t.size != size || t.format != format)
+    }
+
     /// A frame without a look: the images are let go after a while.
     pub(crate) fn idle(&mut self) {
         self.idle = self.idle.saturating_add(1);

@@ -386,6 +386,7 @@ fn observed_avatar_follows_this_frames_other_avatar_pose_while_only_the_local_ed
         owner_id: rider,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::Other(9),
+        region: None,
         position: Vec3::ZERO,
         message: format!(
             "{}{}",

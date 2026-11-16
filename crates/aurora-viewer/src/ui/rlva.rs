@@ -85,7 +85,7 @@ fn exception_source(world: &World, option: &str, want_groups: &mut Vec<Uuid>) ->
         return world.rlva_filter_text(&item.name).into_owned();
     }
     if !world.rlva_can_name(id) {
-        return crate::world::rlva::privacy::anonymous(id).display_name.clone();
+        return world.rlva_anonymous(id).display_name.clone();
     }
     if let Some(name) = world.social.avatar_names.complete(&id).or_else(|| world.avatar_name(&id)) {
         return name;
@@ -305,11 +305,9 @@ impl Tools {
                     }
                 });
             } else {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text(tr!("rlva-tools-filter"))
-                        .desired_width(f32::INFINITY),
-                );
+                crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                    edit.hint_text(tr!("rlva-tools-filter")).desired_width(f32::INFINITY)
+                });
                 let filter = self.filter.to_lowercase();
                 let mut rows = match self.tab {
                     Tab::Exceptions => exception_rows(world, &mut actions.want_groups),

@@ -29,6 +29,7 @@ const VERSION: u32 = 1;
 const THIS_PC: &[&str] = &[
     "username",
     "remember_username",
+    "last_login",
     "remember_password",
     "grid",
     "custom_login_uri",
@@ -274,6 +275,7 @@ impl Settings {
     fn keep_this_pc(&mut self, current: &Settings) {
         self.username = current.username.clone();
         self.remember_username = current.remember_username;
+        self.last_login = current.last_login.clone();
         self.remember_password = current.remember_password;
         self.grid = current.grid.clone();
         self.custom_login_uri = current.custom_login_uri.clone();

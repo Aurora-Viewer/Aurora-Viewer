@@ -87,12 +87,14 @@ impl SavedStack {
     }
 }
 
-/// The asset of an animation item of the agent's inventory that has full
-/// permissions (copy, modify and transfer), like the UUID field of the
-/// texture picker (`actions::asset_uuid_shown`).
+/// The asset of an animation item the agent holds with full permissions
+/// (copy, modify and transfer), like the UUID field of the texture picker
+/// (`actions::asset_uuid_shown`): the rights the agent holds (`held`,
+/// LLViewerInventoryItem::getIsFullPerm, indra/newview/llviewerinventory.cpp),
+/// so the everyone mask for a Library or group-owned item.
 pub(super) fn shared_asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     let original = inv.items.get(&actions::original(inv, id)?)?;
-    if original.owner_mask & actions::FULL != actions::FULL {
+    if actions::held(inv, original) & actions::FULL != actions::FULL {
         return None;
     }
     item(inv, id).map(|(asset, _)| asset)
@@ -195,6 +197,7 @@ impl Stack {
                 Some(Sample {
                     animation: r.clip.clone()?,
                     frame: r.frame,
+                    time_seconds: None,
                 })
             })
             .collect()
@@ -256,6 +259,7 @@ impl Stack {
                 loop_in: 0.0,
                 loop_out: 2.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,
@@ -390,7 +394,9 @@ impl Stack {
                     self.replacement = None;
                 }
                 if self.picker {
-                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-animation-search")));
+                    crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ik-edit-animation-search"))
+                    });
                     if self.cache.as_ref() != Some(&(inv.generation, self.filter.clone())) {
                         let filter = self.filter.to_lowercase();
                         self.candidates = inv
@@ -618,6 +624,47 @@ mod tests {
             restored.rows.iter().map(|r| r.item).collect::<Vec<_>>(),
             stack.rows.iter().map(|r| r.item).collect::<Vec<_>>()
         );
+    }
+    #[test]
+    fn project_files_name_an_asset_by_the_rights_the_agent_holds() {
+        let me = Uuid::from_u128(0xA1);
+        let other = Uuid::from_u128(0xB2);
+        let mut inv = Inventory {
+            owner: me,
+            ..Default::default()
+        };
+        let with = |n: u128, owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| InvItem {
+            owner,
+            everyone_mask,
+            group_owned,
+            ..animation(n, 0x100 + n, owner_mask)
+        };
+        // (what, item, asset named in the file)
+        let cases = [
+            ("ours, full permissions", with(1, me, actions::FULL, 0, false), true),
+            ("ours, no copy", with(2, me, actions::FULL & !actions::COPY, 0, false), false),
+            ("ours, no modify", with(3, me, actions::FULL & !actions::MODIFY, 0, false), false),
+            (
+                "ours, no transfer",
+                with(4, me, actions::FULL & !actions::TRANSFER, 0, false),
+                false,
+            ),
+            ("a Library item", with(5, other, actions::FULL, actions::COPY, false), false),
+            ("group owned", with(6, me, actions::FULL, 0, true), false),
+            ("someone else's", with(7, other, actions::FULL, 0, false), false),
+            ("given to everyone", with(8, other, actions::FULL, actions::FULL, false), true),
+        ];
+        for (_, it, _) in &cases {
+            inv.items.insert(it.id, it.clone());
+        }
+        for (what, it, named) in cases {
+            assert_eq!(shared_asset(&inv, it.id), named.then_some(it.asset_id), "{what}");
+            assert_eq!(
+                SharedAssets::new(&inv).get(it.id),
+                named.then_some(it.asset_id),
+                "{what} (background)"
+            );
+        }
     }
     #[test]
     fn a_row_with_only_an_asset_id_stays_missing_while_inventory_rows_resolve_their_item() {

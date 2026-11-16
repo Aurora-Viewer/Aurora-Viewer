@@ -86,6 +86,8 @@ mod tests {
             kind: ChatKind::System,
             source: uuid::Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
