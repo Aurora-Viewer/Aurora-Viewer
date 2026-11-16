@@ -355,6 +355,28 @@ mod tests {
     }
 
     #[test]
+    fn reply_by_text_checks_startim_before_reopening_a_closed_session() {
+        let mut world = world();
+        world.calls.voice_enabled = true;
+        let invite = aurora_net::VoiceInvite {
+            session: SESSION,
+            session_name: String::new(),
+            from: PERSON,
+            from_name: "Resident".into(),
+            p2p: true,
+            voice: Default::default(),
+        };
+        world.apply(NetEvent::VoiceInvite(invite));
+        assert!(world.social.has_session(&PERSON), "the incoming invitation was shown");
+        world.leave_session(PERSON);
+        restrict(&mut world, "@startim=n");
+        world.answer_call_invite(SESSION, crate::world::calls::InviteAnswer::Text);
+        assert!(!world.social.has_session(&PERSON));
+        assert!(world.social.focus_im.is_none());
+        assert!(world.calls.invites.is_empty(), "the response still dismisses the invitation");
+    }
+
+    #[test]
     fn rlva_startim_checks_all_conference_members_and_group_ids_before_changing_an_existing_call() {
         let mut world = world();
         let other = Uuid::from_u128(123);

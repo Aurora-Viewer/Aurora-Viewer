@@ -694,12 +694,13 @@ impl World {
     /// conference's temporary id becomes the server's
     /// (processSessionInitializedReply).
     pub(super) fn call_session_started(&mut self, temp: Uuid, session: Uuid, success: bool) {
-        // a conference we started: its conversation follows it to its id,
-        // and keeps the keyboard the user gave it (`open_conference`)
-        let mut to_type = false;
+        // Retarget an opening request only if it is still pending. A server
+        // reply is not a new user action: they may already be typing elsewhere.
+        if success && !temp.is_nil() && !session.is_nil() && temp != session && self.social.focus_im == Some(temp) {
+            self.social.focus_im = Some(session);
+        }
         if self.calls.conferences.remove(&temp).is_some() && success && !session.is_nil() && session != temp {
-            to_type = true;
-            self.focus_conversation(session, true);
+            self.social.conference_rekeys.push((temp, session));
             if let Some(invited) = self.calls.invited.remove(&temp) {
                 self.calls.invited.insert(session, invited);
             }
@@ -718,10 +719,6 @@ impl World {
             c.session = session;
         }
         let (session, name) = (c.session, c.name.clone());
-        if moved {
-            // the conversation shown follows the conference to its new id
-            self.focus_conversation(session, to_type);
-        }
         if success {
             self.call_request(CallMethod::Call, session);
         } else {
@@ -1067,9 +1064,12 @@ impl World {
     /// "Start IM" of a P2P invitation (processCallResponse 2): the
     /// conversation without the call, which is declined.
     pub(super) fn answer_voice_invite_by_im(&mut self, inv: &VoiceInvite) {
-        self.social.session_mut(inv.from);
-        // "Reply by text": the user asked for the conversation, ready to type
-        self.focus_conversation(inv.from, true);
+        // LLIncomingCallDialog::processCallResponse goes through startIM,
+        // which checks canStartIM again before opening the text conversation.
+        if self.rlva_start_ims(&[inv.from]) {
+            self.social.session_mut(inv.from);
+            self.focus_conversation(inv.from, true);
+        }
         self.decline_voice_invite(inv);
     }
 }

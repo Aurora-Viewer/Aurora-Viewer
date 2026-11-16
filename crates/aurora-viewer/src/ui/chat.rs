@@ -452,6 +452,47 @@ impl ChatUi {
         self.popped.remove(Some(conversation));
     }
 
+    /// Keep the editor, its selection and its window when the simulator gives
+    /// the conference its permanent ID (processSessionInitializedReply).
+    fn rekey_conference(&mut self, ctx: &egui::Context, from: uuid::Uuid, to: uuid::Uuid) {
+        let (old, new) = (Some(from), Some(to));
+        if self.selected == old {
+            self.selected = new;
+        }
+        if self.reveal == old {
+            self.reveal = new;
+        }
+        if self.selection.0 == old {
+            self.selection.0 = new;
+        }
+        if self.picker_window == Some(old) {
+            self.picker_window = Some(new);
+        }
+        self.popped.rekey(from, to);
+        if let Some(draft) = self.drafts.remove(&old) {
+            self.drafts.insert(new, draft);
+        }
+        if let Some(history) = self.input_history.remove(&old) {
+            self.input_history.insert(new, history);
+        }
+        if let Some(search) = self.searches.remove(&old) {
+            self.searches.insert(new, search);
+        }
+        if let Some(view) = self.views.remove(&old) {
+            self.views.insert(new, view);
+        }
+        let before = egui::Id::unique(("conv_input", old));
+        let after = egui::Id::unique(("conv_input", new));
+        if let Some(state) = egui::TextEdit::load_state(ctx, before) {
+            state.store(ctx, after);
+        }
+        ctx.memory_mut(|m| {
+            if m.has_focus(before) {
+                m.request_focus(after);
+            }
+        });
+    }
+
     /// "Detach": `conversation` in its own window, its field taking the
     /// keyboard, from the next frame (the Conversations window drew it in
     /// this one).
@@ -3329,6 +3370,9 @@ pub fn show(
     let mut actions = std::mem::take(&mut st.thumbnails.actions);
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
+    for (from, to) in world.social.conference_rekeys.drain(..) {
+        st.rekey_conference(ctx, from, to);
+    }
     let opening_conversation = world.social.focus_im.is_some();
     if let Some(f) = world.social.focus_im {
         let conversation = (!f.is_nil()).then_some(f);
