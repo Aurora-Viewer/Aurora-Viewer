@@ -90,6 +90,99 @@ fn mesh_physics_warning_precedes_quotes_and_convex_action_opens_the_collision_pr
 }
 
 #[test]
+fn a_free_upload_starts_without_the_payment_confirmation_and_a_paid_one_still_asks() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.inventory.root = Uuid::from_u128(1);
+    world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: world.inventory.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    world.balance = Some(1000);
+    let price = |cost| Prices {
+        texture: Some(cost),
+        large_texture: Some(cost),
+        sound: Some(cost),
+        animation: Some(cost),
+    };
+    for (cost, starts) in [(0, true), (10, false)] {
+        let entry = Entry::new(
+            "free.png".into(),
+            Ok(Source::Texture(crate::imports::tests::image(16, 16))),
+            Default::default(),
+        );
+        let mut imports = Imports {
+            choice: Choice::Texture,
+            active: Some(entry.id),
+            entries: vec![entry],
+            demo_started: true,
+            ..Default::default()
+        };
+        let prices = price(cost);
+        let frame = |imports: &mut Imports, events| {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(820.0, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui,
+                        &theme.palette(),
+                        imports,
+                        &Preferences::default(),
+                        &world,
+                        &prices,
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        for _ in 0..3 {
+            frame(&mut imports, vec![]);
+        }
+        let (rect, clip, enabled) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
+            .expect("upload action");
+        assert!(enabled && clip.contains_rect(rect), "L${cost}: the upload action is reachable");
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(
+                &mut imports,
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+        if starts {
+            assert!(
+                matches!(actions.as_slice(), [Action::StartFor(Choice::Texture)]),
+                "L$0 starts at once"
+            );
+            assert!(!imports.confirm && imports.confirm_choice.is_none());
+        } else {
+            assert!(actions.is_empty(), "a paid upload waits for the confirmation");
+            assert!(imports.confirm);
+            assert_eq!(imports.confirm_choice, Some(Choice::Texture));
+        }
+    }
+}
+
+#[test]
 fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disables_during_loading() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();

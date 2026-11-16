@@ -299,10 +299,19 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
 /// The name of a head or a compact row: clickable to the profile, with the
 /// author's menu on a right click.
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
-    let text = RichText::new(name)
+    // "(You)" with the option; a moderator's name style adds its italics
+    // (the names are semi-bold already)
+    let mut text = RichText::new(super::shown_name(line, name))
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
+    if super::moderator_look(env, line).is_some_and(|(n, _)| n.italics) {
+        text = text.italics();
+    }
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
+    if who.object && !line.source.is_nil() {
+        super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), env.p, env.world, line);
+        return;
+    }
     if who.avatar.is_nil() {
         return;
     }
@@ -374,21 +383,11 @@ fn roomy_row(
                 });
             }
             let (text, color, italics) = body(env, line, name);
+            let emphasis = super::line_emphasis(env, line, italics);
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    env.world,
-                    env.want_names,
-                    &visible,
-                    size,
-                    color,
-                    super::message_emphasis(line.kind, italics),
-                    mark,
-                );
+                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, emphasis, mark);
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -436,24 +435,14 @@ fn compact_row(
             });
         }
         let (text, color, italics) = body(env, line, name);
+        let emphasis = super::line_emphasis(env, line, italics);
         let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width() - RIGHT);
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    env.world,
-                    env.want_names,
-                    &visible,
-                    size,
-                    color,
-                    super::message_emphasis(line.kind, italics),
-                    mark,
-                );
+                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, emphasis, mark);
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -563,7 +552,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
                 env.emoji,
                 env.world,
                 env.want_names,
-                &line.text,
+                &super::system_text(&line.text),
                 chat_size(ui.ctx(), 12.0),
                 tone,
                 false,

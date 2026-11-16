@@ -109,10 +109,24 @@ pub struct Viewfinder {
     /// The display level drawn last frame (the interface just hidden says
     /// how to show it again).
     shown_display: Option<Display>,
+    /// The last photo's picture on its card, and the place and angle of the
+    /// newest photo in the reel's tray, as drawn last frame: when the card goes,
+    /// its photo flies from one to the other (started then, from there).
+    card_rect: Option<Rect>,
+    reel_slot: Option<(Rect, f32)>,
+    /// The reel's tray being dragged: where it is (kept once let go).
+    reel_drag: Option<Pos2>,
+    fly: Option<(f64, Rect)>,
+    /// When the last photo landed on the tray, while the pile pulses.
+    pulse: Option<f64>,
+    /// The newest photo of the reel, as of last frame.
+    newest: Option<u64>,
 }
 
 /// What the app gives the viewfinder each frame.
 pub struct Frame<'a> {
+    /// Less motion asked (Reduce motion).
+    pub still: bool,
     /// egui's clock (seconds).
     pub now: f64,
     /// The photo's size in pixels, and the window's.
@@ -142,8 +156,8 @@ pub struct Frame<'a> {
     /// The camera's pitch (degrees, positive up).
     pub pitch: f32,
     pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
-    /// The last photo: its thumbnail and what the card says of it.
-    pub review: Option<(&'a egui::TextureHandle, String, Review)>,
+    /// The last photo's picture, for its card.
+    pub review: Option<&'a egui::TextureHandle>,
     pub first_person: bool,
     /// Preferences allow the first person view (EnableMouselook).
     pub first_person_allowed: bool,
@@ -162,6 +176,8 @@ pub struct Frame<'a> {
     pub preset_object: Option<String>,
     /// The poser's window shows over the viewfinder.
     pub posing: bool,
+    /// The session's photos (`ui::photo_reel`).
+    pub reel: &'a crate::ui::photo_reel::ReelView<'a>,
 }
 
 /// The keys the help and the hints name.
@@ -169,19 +185,6 @@ pub struct Keys<'a> {
     pub menu: &'a str,
     pub af_mode: &'a str,
     pub first_person: Option<&'a str>,
-}
-
-/// What the last photo's card offers.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Review {
-    /// On disk: open it, show its folder.
-    Disk(std::path::PathBuf),
-    /// In the Photo Album.
-    Inventory,
-    /// On the profile feed.
-    Profile,
-    /// Sent by e-mail.
-    Email,
 }
 
 /// What the viewfinder asks of the app.
@@ -211,6 +214,8 @@ pub enum Out {
     Preset(Preset),
     /// The poser's window opened or closed (#1389).
     Poser,
+    /// The reel's stack or quick view.
+    Reel(crate::ui::photo_reel::ReelAction),
     /// Out of the photo mode.
     Exit,
 }
@@ -253,7 +258,7 @@ fn gradient(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) 
     painter.add(egui::Shape::mesh(mesh));
 }
 
-fn icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
+pub(crate) fn icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
     if let Some(t) = crate::ui::icons::global(name) {
         painter.image(t.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
     }
@@ -538,7 +543,9 @@ impl Viewfinder {
             self.top_bar(ctx, p, &back, screen, s, panel, f, &mut out);
         }
         self.af_point(ctx, p, &front, s, f);
-        if shows && !self.hinted && !self.menu && !self.help {
+        // (the last photo's card takes its place while it shows)
+        let card = f.now < self.review_until && f.review.is_some();
+        if shows && !self.hinted && !self.menu && !self.help && !card {
             hint(ctx, p, screen, if ctl { 156.0 } else { 128.0 }, ctl && !pad);
         }
         if let Some((text, error, until)) = &self.message {
@@ -572,9 +579,40 @@ impl Viewfinder {
         } else {
             self.pad = Pad::default();
         }
-        if f.now < self.review_until && !self.menu {
-            review(ctx, p, screen, f, &mut out, if pad { 300.0 } else { 132.0 });
+        // a new photo while the last one is still on its card or on its way:
+        // that one joins the pile at once, and the pile answers it (as of
+        // last frame: the new photo's own card starts with it)
+        let newest = f.reel.photos.first().map(|photo| photo.id);
+        if cuts_short(self.newest, newest, self.card_rect.is_some() || self.fly.is_some()) {
+            self.fly = None;
+            self.pulse = Some(f.now);
         }
+        self.newest = newest;
+        // the session's photos where they were moved (bottom left at first,
+        // over the camera pad when it shows); the last photo's card centred
+        // over the lens and aperture controls
+        if shows && !self.menu {
+            self.reel_tray(ctx, p, screen, s, f, if pad { 300.0 } else { 132.0 }, &mut out);
+        }
+        if f.now < self.review_until && !self.menu {
+            let (rect, clicked) = review(ctx, p, screen, f, if ctl { 156.0 } else { 128.0 });
+            self.card_rect = rect;
+            // clicked: its photo in the quick view at once, no flight (the
+            // tray shows it behind)
+            if clicked && let Some(newest) = f.reel.photos.first() {
+                self.review_until = f.now;
+                self.card_rect = None;
+                out.push(Out::Reel(crate::ui::photo_reel::ReelAction::Show(newest.id)));
+            }
+        } else if let Some(from) = self.card_rect.take()
+            && f.now >= self.review_until
+            && shows
+        {
+            // the card's time is up (not covered by the menu): its photo
+            // flies into the reel's tray
+            self.fly = Some((f.now, from));
+        }
+        self.fly_to_tray(ctx, p, f);
         self.countdown(ctx, p, screen, f.now);
         if self.menu {
             self.quick_menu(ctx, p, screen, s, panel, f, &mut out);
@@ -1550,8 +1588,9 @@ impl Viewfinder {
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
                     }
-                    // six above the shutter, seven under it (the panels of
-                    // the shot together)
+                    // six above the shutter, six under it (the panels of
+                    // the shot together; the session's photos are bottom
+                    // left, `reel_tray`)
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
@@ -1609,10 +1648,6 @@ impl Viewfinder {
                     if dock_button(ui, p, Face::Icon("wand"), aurora_i18n::tr!("photo-vf-poser-tip"), f.posing) {
                         out.push(Out::Poser);
                     }
-                    let has_photo = f.review.is_some();
-                    if dock_button(ui, p, Face::Icon("photo-filled"), aurora_i18n::tr!("photo-vf-last-photo"), false) && has_photo {
-                        self.review_until = if f.now < self.review_until { 0.0 } else { f.now + 4.8 };
-                    }
                     if dock_button(ui, p, Face::Text("?"), aurora_i18n::tr!("photo-vf-help-tip"), self.help) {
                         self.help = !self.help;
                         self.menu = false;
@@ -1622,6 +1657,102 @@ impl Viewfinder {
                     }
                 });
             });
+    }
+
+    /// The session's photos (`ui::photo_reel::tray`), floating: dragged by
+    /// their tile anywhere on the screen, kept there between sessions
+    /// (bottom left at first, `bottom` points up); the photo just taken
+    /// joins them once it has flown from its card, wherever they are.
+    #[allow(clippy::too_many_arguments)]
+    fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
+        use crate::ui::photo_reel::{TRAY_TILE, tray_fraction, tray_place, tray_slot};
+        // no surface of its own: the photos on the world
+        let margin = egui::Margin::same(6);
+        let reel = crate::ui::photo_reel::ReelView {
+            arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
+            ..*f.reel
+        };
+        let id = Id::unique("vf_reel_tray");
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(TRAY_TILE + Vec2::splat(12.0), |r| r.size());
+        let default = Pos2::new(screen.left() + GAP, screen.bottom() - bottom - size.y);
+        let pos = match self.reel_drag {
+            Some(dragged) => tray_place(None, screen, size, dragged),
+            None => tray_place(s.viewfinder.reel_at, screen, size, default),
+        };
+        // where the photo just taken lands: the tray's last place, once it
+        // holds it
+        let inner = pos + Vec2::new(f32::from(margin.left), f32::from(margin.top));
+        self.reel_slot = f.reel.photos.first().map(|photo| tray_slot(inner, photo.id));
+        if reel.photos.len() <= usize::from(reel.arriving) {
+            return;
+        }
+        // the pile answers the photo that landed (not with less motion asked)
+        let since = self
+            .pulse
+            .map(|t0| (f.now - t0) as f32)
+            .filter(|t| *t < crate::ui::photo_reel::PULSE);
+        if since.is_none() {
+            self.pulse = None;
+        }
+        let since = since.filter(|_| !f.still);
+        if since.is_some() {
+            ctx.request_repaint();
+        }
+        let mut asked = Vec::new();
+        let area = egui::Area::new(id)
+            .order(Order::Foreground)
+            .fade_in(false)
+            .movable(true)
+            .current_pos(pos)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .inner_margin(margin)
+                    .show(ui, |ui| crate::ui::photo_reel::tray(ui, p, &reel, since, &mut asked))
+            });
+        out.extend(asked.into_iter().map(Out::Reel));
+        // moved: followed live, kept once let go (not every frame of the
+        // drag: the settings are saved when they change)
+        let resp = &area.response;
+        if resp.dragged() {
+            self.reel_drag = Some(pos + resp.drag_delta());
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if resp.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if resp.drag_stopped()
+            && let Some(dragged) = self.reel_drag.take()
+        {
+            s.viewfinder.reel_at = Some(tray_fraction(tray_place(None, screen, size, dragged), screen));
+        }
+    }
+
+    /// The card's photo on its way to the tray, across the bottom of the
+    /// screen: it rises in an arc and shrinks to its place, then the tray
+    /// shows it.
+    fn fly_to_tray(&mut self, ctx: &egui::Context, p: &Palette, f: &Frame) {
+        const FLY: f64 = 0.7;
+        let Some((t0, from)) = self.fly else {
+            return;
+        };
+        let (Some((to, angle)), Some(tex)) = (self.reel_slot, f.review) else {
+            self.fly = None;
+            return;
+        };
+        let k = ((f.now - t0) / FLY) as f32;
+        ctx.request_repaint();
+        if k >= 1.0 {
+            self.fly = None;
+            self.pulse = Some(f.now);
+            return;
+        }
+        // eased in and out, the size along the way
+        let ease = k * k * (3.0 - 2.0 * k);
+        let center = crate::ui::photo_reel::arc_point(from.center(), to.center(), ease);
+        let rect = Rect::from_center_size(center, from.size() + (to.size() - from.size()) * ease);
+        let painter = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("vf_reel_fly")));
+        // turning as it lands, to lie as a print of the tray
+        use crate::ui::photo_reel::{PRINT_EDGE, print};
+        print(&painter, p, rect, PRINT_EDGE * ease, angle * ease, Some(tex));
     }
 
     /// The round shutter: pressed, the focus; released on it, the photo;
@@ -1988,69 +2119,48 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
     clicked
 }
 
-/// The card of the photo just taken.
-fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>, bottom: f32) {
-    let Some((texture, label, kind)) = &f.review else {
-        return;
+/// A photo newer than `before` arrived while the last one was still `showing`
+/// (on its card or on its way to the tray).
+fn cuts_short(before: Option<u64>, newest: Option<u64>, showing: bool) -> bool {
+    showing && before.is_some() && newest > before
+}
+
+/// How long the card of the photo just taken shows (seconds).
+pub(crate) const CARD_TIME: f64 = 2.0;
+
+/// The card of the photo just taken: its picture alone, centred over the
+/// lens and aperture controls (where the first hint was), framed like the
+/// dock's buttons; where its picture is, and whether it was clicked.
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32) -> (Option<Rect>, bool) {
+    let Some(texture) = f.review else {
+        return (None, false);
     };
+    let mut picture = None;
+    let mut clicked = false;
     egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
-        .pivot(Align2::LEFT_BOTTOM)
-        .fixed_pos(Pos2::new(screen.left() + GAP, screen.bottom() - bottom))
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
-            widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
-                    // the photo covering the card's picture
-                    let size = texture.size_vec2();
-                    let (r, c) = (size.x / size.y.max(1.0), 1.5);
-                    let uv = if r > c {
-                        let w = c / r;
-                        Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
-                    } else {
-                        let h = r / c;
-                        Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
-                    };
-                    ui.painter().image(texture.id(), rect, uv, widgets::PICTURE_TINT);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 6.0;
-                        let title = match kind {
-                            Review::Disk(_) => aurora_i18n::tr!("photo-vf-saved"),
-                            Review::Inventory => aurora_i18n::tr!("photo-uploaded"),
-                            Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
-                            Review::Email => aurora_i18n::tr!("photo-email-sent"),
-                        };
-                        // one line each, like the message at the top
-                        ui.add(egui::Label::new(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink)).extend());
-                        ui.add(egui::Label::new(egui::RichText::new(label).size(12.0).color(p.muted)).extend());
-                        ui.horizontal(|ui| match kind {
-                            Review::Disk(path) => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked() {
-                                    out.push(Out::Panel(Action::OpenPhoto(path.clone())));
-                                }
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-vf-folder")).clicked() {
-                                    out.push(Out::Panel(Action::OpenFolder));
-                                }
-                            }
-                            Review::Inventory => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-show-in-inventory")).clicked() {
-                                    out.push(Out::Panel(Action::ShowItem));
-                                }
-                            }
-                            Review::Profile => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-profile-show")).clicked() {
-                                    out.push(Out::Panel(Action::ShowProfile));
-                                }
-                            }
-                            Review::Email => {}
-                        });
-                    });
-                });
+            // the dock's face and edge (`dock_button`)
+            let card = dock_frame(p, ui.visuals(), 5).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
+                // the photo covering the card's picture
+                let radius = widgets::inner_radius(ui.visuals());
+                crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, Some(texture));
+                picture = Some(rect);
             });
+            let resp = card
+                .response
+                .interact(Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                resp.surrender_focus();
+                clicked = true;
+            }
         });
-    let _ = screen;
+    (picture, clicked)
 }
 
 /// The face of a dock button.
@@ -2059,22 +2169,43 @@ enum Face<'a> {
     Text(&'a str),
 }
 
-/// A 44-point button of the dock; true when clicked.
-fn dock_button(ui: &mut egui::Ui, p: &Palette, face: Face, tip: &str, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    let fill = if resp.hovered() || on {
+/// The side of a dock button.
+pub(crate) const DOCK_SIDE: f32 = 44.0;
+
+/// The face of the dock's buttons, shared by everything of photo mode that
+/// sits over the world like them (the reel's tray, its quick view): the
+/// night's blue let through, lighter under the pointer or when on, a thin
+/// edge, teal when on. `alpha` fades it.
+pub(crate) fn dock_face(painter: &egui::Painter, p: &Palette, rect: Rect, lit: bool, on: bool, alpha: f32) {
+    let radius = painter.ctx().global_style().visuals.window_corner_radius;
+    let fill = if lit || on {
         p.panel.gamma_multiply(0.85)
     } else {
         p.navy.gamma_multiply(0.55)
     };
-    ui.painter().rect_filled(rect, radius, fill);
+    painter.rect_filled(rect, radius, fill.gamma_multiply(alpha));
     let edge = if on {
         p.teal.gamma_multiply(0.7)
     } else {
         p.ink.gamma_multiply(0.16)
     };
-    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(alpha)), StrokeKind::Inside);
+}
+
+/// The dock's face as a frame, for a panel of photo mode that holds
+/// widgets (the card, the quick view's bars).
+pub(crate) fn dock_frame(p: &Palette, visuals: &egui::Visuals, margin: i8) -> egui::Frame {
+    egui::Frame::new()
+        .fill(p.navy.gamma_multiply(0.55))
+        .stroke(Stroke::new(1.0, p.ink.gamma_multiply(0.16)))
+        .corner_radius(visuals.window_corner_radius)
+        .inner_margin(egui::Margin::same(margin))
+}
+
+/// A 44-point button of the dock; true when clicked.
+fn dock_button(ui: &mut egui::Ui, p: &Palette, face: Face, tip: &str, on: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(DOCK_SIDE), Sense::click());
+    dock_face(ui.painter(), p, rect, resp.hovered(), on, 1.0);
     match face {
         Face::Icon(name) => icon(ui.painter(), name, Rect::from_center_size(rect.center(), Vec2::splat(20.0)), p.ink),
         Face::Text(text) => {
@@ -2329,4 +2460,24 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         Box::new(move |_, _| Some(Out::FirstPerson(!first))),
     ));
     v
+}
+
+#[cfg(test)]
+mod cut_short_tests {
+    use super::cuts_short;
+
+    #[test]
+    fn only_a_photo_over_one_still_showing_cuts_it_short() {
+        // nothing showing: a photo taken on its own, its pulse is for its landing
+        assert!(!cuts_short(Some(1), Some(2), false));
+        assert!(!cuts_short(None, Some(1), false));
+        // the card or the flight of the last one under way
+        assert!(cuts_short(Some(1), Some(2), true));
+        // the same photo, or the newest deleted: nothing landed
+        assert!(!cuts_short(Some(2), Some(2), true));
+        assert!(!cuts_short(Some(2), Some(1), true));
+        assert!(!cuts_short(Some(2), None, true));
+        // the very first photo has nothing to cut short
+        assert!(!cuts_short(None, Some(1), true));
+    }
 }

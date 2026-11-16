@@ -8,13 +8,28 @@ use crate::scene::legacy_mat::LegacyMaterial;
 use crate::theme::Palette;
 use crate::world::{
     World,
-    objects::{LocalAppearance, ObjKey},
+    inventory::actions as rules,
+    objects::{LocalAppearance, LocalTextureSlot, ObjKey},
 };
 use aurora_assets::material::PbrOverride;
 use aurora_prim::te::TextureFace;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
+
+impl PickTarget {
+    fn local_slot(self) -> Option<LocalTextureSlot> {
+        Some(match self {
+            Self::Diffuse => LocalTextureSlot::Diffuse,
+            Self::PbrMaterial => LocalTextureSlot::Material,
+            Self::Normal => LocalTextureSlot::Normal,
+            Self::Specular => LocalTextureSlot::Specular,
+            Self::PbrMap(channel) => LocalTextureSlot::Pbr(channel),
+            Self::Sculpt => return None,
+            Self::LightTexture => LocalTextureSlot::Light,
+        })
+    }
+}
 
 enum Original {
     Diffuse(Uuid),
@@ -69,9 +84,9 @@ impl Session {
             };
             saved.push(Saved {
                 object: object.full_id,
-                face: s.face,
+                face: if target == PickTarget::LightTexture { 0 } else { s.face },
                 original,
-                local: object.local_appearance(s.face as usize),
+                local: object.local_appearance(if target == PickTarget::LightTexture { 0 } else { s.face as usize }),
             });
             // Object parameters, unlike texture entries, affect one prim.
             if matches!(target, PickTarget::Sculpt | PickTarget::LightTexture) {
@@ -93,12 +108,15 @@ impl Session {
     /// The value the picker shows for these faces: the first one's.
     fn current(&self) -> Uuid {
         let Some(saved) = self.saved.first() else { return Uuid::nil() };
-        match (&saved.local, &saved.original) {
-            (Some(LocalAppearance::Texture(id)), Original::Diffuse(_))
-            | (Some(LocalAppearance::Material(id)), Original::Material { .. }) => *id,
-            (_, Original::Diffuse(id) | Original::Map(id) | Original::Sculpt(id)) => *id,
-            (_, Original::Material { asset, .. }) => *asset,
-            (_, Original::Legacy(material)) => material
+        if let Some(slot) = self.target.local_slot()
+            && let Some(texture) = saved.local.and_then(|appearance| appearance.texture(slot))
+        {
+            return texture;
+        }
+        match &saved.original {
+            Original::Diffuse(id) | Original::Map(id) | Original::Sculpt(id) => *id,
+            Original::Material { asset, .. } => *asset,
+            Original::Legacy(material) => material
                 .as_ref()
                 .map(|m| {
                     if self.target == PickTarget::Normal {
@@ -108,7 +126,7 @@ impl Session {
                     }
                 })
                 .unwrap_or_default(),
-            (_, Original::Light(light)) => light.map(|l| l.texture).unwrap_or_default(),
+            Original::Light(light) => light.map(|l| l.texture).unwrap_or_default(),
         }
     }
 
@@ -128,6 +146,19 @@ impl Session {
 }
 
 impl BuildTool {
+    /// Removing a file also retires rollback and pending bindings to it.
+    pub fn forget_local_picker_asset(&mut self, id: Uuid) {
+        self.ui.picker.forget_local_asset(id);
+        for (_, _, appearance) in &mut self.local_appearance_changes {
+            *appearance = appearance.and_then(|value| value.retain(|entry| entry != id));
+        }
+        if let Some(session) = &mut self.ui.texture_edit {
+            for saved in &mut session.saved {
+                saved.local = saved.local.and_then(|value| value.retain(|entry| entry != id));
+            }
+        }
+    }
+
     /// Global local-appearance removal also retires the picker's rollback
     /// copies, so a later Cancel cannot resurrect the removed applications.
     pub fn forget_local_picker_appearances(&mut self) {
@@ -221,18 +252,15 @@ impl BuildTool {
         if session.last_preview != Some(id) {
             let sel = session.resolve(self, world);
             if let Some((_, material)) = world.local_assets.get(&id) {
-                let appearance = match (session.target, *material) {
-                    (PickTarget::Diffuse, false) => Some(LocalAppearance::Texture(id)),
-                    (PickTarget::PbrMaterial, true) => Some(LocalAppearance::Material(id)),
-                    _ => None,
-                };
-                if let Some(appearance) = appearance {
-                    self.set_local_picker_appearance(world, &sel, Some(appearance));
+                if *material == matches!(session.target, PickTarget::PbrMaterial)
+                    && let Some(slot) = session.target.local_slot()
+                {
+                    self.set_local_picker_channel(world, &sel, slot, Some(id));
                     session.last_preview = Some(id);
                 }
             } else {
-                if matches!(session.target, PickTarget::Diffuse | PickTarget::PbrMaterial) {
-                    self.set_local_picker_appearance(world, &sel, None);
+                if let Some(slot) = session.target.local_slot() {
+                    self.set_local_picker_channel(world, &sel, slot, None);
                 }
                 if session.target == PickTarget::LightTexture
                     && let Some(s) = sel.first()
@@ -258,6 +286,31 @@ impl BuildTool {
             }
         }
         self.ui.texture_edit = Some(session);
+    }
+
+    /// A picker choice (OK, or a live one) with the inventory item behind it:
+    /// the item's rules first (`admit_item`), once per choice.
+    fn apply_choice(&mut self, world: &mut World, env: &mut Env, id: Uuid, item: Option<Uuid>) {
+        if let Some(item) = item
+            && let Some(session) = &self.ui.texture_edit
+            && session.last_preview != Some(id)
+        {
+            let target = session.target;
+            let sel = session.resolve(self, world);
+            if let Err(text) = self.admit_item(world, item, &admit_targets(target, &sel)) {
+                world.system_notice(text, crate::world::notice_topics::Topic::Items);
+                return;
+            }
+        }
+        self.preview_texture(world, env, id);
+    }
+
+    fn set_local_picker_channel(&mut self, world: &mut World, sel: &[Sel], slot: LocalTextureSlot, texture: Option<Uuid>) {
+        for s in sel {
+            let current = world.objects.get(s.idx).and_then(|object| object.local_appearance(s.face as usize));
+            let appearance = LocalAppearance::with_texture(current, slot, texture);
+            self.set_local_picker_appearance(world, std::slice::from_ref(s), appearance);
+        }
     }
 
     pub(super) fn cancel_texture_picker(&mut self, world: &mut World, env: &mut Env) {
@@ -296,7 +349,7 @@ impl BuildTool {
         if session.last_preview.is_none() {
             return;
         }
-        if matches!(session.target, PickTarget::Diffuse | PickTarget::PbrMaterial) {
+        if let Some(slot) = session.target.local_slot() {
             for s in session.resolve(self, world) {
                 let object = world.objects.get(s.idx).map(|object| object.full_id);
                 if let Some(saved) = session
@@ -304,7 +357,9 @@ impl BuildTool {
                     .iter()
                     .find(|saved| Some(saved.object) == object && saved.face == s.face)
                 {
-                    self.set_local_picker_appearance(world, std::slice::from_ref(&s), saved.local);
+                    let current = world.objects.get(s.idx).and_then(|object| object.local_appearance(s.face as usize));
+                    let appearance = LocalAppearance::restore(current, slot, saved.local);
+                    self.set_local_picker_appearance(world, std::slice::from_ref(&s), appearance);
                 }
             }
         }
@@ -456,13 +511,39 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         && tool.ui.texture_edit.is_none()
         && let Some(target) = tool.ui.pick_target
     {
-        tool.ui.texture_edit = Some(Session::capture(tool, world, env, target));
+        let session = Session::capture(tool, world, env, target);
+        // A control can still expose its simulator value while a local file
+        // overrides it. Reopening must keep that file selected in the picker.
+        if let Some(slot) = target.local_slot()
+            && let Some(id) = session
+                .saved
+                .first()
+                .and_then(|saved| saved.local)
+                .and_then(|value| value.texture(slot))
+        {
+            tool.ui.picker.follow(id);
+        }
+        tool.ui.texture_edit = Some(session);
     }
-    tool.ui.picker.allow_local = matches!(tool.ui.pick_target, Some(PickTarget::Diffuse | PickTarget::PbrMaterial));
+    tool.ui.picker.allow_local = tool.ui.pick_target.and_then(PickTarget::local_slot).is_some();
+    if let Some(target) = tool.ui.pick_target {
+        // per frame while a build picker is open: the selected faces only
+        let sel = super::texture::selected(tool, world);
+        let owned = owned_and_not_for_sale(tool, world, &admit_targets(target, &sel));
+        let picker = &mut tool.ui.picker;
+        picker.required_permissions = super::texture::texture_drop::picker_permissions(world, &sel, target);
+        picker.drop_permissions = rules::COPY | rules::TRANSFER;
+        picker.live_permissions = match target {
+            PickTarget::PbrMaterial => rules::FULL,
+            _ => rules::COPY | rules::TRANSFER,
+        };
+        picker.owned_target = owned;
+    }
     tool.ui.picker.prepare_material_preview(ctx, env.scene);
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {
-        tool.preview_texture(world, env, id);
+        let item = tool.ui.picker.chosen_item(id);
+        tool.apply_choice(world, env, id, item);
         tool.ui.texture_edit = None;
         tool.ui.pick_target = None;
     } else if !tool.ui.picker.open {
@@ -472,8 +553,30 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
             tool.dismiss_texture_picker();
         }
     } else if let Some(id) = tool.ui.picker.take_preview() {
-        tool.preview_texture(world, env, id);
+        let item = tool.ui.picker.chosen_item(id);
+        tool.apply_choice(world, env, id, item);
     }
+}
+
+/// The prims a choice for `target` goes on: the first one for the sculpt
+/// map and the projector (one object's parameter), every selected one else.
+pub(super) fn admit_targets(target: PickTarget, sel: &[Sel]) -> Vec<usize> {
+    match target {
+        PickTarget::Sculpt | PickTarget::LightTexture => sel.first().map(|s| s.idx).into_iter().collect(),
+        _ => sel.iter().map(|s| s.idx).collect(),
+    }
+}
+
+/// FSPanelFace::onTextureSelectionChanged's `is_object_owner && not_for_sale`
+/// over the roots of `objects`; unknown properties count as for sale.
+fn owned_and_not_for_sale(tool: &BuildTool, world: &World, objects: &[usize]) -> bool {
+    !objects.is_empty()
+        && objects.iter().all(|&idx| {
+            world.objects.get(crate::build::root_of(world, idx)).is_some_and(|root| {
+                root.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                    && tool.props.get(&root.full_id).is_some_and(|p| p.sale_type == 0)
+            })
+        })
 }
 
 #[cfg(test)]
@@ -571,6 +674,110 @@ mod tests {
                     assert_eq!(world.objects.get(idx).unwrap().local_appearance(0), None);
                 }
             }
+        });
+    }
+
+    #[test]
+    fn local_normal_specular_and_pbr_maps_coexist_without_network_edits() {
+        fixture(|world, tool, env, prims| {
+            let diffuse = Uuid::from_u128(930);
+            for &idx in prims {
+                let object = world.objects.get_mut(idx).unwrap();
+                object.extra.render_materials = vec![(0, Uuid::from_u128(931))];
+                object.render.local_appearance.insert(Some(0), LocalAppearance::Texture(diffuse));
+            }
+            for (channel, target) in [
+                PickTarget::Normal,
+                PickTarget::Specular,
+                PickTarget::PbrMap(0),
+                PickTarget::PbrMap(1),
+                PickTarget::PbrMap(2),
+                PickTarget::PbrMap(3),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = Uuid::from_u128(940 + channel as u128);
+                world.local_assets.insert(id, ("Local channel".into(), false));
+                let before: Vec<_> = prims
+                    .iter()
+                    .map(|&idx| world.objects.get(idx).unwrap().local_appearance(0))
+                    .collect();
+                open(tool, world, env, target);
+                tool.out.clear();
+                tool.preview_texture(world, env, id);
+                assert!(tool.out.is_empty());
+                for &idx in prims {
+                    let object = world.objects.get(idx).unwrap();
+                    assert_eq!(object.local_texture(0, target.local_slot().unwrap()), Some(id));
+                    assert_eq!(object.local_texture(0, LocalTextureSlot::Diffuse), Some(diffuse));
+                    assert_eq!(object.local_appearance(1), None);
+                    assert_ne!(object.te.as_ref().unwrap().faces[0].texture, id);
+                    assert!(!world.gltf_overrides.contains_key(&object.key));
+                }
+                tool.cancel_texture_picker(world, env);
+                assert!(tool.out.is_empty());
+                for (&idx, &original) in prims.iter().zip(&before) {
+                    assert_eq!(world.objects.get(idx).unwrap().local_appearance(0), original);
+                }
+                // Keep this channel and open the next, as OK/closing does.
+                open(tool, world, env, target);
+                tool.preview_texture(world, env, id);
+                tool.dismiss_texture_picker();
+            }
+        });
+    }
+
+    #[test]
+    fn local_projector_preview_keeps_server_parameters_and_cancel_restores() {
+        fixture(|world, tool, env, prims| {
+            let id = Uuid::from_u128(960);
+            world.local_assets.insert(id, ("Local projector".into(), false));
+            open(tool, world, env, PickTarget::LightTexture);
+            tool.out.clear();
+            let idx = prims[0];
+            let original = world.objects.get(idx).unwrap().extra.light_image;
+            tool.preview_texture(world, env, id);
+            let object = world.objects.get(idx).unwrap();
+            assert_eq!(object.visual_light_image().unwrap().texture, id);
+            assert_eq!(object.extra.light_image, original);
+            assert!(tool.out.is_empty());
+            tool.cancel_texture_picker(world, env);
+            assert_eq!(world.objects.get(idx).unwrap().visual_light_image(), original);
+            assert!(tool.out.is_empty());
+        });
+    }
+
+    #[test]
+    fn removing_a_local_file_retires_only_its_channel_from_picker_rollback() {
+        fixture(|world, tool, env, prims| {
+            let diffuse = Uuid::from_u128(970);
+            let normal = Uuid::from_u128(971);
+            let preview = Uuid::from_u128(972);
+            world.local_assets.insert(preview, ("Local normal".into(), false));
+            let original =
+                LocalAppearance::with_texture(Some(LocalAppearance::Texture(diffuse)), LocalTextureSlot::Normal, Some(normal)).unwrap();
+            for &idx in prims {
+                world
+                    .objects
+                    .get_mut(idx)
+                    .unwrap()
+                    .render
+                    .local_appearance
+                    .insert(Some(0), original);
+            }
+            open(tool, world, env, PickTarget::Normal);
+            tool.out.clear();
+            tool.preview_texture(world, env, preview);
+            tool.forget_local_picker_asset(normal);
+            tool.cancel_texture_picker(world, env);
+            for &idx in prims {
+                assert_eq!(
+                    world.objects.get(idx).unwrap().local_appearance(0),
+                    Some(LocalAppearance::Texture(diffuse))
+                );
+            }
+            assert!(tool.out.is_empty());
         });
     }
 
@@ -953,6 +1160,36 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_local_projector_shows_the_file_without_committing_the_server_value() {
+        fixture(|world, tool, env, prims| {
+            tool.selection.truncate(1);
+            let idx = prims[0];
+            let local = Uuid::from_u128(963);
+            world.local_assets.insert(local, ("Local projector".into(), false));
+            world.objects.get_mut(idx).unwrap().render.local_appearance.insert(
+                Some(0),
+                LocalAppearance::with_texture(None, LocalTextureSlot::Light, Some(local)).unwrap(),
+            );
+            let original = world.objects.get(idx).unwrap().extra.light_image;
+            tool.ui
+                .picker
+                .open_with_defaults("Projector", original.map(|v| v.texture).unwrap_or_default(), None, true);
+            tool.ui.pick_target = Some(PickTarget::LightTexture);
+            tool.out.clear();
+            let ctx = egui::Context::default();
+            frame(&ctx, tool, world, env, 0.0, vec![]);
+            assert_eq!(tool.ui.picker.shown(), Some(local));
+            assert!(tool.ui.picker.allow_local);
+            assert!(tool.out.is_empty());
+            tool.cancel_texture_picker(world, env);
+            let object = world.objects.get(idx).unwrap();
+            assert_eq!(object.visual_light_image().unwrap().texture, local);
+            assert_eq!(object.extra.light_image, original);
+            assert!(tool.out.is_empty());
+        });
+    }
+
+    #[test]
     fn light_picker_none_removes_only_projection_and_cancel_restores_its_settings() {
         fixture(|world, tool, env, prims| {
             tool.selection.truncate(1);
@@ -1084,7 +1321,8 @@ mod tests {
                     asset_id: asset,
                     inv_type: 0,
                     name: "A texture".into(),
-                    owner_mask: crate::world::inventory::actions::COPY,
+                    owner: world.agent_id,
+                    owner_mask: crate::world::inventory::actions::COPY | crate::world::inventory::actions::TRANSFER,
                     ..Default::default()
                 },
             );
@@ -1158,7 +1396,10 @@ mod tests {
                 set_texture(world, idx, 0, asset);
             }
             // Like Firestorm, no-copy items require OK instead of a preview.
-            world.inventory.items.get_mut(&item).unwrap().owner_mask = 0;
+            // A build picker previews only copy and transfer items; a
+            // no-transfer one is confirmed on objects the agent owns and
+            // does not sell, and its copy goes into each object's contents.
+            world.inventory.items.get_mut(&item).unwrap().owner_mask = crate::world::inventory::actions::COPY;
             world.inventory.items.get_mut(&item).unwrap().asset_id = Uuid::from_u128(16);
             world.inventory.generation += 1;
             open(tool, world, env, PickTarget::Diffuse);
@@ -1168,11 +1409,35 @@ mod tests {
                 assert_eq!(texture(world, idx, 0), asset);
             }
             let positions = frame(&ctx, tool, world, env, 13.0, vec![]);
-            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")));
+            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-owner-only")));
+            for &idx in prims {
+                let o = world.objects.get_mut(idx).unwrap();
+                o.update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+                let object = o.full_id;
+                tool.props.insert(
+                    object,
+                    aurora_net::build::ObjectProps {
+                        object_id: object,
+                        full: true,
+                        ..Default::default()
+                    },
+                );
+                tool.contents_ready(world, idx);
+                tool.on_task_inventory(world, object, Some(1), Vec::new());
+            }
+            let positions = frame(&ctx, tool, world, env, 13.5, vec![]);
+            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-no-live-preview")));
+            tool.out.clear();
             click(&ctx, tool, world, env, 14.0, positions["OK"]);
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(16));
             }
+            let copies = tool
+                .out
+                .iter()
+                .filter(|c| matches!(c, aurora_net::NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })))
+                .count();
+            assert_eq!(copies, prims.len(), "one copy into each object");
         });
     }
     #[test]
@@ -1309,6 +1574,38 @@ mod tests {
             assert_eq!(BuildTool::gltf_override(world, idx, 1), Default::default());
             assert_eq!(texture(world, idx, 1), map);
             assert_eq!(BuildTool::gltf_asset(world, idx, 0), None);
+        });
+    }
+
+    #[test]
+    fn blinn_phong_surface_drop_keeps_pbr_and_other_faces_unchanged() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1907);
+            let map = Uuid::from_u128(1908);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let original = BuildTool::gltf_override(world, idx, 1);
+            let other = texture(world, idx, 0);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.out.clear();
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(texture(world, idx, 0), other);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), Some(material));
+            assert_eq!(BuildTool::gltf_override(world, idx, 1), original);
+            assert!(!tool.out.iter().any(
+                |cmd| matches!(cmd, aurora_net::NetCommand::Build(crate::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams")
+            ));
+
+            world.objects.set_blinn_phong_preview(idx, false);
+            let pbr_map = Uuid::from_u128(1909);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], pbr_map);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, true);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), None);
+            assert_eq!(texture(world, idx, 1), pbr_map);
         });
     }
 

@@ -6,8 +6,13 @@
 //! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod adapter_choice;
+#[cfg(test)]
+mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
+mod blend_exact;
+#[cfg(test)]
+mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
@@ -17,11 +22,12 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic};
+pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
+mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
@@ -35,15 +41,20 @@ pub mod main_thread;
 mod motion_debug;
 mod motion_history;
 mod occlusion;
+pub mod oit_stochastic;
 pub mod pacing;
 mod packet;
+mod part_pick;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_mesh;
 pub mod probes;
+pub mod projector_shadows;
+mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
@@ -52,6 +63,7 @@ pub mod shadow_cull;
 mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
+pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
@@ -75,7 +87,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
-pub use vr_control::VrState;
+pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).
@@ -87,6 +99,7 @@ pub fn vr_headset_ready() -> bool {
 }
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_mirror;
+pub mod write_staging;
 pub mod writes;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_device;
@@ -95,7 +108,7 @@ mod xr_device;
 mod xr_device;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod xr_frame;
-pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
+pub use water_effects::{RAIN_GROUND_SIZE, RainGround, WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
@@ -108,13 +121,13 @@ pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{world_label_at, world_line_at};
-pub use main_thread::{GpuInfo, Renderer};
+pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
-pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
+pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 
@@ -161,6 +174,20 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
 }
 
+/// object.wgsl as the device takes it: without the attribute of the early
+/// depth test (`fs_blend_once`) where the device does not know it, as on
+/// Metal. naga refuses a whole module for one entry point it cannot read,
+/// so every module made from object.wgsl (the scene, the stochastic
+/// transparency, the impostors) takes it from here (#3751).
+pub(crate) fn object_shader_source(features: wgpu::Features) -> String {
+    let source = water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"));
+    if features.contains(blend_exact::EARLY_TEST) {
+        source.into_owned()
+    } else {
+        source.replace("@early_depth_test(force)", "")
+    }
+}
+
 #[cfg(test)]
 mod shader_tests {
     use crate::pipeline_cache::CachedPipelines;
@@ -171,6 +198,12 @@ mod shader_tests {
         validate(include_str!("shaders/rlva_overlay.wgsl"));
         validate(include_str!("shaders/rlva_resolution.wgsl"));
     }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn headset_grade_shader_is_valid() {
+        validate(crate::vr_mirror::HEADSET_GRADE_SHADER);
+    }
+
     fn validate(src: &str) {
         let module = match naga::front::wgsl::parse_str(src) {
             Ok(m) => m,
@@ -304,7 +337,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 8 * 256,
+            size: crate::readback::readback_size(8 * 256),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -571,7 +604,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("interface order readback"));
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
                 let pixels = readback.get_mapped_range(..).expect("interface order samples");
-                let data: &[f32] = bytemuck::cast_slice(&pixels);
+                let data = crate::readback::f32s(&pixels);
                 let expected = 1.0 / (1.0 + (eye.z - 20.0) / (0.875 * (std::f32::consts::FRAC_PI_3 * 0.5).tan()));
                 let row = data[7 * 64..7 * 64 + 8].to_vec();
                 if let Some(previous) = &reference {
@@ -716,7 +749,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
         );
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 8 * 256,
+            size: crate::readback::readback_size(8 * 256),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -885,7 +918,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog sample readback"),
-            size: 640,
+            size: crate::readback::readback_size(640),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -909,7 +942,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("fog sample readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..).expect("mapped fog samples");
-        let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+        let samples = crate::readback::f32x4s(&mapped);
         for (a, b) in [(0, 1), (2, 3)] {
             for component in 0..2 {
                 for c in 0..3 {
@@ -1054,10 +1087,13 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
         // the diagnostic variants (AURORA_CONTACT_VARIANT)
-        use crate::contact_shadows::{Variant, variant_source};
+        use crate::contact_shadows::{Variant, photo_source, variant_source};
         for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
             validate(&variant_source(v));
         }
+        // a photo's on the RX 9000 cards, up to the most samples
+        validate(&photo_source(Variant::NoShared, 192, 13));
+        validate(&photo_source(Variant::NoShared, count, hard));
     }
 
     #[test]

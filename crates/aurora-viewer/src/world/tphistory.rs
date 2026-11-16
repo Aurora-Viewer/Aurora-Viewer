@@ -36,6 +36,27 @@ impl TpEntry {
     pub fn title(&self) -> String {
         location_title(&self.parcel, &self.region)
     }
+
+    /// The place of an arrival under @showloc: a name that tells nothing and
+    /// no destination, as `LLTeleportHistoryItem(RlvStrings::getString(
+    /// RlvStringKeys::Hidden::Parcel), LLVector3d::zero)` of
+    /// LLTeleportHistory::updateCurrentLocation.
+    pub fn hidden(label: &str, at: i64) -> TpEntry {
+        TpEntry {
+            region: label.to_owned(),
+            handle: 0,
+            position: Vec3::ZERO,
+            parcel: String::new(),
+            at,
+            grid: None,
+        }
+    }
+
+    /// `mGlobalPos.isExactlyZero()`: the place leads nowhere. No region has
+    /// the handle 0 (the grid's origin is empty).
+    pub fn is_hidden(&self) -> bool {
+        self.handle == 0 && self.position == Vec3::ZERO
+    }
 }
 
 /// The places of the session, oldest first, and the one we are in: what
@@ -56,21 +77,37 @@ pub struct TeleportHistory {
 }
 
 impl TeleportHistory {
-    /// Arrival at a new location (login or teleport).
+    /// Arrival at a new location (login or teleport); under @showloc the
+    /// caller gives `TpEntry::hidden`. The RLVa rules of
+    /// LLTeleportHistory::updateCurrentLocation:
+    /// - back / forward under @showloc moves in the list and leaves the place
+    ///   reached as it was;
+    /// - "only append a new item if the list is currently empty or if not
+    ///   @showloc=n restricted and the last entry wasn't zero'ed out": a
+    ///   hidden arrival takes the place of the one we left, and the next
+    ///   arrival takes the place of a hidden one. The session never holds
+    ///   two hidden places in a row, nor a count of the teleports made.
     pub fn arrived(&mut self, entry: TpEntry) {
         if let Some(i) = self.pending.take()
             && i < self.items.len()
         {
             self.current = i;
-            self.items[i] = entry;
+            if !entry.is_hidden() {
+                self.items[i] = entry;
+            }
             return;
         }
         if !self.items.is_empty() {
             self.items.truncate(self.current + 1);
         }
-        self.items.push(entry);
-        if self.items.len() > MAX_ITEMS {
-            self.items.remove(0);
+        match self.items.last_mut() {
+            Some(last) if entry.is_hidden() || last.is_hidden() => *last = entry,
+            _ => {
+                self.items.push(entry);
+                if self.items.len() > MAX_ITEMS {
+                    self.items.remove(0);
+                }
+            }
         }
         self.current = self.items.len() - 1;
     }
@@ -132,18 +169,42 @@ impl TeleportHistory {
         self.current.checked_sub(1).and_then(|i| self.items.get(i))
     }
 
-    /// RlvUIEnabler::onToggleShowLoc keeps the navigation destination while
-    /// removing the current location's visible name.
+    /// @showloc set or released (RlvUIEnabler::onToggleShowLoc →
+    /// LLTeleportHistory::updateCurrentLocation): the places ahead go, and
+    /// the current one is named `region` with no destination left, as the
+    /// zeroed item of the Legacy Viewer. It stays so while the restriction
+    /// holds; once released, `locate_current` says where we are. Returns
+    /// the place as it was.
     pub fn replace_current_region(&mut self, region: &str) -> Option<TpEntry> {
         let current = self.items.get_mut(self.current)?;
-        let previous = current.clone();
-        current.region = region.to_owned();
-        current.parcel.clear();
+        let hidden = TpEntry::hidden(region, current.at);
+        let previous = std::mem::replace(current, hidden);
+        self.items.truncate(self.current + 1);
         Some(previous)
+    }
+
+    /// The current place, when it has no destination (a place @showloc hid,
+    /// now released), is where the agent stands.
+    pub fn locate_current(&mut self, place: TpEntry) {
+        if let Some(e) = self.items.get_mut(self.current)
+            && e.is_hidden()
+        {
+            *e = place;
+        }
     }
 
     pub fn next(&self) -> Option<&TpEntry> {
         self.items.get(self.current + 1)
+    }
+
+    /// Where the Back arrow leads, when it leads somewhere: a place @showloc
+    /// hid is no destination (`go_to`).
+    pub fn back_name(&self) -> Option<String> {
+        self.previous().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
+    }
+
+    pub fn forward_name(&self) -> Option<String> {
+        self.next().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
     }
 
     /// Start travelling back; returns the destination.
@@ -156,12 +217,14 @@ impl TeleportHistory {
     }
 
     /// LLTeleportHistory::goToItem: start travelling to the place `i` of
-    /// the list; none for the place we are in or past the end.
+    /// the list; none for the place we are in or past the end, nor for a
+    /// place @showloc hid (the Legacy Viewer asks for a teleport to the
+    /// global position zero, which the grid refuses).
     pub fn go_to(&mut self, i: usize) -> Option<TpEntry> {
         if i == self.current {
             return None;
         }
-        let e = self.items.get(i).cloned()?;
+        let e = self.items.get(i).filter(|e| !e.is_hidden()).cloned()?;
         self.pending = Some(i);
         Some(e)
     }
@@ -223,34 +286,82 @@ impl HistoryItem {
     }
 }
 
+/// How long dropping a storage waits for its last save (logout, quit): a
+/// stuck disk cannot hold up the viewer longer than that.
+const LAST_SAVE_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
+///
+/// The file is never lost to a save (#2626): it is replaced atomically, on
+/// the disk before the old one goes (a crash or a killed viewer during a
+/// save leaves the old file, where a plain write left it empty); a file
+/// that exists but cannot be read is never saved over in that session; and
+/// the lines this viewer cannot parse are written back as they were. The
+/// Legacy Viewer stops at the first bad line and saves over the rest.
 #[derive(Debug, Default)]
 pub struct HistoryStorage {
     pub items: Vec<HistoryItem>,
-    /// None: not saved (demo, before login).
+    /// Lines of the file that did not parse, kept for the next save.
+    kept: Vec<Vec<u8>>,
+    /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    /// The thread that writes the file (atomic_file flushes the disk: never
+    /// on the frame thread), started at the first save.
+    writer: Option<Writer>,
+}
+
+#[derive(Debug)]
+struct Writer {
+    files: std::sync::mpsc::Sender<Vec<u8>>,
+    /// Told when the thread has written everything and stopped.
+    /// (in a Mutex: the World is shared with the frame's worker threads)
+    done: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Drop for HistoryStorage {
+    fn drop(&mut self) {
+        if let Some(Writer { files, done }) = self.writer.take() {
+            drop(files);
+            let _ = done.into_inner().map(|d| d.recv_timeout(LAST_SAVE_WAIT));
+        }
+    }
 }
 
 impl HistoryStorage {
-    /// LLTeleportHistoryStorage::load: lines that do not parse are skipped
-    /// (Firestorm stops at the first one), then sorted by date.
+    /// LLTeleportHistoryStorage::load, then sorted by date. A line that does
+    /// not parse is kept as it is for the next save (the Legacy Viewer stops
+    /// reading there); a file that exists but cannot be read is left alone
+    /// for the session (not saved over).
     pub fn load(path: PathBuf) -> HistoryStorage {
-        let mut items = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                match aurora_llsd::from_notation(line.as_bytes()) {
-                    Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
-                    _ => log::info!("teleport history: a line could not be read"),
-                }
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
+                return HistoryStorage::default();
             }
+        };
+        let (mut items, kept) = parse(&bytes);
+        if !kept.is_empty() {
+            log::info!(
+                "teleport history: {} line(s) could not be read; they are kept in the file",
+                kept.len()
+            );
         }
         items.sort_by(|a, b| a.date.total_cmp(&b.date));
-        HistoryStorage { items, path: Some(path) }
+        HistoryStorage {
+            items,
+            kept,
+            path: Some(path),
+            writer: None,
+        }
     }
 
     /// A history kept in memory only (the demo's).
     pub fn in_memory(items: Vec<HistoryItem>) -> HistoryStorage {
-        HistoryStorage { items, path: None }
+        let mut storage = HistoryStorage::default();
+        storage.items = items;
+        storage
     }
 
     /// LLTeleportHistoryStorage::addItem: the same title within 5 m replaces
@@ -303,28 +414,103 @@ impl HistoryStorage {
         }
     }
 
-    /// onClearTeleportHistoryDialog: purgeItems + save.
+    /// onClearTeleportHistoryDialog: purgeItems + save. The lines kept
+    /// unread go too: the user asked for an empty history.
     pub fn clear(&mut self) {
         self.items.clear();
+        self.kept.clear();
         self.save();
     }
 
-    fn save(&self) {
-        let Some(path) = &self.path else {
+    /// The file's bytes: the lines kept from the file, then the places.
+    fn file(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for line in &self.kept {
+            out.extend_from_slice(line);
+            out.push(b'\n');
+        }
+        for it in &self.items {
+            out.extend_from_slice(aurora_llsd::to_notation(&it.to_llsd()).as_bytes());
+            out.push(b'\n');
+        }
+        out
+    }
+
+    /// Hands the file to the writer thread; the newest one waiting wins.
+    fn save(&mut self) {
+        let Some(path) = self.path.clone() else {
             return;
         };
-        let mut text = String::new();
-        for it in &self.items {
-            text.push_str(&aurora_llsd::to_notation(&it.to_llsd()));
-            text.push('\n');
+        let file = self.file();
+        if self.writer.is_none() {
+            self.writer = spawn_writer(path.clone());
         }
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = std::fs::write(path, text) {
-            log::warn!("can't save the teleport history: {e}");
+        let sent = self.writer.as_ref().is_some_and(|w| w.files.send(file.clone()).is_ok());
+        if !sent {
+            // no thread: written here, as before
+            self.writer = None;
+            if let Err(e) = write_file(&path, &file) {
+                log::warn!("can't save the teleport history: {e}");
+            }
         }
     }
+
+    /// Waits for the saves handed to the writer (tests).
+    #[cfg(test)]
+    fn flush(&mut self) {
+        if let Some(Writer { files, done }) = self.writer.take() {
+            drop(files);
+            let _ = done.into_inner().map(|d| d.recv());
+        }
+    }
+}
+
+/// The places of a file, and its lines that are not one (kept as they are).
+fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
+    let mut items = Vec::new();
+    let mut kept = Vec::new();
+    for line in bytes.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        match aurora_llsd::from_notation(line) {
+            Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
+            _ => kept.push(line.to_vec()),
+        }
+    }
+    (items, kept)
+}
+
+fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    crate::atomic_file::write(path, file)
+}
+
+fn spawn_writer(path: PathBuf) -> Option<Writer> {
+    let (files, queue) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (finished, done) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("aurora-tp-history".into())
+        .spawn(move || {
+            while let Ok(mut file) = queue.recv() {
+                while let Ok(newer) = queue.try_recv() {
+                    file = newer;
+                }
+                if let Err(e) = write_file(&path, &file) {
+                    log::warn!("can't save the teleport history: {e}");
+                }
+            }
+            let _ = finished.send(());
+        })
+        .map_err(|e| log::warn!("teleport history: no writer thread ({e}); saved on the caller's thread"))
+        .ok()?;
+    Some(Writer {
+        files,
+        done: std::sync::Mutex::new(done),
+    })
 }
 
 /// Accordion sections of the history (panel_teleport_history.xml).
@@ -342,16 +528,19 @@ pub fn history_sections() -> [&'static str; 9] {
     ]
 }
 
-/// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ "utc" (the
-/// default): the first six sections are days starting at midnight UTC,
-/// "6 days ago or earlier" goes back to the same day of the previous month and
-/// "1 month ago or earlier" to six months ago. A date in the future counts as
-/// today. Returns the index in HISTORY_SECTIONS.
-pub fn history_section(date: f64, now: f64) -> usize {
+/// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ: the first six
+/// sections are days starting at midnight in the history's zone (`offset`:
+/// seconds to add to UTC there, 0 for UTC), "6 days ago or earlier" goes
+/// back to the same day of the previous month and "1 month ago or earlier"
+/// to six months ago, both from midnight UTC as the source counts them. A
+/// date in the future counts as today. Returns the index in
+/// HISTORY_SECTIONS.
+pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};
     const DAY: f64 = 86_400.0;
-    let today = (now / DAY).floor();
-    let (y, m, d) = civil_from_days(today as i64);
+    let (y, m, d) = civil_from_days((now / DAY).floor() as i64);
+    // the zone's day, back in UTC seconds below
+    let today = ((now + offset) / DAY).floor();
     // LLDate::fromYMDHMS normalizes a day past the month's end, as does
     // days_from_civil
     let months_back = |n: i64| {
@@ -360,7 +549,7 @@ pub fn history_section(date: f64, now: f64) -> usize {
     };
     for i in 0..history_sections().len() - 1 {
         let lower = match i {
-            0..=5 => (today - i as f64) * DAY,
+            0..=5 => (today - i as f64) * DAY - offset,
             6 => months_back(1),
             _ => months_back(6),
         };
@@ -394,8 +583,8 @@ mod tests {
     fn e(n: &str) -> TpEntry {
         TpEntry {
             region: n.into(),
-            handle: 0,
-            position: Vec3::ZERO,
+            handle: aurora_net::origin_to_handle(256_000, 256_000),
+            position: Vec3::new(128.0, 128.0, 25.0),
             parcel: String::new(),
             at: 0,
             grid: None,
@@ -506,6 +695,63 @@ mod tests {
         assert_eq!(d.previous().map(|x| x.region.clone()), Some("Y".into()));
     }
 
+    /// LLTeleportHistory::updateCurrentLocation under @showloc: however many
+    /// teleports, the session holds one hidden place, which leads nowhere.
+    #[test]
+    fn rlva_hidden_arrivals_share_one_place_with_no_way_back() {
+        let mut h = TeleportHistory::default();
+        h.arrived(e("A"));
+        h.arrived(e("B"));
+        h.arrived(e("C"));
+        assert!(h.go_back().is_some());
+        h.arrived(e("B"));
+        // the restriction comes at B: B loses its name and its destination,
+        // and the places ahead go
+        let was = h.replace_current_region("(Hidden)").expect("a current place");
+        assert_eq!((was.region.as_str(), was.is_hidden()), ("B", false));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert!(s.items[1].is_hidden());
+        // three teleports under it: still one hidden place, the last one's
+        for at in 1..=3 {
+            h.arrived(TpEntry::hidden("(Hidden)", at));
+        }
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert_eq!((s.items[1].title().as_str(), s.items[1].at), ("(Hidden)", 3));
+        assert_eq!(s.items[1].handle, 0);
+        assert_eq!(s.items[1].position, Vec3::ZERO);
+        // Back to A is a teleport like another; A is left as it was
+        assert_eq!(h.back_name().as_deref(), Some("A"));
+        assert_eq!(h.go_back().map(|x| x.region), Some("A".into()));
+        h.arrived(TpEntry::hidden("(Hidden)", 4));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current, s.items[0].region.as_str()), (2, 0, "A"));
+        assert!(!s.items[0].is_hidden());
+        // the hidden place ahead is shown, and is no destination
+        assert!(h.next().is_some_and(TpEntry::is_hidden));
+        assert!(h.forward_name().is_none());
+        assert!(h.go_forward().is_none() && h.go_to(1).is_none());
+        h.arrived(TpEntry::hidden("(Hidden)", 5));
+        // that arrival was no trip in the list: it takes the place of A
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (1, 0));
+        assert!(s.items[0].is_hidden());
+        // released: the place is the one we stand in, and the list grows again
+        h.replace_current_region("D");
+        assert!(h.session().items[0].is_hidden(), "no destination until the agent is located");
+        h.locate_current(e("D"));
+        h.locate_current(e("not hidden any more"));
+        assert_eq!(h.session().items[0].region, "D");
+        h.arrived(e("E"));
+        assert_eq!(h.back_name().as_deref(), Some("D"));
+        // a hidden place never located is replaced by the next arrival
+        h.replace_current_region("(Hidden)");
+        h.arrived(e("F"));
+        let regions: Vec<_> = h.session().items.iter().map(|t| t.region.as_str()).collect();
+        assert_eq!(regions, ["D", "F"]);
+    }
+
     const DAY: f64 = 86_400.0;
 
     #[test]
@@ -514,26 +760,56 @@ mod tests {
         // 2026-10-10 15:00 UTC
         let now = days_from_civil(2026, 10, 10) as f64 * DAY + 15.0 * 3600.0;
         let midnight = days_from_civil(2026, 10, 10) as f64 * DAY;
-        assert_eq!(history_section(now, now), 0);
-        assert_eq!(history_section(midnight, now), 0);
-        assert_eq!(history_section(midnight - 1.0, now), 1);
-        assert_eq!(history_section(now + DAY, now), 0, "future dates count as today");
+        assert_eq!(history_section(now, now, 0.0), 0);
+        assert_eq!(history_section(midnight, now, 0.0), 0);
+        assert_eq!(history_section(midnight - 1.0, now, 0.0), 1);
+        assert_eq!(history_section(now + DAY, now, 0.0), 0, "future dates count as today");
         for days in 2..=5 {
-            assert_eq!(history_section(midnight - (days as f64 - 0.5) * DAY, now), days);
+            assert_eq!(history_section(midnight - (days as f64 - 0.5) * DAY, now, 0.0), days);
         }
-        assert_eq!(history_section(midnight - 5.5 * DAY, now), 6);
+        assert_eq!(history_section(midnight - 5.5 * DAY, now, 0.0), 6);
         // one month back: 2026-09-10 00:00
         let month = days_from_civil(2026, 9, 10) as f64 * DAY;
-        assert_eq!(history_section(month, now), 6);
-        assert_eq!(history_section(month - 1.0, now), 7);
+        assert_eq!(history_section(month, now, 0.0), 6);
+        assert_eq!(history_section(month - 1.0, now, 0.0), 7);
         let six = days_from_civil(2026, 4, 10) as f64 * DAY;
-        assert_eq!(history_section(six, now), 7);
-        assert_eq!(history_section(six - 1.0, now), 8);
+        assert_eq!(history_section(six, now, 0.0), 7);
+        assert_eq!(history_section(six - 1.0, now, 0.0), 8);
         // January: the months before go back into the previous year
         let jan = days_from_civil(2027, 1, 31) as f64 * DAY;
-        assert_eq!(history_section(days_from_civil(2026, 12, 31) as f64 * DAY, jan), 6);
-        assert_eq!(history_section(days_from_civil(2026, 7, 31) as f64 * DAY, jan), 7);
-        assert_eq!(history_section(days_from_civil(2026, 7, 30) as f64 * DAY, jan), 8);
+        assert_eq!(history_section(days_from_civil(2026, 12, 31) as f64 * DAY, jan, 0.0), 6);
+        assert_eq!(history_section(days_from_civil(2026, 7, 31) as f64 * DAY, jan, 0.0), 7);
+        assert_eq!(history_section(days_from_civil(2026, 7, 30) as f64 * DAY, jan, 0.0), 8);
+    }
+
+    /// SLT and local time: the days start at the zone's midnight, the
+    /// months stay counted from midnight UTC.
+    #[test]
+    fn the_days_start_at_the_zones_midnight() {
+        use aurora_net::profile::days_from_civil;
+        const HOUR: f64 = 3600.0;
+        // 2026-11-14 03:00 UTC, 2026-11-13 19:00 PST
+        let utc_midnight = days_from_civil(2026, 11, 14) as f64 * DAY;
+        let now = utc_midnight + 3.0 * HOUR;
+        let pst = -8.0 * HOUR;
+        // 2026-11-13 09:00 UTC: today in SLT, yesterday in UTC
+        let morning = utc_midnight - 15.0 * HOUR;
+        assert_eq!(history_section(morning, now, pst), 0);
+        assert_eq!(history_section(morning, now, 0.0), 1);
+        // SLT's midnight is 08:00 UTC
+        let slt_midnight = utc_midnight - 16.0 * HOUR;
+        assert_eq!(history_section(slt_midnight, now, pst), 0);
+        assert_eq!(history_section(slt_midnight - 1.0, now, pst), 1);
+        // east of UTC (UTC+9): 2026-11-14 12:00 there, its day from 15:00 UTC the day before
+        let tokyo = 9.0 * HOUR;
+        assert_eq!(history_section(utc_midnight - 9.0 * HOUR, now, tokyo), 0);
+        assert_eq!(history_section(utc_midnight - 9.0 * HOUR - 1.0, now, tokyo), 1);
+        // a month back stays 2026-10-14 00:00 UTC in every zone
+        let month = days_from_civil(2026, 10, 14) as f64 * DAY;
+        for offset in [0.0, pst, tokyo] {
+            assert_eq!(history_section(month, now, offset), 6);
+            assert_eq!(history_section(month - 1.0, now, offset), 7);
+        }
     }
 
     #[test]
@@ -569,10 +845,12 @@ mod tests {
         // an older date is sorted in
         s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 1500.0, String::new());
         assert_eq!(s.items[0].title, "Nordheim");
+        s.flush();
         let again = HistoryStorage::load(path.clone());
         assert_eq!(again.items, s.items);
         s.remove(0);
         s.clear();
+        s.flush();
         assert!(HistoryStorage::load(path.clone()).items.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -590,6 +868,80 @@ mod tests {
         assert_eq!(s.items.len(), 2);
         assert_eq!(s.items[0].title, "Ahern");
         assert_eq!(s.items[1].global, DVec3::new(256_148.0, 256_195.0, 24.0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2626: the lines this viewer can't read (not LLSD, not UTF-8) are
+    /// written back at the next save instead of being lost.
+    #[test]
+    fn unreadable_lines_survive_a_save() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-kept-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut text = b"{'date':d\"2024-03-01T10:00:00.00Z\",'global_pos':[r1,r2,r3],'title':'Ahern'}\r\n".to_vec();
+        text.extend_from_slice(b"a line from a newer viewer\r\n");
+        // not UTF-8: a Latin-1 e acute
+        text.extend_from_slice(b"{'title':'caf\xe9'\n");
+        std::fs::write(&path, &text).unwrap();
+        let mut s = HistoryStorage::load(path.clone());
+        assert_eq!(s.items.len(), 1);
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        s.flush();
+        let saved = std::fs::read(&path).unwrap();
+        let lines: Vec<&[u8]> = saved.split(|&b| b == b'\n').collect();
+        assert!(lines.contains(&&b"a line from a newer viewer"[..]));
+        assert!(lines.contains(&&b"{'title':'caf\xe9'"[..]));
+        let again = HistoryStorage::load(path.clone());
+        assert_eq!(again.items, s.items);
+        assert_eq!(again.kept.len(), 2);
+        // saved again: kept once, not twice
+        let mut again = again;
+        again.remove(0);
+        again.flush();
+        assert_eq!(HistoryStorage::load(path.clone()).kept.len(), 2);
+        // Clear history empties the file, kept lines included
+        again.clear();
+        again.flush();
+        let after_clear = HistoryStorage::load(path.clone());
+        assert!(after_clear.items.is_empty() && after_clear.kept.is_empty());
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2626: a history that exists but can't be read is never saved over:
+    /// the session's places stay in memory only.
+    #[test]
+    fn unreadable_file_is_never_saved_over() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-locked-{}", std::process::id()));
+        // a folder where the file should be: reading it fails, as a locked
+        // or damaged file does
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let _ = std::fs::create_dir_all(path.join("inside"));
+        let mut s = HistoryStorage::load(path.clone());
+        assert!(s.path.is_none());
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        assert_eq!(s.items.len(), 1);
+        assert!(s.writer.is_none());
+        drop(s);
+        assert!(path.join("inside").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing file is an empty history that is saved at the first place.
+    #[test]
+    fn missing_file_starts_empty_and_saves() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut s = HistoryStorage::load(path.clone());
+        assert!(s.items.is_empty() && s.path.is_some());
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        // dropping waits for the last save (logout, quit)
+        drop(s);
+        assert_eq!(HistoryStorage::load(path.clone()).items.len(), 1);
+        // the atomic write leaves no temporary file behind
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(TELEPORT_HISTORY_FILE)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
