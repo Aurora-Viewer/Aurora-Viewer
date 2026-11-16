@@ -288,7 +288,9 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     let (_, hover) = frames.run_with_output(vec![egui::Event::PointerMoved(key)], &mut draw);
     assert_eq!(hover.cursor_icon, egui::CursorIcon::Grab);
     let texts = frames.hover(key, &mut draw);
-    assert!(texts.iter().any(|text| text.source.contains("Keyframe at frame 0")));
+    // the catalogue's text: the tests run in the system language
+    let tip = aurora_i18n::tr!("anim-edit-keyframe-at", frame = 0);
+    assert!(texts.iter().any(|text| text.source.contains(&tip)));
     let stable_shapes = frames.shapes(Vec::new(), &mut draw);
     let stable_baseline = stable_shapes
         .iter()
@@ -966,7 +968,8 @@ fn leaving_the_clip_editor_discards_pending_auto_key_work() {
 fn animation_editor_disables_pose_only_scale_mode_and_restores_it_on_exit() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let frame = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2430,6 +2433,17 @@ fn walking_cycle_round_trips_pelvis_bob_and_opposing_hip_swings() {
     assert!(right_track.rot_keys[1].rotation.dot(rotations[right_hip]).abs() < 0.999);
 }
 
+/// The edit session's base the scene hands over (`World::ik_edit_base`):
+/// the pose `frame` shows under the editor.
+fn based(world: &mut World, rot: &[Quat], positions: &[Vec3]) {
+    world.ik_edit_base = Some(Arc::new(ik::EditBase {
+        pose: ik::LocalPose {
+            rotations: rot.to_vec(),
+            positions: positions.to_vec(),
+        },
+        rest: world.avatar_lib.rig.local_pos.clone(),
+    }));
+}
 fn frame(lib: &AvatarLibrary, rot: &[Quat], positions: &[Vec3], scale: &[Vec3]) -> Frame {
     let model = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::ZYX, 0.4, -0.2, 0.1), Vec3::new(132.0, 126.0, 40.0));
     Frame {
@@ -2614,7 +2628,8 @@ fn keying_a_manually_rotated_bone_keeps_the_pose_after_preview_rebuilds() {
 fn recorded_ik_chains_release_only_their_pose_goals_after_the_new_sample_and_leaving_restores_contacts() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2699,7 +2714,8 @@ fn recorded_ik_chains_release_only_their_pose_goals_after_the_new_sample_and_lea
 fn current_ik_pose_can_be_added_to_an_existing_draft_and_new_drafts_preserve_previous_keys() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2731,13 +2747,15 @@ fn current_ik_pose_can_be_added_to_an_existing_draft_and_new_drafts_preserve_pre
 fn creation_records_the_rest_skeleton_never_the_animation_playing_on_the_avatar() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
     let elbow = rig.names["mElbowLeft"];
     let mut rotations = rig.local_rot.clone();
     rotations[elbow] = Quat::from_euler(EulerRot::ZYX, 0.9, -0.4, 0.7);
     let mut positions = rig.local_pos.clone();
     positions[rig.pelvis] += Vec3::new(0.1, -0.2, 0.3);
     let playing = frame(&lib, &rotations, &positions, &rig.scale);
+    // the scene freezes that animation as the edit session's base
+    based(&mut world, &rotations, &positions);
     let at_rest = |editor: &Editor, time: f32| {
         let document = editor.clip.document.as_ref().unwrap();
         let track = document.tracks.iter().find(|t| t.bone == elbow).unwrap();
@@ -2783,7 +2801,8 @@ fn creation_records_the_rest_skeleton_never_the_animation_playing_on_the_avatar(
 fn creation_bakes_the_contacts_the_user_set_on_the_rest_skeleton() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let wrist = rig.names["mWristLeft"];
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
@@ -4011,4 +4030,162 @@ fn the_animation_editor_buttons_use_icons_the_viewer_carries() {
     ] {
         assert!(crate::ui::icons::embedded(icon), "{icon}");
     }
+}
+
+/// Joints a pose stand's or an animation layer's animation turns under the
+/// editor, each its own way.
+const ANIMATED: [&str; 7] = [
+    "mShoulderLeft",
+    "mElbowLeft",
+    "mWristLeft",
+    "mNeck",
+    "mHead",
+    "mHipLeft",
+    "mKneeLeft",
+];
+fn animation(rig: &Rig) -> Vec<Quat> {
+    let mut rotations = rig.local_rot.clone();
+    for (i, name) in ANIMATED.iter().enumerate() {
+        let bone = rig.names[*name];
+        rotations[bone] = (rig.local_rot[bone] * Quat::from_euler(EulerRot::ZYX, 0.5 + 0.1 * i as f32, -0.3, 0.4)).normalize();
+    }
+    rotations
+}
+/// Turn `name` by `touch` in its own frame, as a short gizmo drag does.
+fn nudge(editor: &mut Editor, rig: &Rig, shown: &Frame, name: &str, touch: Quat) {
+    let bone = rig.names[name];
+    editor.select(bone, rig, shown);
+    let turned = (shown.model.inverse() * shown.joints[bone]).to_scale_rotation_translation().1;
+    editor.set_rotation(turned * touch);
+    editor.commit_manipulation(rig, shown, true);
+}
+fn key_at_start(editor: &Editor, bone: usize) -> Quat {
+    let document = editor.clip.document.as_ref().expect("a recorded animation");
+    let track = document.tracks.iter().find(|t| t.bone == bone).expect("every joint is recorded");
+    track.motion.rotation_at(0.0).expect("a key at the start")
+}
+
+#[test]
+fn touching_every_joint_over_an_animation_records_the_touches_only() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    let touch = Quat::from_rotation_x(0.01);
+    let mut editor = Editor::default();
+    editor.toggle();
+    for name in ANIMATED {
+        nudge(&mut editor, &rig, &shown, name, touch);
+    }
+    // "Capture current IK pose" and "Create" record through the same frame
+    editor.new_clip(&world, &shown);
+    for name in ANIMATED {
+        let bone = rig.names[name];
+        let key = key_at_start(&editor, bone);
+        assert!(key.dot(rig.local_rot[bone] * touch).abs() > 0.9999, "{name} keeps the touch");
+        assert!(key.dot(playing[bone]).abs() < 0.99, "{name} leaves the animation out");
+    }
+}
+
+#[test]
+fn edits_follow_the_animation_under_them_when_it_is_excluded() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.follow_edit_base(&world);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    let touch = Quat::from_rotation_x(0.01);
+    for name in ANIMATED {
+        nudge(&mut editor, &rig, &shown, name, touch);
+    }
+    // Exclude current avatar animations: the base is the rest skeleton
+    based(&mut world, &rig.local_rot, &rig.local_pos);
+    editor.follow_edit_base(&world);
+    editor.new_clip(&world, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale));
+    for name in ANIMATED {
+        let bone = rig.names[name];
+        let key = key_at_start(&editor, bone);
+        assert!(key.dot(rig.local_rot[bone] * touch).abs() > 0.9999, "{name} keeps the touch");
+        assert!(key.dot(playing[bone]).abs() < 0.99, "{name} leaves the animation out");
+    }
+}
+
+#[test]
+fn a_contact_set_over_an_animation_follows_it_away() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.follow_edit_base(&world);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    // a wrist contact left where the animation holds the hand
+    editor.select(rig.names["mWristLeft"], &rig, &shown);
+    editor.commit();
+    assert_eq!(editor.request().goals.len(), 1);
+    based(&mut world, &rig.local_rot, &rig.local_pos);
+    editor.follow_edit_base(&world);
+    editor.new_clip(&world, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale));
+    for name in ["mShoulderLeft", "mElbowLeft"] {
+        let bone = rig.names[name];
+        assert!(
+            key_at_start(&editor, bone).dot(rig.local_rot[bone]).abs() > 0.999,
+            "{name} does not reach for the animation's hand"
+        );
+    }
+}
+
+#[test]
+fn edits_without_their_base_are_not_recorded() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let shown = frame(&lib, &animation(&rig), &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    nudge(&mut editor, &rig, &shown, "mElbowLeft", Quat::from_rotation_x(0.01));
+    editor.new_clip(&world, &shown);
+    assert!(editor.clip.document.is_none());
+    assert!(editor.clip.error.is_some());
+}
+
+#[test]
+fn the_scene_hands_the_editor_the_pose_under_its_edits() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let playing = animation(rig);
+    let pelvis = Vec3::new(0.0, 0.0, 0.2);
+    let mut pose = ik::Pose::default();
+    pose.edit = ik::EditRequest {
+        active: true,
+        joints: vec![ik::JointEdit {
+            bone: rig.names["mHead"],
+            rotation: Some(Quat::from_rotation_x(0.7)),
+            translation: None,
+            weight: 1.0,
+        }],
+        ..Default::default()
+    };
+    let now = Instant::now();
+    pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true).unwrap();
+    let base = pose.edit_base.clone().expect("an edit session has a base");
+    assert_eq!(base.pose.rotations, playing, "the animation, without the edit");
+    let offset = pelvis / rig.parent_scale[rig.pelvis];
+    assert!(base.pose.positions[rig.pelvis].abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-6));
+    pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true).unwrap();
+    assert!(
+        Arc::ptr_eq(&base, pose.edit_base.as_ref().unwrap()),
+        "an unchanged base is not copied again"
+    );
+    pose.edit = ik::EditRequest::default();
+    let _ = pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true);
+    assert!(pose.edit_base.is_none(), "no base outside an edit session");
 }

@@ -87,10 +87,11 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Contact sets, `newview/lggcontactsets.cpp` — Copyright © 2011 Greg Hendrickson (LordGregGreg Back); `fspanelcontactsets.cpp`, `fsfloatercontactsetconfiguration.cpp` — Copyright © 2013 Cinder Roxley | `aurora-viewer/src/world/contact_sets.rs`, `world/contact_sets/`, `ui/contacts.rs`, `ui/people/sets.rs` | Originally LGPL 2.1 |
 | Poser, `newview/fsfloaterposer.cpp`, `fsposeranimator.cpp`, `fsjointpose.h` — Copyright © 2024 Angeldark Raymaker | `aurora-viewer/src/ik_edit/poser.rs`, `ik_edit/poser/`, `scene/avatar_studio.rs` | Originally LGPL 2.1 |
 | Area search, `newview/fsareasearch.cpp` — Copyright © 2012 Techwolf Lupindo | `aurora-viewer/src/app/area_search.rs`, `ui/area_search.rs`, `ui/area_search/`, `settings/area_search.rs`, `build/property_query.rs` | Originally LGPL 2.1 |
-| Local mesh, `newview/vjlocalmesh.cpp` — Copyright © 2022 Vaalith Jinn | `aurora-viewer/src/blender_live/protocol.rs` | Originally LGPL 2.1 |
+| Local mesh, `newview/vjlocalmesh.cpp` — Copyright © 2022 Vaalith Jinn | `aurora-viewer/src/blender_live/protocol.rs`, `aurora-viewer/src/imports/local.rs`, `aurora-viewer/src/imports/local/scene.rs`, `aurora-viewer/src/app/imports.rs` | Originally LGPL 2.1 |
 | Grids and SLURLs, `newview/fsgridhandler.cpp`, `fsslurl.cpp` — with modifications Copyright © 2012 arminweatherwax | `aurora-viewer/src/grids.rs`, `slurl.rs` | Originally LGPL 2.1 |
 | Media lists, `newview/floatermedialists.cpp` — Copyright © 2011 Sione Lomu | `aurora-viewer/src/media/filter.rs` | Originally LGPL 2.1 |
 | Simulator features, `newview/lfsimfeaturehandler.cpp` — Copyright © 2013 Liru Færs | `aurora-viewer/src/grid_status.rs`, `world/inventory/actions.rs` | Originally LGPL 2.1 |
+| Region settings of Aurora-Sim based grids, `newview/llpanelopenregionsettings.cpp` — Copyright © 2011 Patrick Sapinski, Matthew Beardmore | `aurora-net/src/open_region.rs`; `aurora-viewer/src/ui/region/opensim.rs` | Originally LGPL 2.1 |
 | Interface sounds, `newview/fspanelpreferenceuisounds.cpp` — Copyright © 2026 Firestorm Viewer Project | `aurora-viewer/src/ui_sound.rs`, `ui/options/pages/sound.rs` | Originally LGPL 2.1 |
 | Avatar alignment (Compass, Face nearest avatar), `newview/fsfloateravataralign.cpp` — Copyright © 2026 Ayane Lyla | `aurora-viewer/src/avatar_align.rs`, `app/avatar_align.rs`, `ui/avatar_align.rs` | Originally LGPL 2.1 |
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
@@ -129,6 +130,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | "Light Rain" by Jeffreys2 (https://freesound.org/people/Jeffreys2/sounds/137022/) and "Rain Indoor Cabin (loop)" by PhilllChabbb (https://freesound.org/people/PhilllChabbb/sounds/232731/), cut, levelled and looped (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/rain-light.ogg`, `assets/rain/rain-roof.ogg` | CC0 1.0 |
 | "Three mighty thunders in row" by Nimlos (https://freesound.org/people/Nimlos/sounds/522025/), cut into five clips and cleaned (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/thunder-*.ogg` | CC0 1.0 |
 | "Snow 004" from ambientCG (https://ambientcg.com/view?id=Snow004), downscaled and packed (built into the executable; changes in [README.md](assets/snow/README.md)) | `assets/snow/snow-normal-height.png`, `assets/snow/snow-color-roughness.png` | CC0 1.0 |
+| "Oiiaioooooiai Cat" by Zhuier (https://sketchfab.com/3d-models/oiiaioooooiai-cat-30d27bf7fb224849b76e208a6eccdb36); changed: texture reduced to 1024 x 1024 and packed with the model into one GLB (built into the executable; changes in [README.md](assets/models/README.md)) | `assets/models/spinning-cat.glb` | CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/) |
 
 Fonts keep their own license (the OFL allows bundling them with software under
 any license). The license texts of the fonts are next to them.
