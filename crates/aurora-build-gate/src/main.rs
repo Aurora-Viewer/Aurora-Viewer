@@ -246,7 +246,7 @@ mod tests {
         // a file that is not there: not heavy, and the argument is kept
         let missing = OsString::from(format!("@{}", dir.join("missing").display()));
         assert!(!is_heavy(std::slice::from_ref(&missing)));
-        assert_eq!(expanded(&[missing.clone()]), [missing.to_string_lossy()]);
+        assert_eq!(expanded(std::slice::from_ref(&missing)), [missing.to_string_lossy()]);
         let _ = fs::remove_dir_all(&dir);
     }
 
