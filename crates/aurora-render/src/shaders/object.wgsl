@@ -1655,7 +1655,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = max(col-m.emissive,vec3<f32>(0.0))*water_scene_light(in.world_pos)+m.emissive;
     }
     col = rez_apply(rec, in, m.n, col);
-    if (!hazed || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())) {
+    if (!hazed || water_fogs_source(in.world_pos)) {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
@@ -3477,9 +3477,22 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 // - rigged and avatars: dithered under 0.598, as avatarAlphaShadowF.glsl
 //   (LLDrawPoolAvatar::renderShadow).
 @fragment
-fn fs_shadow(in: ShadowOut) {
+fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    // the rain's shelter map, seen from straight above (+Y up on the map,
+    // as on the ground: a face turned up keeps its winding, `front`): it
+    // holds what is seen from above, so a face turned down that the scene
+    // culls is left out. A ceiling whose roof is fully transparent (a
+    // skybox's painted sky, its top not drawn at all) lets the snow fall
+    // through it, as people asked; a visible roof, glass too, still keeps
+    // it off (its top faces up). Kept both ways: a two-sided face (seen
+    // from above whichever way it was modelled), and the faces with alpha,
+    // masked or blended (the usual mode of a texture with alpha): a tree's
+    // leaves are one-sided cards, half of them facing down, and without
+    // them the cover under a tree broke into bare texels
+    let both_ways = (rec.flags.x & (FLAG_DOUBLE_SIDED | FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u;
+    if (shadow_params.kind.x == 1u && !both_ways && !front) { discard; }
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     // the rain's shelter map: any blended texel that is there at all keeps
@@ -3710,7 +3723,7 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
         }
     }
     col*=select(vec3<f32>(1.0),water_scene_light(in.world_pos),in.fullbright==0u);
-    if(!is_classic_sky() || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){col=apply_fog(col,in.world_pos);}
+    if(!is_classic_sky() || water_fogs_source(in.world_pos)){col=apply_fog(col,in.world_pos);}
     return vec4<f32>(col, 1.0);
 }
 

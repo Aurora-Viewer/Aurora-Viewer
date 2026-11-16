@@ -152,7 +152,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.open = true;
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
-        "texture" | "destination" => Choice::Texture,
+        "texture" | "texture-free" | "destination" => Choice::Texture,
         "material"
         | "material-cube"
         | "material-aurora"

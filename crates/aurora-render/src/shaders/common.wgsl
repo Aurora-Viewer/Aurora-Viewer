@@ -123,7 +123,7 @@ struct Frame {
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
     rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
-    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z flags (1 rain melts it, 2 the puddles may freeze, 4 deep snow, 8 lying snow hidden), w the detail texture's slot (0: none)
     snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
     snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
@@ -1263,10 +1263,32 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
 }
 
+// Whether a surface takes the water's fog in its own shading (apply_fog):
+// everything seen from below the water, and from above what lies under it.
+// The Legacy Viewer hazes the opaque scene by its own depth before the
+// blended faces under the water (LLPipeline::renderGeomPostDeferred, "do
+// water haze just before pre water alpha"; doWaterHaze,
+// indra/newview/pipeline.cpp), and those faces fog themselves
+// (applySkyAndWaterFog, class2/deferred/alphaF.glsl): each layer by its own
+// depth, and the surface adds none (class3/environment/waterF.glsl). Aurora's
+// surface used to fog its whole copy of the scene by the first depth under
+// it: where a faint blended face lay just under the surface, the bed behind
+// it lost its fog, and a sheet crossing the water plane showed its triangles.
+fn water_fogs_source(world_pos: vec3<f32>) -> bool {
+    return camera_underwater() || world_pos.z < camera_water_level();
+}
+
+// Density of that fog: the under-water one from below (and for the enhanced
+// absorption, which is tuned on it), the plain one from above, as
+// LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
+fn water_source_density() -> f32 {
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+}
+
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+    if (water_fogs_source(world_pos)) {
         if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
-        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,water_source_density());
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);

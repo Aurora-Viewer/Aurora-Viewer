@@ -727,12 +727,17 @@ pub fn settings_list(
     } else {
         aurora_i18n::tr!("ui-environment-based-on-day-cycle")
     };
+    let item = match shown {
+        Shown::Item(id) => catalog.choice_of(kind, id),
+        _ => None,
+    };
     let text = match shown {
         Shown::Shared => aurora_i18n::tr!("ui-environment-shared-environment").to_owned(),
         Shown::DayBased => second.to_owned(),
-        Shown::Item(id) => catalog
-            .name_of(kind, id)
-            .map_or_else(|| aurora_i18n::tr!("ui-environment-inventory-settings").to_owned(), str::to_owned),
+        Shown::Item(_) => item.map_or_else(
+            || aurora_i18n::tr!("ui-environment-inventory-settings").to_owned(),
+            |c| c.name.clone(),
+        ),
         Shown::Preset(n) => super::bars::time_of_day()
             .get(n as usize)
             .copied()
@@ -740,6 +745,7 @@ pub fn settings_list(
             .to_owned(),
         Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
     };
+    let selected_weather = item.is_some_and(|c| c.weather);
     let mut picked = None;
     // `width` at most: a long name is cut, never widening its window
     let size = Vec2::new(width, ui.spacing().interact_size.y);
@@ -762,7 +768,7 @@ pub fn settings_list(
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(LIST_H + 40.0)
-            .selected_text(RichText::new(text).size(12.0).color(p.ink))
+            .selected_text(tagged_name(p, &text, selected_weather, Some(p.ink)))
             .truncate()
             // a click in the search field must not close the list
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -822,7 +828,7 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0)).clicked() {
+                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, None)).clicked() {
                             if !on {
                                 picked = Some(c.asset);
                             }
@@ -840,6 +846,32 @@ pub fn settings_list(
         picked = env_select::step(list, env_select::shown_index(list, shown), true);
     }
     picked
+}
+
+/// A settings item's name as the lists show it (the catalog's, without its
+/// code): one carrying Aurora Weather tagged " [Aurora Weather]" as the
+/// inventory's rows are (testers looked for which of their skies set the
+/// weather); any other as it is. Without `color`, the name takes the row's
+/// own (hovered, selected), tagged or not.
+fn tagged_name(p: &Palette, name: &str, weather: bool, color: Option<egui::Color32>) -> egui::WidgetText {
+    if !weather {
+        let text = RichText::new(name).size(12.0);
+        return match color {
+            Some(c) => text.color(c),
+            None => text,
+        }
+        .into();
+    }
+    let font = egui::FontId::proportional(12.0);
+    let mut job = egui::text::LayoutJob::default();
+    // (PLACEHOLDER: painted in the row's text colour)
+    job.append(
+        name,
+        0.0,
+        egui::TextFormat::simple(font.clone(), color.unwrap_or(egui::Color32::PLACEHOLDER)),
+    );
+    super::inventory::weather_tag(p, &mut job, font);
+    job.into()
 }
 
 /// A list to open on its next frame, with this text in its search field
@@ -1294,6 +1326,42 @@ fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tagged_list_row_takes_the_rows_own_colour_as_a_plain_one() {
+        // a selected row of the sky list: its name in the colour egui gives
+        // that state, whether it carries the Aurora Weather tag or not (it
+        // took the plain text colour, the same hovered, selected or not)
+        fn text_shape(shape: &egui::Shape, starts: &str) -> Option<egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text().starts_with(starts) => Some(t.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_shape(s, starts)),
+                _ => None,
+            }
+        }
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let ctx = egui::Context::default();
+        theme.apply(&ctx, 1.0);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widgets::search_list_item(ui, true, tagged_name(&p, "Plain sky", false, None));
+            widgets::search_list_item(ui, true, tagged_name(&p, "Stormy sky", true, None));
+        });
+        output.textures_delta.clear();
+        let shapes: Vec<egui::Shape> = output.shapes.into_iter().map(|s| s.shape).collect();
+        let find = |starts| shapes.iter().find_map(|s| text_shape(s, starts)).expect("row drawn");
+        let (plain, tagged) = (find("Plain sky"), find("Stormy sky"));
+        assert_eq!(tagged.fallback_color, plain.fallback_color);
+        let name = &tagged.galley.job.sections[0];
+        assert_eq!(name.format.color, egui::Color32::PLACEHOLDER, "the name takes the row's colour");
+        assert!(tagged.galley.text().ends_with(']'), "{}", tagged.galley.text());
+        // the box's own text keeps the colour it is given
+        let job = match tagged_name(&p, "Stormy sky", true, Some(p.ink)) {
+            egui::WidgetText::LayoutJob(job) => job,
+            _ => panic!("a layout job"),
+        };
+        assert_eq!(job.sections[0].format.color, p.ink);
+    }
 
     #[test]
     fn azimuth_and_elevation_round_trip() {

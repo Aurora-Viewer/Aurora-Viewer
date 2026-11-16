@@ -209,6 +209,8 @@ pub struct Renderer {
     prev_palette_buffer: wgpu::Buffer,
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
+    /// `shift_world`'s moves not yet sent with a frame.
+    world_shift: [f32; 2],
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -742,6 +744,7 @@ impl Renderer {
             palette_buffer,
             prev_palette_buffer,
             motion_cut: false,
+            world_shift: [0.0; 2],
             palettes_uploaded: 0,
             vertices_uploaded: 0,
             geometry_uploaded: 0,
@@ -932,6 +935,17 @@ impl Renderer {
     /// ones as the previous ones before drawing it.
     pub fn cut_motion_history(&mut self) {
         self.motion_cut = true;
+    }
+
+    /// Every position moved by `by` (a border crossing: they are relative
+    /// to the new region now). What the renderer keeps in world positions
+    /// from frame to frame (the wetness and snow memory, the footprints'
+    /// map) moves with them, so the crossing changes nothing on the ground:
+    /// left where it was, the memory read 256 m off, and all of it was new
+    /// to it (the snow and the wet ground started again, in a hard line).
+    pub fn shift_world(&mut self, by: Vec3) {
+        self.world_shift[0] += by.x;
+        self.world_shift[1] += by.y;
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -1342,6 +1356,14 @@ impl Renderer {
     pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
         self.vr.head_pose()
     }
+    /// The VR runtime announced it is closing (SteamVR quit by the user): VR
+    /// is over for this renderer. The device was opened through the runtime,
+    /// which ends the process a few seconds later unless this renderer is
+    /// dropped by then: the viewer replaces it with one opened without the
+    /// runtime (aurora-viewer's `gpu_recovery.rs`).
+    pub fn vr_runtime_lost(&self) -> bool {
+        self.vr.runtime_lost()
+    }
     pub fn vr_focused(&self) -> bool {
         self.vr.focused()
     }
@@ -1507,6 +1529,7 @@ impl Renderer {
             capture,
             histogram: self.histogram_request.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
+            world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
         };
         self.frames += 1;

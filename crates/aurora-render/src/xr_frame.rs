@@ -61,7 +61,39 @@ pub(crate) struct Session {
     acquired: [usize; 2],
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// The runtime is going away (`runtime_gone`): set when `begin` ends
+    /// the session for that reason.
+    pub runtime_lost: bool,
 }
+
+/// Whether an OpenXR call failed because the runtime itself is gone (closed
+/// by the user, or crashed), not only the session.
+fn runtime_gone(result: xr::sys::Result) -> bool {
+    matches!(
+        result,
+        xr::sys::Result::ERROR_INSTANCE_LOST | xr::sys::Result::ERROR_RUNTIME_FAILURE
+    )
+}
+
+/// Between VR sessions: whether the runtime announced it is going away
+/// (SteamVR closed by the user). The events of an ended session left in the
+/// queue are dropped; nothing else reads the queue while no session runs.
+///
+/// The runtime ends the viewer's process a few seconds later if the
+/// instance is still open then (SteamVR does, exit code 0): the caller lets
+/// it go at once (`Renderer::vr_runtime_lost`).
+pub(crate) fn runtime_leaving(instance: &xr::Instance) -> bool {
+    let mut buffer = xr::EventDataBuffer::new();
+    loop {
+        match instance.poll_event(&mut buffer) {
+            Ok(Some(xr::Event::InstanceLossPending(_))) => return true,
+            Ok(Some(_)) => {}
+            Ok(None) => return false,
+            Err(e) => return runtime_gone(e),
+        }
+    }
+}
+
 fn head_tracked(flags: xr::SpaceLocationFlags) -> bool {
     flags.contains(
         xr::SpaceLocationFlags::POSITION_VALID
@@ -295,6 +327,7 @@ impl Session {
             acquired: [0; 2],
             device: device.clone(),
             queue: queue.clone(),
+            runtime_lost: false,
         })
     }
     pub fn request_stop(&mut self) {
@@ -310,8 +343,19 @@ impl Session {
         revision: u64,
     ) -> Result<Option<Eyes>> {
         let mut event_buffer = xr::EventDataBuffer::new();
-        while let Some(event) = instance.poll_event(&mut event_buffer)? {
-            if let xr::Event::SessionStateChanged(e) = event {
+        loop {
+            let event = match instance.poll_event(&mut event_buffer) {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(e) => {
+                    self.runtime_lost = runtime_gone(e);
+                    return Err(e.into());
+                }
+            };
+            if let xr::Event::InstanceLossPending(_) = event {
+                self.runtime_lost = true;
+                return Err("the XR runtime is closing".into());
+            } else if let xr::Event::SessionStateChanged(e) = event {
                 // a session dropped while being set up leaves its own events
                 // in the instance's queue; its READY would begin this one a
                 // second time (XR_ERROR_SESSION_RUNNING)

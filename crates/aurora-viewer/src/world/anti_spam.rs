@@ -74,6 +74,37 @@ struct Entry {
     blocked: bool,
 }
 
+/// The blocks of one burst, told in one nearby chat notice that grows with
+/// them (`World::anti_spam_notice`). NACLAntiSpamRegistry::notify posts one
+/// AntiSpamBlocked tip per source; an attack by many objects (a rezzer's
+/// temporary prims, each a new id) then fills the chat with them.
+struct Burst {
+    first: Instant,
+    /// The number of its line in the nearby chat (`LineClock`), and the
+    /// text written there: an edit finds it only while it is unchanged.
+    seq: u64,
+    text: String,
+    /// Each source and category blocked, in order.
+    blocks: Vec<(Queue, Uuid, bool)>,
+}
+
+/// How long after a burst's first block another one joins its notice. An
+/// attack's sources start together and each trips its limit within the
+/// counting interval of the first events (4 s by default), so their blocks
+/// land within a few seconds of each other; a rezzer keeps adding new
+/// sources for as long as it runs. 10 s holds the spread of a default
+/// interval two and a half times over, and a long attack still gets a fresh
+/// line every 10 s, which the lines above the chat bar show again. A longer
+/// interval set in Preferences widens it to two intervals.
+pub fn burst_window(period: u32) -> Duration {
+    Duration::from_secs(10).max(Duration::from_secs(2 * u64::from(period.clamp(1, 60))))
+}
+
+/// A block at `now` joins the burst that began at `first`.
+fn joins(first: Instant, now: Instant, window: Duration) -> bool {
+    now.saturating_duration_since(first) <= window
+}
+
 /// Bound attacker-controlled UUIDs. At capacity, new sources share a small
 /// overflow counter per queue; existing blocks are never evicted by a flood.
 const MAX_SOURCES: usize = 8192;
@@ -85,6 +116,7 @@ pub struct Registry {
     entries: HashMap<(Queue, Uuid), Entry>,
     overflow: HashMap<Queue, Entry>,
     sweep_after: Option<Instant>,
+    burst: Option<Burst>,
 }
 
 impl Registry {
@@ -100,6 +132,7 @@ impl Registry {
         self.entries.clear();
         self.overflow.clear();
         self.sweep_after = None;
+        self.burst = None;
     }
 
     pub fn blocks(&self) -> Vec<(Queue, Uuid)> {
@@ -254,19 +287,89 @@ impl World {
             Decision::Allow => false,
             Decision::Block => true,
             Decision::NewBlock => {
-                let message = if newlines {
-                    aurora_i18n::tr!(
-                        "anti-spam-newlines-blocked",
-                        source = source.to_string(),
-                        limit = self.anti_spam.settings.newlines.clamp(5, 1000)
-                    )
-                } else {
-                    aurora_i18n::tr!("anti-spam-blocked", source = source.to_string(), kind = queue.label())
-                };
-                self.system_message(message);
+                self.anti_spam_notice(queue, source, newlines, Instant::now());
                 true
             }
         }
+    }
+
+    /// A new block, told in the notice of its burst: the source named while
+    /// it is the only one, then their count, one line edited in place while
+    /// it is still in the nearby chat as written (`burst_window`).
+    fn anti_spam_notice(&mut self, queue: Queue, source: Uuid, newlines: bool, now: Instant) {
+        let window = burst_window(self.anti_spam.settings.period);
+        let first = self.chat_clock.first;
+        let line = self.anti_spam.burst.as_ref().filter(|b| joins(b.first, now, window)).and_then(|b| {
+            let i = usize::try_from(b.seq.checked_sub(first)?).ok()?;
+            self.chat
+                .get(i)
+                .filter(|l| l.kind == super::ChatKind::System && l.text == b.text)
+                .map(|_| i)
+        });
+        let Some(i) = line else {
+            let blocks = vec![(queue, source, newlines)];
+            let text = self.anti_spam_text(&blocks);
+            self.system_message(text.clone());
+            let seq = self.chat_clock.first + self.chat.len().saturating_sub(1) as u64;
+            self.anti_spam.burst = Some(Burst {
+                first: now,
+                seq,
+                text,
+                blocks,
+            });
+            return;
+        };
+        let Some(mut burst) = self.anti_spam.burst.take() else {
+            return;
+        };
+        if !burst.blocks.iter().any(|&(q, s, _)| q == queue && s == source) {
+            burst.blocks.push((queue, source, newlines));
+        }
+        let text = self.anti_spam_text(&burst.blocks);
+        if let Some(l) = self.chat.get_mut(i) {
+            l.text.clone_from(&text);
+            self.chat_clock.edited();
+        }
+        burst.text = text;
+        self.anti_spam.burst = Some(burst);
+    }
+
+    /// The notice of a burst's blocks: the source by its name while it is
+    /// alone (AntiSpamBlocked, AntiSpam*NewLineFloodBlocked), else how many
+    /// sources and the categories; the list and Unblock stay in
+    /// Preferences > Protections > Anti-spam.
+    fn anti_spam_text(&self, blocks: &[(Queue, Uuid, bool)]) -> String {
+        let mut sources: Vec<Uuid> = blocks.iter().map(|&(_, s, _)| s).collect();
+        sources.sort_unstable();
+        sources.dedup();
+        let mut kinds: Vec<&str> = Vec::new();
+        for &(queue, _, _) in blocks {
+            if !kinds.contains(&queue.label()) {
+                kinds.push(queue.label());
+            }
+        }
+        let kinds = kinds.join(", ");
+        match (sources.as_slice(), blocks) {
+            ([source], [(_, _, true)]) => aurora_i18n::tr!(
+                "anti-spam-newlines-blocked",
+                source = self.anti_spam_source_name(*source),
+                limit = self.anti_spam.settings.newlines.clamp(5, 1000)
+            ),
+            ([source], _) => aurora_i18n::tr!("anti-spam-blocked", source = self.anti_spam_source_name(*source), kind = kinds),
+            _ => aurora_i18n::tr!("anti-spam-blocked-burst", count = sources.len(), kinds = kinds),
+        }
+    }
+
+    /// A resident by name (none under RLVa @shownames), else the id, as
+    /// before; an object's name is not known here (the Legacy Viewer asks
+    /// for it with RequestObjectPropertiesFamily).
+    fn anti_spam_source_name(&self, id: Uuid) -> String {
+        let name = if self.rlva_can_name(id) {
+            self.person_name(&id)
+        } else {
+            self.avatar_name(&id)
+        };
+        name.unwrap_or_else(|| id.to_string())
     }
 
     /// process_improved_im counts incoming IMs, including inventory and
