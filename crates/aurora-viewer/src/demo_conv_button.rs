@@ -59,6 +59,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: aurora_net::ChatType::Normal,
+            region: Some(crate::demo::HANDLE),
             position: Vec3::ZERO,
             message: aurora_i18n::tr!("demo-toast-hello").into(),
         })],

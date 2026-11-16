@@ -23,6 +23,7 @@ pub mod model;
 
 use super::place_details::{self, ButtonLook, Ctx};
 use super::widgets::{self, Floater};
+use crate::settings::HistoryZone;
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::inventory::{FetchState, Inventory};
@@ -105,6 +106,8 @@ pub enum PlacesAction {
     OpenWindow(Source),
     /// The order of Aurora's lists.
     Sort(model::PlacesSort),
+    /// The history's time zone (FSTPHistoryTZ).
+    HistoryZone(HistoryZone),
 }
 
 /// One line of a landmarks tab.
@@ -218,14 +221,15 @@ fn add_rows(
 }
 
 /// The history in its sections (LLTeleportHistoryPanel::refresh): newest
-/// first, filtered by title; empty sections are left out.
-pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64) -> Vec<(usize, Vec<usize>)> {
+/// first, filtered by title; empty sections are left out. `offset`: the
+/// zone's, `history_offset`.
+pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64, offset: f64) -> Vec<(usize, Vec<usize>)> {
     let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
     for (i, it) in items.iter().enumerate().rev() {
         if !tphistory::history_matches(&it.title, filter) {
             continue;
         }
-        let s = tphistory::history_section(it.date, now);
+        let s = tphistory::history_section(it.date, now, offset);
         match out.last_mut() {
             Some((last, v)) if *last == s => v.push(i),
             _ => out.push((s, vec![i])),
@@ -255,6 +259,35 @@ fn now_secs() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// Seconds to add to UTC for the history's zone at `now`, as
+/// LLStringOps::getPacificTimeOffset and getLocalTimeOffset give it (the
+/// offset of the moment, for every entry).
+pub(crate) fn history_offset(zone: HistoryZone, now: f64) -> f64 {
+    use crate::settings::ClockZone;
+    let clock = match zone {
+        HistoryZone::Utc => return 0.0,
+        HistoryZone::Slt => ClockZone::Slt,
+        HistoryZone::Local => ClockZone::Local,
+    };
+    super::bars::clock::offset(clock, now as i64) as f64
+}
+
+/// menu_teleport_history_gear.xml's "Select Timezone..." (FS:Beq): UTC,
+/// SLT or local time for the days and hours of the history, both looks.
+fn history_zone_menu(ui: &mut egui::Ui, p: &Palette, zone: HistoryZone, actions: &mut Vec<PlacesAction>) {
+    super::menu::submenu(ui, p, "clock-filled", aurora_i18n::tr!("ui-places-history-time-zone"), true, |ui| {
+        for (choice, label) in [
+            (HistoryZone::Utc, aurora_i18n::tr!("ui-places-history-zone-utc")),
+            (HistoryZone::Slt, aurora_i18n::tr!("ui-options-clock-zone-slt")),
+            (HistoryZone::Local, aurora_i18n::tr!("ui-options-clock-zone-local")),
+        ] {
+            if super::menu::check(ui, p, "clock-filled", label, zone == choice, true) && zone != choice {
+                actions.push(PlacesAction::HistoryZone(choice));
+            }
+        }
+    });
 }
 
 #[derive(Default)]
@@ -287,12 +320,24 @@ pub struct PlacesUi {
     /// show its three equal buttons whole, as measured last frame (0 before
     /// it is drawn). The window's minimum width follows it.
     legacy_bar_width: f32,
+    /// The history's time zone, `Settings::tp_history_zone`, set by the app
+    /// before each frame.
+    pub history_zone: HistoryZone,
+    /// AURORA_DEMO_PLACES=…:utc / :local: that zone for the run, until one
+    /// is chosen in the menu (not saved).
+    pub demo_zone: Option<HistoryZone>,
     /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
     /// whatever Preferences › Aurora › Places says (not saved).
     pub demo_classic: bool,
 }
 
 impl PlacesUi {
+    /// The session ended: a question left open ends with it.
+    pub fn forget_question(&mut self) {
+        self.confirm = None;
+        self.dont_ask = false;
+    }
+
     /// "open_landmark_tab" / "open_teleport_history_tab": the lists on a tab.
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
@@ -497,7 +542,7 @@ impl PlacesUi {
                 aurora_i18n::tr!("ui-places-show-sorting-options"),
                 |ui| {
                     if history {
-                        self.history_gear_menu(ui, p, world);
+                        self.history_gear_menu(ui, p, world, actions);
                     } else {
                         self.sorting_menu(ui, p, world, by_date, actions);
                     }
@@ -786,7 +831,9 @@ impl PlacesUi {
                 name: it.name.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), resolved.is_some())
+        // LLLandmarksPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = resolved.is_some() && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = resolved
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -875,7 +922,8 @@ impl PlacesUi {
     fn history_list(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
         let items = &world.tp_storage.items;
         let filter = self.filter.trim().to_owned();
-        let sections = history_sections(items, &filter, now_secs());
+        let now = now_secs();
+        let sections = history_sections(items, &filter, now, history_offset(self.history_zone, now));
         if sections.is_empty() {
             // no_teleports_msg / no_matched_teleports_msg (the search is not
             // ported yet)
@@ -971,7 +1019,9 @@ impl PlacesUi {
         {
             actions.push(history_profile(it));
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), some)
+        // LLTeleportHistoryPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = some && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some((_, it)) = &sel
         {
             actions.push(PlacesAction::ShowOnMap(it.global));
@@ -991,8 +1041,9 @@ impl PlacesUi {
     }
 
     /// menu_teleport_history_gear.xml.
-    fn history_gear_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
-        let present: Vec<usize> = history_sections(&world.tp_storage.items, "", now_secs())
+    fn history_gear_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
+        let now = now_secs();
+        let present: Vec<usize> = history_sections(&world.tp_storage.items, "", now, history_offset(self.history_zone, now))
             .into_iter()
             .map(|(s, _)| s)
             .collect();
@@ -1017,6 +1068,7 @@ impl PlacesUi {
             self.collapsed.extend(0..tphistory::history_sections().len());
             self.selected = None;
         }
+        history_zone_menu(ui, p, self.history_zone, actions);
         // FIRE-31025
         if super::menu::item_if(
             ui,
@@ -1079,7 +1131,8 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-map"),
                 aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                map_target.is_some(),
+                // LLTeleportHistoryPanel::updateVerbs: not under @showworldmap
+                map_target.is_some() && super::context::can_show_on_map(world),
                 w,
             )) && let Some(g) = map_target
             {
@@ -1164,7 +1217,8 @@ impl PlacesUi {
                     look,
                     aurora_i18n::tr!("common-map"),
                     aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                    place.global.is_some(),
+                    // LLPanelPlaces::updateVerbs: not under @showworldmap
+                    place.global.is_some() && super::context::can_show_on_map(world),
                 ) && let Some(g) = place.global
                 {
                     actions.push(PlacesAction::ShowOnMap(g));
@@ -1585,6 +1639,15 @@ mod tests {
         assert!(actions.is_empty());
         assert!(ui.confirm.is_none() && !ui.dont_ask);
 
+        // A checkbox ticked without answering belongs to the session that ended.
+        let mut ui = pending();
+        assert!(answer_confirm(&mut ui, true, &[dont_ask]).is_empty());
+        assert!(ui.dont_ask);
+        ui.forget_question();
+        assert!(ui.confirm.is_none());
+        ui.confirm_landmark(asset, "Landmark".into());
+        assert!(matches!(&answer_confirm(&mut ui, true, &[teleport])[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
+
         // turned off: no question, a history entry too
         let mut ui = pending();
         let actions = answer_confirm(&mut ui, false, &[]);
@@ -1736,9 +1799,9 @@ mod tests {
             item("Matin", now - 2.0 * 3600.0),
             item(aurora_i18n::tr!("common-midday"), now - 60.0),
         ];
-        let s = history_sections(&items, "", now);
+        let s = history_sections(&items, "", now, 0.0);
         assert_eq!(s, vec![(0, vec![4, 3]), (1, vec![2]), (2, vec![1]), (8, vec![0])]);
-        let s = history_sections(&items, "MAT", now);
+        let s = history_sections(&items, "MAT", now, 0.0);
         assert_eq!(s, vec![(0, vec![3])]);
     }
 

@@ -348,7 +348,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
         items.push((Uuid::nil(), e.name.clone()));
     }
     if items.is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let count = aurora_i18n::tr!("ui-profile-aurora-picks-count", count = 0, limit = limit as i64);
         let clicked = if own {
             empty(
@@ -828,7 +828,7 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
         ids.push(Uuid::nil());
     }
     if ids.is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let clicked = if own {
             empty(
                 ui,
@@ -1568,7 +1568,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         env.wanted_images.insert(image);
     }
     if !editing && image.is_nil() && w.fl_about.text.trim().is_empty() {
-        let name = display_name(world, &w.id);
+        let name = display_name(world, w.scope, &w.id);
         let (title, text) = if own {
             (
                 aurora_i18n::tr!("ui-profile-aurora-first-life-empty-own"),
@@ -1746,7 +1746,7 @@ pub(in super::super) fn web(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         );
         return;
     };
-    let Some(username) = web_username(world, &w.id) else {
+    let Some(username) = web_username(world, w.scope, &w.id) else {
         loading(ui, p);
         return;
     };
@@ -1813,7 +1813,7 @@ pub(in super::super) fn notes(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) 
         loading(ui, p);
         return;
     }
-    let name = display_name(world, &w.id);
+    let name = display_name(world, w.scope, &w.id);
     let dirty = w.notes.dirty();
     let saved = w.notes_saved && !dirty;
     let mut save = false;

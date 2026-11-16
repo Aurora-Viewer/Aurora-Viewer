@@ -264,6 +264,8 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -665,6 +667,8 @@ impl World {
                 self.groups.active = id;
                 self.groups.active_title = title.clone();
                 self.groups.active_received = true;
+                // A blank worn title leaves the name tag without a title.
+                // The Group titles window still lists that role (#3147).
                 let active_title = (!id.is_nil() && !title.is_empty()).then_some(title.as_str());
                 if let Some(i) = self.objects.index_of_uuid(&self.agent_id)
                     && let Some(o) = self.objects.get_mut(i)
@@ -716,6 +720,9 @@ impl World {
                     if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == temp_session) {
                         s.other = session;
                     }
+                    // the conversation log's entry (and the poll's memory of the
+                    // open conversation) follows, or the conference is logged twice
+                    self.chat_log.conversations.rekey(temp_session, session);
                 }
                 self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");
@@ -761,6 +768,12 @@ impl World {
                     aurora_i18n::tr!("world-groups-action-denied")
                 };
                 self.session_system(session, format!("{what}{}", reason(&error)));
+            }
+            // moderationActionCoro → showSessionEventError("mute", …): the
+            // notice shows the event alone, its reason is left out
+            NetEvent::SessionModerationFailed { session, forbidden } => {
+                log::warn!("session {session}: moderation refused (not a moderator: {forbidden})");
+                self.session_system(session, aurora_i18n::tr!("world-groups-error-while-moderating"));
             }
             NetEvent::SessionClosed { session, reason: r } => {
                 self.cancel_saved_im(session);
@@ -822,6 +835,10 @@ impl World {
         if inv.from == self.agent_id || session.is_nil() {
             return;
         }
+        // LLIMMgr::addMessage, IM_SESSION_INVITE
+        if !self.omnifilter_session_invite(&mut inv) {
+            return;
+        }
         let in_group = self.groups.is_member(&session);
         if in_group && !self.rlva_allows_im("recvim", session) {
             return;
@@ -880,8 +897,14 @@ impl World {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
+            // FSOpenIMContainerOnOfflineMessage (`Social::offline_ims`)
+            self.social.offline_ims |= inv.offline;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
+            // sessionAdded with has_offline_msg
+            if inv.offline && new {
+                self.log_conversation(session, true);
+            }
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {

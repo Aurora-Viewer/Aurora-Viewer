@@ -74,6 +74,8 @@ pub fn avatars_menu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid])
     if menu::item_if(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"), f.call) {
         act(CtxAction::ConferenceCall(ids.to_vec()));
     }
+    // MarkAvatar, for all of them (LLNetMap::setAvatarMarkColors)
+    crate::ui::avatar_marks::submenu(ui, p, world, ids);
     // "*TODO: unimplemented" for several in Firestorm too
     menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
     menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));

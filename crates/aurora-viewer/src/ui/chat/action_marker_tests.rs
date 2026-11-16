@@ -103,6 +103,8 @@ fn pasted_native_links_preserve_console_line_height() {
         source: id,
         kind: ChatKind::OWN,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
         text: String::new(),
     };
     let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -242,6 +244,8 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
         source: id,
         kind: ChatKind::Local(ChatType::Normal),
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
         text: format!(
             "[secondlife:///app/agent/{id}/about Resident] · [secondlife:///app/agent/{id}/im Resident] · [secondlife:///app/agent/{id}/pay Resident]"
         ),

@@ -4,6 +4,7 @@
 //! LLFloaterInspect::onOpen / refresh (indra/newview/llfloaterinspect.cpp).
 use super::*;
 use crate::ui::inspect::{Row, Totals};
+use crate::world::names::NameScope;
 use aurora_net::RegionHandle;
 use aurora_net::build::BuildCmd;
 use std::collections::HashMap;
@@ -188,13 +189,25 @@ impl App {
                     row.owner_name = aurora_i18n::tr!("inspect-group-owner", name = group);
                 } else if !props.owner_id.is_nil() {
                     self.world.social.want_name(props.owner_id);
-                    row.owner_name = self.world.social.name_of(&props.owner_id);
-                    row.owner = Some(props.owner_id);
+                    // LLFloaterInspect::refresh and onGetOwnerNameCallback
+                    // (indra/newview/llfloaterinspect.cpp): under RLVa's
+                    // `@shownames` the owner is anonymous, the creator only
+                    // when they also own the object or stand around; the
+                    // profile buttons follow. The creator's button stays off
+                    // while the world hides them (stricter: the Legacy
+                    // Viewer opens that profile).
+                    let scope = NameScope::Owner;
+                    row.owner_name = self.world.social.name_in(scope, &props.owner_id);
+                    row.owner = self.world.rlva_shows_name(scope, props.owner_id).then_some(props.owner_id);
                 }
                 if !props.creator_id.is_nil() {
                     self.world.social.want_name(props.creator_id);
-                    row.creator_name = self.world.social.name_of(&props.creator_id);
-                    row.creator = Some(props.creator_id);
+                    let scope = NameScope::Creator { owner: props.owner_id };
+                    row.creator_name = self.world.social.name_in(scope, &props.creator_id);
+                    row.creator = self
+                        .world
+                        .rlva_shows_name(NameScope::World, props.creator_id)
+                        .then_some(props.creator_id);
                 }
             }
             rows.push(row);

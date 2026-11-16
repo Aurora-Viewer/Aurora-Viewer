@@ -100,8 +100,8 @@ The Release workflow publishes together:
   exe's crash symbols ([crash reports](BUG_REPORTING.md#crash-symbols)),
   never downloaded by the viewer, which looks for the package's exact name;
 - then `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` and its `.tar.gz.sha256`,
-  built on Ubuntu 24.04 by a second job once the release exists: a failed
-  Linux build leaves the Windows release published.
+  built on Ubuntu 24.04 by a second job and added once the release exists:
+  a failed Linux build leaves the Windows release published.
 
 On Linux the viewer checks the releases the same way, with the same policy
 (a required update still blocks the login), but does not install them: its
