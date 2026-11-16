@@ -216,6 +216,12 @@ struct FrameU {
     /// x: the material textures' mip bias (main view under FSR drawing the
     /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
     tex_lod: [f32; 4],
+    /// x: 1 when the shading reads the soft shadows' mask (main view only);
+    /// y: the share of the light the sun's shadows let through
+    /// (1 - the shadow intensity), in every pass; z: the projectors'
+    /// light size in metres for their soft shadows (0 = the 5-tap filter of
+    /// before), main view only.
+    soft: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
     /// x: how far the snow lying is drawn (m), whatever falls
@@ -971,6 +977,9 @@ struct Targets {
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
+    /// The soft sun shadows' mask (soft_shadows.rs), when they are on or
+    /// `AURORA_SOFT_SHADOWS` keeps it ready.
+    soft: Option<crate::soft_shadows::Targets>,
     water_refl: Option<ReflTarget>,
     water_air: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
@@ -1201,6 +1210,8 @@ struct GpuTimer {
     last_ssao: Option<f32>,
     /// Last time of the contact shadows (ms).
     last_contact: Option<f32>,
+    /// Last time of the soft sun shadows (ms).
+    last_soft: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
@@ -1281,7 +1292,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 37;
+const GPU_MARKS: u32 = 38;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1366,13 +1377,17 @@ const MARK_ST_ALPHA_END: u32 = 35;
 const MARK_ST_DEPTH_END: u32 = 36;
 const MARK_ST_ACCUM_END: u32 = 37;
 const MARK_ST_COMPOSITE_END: u32 = 38;
-/// The effects beyond the occlusion and the contact shadows
-/// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
+/// After the soft sun shadows, which follow the contact shadows (written
+/// there when they are off); in the effects' range from `MARK_SSAO_END` to
+/// `MARK_WATER_AIR_BEGIN`.
+const MARK_SOFT_END: u32 = 39;
+/// The effects beyond the occlusion, the contact shadows and the soft
+/// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
 /// filtering; the scene copy, with the cut-out pass and the submerged water
 /// particles before it; the SSR.
 const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
-    &[(MARK_CONTACT_END, MARK_WATER_AIR_BEGIN)],
+    &[(MARK_SOFT_END, MARK_WATER_AIR_BEGIN)],
     &[(MARK_WATER_AIR_END, MARK_REFL_END)],
     &[
         (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
@@ -1478,6 +1493,7 @@ impl GpuTimer {
             last_depth: None,
             last_ssao: None,
             last_contact: None,
+            last_soft: None,
             last_bloom: None,
             st_sum: [0.0; 4],
             st_n: 0,
@@ -1512,6 +1528,7 @@ impl GpuTimer {
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
+                            self.last_soft = Some(ms(MARK_CONTACT_END, MARK_SOFT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_st = None;
                             if self.slot_st[slot].get() {
@@ -1932,6 +1949,12 @@ pub(crate) struct Backend {
     /// The Milky Way map (stars.rs milky_way_texels), made once.
     milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
+    /// The soft sun shadows' pipelines, made with the first frame that
+    /// wants them.
+    soft: Option<crate::soft_shadows::SoftShadows>,
+    /// This frame draws the soft shadows (`AURORA_SOFT_SHADOWS=alt`
+    /// switches it each second).
+    soft_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -1978,6 +2001,8 @@ pub(crate) struct Backend {
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
+    /// The shadow atlas's real size in texels (the shed one is small).
+    shadow_dims: (u32, u32),
     shadow_count: u8,
     /// The projector map the rain's shelter takes while it is drawn
     /// (`projector_shadows::shelter_slot`): past the projectors' maps.
@@ -2048,6 +2073,9 @@ pub(crate) struct Backend {
     /// Two threads that finish command encoders beside this one.
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
+    /// The scene's pipelines were compiled with the soft shadows' path
+    /// (`soft_path`): the mask is drawn and read only while they were.
+    soft_pipelines: bool,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
     /// The pipeline workers still running, a set no longer wanted included:
@@ -2509,6 +2537,32 @@ fn begin_scene_b_on<'a>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
+}
+
+/// Whether the scene's pipelines carry the soft shadows' path for `s`: the
+/// setting, or `AURORA_SOFT_SHADOWS` asking for the mask whatever it says.
+/// Off, the shaders are compiled without it (`common_shader_for`), so a frame
+/// that never reads the mask pays nothing for it.
+fn soft_path(s: &RenderSettings) -> bool {
+    crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
+}
+
+const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
+
+/// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
+/// when `soft`, else without: the branches are folded away at compile time.
+pub(crate) fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
+    let common = crate::common_shader_source();
+    if soft {
+        return common;
+    }
+    if !common.contains(SOFT_PATH_ON) {
+        // (the tests fail on it; at run time the soft variant is kept)
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| log::warn!("common.wgsl has no `{SOFT_PATH_ON}` line: the soft shadows' path stays compiled in"));
+        return common;
+    }
+    common.replace(SOFT_PATH_ON, "const SOFT_PATH: bool = false;").into()
 }
 
 /// Rain prototype: the wetness memory's bookkeeping. The memory covers
@@ -3166,6 +3220,8 @@ type ImpostorPipelines = (
 struct PipelineBuild {
     samples: u32,
     ssr: bool,
+    /// Compiled with the soft shadows' path (`soft_path`).
+    soft: bool,
     started: std::time::Instant,
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
@@ -3178,6 +3234,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
+        soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("impostor atlas"),
@@ -3237,7 +3294,7 @@ impl Impostors {
             mapped_at_creation: false,
         });
         let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr);
+            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr, soft);
         Impostors {
             layout,
             atlas,
@@ -3340,10 +3397,11 @@ impl Impostors {
     }
 
     /// The pictures are drawn with the scene's own shaders.
-    fn shader_source(features: wgpu::Features) -> String {
+    /// `soft`: with the soft shadows' path (`common_shader_for`).
+    fn shader_source(features: wgpu::Features, soft: bool) -> String {
         format!(
             "{}\n{}\n{}",
-            crate::common_shader_source(),
+            common_shader_for(soft),
             crate::object_shader_source(features),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         )
@@ -3357,10 +3415,11 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
+        soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
-            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features()).into()),
+            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features(), soft).into()),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("impostors"),
@@ -3906,6 +3965,17 @@ impl Backend {
                 },
                 count: None,
             },
+            // the soft shadows' mask (soft_shadows.rs)
+            wgpu::BindGroupLayoutEntry {
+                binding: 29,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ];
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
@@ -4161,6 +4231,7 @@ impl Backend {
             msaa_samples,
             format,
             settings.gbuffer(),
+            soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -4180,6 +4251,9 @@ impl Backend {
                 &glow.views[1],
                 &gtao,
                 &contact,
+                None,
+                &shadow_view,
+                crate::projector_shadows::atlas_size(shadow_size, crate::projector_shadows::atlas_maps(2, 2)),
                 config.width,
                 config.height,
                 msaa_samples,
@@ -4275,6 +4349,7 @@ impl Backend {
             &tex_layout,
             msaa_samples,
             settings.gbuffer(),
+            soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
@@ -4337,6 +4412,8 @@ impl Backend {
             stars,
             milky_way,
             contact,
+            soft: None,
+            soft_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -4365,6 +4442,7 @@ impl Backend {
             probe_shadow_group,
             shadow_bind_groups,
             shadow_size,
+            shadow_dims: crate::projector_shadows::atlas_size(shadow_size, crate::projector_shadows::atlas_maps(2, 2)),
             shadow_count: 2,
             shelter_slot: 2,
             shelter_drawn: None,
@@ -4407,6 +4485,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            soft_pipelines: soft_path(&settings),
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
@@ -4742,12 +4821,13 @@ impl Backend {
         samples: u32,
         surface_format: wgpu::TextureFormat,
         ssr: bool,
+        soft: bool,
     ) -> Pipelines {
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
             "{}\n{}\n{}",
-            crate::common_shader_source(),
+            common_shader_for(soft),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
@@ -5452,7 +5532,7 @@ impl Backend {
             wgpu::ColorWrites::RED,
         ));
         let ssr_pipe = ssr.then(|| {
-            let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
+            let src = format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -5968,6 +6048,9 @@ impl Backend {
         glow_view: &wgpu::TextureView,
         gtao: &crate::gtao::Gtao,
         contact: &crate::contact_shadows::ContactShadows,
+        soft: Option<&crate::soft_shadows::SoftShadows>,
+        shadow: &wgpu::TextureView,
+        atlas: (u32, u32),
         width: u32,
         height: u32,
         samples: u32,
@@ -6074,6 +6157,11 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
+        // the blended faces opaque enough are in the occlusion depth when it
+        // holds them (`blend_in_ao_depth`)
+        let soft = soft
+            .filter(|_| crate::soft_shadows::Override::from_env().needed(s.soft_shadows))
+            .map(|soft| soft.targets(device, &depth_ss, ao_depth_view, shadow, atlas, w, h));
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -6119,6 +6207,7 @@ impl Backend {
             gtao_shown,
             ao_depth,
             contact,
+            soft,
             depth_ss_tex,
             water_refl,
             water_air,
@@ -6154,7 +6243,8 @@ impl Backend {
                   contact: &wgpu::TextureView,
                   il: &wgpu::TextureView,
                   sample_water: bool,
-                  sample_mask: bool| {
+                  sample_mask: bool,
+                  soft: Option<&wgpu::TextureView>| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
@@ -6170,6 +6260,12 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 25,
                         resource: wgpu::BindingResource::TextureView(milky_way),
+                    },
+                    // the soft shadows' mask (main view only; any texture of
+                    // the format elsewhere, never read: `Frame.soft.x` is 0)
+                    wgpu::BindGroupEntry {
+                        binding: 29,
+                        resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -6302,6 +6398,7 @@ impl Backend {
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
+        let soft = t.soft.as_ref().map(|s| s.result());
         let il = t
             .gtao
             .as_ref()
@@ -6321,6 +6418,7 @@ impl Backend {
                 &dummies.black,
                 false,
                 false,
+                None,
             ),
             a: mk(
                 "frame a",
@@ -6334,6 +6432,7 @@ impl Backend {
                 il,
                 false,
                 true,
+                soft,
             ),
             b: mk(
                 "frame b",
@@ -6347,6 +6446,7 @@ impl Backend {
                 il,
                 true,
                 true,
+                soft,
             ),
             refl: [
                 mk(
@@ -6361,6 +6461,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame mirror",
@@ -6374,6 +6475,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame probe capture",
@@ -6387,6 +6489,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame impostor 0",
@@ -6400,6 +6503,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame impostor 1",
@@ -6413,6 +6517,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame HUD",
@@ -6426,6 +6531,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame drawn pick",
@@ -6439,6 +6545,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame water exterior",
@@ -6452,6 +6559,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
                 mk(
                     "frame probe irradiance capture",
@@ -6465,6 +6573,7 @@ impl Backend {
                     &dummies.black,
                     false,
                     false,
+                    None,
                 ),
             ],
         }
@@ -6478,6 +6587,22 @@ impl Backend {
         shadows
             && self.targets.contact.is_some()
             && crate::contact_shadows::Override::from_env().on_now(self.settings.contact_shadows, secs)
+    }
+
+    /// Whether this frame draws the soft sun shadows: with the sun shadows,
+    /// the mask ready and the cascades chosen per pixel (the mask has no
+    /// vertex distances), `AURORA_SOFT_SHADOWS=alt` every other second. A
+    /// softness of 0 is the shadows of before: no mask, no cost.
+    fn soft_on(&self, shadows: bool, softness: f32) -> bool {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+        shadows
+            && softness > 0.0
+            && self.soft_pipelines
+            && self.soft.is_some()
+            && self.targets.soft.is_some()
+            && self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0
+            && crate::soft_shadows::Override::from_env().on_now(self.settings.soft_shadows, secs)
     }
 
     /// The occlusion method of this frame: `AURORA_AO=alt` switches it each
@@ -6657,6 +6782,10 @@ impl Backend {
     /// `size` forces a size: the 1x1 set that frees a refused one.
     fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
+        // the soft shadows' pipelines, the first time they are wanted
+        if self.soft.is_none() && crate::soft_shadows::Override::from_env().needed(self.settings.soft_shadows) {
+            self.soft = Some(crate::soft_shadows::SoftShadows::new(&self.device));
+        }
         self.depth_pick.scene_changed();
         let scale = if self.snapshot_window.is_some() {
             100
@@ -6690,6 +6819,9 @@ impl Backend {
             &self.glow.views[1],
             &self.gtao,
             &self.contact,
+            self.soft.as_ref(),
+            &self.shadow_view,
+            self.shadow_dims,
             size.0,
             size.1,
             self.msaa_samples,
@@ -6758,7 +6890,8 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        if (samples, s.gbuffer()) == (self.msaa_samples, self.settings.gbuffer()) {
+        let soft = soft_path(&s);
+        if (samples, s.gbuffer(), soft) == (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -6767,14 +6900,15 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.ssr) != (samples, s.gbuffer()))
+            .is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.gbuffer(), soft))
         {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}",
+                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
-                if s.gbuffer() { "on" } else { "off" }
+                if s.gbuffer() { "on" } else { "off" },
+                if soft { "on" } else { "off" }
             );
-            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer());
+            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer(), soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -6792,11 +6926,13 @@ impl Backend {
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // the other settings now, the samples and SSR with their
-                // pipelines
+                // the other settings now, the samples, SSR and soft shadows
+                // with their pipelines (the soft shadows' mask is made
+                // once the pipelines that read it are there)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    soft_shadows: self.settings.soft_shadows,
                     rain_surfaces: self.settings.rain_surfaces,
                     ..s
                 };
@@ -6818,6 +6954,7 @@ impl Backend {
                     samples,
                     self.config.format,
                     s.gbuffer(),
+                    soft,
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -6827,14 +6964,16 @@ impl Backend {
                     &self.tex_layout,
                     samples,
                     s.gbuffer(),
+                    soft,
                 );
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples` and `ssr` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
+    /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
+    /// path `soft` on a worker thread.
+    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -6850,8 +6989,20 @@ impl Backend {
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr);
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr);
+            let scene = Self::make_pipelines(
+                &device,
+                frame,
+                records,
+                tex,
+                shadow,
+                [post, bloom],
+                gbuf,
+                samples,
+                format,
+                ssr,
+                soft,
+            );
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -6864,6 +7015,7 @@ impl Backend {
         let build = PipelineBuild {
             samples,
             ssr,
+            soft,
             started: std::time::Instant::now(),
             done,
         };
@@ -6918,7 +7070,7 @@ impl Backend {
     /// set compiled for other samples or SSR, `None` when they stay.
     fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
         let pipelines_dirty = rebuilt.is_some();
-        let targets_dirty = pipelines_dirty
+        let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
@@ -6926,12 +7078,14 @@ impl Backend {
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
+            || s.soft_shadows != self.settings.soft_shadows
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
         if let Some((samples, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
+            self.soft_pipelines = soft_path(&s);
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
         }
@@ -6948,12 +7102,17 @@ impl Backend {
         let max_dimension = self.device.limits().max_texture_dimension_2d;
         let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, max_dimension);
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
+        // (the soft shadows' mask reads the atlas)
+        targets_dirty |= shadows_dirty && self.targets.soft.is_some();
+        // (`AURORA_SOFT_SHADOWS=1|alt` asks for the mask whatever the setting)
+        targets_dirty |= self.targets.soft.is_none() && crate::soft_shadows::Override::from_env().needed(s.soft_shadows);
         if shadows_dirty {
             // one more map for the rain's shelter where it fits: free up to
             // three projectors (the fourth tile), a row at 4, 8 and 12
             let shelter = crate::projector_shadows::shelter_slot(res, count, max_dimension);
             let maps = crate::projector_shadows::atlas_maps(count, shelter);
             self.shadow_view = Self::make_shadow_atlas(&self.device, res, maps);
+            self.shadow_dims = crate::projector_shadows::atlas_size(res, maps);
             self.shadow_size = res;
             self.shadow_count = count;
             self.shelter_slot = shelter;
@@ -7333,6 +7492,9 @@ impl Backend {
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
+        // the light the sun's shadows let through, in every pass: the
+        // reflections darken their shadows as the view does
+        u.soft[1] = 1.0 - f.shadow_intensity.clamp(0.0, 1.0);
         let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
         // the whole list for every fragment; the main view narrows it (render)
         u.light_sets = LightSets::whole();
@@ -7939,6 +8101,7 @@ impl Backend {
             // (the size the settings ask for stays recorded: no frame's
             // settings make the full atlas again before the remake)
             self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_dims = crate::projector_shadows::atlas_size(512, 0);
             self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
             self.make_targets_now(false, Some((1, 1)));
         });
@@ -8387,6 +8550,7 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
+        self.soft_now = self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -8499,6 +8663,12 @@ impl Backend {
             // the blended faces opaque enough are in the depth it read
             if crate::contact_shadows::Override::from_env().all_casters() {
                 main.contact[1] = 1.0;
+            }
+        }
+        if self.soft_now {
+            main.soft[0] = 1.0;
+            if crate::soft_shadows::projectors_soft() {
+                main.soft[2] = crate::soft_shadows::PROJECTOR_LIGHT_RADIUS * f.shadow_softness;
             }
         }
         main.misc = [
@@ -9027,6 +9197,7 @@ impl Backend {
                 // (orthographic: the first row of a cascade's matrix is the
                 // light's right axis over its half extent)
                 cascades.map(|m| 2.0 / (m.row(0).truncate().length().max(1e-6) * self.shadow_size as f32)),
+                crate::soft_shadows::reach(self.soft_now, f.shadow_softness),
             )
         } else {
             [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
@@ -9940,6 +10111,33 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        // ---- soft sun shadows: the shadow of each pixel of the prepass (or
+        // of the occlusion depth, with the blended faces opaque enough in it)
+        if let (true, Some(soft), Some(t)) = (self.soft_now, &self.soft, &self.targets.soft) {
+            let photo = self.snapshot_window.is_some() || f.photo_scale > 1.0;
+            soft.write(
+                &self.queue,
+                t,
+                &crate::soft_shadows::Frame {
+                    cascades,
+                    splits,
+                    inv_view_proj: Mat4::from_cols_array_2d(&main.inv_view_proj),
+                    camera: Vec3::from_slice(&main.camera_pos[..3]),
+                    softness: f.shadow_softness,
+                    // the TAA accumulates a new pattern each frame (a photo
+                    // keeps one, which its tiles share)
+                    phase: if self.taa.is_some() && !photo {
+                        (self.frame_index % 16) as u32
+                    } else {
+                        0
+                    },
+                    photo,
+                    tile: photo_part(f.photo_tile),
+                },
+            );
+            soft.encode(&mut encoder, t, blend_in_ao_depth);
+        }
+        mark(&mut encoder, MARK_SOFT_END);
         // ---- FSR: the blended faces drawn over what lies behind them, even
         // faint glass, give their own depth and motion, so their edges keep
         // their history (the occlusion and the contact shadows have read
@@ -12134,6 +12332,7 @@ impl Backend {
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
+        stats.gpu_soft = self.timer.as_ref().and_then(|t| t.last_soft);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
@@ -12305,6 +12504,16 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_scene_shader_without_soft_shadows_drops_their_path() {
+        let with = common_shader_for(true);
+        let without = common_shader_for(false);
+        assert!(with.contains(SOFT_PATH_ON), "common.wgsl has its SOFT_PATH line");
+        assert!(!without.contains(SOFT_PATH_ON));
+        assert!(without.contains("const SOFT_PATH: bool = false;"));
+        assert_eq!(without.len(), with.len() + 1);
+    }
 
     #[test]
     fn deep_snow_has_enough_levels_for_its_reach() {
@@ -12538,6 +12747,7 @@ mod tests {
         MARK_DEPTH_END,
         MARK_SSAO_END,
         MARK_CONTACT_END,
+        MARK_SOFT_END,
         MARK_WATER_AIR_BEGIN,
         MARK_WATER_AIR_END,
         MARK_REFL_END,
@@ -12723,11 +12933,11 @@ mod tests {
                 .validate(&module)
                 .map_err(|e| e.emit_to_string(src))
         };
-        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty())) {
+        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty(), true)) {
             panic!("{e}");
         }
         // the source a device with the test takes is refused there
-        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST)).is_err());
+        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST, true)).is_err());
     }
 
     #[test]

@@ -297,6 +297,10 @@ pub mod snow_spin;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Things standing in the sun, for the penumbra of the soft shadows
+/// (AURORA_DEMO_SOFT_SHADOWS).
+#[path = "demo_soft_shadows.rs"]
+pub mod soft_shadows;
 /// A sound passing in front of the listener, back and forth, for the
 /// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
 #[path = "demo_sound_doppler.rs"]
@@ -6399,6 +6403,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(soft_shadows::events());
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(oit_column::events());
@@ -8335,7 +8340,10 @@ pub fn feet_demo() -> Option<bool> {
 /// under thick casters (issue 988).
 pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
-    *SUN.get_or_init(|| parse_sun(&std::env::var("AURORA_DEMO_SUN").ok()?))
+    *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
+        Some(v) => parse_sun(&v),
+        None => soft_shadows::sun(),
+    })
 }
 
 fn parse_sun(v: &str) -> Option<Vec3> {
