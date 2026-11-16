@@ -332,7 +332,7 @@ impl Editor {
         let Some(couple) = self.clip.couple.as_ref() else { return };
         let (Some(a), Some(b)) = (
             world.avatar_models.get(&world.agent_id).copied(),
-            world.avatar_models.get(&couple.partner.id()).copied(),
+            world.couple_base(couple.partner.id()),
         ) else {
             return;
         };

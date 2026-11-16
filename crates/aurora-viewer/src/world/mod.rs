@@ -604,6 +604,10 @@ pub struct World {
     /// region (metres) and a turn about their pelvis (radians). Their body
     /// is drawn there; their animation and the simulator are untouched.
     pub couple_place: (Vec3, f32),
+    /// Person B's skeleton model when couple mode took them: they stay
+    /// there while they walk, turn or sit in the world, `couple_place`
+    /// moving them from it.
+    couple_anchor: Option<(Uuid, glam::Mat4)>,
     /// The partner's kills held meanwhile.
     held_partner: Vec<(ObjKey, Uuid)>,
     /// Interface sounds to play (drained by the app).
@@ -1037,6 +1041,7 @@ impl World {
             held_kills: Vec::new(),
             couple_partner: None,
             couple_place: (Vec3::ZERO, 0.0),
+            couple_anchor: None,
             held_partner: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1925,10 +1930,12 @@ impl World {
         now
     }
 
-    /// The region-space move of Person B's body (`couple_place`), for a
-    /// body whose skeleton model is `model`: the turn goes about their
-    /// pelvis. Avatar Studio's Hover Height lifts B with the agent, so the
-    /// pair keeps its spacing. None for anyone else, or when B is not moved.
+    /// The region-space move of Person B's body, for a body whose skeleton
+    /// model is now `model`: back to where they stood when couple mode took
+    /// them, whatever they do in the world since, then by `couple_place`,
+    /// the turn about their pelvis. Avatar Studio's Hover Height lifts B
+    /// with the agent, so the pair keeps its spacing. None for anyone else,
+    /// or when B is drawn where the world has them.
     pub fn couple_shift(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
         let lift = if self.avatar_studio { self.avatar_studio_lift } else { 0.0 };
         self.couple_shift_lifted(id, model, lift)
@@ -1941,17 +1948,32 @@ impl World {
     }
 
     fn couple_shift_lifted(&self, id: Uuid, model: glam::Mat4, lift: f32) -> Option<glam::Mat4> {
+        if self.couple_partner != Some(id) {
+            return None;
+        }
         let (mut offset, yaw) = self.couple_place;
         if lift.is_finite() {
             offset.z += lift;
         }
-        if self.couple_partner != Some(id) || (offset == Vec3::ZERO && yaw == 0.0) || !offset.is_finite() || !yaw.is_finite() {
+        if !offset.is_finite() || !yaw.is_finite() || model.determinant().abs() <= 1e-8 {
             return None;
         }
-        let pelvis = model.transform_point3(self.avatar_lib.pelvis);
-        let shift =
-            glam::Mat4::from_translation(pelvis + offset) * glam::Mat4::from_rotation_z(yaw) * glam::Mat4::from_translation(-pelvis);
-        shift.is_finite().then_some(shift)
+        let base = self.couple_base(id).unwrap_or(model);
+        let pelvis = base.transform_point3(self.avatar_lib.pelvis);
+        let placed =
+            glam::Mat4::from_translation(pelvis + offset) * glam::Mat4::from_rotation_z(yaw) * glam::Mat4::from_translation(-pelvis) * base;
+        // where the body is drawn, from where the world has it now
+        let shift = placed * model.inverse();
+        (shift.is_finite() && !shift.abs_diff_eq(glam::Mat4::IDENTITY, 1e-5)).then_some(shift)
+    }
+
+    /// Person B's body as couple mode holds it, before `couple_place`: the
+    /// skeleton model they had when they became B.
+    pub fn couple_base(&self, id: Uuid) -> Option<glam::Mat4> {
+        match self.couple_anchor {
+            Some((anchored, model)) if anchored == id && self.couple_partner == Some(id) => Some(model),
+            _ => self.avatar_models.get(&id).copied(),
+        }
     }
 
     /// The animation editor's couple partner, each frame. A partner whose
@@ -1959,6 +1981,15 @@ impl World {
     /// key went to another object since (they came back).
     pub fn set_couple_partner(&mut self, partner: Option<Uuid>) {
         self.couple_partner = partner;
+        // B is held where they stood when they became B (their model once
+        // the scene has one)
+        match partner {
+            Some(id) if self.couple_anchor.is_none_or(|(anchored, _)| anchored != id) => {
+                self.couple_anchor = self.avatar_models.get(&id).map(|model| (id, *model));
+            }
+            None => self.couple_anchor = None,
+            _ => {}
+        }
         if self.held_partner.is_empty() {
             return;
         }
@@ -7069,6 +7100,32 @@ mod motion_tests {
         assert!(!present(&world, 970));
         assert!(present(&world, 975));
         assert!(world.held_kills.is_empty());
+    }
+
+    #[test]
+    fn the_couple_partner_stays_where_couple_mode_took_them_while_they_walk() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(983);
+        let start = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        world.avatar_models.insert(partner, start);
+        world.set_couple_partner(Some(partner));
+        assert!(world.couple_shift(partner, start).is_none(), "drawn where they stand");
+        // they walk off and turn in the world: drawn where they were
+        let walked = glam::Mat4::from_translation(Vec3::new(14.0, 18.0, 30.0)) * glam::Mat4::from_rotation_z(1.0);
+        world.avatar_models.insert(partner, walked);
+        world.set_couple_partner(Some(partner));
+        let shift = world.couple_shift(partner, walked).expect("held back");
+        assert!((shift * walked).abs_diff_eq(start, 1e-4));
+        // a move on screen goes from the held place
+        world.couple_place = (Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let shift = world.couple_shift(partner, walked).expect("moved");
+        assert!((shift * walked).abs_diff_eq(glam::Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)) * start, 1e-4));
+        assert_eq!(world.couple_base(partner), Some(start));
+        // couple mode over: their own place again
+        world.set_couple_partner(None);
+        world.couple_place = (Vec3::ZERO, 0.0);
+        assert!(world.couple_shift(partner, walked).is_none());
+        assert_eq!(world.couple_base(partner), Some(walked));
     }
 
     #[test]
