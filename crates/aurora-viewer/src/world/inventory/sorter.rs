@@ -347,6 +347,16 @@ fn same_store(a: &str, b: &str) -> bool {
     // (letters and digits only: `Mila Rose`, `MilaRose`, `Mila_Rose` and
     // `Mila-Rose` are one store)
     // (`&` kept: `A&B` is not `AB`)
+    // (or the same words, `&` and `and` aside: `Bloom & Co`, `Bloom Co.`)
+    let named = |s: &str| {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty() && !w.eq_ignore_ascii_case("and"))
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>()
+    };
+    if named(&x).len() > 1 && named(&x) == named(&y) {
+        return true;
+    }
     let bare = |s: &str| {
         s.chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '&')
@@ -1063,8 +1073,6 @@ fn in_default_folder(inv: &Inventory, id: Uuid) -> bool {
         })
 }
 
-/// `id` is the Pre-Trash folder or inside it: what is there is on its way
-/// to the Trash, never a place to file things.
 /// [`target_allowed`] for many folders: the Pre-Trash folders are found
 /// once (the picker asks for every folder).
 pub fn target_check(inv: &Inventory) -> impl Fn(Uuid) -> bool + '_ {
@@ -1077,6 +1085,8 @@ pub fn target_check(inv: &Inventory) -> impl Fn(Uuid) -> bool + '_ {
     }
 }
 
+/// `id` is the Pre-Trash folder or inside it: what is there is on its way
+/// to the Trash, never a place to file things.
 fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
     pre_trash_folders(inv).iter().any(|p| id == *p || actions::under(inv, id, *p))
 }
@@ -1485,10 +1495,97 @@ const MASS_KINDS: [&str; 10] = [
     "clutter",
 ];
 
-/// A set's versions by finish (`Vesper Ring Sets` holding `Gold`,
-/// `Silver`).
-const FINISHES: [&str; 10] = [
-    "gold", "silver", "rose", "platinum", "copper", "black", "white", "pearl", "brass", "chrome",
+/// A set's versions by finish, colour, material or season (`Vesper Ring
+/// Sets` holding `Gold`, `Silver`; `Nimbus Hair Packs` holding `Blondes`,
+/// `Reds`).
+const FINISHES: [&str; 87] = [
+    "gold",
+    "silver",
+    "rose",
+    "platinum",
+    "copper",
+    "black",
+    "white",
+    "pearl",
+    "brass",
+    "chrome",
+    "red",
+    "reds",
+    "blue",
+    "blues",
+    "green",
+    "greens",
+    "pink",
+    "pinks",
+    "purple",
+    "yellow",
+    "orange",
+    "brown",
+    "browns",
+    "grey",
+    "gray",
+    "navy",
+    "beige",
+    "cream",
+    "nude",
+    "nudes",
+    "blacks",
+    "blonde",
+    "blondes",
+    "brunettes",
+    "naturals",
+    "pastels",
+    "ombres",
+    "neutrals",
+    "brights",
+    "darks",
+    "lights",
+    "gunmetal",
+    "steel",
+    "titanium",
+    "diamond",
+    "diamonds",
+    "emerald",
+    "ruby",
+    "sapphire",
+    "amethyst",
+    "topaz",
+    "onyx",
+    "crystal",
+    "gem",
+    "gems",
+    "gemstone",
+    "two",
+    "tone",
+    "antique",
+    "matte",
+    "glossy",
+    "shiny",
+    "metallic",
+    "floral",
+    "plain",
+    "print",
+    "prints",
+    "solid",
+    "solids",
+    "striped",
+    "plaid",
+    "leather",
+    "fabric",
+    "velvet",
+    "satin",
+    "lace",
+    "denim",
+    "fall",
+    "spring",
+    "summer",
+    "autumn",
+    "winter",
+    "vol",
+    "volume",
+    "edition",
+    "multi",
+    "mixed",
 ];
 
 /// The pack words of a name that sell many of one thing (`Kyoto Kimono
@@ -1520,7 +1617,7 @@ fn loose_plural(w: &str) -> bool {
 
 /// Folders a user marks a shelf of their own with: a folder of folders so
 /// named is never kept whole as one product.
-const SHELF_MARKERS: [&str; 21] = [
+const SHELF_MARKERS: [&str; 23] = [
     "stuff",
     "misc",
     "my",
@@ -1542,6 +1639,8 @@ const SHELF_MARKERS: [&str; 21] = [
     "packs",
     "bundles",
     "collections",
+    "fave",
+    "faves",
 ];
 
 /// A folder of folders named for one product is a delivery unless it shows
@@ -1580,21 +1679,29 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     // `Vesper`, `Opal`)
     if !packs.is_empty() {
         let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
-        let own_part = |s: &&super::Folder| {
+        let number = |w: &String| w.chars().all(|c| c.is_ascii_digit());
+        // a part only a delivery has (a body, a kind, a HUD), or a version
+        // by finish, colour or season (`Gold`, `Reds`, `Fall 2024`)
+        let own_part = |s: &&super::Folder, structural: bool| {
             let sub = s.info.name.trim();
             let sub_words = words(sub);
-            !sub_words.is_empty()
-                && (classify(sub, -1, 0).body.is_some()
-                    || is_kind(&sub_words.join(" "))
-                    || sub_words.iter().all(|w| {
-                        VERSION_WORDS.contains(&w.as_str())
-                            || DELIVERY_PARTS.contains(&w.as_str())
-                            || FINISHES.contains(&w.as_str())
-                            || tone(w)
-                            || is_kind(w)
-                    }))
+            if sub_words.is_empty() || sub_words.iter().all(number) {
+                return false;
+            }
+            if classify(sub, -1, 0).body.is_some() || is_kind(&sub_words.join(" ")) {
+                return true;
+            }
+            sub_words.iter().all(|w| {
+                VERSION_WORDS.contains(&w.as_str())
+                    || DELIVERY_PARTS.contains(&w.as_str())
+                    || is_kind(w)
+                    || number(w)
+                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w))
+            })
         };
-        if !subs.iter().any(own_part) {
+        // (one `Gold` folder beside `Vesper` and `Opal` is a shelf's: a
+        // finish keeps a set whole only when every folder is one)
+        if !(subs.iter().any(|s| own_part(s, true)) || subs.iter().all(|s| own_part(s, false))) {
             return false;
         }
     }
@@ -1823,7 +1930,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 43] = [
+const SHELF_WORDS: [&str; 45] = [
     "my",
     "old",
     "new",
@@ -1867,6 +1974,8 @@ const SHELF_WORDS: [&str; 43] = [
     "packs",
     "bundles",
     "collections",
+    "fave",
+    "faves",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone
@@ -3443,6 +3552,12 @@ pub fn step_with(
     let mut used: Vec<Uuid> = Vec::new();
     'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
+        // (refused since the plan: skipped before anything is loaded for it)
+        if refused(inv, next) {
+            queue.pop_front();
+            *skipped += 1;
+            continue;
+        }
         // a folder whose tree is still loading waits for it (Resume and
         // Undo read runs in folders not opened this session): skipped only
         // once it is loaded and still cannot move
@@ -3489,7 +3604,7 @@ pub fn step_with(
             } else {
                 movable(inv, next.id, protected, &holds_worn)
             };
-        if !still_here || refused(inv, next) {
+        if !still_here {
             queue.pop_front();
             *skipped += 1;
             continue;

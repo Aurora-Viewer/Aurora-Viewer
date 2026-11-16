@@ -2409,8 +2409,11 @@ pub fn show(
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
-            // (its Auto-sort run goes on to its end, its window too)
+            // (its Auto-sort run goes on to its end, its window too, with the
+            // inventory's request in progress as the other windows see it)
             if w.state.sorter.active() {
+                w.state.pending = st.pending;
+                w.state.progress.clone_from(&st.progress);
                 sorter::show(
                     ctx,
                     p,

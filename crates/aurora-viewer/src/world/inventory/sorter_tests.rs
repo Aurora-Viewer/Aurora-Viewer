@@ -2996,3 +2996,73 @@ fn shelves_of_sets_open_and_an_ampersand_names_another_store() {
     assert!(!same_store("A&B", "AB"));
     assert!(same_store("Bloom&Co", "Bloom & Co"));
 }
+
+/// Audit 37: a set's versions by colour, gem or season keep it whole; one
+/// colour folder beside products named their own way is a shelf's.
+#[test]
+fn sets_by_colour_or_season_stay_whole_and_a_lone_colour_is_a_shelf() {
+    let none = HashSet::new();
+    let whole: [(&str, &[&str]); 5] = [
+        ("Vesper Ring Sets", &["Diamond", "Emerald", "Ruby"]),
+        ("Kyoto Kimono Sets", &["Red", "Blue", "Floral"]),
+        ("Nimbus Hair Packs", &["Blondes", "Reds", "Naturals"]),
+        ("Opal Jewelry Collections", &["Fall 2024", "Winter 2024"]),
+        ("Wren Pose Packs", &["Vol 1", "Vol 2"]),
+    ];
+    for (name, subs) in whole {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        let mut inside = Vec::new();
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, &format!("{name} {sub}"), 0);
+            inside.extend([901 + n as u128, 950 + n as u128]);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!inside.iter().any(|n| moved.contains(&id(*n))), "{name} is never opened");
+    }
+    let shelves: [(&str, &[&str]); 3] = [
+        ("Best Ring Sets", &["Gold", "Vesper", "Opal"]),
+        ("Fave Hair Packs", &["Black", "Ava", "Bree"]),
+        ("Fave Jewelry Collections", &["Silver", "Vesper"]),
+    ];
+    for (name, subs) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(!plan.moves.iter().any(|m| m.id == id(900)), "{name} never moves whole");
+    }
+    assert!(same_store("Bloom & Co", "Bloom Co.") && !same_store("A&B", "AB"));
+}
+
+/// A move refused since the plan (a folder excluded during the run) is
+/// skipped before anything below it is loaded.
+#[test]
+fn a_refused_folder_move_is_skipped_before_its_tree_loads() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 700, 1, "Huge Folder");
+    add_folder(&mut inv, 701, 700, "Never Read");
+    inv.folders.get_mut(&id(701)).expect("folder").state = FetchState::Unknown;
+    let mut queue: VecDeque<Move> = VecDeque::from([Move {
+        id: id(700),
+        folder: true,
+        name: "Huge Folder".into(),
+        from: id(1),
+        to: Dest::Path(vec!["Stuff".into()]),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+        from_trash: false,
+        snapshot: false,
+    }]);
+    let none = HashSet::new();
+    let mut skipped = 0;
+    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, m| m.id == id(700));
+    assert!(!matches!(step, Step::Loading), "never loaded only to be skipped");
+    assert_eq!((skipped, queue.len()), (1, 0));
+    assert_eq!(inv.folders[&id(701)].state, FetchState::Unknown, "nothing asked for");
+}

@@ -183,6 +183,8 @@ pub(super) struct State {
     /// Whether all a saved or whole-inventory source reads is loaded, at an
     /// inventory generation: checked again only when the inventory changes.
     source_loaded: Option<(u64, bool)>,
+    /// The exclusions `source_loaded` was worked out with.
+    source_excluded: Vec<Uuid>,
     cleaning: Option<Planning<CleanupPlan>>,
     /// The run an Undo puts back (its id in the journal).
     undoing: Option<u64>,
@@ -1495,7 +1497,7 @@ pub(super) fn show(
         // listed in My folders since, or holding one, is not moved whole
         // (the sort folder a first run makes: known once it exists, so an
         // exclusion below it counts)
-        if job.base_id.is_none() {
+        if job.base_id.is_none_or(|id| !inv.folders.contains_key(&id)) {
             job.base_id = sorter::child(inv, inv.root, &job.base);
         }
         let checks = !prefs.sorter.excluded.is_empty() || !prefs.sorter.own.is_empty();
@@ -1682,8 +1684,12 @@ pub(super) fn show(
         // (once loaded, it stays so: a 400,000-move run is not read again at
         // every change)
         Source::Saved(moves, _) => match state.source_loaded {
-            Some((generation, loaded)) if generation == inv.generation || loaded => loaded,
+            Some((generation, loaded)) if (generation == inv.generation || loaded) && state.source_excluded == prefs.sorter.excluded => {
+                loaded
+            }
             _ => {
+                // (an exclusion removed since: its folders are read now)
+                state.source_excluded.clone_from(&prefs.sorter.excluded);
                 // a run's move in or of a folder excluded now is kept: its
                 // folders are never read (an Undo puts back what it moved)
                 let excluded =
@@ -4201,6 +4207,13 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
         });
     });
     let pick = picker.pick;
+    // (the list may be up to a second old: the choice is checked again)
+    let chosen = chosen.filter(|id| match pick {
+        Pick::Source => sorter::source_allowed(inv, *id),
+        Pick::Rule(_) => sorter::target_allowed(inv, *id) && !prefs.sorter.excludes(inv, *id),
+        Pick::Exclude => *id != inv.root && !sorter::untouchable(inv, *id),
+        Pick::Own => sorter::own_allowed(inv, &prefs.sorter, *id),
+    });
     if let Some(id) = chosen {
         match pick {
             Pick::Source => state.set_source(Source::Folder(id)),
