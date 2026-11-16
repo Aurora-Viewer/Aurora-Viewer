@@ -5412,6 +5412,7 @@ ui-chat-participants = 参加者（{ $n }）
 ui-chat-search-or-start = 検索または開始…
 ui-chat-contacts-sub = フレンドとコンタクトセット
 ui-chat-contacts-friends-sub = オンラインのフレンド{ $online }
+ui-chat-contacts-groups-sub = グループ{ $count }
 ui-chat-in-earshot = 聞こえる範囲に{ $n }人
 ui-chat-head-in-earshot = { $n ->
     [one] 聞こえる範囲に{ $n }人
@@ -9982,7 +9983,9 @@ people-view-sort-options = 表示／並べ替えのオプション
 people-filter-by-name = 名前で絞り込む…
 people-edit-contact-hold = マウスの左ボタンを長押しするとコンタクトの設定を編集します。
 people-show-contact-sheet = コンタクトの詳細を表示
+people-show-group-sheet = グループの詳細を表示
 people-contact-details-empty = 表示するコンタクトはありません
+people-group-details-empty = 表示するグループはありません
 people-view-rich = リッチな行
 people-view-compact = コンパクト（１人につき１行、大人数向け）
 people-alerts-options = 警告とオプション

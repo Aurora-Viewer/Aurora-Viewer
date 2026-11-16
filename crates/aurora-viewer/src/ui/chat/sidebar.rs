@@ -257,10 +257,12 @@ struct Picked {
 }
 
 /// What the Contacts entry's second line says: the friends online (the tab
-/// shows People's friends) or what the contact list holds.
+/// shows People's friends), our groups (its Groups pill) or what the
+/// contact list holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContactsSub {
     Friends,
+    Groups,
     Lists,
 }
 
@@ -360,6 +362,7 @@ pub(super) fn show(
                             "ui-chat-contacts-friends-sub",
                             online = world.social.friends.iter().filter(|f| f.online).count() as i64
                         ),
+                        ContactsSub::Groups => aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = world.groups.groups.len() as i64),
                         ContactsSub::Lists => aurora_i18n::tr!("ui-chat-contacts-sub").to_owned(),
                     }),
                     sub_icon: None,

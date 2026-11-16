@@ -179,10 +179,10 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     ui.interact(all, ui.scope_id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let contacts_sub = if friends.is_some() {
-            sidebar::ContactsSub::Friends
-        } else {
-            sidebar::ContactsSub::Lists
+        let contacts_sub = match &friends {
+            Some(f) if f.st.pane_groups => sidebar::ContactsSub::Groups,
+            Some(_) => sidebar::ContactsSub::Friends,
+            None => sidebar::ContactsSub::Lists,
         };
         let contacts_clicked = sidebar::show(
             ui,
