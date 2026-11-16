@@ -332,6 +332,12 @@ pub struct PlacesUi {
 }
 
 impl PlacesUi {
+    /// The session ended: a question left open ends with it.
+    pub fn forget_question(&mut self) {
+        self.confirm = None;
+        self.dont_ask = false;
+    }
+
     /// "open_landmark_tab" / "open_teleport_history_tab": the lists on a tab.
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
@@ -1632,6 +1638,15 @@ mod tests {
         let actions = answer_confirm(&mut ui, true, &[dont_ask, aurora_i18n::tr!("common-cancel")]);
         assert!(actions.is_empty());
         assert!(ui.confirm.is_none() && !ui.dont_ask);
+
+        // A checkbox ticked without answering belongs to the session that ended.
+        let mut ui = pending();
+        assert!(answer_confirm(&mut ui, true, &[dont_ask]).is_empty());
+        assert!(ui.dont_ask);
+        ui.forget_question();
+        assert!(ui.confirm.is_none());
+        ui.confirm_landmark(asset, "Landmark".into());
+        assert!(matches!(&answer_confirm(&mut ui, true, &[teleport])[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
 
         // turned off: no question, a history entry too
         let mut ui = pending();
