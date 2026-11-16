@@ -766,7 +766,7 @@ pub(super) fn execute(
                     operations: vec![Operation::Folder {
                         id,
                         parent,
-                        name: aurora_i18n::tr!("inventory-new-outfit").into(),
+                        name: crate::text_validation::default_name("inventory-new-outfit").into(),
                         type_default: 47,
                     }],
                     refresh: vec![parent, id],

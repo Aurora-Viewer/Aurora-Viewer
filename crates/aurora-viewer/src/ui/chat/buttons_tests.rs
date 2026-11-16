@@ -2226,7 +2226,11 @@ fn invitations_are_answered() {
 fn a_group_chat_snoozes_from_its_head_and_its_menu() {
     for style in ALL {
         let mut h = H::new(style);
-        h.world.groups.sessions.entry(GROUP).or_default().group = true;
+        let session = h.world.groups.sessions.entry(GROUP).or_default();
+        session.group = true;
+        // A name of its own: the unnamed fallback (Japanese 会話) is also the
+        // window's title and a section head.
+        session.name = "Builders".to_owned();
         let button = if style.workspace() {
             control_id("head-alarm-snooze-filled")
         } else {

@@ -417,3 +417,24 @@ fn saving_a_copy_replaces_only_the_edited_layer_and_preserves_layer_order() {
         before.iter().find(|link| link.target == id).expect("old link").desc
     );
 }
+
+#[test]
+fn blank_and_transparent_textures_are_allowed_on_tattoo_skin_and_universal_layers() {
+    for kind in [1, 14, 16] {
+        for texture in [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE] {
+            let (world, mut state, _) = fixture(kind);
+            let slot = slots(kind)[0];
+            assert!(
+                state.set_texture(&world, slot, texture),
+                "built-in texture should be accepted for wearable kind {kind}"
+            );
+            assert!(state.message.is_empty());
+            assert_eq!(state.draft.as_ref().unwrap().edited.textures.get(&slot), Some(&texture));
+            let NetCommand::SaveWearable { data, .. } = state.save(&world, None).expect("save succeeds") else {
+                panic!("expected SaveWearable");
+            };
+            let saved = Wearable::parse(&data).expect("saved wearable parsed");
+            assert_eq!(saved.textures.get(&slot), Some(&texture));
+        }
+    }
+}
