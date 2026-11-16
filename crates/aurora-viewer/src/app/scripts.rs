@@ -566,6 +566,10 @@ impl App {
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
+        self.open_script_from(target, None);
+    }
+
+    pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
             return;
         }
@@ -587,10 +591,13 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self
+        let request = self
             .script_editors
-            .open(target, info.name, info.can_read, info.can_edit, info.flags)
-        {
+            .open(target, info.name, info.can_read, info.can_edit, info.flags);
+        if let Some(editor) = self.script_editors.documents.iter_mut().find(|e| e.target == target) {
+            editor.inventory_owner = owner;
+        }
+        if let Some(request) = request {
             // an SLua script, or one that may become one: its keywords are
             // read while the source loads, not on the frame that draws it
             if aurora_net::scripts::is_slua_item(info.flags) || self.world.main().is_some_and(|r| r.lua_scripts) {
@@ -617,7 +624,6 @@ impl App {
     }
 
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
-        let inventory_script = self.script_editors.documents.iter().any(|e| e.target.object.is_nil());
         self.script_editors.agent = self.world.agent_id;
         self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
         // shortcut: the agent's region, not the object's (have_lua_enabled); fine
@@ -649,12 +655,6 @@ impl App {
         self.sync_script_backup_dir();
         self.script_editors.back_up();
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
-        // The last script opened from the Inventory gives the list its
-        // keyboard back, so arrows keep moving its selection (LLToastAlertPanel
-        // restores the focus it saved, indra/newview/lltoastalertpanel.cpp).
-        if inventory_script && self.script_editors.documents.is_empty() && self.panels.inventory {
-            self.inventory_ui.return_focus(ctx);
-        }
     }
 
     pub(super) fn apply_script_action(&mut self, action: Action) {

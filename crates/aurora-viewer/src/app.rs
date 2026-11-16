@@ -23055,9 +23055,9 @@ impl ApplicationHandler for App {
                             it.asset_id = uuid::Uuid::nil();
                         }
                         self.inventory_ui.preview = Some(id);
-                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id, None));
                     } else if matches!(view.as_str(), "animation-open" | "animation-play-local" | "animation-play-world") {
-                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id, None));
                         if view != "animation-open"
                             && let Some(asset) = self.world.inventory.items.get(&id).map(|item| item.asset_id)
                         {

@@ -574,10 +574,13 @@ pub(super) fn preview(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
+        // A successful asynchronous save or a confirmed discard can also close the document.
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     let Some(it) = inv.items.get(&id) else {
         st.preview = None;
+        super::clipboard::return_document_focus(ctx, st);
         return;
     };
     if it.asset_type == 20 {
@@ -1402,7 +1405,7 @@ mod tests {
             let fresh_ctx = egui::Context::default();
             let mut inventory = InventoryUi::default();
             let item = st.preview.expect("item");
-            inventory.open_document(&fresh_ctx, item, 7);
+            inventory.open_document(&fresh_ctx, item, 7, None);
             let new_note = &mut inventory.windows[0].state;
             new_note.load_document(7, true, &Ok(b"New note".to_vec()));
             let mut object_note = InventoryUi::document(item);

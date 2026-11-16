@@ -22,6 +22,7 @@ mod bulk_permissions;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
+pub(crate) use clipboard::return_focus_to;
 mod context;
 mod context_catalog;
 pub(crate) mod context_customize;
@@ -175,7 +176,8 @@ pub enum InvAction {
         items: Vec<Uuid>,
         resident: Uuid,
     },
-    Preview(Uuid),
+    /// Preview the item and return to its originating inventory list when it closes.
+    Preview(Uuid, Option<egui::Id>),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
     EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
@@ -764,13 +766,6 @@ impl InventoryUi {
         } else {
             self.toggle_additional_window(ctx);
         }
-    }
-
-    /// Hand the keyboard back to the list when a window it opened closes, as
-    /// `LLToastAlertPanel` restores the focus it saved (indra/newview,
-    /// lltoastalertpanel.cpp).
-    pub(crate) fn return_focus(&mut self, ctx: &egui::Context) {
-        clipboard::return_focus(ctx, self);
     }
 
     /// RLVa's @showinv closes the additional window with the main one
