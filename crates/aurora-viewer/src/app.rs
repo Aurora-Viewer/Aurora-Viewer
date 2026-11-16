@@ -5753,7 +5753,7 @@ impl App {
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
-            if self.settings.mmo_mouse_buttons {
+            if self.settings.mmo_mouse_buttons || self.settings.avatar_drag_orbits {
                 self.begin_avatar_orbit();
             } else if s.click_avatar_keeps_camera && !self.right_drag {
                 self.camera.begin_drag(false);
