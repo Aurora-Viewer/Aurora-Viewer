@@ -167,11 +167,16 @@ impl AvatarPicker {
                 }
             };
             ui.add_space(4.0);
-            // Ctrl+A / Shift+click: LLScrollListCtrl multi-select. Ctrl+A
-            // selects every row only while no widget holds the keyboard focus:
-            // in the search field it keeps selecting the text.
-            let typing = ui.ctx().memory(|m| m.focused().is_some());
-            if self.multiple && !typing && !rows.is_empty() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+            // The active picker owns Ctrl+A after a row or button took focus.
+            // A text editor keeps its native Select All, including in the UUID tab.
+            let focused = ui.memory(|m| m.focused());
+            if self.multiple
+                && !rows.is_empty()
+                && ui.ctx().top_layer_id() == Some(ui.layer_id())
+                && ui.memory(|m| m.allows_interaction(ui.layer_id()))
+                && !focused.is_some_and(|id| egui::TextEdit::load_state(ui.ctx(), id).is_some())
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A))
+            {
                 self.selected = rows.iter().map(|(id, ..)| *id).collect();
                 self.anchor = rows.last().map(|(id, ..)| *id);
             }
@@ -298,6 +303,98 @@ mod tests {
         for tab in [TAB_SEARCH, TAB_FRIENDS, TAB_UUID] {
             assert_eq!(open_tab(tab, false), tab, "the other tabs stay open");
         }
+    }
+
+    #[test]
+    fn select_all_applies_to_resident_rows_or_the_focused_search_text() {
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let residents: Vec<_> = (1..=18).map(Uuid::from_u128).collect();
+        let hits = residents
+            .iter()
+            .enumerate()
+            .map(|(i, id)| aurora_net::land::FoundAvatar {
+                id: *id,
+                display_name: format!("Resident {i}"),
+                username: format!("resident{i}"),
+            })
+            .collect();
+        let query = "picker fixture";
+        world.land.avatar_search = Some((query.to_owned(), Some(hits)));
+        let mut picker = AvatarPicker::default();
+        picker.open("select-all-residents", true);
+        picker.set_query(query);
+        let mut frame = |picker: &mut AvatarPicker, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(950.0, 700.0))),
+                    events,
+                    ..Default::default()
+                },
+                |_| {
+                    picker.show(&ctx, &palette, &mut world);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let select_all = || egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        for _ in 0..3 {
+            frame(&mut picker, vec![]);
+        }
+        let shapes = frame(&mut picker, vec![]);
+        let position_of = |label: &str| {
+            shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("drawn picker text")
+        };
+        let row = position_of("Resident 1");
+        let search = position_of(query);
+        frame(&mut picker, vec![egui::Event::PointerMoved(row), button(row, true)]);
+        frame(&mut picker, vec![button(row, false)]);
+        assert_eq!(picker.selected, vec![residents[1]]);
+        frame(&mut picker, vec![select_all()]);
+        assert_eq!(picker.selected, residents, "Ctrl+A after a row click includes every match");
+        // Tab navigation can leave the actual row focused, even on platforms
+        // where a mouse click normally leaves no keyboard focus.
+        let layer = ctx.top_layer_id().expect("picker in front");
+        let row_id = ctx
+            .viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .get_layer(layer)
+                    .filter(|w| w.enabled && w.sense.is_focusable() && w.interact_rect.contains(row))
+                    .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                    .map(|w| w.id)
+            })
+            .expect("focusable resident row");
+        picker.selected = vec![residents[1]];
+        ctx.memory_mut(|m| m.request_focus(row_id));
+        frame(&mut picker, vec![select_all()]);
+        assert_eq!(picker.selected, residents, "non-text keyboard focus keeps list Select All");
+        picker.selected.clear();
+        frame(&mut picker, vec![egui::Event::PointerMoved(search), button(search, true)]);
+        frame(&mut picker, vec![button(search, false)]);
+        frame(&mut picker, vec![select_all(), egui::Event::Text("replacement".into())]);
+        assert_eq!(picker.query, "replacement");
+        assert!(picker.selected.is_empty(), "Ctrl+A in Search only edits its text");
     }
 
     #[test]

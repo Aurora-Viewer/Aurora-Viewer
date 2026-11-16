@@ -1100,6 +1100,15 @@ pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>,
     Ok(bucket)
 }
 
+/// Rebuild the confirmed gift from current permissions before each send.
+pub fn offer_for_residents(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>, recipient_count: usize) -> Result<Vec<u8>, String> {
+    let bucket = offer(inv, id, worn)?;
+    if recipient_count > 1 && offer_has_no_copy(inv, &bucket) {
+        return Err(aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").into());
+    }
+    Ok(bucket)
+}
+
 /// Inspect the exact offer, including copy-protected descendants of a folder.
 pub fn offer_has_no_copy(inv: &Inventory, bucket: &[u8]) -> bool {
     bucket.as_chunks::<17>().0.iter().any(|tuple| {

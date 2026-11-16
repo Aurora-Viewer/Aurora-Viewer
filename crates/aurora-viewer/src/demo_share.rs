@@ -64,7 +64,7 @@ pub fn index_of(id: &Uuid) -> Option<usize> {
         return None;
     }
     let n = (v & 0xFFFF_FFFF_FFFF) as usize;
-    (n >= 1).then_some(n - 1)
+    n.checked_sub(1)
 }
 
 /// Buddy-list rows: (id, rights given, rights has).
@@ -181,6 +181,8 @@ mod tests {
         assert_eq!(parse_count("other"), None);
         assert_eq!(agent(0).as_u128() & 0xFFFF_FFFF_FFFF, 1);
         assert_eq!(agent(79).as_u128() & !PREFIX, 80);
+        assert_eq!(index_of(&Uuid::from_u128(PREFIX)), None);
+        assert_eq!(index_of(&agent(79)), Some(79));
     }
 
     #[test]

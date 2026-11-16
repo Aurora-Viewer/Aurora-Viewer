@@ -557,12 +557,10 @@ fn share(
         });
     });
     if give {
-        for &resident in residents {
-            actions.push(InvAction::Share {
-                items: given.clone(),
-                resident,
-            });
-        }
+        actions.push(InvAction::Share {
+            items: given,
+            residents: residents.to_vec(),
+        });
     }
     give || cancel || modal.should_close()
 }
@@ -2656,7 +2654,7 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(give), button(true)]);
         let (_, actions) = frame(&mut st, vec![button(false)]);
         assert!(
-            matches!(&actions[..], [InvAction::Share { items, resident: to }] if *items == ids && *to == resident),
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids && residents == &[resident]),
             "Give gives all but the entry left out"
         );
         assert!(st.dialog.is_none());
@@ -2698,13 +2696,10 @@ mod tests {
         };
         frame(&mut st, vec![egui::Event::PointerMoved(give_many), press(true, give_many)]);
         let (_, actions) = frame(&mut st, vec![press(false, give_many)]);
-        assert_eq!(actions.len(), crowd.len(), "one Share action per resident");
-        for (action, who) in actions.iter().zip(&crowd) {
-            assert!(
-                matches!(action, InvAction::Share { items, resident: to } if *items == ids[..1] && to == who),
-                "Give the copyable item to {who}, never the no-copy one"
-            );
-        }
+        assert!(
+            matches!(&actions[..], [InvAction::Share { items, residents }] if *items == ids[..1] && residents == &crowd),
+            "The confirmed gift keeps every recipient and only the copyable item"
+        );
         assert!(st.dialog.is_none());
         // nothing that can be given: Enter gives nothing
         let enter = egui::Event::Key {

@@ -173,7 +173,7 @@ pub enum InvAction {
     Restore(Uuid),
     Share {
         items: Vec<Uuid>,
-        resident: Uuid,
+        residents: Vec<Uuid>,
     },
     Preview(Uuid),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
@@ -2238,9 +2238,12 @@ pub fn show(
             for resident in residents {
                 world.social.want_name(*resident);
                 facts.names.insert(*resident, world.social.name_of(resident));
-                wanted.push(*resident);
-                if let Some(t) = pics.get(resident) {
-                    facts.pictures.insert(*resident, t.clone());
+            }
+            // Only the first resident's portrait is shown.
+            if let Some(first) = residents.first() {
+                wanted.push(*first);
+                if let Some(t) = pics.get(first) {
+                    facts.pictures.insert(*first, t.clone());
                 }
             }
         }
