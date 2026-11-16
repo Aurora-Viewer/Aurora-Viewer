@@ -533,9 +533,9 @@ pub fn history_sections() -> [&'static str; 9] {
 /// seconds to add to UTC there, 0 for UTC), "6 days ago or earlier" goes
 /// back to the same day of the previous month and "1 month ago or earlier"
 /// to six months ago, both from midnight UTC as the source counts them. A
-/// date in the future counts as today. Returns the index in
-/// HISTORY_SECTIONS.
-pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
+/// date in the future counts as today. The returned lookup gives the index
+/// in the translated section titles for each date in the same frame.
+pub fn history_section_lookup(now: f64, offset: f64) -> impl Fn(f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};
     const DAY: f64 = 86_400.0;
     let (y, m, d) = civil_from_days((now / DAY).floor() as i64);
@@ -547,17 +547,14 @@ pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
         let total = y * 12 + (m as i64 - 1) - n;
         days_from_civil(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32, d) as f64 * DAY
     };
-    for i in 0..history_sections().len() - 1 {
-        let lower = match i {
-            0..=5 => (today - i as f64) * DAY - offset,
-            6 => months_back(1),
-            _ => months_back(6),
-        };
-        if date >= lower {
-            return i;
-        }
-    }
-    history_sections().len() - 1
+    // All visits in a frame share their day and month boundaries. Reading
+    // the translated section titles for every date is especially costly.
+    let lower: [f64; 8] = std::array::from_fn(|i| match i {
+        0..=5 => (today - i as f64) * DAY - offset,
+        6 => months_back(1),
+        _ => months_back(6),
+    });
+    move |date| lower.iter().position(|&start| date >= start).unwrap_or(lower.len())
 }
 
 /// LLAgentUI::buildLocationString(LOCATION_FORMAT_NORMAL): "Parcel, Region",
@@ -579,6 +576,10 @@ pub fn history_matches(title: &str, filter: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn history_section(date: f64, now: f64, offset: f64) -> usize {
+        history_section_lookup(now, offset)(date)
+    }
 
     fn e(n: &str) -> TpEntry {
         TpEntry {
