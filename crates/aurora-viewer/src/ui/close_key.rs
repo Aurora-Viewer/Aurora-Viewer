@@ -389,7 +389,7 @@ mod tests {
         let older = Id::NULL.with(("script_prompt", 1_u64));
         let newer = Id::NULL.with(("script_prompt", 2_u64));
         let mut closed: Vec<&'static str> = Vec::new();
-        let mut frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut Vec<&'static str>| {
+        let frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut Vec<&'static str>| {
             frames.run(events, |ui| {
                 let ctx = ui.ctx().clone();
                 begin(&ctx);
