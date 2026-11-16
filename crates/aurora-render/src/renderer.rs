@@ -4739,14 +4739,10 @@ impl Backend {
         Ok(r)
     }
 
-    /// Shadow atlas, two cascade tiles wide (cascade i at (i % 2, i / 2)),
-    /// all rendered in one pass: the bindless texture group, which wgpu checks
-    /// element by element for every pass binding it, is bound once instead of
-    /// once per cascade. Half-size projector maps fill the fourth tile, then
-    /// additional rows below it (projector_shadows.rs).
     /// Uniforms for the faces of `point_maps` point light maps, created the
-    /// first time the setting asks for them and then kept: with the setting
-    /// off, the shadow pass allocates what it did before.
+    /// first time the setting asks for them and then kept until the viewer
+    /// closes: with the setting never turned on, the shadow pass allocates
+    /// what it did before.
     fn grow_shadow_views(&mut self, point_maps: usize) {
         let want =
             CASCADES + SPOT_SHADOWS + point_maps.min(crate::projector_shadows::MAX_POINT_SHADOWS) * crate::projector_shadows::POINT_FACES;
@@ -4758,6 +4754,11 @@ impl Backend {
         }
     }
 
+    /// Shadow atlas, two cascade tiles wide (cascade i at (i % 2, i / 2)),
+    /// all rendered in one pass: the bindless texture group, which wgpu checks
+    /// element by element for every pass binding it, is bound once instead of
+    /// once per cascade. Half-size projector maps fill the fourth tile, then
+    /// additional rows below it (projector_shadows.rs).
     fn make_shadow_atlas(device: &wgpu::Device, size: u32, count: u8) -> wgpu::TextureView {
         let (width, height) = crate::projector_shadows::atlas_size(size, count);
         let tex = device.create_texture(&wgpu::TextureDescriptor {
