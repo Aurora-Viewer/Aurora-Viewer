@@ -618,7 +618,10 @@ pub enum CtxAction {
     /// (Nearby.People.SetAvatarMarkColor, Minimap.Mark).
     MarkAvatars(Vec<Uuid>, crate::world::avatar_marks::Rgb),
     /// Mark ▸ Custom color…: the colour picker opens for these residents.
-    MarkCustom(Vec<Uuid>),
+    MarkCustom {
+        ids: Vec<Uuid>,
+        source: AvatarList,
+    },
     /// Mark ▸ Clear Mark(s) (Nearby.People.ClearAvatarMarkColor).
     ClearMarks(Vec<Uuid>),
     /// Mark ▸ Clear all Marks (Nearby.People.ClearAllAvatarMarkColors).
@@ -750,8 +753,10 @@ pub fn show(
 /// Firestorm menu, with the same entries in a different order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AvatarList {
-    /// People › Nearby (menu_people_nearby.xml) and the mini-map.
+    /// People › Nearby (menu_people_nearby.xml).
     Nearby,
+    /// The mini-map's More submenu uses the radar entries for a visible dot.
+    MiniMap,
     /// People › Friends (menu_fs_contacts_friends.xml).
     Friend,
     /// A name in the chat or a conversation (menu_url_agent.xml).
@@ -1051,7 +1056,7 @@ fn avatar_menu_reporting(
         }
     };
     match kind {
-        AvatarList::Nearby => {
+        AvatarList::Nearby | AvatarList::MiniMap => {
             profile(ui);
             navigation(ui);
             im(ui);
@@ -1088,7 +1093,7 @@ fn avatar_menu_reporting(
                 act(CtxAction::ShowOnMap(id));
             }
             // menu_fs_radar.xml's MarkAvatar, before Share
-            crate::ui::avatar_marks::submenu(ui, p, world, &[id]);
+            crate::ui::avatar_marks::submenu(ui, p, world, &[id], kind);
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
             if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
                 act(CtxAction::PayResident(id));
