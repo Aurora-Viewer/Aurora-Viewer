@@ -197,19 +197,16 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     // A click anywhere in the list takes the keyboard, then the first letters
     // of a name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
     let focus = ui.make_persistent_id("people-friends-type-ahead");
-    let background = ui.interact(ui.available_rect_before_wrap(), focus, Sense::click());
-    if background.clicked() {
-        background.request_focus();
-    }
-    let entries: Vec<super::type_ahead::Entry<'_>> = all
-        .iter()
-        .map(|l| super::type_ahead::Entry {
-            id: l.friend.id,
-            names: [l.name.as_str(), l.username.as_str(), l.full.as_str()],
-        })
-        .collect();
     let current = st.sel.first().copied().or(st.sheet);
-    if let Some(id) = super::type_ahead::keys(ui, focus, &entries, current) {
+    let navigation = super::type_ahead::Navigation::new(ui, focus, current, || {
+        all.iter()
+            .map(|l| super::type_ahead::Entry {
+                id: l.friend.id,
+                names: [l.name.as_str(), l.username.as_str(), l.full.as_str()],
+            })
+            .collect()
+    });
+    if let Some(id) = navigation.chosen {
         st.sel = vec![id];
         st.anchor = Some(id);
         if c.contact_sheet_on_click {
@@ -257,7 +254,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
                     };
                     super::nearby::section_header(ui, c.p, &title);
                 }
-                row(ui, c, data, st, line, &order, focus);
+                row(ui, c, data, st, line, &order, navigation);
             }
         });
 }
@@ -405,7 +402,15 @@ pub(super) fn set_pills(ui: &mut egui::Ui, c: &Ctx, sets: &[String], chosen: &mu
 
 /// One friend: picture, names, set dot, rights, and the quick actions
 /// under the pointer.
-fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, line: &Line, order: &[Uuid], focus: egui::Id) {
+fn row(
+    ui: &mut egui::Ui,
+    c: &mut Ctx,
+    data: &super::RadarData,
+    st: &mut PeopleUi,
+    line: &Line,
+    order: &[Uuid],
+    navigation: super::type_ahead::Navigation,
+) {
     let p = c.p;
     let f = &line.friend;
     let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
@@ -430,10 +435,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             .or(st.sheet)
             == Some(f.id),
     );
-    super::type_ahead::reveal(ui, focus, rect, f.id);
-    if resp.clicked() || resp.secondary_clicked() {
-        ui.memory_mut(|m| m.request_focus(focus));
-    }
+    navigation.row(ui, &resp, rect, f.id);
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, c.world, &st.sel, f.id);
         return;
@@ -662,6 +664,7 @@ mod tests {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };

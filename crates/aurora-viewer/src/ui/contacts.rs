@@ -1021,19 +1021,16 @@ fn friend_table(
     // A click anywhere in the list takes the keyboard, then the first letters
     // of a name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
     let focus = ui.make_persistent_id("contacts-friends-type-ahead");
-    let background = ui.interact(ui.available_rect_before_wrap(), focus, egui::Sense::click());
-    if background.clicked() {
-        background.request_focus();
-    }
-    let entries: Vec<crate::ui::people::type_ahead::Entry<'_>> = rows
-        .iter()
-        .map(|r| crate::ui::people::type_ahead::Entry {
-            id: r.id,
-            names: [r.user.as_str(), r.display.as_str(), r.full.as_str()],
-        })
-        .collect();
     let current = st.friends_sel.first().copied();
-    if let Some(id) = crate::ui::people::type_ahead::keys(ui, focus, &entries, current) {
+    let navigation = crate::ui::people::type_ahead::Navigation::new(ui, focus, current, || {
+        rows.iter()
+            .map(|r| crate::ui::people::type_ahead::Entry {
+                id: r.id,
+                names: [r.user.as_str(), r.display.as_str(), r.full.as_str()],
+            })
+            .collect()
+    });
+    if let Some(id) = navigation.chosen {
         st.friends_sel = vec![id];
         st.friends_anchor = Some(id);
     }
@@ -1103,10 +1100,7 @@ fn friend_table(
                             == Some(r.id),
                     );
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
-                    crate::ui::people::type_ahead::reveal(ui, focus, rect, r.id);
-                    if resp.clicked() || resp.secondary_clicked() {
-                        ui.memory_mut(|m| m.request_focus(focus));
-                    }
+                    navigation.row(ui, &resp, rect, r.id);
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }
