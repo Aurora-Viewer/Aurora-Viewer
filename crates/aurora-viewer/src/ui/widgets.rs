@@ -276,18 +276,185 @@ fn title_in_reach(
     (asked.is_some() || kept != pos).then_some(kept)
 }
 
+/// LLSpinCtrl::onUpBtn / onDownBtn (indra/llui/llspinctrl.cpp): Alt ×10,
+/// else Ctrl ×0.1, else Shift ×0.01.
+pub(crate) fn spin_key_scale(modifiers: egui::Modifiers) -> f32 {
+    if modifiers.alt {
+        10.0
+    } else if modifiers.ctrl {
+        0.1
+    } else if modifiers.shift {
+        0.01
+    } else {
+        1.0
+    }
+}
+
+/// clamp_precision (indra/llui/llspinctrl.cpp): an arrow or wheel step is
+/// rounded to the field's decimals, so a step finer than the field shows
+/// (Ctrl or Shift on a 0-decimal field) changes nothing instead of leaving
+/// a hidden fraction. In f64, ten at a time like the Legacy Viewer, with
+/// halves rounded up (ll_round: floor(x + 0.5)).
+pub(crate) fn clamp_precision(value: f32, decimals: usize) -> f32 {
+    let mut v = f64::from(value);
+    for _ in 0..decimals {
+        v *= 10.0;
+    }
+    v = (v + 0.5).floor();
+    for _ in 0..decimals {
+        v /= 10.0;
+    }
+    v as f32
+}
+
+/// Points of a trackpad flick that make one notch. Same grain as the shape
+/// editor's category wheel.
+const WHEEL_POINTS_PER_NOTCH: f32 = 55.0;
+
+#[derive(Clone, Copy)]
+struct WheelRemainder(f32);
+
+pub(crate) struct WheelSteps {
+    /// Modifier-scaled notches. Positive raises.
+    pub scaled: f32,
+    /// The same notches, each rounded to an integer. Ctrl and Shift become
+    /// no step on an integer field.
+    pub integer: i32,
+}
+
+impl WheelSteps {
+    fn none() -> Self {
+        Self { scaled: 0.0, integer: 0 }
+    }
+}
+
+/// Notches of the wheel over `rect`. Positive raises. Shared by the
+/// build spinners and the colour picker's number fields (both LLSpinCtrl).
+///
+/// LLSpinCtrl::handleScrollWheel (indra/llui/llspinctrl.cpp) calls onDownBtn
+/// for a positive click count and onUpBtn for a negative one, and returns
+/// true so the panel does not also scroll. The Legacy Viewer negates the
+/// platform wheel (llwindowsdl2.cpp), so rolling it up raises the value.
+/// winit reports that roll as a positive delta.y. Each whole notch is scaled
+/// like onUpBtn. While the pointer stays on an enabled field the smoothed
+/// scroll is eaten, including the frames after the notch, so the build panel
+/// does not creep. A disabled field leaves the wheel to the panel. `apply`
+/// is false while a typed draft or a drag owns the value: the wheel is still
+/// eaten, and it does not change the number.
+pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, apply: bool) -> WheelSteps {
+    let key = id.with("spinner_wheel_remainder");
+    let hovered = ui.is_enabled() && ui.rect_contains_pointer(rect);
+    if !hovered {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    ui.input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
+    if !apply {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    let mut remainder = ui.data(|d| d.get_temp::<WheelRemainder>(key)).map(|kept| kept.0).unwrap_or(0.0);
+    let mut scaled = 0.0f32;
+    let mut integer = 0i32;
+    ui.input(|input| {
+        for event in &input.events {
+            let egui::Event::MouseWheel {
+                unit, delta, modifiers, ..
+            } = event
+            else {
+                continue;
+            };
+            if delta.y == 0.0 || !delta.y.is_finite() {
+                continue;
+            }
+            let notches = delta.y
+                / match unit {
+                    egui::MouseWheelUnit::Point => WHEEL_POINTS_PER_NOTCH,
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => 1.0,
+                };
+            if !notches.is_finite() {
+                continue;
+            }
+            remainder += notches;
+            let whole = remainder.trunc().clamp(-100.0, 100.0);
+            remainder -= whole;
+            if whole != 0.0 {
+                let scale = spin_key_scale(*modifiers);
+                scaled += whole * scale;
+                integer = integer.saturating_add((whole as i32).saturating_mul(scale.round() as i32));
+            }
+        }
+    });
+    if remainder == 0.0 {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+    } else {
+        ui.data_mut(|d| d.insert_temp(key, WheelRemainder(remainder)));
+    }
+    WheelSteps { scaled, integer }
+}
+
+/// LLButton held_down_delay (widgets/button.xml), in seconds.
+const ARROW_HOLD_DELAY: f64 = 0.5;
+/// Repeats after the delay. LLButton::handleHover fires every frame; a
+/// fixed interval is the same pace at any refresh rate.
+const ARROW_HOLD_EVERY: f64 = 0.05;
+/// A stalled frame must not dump a long hold as one jump.
+const ARROW_HOLD_BURST: u32 = 20;
+
+/// How many repeats a hold has earned. The first is at half a second, then
+/// one more every 50 ms.
+pub(crate) fn arrow_hold_repeats(held_for: f64) -> u32 {
+    if !held_for.is_finite() || held_for < ARROW_HOLD_DELAY {
+        return 0;
+    }
+    // Count in whole milliseconds. `(t - 0.5) / 0.05` is not exact in f64:
+    // `0.10 / 0.05` is 1.999…, and floor would skip the repeat that just came due.
+    let elapsed_ms = ((held_for - ARROW_HOLD_DELAY) * 1000.0).round();
+    if !elapsed_ms.is_finite() || elapsed_ms < 0.0 {
+        return 1;
+    }
+    let steps = (elapsed_ms / (ARROW_HOLD_EVERY * 1000.0)).floor();
+    let steps = if steps >= u32::MAX as f64 { u32::MAX } else { steps as u32 };
+    steps.saturating_add(1)
+}
+
+#[derive(Clone, Copy)]
+struct ArrowHold {
+    since: f64,
+    emitted: u32,
+}
+
 /// Two compact increment buttons beside numeric fields (LLSpinCtrl).
 /// Uses theme faces and Tabler glyphs, and inherits disabled state.
-pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
-    let mut step = 0;
+///
+/// widgets/spinner.xml sets tab_stop="false" on both buttons. `Sense::CLICK`
+/// is clickable and not focusable, so Tab moves from the field to the next
+/// field. A hold repeats onUpBtn/onDownBtn: LLButton::handleHover
+/// (indra/llui/llbutton.cpp) fires the held callback every frame after
+/// held_down_delay, and handleMouseUp steps once more on release. Repeating
+/// every frame is one step per rendered frame, so a high refresh rate runs
+/// away with the value. The repeat here is every 50 ms: the same pace on
+/// every machine, and still a quick walk. The first step stays the release,
+/// so a short click is one step. Dragging off the button ends the repeat.
+/// The release counts only when the press and the release are both on the
+/// button. egui forgets a click-only widget after 0.8 s or 6 px of travel
+/// (`is_pointer_button_down_on` and `clicked()` both go false while the
+/// button is still held). A held arrow outlasts that window, so the repeat
+/// is our own timer and the release step is the button coming up with the
+/// pointer still on it, the same moment as handleMouseUp.
+pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i32 {
+    let mut step = 0i32;
+    let now = ui.input(|i| i.time);
+    let enabled = ui.is_enabled();
     ui.allocate_ui_with_layout(Vec2::new(13.0, height), egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_max_width(13.0);
         ui.spacing_mut().item_spacing.y = 0.0;
         for (direction, name, label) in [
-            (1, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
+            (1i32, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
             (-1, "caret-down-filled", aurora_i18n::tr!("numeric-decrease")),
         ] {
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::click());
+            // Not focusable: see the function comment and widgets/spinner.xml.
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::CLICK);
             let visuals = ui.style().interact(&response);
             ui.painter().rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
             if let Some(icon) = super::icons::global(name) {
@@ -298,10 +465,54 @@ pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
                     visuals.fg_stroke.color,
                 );
             }
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-            if response.on_hover_text(label).clicked() {
-                step = direction;
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+            let response = response.on_hover_text(label);
+            if !enabled {
+                continue;
             }
+            let id = response.id.with("spin_arrow_hold");
+            let pointer_here = ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
+            let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+            let tracked = ui.data(|d| d.get_temp::<ArrowHold>(id));
+            // is_pointer_button_down_on stays true while a fresh press is
+            // dragged outside the widget, and it goes false once egui's click
+            // window ends. The hold stops when the pointer leaves. One we
+            // already started keeps going for as long as the button is down.
+            let holding = primary_down && pointer_here && (response.is_pointer_button_down_on() || tracked.is_some());
+            let mut repeats = 0u32;
+            let mut release_step = false;
+            if holding {
+                let mut hold = tracked.unwrap_or(ArrowHold { since: now, emitted: 0 });
+                let due = arrow_hold_repeats(now - hold.since);
+                repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                // Drop repeats a stalled frame would have piled up, so the
+                // value does not fast-forward when the window wakes.
+                hold.emitted = due;
+                let until = if due == 0 {
+                    ARROW_HOLD_DELAY - (now - hold.since)
+                } else {
+                    let into = (now - hold.since - ARROW_HOLD_DELAY).rem_euclid(ARROW_HOLD_EVERY);
+                    ARROW_HOLD_EVERY - into
+                };
+                ui.ctx().request_repaint_after_secs(until.max(0.0) as f32);
+                ui.data_mut(|d| d.insert_temp(id, hold));
+            } else if let Some(hold) = tracked {
+                // Released on the button: the repeat that came due, then one
+                // more step. Leaving while the button is still down just stops.
+                if pointer_here && !primary_down {
+                    let due = arrow_hold_repeats(now - hold.since);
+                    repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                    release_step = true;
+                }
+                ui.data_mut(|d| d.remove::<ArrowHold>(id));
+            } else if response.clicked() {
+                // Press and release in the same frame, before a hold existed.
+                release_step = true;
+            }
+            if release_step {
+                step += direction;
+            }
+            step += direction * repeats as i32;
         }
     });
     step
@@ -529,7 +740,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -1034,7 +1246,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -1045,10 +1258,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1123,16 +1338,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1144,13 +1369,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1161,15 +1387,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
@@ -1994,32 +2219,60 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 
 /// Choice between a few options side by side, in one track: the chosen
 /// segment is lit, in the accent when its option is `accent` (Aurora's own
-/// look), in `raised` otherwise (a legacy look). Returns true when the
-/// selection changed.
+/// look), in `raised` otherwise (a legacy look). The lit face slides from
+/// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
+/// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_tall(ui, p, selected, options, SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
-    let mut changed = false;
+    let mut rects = Vec::with_capacity(widths.len());
     let mut x = track.left() + SEGMENT_PAD;
-    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
+    for w in &widths {
+        rects.push(egui::Rect::from_min_size(
             egui::pos2(x, track.top() + SEGMENT_PAD),
-            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
-        );
-        x += widths[i];
+            Vec2::new(*w, track.height() - SEGMENT_PAD * 2.0),
+        ));
+        x += w;
+    }
+    // the lit face, its edges sliding from the segment chosen before (kept
+    // from the track's left, so that moving the window does not slide it)
+    if let Some(chosen) = rects.get(*selected) {
+        let id = ui.scope_id().with(("segmented-slide", options.len(), options.first().map(|o| o.0)));
+        let time = ui.style().animation_time;
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), chosen.left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), chosen.right() - track.left(), time);
+        let face = if options[*selected].1 { p.violet } else { p.raised };
+        let lit = egui::Rect::from_x_y_ranges(track.left() + left..=track.left() + right, chosen.y_range());
+        ui.painter().rect_filled(lit, inner_radius(ui.visuals()), face);
+    }
+    let mut changed = false;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
         let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
         let sel = *selected == i;
-        let (face, text) = match (sel, *accent) {
-            (true, true) => (Some(p.violet), p.on_accent),
-            (true, false) => (Some(p.raised), p.ink),
-            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
-            (false, _) => (None, p.muted),
+        let text = match (sel, *accent) {
+            (true, true) => p.on_accent,
+            (true, false) => p.ink,
+            (false, _) if resp.hovered() => p.ink,
+            (false, _) => p.muted,
         };
-        if let Some(face) = face {
-            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        if !sel && resp.hovered() {
+            ui.painter()
+                .rect_filled(rect, inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5));
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
@@ -3369,6 +3622,23 @@ pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content:
         None => egui::Button::new(tip),
     };
     super::menu::button(ui, p, button, content).on_hover_text(tip);
+}
+
+#[cfg(test)]
+mod spin_arrow_tests {
+    use super::arrow_hold_repeats;
+
+    #[test]
+    fn arrow_hold_repeats_lands_on_the_50_ms_marks() {
+        assert_eq!(arrow_hold_repeats(0.49), 0);
+        assert_eq!(arrow_hold_repeats(0.50), 1);
+        assert_eq!(arrow_hold_repeats(0.54), 1);
+        assert_eq!(arrow_hold_repeats(0.55), 2);
+        // 0.10 / 0.05 is 1.999… in f64. The repeat at 0.60 s must still count.
+        assert_eq!(arrow_hold_repeats(0.60), 3);
+        assert_eq!(arrow_hold_repeats(0.90), 9);
+        assert_eq!(arrow_hold_repeats(f64::NAN), 0);
+    }
 }
 
 #[cfg(test)]

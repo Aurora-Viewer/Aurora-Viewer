@@ -50,21 +50,7 @@ impl App {
             self.world.avatar_studio = false;
             return;
         }
-        let restricted = self.world.rlva.camera_owner().is_some()
-            || [
-                "setcam_unlock",
-                "setcam_avdistmin",
-                "setcam_avdistmax",
-                "setcam_origindistmin",
-                "setcam_origindistmax",
-                "setcam_eyeoffset",
-                "setcam_focusoffset",
-                "setcam_mouselook",
-                "setcam_fovmin",
-                "setcam_fovmax",
-            ]
-            .iter()
-            .any(|name| self.world.rlva.has(name));
+        let restricted = self.world.rlva.camera_restricted();
         let switch = if !self.in_world() || self.world.teleporting || renderer.vr_engaged() || restricted {
             self.panels.avatar_studio = false;
             self.studio_transition.cancel();

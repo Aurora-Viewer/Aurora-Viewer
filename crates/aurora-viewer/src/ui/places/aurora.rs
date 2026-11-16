@@ -801,17 +801,18 @@ impl PlacesUi {
             return;
         }
         let reorder = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         let mut rects: Vec<(Rect, Uuid)> = Vec::new();
         for l in lines {
             let (key, place) = match l {
                 Line::Title(t) => {
                     ui.add_space(10.0);
                     let at = ui.cursor().min + Vec2::new(10.0, 0.0);
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), egui::Sense::hover());
-                    // large History lists (#2955): skip off-screen section paint
-                    if ui.is_rect_visible(r) {
+                    let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 20.0));
+                    if ui.is_rect_visible(bounds) {
                         section(ui, p, t, at);
                     }
+                    ui.add_space(20.0);
                     continue;
                 }
                 Line::Place(k, place) => (*k, place),
@@ -838,11 +839,7 @@ impl PlacesUi {
                 self.history_zone,
             );
             widgets::reveal_search_selection(ui, &out.resp, selected);
-            // place_row already skips its paint when clipped; skip menus and
-            // snapshot work for thousands of History rows off screen (#2955)
-            if !ui.is_rect_visible(out.resp.rect) {
-                continue;
-            }
+            let visible = ui.is_rect_visible(out.resp.rect);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -857,7 +854,7 @@ impl PlacesUi {
             }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
-            if let Some(s) = spot {
+            if visible && let Some(s) = spot {
                 self.want_snapshots.push(s);
             }
             if let Some(fav) = place.favorite.filter(|_| reorder) {
@@ -882,11 +879,14 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            // asked every frame: the menu shows as long as it is open
-            menu::context_menu(&out.resp, p, |ui| {
-                self.select(key, place, &world.inventory, history, actions);
-                self.place_menu(ui, p, world, key, place, actions);
-            });
+            // A menu stays under the pointer when its row scrolls out of view.
+            // The row still owns its reorder rank and its expanded narrow details.
+            if visible || (popup_open && out.resp.context_menu_opened()) {
+                menu::context_menu(&out.resp, p, |ui| {
+                    self.select(key, place, &world.inventory, history, actions);
+                    self.place_menu(ui, p, world, key, place, actions);
+                });
+            }
             if !wide && self.aurora.selected == Some(key) {
                 self.narrow_details(ui, c, place, actions);
             }
@@ -989,7 +989,10 @@ impl PlacesUi {
         ) {
             self.teleport(key, place, inv, history);
         }
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
+        // LLLandmarksPanel / LLTeleportHistoryPanel::isActionEnabled
+        // ("show_on_map"): not under @showworldmap
+        let mappable = place.global.is_some() && crate::ui::context::can_show_on_map(world);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = place.global
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -1210,7 +1213,7 @@ impl PlacesUi {
                 }
             }
             if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
+                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
                     widgets::action_button(
                         ui,
                         p,
@@ -1633,7 +1636,7 @@ impl PlacesUi {
             }
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             if ui
-                .add_enabled_ui(place.global.is_some(), |ui| {
+                .add_enabled_ui(place.global.is_some() && crate::ui::context::can_show_on_map(world), |ui| {
                     widgets::action_button(
                         ui,
                         p,

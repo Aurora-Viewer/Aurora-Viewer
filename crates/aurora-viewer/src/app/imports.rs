@@ -152,12 +152,7 @@ impl App {
                     self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 );
             }
-            let prices = Prices {
-                texture: Some(10),
-                large_texture: Some(40),
-                sound: Some(10),
-                animation: Some(10),
-            };
+            let prices = self.imports.demo_prices();
             if self.imports.total(&prices).is_some() {
                 self.imports.demo_upload_started = true;
                 self.imports
@@ -437,12 +432,7 @@ impl App {
                         self.imports.choice
                     };
                     let prices = if self.demo {
-                        Prices {
-                            texture: Some(10),
-                            large_texture: Some(40),
-                            sound: Some(10),
-                            animation: Some(10),
-                        }
+                        self.imports.demo_prices()
                     } else {
                         self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
                     };
@@ -1116,6 +1106,7 @@ impl App {
                 }
                 entry.local_published = true;
                 entry.local_generation = prepared.generation;
+                self.egui_ctx.request_repaint();
             } else {
                 entry.local_failed_generation = Some(prepared.generation);
                 self.imports.message = aurora_i18n::tr!("import-local-staging-busy").into();
@@ -1123,6 +1114,9 @@ impl App {
             entry.local_pending = false;
         }
         self.imports.local_uploads = pending;
+        if !self.imports.local_uploads.is_empty() {
+            self.egui_ctx.request_repaint_after(Duration::from_millis(33));
+        }
         let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
         for (asset, slot) in previous_slots {
             if !referenced.contains(&asset) {
