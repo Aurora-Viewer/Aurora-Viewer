@@ -85,6 +85,13 @@ impl World {
         max.is_finite().then_some(max)
     }
 
+    /// LLToolPlacer::raycastForNewObjPos (lltoolplacer.cpp): under @fartouch
+    /// the Create tool places nothing farther than its distance.
+    pub fn rlva_can_place_at(&self, point: glam::Vec3) -> bool {
+        self.rlva_select_limit()
+            .is_none_or(|max| point.distance(self.agent.position) <= max)
+    }
+
     /// LLToolSelect::handleObjectSelection (lltoolselect.cpp): under
     /// @fartouch nothing farther than its distance is selected, what the
     /// agent wears aside. Stricter than there, where a click on a surface

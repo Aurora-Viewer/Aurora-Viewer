@@ -66,6 +66,41 @@ pub struct Command {
     pub option: String,
     pub strict: bool,
     pub param: Param,
+    /// `@setenv=n` was held when this force was queued.
+    pub environment_locked: bool,
+    /// The rules it was received under, once queued.
+    pub received: Received,
+}
+
+/// Every object's rules at one moment.
+#[derive(Debug)]
+pub struct LockSnapshot {
+    revision: u64,
+    rules: BTreeMap<Uuid, BTreeSet<Rule>>,
+}
+
+/// The rules a queued command was received under. RlvHandler::processCommand
+/// (rlvhandler.cpp) runs a force or a query when it arrives, so a lock set
+/// or released after it, later in the same message included, changes
+/// nothing for it; here such a command waits for the frame's turn, or for an
+/// outfit change to end, and reads those rules then (`Rlva::rewind`). Not a
+/// part of what the command says: it takes no part in comparisons.
+#[derive(Debug, Clone, Default)]
+pub struct Received(Option<std::sync::Arc<LockSnapshot>>);
+
+impl PartialEq for Received {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Received {}
+
+/// The current rules, set aside while a queued command reads those it was
+/// received under (`Rlva::rewind`, `Rlva::resume`).
+pub struct LiveRules {
+    revision: u64,
+    rules: BTreeMap<Uuid, BTreeSet<Rule>>,
 }
 
 impl Command {
@@ -93,6 +128,8 @@ impl Command {
             option: if param == Param::Clear { value } else { option }.to_owned(),
             strict,
             param,
+            environment_locked: false,
+            received: Received::default(),
         })
     }
 
@@ -462,6 +499,9 @@ pub struct Rlva {
     /// The rules of each object in the order it issued them, as
     /// RlvObject::m_Commands keeps them: what @getstatus lists.
     issued: BTreeMap<Uuid, Vec<Rule>>,
+    /// The rules as the last queued command found them, shared by every
+    /// command queued until they change.
+    snapshot: Option<std::sync::Arc<LockSnapshot>>,
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
@@ -559,6 +599,7 @@ impl Rlva {
         self.enabled = enabled;
         self.rules.clear();
         self.issued.clear();
+        self.snapshot = None;
         self.rename = Default::default();
         self.offers = Default::default();
         self.controllers = Default::default();
@@ -734,6 +775,37 @@ impl Rlva {
         true
     }
 
+    /// The rules of this moment, for a command that is queued.
+    fn received(&mut self) -> Received {
+        if self.snapshot.as_ref().is_none_or(|s| s.revision != self.revision) {
+            self.snapshot = Some(std::sync::Arc::new(LockSnapshot {
+                revision: self.revision,
+                rules: self.rules.clone(),
+            }));
+        }
+        Received(self.snapshot.clone())
+    }
+
+    /// Puts back the rules a queued command was received under, when they
+    /// changed since, for the time it runs. `resume` restores what this
+    /// returns. The revision goes back with them, so that what is cached by
+    /// revision (the folder and wear locks) is resolved for these rules,
+    /// then again for the current ones.
+    pub(crate) fn rewind(&mut self, command: &Command) -> Option<LiveRules> {
+        let then = command.received.0.as_ref().filter(|then| then.revision != self.revision)?;
+        Some(LiveRules {
+            revision: std::mem::replace(&mut self.revision, then.revision),
+            rules: std::mem::replace(&mut self.rules, then.rules.clone()),
+        })
+    }
+
+    pub(crate) fn resume(&mut self, live: Option<LiveRules>) {
+        if let Some(live) = live {
+            self.rules = live.rules;
+            self.revision = live.revision;
+        }
+    }
+
     /// A blocked object (anything but a release) and a command disabled by a
     /// setting: RlvHandler::processCommand (rlvhandler.cpp) returns
     /// RLV_RET_FAILED_BLOCKED / RLV_RET_FAILED_DISABLED before it runs the
@@ -860,7 +932,20 @@ impl Rlva {
                     && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
                     && self.pending.len() < 256 =>
             {
-                self.pending.push((source, c));
+                // A foreign environment lock refuses the force when received.
+                // Releasing it before the queue drains must not revive that command.
+                if was_environment_locked && c.behaviour.starts_with("setenv_") && self.has_except("setenv", source) {
+                    return Outcome::Rejected;
+                }
+                let received = self.received();
+                self.pending.push((
+                    source,
+                    Command {
+                        environment_locked: was_environment_locked,
+                        received,
+                        ..c
+                    },
+                ));
                 outcome = Outcome::Queued;
             }
             Param::Reply(channel)
@@ -880,7 +965,8 @@ impl Rlva {
                 if let Some(text) = reply {
                     self.reply(channel, &c.behaviour, text);
                 } else if self.pending.len() < 256 {
-                    self.pending.push((source, c));
+                    let received = self.received();
+                    self.pending.push((source, Command { received, ..c }));
                     outcome = Outcome::Queued;
                 } else {
                     outcome = Outcome::Rejected;
@@ -1062,6 +1148,8 @@ fn rule_text(r: &Rule) -> String {
         option: r.option.clone(),
         strict: r.strict,
         param: Param::Add,
+        environment_locked: false,
+        received: Received::default(),
     }
     .restriction()
 }
@@ -1149,3 +1237,7 @@ mod tests;
 #[cfg(test)]
 #[path = "rlva/link_lock_tests.rs"]
 pub(crate) mod link_lock_tests;
+
+#[cfg(test)]
+#[path = "rlva/outfit_swap_tests.rs"]
+mod outfit_swap_tests;

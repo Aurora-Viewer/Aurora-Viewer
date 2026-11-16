@@ -1187,7 +1187,7 @@ pub(super) fn execute(
     match command {
         Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
-        Command::Folder(id) => submit(rules::create_folder(id, aurora_i18n::tr!("common-new-folder"))),
+        Command::Folder(id) => submit(rules::create_folder(id, crate::text_validation::default_name("common-new-folder"))),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {
@@ -1210,7 +1210,8 @@ pub(super) fn execute(
         }
         Command::Share(ids) => {
             st.share_items = ids;
-            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+            // LLAvatarActions::shareWithAvatars: allow_multiple true
+            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
@@ -1270,7 +1271,7 @@ pub(super) fn execute(
         Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
-            actions.push(InvAction::Preview(id));
+            actions.push(InvAction::Preview(id, Some(clipboard::focus_id(st))));
         }
         Command::Window(id) => st.open_folder_window(id),
         Command::Asset(id) => ui.ctx().copy_text(id.to_string()),
