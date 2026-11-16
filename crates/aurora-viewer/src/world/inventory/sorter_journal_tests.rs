@@ -81,6 +81,7 @@ fn sort(inv: &mut Inventory) -> Journal {
             folder: m.folder,
             from: m.from,
             name: m.name.clone(),
+            to: None,
         }));
     }
     journal
@@ -105,6 +106,7 @@ fn the_journal_keeps_the_last_runs() {
             folder: false,
             from: id(1),
             name: "x".into(),
+            to: None,
         }]);
     }
     assert_eq!(journal.runs.len(), RUNS);
@@ -117,6 +119,7 @@ fn entry(n: u128) -> Entry {
         folder: false,
         from: id(1),
         name: "x".into(),
+        to: None,
     }
 }
 
@@ -166,6 +169,7 @@ fn runs_from_an_older_file_are_numbered() {
             at,
             kind: RunKind::Move,
             entries: Vec::new(),
+            undoes: None,
         });
     }
     journal.number_runs();
@@ -210,6 +214,7 @@ fn undo_of_a_trash_run_takes_entries_out_of_the_trash() {
             folder: false,
             from: id(10),
             name: format!("{n}"),
+            to: None,
         }]);
         if let Some(it) = inv.items.get_mut(&id(n)) {
             it.parent = id(11);
@@ -233,12 +238,14 @@ fn undo_never_moves_into_or_out_of_a_hands_off_folder() {
             folder: false,
             from: id(14),
             name: "a".into(),
+            to: None,
         },
         Entry {
             id: id(101),
             folder: false,
             from: id(12),
             name: "b".into(),
+            to: None,
         },
     ]);
     if let Some(it) = inv.items.get_mut(&id(101)) {
@@ -283,6 +290,7 @@ fn files_round_trip_and_snapshots_are_pruned() {
         folder: false,
         from: id(1),
         name: "Item".into(),
+        to: None,
     }]);
     save(&journal_path(&dir), &journal).expect("save");
     assert_eq!(load::<Journal>(&journal_path(&dir)).expect("load"), journal);
@@ -298,6 +306,9 @@ fn files_round_trip_and_snapshots_are_pruned() {
             unpacker: false,
             restore: false,
         }],
+        base_id: None,
+        undoes: None,
+        runs: Vec::new(),
     };
     save(&unfinished_path(&dir), &unfinished).expect("save");
     assert_eq!(load::<Unfinished>(&unfinished_path(&dir)).expect("load"), unfinished);
@@ -412,4 +423,52 @@ fn empty_runs_never_push_real_ones_out_and_ids_never_repeat() {
     journal.forget_undone(undo, real);
     let next = journal.begin(RunKind::Move, 40);
     assert!(next > undo && next > real, "ids never repeat");
+}
+
+/// An Undo's own runs are never "the last run" (undoing them would put the
+/// sort back), an Undo resumed in another session forgets all its runs at
+/// the end, and a run whose entries are all gone never hides an older one.
+#[test]
+fn undo_runs_are_never_undone_and_gone_runs_never_hide_older_ones() {
+    let mut journal = Journal::default();
+    let sort = journal.begin(RunKind::Move, 1);
+    journal.record_in(sort, [entry(1), entry(2), entry(3)]);
+    // an Undo stopped by a crash, then resumed: two runs of the same Undo
+    let first = journal.begin_undo(2, sort);
+    journal.record_in(first, [entry(1)]);
+    assert_eq!(journal.last().map(|r| r.id), Some(sort), "the crashed Undo is not the last run");
+    let second = journal.begin_undo(3, sort);
+    journal.record_in(second, [entry(2)]);
+    for own in [first, second] {
+        journal.forget_undone(own, sort);
+    }
+    let left = journal.runs.iter().find(|r| r.id == sort).expect("the sort");
+    assert_eq!(left.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![id(3)]);
+    assert!(journal.runs.iter().all(|r| r.undoes.is_none()));
+    // a newer run whose entries were all purged: the older one is offered
+    let trash = journal.begin(RunKind::Trash, 4);
+    journal.record_in(trash, [entry(9)]);
+    let found = journal.last_undoable(|e| e != id(9)).map(|r| r.id);
+    assert_eq!(found, Some(sort));
+}
+
+/// Undo leaves an entry the user moved on after the run.
+#[test]
+fn undo_leaves_what_was_moved_by_hand_after_the_run() {
+    let mut inv = fixture();
+    let mut journal = sort(&mut inv);
+    // where the run put each entry
+    for run in journal.runs.iter_mut() {
+        for e in run.entries.iter_mut() {
+            e.to = actions::parent(&inv, e.id);
+        }
+    }
+    let run = journal.last().expect("a run").clone();
+    let moved = run.entries[0].id;
+    if let Some(it) = inv.items.get_mut(&moved) {
+        it.parent = id(12);
+    }
+    let (moves, skipped) = undo_moves(&inv, &run, &HashSet::new(), &HashSet::new());
+    assert!(moves.iter().all(|m| m.id != moved));
+    assert!(skipped >= 1);
 }

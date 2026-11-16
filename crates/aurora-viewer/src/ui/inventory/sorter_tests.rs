@@ -422,6 +422,7 @@ fn every_window_of_an_account_shares_its_journal() {
             folder: false,
             from: Uuid::from_u128(1),
             name: "x".into(),
+            to: None,
         }],
     );
     assert_eq!(second.with(|j| j.last().map(|run| (run.at, run.entries.len()))), Some((10, 1)));
@@ -485,7 +486,45 @@ fn one_run_at_a_time_per_account() {
 /// the Trash, and nothing is sent until they are counted.
 #[test]
 fn a_trash_batch_is_never_sent_twice() {
-    let inv = Inventory::default();
+    // an inventory with a Trash: a resend would really be pushed
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    for (id, parent, kind) in [(1u128, 0u128, 8), (2, 1, -1), (14, 1, 14)] {
+        inv.folders.insert(
+            Uuid::from_u128(id),
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: Uuid::from_u128(id),
+                    parent: Uuid::from_u128(parent),
+                    name: format!("Folder {id}"),
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    if let Some(root) = inv.folders.get_mut(&Uuid::from_u128(1)) {
+        root.children = vec![Uuid::from_u128(2), Uuid::from_u128(14)];
+    }
+    inv.add_items(
+        [9000u128, 9010]
+            .into_iter()
+            .map(|n| aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(n),
+                parent: Uuid::from_u128(2),
+                name: format!("Item {n}"),
+                asset_type: 6,
+                ..Default::default()
+            })
+            .collect(),
+    );
     let mut st = InventoryUi::default();
     let mut trash = TrashJob::new(vec![(Uuid::from_u128(9010), Uuid::from_u128(2))]);
     trash.begun = true;

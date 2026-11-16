@@ -208,7 +208,7 @@
   {
    "name": "Speedster Car HUD",
    "type": 6,
-   "expect": "{huds}"
+   "expect": "{vehicles}"
   },
   {
    "name": "Rez to Unpack - Porch Set",

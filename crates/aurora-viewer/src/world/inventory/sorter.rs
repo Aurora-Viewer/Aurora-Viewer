@@ -483,6 +483,8 @@ pub struct Classified {
 /// The lowercase words of a name: creators separate them with anything
 /// (`.SB.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Maze`).
 pub fn words(name: &str) -> Vec<String> {
+    // an apostrophe joins (`Women's` is one word, not `women` and `s`)
+    let name: String = name.chars().filter(|c| !matches!(c, '\'' | '’')).collect();
     name.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
@@ -628,7 +630,8 @@ pub fn rule_for<'a>(rules: &'a [Rule], name: &str, created: Option<i64>) -> Opti
 pub fn split_path(path: &str) -> Vec<String> {
     path.split(['/', '\\'])
         .filter_map(|part| actions::clean_name(part).ok())
-        .map(|part| inventory_name(&crate::text_validation::generated_name(&part, 63), ""))
+        // accents first (`Robes d'été` → `Robes d'ete`), never `?`
+        .map(|part| inventory_name(&crate::text_validation::generated_name(&inventory_name(&part, ""), 63), ""))
         .filter(|part| !part.is_empty())
         // a rule's path is a few folders, never a hundred nested ones
         .take(MAX_PATH_DEPTH)
@@ -715,21 +718,39 @@ pub fn target_by(
         && let Some(shop) = &shop
         && let Some(hint) = hints
             .iter()
-            .find(|h| h.creator.is_none() && h.store.trim().eq_ignore_ascii_case(shop.trim()))
+            .find(|h| h.creator.is_none() && inventory_name(h.store.trim(), "").eq_ignore_ascii_case(&inventory_name(shop.trim(), "")))
     {
         found.category = Some(hint.category);
     }
     let mut path = Vec::new();
-    path.extend(found.body.map(Body::folder));
+    // a body says who wears it: a sofa, a car, a notecard has none
+    // (`Hourglass Vase` is no Slink item)
+    let worn = !matches!(
+        found.category,
+        Some(
+            Category::Furniture
+                | Category::Decor
+                | Category::Vehicles
+                | Category::Pets
+                | Category::Landmarks
+                | Category::Notecards
+                | Category::Scripts
+                | Category::Sounds
+                | Category::Textures
+        )
+    );
+    path.extend(found.body.filter(|_| worn).map(Body::folder));
     path.extend(found.category.map(category_folder));
     // By store (`stores`): below the category, or in Stores when the name
     // says nothing else.
     if stores && let Some(shop) = shop {
-        if path.is_empty() {
-            path.push(stores_folder());
-        }
+        // a store name with no letter the inventory keeps (`[桜屋]`) gets
+        // no folder of its own, and no bare Stores folder either
         let shop = inventory_name(&shop, "");
         if !shop.is_empty() {
+            if path.is_empty() {
+                path.push(stores_folder());
+            }
             path.push(shop);
         }
     }
@@ -790,7 +811,9 @@ pub fn store(name: &str) -> Option<String> {
         && (found.category.is_none() || maker)
         && !found.unpacker
         && !found.squish
-        && !found.waifus;
+        && !found.waifus
+        // `(Mesh)`, `[DEMO]`, `*NEW*`: a status, not a store
+        && !tag_words.iter().all(|w| VOCABULARY.store_stopwords.contains(w));
     reads.then(|| tag.to_owned())
 }
 
@@ -975,7 +998,10 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
         return false;
     }
     let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
-    target(name, -1, 0, None, &[], false).is_some() || store(name).is_some() || !has_folders
+    // a store before a dash (`Clothes - Winter`) is too weak a sign for a
+    // folder of the user's: only a tag (`[Store]`, `*Store*`) makes it one
+    let tagged = store(name).is_some() && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
+    target(name, -1, 0, None, &[], false).is_some() || tagged || !has_folders
 }
 
 /// What a whole-inventory sort reads, in an open place only: the loose
@@ -1300,7 +1326,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
     for m in moves {
         let here = actions::parent(inv, m.id) == Some(m.from);
         // a folder excluded since (or an entry in one) stays, like any sort's
-        if here && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
+        if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
             plan.kept += 1;
             plan.kept_list.push((m.name.clone(), Kept::Excluded));
             continue;

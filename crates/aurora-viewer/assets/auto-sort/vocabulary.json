@@ -477,46 +477,6 @@
       ]
     },
     {
-      "category": "heads",
-      "words": [
-        "head",
-        "heads",
-        "lelutka",
-        "catwa",
-        "genus",
-        "evox",
-        "evo x",
-        "akeruka",
-        "logo head"
-      ]
-    },
-    {
-      "category": "animations",
-      "words": [
-        "pose",
-        "poses",
-        "animation",
-        "animations",
-        "ao",
-        "dance",
-        "posestand"
-      ]
-    },
-    {
-      "category": "gestures",
-      "words": [
-        "gesture",
-        "gestures"
-      ]
-    },
-    {
-      "category": "huds",
-      "words": [
-        "hud",
-        "huds"
-      ]
-    },
-    {
       "category": "furniture",
       "words": [
         "chair",
@@ -587,6 +547,46 @@
         "kitten",
         "breedable",
         "companion"
+      ]
+    },
+    {
+      "category": "heads",
+      "words": [
+        "head",
+        "heads",
+        "lelutka",
+        "catwa",
+        "genus",
+        "evox",
+        "evo x",
+        "akeruka",
+        "logo head"
+      ]
+    },
+    {
+      "category": "animations",
+      "words": [
+        "pose",
+        "poses",
+        "animation",
+        "animations",
+        "ao",
+        "dance",
+        "posestand"
+      ]
+    },
+    {
+      "category": "gestures",
+      "words": [
+        "gesture",
+        "gestures"
+      ]
+    },
+    {
+      "category": "huds",
+      "words": [
+        "hud",
+        "huds"
       ]
     },
     {
@@ -722,5 +722,33 @@
       " ~ ",
       ": "
     ]
-  }
+  },
+  "store_stopwords": [
+    "mesh",
+    "demo",
+    "free",
+    "freebie",
+    "new",
+    "gift",
+    "rigged",
+    "fitted",
+    "female",
+    "male",
+    "unisex",
+    "bento",
+    "bom",
+    "sale",
+    "update",
+    "updated",
+    "limited",
+    "exclusive",
+    "group",
+    "hunt",
+    "promo",
+    "wear",
+    "add",
+    "adult",
+    "pg",
+    "nsfw"
+  ]
 }

@@ -124,7 +124,7 @@ pub(super) struct State {
     snapshots: Vec<(i64, std::path::PathBuf)>,
     /// Batches confirmed since the journal was last written.
     unsaved: usize,
-    /// Batches are held: a teleport runs or no region is connected.
+    /// Batches are held: a teleport runs.
     held: bool,
     /// The inventory's generation last seen, and since when it has not changed.
     seen_generation: u64,
@@ -150,6 +150,9 @@ pub(super) struct State {
     undoing: Option<u64>,
     /// This window, for the account's one run at a time.
     window: Uuid,
+    /// When the journal was last written: written again every few seconds
+    /// while a run confirms moves (a crash loses little).
+    saved_at: Option<Instant>,
     /// A sort job ended this frame: its save removes the run to resume.
     /// No other save (a Trash run's, another window's) touches that file.
     job_just_ended: bool,
@@ -382,6 +385,9 @@ struct TrashJob {
     unsure_seen: Option<u64>,
     /// Its run in the journal.
     run: Option<u64>,
+    /// Since when the batch on its way has been taken and its delete still
+    /// pending: a delete that never ends does not hold the run forever.
+    taken_at: Option<Instant>,
 }
 
 impl TrashJob {
@@ -398,6 +404,7 @@ impl TrashJob {
             unsure: Vec::new(),
             unsure_seen: None,
             run: None,
+            taken_at: None,
         }
     }
 }
@@ -455,6 +462,12 @@ struct Job {
     unsure: Vec<(Move, bool, Instant)>,
     /// Its run in the journal.
     run: Option<u64>,
+    /// An Undo: the run it undoes, and the runs of the same Undo begun in
+    /// an earlier session (stopped by the viewer, then resumed).
+    undoes: Option<u64>,
+    earlier_runs: Vec<u64>,
+    /// The sort folder's id when the run began, for a resume.
+    base_id: Option<Uuid>,
 }
 
 struct InFlight {
@@ -493,6 +506,9 @@ impl Job {
             stopping: false,
             unsure: Vec::new(),
             run: None,
+            undoes: None,
+            earlier_runs: Vec::new(),
+            base_id: None,
         }
     }
 
@@ -527,6 +543,7 @@ impl Job {
                     folder: m.folder,
                     from: m.from,
                     name: m.name.clone(),
+                    to: None,
                 }));
                 self.retries = 0;
                 self.next_at = Some(now + PACE);
@@ -588,6 +605,7 @@ impl Job {
                 folder: m.folder,
                 from: m.from,
                 name: m.name.clone(),
+                to: None,
             });
         }
     }
@@ -613,7 +631,7 @@ const OPTIONS: usize = 2;
 const CLEANUP: usize = 3;
 
 /// Journal saves: every this many confirmed batches, and at a run's end.
-const SAVE_EVERY: usize = 20;
+const SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl State {
     fn account_dir(&self) -> Option<std::path::PathBuf> {
@@ -632,7 +650,11 @@ impl State {
             Ok(journal) => journal,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(error) => {
-                log::warn!("auto-sort: the journal could not be read: {error}");
+                // kept aside, never written over: the history stays for a
+                // newer viewer or a look by hand
+                let aside = j::journal_path(&dir).with_extension(format!("bad-{}.json.gz", unix_now()));
+                let kept = std::fs::rename(j::journal_path(&dir), &aside).is_ok();
+                log::warn!("auto-sort: the journal could not be read ({error}); kept aside: {kept}");
                 Default::default()
             }
         });
@@ -650,7 +672,15 @@ impl State {
         // only the window whose run is going (or just ended) writes or
         // removes the run to resume: another one's save leaves it alone
         let owns_run = self.job.is_some() || std::mem::take(&mut self.job_just_ended);
+        self.saved_at = Some(Instant::now());
+        // a new run's moves replace any older run to resume
+        if self.job.as_ref().is_some_and(|job| job.restoring != Some(Restoring::Resume)) {
+            self.unfinished = None;
+        }
         let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
+            base_id: job.base_id,
+            undoes: job.undoes,
+            runs: job.earlier_runs.iter().copied().chain(job.run).collect(),
             base: job.base.clone(),
             moves: job
                 .in_flight
@@ -698,7 +728,11 @@ impl State {
             }
             _ => sorter::journal::Snapshot::take(inv, at, account),
         };
-        self.snapshots.insert(0, (at, sorter::journal::snapshot_path(&dir, at)));
+        let path = sorter::journal::snapshot_path(&dir, at);
+        // two in the same second share a file: listed once
+        if !self.snapshots.iter().any(|(_, listed)| *listed == path) {
+            self.snapshots.insert(0, (at, path));
+        }
         self.snapshots.truncate(sorter::journal::SNAPSHOTS);
         in_order(move || {
             use sorter::journal as j;
@@ -761,11 +795,17 @@ impl InventoryUi {
         match prefs.store_hints.iter_mut().find(|h| h.creator == hint.creator) {
             Some(mine) => {
                 // a name still loading ("…") never replaces a known one
-                if !hint.creator_name.is_empty() && hint.creator_name != "…" {
+                if !hint.creator_name.is_empty() && !hint.creator_name.ends_with('…') {
                     mine.creator_name = hint.creator_name;
                 }
             }
-            None => prefs.store_hints.push(hint),
+            None => {
+                let mut hint = hint;
+                if hint.creator_name.ends_with('…') {
+                    hint.creator_name.clear();
+                }
+                prefs.store_hints.push(hint);
+            }
         }
         self.sorter.open = true;
         if self.sorter.source.is_none() {
@@ -1035,7 +1075,7 @@ pub(super) fn show(
     let mut begin = false;
     if let Some(job) = state.job.as_mut() {
         if !job.confirmed.is_empty() {
-            let confirmed = std::mem::take(&mut job.confirmed);
+            let confirmed = placed(inv, std::mem::take(&mut job.confirmed));
             state.journal.record_in(job.run, confirmed);
             state.unsaved += 1;
         }
@@ -1046,13 +1086,17 @@ pub(super) fn show(
     }
     if begin {
         // a run starts: its journal, and a snapshot of the layout first
-        let run = state.journal.begin(sorter::journal::RunKind::Move, unix_now());
+        let undoes = state.job.as_ref().and_then(|job| job.undoes);
+        let run = match undoes {
+            Some(undone) => state.journal.with(|j| j.begin_undo(unix_now(), undone)),
+            None => state.journal.begin(sorter::journal::RunKind::Move, unix_now()),
+        };
         if let Some(job) = state.job.as_mut() {
             job.run = Some(run);
         }
         state.snapshot(inv);
     }
-    if state.unsaved >= SAVE_EVERY {
+    if state.unsaved > 0 && state.saved_at.is_none_or(|at| at.elapsed() >= SAVE_EVERY) {
         state.save_progress();
     }
     // paused or held, a destination's wait starts again afterwards: the
@@ -1062,7 +1106,7 @@ pub(super) fn show(
     {
         job.waiting_since = None;
     }
-    // while a teleport runs or no region is connected, nothing is sent and
+    // while a teleport runs, nothing is sent and
     // no retry is spent: the job resumes on its own
     if free
         && !hold
@@ -1117,20 +1161,23 @@ pub(super) fn show(
                 };
                 let restoring = job.restoring;
                 let run = job.run;
-                let last = std::mem::take(&mut job.confirmed);
+                let undoes = job.undoes;
+                let earlier = std::mem::take(&mut job.earlier_runs);
+                let last = placed(inv, std::mem::take(&mut job.confirmed));
                 state.journal.record_in(run, last);
                 state.job = None;
                 state.job_just_ended = true;
                 state.journal.release(state.window);
                 state.preview = None;
                 state.cleanup = None;
-                if restoring == Some(Restoring::Undo)
-                    && let (Some(undone), Some(run)) = (state.undoing.take(), run)
-                {
-                    // the undo's own run goes, and from the run it undid
-                    // only the entries it put back: what it could not is
+                if let Some(undone) = undoes {
+                    // the undo's own runs (this session's and a stopped
+                    // session's) go, and from the run it undid only the
+                    // entries they put back: what could not go back is
                     // still there to undo
-                    state.journal.forget_undone(run, undone);
+                    for own in earlier.into_iter().chain(run) {
+                        state.journal.forget_undone(own, undone);
+                    }
                 }
                 if restoring == Some(Restoring::Resume) {
                     state.unfinished = None;
@@ -1442,6 +1489,8 @@ pub(super) fn show(
         job.queue.clear();
     }
     if stop && let Some(trash) = state.trash.as_mut() {
+        // what Stop leaves is told in the summary
+        trash.skipped += trash.queue.len();
         trash.queue.clear();
     }
     state.open = open;
@@ -1887,7 +1936,15 @@ fn send_trash_batch(
     if let Some((batch, frames, taken)) = trash.in_flight.as_mut() {
         *frames += 1;
         *taken |= deleting;
-        if *taken && !deleting {
+        let stuck = *taken && deleting && trash.taken_at.get_or_insert(now).elapsed() > 4 * TRASH_SHOW_LIMIT;
+        if stuck {
+            log::warn!(
+                "auto-sort: a Trash batch's delete did not end in {} s",
+                (4 * TRASH_SHOW_LIMIT).as_secs()
+            );
+        }
+        if *taken && !deleting || stuck {
+            trash.taken_at = None;
             // what the delete really did is read from the inventory: each
             // entry counts once it shows in the Trash (below), a little
             // after the request if need be
@@ -1940,6 +1997,7 @@ fn send_trash_batch(
                     folder: inv.folders.contains_key(id),
                     from: *from,
                     name: rules::name(inv, *id),
+                    to: None,
                 }),
             );
             st.sorter.unsaved += 1;
@@ -2003,6 +2061,20 @@ fn send_trash_batch(
             }
         }
     }
+}
+
+/// Each entry with the folder it is in now, where the run put it: Undo
+/// leaves those the user moves on afterwards.
+fn placed(inv: &Inventory, entries: Vec<sorter::journal::Entry>) -> Vec<sorter::journal::Entry> {
+    entries
+        .into_iter()
+        .map(|mut e| {
+            if e.to.is_none() {
+                e.to = crate::world::inventory::actions::parent(inv, e.id);
+            }
+            e
+        })
+        .collect()
 }
 
 /// `id` is in the Trash (at any depth).
@@ -2257,6 +2329,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
             if busy_elsewhere(&mut st.sorter) {
                 return;
             }
+            st.sorter.journal.claim(st.sorter.window);
             st.sorter.trash = Some(TrashJob::new(ids));
         }
         Confirm::PreTrash(ids) => {
@@ -2266,6 +2339,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
             if busy_elsewhere(&mut st.sorter) {
                 return;
             }
+            st.sorter.journal.claim(st.sorter.window);
             st.sorter.trash = Some(TrashJob::new(ids));
         }
     }
@@ -2298,12 +2372,23 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
         return;
     }
     let mut job = Job::new(plan.moves.iter().cloned().collect(), sorter::base_name_in(inv, &prefs.sorter));
+    job.base_id = sorter::base_folder(inv, &prefs.sorter);
     if let Some(Source::Saved(_, restoring)) = &state.source {
         job.restoring = Some(*restoring);
+        if *restoring == Restoring::Undo {
+            job.undoes = state.undoing.take();
+        }
         if let (Restoring::Resume, Some(unfinished)) = (restoring, &state.unfinished) {
-            job.base.clone_from(&unfinished.base);
+            // the sort folder as it is named now, else as it was
+            let renamed = unfinished.base_id.and_then(|id| inv.folders.get(&id)).map(|f| f.info.name.clone());
+            job.base = renamed.unwrap_or_else(|| unfinished.base.clone());
+            job.base_id = unfinished.base_id;
+            job.undoes = unfinished.undoes;
+            job.earlier_runs.clone_from(&unfinished.runs);
         }
     }
+    // the account's run is this window's from now (not the next frame)
+    state.journal.claim(state.window);
     state.job = Some(job);
 }
 
@@ -2904,16 +2989,23 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             state.tab = PREVIEW;
         }
     }
-    match state.journal.with(|j| j.last().map(|run| (run.at, run.entries.len()))) {
+    let exists = |id: Uuid| inv.items.contains_key(&id) || inv.folders.contains_key(&id);
+    match state
+        .journal
+        .with(|j| j.last_undoable(exists).map(|run| (run.at, run.entries.len())))
+    {
         Some((at, count)) => {
             let date = snapshot_date(at);
             let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = count, date = date.as_str());
             if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
                 let (moves, _) = state
                     .journal
-                    .with(|j| j.last().map(|run| sorter::journal::undo_moves(inv, run, &protected, worn)))
+                    .with(|j| {
+                        j.last_undoable(exists)
+                            .map(|run| sorter::journal::undo_moves(inv, run, &protected, worn))
+                    })
                     .unwrap_or_default();
-                state.undoing = state.journal.with(|j| j.last().map(|run| run.id));
+                state.undoing = state.journal.with(|j| j.last_undoable(exists).map(|run| run.id));
                 state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
                 state.tab = PREVIEW;
             }
@@ -3127,6 +3219,10 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
                         ],
                     ) {
                         rule.pre_trash = kind == 2;
+                        if rule.pre_trash {
+                            rule.target = None;
+                            rule.folder.clear();
+                        }
                         match kind {
                             1 => state.picker = Some(Picker::new(Pick::Rule(index))),
                             0 => rule.target = None,

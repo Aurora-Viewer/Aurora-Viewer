@@ -2146,3 +2146,84 @@ fn a_resumed_run_honours_folders_excluded_since() {
     assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id(100)]);
     assert!(plan.kept_list.iter().any(|(_, why)| *why == Kept::Excluded));
 }
+
+/// Names as creators really write them, that the vocabulary used to file
+/// wrongly: status tags are no store, an apostrophe joins its word, a home
+/// item gets no body, accented rule folders keep their letters, a store
+/// tag with no letter the inventory keeps gets no bare Stores folder.
+#[test]
+fn status_tags_apostrophes_bodies_and_accents_are_read_right() {
+    assert_eq!(store("(Mesh) Sweater"), None);
+    assert_eq!(store("[DEMO] Velvet Gown"), None);
+    assert_eq!(words("Women's Boots"), vec!["womens", "boots"]);
+    assert_eq!(sorted_as("Hourglass Vase", 6, &[]), cat(Category::Decor));
+    assert_eq!(sorted_as("Bed with 50 poses", 6, &[]), cat(Category::Furniture));
+    assert_eq!(split_path("Robes d'été/Café"), vec!["Robes d'ete".to_owned(), "Cafe".to_owned()]);
+    assert!(!sorted_as("[桜屋] something", 6, &[]).contains(&stores_folder()));
+    // a folder of the user's named with a dash is not a product by its store
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Clothes - Winter");
+    add_folder(&mut inv, 81, 80, "Coats");
+    assert!(!product_folder_in(&inv, id(80), &HashSet::new()));
+}
+
+/// Undo and a layout restore are never stopped by an exclusion added since
+/// (excluding Sorted, then Undo, must still put things back); a resumed
+/// run is.
+#[test]
+fn exclusions_stop_a_resume_but_never_an_undo() {
+    let mut inv = fixture(&["Velvet Sofa"]);
+    add_folder(&mut inv, 50, 1, "Sorted");
+    if let Some(it) = inv.items.get_mut(&id(100)) {
+        it.parent = id(50);
+    }
+    let back = Move {
+        id: id(100),
+        folder: false,
+        name: "Velvet Sofa".into(),
+        from: id(50),
+        to: Dest::Folder(id(OBJECTS)),
+        label: String::new(),
+        unpacker: false,
+        restore: true,
+    };
+    let prefs = Preferences {
+        excluded: vec![id(50)],
+        ..Default::default()
+    };
+    let plan = plan_saved(&inv, std::slice::from_ref(&back), &prefs, &HashSet::new(), &HashSet::new());
+    assert_eq!(plan.moves.len(), 1, "Undo still puts it back");
+    let resume = Move { restore: false, ..back };
+    let plan = plan_saved(&inv, &[resume], &prefs, &HashSet::new(), &HashSet::new());
+    assert!(plan.moves.is_empty(), "a resumed run leaves it");
+}
+
+/// A file's "except Sorted" Pre-Trash rule is not the user's plain one.
+#[test]
+fn pre_trash_rules_compare_by_words_and_where_they_look() {
+    use super::share::import;
+    let found = import(&format!("{}\nrule: any | old | pre-trash | except-sorted\n", super::share::HEADER));
+    let mine = Preferences {
+        rules: vec![Rule {
+            words: "old".into(),
+            mode: Match::Any,
+            pre_trash: true,
+            folder: "left over".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(found.duplicates(&mine).0, vec![false]);
+    let same = Preferences {
+        rules: vec![Rule {
+            skip_sorted: true,
+            ..mine.rules[0].clone()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        found.duplicates(&same).0,
+        vec![true],
+        "a stale folder on a Pre-Trash rule is ignored"
+    );
+}

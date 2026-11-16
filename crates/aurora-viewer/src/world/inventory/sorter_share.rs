@@ -412,11 +412,13 @@ fn same_hint(a: &StoreHint, b: &StoreHint) -> bool {
 /// The same rule, whatever the case and spacing of its words and path.
 fn same_rule(a: &Rule, b: &Rule) -> bool {
     let norm = |s: &str| super::words(s).join(" ");
-    a.mode == b.mode
-        && a.pre_trash == b.pre_trash
-        && a.target == b.target
-        && norm(&a.words) == norm(&b.words)
-        && super::split_path(&a.folder) == super::split_path(&b.folder)
+    let same_words = a.mode == b.mode && norm(&a.words) == norm(&b.words);
+    if a.pre_trash || b.pre_trash {
+        // a Pre-Trash rule has no folder: its words, where it looks and
+        // whether it is on make it
+        return same_words && a.pre_trash == b.pre_trash && a.skip_sorted == b.skip_sorted && a.enabled == b.enabled;
+    }
+    same_words && a.target == b.target && super::split_path(&a.folder) == super::split_path(&b.folder)
 }
 
 fn read_bool(value: &str) -> Option<bool> {

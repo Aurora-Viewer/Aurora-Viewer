@@ -68,6 +68,8 @@ struct Raw {
     unpackers: Vec<String>,
     variants: Variants,
     store_tag_patterns: StoreTags,
+    #[serde(default)]
+    store_stopwords: Vec<String>,
 }
 
 /// The vocabulary, read and checked.
@@ -83,6 +85,9 @@ pub struct Vocabulary {
     pub unpackers: Vec<String>,
     pub variants: Variants,
     pub store_tags: StoreTags,
+    /// Words of a tag that names a status, not a store (`(Mesh)`, `[DEMO]`,
+    /// `*NEW*`): a tag made only of them is no store.
+    pub store_stopwords: Vec<String>,
 }
 
 impl Vocabulary {
@@ -111,6 +116,14 @@ impl Vocabulary {
         check(&mut problems, "unpackers", &raw.unpackers);
         check(&mut problems, "variants/squish", &raw.variants.squish);
         check(&mut problems, "variants/waifus", &raw.variants.waifus);
+        check(&mut problems, "store_stopwords", &raw.store_stopwords);
+        // a body's name is a folder name as the inventory keeps it: anything
+        // else would be renamed by the server and made again on each run
+        for body in &raw.bodies {
+            if super::inventory_name(&body.body, "") != body.body {
+                problems.push(format!("bodies: \"{}\" is no inventory folder name", body.body));
+            }
+        }
         for body in &raw.bodies {
             if body.body.trim().is_empty() {
                 problems.push("bodies: a body without a name".to_owned());
@@ -134,6 +147,7 @@ impl Vocabulary {
             unpackers: raw.unpackers,
             variants: raw.variants,
             store_tags: raw.store_tag_patterns,
+            store_stopwords: raw.store_stopwords,
         })
     }
 

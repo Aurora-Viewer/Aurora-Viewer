@@ -2292,7 +2292,7 @@ pub fn show(
     }
     // Auto-sort's creator hints show who they are for: the names are asked
     // for while the window is open and kept once known
-    if st.sorter_open() {
+    if st.sorter_open() || st.windows.iter().any(|w| w.state.sorter_open()) {
         for hint in prefs.sorter.store_hints.iter_mut() {
             let Some(creator) = hint.creator else { continue };
             world.social.want_name(creator);
@@ -2303,8 +2303,8 @@ pub fn show(
             }
         }
     }
-    // Auto-sort holds its batches while a teleport runs or no region is
-    // connected, and counts active gestures as worn (never moved)
+    // Auto-sort holds its batches while a teleport runs, and counts active
+    // gestures as worn (never moved)
     let sorter_hold = world.teleporting;
     let sorter_worn: HashSet<Uuid> = facts.worn.iter().chain(facts.active_gestures.iter()).copied().collect();
     let inv = &mut world.inventory;

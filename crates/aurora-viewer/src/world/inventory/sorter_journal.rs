@@ -29,6 +29,10 @@ pub struct Entry {
     pub folder: bool,
     pub from: Uuid,
     pub name: String,
+    /// Where the run put it, when known: Undo leaves an entry the user
+    /// moved on since (it is no longer there).
+    #[serde(default)]
+    pub to: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +54,10 @@ pub struct Run {
     pub at: i64,
     pub kind: RunKind,
     pub entries: Vec<Entry>,
+    /// An Undo run: the run it undoes. Never offered as "Undo last run"
+    /// itself (undoing an Undo would put the sort back).
+    #[serde(default)]
+    pub undoes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -74,6 +82,7 @@ impl Journal {
             at,
             kind,
             entries: Vec::new(),
+            undoes: None,
         });
         while self.runs.len() > RUNS {
             self.runs.pop_front();
@@ -106,9 +115,30 @@ impl Journal {
         }
     }
 
-    /// The last run that moved something.
+    /// An Undo of the run `undone` begins; its id.
+    pub fn begin_undo(&mut self, at: i64, undone: u64) -> u64 {
+        let id = self.begin(RunKind::Move, at);
+        if let Some(run) = self.runs.iter_mut().find(|run| run.id == id) {
+            run.undoes = Some(undone);
+        }
+        id
+    }
+
+    /// The last run that moved something (an Undo's own run never).
+    #[cfg(test)]
     pub fn last(&self) -> Option<&Run> {
-        self.runs.iter().rev().find(|run| !run.entries.is_empty())
+        self.runs.iter().rev().find(|run| !run.entries.is_empty() && run.undoes.is_none())
+    }
+
+    /// The last run with something left to put back: a run whose entries
+    /// are all gone (purged from the Trash, deleted) never hides an older
+    /// one.
+    pub fn last_undoable(&self, exists: impl Fn(Uuid) -> bool) -> Option<&Run> {
+        self.runs
+            .iter()
+            .rev()
+            .filter(|run| run.undoes.is_none())
+            .find(|run| run.entries.iter().any(|e| exists(e.id)))
     }
 
     /// After the Undo run `undo` of the run `undone`: the undo's own run
@@ -157,6 +187,11 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
             RunKind::Move => !in_trash,
         };
         if now == entry.from {
+            continue;
+        }
+        // moved on by hand since the run put it somewhere: it stays there
+        if run.kind == RunKind::Move && entry.to.is_some_and(|to| to != now) {
+            skipped += 1;
             continue;
         }
         if !where_run_left || !restore_target_allowed(inv, entry.from) || !restorable(inv, entry.id, protected, &holds_worn) {
@@ -332,6 +367,15 @@ pub fn moved_since(journal: &Journal, since: i64) -> HashSet<Uuid> {
 pub struct Unfinished {
     pub base: String,
     pub moves: Vec<Move>,
+    /// The sort folder by id: a resumed run finds it even renamed.
+    #[serde(default)]
+    pub base_id: Option<Uuid>,
+    /// An Undo stopped by the viewer: the run it undoes, and its own runs
+    /// so far (forgotten with what they put back once it ends).
+    #[serde(default)]
+    pub undoes: Option<u64>,
+    #[serde(default)]
+    pub runs: Vec<u64>,
 }
 
 /// The folder of Auto-sort's files for one account.
