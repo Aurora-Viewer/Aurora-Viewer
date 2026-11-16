@@ -784,6 +784,14 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     // (a store's shelf named only for the store stays whole in place: its
     // deliveries are never opened either)
     assert!(!moved.contains(&id(145)), "a store's shelf never moves");
+    // a shelf named for a plural kind is opened (`Work Outfits`)
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 150, 1, "Work Outfits");
+    add_folder(&mut inv, 151, 150, "Monday");
+    add_item(&mut inv, 216, 151, "Silk Shirt", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(150)), "Work Outfits is a shelf");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

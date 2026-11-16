@@ -1450,8 +1450,11 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
                 .iter()
                 .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
     });
-    let occasion_shelf = occasion && name_words.iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str()));
-    !(by_kind || holds_deliveries || occasion_shelf)
+    // a plural kind in the name: a shelf of them (`Work Outfits`, `Poses
+    // for Photos`), unless sold as one (`Winter Boots`); a delivery named so
+    // (`Mila Poses Pack`) was kept by its versions above
+    let plural_shelf = name_words.iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str()));
+    !(by_kind || holds_deliveries || plural_shelf)
 }
 
 /// Every subfolder of `f` is a version of the product named `name`: a body,

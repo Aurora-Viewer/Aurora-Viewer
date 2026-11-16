@@ -3565,8 +3565,12 @@ fn undo_and_snapshots(
         Some((at, count)) => {
             let date = snapshot_date(at);
             let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = count, date = date.as_str());
-            let clicked = action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked();
-            if clicked || state.undo_waiting.is_some_and(|seen| seen != inv.generation) {
+            // (never while a run goes)
+            let clicked = ui
+                .add_enabled_ui(!busy, |ui| action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size))
+                .inner
+                .clicked();
+            if !busy && (clicked || state.undo_waiting.is_some_and(|seen| seen != inv.generation)) {
                 // the folders the runs put entries in are loaded first, else
                 // an entry not known yet would be counted as staying
                 // (gathered from the journal once, at the click; then only
