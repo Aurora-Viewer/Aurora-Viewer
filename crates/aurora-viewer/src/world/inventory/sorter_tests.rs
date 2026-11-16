@@ -3159,7 +3159,7 @@ fn stale_moves_are_skipped_a_few_batches_a_frame() {
 #[test]
 fn unpacked_deliveries_stay_whole_whatever_they_sell() {
     let none = HashSet::new();
-    let layouts: [(&str, &[&str]); 6] = [
+    let layouts: [(&str, &[&str]); 9] = [
         ("Zephyr Gizmo (unpacked)", &["Zephyr Gizmo", "Zephyr Gizmo Guide"]),
         ("Quillon Thing [BOXED]", &["Quillon Thing", "Readme"]),
         ("Brindle Combat System v4", &["Brindle Help", "Brindle Sword", "Brindle Dodge"]),
@@ -3172,6 +3172,9 @@ fn unpacked_deliveries_stay_whole_whatever_they_sell() {
             "Rascal Polo by Lumen",
             &["Polo XS by Lumen", "Polo M by Lumen", "Vintage Polo (wear me)"],
         ),
+        ("Quiet Faders (Wear to Auto-Unpack)", &["Fader Left", "Fader Right"]),
+        ("Brindle Combat System v.4", &["Help", "Sword"]),
+        ("Kitty Makeup - Cateyes I - Pack 1", &["Kitty Cateyes Light", "Kitty Cateyes Dark"]),
     ];
     for (name, items) in layouts {
         let mut inv = fixture(&[]);

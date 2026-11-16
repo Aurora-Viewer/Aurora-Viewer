@@ -1455,7 +1455,11 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     // the user marks as a shelf: `My Stuff`, `Unpacked`)
     // (an unpacker's marks win over a shelf word in a long product name:
     // `Face Slapper {Unpacker/backup} v1.0.3`)
-    let shelf_marked = words(name).iter().any(|w| SHELF_MARKERS.contains(&w.as_str()));
+    // (a lone letter is no mark in a long name: `Cateyes I`)
+    let name_words = words(name);
+    let shelf_marked = name_words
+        .iter()
+        .any(|w| SHELF_MARKERS.contains(&w.as_str()) && !(w.chars().count() == 1 && name_words.len() > 2));
     let delivered = delivery_marked(name) || !shelf_marked && shares_its_name(inv, f, name);
     if delivered {
         return true;
@@ -1491,8 +1495,8 @@ fn delivery_marked(name: &str) -> bool {
         "[unpacked]",
         "{unpacked}",
         "boxed",
-        "wear to unpack",
-        "touch to unpack",
+        "unpack",
+        "unpacker",
         "wear me",
         "add me",
         "(wear)",
@@ -1511,7 +1515,9 @@ fn delivery_marked(name: &str) -> bool {
                     .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
         };
         // `v4`, `v1.2`, `V0.08`; `(1.0.4)`, `[6.0]`
-        inner.strip_prefix('v').is_some_and(numbers) || bracketed && inner.contains('.') && numbers(inner)
+        // (`v.4` too)
+        inner.strip_prefix('v').is_some_and(|rest| numbers(rest.trim_start_matches('.')))
+            || bracketed && inner.contains('.') && numbers(inner)
     })
 }
 
