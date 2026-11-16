@@ -346,9 +346,10 @@ fn same_store(a: &str, b: &str) -> bool {
     let (x, y) = (inventory_name(a.trim(), ""), inventory_name(b.trim(), ""));
     // (letters and digits only: `Mila Rose`, `MilaRose`, `Mila_Rose` and
     // `Mila-Rose` are one store)
+    // (`&` kept: `A&B` is not `AB`)
     let bare = |s: &str| {
         s.chars()
-            .filter(char::is_ascii_alphanumeric)
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '&')
             .collect::<String>()
             .to_ascii_lowercase()
     };
@@ -1472,6 +1473,12 @@ const MASS_KINDS: [&str; 10] = [
     "clutter",
 ];
 
+/// A set's versions by finish (`Vesper Ring Sets` holding `Gold`,
+/// `Silver`).
+const FINISHES: [&str; 10] = [
+    "gold", "silver", "rose", "platinum", "copper", "black", "white", "pearl", "brass", "chrome",
+];
+
 /// The pack words of a name that sell many of one thing (`Kyoto Kimono
 /// Sets`, `Opal Jewelry Collections`): a pack word after a singular kind, in
 /// a name with a word of its own. They say nothing of a shelf; `Makeup Sets`
@@ -1555,6 +1562,30 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     }
     let own = product_words(name);
     let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
+    // a set of one thing shows it in its subfolders: a body, a kind, a
+    // finish (`Vesper Ring Sets` holding `Gold`, `Silver`); a shelf of
+    // sets holds products named their own way (`Best Ring Sets` holding
+    // `Vesper`, `Opal`)
+    if !packs.is_empty() {
+        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+        let own_part = |s: &&super::Folder| {
+            let sub = s.info.name.trim();
+            let sub_words = words(sub);
+            !sub_words.is_empty()
+                && (classify(sub, -1, 0).body.is_some()
+                    || is_kind(&sub_words.join(" "))
+                    || sub_words.iter().all(|w| {
+                        VERSION_WORDS.contains(&w.as_str())
+                            || DELIVERY_PARTS.contains(&w.as_str())
+                            || FINISHES.contains(&w.as_str())
+                            || tone(w)
+                            || is_kind(w)
+                    }))
+        };
+        if !subs.iter().any(own_part) {
+            return false;
+        }
+    }
     let kind_only = |sub_words: &[String]| {
         !sub_words.is_empty()
             && (is_kind(&sub_words.join(" ")) || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w)))

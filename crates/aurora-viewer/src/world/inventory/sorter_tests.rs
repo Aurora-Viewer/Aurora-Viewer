@@ -2971,3 +2971,28 @@ fn sets_of_one_thing_and_own_store_spellings_stay_whole() {
     assert!(same_store("Mila Rose", "Mila_Rose") && same_store("MILA.", "mila"));
     assert!(!same_store("Mila", "Milan"));
 }
+
+/// Audit 36: a shelf of sets holding products named their own way opens;
+/// `A&B` and `AB` are two stores.
+#[test]
+fn shelves_of_sets_open_and_an_ampersand_names_another_store() {
+    let none = HashSet::new();
+    let shelves: [(&str, &[&str]); 5] = [
+        ("Best Ring Sets", &["Vesper", "Opal"]),
+        ("Female Pose Packs", &["Sunny", "Breeze", "Lazy Day"]),
+        ("Long Hair Packs", &["Ava", "Bree"]),
+        ("Office Outfit Bundles", &["Monday", "Tuesday"]),
+        ("Bridal Jewelry Collections", &["Vesper", "Opal"]),
+    ];
+    for (name, subs) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(!plan.moves.iter().any(|m| m.id == id(900)), "{name} never moves whole");
+    }
+    assert!(!same_store("A&B", "AB"));
+    assert!(same_store("Bloom&Co", "Bloom & Co"));
+}
