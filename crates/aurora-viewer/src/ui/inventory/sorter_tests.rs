@@ -581,3 +581,17 @@ fn a_trash_batch_is_tracked_by_its_own_request() {
     st.begin_delete(request, deletion.selection);
     assert!(st.pending_delete.is_none(), "the window's selection is left alone");
 }
+
+/// A refused Trash batch's entries are shown back where they were: the
+/// Trash wait counts only what the server moved.
+#[test]
+fn a_refused_trash_batch_is_shown_back() {
+    let mut st = InventoryUi::default();
+    let mut trash = TrashJob::new(Vec::new());
+    trash.in_flight = Some((vec![(Uuid::from_u128(9000), Uuid::from_u128(2))], 0, true));
+    trash.request = Some(Uuid::from_u128(77));
+    st.sorter.trash = Some(trash);
+    st.finish_sorter(Uuid::from_u128(77), Some("refused"), None);
+    let trash = st.sorter.trash.as_ref().expect("the job goes on");
+    assert_eq!(trash.put_back, vec![(Uuid::from_u128(9000), Uuid::from_u128(2))]);
+}

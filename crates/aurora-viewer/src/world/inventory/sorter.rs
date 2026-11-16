@@ -1498,7 +1498,7 @@ const MASS_KINDS: [&str; 10] = [
 /// A set's versions by finish, colour, material or season (`Vesper Ring
 /// Sets` holding `Gold`, `Silver`; `Nimbus Hair Packs` holding `Blondes`,
 /// `Reds`).
-const FINISHES: [&str; 87] = [
+const FINISHES: [&str; 115] = [
     "gold",
     "silver",
     "rose",
@@ -1586,6 +1586,34 @@ const FINISHES: [&str; 87] = [
     "edition",
     "multi",
     "mixed",
+    "teal",
+    "olive",
+    "burgundy",
+    "khaki",
+    "camel",
+    "charcoal",
+    "lavender",
+    "mint",
+    "coral",
+    "corals",
+    "berry",
+    "berries",
+    "pewter",
+    "nickel",
+    "jade",
+    "turquoise",
+    "ginger",
+    "gingers",
+    "auburn",
+    "auburns",
+    "peach",
+    "mauve",
+    "taupe",
+    "wine",
+    "rust",
+    "mustard",
+    "lilac",
+    "aqua",
 ];
 
 /// The pack words of a name that sell many of one thing (`Kyoto Kimono
@@ -1695,13 +1723,14 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
                 VERSION_WORDS.contains(&w.as_str())
                     || DELIVERY_PARTS.contains(&w.as_str())
                     || is_kind(w)
-                    || number(w)
-                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w))
+                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w) || number(w))
             })
         };
-        // (one `Gold` folder beside `Vesper` and `Opal` is a shelf's: a
-        // finish keeps a set whole only when every folder is one)
-        if !(subs.iter().any(|s| own_part(s, true)) || subs.iter().all(|s| own_part(s, false))) {
+        // (one `Gold` folder beside `Vesper` and `Opal` is a shelf's: finishes
+        // keep a set whole when there are two or more and most folders are
+        // one, a `Burgundy` or a `Demo` beside `Black` and `White` included)
+        let finishes = subs.iter().filter(|s| own_part(s, false)).count();
+        if !(subs.iter().any(|s| own_part(s, true)) || finishes == subs.len() || finishes >= 2 && finishes * 2 > subs.len()) {
             return false;
         }
     }
@@ -3550,12 +3579,22 @@ pub fn step_with(
     // what this batch moves and where it sends, for the moves after
     let mut sent_folders: Vec<Uuid> = Vec::new();
     let mut used: Vec<Uuid> = Vec::new();
+    // (a few batches' worth of refused moves a frame at most: a folder of
+    // 400,000 excluded mid-run is skipped over several frames, never in one)
+    let mut refusals = 0;
     'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
         // (refused since the plan: skipped before anything is loaded for it)
         if refused(inv, next) {
             queue.pop_front();
             *skipped += 1;
+            refusals += 1;
+            if refusals >= 4 * BATCH {
+                if change.operations.is_empty() {
+                    return Step::Wait;
+                }
+                break 'moves;
+            }
             continue;
         }
         // a folder whose tree is still loading waits for it (Resume and

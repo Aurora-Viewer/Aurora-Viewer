@@ -3066,3 +3066,61 @@ fn a_refused_folder_move_is_skipped_before_its_tree_loads() {
     assert_eq!((skipped, queue.len()), (1, 0));
     assert_eq!(inv.folders[&id(701)].state, FetchState::Unknown, "nothing asked for");
 }
+
+/// Audit 38: a set with one colour of its own or a `Demo` folder beside its
+/// finishes stays whole; a kind with a year beside products named their own
+/// way is still a shelf's.
+#[test]
+fn sets_with_one_odd_folder_stay_whole_and_a_dated_kind_is_a_shelf() {
+    let none = HashSet::new();
+    let whole: [(&str, &[&str]); 3] = [
+        ("Halcyon Dress Packs", &["Black", "White", "Burgundy"]),
+        ("Rivet Boot Packs", &["Black", "Brown", "Plum"]),
+        ("Vesper Ring Sets", &["Gold", "Silver", "Demo"]),
+    ];
+    for (name, subs) in whole {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        let mut inside = Vec::new();
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, &format!("{name} {sub}"), 0);
+            inside.extend([901 + n as u128, 950 + n as u128]);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!inside.iter().any(|n| moved.contains(&id(*n))), "{name} is never opened");
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Best Ring Sets");
+    for (n, sub) in ["Ring 2", "Vesper", "Opal"].iter().enumerate() {
+        add_folder(&mut inv, 901 + n as u128, 900, sub);
+    }
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(900)), "a shelf never moves whole");
+}
+
+/// Refused moves are skipped a few batches' worth a frame, never a whole
+/// 400,000-move queue at once.
+#[test]
+fn refused_moves_are_skipped_a_few_batches_a_frame() {
+    let mut inv = fixture(&["Lace Bra"]);
+    let one = Move {
+        id: id(100),
+        folder: false,
+        name: "Lace Bra".into(),
+        from: id(OBJECTS),
+        to: Dest::Path(vec!["Lingerie".into()]),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+        from_trash: false,
+        snapshot: false,
+    };
+    let mut queue: VecDeque<Move> = std::iter::repeat_n(one, 4 * BATCH + 5).collect();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| true);
+    assert!(matches!(step, Step::Wait));
+    assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
+}

@@ -545,6 +545,9 @@ struct TrashJob {
     /// answered (`finish_sorter`).
     request: Option<Uuid>,
     answered: bool,
+    /// Entries of a refused or unconfirmed batch to show back where they
+    /// were (the inventory shows a move as soon as it is sent).
+    put_back: Vec<(Uuid, Uuid)>,
 }
 
 impl TrashJob {
@@ -564,6 +567,7 @@ impl TrashJob {
             taken_at: None,
             request: None,
             answered: false,
+            put_back: Vec::new(),
         }
     }
 }
@@ -1319,6 +1323,14 @@ impl InventoryUi {
         for state in std::iter::once(&mut self.sorter).chain(self.windows.iter_mut().map(|w| &mut w.state.sorter)) {
             if let Some(trash) = state.trash.as_mut().filter(|t| t.request == Some(request)) {
                 trash.answered = true;
+                // (refused, or not confirmed: shown back where they were, the
+                // Trash wait then counts only what the server really moved)
+                if let Some((batch, _, _)) = trash.in_flight.as_ref() {
+                    let back = batch
+                        .iter()
+                        .filter(|(id, _)| error.is_some() && unread.is_none() || unread.is_some_and(|u| u.contains(id)));
+                    trash.put_back.extend(back.copied());
+                }
             }
         }
         fn finish(state: &mut State, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
@@ -1402,7 +1414,7 @@ pub(super) fn show(
     let free = st.pending.is_none()
         && !actions
             .iter()
-            .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)));
+            .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_) | InvAction::Drop(_)));
     let now = Instant::now();
     let state = &mut st.sorter;
     // A batch the app never took (another inventory change went first in
@@ -1506,31 +1518,42 @@ pub(super) fn show(
         } else {
             Default::default()
         };
-        let base = job.base_id;
+        // (the sort folder the moves really go into, as `step` finds it)
+        let base = sorter::child(inv, inv.root, &job.base);
         let options = &prefs.sorter;
+        // (each destination path read once a frame)
+        let paths: std::cell::RefCell<std::collections::HashMap<Vec<String>, bool>> = Default::default();
         // a folder holding an excluded one stays too: it would carry it
         let refused = |inv: &Inventory, m: &Move| {
             if !checks {
                 return false;
             }
+            if !m.restore && m.folder && own.contains(&m.id) {
+                return true;
+            }
+            // (a snapshot's restore honours exclusions like a sort)
+            if m.restore && !m.snapshot {
+                return false;
+            }
             // (into an excluded folder neither: a rule's, or one on the way
             // below the sort folder)
-            let into_excluded = match &m.to {
+            let into_excluded = || match &m.to {
                 sorter::Dest::Folder(t) => options.excludes(inv, *t),
-                sorter::Dest::Path(p) => base.is_some_and(|b| sorter::path_excluded(inv, b, p, options)),
+                sorter::Dest::Path(p) => base.is_some_and(|b| {
+                    *paths
+                        .borrow_mut()
+                        .entry(p.clone())
+                        .or_insert_with(|| sorter::path_excluded(inv, b, p, options))
+                }),
                 sorter::Dest::PreTrash => false,
             };
-            // (a snapshot's restore honours exclusions like a sort)
-            let sorts = !m.restore || m.snapshot;
-            !m.restore && m.folder && own.contains(&m.id)
-                || sorts && into_excluded
-                || sorts
-                    && (options.excludes(inv, m.id)
-                        || m.folder
-                            && options
-                                .excluded
-                                .iter()
-                                .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
+            options.excludes(inv, m.id)
+                || m.folder
+                    && options
+                        .excluded
+                        .iter()
+                        .any(|e| crate::world::inventory::actions::under(inv, *e, m.id))
+                || into_excluded()
         };
         match sorter::step_with(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped, &refused) {
             Step::Change(change, moves) => {
@@ -1645,6 +1668,12 @@ pub(super) fn show(
                 // the journal written, and no run left to resume
                 state.save_progress();
             }
+        }
+    }
+    if let Some(trash) = st.sorter.trash.as_mut() {
+        for (id, from) in std::mem::take(&mut trash.put_back) {
+            let folder = inv.folders.contains_key(&id);
+            sorter::show_in(inv, id, folder, from);
         }
     }
     send_trash_batch(inv, st, prefs, worn, actions, free && !hold);
@@ -2452,7 +2481,7 @@ fn send_trash_batch(
     actions: &mut Vec<InvAction>,
     free: bool,
 ) {
-    let free = free && st.pending_delete.is_none() && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
+    let free = free && !actions.iter().any(|a| matches!(a, InvAction::Delete(_) | InvAction::Drop(_)));
     let now = Instant::now();
     if st.sorter.trash.as_ref().is_some_and(|trash| !trash.begun) {
         // a Trash run starts: its journal, and a snapshot of the layout first
