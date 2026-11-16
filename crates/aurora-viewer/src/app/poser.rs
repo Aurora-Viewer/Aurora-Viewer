@@ -22,6 +22,12 @@ impl App {
             let values = self.world.avatar_lib.shape_params.values_with(&[(193, 1.0)]);
             self.world.preview_shape(Some(values));
         }
+        // shape-change: our Height slider at 100 after the head edit, with the
+        // pose active, which must follow the new shape at once (#2415)
+        if mode == "shape-change" && self.frame_count == 600 {
+            let values = self.world.avatar_lib.shape_params.values_with(&[(33, 1.0)]);
+            self.world.preview_shape(Some(values));
+        }
         // bridge-* modes show the subject menu's bridge hints for the same peer.
         // compact*: the same peer, a friend nearby to ask from the subject
         // menu; compact-accept has her accept at once
