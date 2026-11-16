@@ -208,6 +208,24 @@ mod tests {
         dir
     }
 
+    /// A slot that has just been freed, tried for a few seconds. On Unix a
+    /// lock outlives its file for an instant when another test starts a
+    /// process at that moment: until it runs its program, the new process
+    /// holds a copy of every open file of this one, the lock with it. A
+    /// build never sees it: it waits for its slot (`take_slot`).
+    fn take_soon(dir: &Path, count: usize) -> Option<File> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(slot) = Slots::open(dir, count).unwrap().try_take().unwrap() {
+                return Some(slot);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn the_viewer_crate_is_heavy_whatever_the_command() {
         assert!(is_heavy(&arguments(&["--crate-name", "aurora_viewer", "--edition=2024"])));
@@ -301,7 +319,7 @@ mod tests {
         let third = Slots::open(&dir, 3).unwrap().try_take().unwrap();
         assert!(third.is_some());
         drop(first);
-        assert!(Slots::open(&dir, 2).unwrap().try_take().unwrap().is_some());
+        assert!(take_soon(&dir, 2).is_some());
         drop((second, third));
         let _ = fs::remove_dir_all(&dir);
     }
