@@ -772,7 +772,7 @@ pub fn settings_list(
         let combo_id = ui.make_persistent_id(egui::IdSalt::new(&salt));
         let query_id = combo_id.with("search");
         let popup_id = combo_id.with("popup");
-        let height_id = combo_id.with("full-height");
+        let height_id = combo_id.with("content-height");
         let demo = ui.data_mut(|d| d.remove_temp::<String>(demo_open_id(&salt)));
         if let Some(text) = &demo {
             egui::Popup::open_id(ui.ctx(), popup_id);
@@ -784,26 +784,23 @@ pub fn settings_list(
             ui.data_mut(|d| d.remove_temp::<String>(query_id));
         }
         let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
-        // an egui popup is bounded by its size of the last frame, so one that
-        // shrank to fewer names could not grow back: it gets the height its
-        // names asked for last frame, never more than the whole list's. Only
-        // what they need, not the whole height: a list opened upward keeps
-        // its bottom on the button through that size.
-        let height: Option<(f32, f32)> = ui.data_mut(|d| d.get_temp(height_id));
+        // Give egui the measured height before it positions the popup, so an
+        // upward list stays on its button as filtering or inventory changes.
         if opening && demo.is_none() {
-            ui.data_mut(|d| d.remove_temp::<(f32, f32)>(height_id));
-        } else if let Some((full, wanted)) = height
+            ui.data_mut(|d| d.remove_temp::<f32>(height_id));
+        } else if let Some(wanted) = ui.data(|d| d.get_temp::<f32>(height_id))
             && let Some(mut area) = egui::AreaState::load(ui.ctx(), popup_id)
         {
-            area.size = area.size.map(|s| Vec2::new(s.x, wanted.min(full)));
+            area.size = area.size.map(|s| Vec2::new(s.x, wanted));
             let layer = egui::LayerId::new(egui::Order::Foreground, popup_id);
             ui.ctx().memory_mut(|m| m.areas_mut().set_state(layer, area));
         }
         let margins = egui::Frame::popup(ui.style()).total_margin().sum().y;
+        let max_content_height = LIST_H + 40.0;
         let mut content_height = None;
         egui::ComboBox::from_id_salt(salt)
             .width(width)
-            .height(LIST_H + 40.0)
+            .height(max_content_height)
             .selected_text(tagged_name(p, &text, selected_weather, Some(p.ink)))
             .truncate()
             // a click in the search field must not close the list
@@ -877,12 +874,9 @@ pub fn settings_list(
                 let cut = scroll.content_size.y.min(LIST_H) - scroll.inner_rect.height();
                 content_height = Some(ui.min_rect().height() + cut.max(0.0));
             });
-        if let Some(content) = content_height
-            && let Some(popup) = egui::AreaState::load(ui.ctx(), popup_id).and_then(|a| a.size)
-        {
-            let full = height.map_or(0.0, |(full, _)| full);
-            let full = if query.trim().is_empty() { full.max(popup.y) } else { full };
-            ui.data_mut(|d| d.insert_temp(height_id, (full, content + margins)));
+        if let Some(content) = content_height {
+            let wanted = (content.min(max_content_height) + margins).min(ui.ctx().content_rect().height());
+            ui.data_mut(|d| d.insert_temp(height_id, wanted));
         }
         ui.data_mut(|d| d.insert_temp(query_id, query));
     });
@@ -1373,6 +1367,55 @@ fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_open_list_grows_as_inventory_arrives_and_stays_anchored_after_filtering() {
+        let theme = crate::theme::Theme::default();
+        let palette = theme.palette();
+        let empty = SettingsCatalog::default();
+        let loaded = SettingsCatalog {
+            sky: (0..30)
+                .map(|n| env_select::SettingsChoice {
+                    item: Uuid::from_u128(n + 1),
+                    asset: Uuid::from_u128(n + 101),
+                    name: format!("Sky {n}"),
+                    weather: false,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for below in [true, false] {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, 1.0);
+            let salt = "streaming_environment_list";
+            let frame = |catalog: &SettingsCatalog, search: Option<&str>| {
+                if let Some(search) = search {
+                    ctx.data_mut(|d| d.insert_temp(demo_open_id(&salt), search.to_owned()));
+                }
+                for _ in 0..4 {
+                    let input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 800.0))),
+                        ..Default::default()
+                    };
+                    let _ = ctx.run_ui(input, |ui| {
+                        ui.add_space(if below { 20.0 } else { 740.0 });
+                        settings_list(ui, &palette, catalog, SettingsKind::Sky, Shown::Shared, salt, COMBO_W);
+                    });
+                }
+                let popup = ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground)).expect("open popup");
+                egui::AreaState::load(&ctx, popup.id).expect("popup area").rect()
+            };
+            let initial = frame(&empty, Some(""));
+            let full = frame(&loaded, None);
+            assert!(full.height() > initial.height() + 180.0, "new inventory: {initial:?} -> {full:?}");
+            let filtered = frame(&loaded, Some("no such sky"));
+            let restored = frame(&loaded, Some(""));
+            assert!(filtered.height() + 180.0 < full.height());
+            assert!((restored.height() - full.height()).abs() < 2.0);
+            let edge = |r: egui::Rect| if below { r.top() } else { r.bottom() };
+            assert!((edge(initial) - edge(full)).abs() < 2.0 && (edge(filtered) - edge(restored)).abs() < 2.0);
+        }
+    }
 
     #[test]
     fn a_tagged_list_row_takes_the_rows_own_colour_as_a_plain_one() {
