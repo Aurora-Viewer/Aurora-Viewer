@@ -1051,7 +1051,7 @@ mod tests {
 
     /// #1009: autohidden, the chat island shows only while the chat is used
     /// (Enter, a draft), without its button when the dock holds
-    /// Conversations; Escape on the empty bar puts it away. A saved dock
+    /// Conversations; Escape puts the draft away until Enter. A saved dock
     /// without Conversations keeps the island's button alone.
     #[test]
     fn the_autohidden_chat_island_shows_while_the_chat_is_used() {
@@ -1076,13 +1076,17 @@ mod tests {
             bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
             "without its button"
         );
-        // a draft keeps it once the keyboard went elsewhere
         bench.frame(vec![egui::Event::Text("draft".into())]);
-        bench.frame(escape());
+        assert!(bench.frame(escape()).0.is_none());
         bench.frame(vec![]);
-        assert!(!bench.chat.has_focus);
-        assert!(bench.chat.bar_shown(), "the draft keeps the bar");
-        // empty, Escape puts it away
+        assert!(!bench.chat.has_focus && !bench.chat.bar_shown() && !bench.chat.in_use());
+        assert_eq!(bench.chat.input, "draft");
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        assert!(bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]).0.is_none());
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus && bench.chat.bar_shown());
+        assert_eq!(bench.chat.input, "draft");
+        // empty, Escape also puts it away
         bench.chat.input.clear();
         bench.chat.focus_request = true;
         bench.frame(vec![]);
@@ -1105,6 +1109,50 @@ mod tests {
             .expect("the button alone")
             .rect;
         assert!(button.right() < 2.0 * MARGIN + 2.0 * PAD + 40.0, "in the corner: {button:?}");
+    }
+
+    #[test]
+    fn clicking_the_world_puts_away_the_draft_and_enter_restores_it() {
+        let mut bench = Bench::new();
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("nearby draft".into())]);
+
+        let field = crate::ui::chat::bar_input_id();
+        let inside = bench.ctx.read_response(field).expect("nearby editor").rect.center();
+        let outside = screen(1536.0).center();
+        for pos in [inside, outside] {
+            bench.frame(vec![egui::Event::PointerMoved(pos)]);
+            let over_ui = crate::ui::widgets::pointer_over_ui(&bench.ctx, pos);
+            assert_eq!(over_ui, pos == inside, "only the world takes the second press");
+            if !over_ui {
+                assert!(crate::app::release_world_keyboard(
+                    &bench.ctx,
+                    &mut bench.chat,
+                    winit::event::MouseButton::Left
+                ));
+            }
+            for pressed in [true, false] {
+                let (out, _, _) = bench.frame(vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+                assert!(out.is_none());
+            }
+            bench.frame(vec![]);
+            assert_eq!(bench.chat.bar_shown(), pos == inside);
+            assert_eq!(bench.chat.input, "nearby draft");
+        }
+
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        assert!(bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]).0.is_none());
+        assert!(bench.chat.has_focus && bench.chat.bar_shown());
+        assert_eq!(bench.chat.input, "nearby draft");
+        assert!(bench.chat.draft_mut(None).is_empty());
     }
 
     /// #2993: Conversations on a side toolbar keeps the island's

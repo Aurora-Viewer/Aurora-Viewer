@@ -109,6 +109,8 @@ pub struct ChatUi {
     /// Viewer's MainChatbarVisible off, not saved): `toggle_bar`. Enter or
     /// a letter key brings it back with the keyboard.
     pub bar_hidden: bool,
+    /// A draft put away in WhenTyping stays in the editor for the next Enter.
+    typing_dismissed: bool,
     /// The bar was shown before the pointer went down (`note_frame`): a
     /// press on the toolbar takes the keyboard from an autohidden bar, which
     /// then hides before the click lands on the Chat bar button.
@@ -504,15 +506,13 @@ impl ChatUi {
     /// window only", or with "Shown when typing" while it is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
     /// key brings it with the keyboard, and Escape or a message sent with
-    /// "Keep the chat bar active" off puts it away; a click elsewhere on an
-    /// empty bar puts it away too, where the Legacy Viewer waited for
-    /// Escape. A draft keeps it.
+    /// "Keep the chat bar active" off puts it away. The editor keeps its draft.
     pub fn bar_shown(&self) -> bool {
         use crate::settings::ChatBar;
         if self.bar_mode == ChatBar::ConversationsOnly {
             return false;
         }
-        if self.bar_hidden {
+        if self.bar_hidden || (self.bar_mode == ChatBar::WhenTyping && self.typing_dismissed) {
             return self.focus_request;
         }
         self.bar_mode == ChatBar::Always
@@ -522,6 +522,22 @@ impl ChatUi {
             || self.bar_emoji_open
             || self.bar_channel_open
             || self.bar_hovered
+    }
+
+    /// FSNearbyChatControl::autohide(false) leaves unsent text in the editor.
+    /// An open picker or modal gets to dismiss itself first.
+    pub(crate) fn dismiss_typing_bar(&mut self, ctx: &egui::Context) {
+        if self.bar_mode == crate::settings::ChatBar::WhenTyping
+            && !self.bar_emoji_open
+            && !self.bar_channel_open
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+        {
+            self.typing_dismissed = true;
+            self.has_focus = false;
+            self.focus_request = false;
+            self.shown_before_click = false;
+        }
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -556,7 +572,7 @@ impl ChatUi {
         if self.bar_mode == crate::settings::ChatBar::ConversationsOnly {
             return false;
         }
-        self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
+        self.focus_request || (self.bar_shown() && (self.has_focus || !self.input.trim().is_empty()))
     }
 
     /// Enter from the world (start_chat, indra/newview/llviewerinput.cpp):
@@ -4843,6 +4859,7 @@ pub(crate) fn bar_input(
     if focusing {
         // Enter or a letter key shows a bar put away (showDefaultChatBar(true))
         st.bar_hidden = false;
+        st.typing_dismissed = false;
         resp.request_focus();
         // FSNearbyChat::showDefaultChatBar only moves the caret after
         // inserting `/` into an empty field; a draft keeps its position.
@@ -4851,6 +4868,16 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
+    // Completion lists have already handled their own Escape and restored focus.
+    if resp.lost_focus()
+        && ui.input(|i| {
+            i.events.iter().any(
+                |event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if modifiers.is_none()),
+            )
+        })
+    {
+        st.dismiss_typing_bar(ui.ctx());
+    }
     if resp.gained_focus() {
         st.last_field = ChatField::Bar;
     }

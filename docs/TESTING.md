@@ -9212,7 +9212,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Preferences › Chat › "Chat bar" on "Shown when typing", with either
   bars: with the islands the chat island goes and the dock gets its
   Conversations button back; with `legacy` the toolbar takes the whole
-  bar), `chatstart` (autohidden, Enter pressed at frame 300 on the draft
+  bar). Press Enter, type a draft, press Escape and press Enter again.
+  Repeat with a left click in the world in place of Escape. Both times
+  the draft returns to the same field without being sent. Use
+  `chatstart` (autohidden, Enter pressed at frame 300 on the draft
   "Hello!": the island back, without its button, the keyboard in it),
   `window` (Preferences › Chat › Chat bar on "Conversations window only":
   no chat island nor Legacy chat field, the dock keeps its Conversations

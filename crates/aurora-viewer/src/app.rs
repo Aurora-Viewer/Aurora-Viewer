@@ -1321,6 +1321,22 @@ fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
     is_synthetic && state == ElementState::Pressed
 }
 
+/// LLTool::handleAnyMouseClick gives the keyboard back to the world on press,
+/// also for a drag. A left press also puts away Aurora's typing-only chat bar.
+/// A focused editor must finish its commit before the world handles the press.
+pub(crate) fn release_world_keyboard(ctx: &egui::Context, chat: &mut ui::chat::ChatUi, button: MouseButton) -> bool {
+    let typing = ctx.text_edit_focused();
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+    if button == MouseButton::Left {
+        chat.dismiss_typing_bar(ctx);
+    }
+    typing
+}
+
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
 /// field (LLViewerWindow::handleKey). The field keeps the exact editing
@@ -24431,20 +24447,8 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                // a press in the world takes the keyboard from the fields, also
-                // when it turns into a drag (LLTool::handleAnyMouseClick:
-                // setKeyboardFocus(NULL)); egui lets it go on a click only
-                if pressed && !over_ui && self.in_world() {
-                    let typing = self.egui_ctx.text_edit_focused();
-                    self.egui_ctx.memory_mut(|m| {
-                        if let Some(id) = m.focused() {
-                            m.surrender_focus(id);
-                        }
-                    });
-                    // the field commits first, to what it was typed for
-                    if typing {
-                        self.press_while_typing();
-                    }
+                if pressed && !over_ui && self.in_world() && release_world_keyboard(&self.egui_ctx, &mut self.chat_ui, *button) {
+                    self.press_while_typing();
                 }
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);
