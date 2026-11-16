@@ -10692,6 +10692,7 @@ search-aurora-previous-page = 前の１００件
 search-aurora-tomorrow = 明日
 search-aurora-event-time = { $day }・{ $time }ＳＬＴ
 search-aurora-event-time-zone = { $day }・{ $time } { $zone }
+search-event-zone-range = { $from } → { $to }
 search-aurora-slt = ＳＬＴ
 search-aurora-linden = L$ { $amount }
 search-aurora-auction = オークション

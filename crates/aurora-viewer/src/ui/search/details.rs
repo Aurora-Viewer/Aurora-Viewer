@@ -246,7 +246,7 @@ pub fn show(
         (Tab::Groups, Key::Id(id)) => group(ui, c, id, row_name, false, actions),
         (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, row, actions),
         (Tab::Classifieds, Key::Id(id)) => classified(ui, c, id, row_name, actions),
-        (Tab::Events, Key::Event(id)) => event(ui, c, id, row_name, actions),
+        (Tab::Events, Key::Event(id)) => event(ui, c, id, row, actions),
         _ => {}
     }
 }
@@ -600,7 +600,7 @@ fn classified(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions:
     }
 }
 
-fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut Vec<SearchAction>) {
+fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row: Option<&Row>, actions: &mut Vec<SearchAction>) {
     let (p, world) = (c.p, c.world);
     let info = world.search.events.get(&id);
     let global = info.map(|e| e.global).filter(|g| *g != DVec3::ZERO);
@@ -615,7 +615,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
     let clicked = pane(ui, p, ("search-event", Key::Event(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         let Some(e) = info else {
-            ui.label(RichText::new(row_name).size(15.0).strong().color(p.ink));
+            ui.label(RichText::new(row.map_or("", |r| r.name.as_str())).size(15.0).strong().color(p.ink));
             muted(ui, p, aurora_i18n::tr!("common-loading-2"));
             return;
         };
@@ -632,7 +632,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
                 },
             )
         });
-        let date = super::event_date_text(&e.date, i64::from(e.date_utc), crate::ui::bars::clock::zone());
+        let start = super::event_start(e.date_utc, row.and_then(|r| r.values.first()));
+        let date = super::event_date_text(&e.date, start.unwrap_or_default(), crate::ui::bars::clock::zone());
         text_field(ui, p, aurora_i18n::tr!("search-event-date"), &date);
         text_field(
             ui,

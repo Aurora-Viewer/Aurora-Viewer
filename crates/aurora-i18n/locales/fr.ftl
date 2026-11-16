@@ -10761,6 +10761,7 @@ search-aurora-previous-page = 100 résultats précédents
 search-aurora-tomorrow = Demain
 search-aurora-event-time = { $day } · { $time } heure SL
 search-aurora-event-time-zone = { $day } · { $time } { $zone }
+search-event-zone-range = { $from } → { $to }
 search-aurora-slt = heure SL
 search-aurora-linden = L$ { $amount }
 search-aurora-auction = Enchère

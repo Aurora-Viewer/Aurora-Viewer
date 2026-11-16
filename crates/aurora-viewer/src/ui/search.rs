@@ -253,6 +253,24 @@ fn cell_text(v: &Value, zone: ClockZone) -> (String, bool) {
     }
 }
 
+/// Prefer EventInfoReply's precise start. The directory row can still supply
+/// it while details load, or when a grid omits DateUTC from its reply.
+fn event_start(exact: u32, listed: Option<&Value>) -> Option<i64> {
+    match (exact, listed) {
+        (1.., _) => Some(i64::from(exact)),
+        (_, Some(Value::Dated { unix, .. })) if *unix != 0 => Some(i64::from(*unix)),
+        _ => None,
+    }
+}
+
+/// The directory queries Pacific calendar days. Advancing the calendar uses
+/// today's offset; recomputing it 24 hours later could skip or repeat a date.
+fn directory_day(now: i64, days: i32) -> (usize, i64, usize) {
+    let offset = super::bars::clock::offset(ClockZone::Slt, now);
+    let (_, month, day, weekday, ..) = super::land::parts_at(now + i64::from(days) * 86_400, offset);
+    (month, day, weekday)
+}
+
 /// The date parts of an event's start in `zone` (`land::slt_parts`'s
 /// order): the clock's choice of SLT or local time (#1754).
 pub(crate) fn event_parts(unix: i64, zone: ClockZone) -> (i64, usize, i64, usize, i64, i64, i64) {
@@ -299,6 +317,20 @@ fn event_hours_at(start: i64, minutes: u32, offset: impl Fn(i64) -> i64) -> Stri
     match end_day - day {
         0 => range,
         days => format!("{range} (+{days})"),
+    }
+}
+
+/// A local range can start and finish on opposite sides of a clock change.
+fn event_zone_range(start: i64, minutes: u32, name: impl Fn(i64) -> String) -> String {
+    let from = name(start);
+    if minutes == 0 {
+        return from;
+    }
+    let to = name(start + i64::from(minutes) * 60);
+    if from == to {
+        from
+    } else {
+        aurora_i18n::tr!("search-event-zone-range", from = from.as_str(), to = to.as_str())
     }
 }
 
@@ -793,7 +825,7 @@ impl SearchUi {
                         find = true;
                     }
                     // setDay: "month/day" in Pacific time
-                    let (_, month, day, ..) = super::land::slt_parts(unix_now() + self.events_day as i64 * 86_400);
+                    let (month, day, _) = directory_day(unix_now(), self.events_day);
                     let date = aurora_i18n::tr!("search-events-date", month = month as i64, day = day);
                     ui.add_sized(
                         [44.0, 20.0],
@@ -1281,6 +1313,31 @@ mod tests {
         };
         assert_eq!(cell_text(&dated, ClockZone::Local), (own, false));
         assert_eq!(zone_name(ClockZone::Slt, t), "SLT");
+    }
+
+    #[test]
+    fn event_details_use_the_listed_start_until_a_precise_time_is_available() {
+        let listed = Value::Dated {
+            text: "11/04 14:00".into(),
+            unix: 1_793_808_000,
+        };
+        assert_eq!(event_start(1_793_815_200, Some(&listed)), Some(1_793_815_200));
+        assert_eq!(event_start(0, Some(&listed)), Some(1_793_808_000));
+        let missing = Value::Dated {
+            text: "TBD".into(),
+            unix: 0,
+        };
+        assert_eq!(event_start(0, Some(&missing)), None);
+        assert_eq!(event_start(0, None), None);
+    }
+
+    #[test]
+    fn directory_day_steps_across_short_and_long_pacific_days() {
+        // Saturday March 7 at 23:30 PST and Sunday November 1 at 00:30 PDT.
+        let utc = |y, m, d, hour: i64, minute: i64| aurora_net::profile::days_from_civil(y, m, d) * 86_400 + hour * 3600 + minute * 60;
+        assert_eq!(directory_day(utc(2026, 3, 8, 7, 30), 1), (3, 8, 0));
+        assert_eq!(directory_day(utc(2026, 11, 1, 7, 30), 1), (11, 2, 1));
+        assert_eq!(directory_day(utc(2026, 3, 9, 7, 30), -1), (3, 8, 0));
     }
 
     /// The details' hours from start to end (#1754 follow-up: a range, not

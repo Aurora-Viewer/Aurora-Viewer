@@ -471,13 +471,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         // onBtnEventReminder: LLEventNotifier is not ported
         Btn::new("bell-filled", aurora_i18n::tr!("search-aurora-remind")).not_yet(),
     ];
-    let start = info
-        .map(|e| e.date_utc as i64)
-        .filter(|t| *t > 0)
-        .or_else(|| match row.and_then(|r| r.values.first()) {
-            Some(Value::Dated { unix, .. }) => Some(*unix as i64),
-            _ => None,
-        });
+    let start = super::event_start(info.map_or(0, |e| e.date_utc), row.and_then(|r| r.values.first()));
     let clicked = pane(ui, p, ("aurora-search-event", Key::Event(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         if let Some(t) = start {
@@ -495,7 +489,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         };
         head(ui, p, &e.name, None, Some(content), &e.category);
         ui.add_space(4.0);
-        let date = super::event_date_text(&e.date, i64::from(e.date_utc), crate::ui::bars::clock::zone());
+        let date = super::event_date_text(&e.date, start.unwrap_or_default(), crate::ui::bars::clock::zone());
         text_field(ui, p, aurora_i18n::tr!("search-event-date"), &date);
         text_field(
             ui,
@@ -564,7 +558,9 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, minutes: u32) {
                     ui.label(RichText::new(hours).size(15.0).strong().color(p.ink));
                     let sub = match zone {
                         crate::settings::ClockZone::Slt => aurora_i18n::tr!("search-aurora-slt").to_owned(),
-                        crate::settings::ClockZone::Local => crate::ui::bars::clock::zone_name(zone, start),
+                        crate::settings::ClockZone::Local => {
+                            super::event_zone_range(start, minutes, |t| crate::ui::bars::clock::zone_name(zone, t))
+                        }
                     };
                     ui.label(RichText::new(sub).size(12.0).color(p.muted));
                 });
