@@ -5631,13 +5631,20 @@ impl App {
             // stationary; movement / RMB promotes to mouse steer (Legacy Viewer).
             let s = &self.settings.camera;
             let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
-            self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
-            if !s.click_avatar_keeps_camera {
+            if s.click_avatar_keeps_camera {
+                if self.world.rlva.camera_value("setcam_unlock").is_none() {
+                    let joint = s
+                        .third_person_follow_joint
+                        .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));
+                    self.camera.focus_own_surface(p, object, joint, s);
+                }
+            } else {
+                self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
             if self.settings.mmo_mouse_buttons {
                 self.begin_avatar_orbit();
-            } else if s.click_avatar_keeps_camera {
+            } else if s.click_avatar_keeps_camera && !self.right_drag {
                 self.camera.begin_drag(false);
                 self.mouse_mode = MouseMode::AvatarKeepOrbit;
                 self.set_mouselook_grab(true);
@@ -8958,6 +8965,11 @@ impl App {
             // (exit prompt, lost focus, mouselook): steering ends with it
             self.end_mouse_drag();
         }
+        if self.mouse_mode == MouseMode::AvatarKeepOrbit && player_movement_input {
+            // Route the first walking frame through steering as well.
+            self.camera.fold_orbit(&mut self.world.agent);
+            self.begin_mouse_steer();
+        }
         if self.mouse_mode == MouseMode::Steer {
             // Mouse steering (LLToolCamera::mMouseSteering): the mouse turns
             // the avatar itself (cameraOrbitAround), forward and back keep
@@ -9035,11 +9047,6 @@ impl App {
             && let Some(yaw) = self.camera.gamepad_pan_movement_yaw()
         {
             self.world.agent.yaw = yaw;
-        }
-        if moving && self.mouse_mode == MouseMode::AvatarKeepOrbit {
-            // ClickOnAvatarKeepsCamera: walking (or RMB walk) takes mouse steer
-            self.camera.fold_orbit(&mut self.world.agent);
-            self.begin_mouse_steer();
         }
         if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,

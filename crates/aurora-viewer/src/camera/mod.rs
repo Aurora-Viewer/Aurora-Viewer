@@ -922,6 +922,18 @@ impl Camera {
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
     }
 
+    /// Aim the displayed shot at the posed body surface the user clicked.
+    /// Express the eye relative to that point before applying optical zoom,
+    /// and account for the joint motion already present in the surface pick.
+    pub fn focus_own_surface(&mut self, point: Vec3, object: Option<(Uuid, FocusObject)>, joint: Option<Vec3>, s: &CameraSettings) {
+        self.focus_on_avatar = false;
+        self.fov_zoom = self.current_fov_zoom;
+        let virtual_eye = point + (self.position - point) / (1.0 + self.fov_zoom);
+        self.set_camera_pos_and_focus(virtual_eye, point, object, s);
+        self.focus_target -= self.third_person_joint_delta(s, joint);
+        self.update_focus_offset();
+    }
+
     /// `pstcampos` chat command (cmdline_apply_camera): unlockView, then
     /// setCameraPosAndFocusGlobal.
     pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
@@ -2359,7 +2371,9 @@ impl Camera {
                 Some(p) => p,
                 None => self.third_person_camera(agent, s, f),
             },
-            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f),
+            CameraMode::ThirdPerson | CameraMode::Follow => {
+                self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f.follow_joint_offset)
+            }
         };
         if !s.disable_constraints {
             let offset = camera - self.avatar.position;
@@ -2390,7 +2404,7 @@ impl Camera {
         let frame = self.frame_rotation(agent);
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f);
+        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f.follow_joint_offset);
         let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
@@ -2450,11 +2464,11 @@ impl Camera {
 
     /// Keep camera and focus offsets unchanged while translating the shot with
     /// the selected joint's movement from its neutral position.
-    fn third_person_joint_delta(&self, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+    fn third_person_joint_delta(&self, s: &CameraSettings, joint: Option<Vec3>) -> Vec3 {
         if !self.needs_animated_joint(s) {
             return Vec3::ZERO;
         }
-        f.follow_joint_offset
+        joint
             .filter(|offset| offset.is_finite())
             .map(|offset| {
                 self.avatar.render_rotation
@@ -2492,11 +2506,15 @@ impl Camera {
             // move the eye away from its requested position.
             CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => {
-                self.focus_target + self.third_person_joint_delta(s, f)
+                self.focus_target + self.third_person_joint_delta(s, f.follow_joint_offset)
             }
             CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, f.now, false) {
                 Some(p) => p,
-                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset() + self.third_person_joint_delta(s, f),
+                None => {
+                    self.avatar.position
+                        + self.frame_rotation(agent) * s.focus_offset()
+                        + self.third_person_joint_delta(s, f.follow_joint_offset)
+                }
             },
         }
     }
@@ -6568,6 +6586,52 @@ mod tests {
         cam.avatar_keep_orbit_drag(256.0, 0.0, 1280.0, &mut w.agent);
         assert_eq!(w.agent.yaw, heading, "orbit around the hit must not steer");
         assert!((cam.focus_target - hit).length() < 1e-3, "focus stays on the hit");
+    }
+
+    #[test]
+    fn keep_camera_click_preserves_the_rendered_eye_and_posed_hit() {
+        for seated in [false, true] {
+            let mut world = hover_world(seated);
+            let settings = CameraSettings {
+                third_person_follow_joint: Some(CameraFollowJoint::Head),
+                smoothing: 0.0,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            let mut input = frame(1.0 / 60.0);
+            input.follow_joint_offset = Some(Vec3::new(0.12, -0.2, 0.35));
+            camera.update(&mut world, &settings, &input);
+            let idx = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let object = pick_focus_object(&world, idx, input.now).unwrap();
+            assert!(object.1.avatar);
+            let eye = camera.position;
+            // A previously focused close object narrowed the lens.
+            camera.current_fov_zoom = 0.5;
+            camera.fov_zoom = 0.5;
+            camera.virtual_position = camera.target + (eye - camera.target) / 1.5;
+            let lens = camera.zoomed_fov(&settings, input.aspect);
+            let hit = camera.target + camera.avatar.render_rotation * Vec3::new(0.03, 0.18, 0.22);
+            camera.focus_own_surface(hit, Some(object), input.follow_joint_offset, &settings);
+            for _ in 0..120 {
+                camera.update(&mut world, &settings, &input);
+                assert!(
+                    camera.position.abs_diff_eq(eye, 1e-3),
+                    "the eye moved after the click, seated={seated}"
+                );
+                assert!((camera.fov_y - lens).abs() < 1e-5);
+            }
+            assert!(
+                camera.target.abs_diff_eq(hit, 1e-3),
+                "the posed surface received the joint offset twice"
+            );
+            let heading = world.agent.yaw;
+            camera.begin_drag(false);
+            camera.avatar_keep_orbit_drag(150.0, 0.0, 1280.0, &mut world.agent);
+            camera.update(&mut world, &settings, &input);
+            assert_eq!(world.agent.yaw, heading);
+            assert!(camera.target.abs_diff_eq(hit, 1e-3));
+            assert!(camera.position.distance(eye) > 0.05);
+        }
     }
 
     #[test]
