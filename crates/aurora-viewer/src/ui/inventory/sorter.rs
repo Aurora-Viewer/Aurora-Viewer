@@ -1394,7 +1394,7 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     st.sorter.held = hold;
-    share_step(inv, &mut st.sorter, agent);
+    share_step(inv, &mut st.sorter);
     // the default folders the user allowed, for the hands-off rule
     let unlocked = prefs.sorter.unlocked_set(inv);
     if inv.sorter_unlocked != unlocked {
@@ -3613,7 +3613,7 @@ const SHARE_LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600
 /// frame, like the inventory's own search), then written to the Desktop on
 /// another thread. Folder and item names and where each is, never an asset
 /// id; nothing moves.
-fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
+fn share_step(inv: &mut Inventory, state: &mut State) {
     match state.shared.as_ref() {
         Some(Share::Loading(since)) => {
             let loaded = crate::world::inventory::actions::request_tree(inv, inv.root);
@@ -3631,7 +3631,6 @@ fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
             }
             let at = unix_now();
             let snapshot = sorter::journal::Snapshot::take_to_share(inv, at);
-            let _ = agent;
             let when = chrono::DateTime::from_timestamp(at, 0).map_or_else(
                 || at.to_string(),
                 |t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H-%M").to_string(),

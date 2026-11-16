@@ -1142,10 +1142,6 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
     false
 }
 
-/// The folders below `id` (itself included) not loaded yet: a folder moves
-/// whole once they are, so they are asked for. One the server failed to
-/// give is not listed: it keeps its parent where it is (`holds_closed`)
-/// and is never asked for again in a loop.
 /// A folder at or below `id` the server failed to give (its contents are
 /// unknown, never taken as empty): a folder holding one never moves whole,
 /// it may carry what no one has seen (something worn, a locked folder).
@@ -1167,6 +1163,10 @@ pub fn failed_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
     false
 }
 
+/// The folders below `id` (itself included) not loaded yet: a folder moves
+/// whole once they are, so they are asked for. One the server failed to
+/// give is not listed: it keeps its parent where it is (`holds_closed`)
+/// and is never asked for again in a loop.
 pub fn unloaded_below(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> Vec<Uuid> {
     let mut out = Vec::new();
     let mut stack = vec![id];
