@@ -416,18 +416,27 @@ cargo run -p aurora-viewer
   in `.sccache\` in the project folder (10 GB at most; set
   `AURORA_BUILD_CACHE_SIZE`, for example `20G`, then run `check.ps1` or
   `new-task.ps1` again). Cargo finds it through `.cargo\config.toml` in the
-  project folder, which the scripts write while sccache is installed and
-  delete once it is uninstalled. To stop using it, uninstall sccache
-  (`winget uninstall Mozilla.sccache`), then run `check.ps1` once (until then
-  Cargo stops with "could not execute process"). The first build of a new
+  project folder, which the scripts write (with the build gate, below). To
+  stop using it, uninstall sccache (`winget uninstall Mozilla.sccache`),
+  then run `check.ps1` once (the builds go on without the cache in the
+  meantime). The first build of a new
   task takes about a third less processor time (seven crates in ten come from
   the cache; the others depend on a build script that writes into the
   task's own folder), and a task rebuilt after its `target\` was freed about
   half.
-- **One heavy build at a time.** `check.ps1` waits before clippy and the
-  tests while two other heavy builds already run on the PC ("Waiting for a
-  build slot…"): eight agents compiling at once each take every core and
-  all finish later. `AURORA_BUILD_SLOTS` changes the number (2 by default).
+- **Two heavy builds at a time.** One compile of the viewer crate takes 8 to
+  17 GB of memory: eight agents compiling at once ask for several times the
+  PC's memory, and all of them crawl in the page file. Two limits, each of
+  `AURORA_BUILD_SLOTS` slots (2 by default; set it to 1 if the PC still
+  swaps, before opening the agents' sessions, which read it at their start):
+  - the **build gate**: Cargo runs every compiler through
+    `aurora-build-gate` (`.cargo\` in the project folder, built by the
+    scripts), and a compile of the viewer crate waits there for a free slot,
+    whatever the command: `cargo test` or `cargo run` typed by an agent as
+    much as `check.ps1`. It waits without a message; the waiting builds are
+    the `aurora-build-gate-*` processes that have no `rustc` under them;
+  - `check.ps1` also waits before clippy and the tests while two others
+    already run ("Waiting for a build slot…").
 
 ### Disk space
 

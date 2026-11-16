@@ -195,12 +195,15 @@ worktree, branch, `target` folder and logs.
 - The worktree is created in `../work/<name>` from an up-to-date
   `origin/main`. Its `target/` is its own: your builds do not disturb the
   other agents and theirs do not disturb you.
-- The first build of a worktree takes a few minutes; that is normal. When
-  sccache is installed, the scripts point Cargo at a compiler cache shared by
-  all the worktrees (`<project folder>\.sccache`, through
-  `<project folder>\.cargo\config.toml`): the dependencies another task
-  already built come from there. Do not change or delete these two, and do
-  not set `RUSTC_WRAPPER` yourself. A build that stops on `sccache.exe …
+- The first build of a worktree takes a few minutes; that is normal. The
+  scripts write `<project folder>\.cargo\config.toml`, which every Cargo
+  command of the repository and of the tasks reads. It runs each compiler
+  through the build gate (section 5, "Build slots") and, when sccache is
+  installed, through a compiler cache shared by all the worktrees
+  (`<project folder>\.sccache`): the dependencies another task already built
+  come from there. Do not change or delete that file, the gate next to it
+  (`aurora-build-gate-*`, `build-slots\`) nor the cache, and do not set
+  `RUSTC_WRAPPER` yourself. A build that stops on `sccache.exe …
   didn't exit successfully` with no compiler error lost the cache server
   (process killed): run it again.
 - **Build only in your worktree**, with its default `target/`: no custom
@@ -281,12 +284,21 @@ Before each significant commit, and always before the PR:
 ./scripts/check.ps1   # scripts parse in PowerShell 5.1, cargo fmt --check, clippy -D warnings, tests
 ```
 
-- **Build slots**: several agents share the PC. Before clippy and the tests,
-  `check.ps1` takes one of two build slots, and waits for one to be free
-  ("Waiting for a build slot…") while two other heavy builds run, then
-  holds it until the end. That wait is normal: let it run, do not kill it
-  nor go around it (`AURORA_BUILD_SLOTS` is the human's setting). A demo
-  launch (`cargo run`) takes no slot.
+- **Build slots**: several agents share the PC, and one compile of the
+  viewer crate takes 8 to 17 GB of memory. Two limits share the PC, each of
+  `AURORA_BUILD_SLOTS` slots (the human's setting, 2 by default):
+  - **the build gate**: every compile of the `aurora_viewer` crate waits for
+    a free slot, whatever started it (`cargo test`, `clippy`, `build`,
+    `run`, `check.ps1`). It waits without a message: a build that stays on
+    `aurora_viewer` while the processor is idle is behind the builds of
+    other tasks;
+  - **`check.ps1`** takes a slot of its own before clippy and the tests
+    ("Waiting for a build slot…") and holds it until the end. A demo launch
+    (`cargo run`) does not take this one: only the gate holds its compile.
+
+  Both waits are normal: let them run. Do not kill a waiting build to start
+  it again (it only waits again), and do not go around the gate (no
+  `RUSTC_WRAPPER`, no `--config`, no other `CARGO_HOME`).
 - **Tests: always the whole workspace**, filtered by name if needed:
   `cargo test --workspace <filter>`, never `cargo test -p <crate>` alone.
   One crate alone resolves the features of its dependencies differently, and
