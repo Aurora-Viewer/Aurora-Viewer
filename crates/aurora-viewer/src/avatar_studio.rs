@@ -358,8 +358,10 @@ mod tests {
 
     #[test]
     fn person_b_follows_the_user_s_hover_until_given_their_own() {
-        let mut studio = Studio::default();
-        studio.hover_height = 0.3;
+        let mut studio = Studio {
+            hover_height: 0.3,
+            ..Studio::default()
+        };
         for _ in 0..200 {
             studio.update(0.05);
         }

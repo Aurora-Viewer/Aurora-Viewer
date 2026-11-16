@@ -756,7 +756,7 @@ fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, studio: &mut 
             let mut whose = usize::from(studio.hover_partner);
             let you = aurora_i18n::tr!("avatar-studio-hover-you");
             let partner = aurora_i18n::tr!("anim-couple-person-b");
-            if widgets::segmented(ui, p, &mut whose, &[(&you, true), (&partner, true)]) {
+            if widgets::segmented(ui, p, &mut whose, &[(you, true), (partner, true)]) {
                 studio.hover_partner = whose == 1;
             }
             ui.add_space(6.0);
