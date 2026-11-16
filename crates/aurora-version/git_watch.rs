@@ -37,8 +37,9 @@ pub fn git(root: &Path, args: &[&str]) -> Option<String> {
 /// Git rewrites the first when any worktree deletes a packed branch
 /// (`branch -D`, `fetch --prune`, `push --delete`) or packs the references,
 /// and a pack deletes the second, which Cargo reads as a change. Neither
-/// tells a commit apart either: a commit on a branch that only `packed-refs`
-/// holds changes neither file.
+/// shows a commit on a branch that only `packed-refs` holds: `packed-refs`
+/// is not written, and the branch's file, missing until then, could not be
+/// declared.
 ///
 /// Without a reflog (`core.logAllRefUpdates` off, or a checkout that never
 /// had one) the two files are all there is to go by, and both are declared.
