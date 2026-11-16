@@ -983,12 +983,19 @@ impl Editor {
     fn authored_frame(&self, rig: &Rig, frame: &Frame, world: &World) -> Option<Frame> {
         let (shaped, scales) = authoring::local_pose(rig, frame)?;
         let base = if !self.clip.active || self.clip.waiting_source() {
-            // without its base an edit cannot be told from it: nothing is recorded
             let base = world
                 .ik_edit_base
                 .clone()
-                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len())?;
-            Some(base)
+                .filter(|b| b.pose.rotations.len() == rig.len() && b.pose.positions.len() == rig.len() && b.rest.len() == rig.len());
+            // without its base an edit cannot be told from it: nothing is
+            // recorded. With no edit yet there is nothing to tell apart, and
+            // the base only exists once an edit session ran: Avatar Studio's
+            // first Animate came here before any, and its new animation
+            // failed until a second press. It starts from the rest skeleton.
+            if base.is_none() && !self.authoring.request(&self.goals, &self.disabled).is_empty() {
+                return None;
+            }
+            base
         } else {
             None
         };

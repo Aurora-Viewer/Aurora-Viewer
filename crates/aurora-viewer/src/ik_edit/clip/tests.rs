@@ -4260,6 +4260,26 @@ fn a_contact_set_over_an_animation_follows_it_away() {
 }
 
 #[test]
+fn a_new_animation_with_no_edit_yet_needs_no_base() {
+    // Avatar Studio's first Animate, before any edit session gave a base
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    assert!(world.ik_edit_base.is_none());
+    let shown = frame(&lib, &animation(&rig), &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.new_clip(&world, &shown);
+    assert!(editor.clip.error.is_none(), "{:?}", editor.clip.error);
+    assert!(editor.clip.active, "the animation editor opens on the first press");
+    let elbow = rig.names["mElbowLeft"];
+    assert!(
+        key_at_start(&editor, elbow).dot(rig.local_rot[elbow]).abs() > 0.9999,
+        "it starts from the rest skeleton"
+    );
+}
+
+#[test]
 fn edits_without_their_base_are_not_recorded() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
