@@ -612,7 +612,6 @@ pub struct App {
     ik_editor: crate::ik_edit::Editor,
     /// AURORA_DEMO_COUPLE=leave: when Nova became Person B.
     couple_demo_since: Option<Instant>,
-    couple_trace_at: Option<Instant>,
     hud_drag: Option<crate::build::hud_drag::HudDrag>,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
@@ -1862,7 +1861,6 @@ impl App {
             build: Default::default(),
             ik_editor: Default::default(),
             couple_demo_since: None,
-            couple_trace_at: None,
             hud_drag: None,
             interactions: Default::default(),
             cursors: crate::cursors::Cursors::with_palette(&palette),
@@ -11355,7 +11353,6 @@ impl App {
             // poses first: attachments follow their bone in the same frame
             self.scene.update_foot_scope(&self.world, cull, world_frame);
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
-            self.couple_trace();
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,
                 crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta

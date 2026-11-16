@@ -45,50 +45,6 @@ impl App {
             }
         }
     }
-    /// TEMPORARY couple-mode trace (debugging Person B rising after an
-    /// import): once a second while couple mode is on, where B's model,
-    /// anchor, placement and posed pelvis are, beside A's.
-    pub(super) fn couple_trace(&mut self) {
-        let Some(b) = self.world.couple_partner else { return };
-        if self
-            .couple_trace_at
-            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1))
-        {
-            return;
-        }
-        self.couple_trace_at = Some(Instant::now());
-        let rig = &self.world.avatar_lib.rig;
-        let pelvis_of = |id: uuid::Uuid| -> Option<(glam::Vec3, glam::Vec3)> {
-            let model = *self.world.avatar_models.get(&id)?;
-            let pose = self.world.avatar_poses.get(&id)?.get(rig.pelvis).copied()?;
-            Some((model.w_axis.truncate(), (model * pose).w_axis.truncate()))
-        };
-        let a = pelvis_of(self.world.agent_id);
-        let posed = pelvis_of(b);
-        let shift = self
-            .world
-            .avatar_models
-            .get(&b)
-            .and_then(|model| self.world.couple_shift(b, *model))
-            .map(|shift| shift.w_axis.truncate());
-        let anchor = self.world.couple_base(b).map(|model| model.w_axis.truncate());
-        let request = self.scene.ik_edit_others.get(&b);
-        let (place, turn) = self.world.couple_place;
-        log::info!(
-            "couple trace: A model/pelvis {a:?}; B model/pelvis {posed:?}; B shift {shift:?}; anchor {anchor:?}; place {place:?} turn {turn:.2}; studio {} lift {:.2}; B request active {:?} anims {:?} joints {:?} goals {:?}",
-            self.world.avatar_studio,
-            self.world.avatar_studio_lift,
-            request.map(|r| r.active),
-            request.map(|r| r.animations.len()),
-            request.map(|r| r
-                .joints
-                .iter()
-                .filter(|j| j.translation.is_some())
-                .map(|j| (j.bone, j.translation))
-                .collect::<Vec<_>>()),
-            request.map(|r| r.goals.len()),
-        );
-    }
     pub(super) fn poser_demo(&mut self, mode: &str) {
         if self.frame_count == 300
             && let Some(handle) = self.world.main_region
