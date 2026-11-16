@@ -63,11 +63,20 @@ function Get-IncrementalDirs([string]$Target) {
 #
 # With neither, the file is deleted: Cargo builds as before.
 
-# The marker changed when the gate came: a script from before it does not
-# know the file as its own and leaves it alone, instead of writing the gate
-# out of it at each run of an older worktree.
-$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
-$BuildCacheMarkerBeforeGate = '# Written by the Aurora Viewer scripts (Sync-BuildCache).'
+# The marker names the generation of the gate. A script of an older worktree
+# does not know a newer file as its own and leaves it alone, instead of
+# writing its own gate back at each of its runs: the file names the gate
+# built by the last script that wrote it. A change to the gate that every
+# worktree of the PC must get takes the next number here and moves the
+# marker it replaces to the older ones. 1 came with the gate; 2 runs the
+# compiler alone when sccache cannot be started (a command line just under
+# Windows' limit).
+$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate 2).'
+# Files of older scripts: this one's to replace.
+$BuildCacheOlderMarkers = @(
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache).',
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
+)
 
 function Find-Sccache {
     $cmd = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -146,7 +155,7 @@ function Sync-BuildCache([string]$Root) {
     if (-not $Root) { $Root = (Get-AuroraPaths).Root }
     $file = Join-Path $Root '.cargo\config.toml'
     if ((Test-Path -LiteralPath $file) -and
-        -not (Select-String -LiteralPath $file -Pattern $BuildCacheMarker, $BuildCacheMarkerBeforeGate -SimpleMatch -Quiet)) { return }
+        -not (Select-String -LiteralPath $file -Pattern (@($BuildCacheMarker) + $BuildCacheOlderMarkers) -SimpleMatch -Quiet)) { return }
     $sccache = Find-Sccache
     $gate = Get-BuildGate $Root
     if (-not $sccache -and -not $gate) {
