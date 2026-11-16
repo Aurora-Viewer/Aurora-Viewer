@@ -606,7 +606,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         }
         // Type-ahead: "Demo s" then "il" adds up to Demo silhouette; Up
         // ends the word, so "n" selects No-copy object, the first "n" below.
-        if mode.ends_with("keyboard-type") {
+        // The wide layout's explorer presses Right, which it does not use
+        // but which ends the word all the same.
+        let wide = mode == "keyboard-type-wide";
+        if mode.ends_with("keyboard-type") || wide {
             if matches!(frame, 666 | 690 | 720) {
                 log::info!(
                     "demo inventory keyboard type: frame={frame}, selected={:?}, selected_count={}, visible={}",
@@ -621,7 +624,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 705 => "n",
                 700 => {
                     return vec![egui::Event::Key {
-                        key: egui::Key::ArrowUp,
+                        key: if wide { egui::Key::ArrowRight } else { egui::Key::ArrowUp },
                         physical_key: None,
                         pressed: true,
                         repeat: false,
