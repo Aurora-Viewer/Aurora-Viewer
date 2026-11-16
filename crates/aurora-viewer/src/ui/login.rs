@@ -1055,7 +1055,7 @@ mod tests {
         fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
             match shape {
                 egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
-                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                egui::Shape::Vec(shapes) => shapes.iter().rev().find_map(|s| position(s, label)),
                 _ => None,
             }
         }
@@ -1098,6 +1098,7 @@ mod tests {
         let pos = output
             .shapes
             .iter()
+            .rev() // the button, painted after the heading (Japanese writes both ログイン)
             .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
             .expect("button");
         for pressed in [true, false] {
@@ -1161,6 +1162,7 @@ mod tests {
         let pos = output
             .shapes
             .iter()
+            .rev() // the button, painted after the heading (Japanese writes both ログイン)
             .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
             .expect("enabled button");
         draw(
