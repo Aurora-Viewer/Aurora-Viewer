@@ -36,7 +36,7 @@ impl Editor {
             Some(_) if add => {
                 if let Some(next) = self.clip_followers().first().copied() {
                     self.clip.together.retain(|b| *b != next);
-                    self.select(next, rig, frame);
+                    self.select_joint(next, rig, frame);
                 }
             }
             _ => {
@@ -57,16 +57,21 @@ impl Editor {
     /// alone, so that joints picked earlier never follow a joint they were
     /// not picked with.
     pub(in crate::ik_edit) fn clip_lead_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
-        if self.selected != Some(bone) {
-            if self.clip.together.contains(&bone) {
-                let lead = self.selected;
-                self.clip.together.retain(|b| *b != bone);
-                self.clip.together.extend(lead);
-            } else {
-                self.clip.together.clear();
-            }
-        }
         self.select(bone, rig, frame);
+    }
+    /// The joints picked together once `bone` is selected (see
+    /// `clip_lead_bone`); `select` applies it on every path.
+    pub(in crate::ik_edit) fn clip_retarget_followers(&mut self, bone: usize) {
+        if self.selected == Some(bone) {
+            return;
+        }
+        if self.clip.together.contains(&bone) {
+            let lead = self.selected;
+            self.clip.together.retain(|b| *b != bone);
+            self.clip.together.extend(lead);
+        } else {
+            self.clip.together.clear();
+        }
     }
     /// Give the followers the change `lead` went through from `start` to
     /// `pose`, record it as their own edit and keep a goal for each, so that

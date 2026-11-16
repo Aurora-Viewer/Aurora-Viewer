@@ -102,13 +102,7 @@ impl Editor {
             self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
             if response.clicked() || response.drag_started() {
                 if !selected {
-                    if self.clip.active {
-                        // the joints picked with another one do not follow
-                        // this limb
-                        self.clip_lead_bone(limb.end, rig, frame);
-                    } else {
-                        self.select(limb.end, rig, frame);
-                    }
+                    self.select(limb.end, rig, frame);
                 }
                 self.control = Control::Pole;
                 self.mode = Mode::Ik;

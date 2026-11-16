@@ -3885,6 +3885,32 @@ fn a_joint_selected_from_the_timeline_never_takes_over_the_joints_picked_with_an
 }
 
 #[test]
+fn every_other_way_of_selecting_a_joint_keeps_the_joints_picked_together_right() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    // the joint list, a pole, a binding or a link select through `select`
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.select(head, &rig, &original);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty(), "the eyes do not follow the head");
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.select(right, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(right), vec![left]));
+    // Shift + click on the selected joint still hands the lead to a follower
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(left), vec![]));
+}
+
+#[test]
 fn a_joint_added_to_the_selection_does_not_give_the_selected_joint_its_limbs_pole() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();

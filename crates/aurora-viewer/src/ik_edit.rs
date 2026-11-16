@@ -779,6 +779,18 @@ impl Editor {
     }
 
     fn select(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.clip.active && !self.poser.active {
+            // every way of picking a joint in the animation editor (handle,
+            // bone, picker, Tracks row, timeline, joint list, pole, binding,
+            // link…) keeps the joints picked together right: a joint of the
+            // selection leads the others, any other joint is selected alone
+            self.clip_retarget_followers(bone);
+        }
+        self.select_joint(bone, rig, frame);
+    }
+    /// Select `bone` and leave the animation editor's joints picked together
+    /// as they are: for the paths that already set them.
+    fn select_joint(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
         if self.poser.active {
             self.select_pose_bone(bone, rig, frame);
             return;
