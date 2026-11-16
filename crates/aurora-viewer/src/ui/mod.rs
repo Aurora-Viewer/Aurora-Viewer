@@ -135,6 +135,7 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
+pub mod spinning_cat;
 pub mod staff;
 pub mod stand_fly;
 pub mod stream_title;

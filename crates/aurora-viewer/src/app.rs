@@ -149,6 +149,7 @@ mod shape_editor;
 mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
+mod spinning_cat;
 mod stand_fidget;
 mod stand_fly;
 mod stream_list;
@@ -719,6 +720,8 @@ pub struct App {
     empty_lists: DrawLists,
     quit_at: Option<Instant>,
     exit_prompt: ui::exit::ExitPrompt,
+    /// The spinning cat behind the Konami code (`crate::oiia`).
+    oiia: crate::oiia::Oiia,
     /// saves the window layout shortly after it changes (ui/layout.rs)
     layout_autosave: ui::layout::Autosave,
     loading_stage: String,
@@ -1857,6 +1860,7 @@ impl App {
             empty_lists: DrawLists::default(),
             quit_at: None,
             exit_prompt: Default::default(),
+            oiia: Default::default(),
             layout_autosave: Default::default(),
             loading_stage: String::new(),
             move_complete_at: None,
@@ -11538,6 +11542,7 @@ impl App {
                 world_clock(),
                 !self.settings.reduce_motion,
             );
+            self.spinning_cat_frame(&mut gfx.renderer, dt);
             self.frame_profile.lap(Lap::Extras);
             let overlays = self.settings.world_overlays;
             self.scene
@@ -11573,6 +11578,7 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            self.scene.spinning_cat.append(&mut self.scene.lists);
             // the build tools' holograms: where Place on surface would put
             // the selection, or a move's (scene/build_hologram.rs)
             {
@@ -12263,7 +12269,8 @@ impl App {
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            None => self.live_look((w, h), focus),
+            // the spinning cat's colours, when the photo mode shows no look
+            None => self.live_look((w, h), focus).or_else(|| self.oiia.look(w, h)),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -20334,6 +20341,21 @@ impl App {
             self.net.runtime(),
         );
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+        // The spinning cat: its warning first, then Stop while it plays.
+        if self.oiia.warning() && !self.spinning_cat_video() {
+            // No video, no show: the code's window says why.
+            if ui::spinning_cat::unavailable(&ctx, &p) {
+                self.oiia.decline();
+            }
+        } else if self.oiia.warning() {
+            match ui::spinning_cat::warning(&ctx, &p) {
+                Some(true) => self.start_spinning_cat(None),
+                Some(false) => self.oiia.decline(),
+                None => {}
+            }
+        } else if self.oiia.playing() && ui::spinning_cat::stop(&ctx, &p) {
+            self.oiia.stop();
+        }
         self.ui_parts.lap(Part::UiRest, t);
         a
     }
@@ -23710,6 +23732,11 @@ impl ApplicationHandler for App {
                     let pressed = ke.state == ElementState::Pressed;
                     let mods = self.key_mods(ke);
                     let altgr_text = self.altgr_text_input(ke);
+                    // The spinning cat watches for its code (crate::oiia):
+                    // the keys go on to do what they do.
+                    if pressed && !ke.repeat {
+                        self.spinning_cat_key(code, &ke.logical_key);
+                    }
                     // The color dialog and an emoji picker own Escape before
                     // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
@@ -23723,6 +23750,11 @@ impl ApplicationHandler for App {
                             || self.chat_ui.previews.image_window_open()
                             || ui::emoji::picker_open(&self.egui_ctx))
                     {
+                        return;
+                    }
+                    // Escape ends the spinning cat's show, and nothing else.
+                    if pressed && code == KeyCode::Escape && self.oiia.playing() {
+                        self.oiia.stop();
                         return;
                     }
                     // learn the keyboard layout for the shortcut labels
