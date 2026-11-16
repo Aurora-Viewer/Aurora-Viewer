@@ -67,6 +67,10 @@ pub struct Journal {
     /// forgotten (a stale Undo then never touches a newer run).
     #[serde(default)]
     pub last_id: u64,
+    /// The file could not be read this session (busy, not allowed): this
+    /// session's runs are kept in memory only, the file never written over.
+    #[serde(skip)]
+    pub read_only: bool,
 }
 
 impl Journal {
@@ -156,12 +160,18 @@ impl Journal {
     /// The last run with something left to put back: a run whose entries
     /// are all gone (purged from the Trash, deleted) never hides an older
     /// one.
-    pub fn last_undoable(&self, exists: impl Fn(Uuid) -> bool) -> Option<&Run> {
+    pub fn last_undoable(&self, exists: impl Fn(&Entry) -> bool) -> Option<&Run> {
         self.runs
             .iter()
             .rev()
             .filter(|run| run.undoes.is_none())
-            .find(|run| run.entries.iter().any(|e| exists(e.id)))
+            .find(|run| run.entries.iter().any(&exists))
+    }
+
+    /// Changes whenever a run starts, ends or records moves: what was read
+    /// from the journal at one value still holds at the same one.
+    pub fn version(&self) -> (u64, usize, usize) {
+        (self.last_id, self.runs.len(), self.runs.back().map_or(0, |run| run.entries.len()))
     }
 
     /// After the Undo run `undo` of the run `undone`: the undo's own run

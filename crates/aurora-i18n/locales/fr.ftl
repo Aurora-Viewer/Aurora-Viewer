@@ -14430,6 +14430,7 @@ inventory-sorter-undo-stays = { $count ->
    *[other] { $count } éléments restent où ils sont : déplacés à la main depuis, disparus, ou dans un endroit que le tri automatique ne touche pas.
     }
 inventory-sorter-undo-nothing = Rien des derniers tris ne peut être remis en place : leurs éléments ont été déplacés à la main, ont disparu, ou sont dans des endroits que le tri automatique ne touche pas.
+inventory-sorter-undo-loading = Chargement des dossiers où les derniers tris ont rangé les éléments ; l'aperçu de l'annulation s'ouvre une fois qu'ils sont chargés.
 inventory-sorter-busy-elsewhere = Le tri automatique tourne déjà dans une autre fenêtre d’inventaire : attendez qu’il y termine.
 inventory-sorter-trash-gone = (n’est plus dans l’inventaire)
 inventory-sorter-trash-more = …et { $count } de plus
@@ -14443,6 +14444,7 @@ inventory-sorter-menu-creator = Tri automatique par ce créateur
 inventory-sorter-by-creator = Par { $name }
 inventory-sorter-creator-unknown = un créateur inconnu
 inventory-sorter-hint-store-optional = Dossier de la boutique (facultatif)
+inventory-sorter-hint-store-optional-tip = Laissez vide pour utiliser la boutique lue dans les noms des objets ; saisissez-en une pour ranger les objets de ce créateur dans ce dossier de boutique.
 inventory-sorter-open = Tri automatique : ranger les éléments en vrac par corps et par genre
 inventory-sorter-source = Dossier à trier
 inventory-sorter-selection = { $count ->
@@ -14499,6 +14501,7 @@ inventory-sorter-pre-trash-waiting = { $count ->
    *[other] { $count } éléments attendent dans la Pré-corbeille
     }
 inventory-sorter-pre-trash-hint = Ouvrez le dossier Pré-corbeille de votre inventaire et sortez-en ce que vous voulez garder. Le reste part à la corbeille quand vous confirmez.
+inventory-sorter-pre-trash-loading = Pré-corbeille est encore en chargement : le bouton sera prêt une fois tout son contenu connu.
 inventory-sorter-pre-trash-empty = Mettre à la corbeille
 inventory-sorter-pre-trash-title = Mettre la Pré-corbeille à la corbeille ?
 inventory-sorter-pre-trash-text = { $count ->
@@ -14629,9 +14632,25 @@ inventory-sorter-kept-link = Restent : liens (ils appartiennent à leur dossier)
 inventory-sorter-kept-locked = Restent : dans un dossier verrouillé
 inventory-sorter-kept-excluded = Restent : dans un dossier exclu
 inventory-sorter-kept-protected = Restent : dossiers système et protégés
-inventory-sorter-done-skipped = { $count } triés ; { $skipped } ignorés car ils ont changé depuis l'aperçu.
+inventory-sorter-kept-loading = Restent pour l'instant : dossiers encore en chargement (ils bougent une fois chargés)
+inventory-sorter-done-skipped = { $count ->
+        [one] { $count } trié
+       *[other] { $count } triés
+    } ; { $skipped ->
+        [one] { $skipped } ignoré car il a changé depuis l'aperçu.
+       *[other] { $skipped } ignorés car ils ont changé depuis l'aperçu.
+    }
 inventory-sorter-retrying = { $error } (nouvel essai, tentative { $attempt })
-inventory-sorter-done-failed = { $count } triés ; { $skipped } ignorés (changés depuis l'aperçu) ; { $failed } refusés par le serveur et laissés en place.
+inventory-sorter-done-failed = { $count ->
+        [one] { $count } trié
+       *[other] { $count } triés
+    } ; { $skipped ->
+        [one] { $skipped } ignoré
+       *[other] { $skipped } ignorés
+    } (changés depuis l'aperçu) ; { $failed ->
+        [one] { $failed } refusé par le serveur et laissé en place.
+       *[other] { $failed } refusés par le serveur et laissés en place.
+    }
 inventory-sorter-paused = En pause : { $done } / { $total }
 inventory-sorter-eta = encore environ { $minutes } min
 inventory-sorter-pause = Pause
@@ -14660,7 +14679,7 @@ inventory-sorter-lost-found-tip = Trie les objets trouvés comme vos propres dos
 inventory-sorter-unlock = Autoriser…
 inventory-sorter-unlock-remove = Autorisé : verrouiller à nouveau
 inventory-sorter-unlock-title = Autoriser le tri automatique dans { $folder } ?
-inventory-sorter-unlock-text = Le tri déplacera alors des objets de { $folder } vers les dossiers de tri, comme depuis vos propres dossiers. Certains scripts, HUD et autres viewers attendent des objets dans { $folder } : ils risquent de ne plus les trouver. Les objets portés, liens, gestes actifs et dossiers de livraison restent protégés, le dossier lui-même ne bouge jamais, et chaque tri peut être annulé.
+inventory-sorter-unlock-text = Le tri déplacera alors des objets de { $folder } vers les dossiers de tri, comme depuis vos propres dossiers. Certains scripts, HUD et autres viewers attendent des objets dans { $folder } : ils risquent de ne plus les trouver. Les objets portés, liens et gestes actifs restent en place, les dossiers de livraison bougent entiers et ne sont jamais ouverts, le dossier lui-même ne bouge jamais, et vos derniers tris peuvent être annulés.
 inventory-sorter-unlock-confirm = L'autoriser
 inventory-sorter-unlocked-list = Déverrouillés par vous : { $folders }
 inventory-sorter-updating = Votre inventaire change encore : l'aperçu sera refait une fois stabilisé.

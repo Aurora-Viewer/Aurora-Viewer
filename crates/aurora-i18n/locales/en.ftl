@@ -14425,6 +14425,7 @@ inventory-sorter-undo-stays = { $count ->
    *[other] { $count } entries stay where they are: moved on by hand, gone, or in a place Auto-sort may not touch.
     }
 inventory-sorter-undo-nothing = Nothing of the last runs can be put back: their entries were moved on by hand, are gone, or are in places Auto-sort may not touch.
+inventory-sorter-undo-loading = Loading the folders the last runs moved things into; the Undo preview opens once they are loaded.
 inventory-sorter-busy-elsewhere = Auto-sort is already running in another inventory window: wait for it to finish there.
 inventory-sorter-trash-gone = (no longer in the inventory)
 inventory-sorter-trash-more = …and { $count } more
@@ -14438,6 +14439,7 @@ inventory-sorter-menu-creator = Auto-sort by this creator
 inventory-sorter-by-creator = By { $name }
 inventory-sorter-creator-unknown = an unknown creator
 inventory-sorter-hint-store-optional = Store folder (optional)
+inventory-sorter-hint-store-optional-tip = Leave empty to use the store name read from the item names; type one to put this creator's items in that store folder.
 inventory-sorter-open = Auto-sort: file loose items into folders by body and kind
 inventory-sorter-source = Folder to sort
 inventory-sorter-selection = { $count ->
@@ -14494,6 +14496,7 @@ inventory-sorter-pre-trash-waiting = { $count ->
    *[other] { $count } entries wait in Pre-Trash
     }
 inventory-sorter-pre-trash-hint = Open the Pre-Trash folder in your inventory and move out what you want to keep. The rest goes to the Trash when you confirm.
+inventory-sorter-pre-trash-loading = Pre-Trash is still loading: the button is ready once all it holds is known.
 inventory-sorter-pre-trash-empty = Move to Trash
 inventory-sorter-pre-trash-title = Move Pre-Trash to the Trash?
 inventory-sorter-pre-trash-text = { $count ->
@@ -14624,9 +14627,16 @@ inventory-sorter-kept-link = Stays: links (they belong to their folder)
 inventory-sorter-kept-locked = Stays: in a locked folder
 inventory-sorter-kept-excluded = Stays: in an excluded folder
 inventory-sorter-kept-protected = Stays: system and protected folders
-inventory-sorter-done-skipped = { $count } sorted; { $skipped } skipped because they changed since the preview.
+inventory-sorter-kept-loading = Stays for now: folders still loading (they move once loaded)
+inventory-sorter-done-skipped = { $count } sorted; { $skipped ->
+        [one] { $skipped } skipped because it changed since the preview.
+       *[other] { $skipped } skipped because they changed since the preview.
+    }
 inventory-sorter-retrying = { $error } (trying again, attempt { $attempt })
-inventory-sorter-done-failed = { $count } sorted; { $skipped } skipped (changed since the preview); { $failed } refused by the server and left in place.
+inventory-sorter-done-failed = { $count } sorted; { $skipped } skipped (changed since the preview); { $failed ->
+        [one] { $failed } refused by the server and left in place.
+       *[other] { $failed } refused by the server and left in place.
+    }
 inventory-sorter-paused = Paused: { $done } / { $total }
 inventory-sorter-eta = about { $minutes } min left
 inventory-sorter-pause = Pause
@@ -14655,7 +14665,7 @@ inventory-sorter-lost-found-tip = Sorts Lost and Found like your own folders: wh
 inventory-sorter-unlock = Allow…
 inventory-sorter-unlock-remove = Allowed: lock again
 inventory-sorter-unlock-title = Allow Auto-sort in { $folder }?
-inventory-sorter-unlock-text = Auto-sort will then move items out of { $folder } into the sort folders, like from your own folders. Some scripts, HUDs and other viewers expect things in { $folder }: they may not find them any more. Worn items, links, active gestures and delivery folders stay protected, the folder itself never moves, and every run can be undone.
+inventory-sorter-unlock-text = Auto-sort will then move items out of { $folder } into the sort folders, like from your own folders. Some scripts, HUDs and other viewers expect things in { $folder }: they may not find them any more. Worn items, links and active gestures stay where they are, delivery folders move whole and are never opened, the folder itself never moves, and your recent runs can be undone.
 inventory-sorter-unlock-confirm = Allow it
 inventory-sorter-unlocked-list = Unlocked by you: { $folders }
 inventory-sorter-updating = Your inventory is still changing: the preview is made again once it settles.

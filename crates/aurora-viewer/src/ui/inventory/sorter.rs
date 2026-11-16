@@ -145,6 +145,16 @@ pub(super) struct State {
     /// generation: a run that starts on that same inventory saves it as its
     /// snapshot, nothing taken on the frame.
     layout: Option<(u64, sorter::journal::Snapshot)>,
+    /// The Undo button's run (its date and size), at an inventory generation
+    /// and a journal version: searched again only when either changes.
+    undo_label: Option<((u64, (u64, usize, usize)), Option<(i64, usize)>)>,
+    /// Undo was pressed while the folders its runs put entries in were
+    /// still loading: it opens its preview once they are (checked again
+    /// when the inventory changes from this generation).
+    undo_waiting: Option<u64>,
+    /// Whether all a saved or whole-inventory source reads is loaded, at an
+    /// inventory generation: checked again only when the inventory changes.
+    source_loaded: Option<(u64, bool)>,
     cleaning: Option<Planning<CleanupPlan>>,
     /// The run an Undo puts back (its id in the journal).
     undoing: Option<u64>,
@@ -289,6 +299,52 @@ impl SharedJournal {
 /// A window that stopped saying its run is going (closed, gone) for this
 /// long no longer holds the account's journal.
 const RUNNER_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Open Undo's preview: the newest run with something that can go back. A
+/// run whose entries all stay (moved on by hand, in a place locked since)
+/// never blocks an older one.
+fn start_undo(inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>, protected: &HashSet<Uuid>) {
+    let found = state.journal.with(|j| {
+        let mut stayed = 0;
+        for run in j.runs.iter().rev().filter(|run| run.undoes.is_none() && !run.entries.is_empty()) {
+            let (moves, skipped) = sorter::journal::undo_moves(inv, run, protected, worn);
+            if !moves.is_empty() {
+                return Some((run.id, moves, skipped + stayed));
+            }
+            stayed += skipped;
+        }
+        None
+    });
+    match found {
+        Some((run, moves, skipped)) => {
+            state.undoing = Some(run);
+            state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
+            state.tab = PREVIEW;
+            if skipped > 0 {
+                state.status = aurora_i18n::tr!("inventory-sorter-undo-stays", count = skipped);
+            }
+        }
+        None => state.status = aurora_i18n::tr!("inventory-sorter-undo-nothing").into(),
+    }
+}
+
+/// Ask for the folders not loaded yet among `ids`, and say whether they all
+/// are. One the server failed to give counts as read (what it holds stays
+/// where it is) and is never asked for again in a loop.
+fn ask_for(inv: &mut Inventory, ids: impl IntoIterator<Item = Uuid>) -> bool {
+    let mut loaded = true;
+    for id in ids {
+        match inv.folders.get(&id).map(|f| f.state) {
+            Some(FetchState::Unknown) => {
+                inv.request(id);
+                loaded = false;
+            }
+            Some(FetchState::Fetching) => loaded = false,
+            Some(FetchState::Fetched | FetchState::Failed) | None => {}
+        }
+    }
+    loaded
+}
 
 /// Wait (a short while at most) for Auto-sort's files queued so far to be
 /// written: at quit, after the last flush.
@@ -654,7 +710,7 @@ impl State {
                 // busy or not allowed now: an empty journal for this session,
                 // the file left as it is
                 log::warn!("auto-sort: the journal could not be read now: {error}");
-                Default::default()
+                j::Journal { read_only: true, ..Default::default() }
             }
             Err(error) => {
                 // kept aside, never written over: the history stays for a
@@ -675,7 +731,8 @@ impl State {
     fn save_progress(&mut self) {
         self.unsaved = 0;
         let Some(dir) = self.account_dir() else { return };
-        let journal = self.journal.with(|j| j.clone());
+        // a journal whose file could not be read is never written over it
+        let journal = self.journal.with(|j| (!j.read_only).then(|| j.clone()));
         // only the window whose run is going (or just ended) writes or
         // removes the run to resume: another one's save leaves it alone
         let owns_run = self.job.is_some() || std::mem::take(&mut self.job_just_ended);
@@ -699,7 +756,9 @@ impl State {
         });
         in_order(move || {
             use sorter::journal as j;
-            if let Err(error) = j::save(&j::journal_path(&dir), &journal) {
+            if let Some(journal) = journal
+                && let Err(error) = j::save(&j::journal_path(&dir), &journal)
+            {
                 log::warn!("auto-sort: the journal could not be saved: {error}");
             }
             if !owns_run {
@@ -719,7 +778,7 @@ impl State {
         });
     }
 
-    /// A snapshot of the layout before a large or Trash run, kept with the
+    /// A snapshot of the layout before a sort or Trash run, kept with the
     /// account's last ones.
     fn snapshot(&mut self, inv: &Inventory) {
         let Some(dir) = self.account_dir() else { return };
@@ -794,6 +853,7 @@ impl State {
         if self.source.as_ref() != Some(&source) {
             self.preview = None;
             self.status.clear();
+            self.source_loaded = None;
         }
         self.source = Some(source);
     }
@@ -1136,18 +1196,19 @@ pub(super) fn show(
         // a folder excluded during the run: its moves still queued stay
         // (the next batch's are checked, a few hundred at most)
         if !prefs.sorter.excluded.is_empty() {
-            let mut kept = 0;
-            let mut checked = 0;
-            job.queue.retain(|m| {
-                checked += 1;
-                if checked > sorter::BATCH * 2 || m.restore {
-                    return true;
-                }
-                let out = prefs.sorter.excludes(inv, m.id);
-                kept += usize::from(out);
-                !out
-            });
-            job.skipped += kept;
+            // a folder holding an excluded one stays too: it would carry it
+            let out: Vec<usize> = (0..job.queue.len().min(sorter::BATCH * 2))
+                .filter(|&i| {
+                    let m = &job.queue[i];
+                    !m.restore
+                        && (prefs.sorter.excludes(inv, m.id)
+                            || m.folder && prefs.sorter.excluded.iter().any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
+                })
+                .collect();
+            for &i in out.iter().rev() {
+                job.queue.remove(i);
+            }
+            job.skipped += out.len();
         }
         match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped) {
             Step::Change(change, moves) => {
@@ -1246,27 +1307,29 @@ pub(super) fn show(
         // saved moves (Undo, a layout, a run to resume) are read where their
         // entries were: each such folder is loaded first, else a move whose
         // entry is not known yet would be dropped from the run
-        Source::Saved(moves, _) => {
-            let mut loaded = true;
-            let mut asked = HashSet::new();
-            for m in moves.iter() {
-                if asked.insert(m.from) && inv.folders.get(&m.from).is_some_and(|f| f.state != FetchState::Fetched) {
-                    inv.request(m.from);
-                    loaded = false;
+        // A folder moved whole is loaded with all it holds too, else it
+        // would be kept as "not loaded". Read again only when the inventory
+        // changes, never every frame.
+        Source::Saved(moves, _) => match state.source_loaded {
+            Some((generation, loaded)) if generation == inv.generation => loaded,
+            _ => {
+                let mut read: HashSet<Uuid> = moves.iter().map(|m| m.from).collect();
+                for m in moves.iter().filter(|m| m.folder) {
+                    read.extend(sorter::unloaded_below(inv, m.id));
                 }
+                let loaded = ask_for(inv, read);
+                state.source_loaded = Some((inv.generation, loaded));
+                loaded
             }
-            loaded
-        }
-        Source::Whole => {
-            let mut loaded = true;
-            for id in sorter::whole_sources(inv, &prefs.sorter) {
-                if inv.folders.get(&id).is_some_and(|f| f.state != FetchState::Fetched) {
-                    inv.request(id);
-                    loaded = false;
-                }
+        },
+        Source::Whole => match state.source_loaded {
+            Some((generation, loaded)) if generation == inv.generation => loaded,
+            _ => {
+                let loaded = ask_for(inv, sorter::whole_sources(inv, &prefs.sorter));
+                state.source_loaded = Some((inv.generation, loaded));
+                loaded
             }
-            loaded
-        }
+        },
     };
     // The inventory changes many times a second while it loads: a plan of a
     // large one is made again once it has been quiet for a moment, and not
@@ -1392,12 +1455,9 @@ pub(super) fn show(
         .waiting
         .as_ref()
         .map_or((std::sync::Arc::default(), None), |(_, w, at)| (std::sync::Arc::clone(w), *at));
-    // Pre-Trash is emptied once loaded (all its entries known), asked for
-    // when it is not yet
-    let pre_trash_loaded = waiting_in.is_none_or(|id| inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched));
-    if !pre_trash_loaded && let Some(id) = waiting_in {
-        inv.request(id);
-    }
+    // Pre-Trash is emptied once loaded with all it holds (every entry and
+    // subfolder known), asked for when it is not yet
+    let pre_trash_loaded = waiting_in.is_none_or(|id| ask_for(inv, sorter::unloaded_below(inv, id)));
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -1453,7 +1513,7 @@ pub(super) fn show(
                 CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
                 _ => {
                     if !waiting.is_empty() {
-                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy || !pre_trash_loaded);
+                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy, !pre_trash_loaded);
                         ui.add_space(6.0);
                     }
                     // the default folders the user opened, named in every preview
@@ -2143,7 +2203,7 @@ fn in_bin(inv: &Inventory, bin: Option<Uuid>, id: Uuid) -> bool {
 }
 
 /// What waits in Pre-Trash, and the step that sends it to the Trash.
-fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], waiting_in: Option<Uuid>, busy: bool) {
+fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], waiting_in: Option<Uuid>, busy: bool, loading: bool) {
     crate::ui::widgets::surface(ui, p, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -2155,8 +2215,15 @@ fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[
                 .small()
                 .color(p.muted),
         );
+        if loading {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-sorter-pre-trash-loading"))
+                    .small()
+                    .color(p.muted),
+            );
+        }
         ui.add_space(4.0);
-        let send = ui.add_enabled_ui(!busy, |ui| {
+        let send = ui.add_enabled_ui(!busy && !loading, |ui| {
             crate::ui::widgets::action_button(
                 ui,
                 p,
@@ -3064,39 +3131,46 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             }
         }
     }
-    let exists = |id: Uuid| inv.items.contains_key(&id) || inv.folders.contains_key(&id);
-    match state
-        .journal
-        .with(|j| j.last_undoable(exists).map(|run| (run.at, run.entries.len())))
-    {
+    // an entry counts while it is known, or while the folder the run put it
+    // in is not loaded yet (it is likely there, unseen)
+    let unloaded = |id: Option<Uuid>| id.is_some_and(|to| inv.folders.get(&to).is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching)));
+    let key = (inv.generation, state.journal.with(|j| j.version()));
+    let label = match &state.undo_label {
+        Some((at, label)) if *at == key => *label,
+        _ => {
+            let exists = |e: &sorter::journal::Entry| inv.items.contains_key(&e.id) || inv.folders.contains_key(&e.id) || unloaded(e.to);
+            let label = state.journal.with(|j| j.last_undoable(exists).map(|run| (run.at, run.entries.len())));
+            state.undo_label = Some((key, label));
+            label
+        }
+    };
+    match label {
         Some((at, count)) => {
             let date = snapshot_date(at);
             let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = count, date = date.as_str());
-            if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
-                // the newest run with something that can go back: a run whose
-                // entries all stay (moved on by hand, in a place locked
-                // since) never blocks an older one
-                let found = state.journal.with(|j| {
-                    let mut stayed = 0;
-                    for run in j.runs.iter().rev().filter(|run| run.undoes.is_none() && !run.entries.is_empty()) {
-                        let (moves, skipped) = sorter::journal::undo_moves(inv, run, &protected, worn);
-                        if !moves.is_empty() {
-                            return Some((run.id, moves, skipped + stayed));
-                        }
-                        stayed += skipped;
-                    }
-                    None
+            let clicked = action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked();
+            if clicked || state.undo_waiting.is_some_and(|seen| seen != inv.generation) {
+                // the folders the runs put entries in are loaded first, else
+                // an entry not known yet would be counted as staying
+                let loading: Vec<Uuid> = state.journal.with(|j| {
+                    j.runs
+                        .iter()
+                        .filter(|run| run.undoes.is_none())
+                        .flat_map(|run| run.entries.iter().filter_map(|e| e.to))
+                        .filter(|to| unloaded(Some(*to)))
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect()
                 });
-                match found {
-                    Some((run, moves, skipped)) => {
-                        state.undoing = Some(run);
-                        state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
-                        state.tab = PREVIEW;
-                        if skipped > 0 {
-                            state.status = aurora_i18n::tr!("inventory-sorter-undo-stays", count = skipped);
-                        }
+                if loading.is_empty() {
+                    state.undo_waiting = None;
+                    start_undo(inv, state, worn, &protected);
+                } else {
+                    if clicked {
+                        state.status = aurora_i18n::tr!("inventory-sorter-undo-loading").into();
                     }
-                    None => state.status = aurora_i18n::tr!("inventory-sorter-undo-nothing").into(),
+                    state.undo_waiting = Some(inv.generation);
+                    state.to_request.extend(loading);
                 }
             }
         }
@@ -3194,12 +3268,15 @@ fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences
                 } else {
                     aurora_i18n::tr!("inventory-sorter-hint-store")
                 };
-                ui.add(
+                let store = ui.add(
                     egui::TextEdit::singleline(&mut hint.store)
                         .char_limit(64)
                         .hint_text(hint_text)
                         .desired_width(150.0),
                 );
+                if by_creator {
+                    store.on_hover_text(aurora_i18n::tr!("inventory-sorter-hint-store-optional-tip"));
+                }
                 ui.label(RichText::new("→").color(p.muted));
                 egui::ComboBox::from_id_salt("hint_category")
                     .selected_text(hint.category.folder())

@@ -448,7 +448,7 @@ fn undo_runs_are_never_undone_and_gone_runs_never_hide_older_ones() {
     // a newer run whose entries were all purged: the older one is offered
     let trash = journal.begin(RunKind::Trash, 4);
     journal.record_in(trash, [entry(9)]);
-    let found = journal.last_undoable(|e| e != id(9)).map(|r| r.id);
+    let found = journal.last_undoable(|e| e.id != id(9)).map(|r| r.id);
     assert_eq!(found, Some(sort));
 }
 

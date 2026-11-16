@@ -2160,6 +2160,14 @@ fn status_tags_apostrophes_bodies_and_accents_are_read_right() {
     assert_eq!(sorted_as("Hourglass Vase", 6, &[]), cat(Category::Decor));
     assert_eq!(sorted_as("Bed with 50 poses", 6, &[]), cat(Category::Furniture));
     assert_eq!(split_path("Robes d'été/Café"), vec!["Robes d'ete".to_owned(), "Cafe".to_owned()]);
+    // a letter the table lacks is left out, never a `?`; a part of such
+    // letters only is dropped
+    assert_eq!(split_path("Ładne rzeczy/桜屋/Shoes"), vec!["adne rzeczy".to_owned(), "Shoes".to_owned()]);
+    // a rule's words are read joined: `women's` never meets every `'s`
+    let rule = Rule { words: "women's".into(), mode: Match::Any, enabled: true, folder: "W".into(), ..Default::default() };
+    assert!(rule.named(&words("Women's Boots")));
+    assert!(!rule.named(&words("Kat's Dress")));
+    assert!(!rule.named(&words("Women Boots")));
     assert!(!sorted_as("[桜屋] something", 6, &[]).contains(&stores_folder()));
     // a folder of the user's named with a dash is not a product by its store
     let mut inv = fixture(&[]);

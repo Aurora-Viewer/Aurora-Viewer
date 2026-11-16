@@ -98,7 +98,7 @@ impl Rule {
     /// to Clean up ([`Cleanup`]), and an old dated rule without words stays
     /// incomplete rather than taking everything.
     pub fn usable(&self) -> bool {
-        self.enabled && !words(&self.words).is_empty() && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
+        self.enabled && !joined_words(&self.words).is_empty() && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
     }
 
     /// The rule's words meet the name's.
@@ -108,7 +108,9 @@ impl Rule {
 
     /// The words alone.
     pub fn named(&self, name_words: &[String]) -> bool {
-        let wanted = words(&self.words);
+        // a rule's own words are read joined (`women's` is `womens`): its
+        // parts (`s`) would meet every name with an apostrophe
+        let wanted = joined_words(&self.words);
         !wanted.is_empty()
             && match self.mode {
                 Match::All => wanted.iter().all(|w| name_words.contains(w)),
@@ -510,6 +512,26 @@ pub fn words(name: &str) -> Vec<String> {
     out
 }
 
+/// The words of a rule or a tag: an apostrophe joins its word (`women's`
+/// is `womens`), never split into parts that would meet any name.
+pub fn joined_words(name: &str) -> Vec<String> {
+    name.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\'' | '’'))
+        .map(|chunk| chunk.chars().filter(|c| !matches!(c, '\'' | '’')).collect::<String>().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Two folder names are the same, case and outer spaces aside; `lower` is
+/// lowercase already.
+fn same_name(name: &str, lower: &str) -> bool {
+    let name = name.trim();
+    if name.is_ascii() && lower.is_ascii() {
+        name.eq_ignore_ascii_case(lower)
+    } else {
+        name.to_lowercase() == lower
+    }
+}
+
 /// `phrase` (one or more words) appears in `words`, whole words in order.
 /// The tables are lowercase already: nothing is allocated per test, which
 /// runs for every phrase of every entry of a large folder.
@@ -651,11 +673,24 @@ pub fn split_path(path: &str) -> Vec<String> {
         .filter_map(|part| actions::clean_name(part).ok())
         // accents first (`Robes d'été` → `Robes d'ete`), never `?`
         .map(|part| {
-            // accents become letters; a part with letters the table lacks
-            // (`Ładne rzeczy`) is kept as it is rather than dropped
-            let latin = inventory_name(&part, "");
-            let part = if latin.is_empty() { part } else { latin };
-            inventory_name(&crate::text_validation::generated_name(&part, 63), "")
+            // accents become letters, letter by letter: one the table lacks
+            // (`Ł` of `Ładne rzeczy`) is left out, never a `?`, and the
+            // rest of the part stays (`adne rzeczy`)
+            let latin: String = part
+                .chars()
+                .map(|c| match c {
+                    c if c.is_ascii() => c.to_string(),
+                    c if c.is_whitespace() => " ".to_owned(),
+                    '’' | '‘' => "'".to_owned(),
+                    '–' | '—' => "-".to_owned(),
+                    c => inventory_name(c.encode_utf8(&mut [0; 4]), ""),
+                })
+                .collect();
+            let latin = latin.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !latin.chars().any(char::is_alphanumeric) {
+                return String::new();
+            }
+            inventory_name(&crate::text_validation::generated_name(&latin, 63), "")
         })
         .filter(|part| !part.is_empty())
         // a rule's path is a few folders, never a hundred nested ones
@@ -828,7 +863,7 @@ pub fn store(name: &str) -> Option<String> {
         })
         .or_else(|| underscore_store(text))?;
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
-    let tag_words = words(tag);
+    let tag_words = joined_words(tag);
     let found = classify(tag, -1, 0);
     // a body mod maker's tag (`MAZE.mods`) names its trade, not a product
     let maker = tag_words.last().is_some_and(|w| w == "mods" || w == "mod");
@@ -932,8 +967,10 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
 }
 
 /// The folders below `id` (itself included) not loaded yet: a folder moves
-/// whole once they are, so they are asked for.
-fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+/// whole once they are, so they are asked for. One the server failed to
+/// give is not listed: it keeps its parent where it is (`holds_closed`)
+/// and is never asked for again in a loop.
+pub fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
     let mut out = Vec::new();
     let mut stack = vec![id];
     let mut seen = HashSet::new();
@@ -943,7 +980,9 @@ fn unloaded_below(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
         }
         let Some(f) = inv.folders.get(&folder) else { continue };
         if f.state != FetchState::Fetched {
-            out.push(folder);
+            if f.state != FetchState::Failed {
+                out.push(folder);
+            }
             continue;
         }
         stack.extend(f.children.iter().copied());
@@ -1030,7 +1069,7 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
         .children
         .iter()
         .filter_map(|id| inv.folders.get(id))
-        .filter(|f| !f.library && f.info.parent == parent && f.info.type_default == -1 && f.info.name.trim().to_lowercase() == name)
+        .filter(|f| !f.library && f.info.parent == parent && f.info.type_default == -1 && same_name(&f.info.name, &name))
         .map(|f| f.info.id)
         .min()
 }
@@ -1391,6 +1430,16 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
     let mut plan = Plan::default();
     for m in moves {
         let here = actions::parent(inv, m.id) == Some(m.from);
+        // a folder whose tree is still loading: kept for now, asked for
+        if here && m.folder {
+            let unloaded = unloaded_below(inv, m.id);
+            if !unloaded.is_empty() {
+                plan.unfetched.extend(unloaded);
+                plan.kept += 1;
+                plan.kept_list.push((m.name.clone(), Kept::Loading));
+                continue;
+            }
+        }
         // a folder excluded since (or an entry in one) stays, like any sort's
         if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded)) {
             plan.kept += 1;
@@ -1504,6 +1553,9 @@ pub enum Kept {
     /// A system folder, the Trash, Marketplace Listings, the Library, the
     /// Current Outfit, a viewer folder (#RLV…): what a drag may not move.
     Protected,
+    /// A folder whose subfolders are not loaded yet: it moves whole once
+    /// they are (the preview asks for them).
+    Loading,
 }
 
 impl Kept {
@@ -1514,6 +1566,7 @@ impl Kept {
             Kept::Locked => aurora_i18n::tr!("inventory-sorter-kept-locked"),
             Kept::Excluded => aurora_i18n::tr!("inventory-sorter-kept-excluded"),
             Kept::Protected => aurora_i18n::tr!("inventory-sorter-kept-protected"),
+            Kept::Loading => aurora_i18n::tr!("inventory-sorter-kept-loading"),
         }
     }
 }
@@ -2195,7 +2248,7 @@ fn plan_with(
                 // moved whole once all it holds is loaded (and seen not worn)
                 plan.unfetched.extend(unloaded);
                 plan.kept += 1;
-                plan.kept_list.push((name, Kept::Protected));
+                plan.kept_list.push((name, Kept::Loading));
                 continue;
             }
         }
@@ -2310,6 +2363,21 @@ pub fn step(
     let mut used: Vec<Uuid> = Vec::new();
     'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
+        // a folder whose tree is still loading waits for it (Resume and
+        // Undo read runs in folders not opened this session): skipped only
+        // once it is loaded and still cannot move
+        if next.folder && actions::parent(inv, next.id) == Some(next.from) {
+            let loading = unloaded_below(inv, next.id);
+            if !loading.is_empty() {
+                for id in loading {
+                    inv.request(id);
+                }
+                if change.operations.is_empty() {
+                    return Step::Wait;
+                }
+                break 'moves;
+            }
+        }
         let still_here = actions::parent(inv, next.id) == Some(next.from)
             && inv.folders.contains_key(&next.id) == next.folder
             // a restore goes back to a folder, never along a path or to
