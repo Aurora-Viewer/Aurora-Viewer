@@ -335,16 +335,21 @@ fn start_undo(inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>, protecte
 /// are. One the server failed to give counts as read (what it holds stays
 /// where it is) and is never asked for again in a loop.
 fn ask_for(inv: &mut Inventory, ids: impl IntoIterator<Item = Uuid>) -> bool {
-    let mut loaded = true;
+    let mut unknown = Vec::new();
+    let mut reading = 0;
     for id in ids {
         match inv.folders.get(&id).map(|f| f.state) {
-            Some(FetchState::Unknown) => {
-                inv.request(id);
-                loaded = false;
-            }
-            Some(FetchState::Fetching) => loaded = false,
+            Some(FetchState::Unknown) => unknown.push(id),
+            Some(FetchState::Fetching) => reading += 1,
             Some(FetchState::Fetched | FetchState::Failed) | None => {}
         }
+    }
+    // a few at a time: a deep tree is read as its folders answer (each
+    // answer changes the inventory, and this is asked again), never
+    // thousands of requests at once
+    let loaded = unknown.is_empty() && reading == 0;
+    for id in unknown.into_iter().take(REQUESTS_AT_ONCE.saturating_sub(reading)) {
+        inv.request(id);
     }
     loaded
 }
@@ -506,6 +511,9 @@ struct Job {
     started: Instant,
     /// Since when the next move waits for its destination to load.
     waiting_since: Option<Instant>,
+    /// The move that wait is for, and whether for its own subfolders: a
+    /// new move or another kind of wait starts the clock again.
+    waiting_for: Option<(Uuid, bool)>,
     /// Moves confirmed since the journal last took them.
     confirmed: Vec<sorter::journal::Entry>,
     /// Undo, a snapshot or a resumed run: what it ends.
@@ -527,12 +535,6 @@ struct Job {
     earlier_runs: Vec<u64>,
     /// The sort folder's id when the run began, for a resume.
     base_id: Option<Uuid>,
-    /// The folders a refused batch's moves came from, to read again: the
-    /// inventory moved them here before the server answered, so until those
-    /// folders are read again an entry would look arrived when it is not.
-    recheck: Vec<Uuid>,
-    /// Those folders being read: nothing is counted or sent meanwhile.
-    rechecking: HashSet<Uuid>,
     /// How many moves the run-to-resume file held when last written (None:
     /// not written yet). It is written again only once the run shrank by a
     /// fifth: a large run's whole queue is not copied every few seconds,
@@ -579,9 +581,18 @@ impl Job {
             undoes: None,
             earlier_runs: Vec::new(),
             base_id: None,
-            recheck: Vec::new(),
-            rechecking: HashSet::new(),
+            waiting_for: None,
             unfinished_len: None,
+        }
+    }
+
+    /// The next move waits (`subtree`: for its own subfolders, else for its
+    /// destination): the clock starts again for another move or wait.
+    fn wait_for(&mut self, subtree: bool) {
+        let key = self.queue.front().map(|m| (m.id, subtree));
+        if self.waiting_for != key {
+            self.waiting_for = key;
+            self.waiting_since = None;
         }
     }
 
@@ -605,9 +616,6 @@ impl Job {
                 folders,
                 self.retries + 1
             );
-        }
-        if error.is_some() {
-            self.recheck.extend(batch.moves.iter().map(|m| m.from));
         }
         match error {
             None => {
@@ -647,7 +655,7 @@ impl Job {
     /// applied them late, or in part): done and journaled, out of the queue
     /// or of the failed count. The rest stay unsure until the job ends.
     fn settle(&mut self, inv: &Inventory) {
-        if self.unsure.is_empty() || !self.rechecking.is_empty() {
+        if self.unsure.is_empty() {
             return;
         }
         let base = self.base.clone();
@@ -1220,20 +1228,9 @@ pub(super) fn show(
     // a refused batch the server applied after all: done, not resent (before
     // the journal takes this frame's confirmed moves, so none is left out)
     if let Some(job) = state.job.as_mut() {
-        // a refused batch's sources read again first (their entries' place
-        // as the server has it), then what arrived is counted
-        for id in std::mem::take(&mut job.recheck) {
-            if let Some(f) = inv.folders.get_mut(&id) {
-                f.state = FetchState::Unknown;
-                inv.request(id);
-                job.rechecking.insert(id);
-            }
-        }
-        job.rechecking.retain(|id| {
-            inv.folders
-                .get(id)
-                .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching))
-        });
+        // (a refused or partly confirmed batch's answer carries the server's
+        // record of each entry it read, already applied: an entry is never
+        // counted from where it was only sent)
         job.settle(inv);
     }
     // The journal takes what the server confirmed; saved every few batches
@@ -1279,7 +1276,6 @@ pub(super) fn show(
         && !state.submitted
         && let Some(job) = state.job.as_mut()
         && !job.paused
-        && job.rechecking.is_empty()
         && job.next_at.is_none_or(|at| now >= at)
     {
         // a folder excluded during the run: its moves still queued stay
@@ -1320,6 +1316,7 @@ pub(super) fn show(
                 // a folder to move whole whose subfolders load slowly: only
                 // that move is given up after a longer wait, never the moves
                 // to the same place
+                job.wait_for(true);
                 let since = *job.waiting_since.get_or_insert(now);
                 if now.duration_since(since) > LOADING_LIMIT {
                     if job.queue.pop_front().is_some() {
@@ -1334,6 +1331,7 @@ pub(super) fn show(
             }
             Step::Wait => {
                 // a destination that never loads: its move is skipped
+                job.wait_for(false);
                 let since = *job.waiting_since.get_or_insert(now);
                 if now.duration_since(since) > WAIT_LIMIT {
                     if let Some(first) = job.queue.pop_front() {

@@ -2310,7 +2310,7 @@ pub enum NetCommand {
     /// Track a mutation's deferred item copies while its folders remain visible.
     FinishInventoryCopies {
         request: Uuid,
-        reply: crate::inventory::operations::Reply,
+        reply: Box<crate::inventory::operations::Reply>,
     },
     CreateInventoryItem {
         parent: Uuid,

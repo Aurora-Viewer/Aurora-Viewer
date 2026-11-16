@@ -286,7 +286,7 @@ impl Demo {
                     item.owner = world.agent_id;
                     items.push(item);
                 }
-                let mut completed = reply.clone();
+                let mut completed = (**reply).clone();
                 completed.copies.clear();
                 completed.contents.clear();
                 completed.folders.clear();

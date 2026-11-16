@@ -726,13 +726,23 @@ impl App {
                     self.inventory_ui.show_original(&self.world.inventory, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
-                self.send(NetCommand::FinishInventoryCopies { request, reply });
+                self.send(NetCommand::FinishInventoryCopies {
+                    request,
+                    reply: Box::new(reply),
+                });
                 return;
             }
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
-        self.inventory_ui.finish_sorter(request, result.as_ref().err().map(String::as_str));
+        // moves the server did not show at their place: the batch is
+        // answered as refused (its entries counted once seen there)
+        let unconfirmed = result
+            .as_ref()
+            .is_ok_and(|reply| !reply.unconfirmed.is_empty())
+            .then(|| aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders"));
+        self.inventory_ui
+            .finish_sorter(request, result.as_ref().err().map(String::as_str).or(unconfirmed));
         self.inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());

@@ -1450,7 +1450,19 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
     for m in moves {
         let here = actions::parent(inv, m.id) == Some(m.from);
         // a folder whose tree is still loading: kept for now, asked for
-        if here && m.folder {
+        // (only one that could move: never excluded, locked, worn or
+        // protected, nor a tree loaded only to be skipped)
+        if here
+            && m.folder
+            && (m.restore || !prefs.excludes(inv, m.id))
+            && actions::relocatable(inv, m.id, protected)
+            && !holds_worn.contains(&m.id)
+            && match m.to {
+                Dest::Folder(target) if m.restore => restore_target_allowed(inv, target),
+                Dest::Folder(target) => target_allowed(inv, target),
+                Dest::Path(_) | Dest::PreTrash => true,
+            }
+        {
             let unloaded = unloaded_below(inv, m.id);
             if !unloaded.is_empty() {
                 // the run waits for its tree before it goes (step), so it is
@@ -2400,10 +2412,17 @@ pub fn step(
             if !loading.is_empty() {
                 // a few at a time beside the inventory's own loading, never
                 // a whole deep tree in one frame
-                for id in loading {
-                    if inv.queue.len() >= LOADS_AT_ONCE {
-                        break;
-                    }
+                let reading = loading
+                    .iter()
+                    .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching))
+                    .count();
+                let ask: Vec<Uuid> = loading
+                    .iter()
+                    .copied()
+                    .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown))
+                    .take(LOADS_AT_ONCE.saturating_sub(reading))
+                    .collect();
+                for id in ask {
                     inv.request(id);
                 }
                 if change.operations.is_empty() {

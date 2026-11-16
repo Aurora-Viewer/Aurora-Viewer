@@ -310,6 +310,10 @@ pub struct Reply {
     /// the inventory to place them without reading their folders.
     pub moved_items: Vec<super::InvItem>,
     pub moved_folders: Vec<super::InvFolder>,
+    /// Moves of a `confirm_each` batch the server did not show at their
+    /// destination: the batch is answered with what it read (the server's
+    /// records, applied as they are) and these are not counted as done.
+    pub unconfirmed: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -653,6 +657,7 @@ where
             created,
             moved_items: Vec::new(),
             moved_folders: Vec::new(),
+            unconfirmed: Vec::new(),
         });
     }
     progress(Progress {
@@ -678,39 +683,47 @@ where
                 _ => None,
             })
             .collect();
-        let items: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| !folder).map(|(id, _, _)| *id).collect();
-        let moved: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| *folder).map(|(id, _, _)| *id).collect();
+        let wanted: HashMap<Uuid, Uuid> = expected.iter().map(|(id, _, parent)| (*id, *parent)).collect();
+        let mut items: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| !folder).map(|(id, _, _)| *id).collect();
+        let mut moved: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| *folder).map(|(id, _, _)| *id).collect();
+        // the server's latest record of each entry read, placed or not: the
+        // inventory takes them as they are (an entry still in its folder is
+        // shown there again, never left where it was only sent)
+        let mut item_records: HashMap<Uuid, super::InvItem> = HashMap::new();
+        let mut folder_records: HashMap<Uuid, super::InvFolder> = HashMap::new();
         for attempt in 0..=5u32 {
             let read_items = super::ais::read_items(http, cap, owner, &items).await;
             let read_folders = super::ais::read_folders(http, cap, &moved).await;
-            let placed = |id: Uuid, folder: bool, parent: Uuid| {
-                if folder {
-                    read_folders.iter().any(|f| f.id == id && f.parent == parent)
-                } else {
-                    read_items.items.iter().any(|it| it.id == id && it.parent == parent)
-                }
-            };
-            if expected.iter().all(|(id, folder, parent)| placed(*id, *folder, *parent)) {
-                return Ok(Reply {
-                    contents: Vec::new(),
-                    folders,
-                    moves_queued: false,
-                    refresh,
-                    copies,
-                    removed: change.removed,
-                    created,
-                    moved_items: read_items.items,
-                    moved_folders: read_folders,
-                });
+            // an entry deleted meanwhile has nothing left to confirm
+            let gone: std::collections::HashSet<Uuid> = read_items.missing.iter().copied().collect();
+            for it in read_items.items {
+                item_records.insert(it.id, it);
             }
-            if attempt == 5 {
+            for f in read_folders {
+                folder_records.insert(f.id, f);
+            }
+            // only what is not placed yet is read again
+            items.retain(|id| !gone.contains(id) && item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));
+            moved.retain(|id| folder_records.get(id).is_none_or(|f| Some(&f.parent) != wanted.get(id)));
+            if items.is_empty() && moved.is_empty() || attempt == 5 {
                 break;
             }
             // a move can show a moment after its request: read again, never
             // write again
             tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
         }
-        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into());
+        return Ok(Reply {
+            contents: Vec::new(),
+            folders,
+            moves_queued: false,
+            refresh,
+            copies,
+            removed: change.removed,
+            created,
+            moved_items: item_records.into_values().collect(),
+            moved_folders: folder_records.into_values().collect(),
+            unconfirmed: items.into_iter().chain(moved).collect(),
+        });
     }
     let mut contents = Vec::new();
     let favorite_changed = change
@@ -798,6 +811,7 @@ where
         created,
         moved_items: Vec::new(),
         moved_folders: Vec::new(),
+        unconfirmed: Vec::new(),
     })
 }
 
@@ -1358,6 +1372,7 @@ mod tests {
         assert!(lines.iter().all(|l| l.starts_with("GET ")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("/item/")) && lines.iter().any(|l| l.contains("/category/")));
         assert!(!lines.iter().any(|l| l.contains("/fetch")), "no folder read again");
+        assert!(reply.unconfirmed.is_empty(), "every move seen at its place");
         assert!(reply.contents.is_empty());
         assert_eq!(
             reply.moved_items.iter().map(|it| (it.id, it.parent)).collect::<Vec<_>>(),

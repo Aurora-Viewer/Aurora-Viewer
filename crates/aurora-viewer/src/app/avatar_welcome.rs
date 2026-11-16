@@ -381,7 +381,10 @@ fn copy_reply(
                     return None;
                 }
                 wears.late[at].1 = folder;
-                return Some(NetCommand::FinishInventoryCopies { request, reply });
+                return Some(NetCommand::FinishInventoryCopies {
+                    request,
+                    reply: Box::new(reply),
+                });
             }
             Err(reason) => {
                 log::warn!("avatar welcome pack: late copy failed: {reason}");
@@ -406,7 +409,10 @@ fn copy_reply(
                 None
             } else {
                 job.stage = Stage::Copy { request, root: folder };
-                Some(NetCommand::FinishInventoryCopies { request, reply })
+                Some(NetCommand::FinishInventoryCopies {
+                    request,
+                    reply: Box::new(reply),
+                })
             }
         }
         Err(reason) => {
@@ -674,6 +680,7 @@ mod tests {
         Reply {
             moved_items: Vec::new(),
             moved_folders: Vec::new(),
+            unconfirmed: Vec::new(),
             contents: Vec::new(),
             folders: vec![InvFolder {
                 id: id(101),

@@ -1500,7 +1500,7 @@ impl Bridge {
                         if !reply.copies.is_empty() {
                             self.commands.push(NetCommand::FinishInventoryCopies {
                                 request: *request,
-                                reply: reply.clone(),
+                                reply: Box::new(reply.clone()),
                             });
                         } else {
                             self.mutation = None;
