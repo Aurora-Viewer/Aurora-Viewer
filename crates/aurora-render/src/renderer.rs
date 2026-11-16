@@ -7705,18 +7705,29 @@ impl Backend {
                 return Err(Box::new(packet));
             }
         };
+        let generation = self.vr.reference(eyes.reference_changed);
         if let Some(rotation) = eyes.head_rotation {
             self.vr.set_head_pose(crate::HeadPose {
                 rotation,
                 position: eyes.head_position,
                 rig_position: packet.params.view.inverse().w_axis.truncate(),
-                generation: self.vr.reference(eyes.reference_changed),
+                generation,
                 origin: packet.params.vr_origin,
                 revision: packet.params.vr_revision,
                 mode: packet.params.vr_rig,
                 sampled: std::time::Instant::now(),
             });
         }
+        self.vr.set_controller_poses(crate::ControllerPoses {
+            hands: eyes.hands,
+            tracking_to_world: eyes.tracking_to_world,
+            buttons: eyes.buttons,
+            generation,
+            origin: packet.params.vr_origin,
+            revision: packet.params.vr_revision,
+            mode: packet.params.vr_rig,
+            sampled: std::time::Instant::now(),
+        });
         self.vr.set_focused(focused);
         self.vr.started();
         // Keep the desktop egui texture atlas current, even though the headset has no UI.

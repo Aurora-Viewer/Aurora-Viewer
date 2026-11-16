@@ -38,11 +38,40 @@ impl HeadPose {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GripState {
+    Unavailable,
+    Inactive,
+    Untracked,
+    Tracked(glam::Vec3),
+}
+
+/// Predicted grip points in renderer world coordinates, coherent with the eye anchor.
+#[derive(Debug, Clone, Copy)]
+pub struct ControllerPoses {
+    pub hands: [GripState; 2],
+    /// LOCAL tracking space to world, sampled with these grips (includes rig motion).
+    pub tracking_to_world: glam::Mat4,
+    /// Monotonic calibration/toggle press counters; retained until the next press.
+    pub buttons: [u64; 2],
+    pub generation: u64,
+    pub origin: Option<u64>,
+    pub revision: u64,
+    pub mode: crate::stereo_view::RigMode,
+    pub sampled: std::time::Instant,
+}
+impl ControllerPoses {
+    pub fn matches(&self, origin: Option<u64>, revision: u64) -> bool {
+        self.sampled.elapsed() <= std::time::Duration::from_millis(100) && self.origin == origin && self.revision == revision
+    }
+}
+
 pub(crate) struct Control {
     wanted: AtomicBool,
     state: AtomicU8,
     focused: AtomicBool,
     head_pose: Mutex<Option<HeadPose>>,
+    controllers: Mutex<Option<ControllerPoses>>,
     reference: AtomicU64,
     default_resolution: AtomicU64,
     /// The runtime announced it is going away (`xr_frame::runtime_leaving`):
@@ -56,6 +85,7 @@ impl Control {
             wanted: AtomicBool::new(false),
             focused: AtomicBool::new(false),
             head_pose: Mutex::new(None),
+            controllers: Mutex::new(None),
             reference: AtomicU64::new(0),
             default_resolution: AtomicU64::new(0),
             runtime_lost: AtomicBool::new(false),
@@ -84,6 +114,26 @@ impl Control {
             self.reference.fetch_add(1, Ordering::AcqRel) + 1
         } else {
             self.reference.load(Ordering::Acquire)
+        }
+    }
+    pub fn controller_poses(&self) -> Option<ControllerPoses> {
+        if !self.focused() {
+            return None;
+        }
+        self.controllers
+            .try_lock()
+            .ok()
+            .and_then(|p| *p)
+            .filter(|p| p.sampled.elapsed() <= std::time::Duration::from_millis(100))
+    }
+    pub fn set_controller_poses(&self, mut poses: ControllerPoses) {
+        for hand in &mut poses.hands {
+            if matches!(hand, GripState::Tracked(p) if !p.is_finite()) {
+                *hand = GripState::Untracked;
+            }
+        }
+        if let Ok(mut current) = self.controllers.try_lock() {
+            *current = Some(poses);
         }
     }
     pub fn set_head_pose(&self, mut pose: HeadPose) {
@@ -115,6 +165,9 @@ impl Control {
     }
     pub fn set_focused(&self, focused: bool) {
         self.focused.store(focused, Ordering::Release);
+        if !focused && let Ok(mut poses) = self.controllers.try_lock() {
+            *poses = None;
+        }
     }
     pub fn state(&self) -> VrState {
         match self.state.load(Ordering::Acquire) {
@@ -135,6 +188,9 @@ impl Control {
             return false;
         }
         self.wanted.store(on, Ordering::Release);
+        if let Ok(mut poses) = self.controllers.try_lock() {
+            *poses = None;
+        }
         if let Ok(mut head) = self.head_pose.try_lock() {
             *head = None;
         }
@@ -160,6 +216,9 @@ impl Control {
     }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn finish(&self, failed: bool) {
+        if let Ok(mut poses) = self.controllers.try_lock() {
+            *poses = None;
+        }
         self.wanted.store(false, Ordering::Release);
         self.focused.store(false, Ordering::Release);
         if let Ok(mut head) = self.head_pose.try_lock() {
@@ -172,6 +231,52 @@ impl Control {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn controller_sample() -> ControllerPoses {
+        ControllerPoses {
+            hands: [GripState::Tracked(glam::Vec3::X), GripState::Tracked(glam::Vec3::Y)],
+            tracking_to_world: glam::Mat4::IDENTITY,
+            buttons: [0; 2],
+            generation: 2,
+            origin: Some(7),
+            revision: 3,
+            mode: crate::stereo_view::RigMode::FirstPerson,
+            sampled: std::time::Instant::now(),
+        }
+    }
+    #[test]
+    fn xr_arms_feedback_clears_on_focus_exit_and_rejects_stale_or_wrong_reference() {
+        let control = Control::new(true);
+        let mut sample = controller_sample();
+        control.set_controller_poses(sample);
+        assert!(control.controller_poses().is_none());
+        control.set_focused(true);
+        assert!(control.controller_poses().is_some());
+        assert!(sample.matches(Some(7), 3));
+        assert!(!sample.matches(Some(8), 3));
+        assert!(!sample.matches(Some(7), 4));
+        control.set_focused(false);
+        control.set_focused(true);
+        assert!(control.controller_poses().is_none(), "focus regain cannot resurrect cached hands");
+        sample.sampled -= std::time::Duration::from_secs(1);
+        control.set_controller_poses(sample);
+        assert!(control.controller_poses().is_none());
+        control.set_controller_poses(controller_sample());
+        control.finish(false);
+        control.set_focused(true);
+        assert!(control.controller_poses().is_none());
+    }
+    #[test]
+    fn xr_arms_invalid_hand_does_not_discard_the_other_hand() {
+        let control = Control::new(true);
+        control.set_focused(true);
+        let mut sample = controller_sample();
+        sample.hands[0] = GripState::Tracked(glam::Vec3::NAN);
+        control.set_controller_poses(sample);
+        assert_eq!(
+            control.controller_poses().expect("feedback").hands,
+            [GripState::Untracked, GripState::Tracked(glam::Vec3::Y)]
+        );
+    }
     fn sample(rotation: glam::Quat) -> HeadPose {
         HeadPose {
             rotation,

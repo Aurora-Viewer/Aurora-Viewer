@@ -548,6 +548,7 @@ impl Motion {
 pub struct Controller {
     pub(super) poser: Option<(Arc<crate::ik_edit::poser::SubjectPose>, Mat4)>,
     pub(super) ik: super::ik::Pose,
+    pub(super) arm_tracking: crate::arm_tracking::Targets,
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
     pub(super) ground: Option<grounding::Frame>,
@@ -1767,6 +1768,14 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
+        let arms = if !self.ik.edit.active && self.ik.targets.is_empty() && self.poser.is_none() && !hold_pose {
+            crate::arm_tracking::apply(rig, rotations, positions, pelvis, scale, self.arm_tracking)
+        } else {
+            None
+        };
+        let (rotations, positions) = arms
+            .as_ref()
+            .map_or((rotations, positions), |p| (p.rotations.as_slice(), p.positions.as_slice()));
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
             |(pose, model)| pose.matrices(rig, *model),
@@ -2656,6 +2665,55 @@ mod tests {
         });
         let mid = angle(&mut c, at(4.25));
         assert!(mid > -0.4 && mid < 0.4, "{mid}");
+    }
+
+    #[test]
+    fn arm_tracking_keeps_animation_running_and_releases_on_the_next_frame() {
+        let rig = rig();
+        let mut clip = swing(&rig).anim.clone();
+        for name in ["mTorso", "mKneeLeft", "mElbowRight"] {
+            let mut joint = clip.joints[0].clone();
+            joint.joint_name = name.into();
+            clip.joints.push(joint);
+        }
+        let clip = Arc::new(BoundAnim::bind(clip, &rig));
+        let mut reference = Controller::for_control_avatar();
+        let mut tracked = Controller::for_control_avatar();
+        let start = Instant::now();
+        let id = Uuid::from_u128(0x12345);
+        for controller in [&mut reference, &mut tracked] {
+            controller.sync(&[signal(id, 1, start)], start, |_| Some(clip.clone()));
+        }
+        let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
+        tracked.arm_tracking =
+            ["mWristLeft", "mWristRight"].map(|name| Some(rest[rig.names[name]].w_axis.truncate() + Vec3::new(0.2, 0.0, 0.15)));
+        let mut baseline = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let mut output = baseline.clone();
+        let mut torso = Vec::new();
+        for millis in [250, 750, 1250] {
+            let now = start + Duration::from_millis(millis);
+            reference.evaluate(&rig, now, None, &mut baseline);
+            tracked.evaluate(&rig, now, None, &mut output);
+            assert_eq!(reference.rot, tracked.rot, "corrections never feed into held animation rotations");
+            assert_eq!(reference.pos_delta, tracked.pos_delta);
+            for name in ["mTorso", "mHipLeft", "mKneeLeft", "mAnkleRight", "mHead"] {
+                assert_eq!(baseline[rig.names[name]], output[rig.names[name]], "{name} keeps normal animation");
+            }
+            assert_ne!(baseline[rig.names["mWristLeft"]], output[rig.names["mWristLeft"]]);
+            torso.push(baseline[rig.names["mTorso"]]);
+        }
+        assert_ne!(torso[0], torso[1], "base animation is actually moving");
+        tracked.arm_tracking[0] = None;
+        let now = start + Duration::from_millis(1400);
+        reference.evaluate(&rig, now, None, &mut baseline);
+        tracked.evaluate(&rig, now, None, &mut output);
+        assert_eq!(baseline[rig.names["mWristLeft"]], output[rig.names["mWristLeft"]]);
+        tracked.arm_tracking = [None; 2];
+        let now = start + Duration::from_millis(1500);
+        reference.evaluate(&rig, now, None, &mut baseline);
+        tracked.evaluate(&rig, now, None, &mut output);
+        assert_eq!(baseline, output, "both arms rejoin the current animation immediately");
+        assert!(tracked.paused_at.is_none());
     }
 
     fn rig() -> Rig {

@@ -26,7 +26,8 @@ impl Graphics {
             // SAFETY: Standard platform loader lookup, with desktop fallback on failure.
             unsafe { xr::Entry::load(&())? }
         };
-        if !entry.enumerate_extensions()?.khr_metal_enable {
+        let available = entry.enumerate_extensions()?;
+        if !available.khr_metal_enable {
             return Err("XR_KHR_metal_enable unavailable".into());
         }
         let xr = entry.create_instance(
@@ -41,6 +42,7 @@ impl Graphics {
                 // a non-exhaustive struct: set the one extension on a default
                 let mut extensions = xr::ExtensionSet::default();
                 extensions.khr_metal_enable = true;
+                extensions.meta_touch_controller_plus = crate::xr_input::enabled() && available.meta_touch_controller_plus;
                 extensions
             },
             &[],

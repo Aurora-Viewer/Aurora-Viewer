@@ -3759,6 +3759,8 @@ To check with these scenarios:
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
+| `AURORA_LIVE_VR_ARMS=1` | Opt-in OpenXR controller arm tracking for your own avatar in a live session (docs/VR.md) |
+| `AURORA_DEMO_VR_ARMS=1\|test\|xr` | Offline: wrist targets from a desktop panel or from OpenXR controllers, layered over the avatar's animation |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
@@ -4027,6 +4029,24 @@ That ignored test creates and removes its own isolated profile.
   Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.
+- **`AURORA_DEMO_VR_ARMS=1|test|xr`**: requires `AURORA_DEMO=1`. Opens a desktop
+  panel with tracking initially off, independent arm switches and XYZ wrist
+  targets in avatar-local metres (+X forward, +Y left, +Z up), each with a reset.
+  Normal animation continues; only the shoulder and elbow are corrected with the
+  existing two-link solver, so wrists and fingers stay animated and a target out
+  of reach is bounded without stretching. Switching a hand or the global switch
+  off restores the animation on the next pose evaluation. Nothing is saved and no
+  network command is generated. IK Edit, the Poser, animation previews, frozen
+  poses and scripted contacts take precedence. Clear `AURORA_DEMO_IK_EDIT`,
+  `AURORA_DEMO_HAND_IK` and `AURORA_DEMO_POSER` for the ordinary standing fixture.
+
+  `test` is the automated visual scenario: left tracking at frame 420, both hands
+  at 520, right only at 700, global off at 850. Capture frames `450,620,760,900`
+  in one run. `xr` takes the targets from OpenXR grip poses instead: **Y**/**B**
+  toggle tracking and **X**/**A** capture the neutral pose. A hand that stops
+  being tracked releases on its own and waits for a new capture; losing focus or
+  recentering clears both. See [VR setup](VR.md#experimental-controller-arm-tracking).
+
 - **`AURORA_DEMO_IK_EDIT=1|move|release|gizmo|gizmo-local|gizmo-rotate`**: reuse the synthetic motorcycle,
   open IK Edit at frame 420, select the left wrist's palm point and the left
   linked target. `move` changes palm position and enables orientation;
@@ -14702,3 +14722,10 @@ before linking, for manual Ctrl+L and button checks. `link-denied,0,0` leaves on
 prim without Modify and attempts the same link: the refusal dialog must appear
 and both prims stay separate. Use `AURORA_DEMO_BUILD_STYLE=aurora|legacy` to
 compare the layouts and capture at frame 720 or later. These use no grid assets.
+
+
+`AURORA_LIVE_VR_ARMS=1`: ignored by offline launches. Read at startup, because the
+controller actions are created with the OpenXR session. The panel starts with
+tracking off; it needs your own ready, logged-in avatar and an explicit
+activation plus neutral capture. Agents must not connect to a grid to test it:
+the human logs in and checks it with a headset (see [VR.md](VR.md#experimental-controller-arm-tracking)).

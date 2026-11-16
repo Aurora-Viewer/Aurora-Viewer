@@ -15239,3 +15239,27 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+# Experimental offline arm tracking
+vr-arms-title = Suivi expérimental des bras
+vr-arms-help = Mètres dans le repère de l’avatar : X devant, Y à gauche, Z en haut. Les animations continuent.
+vr-arms-paused = Le suivi laisse la priorité à la pose, aux aperçus d’animation et aux poses figées.
+vr-arms-enable = Activer le suivi des bras
+vr-arms-left = Poignet gauche
+vr-arms-right = Poignet droit
+vr-arms-reset = Réinitialiser la cible
+vr-arms-source-desktop = Cibles de bureau
+vr-arms-source-xr = Contrôleurs OpenXR
+vr-arms-xr-help = En VR : B ou Y active/désactive le suivi ; A ou X capture les mains actuelles comme pose neutre. Recalibrez après une perte du suivi ou un recentrage. Les animations continuent.
+vr-arms-xr-calibrate = Calibrer la pose neutre
+vr-arms-xr-scale = Échelle du mouvement
+vr-arms-xr-unavailable = Entrée VR indisponible
+vr-arms-xr-inactive = Contrôleur inactif
+vr-arms-xr-lost = Suivi perdu ou invalide
+vr-arms-xr-needs-calibration = Suivi actif — calibrez la pose neutre
+vr-arms-xr-ready = Suivi actif et calibré
+vr-arms-xr-on = Suivi des bras activé
+vr-arms-xr-off = Suivi des bras désactivé
+vr-arms-xr-hint = { $state } · G : { $left } · D : { $right } · A/X : neutre · B/Y : suivi
+
+vr-arms-live-help = Les bras de votre avatar suivent vos manettes. Activez, puis enregistrez votre posture neutre (X ou A). Après un changement d’avatar, d’apparence ou de région, réactivez et enregistrez à nouveau. Local uniquement : les autres ne le voient pas.

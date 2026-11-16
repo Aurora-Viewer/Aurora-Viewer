@@ -613,6 +613,7 @@ pub struct App {
     /// Build tools (selection, manipulators, create, terraform).
     build: crate::build::BuildTool,
     ik_editor: crate::ik_edit::Editor,
+    arm_tracking: Option<crate::arm_tracking::Panel>,
     hud_drag: Option<crate::build::hud_drag::HudDrag>,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
@@ -1875,6 +1876,7 @@ impl App {
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
+            arm_tracking: crate::arm_tracking::Panel::from_env(),
             hud_drag: None,
             interactions: Default::default(),
             cursors: crate::cursors::Cursors::with_palette(&palette),
@@ -3366,6 +3368,13 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        if let Some(panel) = &mut self.arm_tracking
+            && panel.is_live()
+        {
+            panel.live_scope(false, None);
+            self.scene.arm_tracking = [None; 2];
+            self.scene.arm_tracking_live = None;
+        }
         self.parcel_music.enter(false);
         self.stream_url.clear();
         self.music_fade.reset();
@@ -4412,6 +4421,13 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
+                // An arrival can begin and finish in one event batch, even in
+                // the same region. Never carry a live neutral pose across it.
+                if let Some(panel) = &mut self.arm_tracking
+                    && panel.is_live()
+                {
+                    panel.live_scope(false, None);
+                }
                 let arrived_before = std::mem::replace(&mut self.first_arrival_done, true);
                 if arrived_before {
                     self.draw_stepping_arrived();
@@ -11410,6 +11426,20 @@ impl App {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
             // poses first: attachments follow their bone in the same frame
+            self.scene.arm_tracking = if let Some(panel) = &mut self.arm_tracking {
+                let live_state = matches!(self.screen, Screen::World)
+                    .then(|| self.scene.live_arm_state(&self.world))
+                    .flatten();
+                let allowed = panel.live_scope(self.demo, live_state) && !self.world.teleporting;
+                self.scene.arm_tracking_live = if panel.is_live() && allowed { live_state } else { None };
+                if !panel.is_live() || allowed {
+                    panel.tick(&self.world, self.frame_count);
+                }
+                panel.update_xr(&self.world, gfx.renderer.vr_controller_poses(), self.vr_revision, allowed);
+                panel.targets(allowed)
+            } else {
+                [None; 2]
+            };
             self.scene.update_foot_scope(&self.world, cull, world_frame);
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
@@ -18643,6 +18673,14 @@ impl App {
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
                 if !self.ik_editor.posing() {
+                    if let Some(panel) = &mut self.arm_tracking {
+                        panel.show(
+                            &ctx,
+                            &p,
+                            self.demo || panel.is_live(),
+                            self.scene.ik_edit.active || !self.scene.poser.is_empty(),
+                        );
+                    }
                     self.ik_editor.request_object_data(&mut self.world, Instant::now());
                     self.build.out.extend(self.ik_editor.take_prim_requests());
                     self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
@@ -18758,7 +18796,11 @@ impl App {
                 if vr_active {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
                     aurora_render::vr_hint_marker(&painter, true);
-                    let text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string());
+                    let mut text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string()).to_owned();
+                    if let Some(hint) = self.arm_tracking.as_ref().and_then(|p| p.xr_hint()) {
+                        text.push('\n');
+                        text.push_str(&hint);
+                    }
                     let at = egui::pos2(ctx.content_rect().center().x, ctx.content_rect().bottom() - 16.0);
                     let font = egui::FontId::proportional(18.0);
                     // Match the desktop mouselook instructions; this layer is excluded from both eyes.

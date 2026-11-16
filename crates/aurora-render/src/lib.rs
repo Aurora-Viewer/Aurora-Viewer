@@ -87,7 +87,9 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
-pub use vr_control::{HeadPose, VrState};
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+mod xr_input;
+pub use vr_control::{ControllerPoses, GripState, HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).

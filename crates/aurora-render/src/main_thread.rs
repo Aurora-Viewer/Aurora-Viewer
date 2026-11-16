@@ -1364,6 +1364,9 @@ impl Renderer {
     pub fn vr_runtime_lost(&self) -> bool {
         self.vr.runtime_lost()
     }
+    pub fn vr_controller_poses(&self) -> Option<crate::ControllerPoses> {
+        self.vr.controller_poses()
+    }
     pub fn vr_focused(&self) -> bool {
         self.vr.focused()
     }

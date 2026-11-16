@@ -190,7 +190,20 @@ impl Anchor {
 
     pub fn head_position(&self, pose: Pose) -> Option<Vec3> {
         pose.matrix()?;
-        let position = (self.rig * self.tracking).transform_point3(pose.position) + self.correction;
+        self.tracking_position(pose.position)
+    }
+
+    /// LOCAL tracking space to world, including the artificial rig and correction.
+    pub fn tracking_transform(&self) -> Mat4 {
+        Mat4::from_translation(self.correction) * self.rig * self.tracking
+    }
+
+    /// Map an independently tracked point with the same origin/correction as the eyes.
+    pub fn tracking_position(&self, position: Vec3) -> Option<Vec3> {
+        if !position.is_finite() {
+            return None;
+        }
+        let position = self.tracking_transform().transform_point3(position);
         position.is_finite().then_some(position)
     }
 
@@ -212,6 +225,19 @@ impl Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn xr_arms_points_share_eye_anchor_and_convert_y_up_to_world_z_up() {
+        let head = pose(Vec3::new(0.0, 1.6, 0.0));
+        let anchor = Anchor::new(rig_view(Vec3::new(10.0, 20.0, 2.0), 0.0), head).expect("anchor");
+        let grip = Vec3::new(0.2, 1.2, -0.4);
+        let base = anchor.tracking_position(grip).expect("grip");
+        let raised = anchor.tracking_position(grip + Vec3::Y * 0.3).expect("raised");
+        let right = anchor.tracking_position(grip + Vec3::X * 0.2).expect("right");
+        assert!((raised - base).abs_diff_eq(Vec3::Z * 0.3, 1e-5));
+        assert!((right - base).abs_diff_eq(Vec3::NEG_Y * 0.2, 1e-5));
+        assert_eq!(anchor.tracking_position(head.position), anchor.head_position(head));
+        assert!(anchor.tracking_position(Vec3::NAN).is_none());
+    }
     fn pose(position: Vec3) -> Pose {
         Pose {
             position,

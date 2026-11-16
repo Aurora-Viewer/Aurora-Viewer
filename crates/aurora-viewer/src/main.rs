@@ -7,6 +7,7 @@ mod allocator;
 mod alt_codes;
 mod ao;
 mod app;
+mod arm_tracking;
 mod atomic_file;
 mod autopilot;
 mod autoreplace;

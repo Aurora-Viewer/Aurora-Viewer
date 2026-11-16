@@ -890,6 +890,8 @@ pub struct Scene {
     /// Every skeleton holds its pose: the photo mode's frozen world.
     pub pause_all_skeletons: bool,
     pub ik_edit: ik::EditRequest,
+    pub arm_tracking: crate::arm_tracking::Targets,
+    pub arm_tracking_live: Option<crate::arm_tracking::live::State>,
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
@@ -1653,6 +1655,8 @@ impl Scene {
             paused_skeletons: HashSet::new(),
             pause_all_skeletons: false,
             ik_edit: ik::EditRequest::default(),
+            arm_tracking: [None; 2],
+            arm_tracking_live: None,
             poser: HashMap::new(),
             synchronize_animations: false,
             animation_speed: 1.0,
@@ -5766,6 +5770,57 @@ impl Scene {
         s
     }
 
+    pub(crate) fn live_arm_state(&self, world: &World) -> Option<crate::arm_tracking::live::State> {
+        let avatar = world.agent_id;
+        let idx = world.objects.index_of_uuid(&avatar)?;
+        let object = world.objects.get(idx)?;
+        let skeleton = self.skeletons.get(&avatar)?;
+        if avatar.is_nil()
+            || world.login.as_ref().is_none_or(|login| login.agent_id != avatar)
+            || !object.is_avatar()
+            || !world.movement_complete
+            || world.teleporting
+            || world.agent.is_sitting()
+            || world.server_visual_params().is_empty()
+            || skeleton.appearance_gen != world.appearance_generation(&avatar)
+            || self.ik_edit.active
+            || self.poser.contains_key(&avatar)
+            || self.pause_all_skeletons
+            || self.paused_skeletons.contains(&avatar)
+            || world.animation_preview_clock.is_some()
+            || world.avatar_studio
+            || self.neutral_pose_test == Some(true)
+            || self.motions.get(&avatar).is_some_and(|m| !m.ik.targets.is_empty())
+        {
+            return None;
+        }
+        let model = world.avatar_models.get(&avatar)?;
+        let pose = world.avatar_poses.get(&avatar)?;
+        if !model.is_finite() || model.determinant().abs() < 1e-8 || pose.len() != world.avatar_lib.rig.len() {
+            return None;
+        }
+        for names in crate::arm_tracking::CHAINS {
+            let [Some(a), Some(b), Some(c)] = names.map(|name| world.avatar_lib.rig.names.get(name).copied()) else {
+                return None;
+            };
+            let rig = &world.avatar_lib.rig;
+            if rig.parent[b] != Some(a)
+                || rig.parent[c] != Some(b)
+                || [a, b, c]
+                    .iter()
+                    .any(|&j| !pose[j].is_finite() || !skeleton.base.local_pos[j].is_finite() || !skeleton.base.scale[j].is_finite())
+            {
+                return None;
+            }
+        }
+        Some(crate::arm_tracking::live::State {
+            avatar,
+            region: world.main_region?,
+            appearance: skeleton.appearance_gen,
+            skeleton: skeleton.signature,
+        })
+    }
+
     /// Evaluate skeleton poses of every palette owner near the camera; the
     /// sync of the same frame uploads their joint palettes
     /// (`update_anchors`). Only our avatar reports timed animation stops
@@ -5888,6 +5943,11 @@ impl Scene {
                 None
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
+            motions.arm_tracking = if owner == world.agent_id && !control && preview.is_none() {
+                self.arm_tracking
+            } else {
+                [None; 2]
+            };
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
             motions.set_time_factor(
                 anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
@@ -5979,6 +6039,14 @@ impl Scene {
             } else {
                 Vec::new()
             };
+            // Recheck after rebuilding the shaped skeleton and scripted targets:
+            // never apply yesterday's calibration to today's joints, even for one frame.
+            if owner == world.agent_id
+                && let Some(expected) = self.arm_tracking_live
+                && (self.live_arm_state(world) != Some(expected) || !motions.ik.targets.is_empty())
+            {
+                motions.arm_tracking = [None; 2];
+            }
             for frame in [&mut motions.ground, &mut motions.legacy_ground].into_iter().flatten() {
                 let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
                 frame.to_world.w_axis.z += dz - previous;
@@ -6694,6 +6762,70 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn arm_tracking_live_eligibility_requires_own_ready_avatar_and_releases_on_tools_and_travel() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut scene = Scene::new(Default::default(), lib);
+        assert!(scene.live_arm_state(&world).is_none());
+        let handle = world.main_region.expect("synthetic demo region");
+        let idx = world.objects.upsert(handle, crate::demo::action_avatar(false));
+        world.movement_complete = true;
+        world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: world.agent_id,
+            visual_params: vec![128; 218],
+            texture_entry: None,
+            cof_version: 1,
+            appearance_version: 1,
+            hover_height: 0.0,
+            attachments: Vec::new(),
+        }));
+        let now = Instant::now();
+        scene.skeleton_of(&world, world.agent_id, idx, now);
+        world.avatar_models.insert(world.agent_id, Mat4::IDENTITY);
+        world
+            .avatar_poses
+            .insert(world.agent_id, vec![Mat4::IDENTITY; world.avatar_lib.rig.len()]);
+        let ready = scene.live_arm_state(&world).expect("own ready skeleton");
+        let own = world.agent_id;
+        let login = world.login.take();
+        assert!(scene.live_arm_state(&world).is_none());
+        world.login = login;
+        Arc::make_mut(world.login.as_mut().expect("synthetic login")).agent_id = Uuid::from_u128(111);
+        assert!(scene.live_arm_state(&world).is_none(), "login identity must match the avatar");
+        Arc::make_mut(world.login.as_mut().expect("synthetic login")).agent_id = own;
+        world.agent_id = Uuid::from_u128(123);
+        assert!(scene.live_arm_state(&world).is_none());
+        world.agent_id = own;
+        world.teleporting = true;
+        assert!(scene.live_arm_state(&world).is_none());
+        world.teleporting = false;
+        world.movement_complete = false;
+        assert!(scene.live_arm_state(&world).is_none());
+        world.movement_complete = true;
+        scene.ik_edit.active = true;
+        assert!(scene.live_arm_state(&world).is_none());
+        scene.ik_edit.active = false;
+        scene.paused_skeletons.insert(own);
+        assert!(scene.live_arm_state(&world).is_none());
+        scene.paused_skeletons.clear();
+        assert_eq!(scene.live_arm_state(&world), Some(ready));
+        world.preview_shape(Some(vec![129; 218]));
+        assert!(scene.live_arm_state(&world).is_none(), "stale shaped skeleton is not eligible");
+        scene.skeleton_of(&world, own, idx, now);
+        assert_ne!(scene.live_arm_state(&world), Some(ready));
+        world.avatar_poses.get_mut(&own).expect("own pose")[world.avatar_lib.rig.names["mWristLeft"]] =
+            Mat4::from_cols_array(&[f32::NAN; 16]);
+        assert!(scene.live_arm_state(&world).is_none());
+        world.avatar_poses.remove(&own);
+        assert!(scene.live_arm_state(&world).is_none());
+        world.login = None;
+        assert!(scene.live_arm_state(&world).is_none());
+    }
 
     #[test]
     fn saved_material_local_maps_rebuild_the_object_after_local_slot_restoration() {
