@@ -21,6 +21,7 @@ static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("a
 
 /// The saved state; false when there is none or it cannot be read.
 pub fn load(path: &Path) -> bool {
+    crate::saves::wait_for(path, crate::saves::BEFORE_READ);
     match OWED.owed(path).map_or_else(|| std::fs::read(path), Ok) {
         Ok(bytes) => serde_json::from_slice::<bool>(&bytes).unwrap_or_else(|e| {
             log::warn!("cannot read the flying state at the last logout: {e}");
@@ -35,12 +36,16 @@ pub fn load(path: &Path) -> bool {
     }
 }
 
-/// Remember whether the session that ends was flying.
+/// Remember whether the session that ends was flying, on a save thread
+/// (saves.rs): the logout does not wait for the disk.
 pub fn save(path: &Path, flying: bool) {
     let bytes = if flying { b"true".to_vec() } else { b"false".to_vec() };
-    if let Err(e) = OWED.write(path, bytes) {
-        log::warn!("cannot save the flying state at logout ({e}); kept, tried again later");
-    }
+    let path = path.to_path_buf();
+    crate::saves::replace(path.clone(), move || {
+        if let Err(e) = OWED.write(&path, bytes) {
+            log::warn!("cannot save the flying state at logout ({e}); kept, tried again later");
+        }
+    });
 }
 
 /// The viewer closing: a state still owed is tried once more.

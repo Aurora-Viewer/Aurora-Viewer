@@ -163,6 +163,8 @@ pub struct Monitor {
     scene_sort: usize,
     /// The last report written, for the status bar.
     pub exported: Option<String>,
+    /// The report being written by its save thread: its file name once done.
+    pub export: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 impl Default for Monitor {
@@ -179,6 +181,7 @@ impl Default for Monitor {
             scene_view: SceneView::Avatars,
             scene_sort: 1,
             exported: None,
+            export: None,
         }
     }
 }
