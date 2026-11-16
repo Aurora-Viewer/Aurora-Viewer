@@ -1399,7 +1399,7 @@ mod tests {
         for width in [260.0, 130.0, 20.0, 130.0, 260.0] {
             let mut draw = |ui: &mut egui::Ui| {
                 ui.set_width(width);
-                header(ui, &palette, &mut settings, None, egui::Id::new("radar-test-list"));
+                header(ui, &palette, &mut settings, None, egui::Id::unique("radar-test-list"));
             };
             let mut edge = egui::Pos2::ZERO;
             frames.run(Vec::new(), |ui| {
