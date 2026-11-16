@@ -520,6 +520,11 @@ struct Job {
     earlier_runs: Vec<u64>,
     /// The sort folder's id when the run began, for a resume.
     base_id: Option<Uuid>,
+    /// How many moves the run-to-resume file held when last written (None:
+    /// not written yet). It is written again only once the run shrank by a
+    /// fifth: a large run's whole queue is not copied every few seconds,
+    /// and a resume drops the moves already done.
+    unfinished_len: Option<usize>,
 }
 
 struct InFlight {
@@ -561,6 +566,7 @@ impl Job {
             undoes: None,
             earlier_runs: Vec::new(),
             base_id: None,
+            unfinished_len: None,
         }
     }
 
@@ -682,7 +688,8 @@ const RULES: usize = 1;
 const OPTIONS: usize = 2;
 const CLEANUP: usize = 3;
 
-/// Journal saves: every this many confirmed batches, and at a run's end.
+/// Journal saves: at most this often while a run confirms batches, and at
+/// a run's end.
 const SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl State {
@@ -710,7 +717,10 @@ impl State {
                 // busy or not allowed now: an empty journal for this session,
                 // the file left as it is
                 log::warn!("auto-sort: the journal could not be read now: {error}");
-                j::Journal { read_only: true, ..Default::default() }
+                j::Journal {
+                    read_only: true,
+                    ..Default::default()
+                }
             }
             Err(error) => {
                 // kept aside, never written over: the history stays for a
@@ -740,6 +750,27 @@ impl State {
         // a new run's moves replace any older run to resume
         if self.job.as_ref().is_some_and(|job| job.restoring != Some(Restoring::Resume)) {
             self.unfinished = None;
+        }
+        // the run to resume is written at its start and again each time it
+        // shrank by a fifth, never its whole queue every few seconds
+        let mut keep_file = false;
+        if let Some(job) = self.job.as_mut() {
+            let remaining = job.queue.len() + job.in_flight.as_ref().map_or(0, |batch| batch.moves.len());
+            if remaining > 0 && job.run.is_some() && job.unfinished_len.is_some_and(|last| remaining * 5 > last * 4) {
+                keep_file = true;
+            } else {
+                job.unfinished_len = Some(remaining);
+            }
+        }
+        if keep_file {
+            in_order(move || {
+                if let Some(journal) = journal
+                    && let Err(error) = sorter::journal::save(&sorter::journal::journal_path(&dir), &journal)
+                {
+                    log::warn!("auto-sort: the journal could not be saved: {error}");
+                }
+            });
+            return;
         }
         let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
             base_id: job.base_id,
@@ -827,6 +858,31 @@ impl State {
             confirmed.extend(flying);
             if !confirmed.is_empty() {
                 self.journal.record_in(job.run, confirmed);
+                self.unsaved += 1;
+            }
+        }
+        // a Trash run's entries on their way or not seen in the Trash yet:
+        // journaled too, as Undo leaves an entry that is not in the Trash
+        if let Some(trash) = self.trash.as_mut() {
+            let flying: Vec<(Uuid, Uuid)> = trash
+                .in_flight
+                .take()
+                .map(|(batch, _, _)| batch)
+                .unwrap_or_default()
+                .into_iter()
+                .chain(trash.unsure.drain(..).map(|(id, from, _)| (id, from)))
+                .collect();
+            if !flying.is_empty() {
+                self.journal.record_in(
+                    trash.run,
+                    flying.into_iter().map(|(id, from)| sorter::journal::Entry {
+                        id,
+                        folder: false,
+                        from,
+                        name: String::new(),
+                        to: None,
+                    }),
+                );
                 self.unsaved += 1;
             }
         }
@@ -1202,7 +1258,12 @@ pub(super) fn show(
                     let m = &job.queue[i];
                     !m.restore
                         && (prefs.sorter.excludes(inv, m.id)
-                            || m.folder && prefs.sorter.excluded.iter().any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
+                            || m.folder
+                                && prefs
+                                    .sorter
+                                    .excluded
+                                    .iter()
+                                    .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
                 })
                 .collect();
             for &i in out.iter().rev() {
@@ -1370,11 +1431,15 @@ pub(super) fn show(
         state.planned_at = Some(now);
         let make = {
             let (source, options, protected, worn) = (source.clone(), prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
-            move |inv: &Inventory| match &source {
-                Source::Folder(id) => sorter::plan(inv, *id, &options, &protected, &worn),
-                Source::Entries(ids) => sorter::plan_entries(inv, ids, &options, &protected, &worn),
-                Source::Whole => sorter::plan_whole(inv, &options, &protected, &worn),
-                Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &options, &protected, &worn),
+            move |inv: &Inventory| {
+                let mut plan = match &source {
+                    Source::Folder(id) => sorter::plan(inv, *id, &options, &protected, &worn),
+                    Source::Entries(ids) => sorter::plan_entries(inv, ids, &options, &protected, &worn),
+                    Source::Whole => sorter::plan_whole(inv, &options, &protected, &worn),
+                    Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &options, &protected, &worn),
+                };
+                plan.order();
+                plan
             }
         };
         if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
@@ -1513,7 +1578,7 @@ pub(super) fn show(
                 CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
                 _ => {
                     if !waiting.is_empty() {
-                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy, !pre_trash_loaded);
+                        pre_trash_card(ui, p, inv, state, (&waiting, waiting_in), busy, !pre_trash_loaded);
                         ui.add_space(6.0);
                     }
                     // the default folders the user opened, named in every preview
@@ -1574,7 +1639,7 @@ pub(super) fn show(
                     .map(|r| (r.id, r.from))
                     .collect();
                 if !ids.is_empty() {
-                    state.confirm = Some(Confirm::Trash(ids));
+                    state.confirm = Some(Confirm::Trash(folders_first(inv, ids)));
                 }
             }
         }
@@ -2202,8 +2267,18 @@ fn in_bin(inv: &Inventory, bin: Option<Uuid>, id: Uuid) -> bool {
     actions::parent(inv, id).is_some_and(|p| bin.is_some_and(|t| p == t || actions::under(inv, p, t)))
 }
 
-/// What waits in Pre-Trash, and the step that sends it to the Trash.
-fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], waiting_in: Option<Uuid>, busy: bool, loading: bool) {
+/// What waits in Pre-Trash (its entries and the folder), and the step that
+/// sends it to the Trash.
+fn pre_trash_card(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    state: &mut State,
+    waiting: (&[Uuid], Option<Uuid>),
+    busy: bool,
+    loading: bool,
+) {
+    let (waiting, waiting_in) = waiting;
     crate::ui::widgets::surface(ui, p, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -2236,9 +2311,19 @@ fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[
         if send.inner.clicked()
             && let Some(folder) = waiting_in
         {
-            state.confirm = Some(Confirm::PreTrash(waiting.iter().map(|id| (*id, folder)).collect()));
+            state.confirm = Some(Confirm::PreTrash(folders_first(
+                inv,
+                waiting.iter().map(|id| (*id, folder)).collect(),
+            )));
         }
     });
+}
+
+/// A Trash confirmation's entries, folders first (once, not per frame);
+/// the order is otherwise kept.
+fn folders_first(inv: &Inventory, mut ids: Vec<(Uuid, Uuid)>) -> Vec<(Uuid, Uuid)> {
+    ids.sort_by_key(|(id, _)| !inv.folders.contains_key(id));
+    ids
 }
 
 /// Rows shown in a Trash confirmation; the rest are counted.
@@ -2247,12 +2332,10 @@ const DOOMED_ROWS: usize = 300;
 /// The entries a Trash confirmation sends, each with the folder it is in,
 /// folders first, in a scrolled list.
 fn doomed_list(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, ids: &[(Uuid, Uuid)]) {
-    // folders first across the whole list (the riskiest entries), then the
-    // first rows of that order
-    let (folders, items): (Vec<&(Uuid, Uuid)>, Vec<&(Uuid, Uuid)>) = ids.iter().partition(|(id, _)| inv.folders.contains_key(id));
-    let mut rows: Vec<(bool, String, String)> = folders
-        .into_iter()
-        .chain(items)
+    // folders come first in `ids` (the riskiest entries, `folders_first`
+    // when the confirmation was made): the first rows of that order
+    let mut rows: Vec<(bool, String, String)> = ids
+        .iter()
         .take(DOOMED_ROWS)
         .map(|(id, from)| {
             let (folder, name) = match (inv.folders.get(id), inv.items.get(id)) {
@@ -3133,13 +3216,21 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
     }
     // an entry counts while it is known, or while the folder the run put it
     // in is not loaded yet (it is likely there, unseen)
-    let unloaded = |id: Option<Uuid>| id.is_some_and(|to| inv.folders.get(&to).is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching)));
+    let unloaded = |id: Option<Uuid>| {
+        id.is_some_and(|to| {
+            inv.folders
+                .get(&to)
+                .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching))
+        })
+    };
     let key = (inv.generation, state.journal.with(|j| j.version()));
     let label = match &state.undo_label {
         Some((at, label)) if *at == key => *label,
         _ => {
             let exists = |e: &sorter::journal::Entry| inv.items.contains_key(&e.id) || inv.folders.contains_key(&e.id) || unloaded(e.to);
-            let label = state.journal.with(|j| j.last_undoable(exists).map(|run| (run.at, run.entries.len())));
+            let label = state
+                .journal
+                .with(|j| j.last_undoable(exists).map(|run| (run.at, run.entries.len())));
             state.undo_label = Some((key, label));
             label
         }
@@ -3528,8 +3619,8 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
     for (why, names) in plan.kept_by_reason() {
         let title = format!("{}  ({})", why.label(), names.len());
         crate::ui::widgets::collapsing(ui, p, ("inventory_sorter_kept", why), title, false, |ui| {
-            for name in names.iter().take(PREVIEW_ROWS) {
-                ui.label(RichText::new(*name).color(p.muted));
+            for (name, _) in names.iter().take(PREVIEW_ROWS) {
+                ui.label(RichText::new(name).color(p.muted));
             }
             more(ui, p, names.len());
         });

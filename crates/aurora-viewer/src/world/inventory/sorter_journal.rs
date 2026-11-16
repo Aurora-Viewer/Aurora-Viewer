@@ -231,7 +231,15 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
             skipped += 1;
             continue;
         }
-        moves.push(restore_move(inv, entry.id, entry.folder, &entry.name, now, entry.from));
+        // an entry journaled at logout while its batch was on its way has
+        // no kind or name: both are read from the inventory now
+        let folder = inv.folders.get(&entry.id);
+        let name = match (entry.name.is_empty(), folder, inv.items.get(&entry.id)) {
+            (true, Some(f), _) => f.info.name.as_str(),
+            (true, None, Some(it)) => it.name.as_str(),
+            _ => entry.name.as_str(),
+        };
+        moves.push(restore_move(inv, entry.id, folder.is_some(), name, now, entry.from));
     }
     moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
     (moves, skipped)

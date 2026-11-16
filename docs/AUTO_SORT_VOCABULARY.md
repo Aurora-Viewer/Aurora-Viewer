@@ -18,13 +18,17 @@ built into the viewer. Anyone can add a word there without reading Rust.
 | `unpackers` | Words of a box that gives the real items when worn or rezzed. |
 | `variants` | `squish` (`sq`, `squeeze`…) and `waifus` words: these versions get their own folder below the category. |
 | `store_tag_patterns` | `enclosed`: the pairs a store is written between (`[` `]`, `*` `*`…); `separators`: what follows a store at the start of a name (` - `, ` // `, `: `…). |
+| `store_stopwords` | Words of a status written like a store tag (`mesh`, `demo`, `new`…): a tag made only of them (`(Mesh)`, `[DEMO]`) is not a store. |
 
 ### Writing words
 
 A name is read as lowercase words: everything that is not a letter or a digit
 separates words. A word or phrase of the file is written the same way:
 lowercase, single spaces, no punctuation (`evo x`, `add on`, `wear to
-unpack`). A word written otherwise could never match, so the viewer refuses
+unpack`). An apostrophe joins its word: `women's` is read `womens` (an
+item name is read both as `women`, `s` and as `womens`, so rules written
+either way still match), and a rule's or a store tag's words are read joined
+only. A word written otherwise could never match, so the viewer refuses
 the file and says which word, for instance `"Tattoo" is read as "tattoo"`.
 An unknown section, an unknown category or a body that hides a body that does
 not exist are refused too.

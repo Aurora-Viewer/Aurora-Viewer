@@ -2162,9 +2162,18 @@ fn status_tags_apostrophes_bodies_and_accents_are_read_right() {
     assert_eq!(split_path("Robes d'été/Café"), vec!["Robes d'ete".to_owned(), "Cafe".to_owned()]);
     // a letter the table lacks is left out, never a `?`; a part of such
     // letters only is dropped
-    assert_eq!(split_path("Ładne rzeczy/桜屋/Shoes"), vec!["adne rzeczy".to_owned(), "Shoes".to_owned()]);
+    assert_eq!(
+        split_path("Ładne rzeczy/桜屋/Shoes"),
+        vec!["adne rzeczy".to_owned(), "Shoes".to_owned()]
+    );
     // a rule's words are read joined: `women's` never meets every `'s`
-    let rule = Rule { words: "women's".into(), mode: Match::Any, enabled: true, folder: "W".into(), ..Default::default() };
+    let rule = Rule {
+        words: "women's".into(),
+        mode: Match::Any,
+        enabled: true,
+        folder: "W".into(),
+        ..Default::default()
+    };
     assert!(rule.named(&words("Women's Boots")));
     assert!(!rule.named(&words("Kat's Dress")));
     assert!(!rule.named(&words("Women Boots")));

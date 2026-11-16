@@ -98,7 +98,9 @@ impl Rule {
     /// to Clean up ([`Cleanup`]), and an old dated rule without words stays
     /// incomplete rather than taking everything.
     pub fn usable(&self) -> bool {
-        self.enabled && !joined_words(&self.words).is_empty() && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
+        self.enabled
+            && !joined_words(&self.words).is_empty()
+            && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
     }
 
     /// The rule's words meet the name's.
@@ -516,7 +518,13 @@ pub fn words(name: &str) -> Vec<String> {
 /// is `womens`), never split into parts that would meet any name.
 pub fn joined_words(name: &str) -> Vec<String> {
     name.split(|c: char| !c.is_alphanumeric() && !matches!(c, '\'' | '’'))
-        .map(|chunk| chunk.chars().filter(|c| !matches!(c, '\'' | '’')).collect::<String>().to_lowercase())
+        .map(|chunk| {
+            chunk
+                .chars()
+                .filter(|c| !matches!(c, '\'' | '’'))
+                .collect::<String>()
+                .to_lowercase()
+        })
         .filter(|w| !w.is_empty())
         .collect()
 }
@@ -1047,13 +1055,16 @@ impl Plan {
         groups
     }
 
-    /// What stays, by reason, each with its names.
-    pub fn kept_by_reason(&self) -> Vec<(Kept, Vec<&str>)> {
-        let mut by: std::collections::BTreeMap<Kept, Vec<&str>> = std::collections::BTreeMap::new();
-        for (name, why) in &self.kept_list {
-            by.entry(*why).or_default().push(name);
-        }
-        by.into_iter().collect()
+    /// What stays, by reason, each reason one slice of `kept_list` (in
+    /// order once [`order`](Self::order) ran): nothing copied per frame.
+    pub fn kept_by_reason(&self) -> Vec<(Kept, &[(String, Kept)])> {
+        self.kept_list.chunk_by(|a, b| a.1 == b.1).map(|rows| (rows[0].1, rows)).collect()
+    }
+
+    /// Ready for the preview, once per plan (off the frame for a large
+    /// one): what stays sorted by reason, keeping each reason's order.
+    pub fn order(&mut self) {
+        self.kept_list.sort_by_key(|(_, why)| *why);
     }
 
     pub fn unpackers(&self) -> usize {
