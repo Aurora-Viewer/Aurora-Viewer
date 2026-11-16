@@ -780,7 +780,7 @@ mod tests {
             let skin = crate::ui::skin::Layout::default();
             // Same as app.rs: the default dock leaves Conversations to the
             // island unless the chat bar is autohidden.
-            let layout = DockLayout::default().of(&skin, self.chat.autohide).clone();
+            let layout = DockLayout::default().of(&skin, self.chat.bar_mode.hides()).clone();
             let settings = crate::ui::toolbar::ToolbarSettings {
                 buttons: self.buttons.clone(),
                 left: self.left.clone(),
@@ -1108,45 +1108,46 @@ mod tests {
     }
 
     /// #2993: Conversations on a side toolbar keeps the island's
-    /// "Nearby chat and Conversations" button away, autohidden or not.
+    /// "Nearby chat and Conversations" button away in all three chat bar modes.
     #[test]
     fn conversations_on_a_side_toolbar_hides_the_island_button() {
+        use crate::settings::ChatBar;
+        use crate::ui::toolbar::Bar;
+
         let conv = crate::ui::skin::Layout::default()
             .toolbar
             .into_iter()
             .find(|b| b.command == "conversations")
             .expect("skin Conversations");
         let without = DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone();
-        for (side, autohide) in [
-            (crate::ui::toolbar::Bar::Left, true),
-            (crate::ui::toolbar::Bar::Right, true),
-            (crate::ui::toolbar::Bar::Left, false),
-            (crate::ui::toolbar::Bar::Right, false),
+        for (side, bar_mode) in [
+            (Bar::Left, ChatBar::Always),
+            (Bar::Right, ChatBar::Always),
+            (Bar::Left, ChatBar::WhenTyping),
+            (Bar::Right, ChatBar::WhenTyping),
+            (Bar::Left, ChatBar::ConversationsOnly),
+            (Bar::Right, ChatBar::ConversationsOnly),
         ] {
             let mut bench = Bench::new();
-            bench.chat.autohide = autohide;
+            bench.chat.bar_mode = bar_mode;
             bench.buttons = Some(without.clone());
             match side {
-                crate::ui::toolbar::Bar::Left => bench.left = vec![conv.clone()],
-                crate::ui::toolbar::Bar::Right => bench.right = vec![conv.clone()],
-                crate::ui::toolbar::Bar::Bottom => unreachable!(),
+                Bar::Left => bench.left = vec![conv.clone()],
+                Bar::Right => bench.right = vec![conv.clone()],
+                Bar::Bottom => unreachable!(),
             }
-            if !autohide {
-                // Always-shown island: focus so the field is there to check.
-                bench.chat.focus_request = true;
-            }
+            bench.chat.focus_request = bar_mode == ChatBar::Always;
             bench.frame(vec![]);
             bench.frame(vec![]);
             assert!(
                 bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
-                "Conversations on {side:?}, autohide={autohide}: no island button"
+                "Conversations on {side:?}, {bar_mode:?}: no island button"
             );
-            if !autohide {
-                assert!(
-                    bench.text_rect(aurora_i18n::tr!("common-nearby-chat")).is_some(),
-                    "the nearby chat field stays"
-                );
-            }
+            assert_eq!(
+                bench.text_rect(aurora_i18n::tr!("common-nearby-chat")).is_some(),
+                bar_mode == ChatBar::Always,
+                "nearby chat field on {side:?}, {bar_mode:?}"
+            );
         }
     }
 
