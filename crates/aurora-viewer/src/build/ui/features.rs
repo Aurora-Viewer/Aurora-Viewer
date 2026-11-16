@@ -224,14 +224,20 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
             let phys = tool.physics.get(&key.local_id).copied();
             let shape = phys.map(|x| x.shape_type);
-            let child_selected = tool.sel_prims(world).into_iter().any(|i| crate::build::root_of(world, i) != i);
+            let roots: Vec<bool> = tool
+                .sel_prims(world)
+                .into_iter()
+                .map(|i| crate::build::root_of(world, i) == i)
+                .collect();
+            let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
             let shapes = physics_shape_choices(child_selected, shape);
             ui.horizontal(|ui| {
                 if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
                 }
-                if !child_selected {
-                    // why None is missing: only a linkset's child prims take it
+                if root_selected {
+                    // why None is missing, or why a whole linkset set to None
+                    // still shows the root's shape: only child prims take it
                     let _ = super::common::icon_button(
                         ui,
                         p,
