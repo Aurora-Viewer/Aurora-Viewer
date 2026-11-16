@@ -113,7 +113,7 @@ pub(super) fn seen_text(seconds: f64) -> String {
     }
 }
 
-/// The badges of a row in the mock-up's order (friend, voice, typing,
+/// The badges of a row in order (friend, voice, region, typing,
 /// sitting, payment info, note), with the text each shows on hover. Only
 /// what is so: no payment info, Firestorm's grey card, is in the sheet.
 fn badges(p: &Palette, settings: &RadarSettings, row: &Row) -> Vec<(&'static str, Color32, String)> {
@@ -132,6 +132,13 @@ fn badges(p: &Palette, settings: &RadarSettings, row: &Row) -> Vec<(&'static str
             Some(false) => out.push(("microphone-filled", p.muted, aurora_i18n::tr!("radar-voice-connected").to_owned())),
             None => {}
         }
+    }
+    if settings.shows(Column::Region) && row.same_region {
+        out.push((
+            Column::Region.icon(),
+            p.violet_light,
+            aurora_i18n::tr!("radar-col-region").to_owned(),
+        ));
     }
     if settings.shows(Column::Typing) && row.typing {
         out.push(("keyboard-filled", p.violet_light, aurora_i18n::tr!("radar-col-typing").to_owned()));
@@ -154,7 +161,7 @@ fn badges(p: &Palette, settings: &RadarSettings, row: &Row) -> Vec<(&'static str
 
 /// Age text for a Near you row when Columns › Age is on.
 fn age_text(row: &Row, settings: &RadarSettings) -> Option<(String, bool)> {
-    if !settings.shows(Column::Age) {
+    if row.anonymous || !settings.shows(Column::Age) {
         return None;
     }
     match row.age {
@@ -173,11 +180,14 @@ fn age_text(row: &Row, settings: &RadarSettings) -> Option<(String, bool)> {
 /// colour follows the figure (red under the age alert).
 fn paint_age(ui: &egui::Ui, p: &Palette, cell: Rect, text: String, young: bool, size: f32) {
     let color = if young { p.danger } else { p.muted };
-    let galley = ui.painter().layout_no_wrap(text, FontId::proportional(size), color);
-    let left = cell.right() - galley.size().x;
+    let format = egui::TextFormat::simple(FontId::proportional(size), color);
+    let mut job = egui::text::LayoutJob::single_section(text, format);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(cell.width() - size - AGE_ICON_GAP);
+    let galley = ui.painter().layout_job(job);
+    let left = (cell.right() - galley.size().x).max(cell.left() + size + AGE_ICON_GAP);
     let icon = Rect::from_center_size(Pos2::new(left - AGE_ICON_GAP - size / 2.0, cell.center().y), Vec2::splat(size));
     radar::icon(ui, Column::Age.icon(), icon, size, color);
-    crate::ui::widgets::paint_row_text(ui.painter(), galley, left, cell.center().y, color);
+    crate::ui::widgets::paint_row_text(&ui.painter().with_clip_rect(cell), galley, left, cell.center().y, color);
 }
 
 /// A semi-bold text format (the mock-up's weight 600).
@@ -459,7 +469,7 @@ fn list_part(
                     shortcuts,
                     compact,
                     data.settings.shows(Column::Seen),
-                    data.settings.shows(Column::Age),
+                    !anonymous && row.age != Age::Unknown && data.settings.shows(Column::Age),
                 );
                 let tip = if compact {
                     paint_compact(ui, p, world, data, st, row, rect, &end, i, selected, hot, pointer, actions)
@@ -647,10 +657,10 @@ pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     }
 }
 
-/// The most badges a row can carry: blocked, friend, voice, typing,
+/// The most badges a row can carry: blocked, friend, voice, region, typing,
 /// sitting, payment info, note.
 #[cfg(test)]
-const MAX_BADGES: usize = 7;
+const MAX_BADGES: usize = 8;
 
 /// The measures of a row's right end, rich or compact.
 struct Metrics {
@@ -1334,7 +1344,7 @@ mod tests {
                     }
                 }
             }
-            // a usual window shows all seven badges beside the actions
+            // a usual window shows every badge beside the actions
             let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, RICH_H));
             if !compact {
                 let end = right_end(row, names_left(row, false), MAX_BADGES, Some(4), false, true, true);
@@ -1372,12 +1382,24 @@ mod tests {
         };
         assert!(badges(&p, &settings, &row).is_empty(), "optional columns off");
         assert!(age_text(&row, &settings).is_none());
+        settings.columns = Column::Region.bit();
+        assert_eq!(
+            badges(&p, &settings, &row).first().map(|badge| badge.0),
+            Some(Column::Region.icon())
+        );
+        row.same_region = false;
+        assert!(badges(&p, &settings, &row).is_empty());
         settings.columns = Column::Age.bit() | Column::Voice.bit() | Column::Notes.bit();
         let shown: Vec<_> = badges(&p, &settings, &row).into_iter().map(|(icon, _, _)| icon).collect();
         assert_eq!(shown, ["microphone-filled", "note"]);
         assert_eq!(age_text(&row, &settings), Some(("9".into(), false)));
         settings.age_alert_days = 14;
         assert_eq!(age_text(&row, &settings), Some(("9".into(), true)));
+        row.anonymous = true;
+        assert!(age_text(&row, &settings).is_none());
+        row.anonymous = false;
+        row.age = Age::Unknown;
+        assert!(age_text(&row, &settings).is_none());
         row.age = Age::Hidden;
         assert_eq!(
             age_text(&row, &settings).map(|(t, _)| t),
@@ -1394,6 +1416,31 @@ mod tests {
         );
         assert!(layout.age.is_some());
         assert!(layout.seen.is_none(), "Seen column bit is off");
+    }
+
+    #[test]
+    fn age_labels_keep_the_cake_and_text_inside_their_column() {
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let cell = Rect::from_min_size(Pos2::new(140.0, 30.0), Vec2::new(AGE_W, RICH_H));
+        for size in [11.0, 12.0] {
+            for text in ["9", "12345", "該当なし", "123456789012345"] {
+                let output = ctx.run_ui(Default::default(), |ui| paint_age(ui, &palette, cell, text.into(), false, size));
+                let label = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(label) if label.galley.text() == text => Some(label),
+                        _ => None,
+                    })
+                    .expect("age label");
+                assert!(label.pos.x >= cell.left() + size + AGE_ICON_GAP - 0.5);
+                assert!(label.pos.x + label.galley.size().x <= cell.right() + 0.5);
+                if text == "12345" {
+                    assert!(!label.galley.elided, "five figures fit beside the cake");
+                }
+            }
+        }
     }
 
     #[test]
