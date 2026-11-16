@@ -22994,8 +22994,6 @@ impl ApplicationHandler for App {
                     self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
                     self.inventory_ui.expand_all = Some(true);
                 }
-                if matches!(view.as_str(), "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run") {
-                }
                 if matches!(
                     view.as_str(),
                     "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run" | "sorter-vocab"

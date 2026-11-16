@@ -107,6 +107,8 @@ pub(super) struct State {
     /// The excluded folders Clean up's list was made with: an exclusion
     /// since makes it again.
     cleanup_excluded: Vec<Uuid>,
+    /// My folders when Clean up's list was made.
+    cleanup_own: Vec<Uuid>,
     /// Clean up's rows unchecked: they stay.
     skipped: HashSet<Uuid>,
     /// Clean up's entries on their way to the Trash, a batch at a time.
@@ -1455,8 +1457,10 @@ pub(super) fn show(
         && job.next_at.is_none_or(|at| now >= at)
     {
         // a folder excluded during the run: its moves still queued stay
-        // (the next batch's are checked, a few hundred at most)
-        if !prefs.sorter.excluded.is_empty() {
+        // (the next batch's are checked, a few hundred at most); a folder
+        // listed in My folders since, or holding one, is not moved whole
+        if !prefs.sorter.excluded.is_empty() || !prefs.sorter.own.is_empty() {
+            let own = sorter::own_folders(inv, &prefs.sorter);
             // a folder holding an excluded one stays too: it would carry it
             let base = job.base_id;
             let out: Vec<usize> = (0..job.queue.len().min(sorter::BATCH * 2))
@@ -1471,7 +1475,8 @@ pub(super) fn show(
                     };
                     // (a snapshot's restore honours exclusions like a sort)
                     let sorts = !m.restore || m.snapshot;
-                    sorts && into_excluded
+                    !m.restore && m.folder && own.contains(&m.id)
+                        || sorts && into_excluded
                         || sorts
                             && (prefs.sorter.excludes(inv, m.id)
                                 || m.folder
@@ -1754,6 +1759,7 @@ pub(super) fn show(
         state.to_request.extend(plan.unfetched.iter().copied());
         state.cleanup = Some((task.generation, choices, from, day, plan));
         state.cleanup_excluded.clone_from(&prefs.sorter.excluded);
+        state.cleanup_own.clone_from(&prefs.sorter.own);
     }
     if state.tab == CLEANUP && !busy && state.cleaning.is_none() {
         let now = std::time::SystemTime::now()
@@ -1765,7 +1771,8 @@ pub(super) fn show(
             && state.cleaned_at.is_none_or(|at| instant.duration_since(at) >= REPLAN);
         let stale = state.cleanup.as_ref().is_none_or(|(generation, choices, from, at, _)| {
             *choices != prefs.sorter.cleanup || *from != cleanup_source || *at != day || *generation != inv.generation && settled
-        }) || state.cleanup_excluded != prefs.sorter.excluded;
+        }) || state.cleanup_excluded != prefs.sorter.excluded
+            || state.cleanup_own != prefs.sorter.own;
         if stale {
             state.cleaned_at = Some(instant);
             let make = {
@@ -1780,6 +1787,7 @@ pub(super) fn show(
                 state.to_request.extend(plan.unfetched.iter().copied());
                 state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
                 state.cleanup_excluded.clone_from(&prefs.sorter.excluded);
+                state.cleanup_own.clone_from(&prefs.sorter.own);
             }
         }
     }
@@ -3699,8 +3707,6 @@ fn undo_and_snapshots(
     }
 }
 
-/// Store hints: a store whose names say nothing of what it sells, and the
-/// category its items go to.
 /// The folders the user lists as their own: opened and sorted, never moved
 /// whole, whatever their name. One no longer allowed (made a default
 /// folder, moved into the sort folder) is shown as such and ignored.
@@ -3744,6 +3750,8 @@ fn own_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Stat
     }
 }
 
+/// Store hints: a store whose names say nothing of what it sells, and the
+/// category its items go to.
 fn store_hints(ui: &mut egui::Ui, p: &Palette, options: &mut sorter::Preferences) {
     use sorter::{Category, StoreHint};
     crate::ui::widgets::section_header(ui, p, "building-store", aurora_i18n::tr!("inventory-sorter-hints"));
@@ -4084,6 +4092,7 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
     let Some(picker) = state.picker.as_mut() else { return };
     if picker.generation != inv.generation {
         let pick = picker.pick;
+        let own_ok = sorter::own_check(inv, &prefs.sorter);
         let mut rows: Vec<(Uuid, String)> = inv
             .folders
             .values()
@@ -4093,7 +4102,7 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
                 Pick::Source => sorter::source_allowed(inv, *id),
                 Pick::Rule(_) => sorter::target_allowed(inv, *id) && !prefs.sorter.excludes(inv, *id),
                 Pick::Exclude => *id != inv.root && !sorter::untouchable(inv, *id),
-                Pick::Own => sorter::own_allowed(inv, &prefs.sorter, *id),
+                Pick::Own => own_ok(*id),
             })
             .map(|id| (id, sorter::folder_path(inv, id)))
             .collect();

@@ -702,12 +702,16 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     add_folder(&mut inv, 33, 1, "Kira Avatar");
     add_folder(&mut inv, 34, 33, "Head");
     add_folder(&mut inv, 35, 33, "Eyes");
+    add_item(&mut inv, 2900, 34, "Kira Head", 0);
     add_folder(&mut inv, 36, 1, "Hex Dress");
     add_folder(&mut inv, 37, 36, "Maitreya");
     add_folder(&mut inv, 38, 36, "HUDs");
     let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
     let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
-    assert!(![31, 32, 34, 35, 37, 38].iter().any(|n| moved.contains(&id(*n))), "never opened");
+    assert!(
+        ![31, 32, 34, 35, 37, 38, 2900].iter().any(|n| moved.contains(&id(*n))),
+        "never opened"
+    );
     // (Kira Avatar names no kind: it stays whole where it is)
     assert!([30, 36].iter().all(|n| moved.contains(&id(*n))), "they move whole");
     // a delivery with only its HUD and textures folders, and an occasion
@@ -2698,4 +2702,89 @@ fn listed_own_folders_are_opened_never_moved_whole() {
     add_folder(&mut inv, 720, 1, &base);
     add_folder(&mut inv, 721, 720, "Hair Collection");
     assert!(!own_allowed(&inv, &prefs, id(721)), "inside the sort folder");
+}
+
+/// Deliveries audit 32 found opened: a pose pack with its props, hair with
+/// its bang versions, a head or a body with its HUD and plural extras, a
+/// vehicle with its rez box and riders' poses. Each stays whole.
+#[test]
+fn deliveries_with_props_bangs_huds_and_rez_boxes_stay_whole() {
+    let none = HashSet::new();
+    let layouts: [(&str, &[&str]); 9] = [
+        ("Aster Photo Poses", &["Singles", "Couples", "Props"]),
+        ("Kaida Hair", &["Bangs", "No Bangs", "HUD"]),
+        ("Coral Hair", &["With Bangs", "No Bangs"]),
+        ("Juno Hair", &["Bangs", "Without Bangs"]),
+        ("Orion Head", &["HUDs", "Shapes", "Skins"]),
+        ("Marlowe Dress Pack", &["Dresses", "HUD"]),
+        ("Elara Body", &["HUDs", "Shapes", "Skins"]),
+        ("Thunderbolt Motorcycle", &["Rez Box", "Riders Poses", "HUD"]),
+        ("Sapphire Yacht", &["Rez Box", "Passenger Poses", "Textures"]),
+    ];
+    for (name, subs) in layouts {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        let mut inside = Vec::new();
+        for (n, sub) in subs.iter().enumerate() {
+            let folder = 901 + n as u128;
+            add_folder(&mut inv, folder, 900, sub);
+            add_item(&mut inv, 950 + n as u128, folder, &format!("{name} {sub}"), 0);
+            inside.extend([folder, 950 + n as u128]);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!inside.iter().any(|n| moved.contains(&id(*n))), "{name} is never opened");
+    }
+    // a shelf of kinds stays a shelf
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Fantasy");
+    add_folder(&mut inv, 901, 900, "Heads");
+    add_folder(&mut inv, 902, 900, "Skins");
+    add_folder(&mut inv, 903, 900, "HUD");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(900)), "Fantasy is a shelf");
+}
+
+/// A folder listed in My folders since a run was planned stays on Resume; a
+/// Pre-Trash word rule and Clean up never take one whole.
+#[test]
+fn listed_own_folders_stay_on_resume_pre_trash_and_clean_up() {
+    let none = HashSet::new();
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 700, 1, "Old Hair Collection");
+    add_item(&mut inv, 801, 700, "Old Bob Hair", date_start("2015-01").expect("date"));
+    let prefs = Preferences {
+        own: vec![id(700)],
+        rules: vec![Rule {
+            words: "old".into(),
+            mode: Match::Any,
+            pre_trash: true,
+            ..Default::default()
+        }],
+        ..Preferences::default()
+    };
+    let resume = Move {
+        id: id(700),
+        folder: true,
+        name: "Old Hair Collection".into(),
+        from: id(1),
+        to: Dest::Path(vec!["Hair".into()]),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+        from_trash: false,
+        snapshot: false,
+    };
+    let plan = plan_saved(&inv, std::slice::from_ref(&resume), &prefs, &none, &none);
+    assert!(plan.moves.is_empty(), "a resumed run leaves a listed folder");
+    assert!(plan.kept_list.iter().any(|(_, k)| *k == Kept::Own));
+    let undo = Move { restore: true, ..resume };
+    assert_eq!(plan_saved(&inv, &[undo], &prefs, &none, &none).moves.len(), 1, "Undo puts it back");
+    let plan = plan_whole(&inv, &prefs, &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(700)), "a Pre-Trash word rule never takes it whole");
+    assert!(moved.contains(&id(801)), "its old item is taken alone");
+    let cleanup = plan_cleanup(&inv, &prefs, &before_2020(), inv.root, today(), &none, &none);
+    assert!(!cleanup.rows.iter().any(|r| r.id == id(700)), "Clean up takes its items one by one");
+    assert!(cleanup.rows.iter().any(|r| r.id == id(801)));
 }

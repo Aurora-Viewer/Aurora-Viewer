@@ -1267,23 +1267,32 @@ pub fn untouchable(inv: &Inventory, id: Uuid) -> bool {
 /// their folders in an open place, never My Inventory, a default, viewer or
 /// protected folder, nor the sort folder, Pre-Trash or a folder in them.
 pub fn own_allowed(inv: &Inventory, prefs: &Preferences, id: Uuid) -> bool {
-    if id == inv.root
-        || !inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1 && !f.library)
-        || !folder_open(inv, id)
-        || untouchable(inv, id)
-    {
-        return false;
-    }
+    own_check(inv, prefs)(id)
+}
+
+/// [`own_allowed`] for many folders: the sort folder and the Pre-Trash
+/// folders are found once (the picker asks for every folder).
+pub fn own_check<'a>(inv: &'a Inventory, prefs: &Preferences) -> impl Fn(Uuid) -> bool + 'a {
     let (base, waiting) = (base_folder(inv, prefs), pre_trash_folders(inv));
-    !actions::ancestors(inv, id).any(|a| Some(a) == base || waiting.contains(&a))
+    move |id| {
+        id != inv.root
+            && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1 && !f.library)
+            && folder_open(inv, id)
+            && !untouchable(inv, id)
+            && !actions::ancestors(inv, id).any(|a| Some(a) == base || waiting.contains(&a))
+    }
 }
 
 /// The folders listed as the user's own that still may be, and every folder
 /// holding one (below My Inventory): none of them is ever a product's
 /// folder, so none moves whole.
-fn own_folders(inv: &Inventory, prefs: &Preferences) -> HashSet<Uuid> {
+pub fn own_folders(inv: &Inventory, prefs: &Preferences) -> HashSet<Uuid> {
     let mut set = HashSet::new();
-    for id in prefs.own.iter().copied().filter(|id| own_allowed(inv, prefs, *id)) {
+    if prefs.own.is_empty() {
+        return set;
+    }
+    let allowed = own_check(inv, prefs);
+    for id in prefs.own.iter().copied().filter(|id| allowed(*id)) {
         set.extend(actions::ancestors(inv, id).take_while(|a| *a != inv.root));
     }
     set
@@ -1464,24 +1473,34 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
         && subs.iter().any(|s| words(s.info.name.trim()).iter().any(|w| plural_kind(w)))
         && !(named && named_seen);
     // a subfolder that is a delivery of its own: a store's shelf
-    let holds_deliveries = subs.iter().any(|s| {
-        let sub = s.info.name.trim();
-        if store(sub).is_some() {
-            return true;
-        }
-        let read = classify(sub, -1, 0);
-        read.body.is_none()
-            && read.category.is_some_and(|c| {
-                !matches!(
-                    c,
-                    Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
-                )
-            })
-            && names_a_product(sub)
-            && product_words(sub)
+    // (never beside a delivery's own working folder: `Rez Box`, `HUD`; a
+    // store's shelf holds none)
+    let parts_seen = subs.iter().any(|s| {
+        let sub_words = words(s.info.name.trim());
+        !sub_words.is_empty()
+            && sub_words
                 .iter()
-                .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
+                .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()))
     });
+    let holds_deliveries = !parts_seen
+        && subs.iter().any(|s| {
+            let sub = s.info.name.trim();
+            if store(sub).is_some() {
+                return true;
+            }
+            let read = classify(sub, -1, 0);
+            read.body.is_none()
+                && read.category.is_some_and(|c| {
+                    !matches!(
+                        c,
+                        Category::Huds | Category::BodyAddons | Category::Shapes | Category::Skins | Category::Eyes | Category::Heads
+                    )
+                })
+                && names_a_product(sub)
+                && product_words(sub)
+                    .iter()
+                    .any(|w| !own.contains(w) && !OCCASION_WORDS.contains(&w.as_str()))
+        });
     // a plural kind in the name: a shelf of them (`Work Outfits`, `Poses
     // for Photos`), unless sold as one (`Winter Boots`); a delivery named so
     // (`Mila Poses Pack`) was kept by its versions above
@@ -1563,7 +1582,12 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // (a product named for what it is, with a folder repeating its name,
     // keeps its plural extras: `Lelutka Avalon Head` holding `Avalon HUD`,
     // `Skins`, `Shapes`)
-    let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen);
+    // (nor a delivery with a version of its own beside them, `Kira Avatar`
+    // holding `Head` and `Eyes`, or a named one or a body with its HUD:
+    // `Orion Head` holding `HUDs`, `Shapes`, `Skins`)
+    let body_named = words(name).last().is_some_and(|w| w == "body");
+    let delivery_extras = versions || (named || body_named) && fatpack_seen;
+    let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen) && !delivery_extras;
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
     all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen || part_seen) && names_a_product(name))
 }
@@ -1595,7 +1619,7 @@ fn product_words(name: &str) -> Vec<String> {
 }
 
 /// The folders a product's delivery holds beside its body versions.
-const VERSION_WORDS: [&str; 35] = [
+const VERSION_WORDS: [&str; 38] = [
     "hud",
     "huds",
     "textures",
@@ -1631,12 +1655,17 @@ const VERSION_WORDS: [&str; 35] = [
     "singles",
     "couples",
     "bento",
+    "no",
+    "with",
+    "without",
 ];
 
 /// A delivery's working parts: with a name of its own (`Elegance AO`
 /// holding `Stands`, `Walks`, `Sits`) they keep it whole; on a shelf
 /// (`Builds` holding `Textures`, `Scripts`) they say nothing.
-const DELIVERY_PARTS: [&str; 9] = ["teeth", "stands", "walks", "sits", "scripts", "script", "opacity", "rez", "box"];
+const DELIVERY_PARTS: [&str; 10] = [
+    "teeth", "stands", "walks", "sits", "scripts", "script", "opacity", "rez", "box", "props",
+];
 
 /// Words a user names a shelf of their own with, never a product.
 const SHELF_WORDS: [&str; 39] = [
@@ -1758,20 +1787,23 @@ pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
 
 fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
-    open_levels(inv, prefs, places, vec![inv.root], 0, &mut sources);
-    // a folder listed as the user's own deeper down is opened too, with its
-    // own folders of folders below it
+    let mut seen = HashSet::from([inv.root]);
+    open_levels(inv, prefs, places, vec![inv.root], 0, &mut sources, &mut seen);
+    // a folder listed as the user's own is opened at any depth, with its own
+    // folders of folders below it (the same depth wherever it lies)
     let mut listed: Vec<Uuid> = prefs.own.iter().copied().filter(|id| places.own.contains(id)).collect();
     listed.sort_unstable();
     listed.dedup();
     for id in listed {
         let Some(f) = inv.folders.get(&id) else { continue };
-        let open = !sources.contains(&id) && !prefs.excludes(inv, id) && !places.reserved.contains(&f.info.name.trim().to_lowercase());
-        if open {
+        if prefs.excludes(inv, id) || places.reserved.contains(&f.info.name.trim().to_lowercase()) {
+            continue;
+        }
+        if seen.insert(id) {
             sources.push(id);
-            if f.state == FetchState::Fetched {
-                open_levels(inv, prefs, places, vec![id], 1, &mut sources);
-            }
+        }
+        if f.state == FetchState::Fetched {
+            open_levels(inv, prefs, places, vec![id], 1, &mut sources, &mut seen);
         }
     }
     sources
@@ -1781,7 +1813,15 @@ fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Ve
 /// then the user's own folders of folders below them (`Clothes/Winter`):
 /// each is opened, its products move whole. A folder not loaded yet is
 /// read first (it is judged once its contents are known).
-fn open_levels(inv: &Inventory, prefs: &Preferences, places: &Places, mut level: Vec<Uuid>, first: usize, sources: &mut Vec<Uuid>) {
+fn open_levels(
+    inv: &Inventory,
+    prefs: &Preferences,
+    places: &Places,
+    mut level: Vec<Uuid>,
+    first: usize,
+    sources: &mut Vec<Uuid>,
+    seen: &mut HashSet<Uuid>,
+) {
     for depth in first..=OPEN_DEPTH {
         let mut next = Vec::new();
         for parent in &level {
@@ -1798,8 +1838,10 @@ fn open_levels(inv: &Inventory, prefs: &Preferences, places: &Places, mut level:
                     || f.state != FetchState::Fetched
                     || places.own.contains(&id)
                     || !product_folder_in(inv, id, &places.reserved);
-                if open && own && !sources.contains(&id) {
-                    sources.push(id);
+                if open && own {
+                    if seen.insert(id) {
+                        sources.push(id);
+                    }
                     // (Objects and an unlocked default folder too: their
                     // folders of folders are the user's own)
                     if f.state == FetchState::Fetched {
@@ -2166,6 +2208,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut plan = Plan::default();
     let base = base_folder(inv, prefs);
+    let own = own_folders(inv, prefs);
     // a run's move into a folder excluded since (a rule's, or one on the way
     // below the sort folder) stays
     let into_excluded = |m: &Move| match &m.to {
@@ -2209,6 +2252,13 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
         if here && sorts && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded) || into_excluded(m)) {
             plan.kept += 1;
             plan.kept_list.push((m.name.clone(), Kept::Excluded));
+            continue;
+        }
+        // a folder listed as the user's own since (or holding one) is never
+        // moved whole by a sort; an Undo or a snapshot puts it back
+        if here && !m.restore && m.folder && own.contains(&m.id) {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Own));
             continue;
         }
         let ok = here
@@ -2317,6 +2367,9 @@ pub enum Kept {
     Locked,
     /// In a folder the user excluded.
     Excluded,
+    /// One of the user's own folders (My folders), or holding one: never
+    /// moved whole.
+    Own,
     /// A system folder, the Trash, Marketplace Listings, the Library, the
     /// Current Outfit, a viewer folder (#RLV…): what a drag may not move.
     Protected,
@@ -2332,6 +2385,7 @@ impl Kept {
             Kept::Link => aurora_i18n::tr!("inventory-sorter-kept-link"),
             Kept::Locked => aurora_i18n::tr!("inventory-sorter-kept-locked"),
             Kept::Excluded => aurora_i18n::tr!("inventory-sorter-kept-excluded"),
+            Kept::Own => aurora_i18n::tr!("inventory-sorter-kept-own"),
             Kept::Protected => aurora_i18n::tr!("inventory-sorter-kept-protected"),
             Kept::Loading => aurora_i18n::tr!("inventory-sorter-kept-loading"),
         }
@@ -2503,7 +2557,8 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
             let system = f.info.type_default != -1 || Some(*sub) == base;
             let made = reserved.contains(&name.to_lowercase())
                 || prefs.stores && in_sorted(*sub) && store(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
-            if !system && !made && movable(inv, *sub, protected, &holds_worn) {
+            // (nor one of the user's own: it is opened, its contents read)
+            if !system && !made && !own.contains(sub) && movable(inv, *sub, protected, &holds_worn) {
                 let name_words = words(name);
                 let rules = rules_for_place(&prefs.rules, in_sorted(*sub));
                 if first_rule(&rules, &name_words, None).is_some_and(|rule| rule.pre_trash) {
@@ -2847,6 +2902,7 @@ pub fn plan_cleanup(
             // Auto-sort made, never the sort folder itself
             if cleanup.empty_folders
                 && !system
+                && !own.contains(sub)
                 && Some(*sub) != base
                 && movable(inv, *sub, protected, &holds_worn)
                 && !holds_closed(inv, *sub, &prefs.excluded)
@@ -2865,6 +2921,8 @@ pub fn plan_cleanup(
             }
             if !system
                 && !made
+                // (the user's own folders give up their items one by one)
+                && !own.contains(sub)
                 && movable(inv, *sub, protected, &holds_worn)
                 // an excluded folder inside keeps the whole folder out
                 && !holds_closed(inv, *sub, &prefs.excluded)
