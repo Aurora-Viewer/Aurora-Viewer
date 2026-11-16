@@ -47,9 +47,9 @@ incremental = false
 
 # The dependencies are optimised a little. They come from the Rust cache and
 # are rebuilt only when Cargo.lock or the Rust version changes, and the
-# viewer's interface tests spend most of their time in them (egui): on the
-# same hosted runner those tests take 158 s instead of 566 s. 1 and not 3:
-# the tests run as fast, and a cache built from nothing costs less (TASKS.md,
+# viewer's interface tests spend most of their time in them: on the same
+# hosted runner those tests take 158 s instead of 566 s. 1 and not 3: the
+# tests run as fast, and a cache built from nothing costs less (TASKS.md,
 # task `ci-optimised-deps`, has the measures). Without this section `ci`
 # would inherit the 3 of `dev`.
 [profile.ci.package."*"]
