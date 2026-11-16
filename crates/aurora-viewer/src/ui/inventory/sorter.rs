@@ -118,7 +118,7 @@ pub(super) struct State {
     /// The account whose journal, snapshots and unfinished run are loaded.
     account: Option<Uuid>,
     /// The last runs' confirmed moves, for Undo (saved per account).
-    journal: sorter::journal::Journal,
+    journal: SharedJournal,
     /// A run the viewer stopped before its end, to resume.
     unfinished: Option<sorter::journal::Unfinished>,
     snapshots: Vec<(i64, std::path::PathBuf)>,
@@ -200,6 +200,41 @@ impl<T: Send + 'static> Planning<T> {
                 None
             }
         }
+    }
+}
+
+/// The journal of an account's runs, one for every inventory window: a run
+/// in one window and Undo in another see the same runs, and a save never
+/// writes one window's older copy over another's.
+#[derive(Clone, Default)]
+struct SharedJournal(std::sync::Arc<std::sync::Mutex<sorter::journal::Journal>>);
+
+impl SharedJournal {
+    /// The account's journal, read from its file the first time.
+    fn of(account: Uuid, read: impl FnOnce() -> sorter::journal::Journal) -> Self {
+        static JOURNALS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Uuid, SharedJournal>>> = std::sync::OnceLock::new();
+        let journals = JOURNALS.get_or_init(Default::default);
+        let mut journals = journals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        journals
+            .entry(account)
+            .or_insert_with(|| Self(std::sync::Arc::new(std::sync::Mutex::new(read()))))
+            .clone()
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&mut sorter::journal::Journal) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    fn record(&self, entries: impl IntoIterator<Item = sorter::journal::Entry>) {
+        self.with(|j| j.record(entries));
+    }
+
+    fn begin(&self, kind: sorter::journal::RunKind, at: i64) {
+        self.with(|j| j.begin(kind, at));
+    }
+
+    fn forget_undone(&self, undone: i64) {
+        self.with(|j| j.forget_undone(undone));
     }
 }
 
@@ -475,14 +510,14 @@ impl State {
         self.account = Some(agent);
         let dir = crate::settings::account_dir(&agent);
         use sorter::journal as j;
-        self.journal = match j::load(&j::journal_path(&dir)) {
+        self.journal = SharedJournal::of(agent, || match j::load(&j::journal_path(&dir)) {
             Ok(journal) => journal,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(error) => {
                 log::warn!("auto-sort: the journal could not be read: {error}");
                 Default::default()
             }
-        };
+        });
         self.unfinished = j::load(&j::unfinished_path(&dir))
             .ok()
             .filter(|u: &j::Unfinished| !u.moves.is_empty());
@@ -493,7 +528,7 @@ impl State {
     fn save_progress(&mut self) {
         self.unsaved = 0;
         let Some(dir) = self.account_dir() else { return };
-        let journal = self.journal.clone();
+        let journal = self.journal.with(|j| j.clone());
         let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
             base: job.base.clone(),
             moves: job
@@ -2640,13 +2675,16 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             state.tab = PREVIEW;
         }
     }
-    match state.journal.last() {
-        Some(run) => {
-            let date = snapshot_date(run.at);
-            let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = run.entries.len(), date = date.as_str());
+    match state.journal.with(|j| j.last().map(|run| (run.at, run.entries.len()))) {
+        Some((at, count)) => {
+            let date = snapshot_date(at);
+            let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = count, date = date.as_str());
             if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
-                let (moves, _) = sorter::journal::undo_moves(inv, run, &protected, worn);
-                state.undoing = Some(run.at);
+                let (moves, _) = state
+                    .journal
+                    .with(|j| j.last().map(|run| sorter::journal::undo_moves(inv, run, &protected, worn)))
+                    .unwrap_or_default();
+                state.undoing = Some(at);
                 state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
                 state.tab = PREVIEW;
             }
@@ -2684,7 +2722,7 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
         match sorter::journal::load::<sorter::journal::Snapshot>(&path) {
             Ok(snapshot) => {
                 let account = state.account.unwrap_or_default();
-                let by_runs = sorter::journal::moved_since(&state.journal, snapshot.at);
+                let by_runs = state.journal.with(|j| sorter::journal::moved_since(j, snapshot.at));
                 match sorter::journal::restore_moves(inv, &snapshot, account, &by_runs, &protected, worn) {
                     Ok((moves, summary)) => {
                         state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));

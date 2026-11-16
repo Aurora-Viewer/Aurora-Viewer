@@ -385,6 +385,29 @@ fn a_trash_batch_counts_what_reached_the_trash() {
     send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
     let trash = st.sorter.trash.as_ref().expect("the job goes on");
     assert_eq!((trash.sent, trash.failed), (1, 1));
-    let run = st.sorter.journal.last().expect("a run");
-    assert_eq!(run.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![Uuid::from_u128(9000)]);
+    let ids = st
+        .sorter
+        .journal
+        .with(|j| j.last().map(|run| run.entries.iter().map(|e| e.id).collect::<Vec<_>>()));
+    assert_eq!(ids, Some(vec![Uuid::from_u128(9000)]));
+}
+
+/// Two inventory windows of one account share its journal: a run recorded
+/// in one is the run the other undoes, and another account's stays apart.
+#[test]
+fn every_window_of_an_account_shares_its_journal() {
+    use crate::world::inventory::sorter::journal::{Entry, Journal, RunKind};
+    let account = Uuid::new_v4();
+    let first = SharedJournal::of(account, Journal::default);
+    let second = SharedJournal::of(account, || panic!("read once per account"));
+    first.begin(RunKind::Move, 10);
+    first.record([Entry {
+        id: Uuid::from_u128(9000),
+        folder: false,
+        from: Uuid::from_u128(1),
+        name: "x".into(),
+    }]);
+    assert_eq!(second.with(|j| j.last().map(|run| (run.at, run.entries.len()))), Some((10, 1)));
+    let other = SharedJournal::of(Uuid::new_v4(), Journal::default);
+    assert!(other.with(|j| j.last().is_none()));
 }
