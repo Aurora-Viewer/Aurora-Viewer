@@ -145,10 +145,15 @@ pub fn acquired_date(secs: i64) -> String {
         return aurora_i18n::tr!("status-unknown").to_owned();
     }
     let (y, m, d, w, h, mi, s) = super::land::slt_parts(secs);
-    format!(
-        "{} {d:02} {} {y} {h:02}:{mi:02}:{s:02}",
-        super::land::weekdays()[w],
-        super::land::months()[m - 1]
+    // acquired_date (panel_landmark_info.xml): the claim date's order in
+    // every language, the day on two digits
+    aurora_i18n::tr!(
+        "land-claim-date",
+        weekday = super::land::weekdays()[w],
+        day = format!("{d:02}"),
+        month = super::land::months()[m - 1],
+        year = y.to_string(),
+        time = format!("{h:02}:{mi:02}:{s:02}")
     )
 }
 
@@ -873,10 +878,11 @@ mod tests {
         let t = days_from_civil(2024, 4, 2) * 86_400 + 14 * 3600 + 42 * 60 + 28;
         assert_eq!(
             acquired_date(t),
-            if aurora_i18n::language() == "fr" {
-                "mar. 02 avr. 2024 07:42:28"
-            } else {
-                "Tue 02 Apr 2024 07:42:28"
+            match aurora_i18n::language() {
+                "fr" => "mar. 02 avr. 2024 07:42:28",
+                // the order of the Legacy Viewer's xui/ja acquired_date
+                "ja" => "2024年4月02日（火）07:42:28",
+                _ => "Tue 02 Apr 2024 07:42:28",
             }
         );
         assert_eq!(acquired_date(0), aurora_i18n::tr!("status-unknown"));

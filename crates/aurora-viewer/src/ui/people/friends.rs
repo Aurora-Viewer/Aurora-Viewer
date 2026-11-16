@@ -194,6 +194,26 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     let all = lines(c, &filter, st.friend_set.as_deref());
     let order: Vec<Uuid> = all.iter().map(|l| l.friend.id).collect();
     st.sel.retain(|id| order.contains(id));
+    // A click anywhere in the list takes the keyboard, then the first letters
+    // of a name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
+    let focus = ui.make_persistent_id("people-friends-type-ahead");
+    let current = st.sel.first().copied().or(st.sheet);
+    let navigation = super::type_ahead::Navigation::new(ui, focus, current, || {
+        all.iter()
+            .map(|l| super::type_ahead::Entry {
+                id: l.friend.id,
+                names: [l.name.as_str(), l.username.as_str(), l.full.as_str()],
+            })
+            .collect()
+    });
+    if let Some(id) = navigation.chosen {
+        st.sel = vec![id];
+        st.anchor = Some(id);
+        if c.contact_sheet_on_click {
+            st.sheet = Some(id);
+            st.sheet_grow = false;
+        }
+    }
     if c.contact_sheet_on_click {
         let selected = st
             .sheet
@@ -234,7 +254,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
                     };
                     super::nearby::section_header(ui, c.p, &title);
                 }
-                row(ui, c, data, st, line, &order);
+                row(ui, c, data, st, line, &order, navigation);
             }
         });
 }
@@ -382,7 +402,15 @@ pub(super) fn set_pills(ui: &mut egui::Ui, c: &Ctx, sets: &[String], chosen: &mu
 
 /// One friend: picture, names, set dot, rights, and the quick actions
 /// under the pointer.
-fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, line: &Line, order: &[Uuid]) {
+fn row(
+    ui: &mut egui::Ui,
+    c: &mut Ctx,
+    data: &super::RadarData,
+    st: &mut PeopleUi,
+    line: &Line,
+    order: &[Uuid],
+    navigation: super::type_ahead::Navigation,
+) {
     let p = c.p;
     let f = &line.friend;
     let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
@@ -407,6 +435,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             .or(st.sheet)
             == Some(f.id),
     );
+    navigation.row(ui, &resp, rect, f.id);
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, c.world, &st.sel, f.id);
         return;
@@ -601,6 +630,110 @@ fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A click on a friend takes the keyboard, then the first letters of
+    /// another name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
+    #[test]
+    fn typing_jumps_to_the_first_friend_whose_name_matches() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        theme.apply(&frames.ctx, 1.0);
+        frames.ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let ids: Vec<Uuid> = ["Alice", "Bob", "Carol"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let id = Uuid::from_u128(0xF000 + i as u128);
+                world.social.friends.push(Friend {
+                    id,
+                    online: true,
+                    rights_given: 3,
+                    rights_has: 7,
+                });
+                world.social.names.insert(id, name.to_owned());
+                id
+            })
+            .collect();
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = super::super::RadarSettings::default();
+        let (voice, pics) = (HashMap::new(), HashMap::new());
+        let data = super::super::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            second_life: true,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut settings = super::super::FriendsSettings {
+            sort: SORT_NAME,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut st = PeopleUi::default();
+        let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(420.0, 400.0));
+        let mut draw = |ui: &mut egui::Ui, st: &mut PeopleUi| {
+            let mut child = super::super::nearby::list_ui(ui, bounds, "type-ahead-test", false);
+            let mut c = Ctx {
+                p: &p,
+                world: &world,
+                contacts: &mut contacts,
+                friends: &mut settings,
+                images: &pics,
+                actions: &mut actions,
+                embedded_contacts: false,
+                contact_sheet_on_click: false,
+            };
+            list(&mut child, &mut c, &data, st, false);
+        };
+        // Without a click the list does not own the keyboard.
+        frames.run(vec![egui::Event::Text("b".into())], |ui| draw(ui, &mut st));
+        assert!(st.sel.is_empty(), "typing with the keyboard elsewhere leaves the list alone");
+
+        frames.run(Vec::new(), |ui| draw(ui, &mut st));
+        let row = frames
+            .ctx
+            .viewport(|v| {
+                v.this_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, widgets)| widgets)
+                    .filter(|w| w.sense.senses_drag() && (w.rect.height() - RICH_H).abs() < 0.5)
+                    .map(|w| w.rect)
+                    .min_by(|a, b| a.top().total_cmp(&b.top()))
+            })
+            .expect("the friend rows are drawn");
+        let pos = row.center();
+        frames.run(
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            |ui| draw(ui, &mut st),
+        );
+        frames.run(vec![egui::Event::Text("b".into())], |ui| draw(ui, &mut st));
+        assert_eq!(st.sel, vec![ids[1]], "typing B jumps to Bob");
+        assert_eq!(st.anchor, Some(ids[1]));
+        frames.run(vec![egui::Event::Text("o".into())], |ui| draw(ui, &mut st));
+        assert_eq!(st.sel, vec![ids[1]], "a longer prefix keeps the match");
+        frames.run(vec![egui::Event::Text("b".into())], |ui| draw(ui, &mut st));
+        assert_eq!(st.sel, vec![ids[1]], "a prefix with no match keeps the selection");
+    }
 
     #[test]
     fn inline_controls_fit_the_list_at_transition_widths() {

@@ -16,7 +16,7 @@ use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, c
 use aurora_render::{DrawLists, EguiHandOver, FrameParams, RenderStats, Renderer};
 use glam::{Mat4, Vec3, Vec4};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -68,6 +68,7 @@ mod dev_toolbox;
 mod folders;
 mod hover_pick;
 mod texture_picker;
+mod typing_pointer;
 use folders::chat_log_root;
 mod admin_status;
 mod avatar_studio;
@@ -303,6 +304,9 @@ enum MouseMode {
     Steer,
     /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
+    /// Left on our avatar with ClickOnAvatarKeepsCamera: aim at the hit and
+    /// orbit without turning until we move, then mouse steer (Legacy Viewer).
+    AvatarKeepOrbit,
     /// Left button held on our avatar with MMO-style mouse buttons: orbit
     /// the camera around it without turning it (the default's right drag).
     Orbit,
@@ -417,6 +421,9 @@ pub struct App {
     /// The window of a lost GPU device, kept on screen until the new one has
     /// presented its first image (gpu_recovery.rs).
     retired_window: Option<Arc<Window>>,
+    // Available while a frame borrows Gfx for rendering and dispatches a quit action.
+    current_window: Weak<Window>,
+    exit_windows_hidden: bool,
     /// When the GPU device was lost lately (gpu_recovery.rs `loss_step`).
     gpu_losses: std::collections::VecDeque<Instant>,
     egui_ctx: egui::Context,
@@ -499,6 +506,8 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
+    super_held: bool,
+    ime_preedit: bool,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -573,6 +582,8 @@ pub struct App {
     cursor_hold: cursor_hold::CursorHold,
     /// Alt held in mouselook: the cursor given back, the view still.
     alt_cursor: cursor_hold::AltCursor,
+    /// The pointer hidden while a text field takes typing (#3211).
+    typing_pointer: typing_pointer::TypingPointer,
     numeric_drag: ui::numeric_drag::NumericDrag,
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
@@ -672,7 +683,7 @@ pub struct App {
     /// Turn key held since (yaw rate ramp).
     turn_since: Option<Instant>,
     /// Since when each camera key is held (CameraKeys rate ramp).
-    cam_key_since: [Option<Instant>; 10],
+    cam_key_since: [Option<Instant>; 12],
     /// Look-at: the privacy settings (PrivateLookAtTarget,
     /// PrivateLocalLookAtTarget) our last ViewerEffect followed (none before
     /// the first frame), camera focus, cursor and body heading
@@ -913,6 +924,8 @@ pub struct App {
     bumps_ui: ui::bumps::BumpsUi,
     /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
     voice_controls_ui: ui::voice_controls::VoiceControlsUi,
+    /// The Omnifilter Rules Editor (`ui/omnifilter.rs`).
+    omnifilter_ui: ui::omnifilter::OmnifilterUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
@@ -1275,6 +1288,34 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
     matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
+/// Read the logical key, so an IME or a remapped Return is not a quit.
+/// The regular and keypad Enter both report NamedKey::Enter.
+fn exit_prompt_key(key: &winit::keyboard::Key, composing: bool) -> Option<egui::Key> {
+    use winit::keyboard::{Key, NamedKey};
+    if composing {
+        return None;
+    }
+    match key {
+        Key::Named(NamedKey::Enter) => Some(egui::Key::Enter),
+        Key::Named(NamedKey::Escape) => Some(egui::Key::Escape),
+        Key::Named(NamedKey::Tab) => Some(egui::Key::Tab),
+        Key::Named(NamedKey::Space) => Some(egui::Key::Space),
+        Key::Character(s) if s == " " => Some(egui::Key::Space),
+        _ => None,
+    }
+}
+
+/// The shortcut mask as egui reads it, for the prompt's own keys.
+fn exit_prompt_modifiers(mods: Mods, super_held: bool) -> egui::Modifiers {
+    egui::Modifiers {
+        alt: mods.alt,
+        ctrl: mods.ctrl,
+        shift: mods.shift,
+        command: super_held,
+        ..egui::Modifiers::NONE
+    }
+}
+
 /// A press winit made up from the keyboard state when the window gained the
 /// focus. Its synthetic releases stay: they only ever clear a held key.
 fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
@@ -1577,6 +1618,12 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        // AURORA_DEMO_OMNIFILTER: on, on the demo's rules, for this run
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && let Some(omnifilter) = crate::demo::omnifilter::settings()
+        {
+            settings.omnifilter = omnifilter;
+        }
         external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
@@ -1691,6 +1738,8 @@ impl App {
             fullscreen_restore: None,
             fullscreen_applied: false,
             retired_window: None,
+            current_window: Weak::new(),
+            exit_windows_hidden: false,
             gpu_losses: Default::default(),
             egui_ctx,
             logo: None,
@@ -1699,6 +1748,11 @@ impl App {
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
+                // OmnifilterEngine::init (the demo's rules are its own)
+                match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
+                    Some(sets) => w.omnifilter = crate::omnifilter::Engine::with_sets(sets),
+                    None => w.omnifilter.load(crate::omnifilter::user_file()),
+                }
                 w
             },
             bridge_runtime: Default::default(),
@@ -1749,6 +1803,8 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
+            super_held: false,
+            ime_preedit: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -1790,6 +1846,7 @@ impl App {
             sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
             alt_cursor: Default::default(),
+            typing_pointer: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
@@ -1838,7 +1895,7 @@ impl App {
             voice_level: 0.0,
             fb_since: None,
             turn_since: None,
-            cam_key_since: [None; 10],
+            cam_key_since: [None; 12],
             look_at_privacy: None,
             static_eyes: Default::default(),
             look_hover: None,
@@ -1982,6 +2039,7 @@ impl App {
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
             voice_controls_ui: Default::default(),
+            omnifilter_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
@@ -3297,6 +3355,7 @@ impl App {
         self.settings.save();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        self.world.omnifilter.save_before_exit();
         for entry in &self.imports.entries {
             if let Some(crate::imports::Source::Mesh(draft)) = &entry.source {
                 draft.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -3341,7 +3400,19 @@ impl App {
         self.portal_journey = None;
         self.portal_ask = None;
         self.portal_demo_peer = None;
+        // its teleport belongs to the session that held it
+        self.suitcase_ask = None;
         self.follow_recovery = None;
+        // a question left open belongs to its session: a yes in the next one
+        // would act on another session's objects
+        self.delete_confirm = None;
+        self.moderation_ask = None;
+        self.god_kick_ask = None;
+        self.group_chat_confirm = None;
+        self.object_menu = Default::default();
+        self.place_confirm = None;
+        self.places_ui.forget_question();
+        self.url_confirm = None;
         self.inventory_ui = Default::default();
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account
@@ -4226,8 +4297,22 @@ impl App {
                 // the remembered one was used); otherwise forgotten
                 let (uri, user) = (self.settings.login_uri(), self.settings.username.clone());
                 if self.settings.remember_password {
-                    if !self.login_form.password.is_empty() {
-                        crate::credentials::store(&uri, &user, &aurora_net::login::login_hash(&uri, &self.login_form.password));
+                    let typed = !self.login_form.password.is_empty();
+                    let refused = self.demo && std::env::var_os("AURORA_DEMO_REMEMBER_REFUSED").is_some();
+                    let kept = !refused
+                        && crate::credentials::stays_remembered(typed, || {
+                            crate::credentials::store(&uri, &user, &aurora_net::login::login_hash(&uri, &self.login_form.password))
+                        });
+                    if !kept {
+                        // Aurora's own: the Legacy Viewer's bin_conf.dat file has no store to miss.
+                        self.settings.remember_password = false;
+                        self.world.system_notice(
+                            aurora_i18n::tr!("app-password-not-remembered"),
+                            crate::world::notice_topics::Topic::Warning,
+                        );
+                        if !self.demo {
+                            self.settings.save();
+                        }
                     }
                 } else {
                     crate::credentials::forget(&uri, &user);
@@ -4607,17 +4692,21 @@ impl App {
             // modifiers held now choose the drag (AltGr: Ctrl + Alt)
             let (_, ctrl) = self.mouse_alt_ctrl();
             let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !ctrl && !self.shift;
-            let mode = match self.mouse_mode {
-                MouseMode::Steer => crate::camera::ToolMode::Zoom,
-                _ if focus_tool => match self.build.focus_mode {
-                    crate::build::FocusMode::Zoom => crate::camera::ToolMode::Zoom,
-                    crate::build::FocusMode::Orbit => crate::camera::ToolMode::Orbit,
-                    crate::build::FocusMode::Pan => crate::camera::ToolMode::Pan,
-                },
-                _ => crate::camera::ToolMode::from_mods(ctrl, self.shift),
-            };
             let width = self.gfx.as_ref().map(|g| g.renderer.size().0 as f32).unwrap_or(1280.0);
-            self.camera.drag(mode, dx, dy, width, &mut self.world.agent);
+            if self.mouse_mode == MouseMode::AvatarKeepOrbit {
+                self.camera.avatar_keep_orbit_drag(dx, dy, width, &mut self.world.agent);
+            } else {
+                let mode = match self.mouse_mode {
+                    MouseMode::Steer => crate::camera::ToolMode::Zoom,
+                    _ if focus_tool => match self.build.focus_mode {
+                        crate::build::FocusMode::Zoom => crate::camera::ToolMode::Zoom,
+                        crate::build::FocusMode::Orbit => crate::camera::ToolMode::Orbit,
+                        crate::build::FocusMode::Pan => crate::camera::ToolMode::Pan,
+                    },
+                    _ => crate::camera::ToolMode::from_mods(ctrl, self.shift),
+                };
+                self.camera.drag(mode, dx, dy, width, &mut self.world.agent);
+            }
         } else if self.right_drag {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
@@ -5580,17 +5669,30 @@ impl App {
                 self.hold_focus_cursor();
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
-            // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick).
-            // Unlike LLToolCamera::pickCallback (lltoolfocus.cpp), keep the
-            // focus too when enabled: a plain press must not reframe (#1243).
+            // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick):
+            // always LLToolCamera::pickCallback on the hit, then only when the
+            // option is off call setFocusOnAvatar(true) (snap behind + steer).
+            // On: keep camera position, aim at the touched spot, orbit while
+            // stationary; movement / RMB promotes to mouse steer (Legacy Viewer).
             let s = &self.settings.camera;
-            if !s.click_avatar_keeps_camera {
-                let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+            let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+            if s.click_avatar_keeps_camera {
+                if self.world.rlva.camera_value("setcam_unlock").is_none() {
+                    let joint = s
+                        .third_person_follow_joint
+                        .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));
+                    self.camera.focus_own_surface(p, object, joint, s);
+                }
+            } else {
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
             if self.settings.mmo_mouse_buttons {
                 self.begin_avatar_orbit();
+            } else if s.click_avatar_keeps_camera && !self.right_drag {
+                self.camera.begin_drag(false);
+                self.mouse_mode = MouseMode::AvatarKeepOrbit;
+                self.set_mouselook_grab(true);
             } else {
                 self.begin_mouse_steer();
             }
@@ -6905,6 +7007,19 @@ impl App {
         self.egui_ctx.request_repaint();
     }
 
+    fn pump_network_events(&mut self, t_ev: Instant) {
+        while let Ok((sent, ev)) = self.net.events.try_recv() {
+            // (`sent`: when the session read the datagram, the time its
+            // motion starts from)
+            self.receive_event(ev, sent);
+            let now = Instant::now();
+            self.net_profile.event_applied(sent, now);
+            if now.duration_since(t_ev) > Duration::from_millis(8) {
+                break;
+            }
+        }
+    }
+
     fn confirm_exit(&mut self, action: ui::exit::Action) {
         if action != ui::exit::Action::Cancel
             && (!self.close_wearable_editor() || !self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
@@ -6914,6 +7029,9 @@ impl App {
         }
         if !self.exit_prompt.confirm(action, Instant::now()) {
             return;
+        }
+        if action == ui::exit::Action::Quit {
+            self.hide_windows_for_exit();
         }
         if self.in_world() {
             self.world.save_open_ims();
@@ -6928,6 +7046,7 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.hide_windows_for_exit();
         self.instances.leave();
         // closed while the graphics card still holds a frame, from its
         // notice or not: reported, and the next start offers the safe
@@ -6939,6 +7058,8 @@ impl App {
         }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        // a rule changed just before closing is kept, as at a logout
+        self.world.omnifilter.save_before_exit();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();
@@ -6957,24 +7078,6 @@ impl App {
         // it waits for the LogoutReply). No wait when none is.
         if !self.net.wait_viewer_stats(Duration::from_secs(2)) {
             log::debug!("the last viewer statistics report was still being posted at exit");
-        }
-        if let Some(g) = self
-            .gfx
-            .as_ref()
-            .filter(|g| forced_window_size().is_none() && g.window.fullscreen().is_none())
-        {
-            self.settings.window_maximized = g.window.is_maximized();
-            // when maximized, keep the restored size / position recorded below
-            if !self.settings.window_maximized && !g.window.is_minimized().unwrap_or(false) {
-                let s = g.window.inner_size();
-                let sf = g.window.scale_factor();
-                self.settings.window_width = (s.width as f64 / sf) as u32;
-                self.settings.window_height = (s.height as f64 / sf) as u32;
-                if let Ok(p) = g.window.outer_position() {
-                    self.settings.window_x = Some(p.x);
-                    self.settings.window_y = Some(p.y);
-                }
-            }
         }
         if self.capture.is_none() {
             ui::layout::save(&self.egui_ctx);
@@ -7000,10 +7103,42 @@ impl App {
         // and the settings theirs (written by the save thread), before a
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
-        if self.restart_into_vr {
-            restart_with_vr(self.vr_requested_mode);
-        }
         event_loop.exit();
+    }
+
+    /// Hide as soon as Quit is confirmed. A hidden native window may lose its
+    /// reported geometry, so capture it before hiding either recovery window.
+    fn hide_windows_for_exit(&mut self) {
+        if self.exit_windows_hidden {
+            return;
+        }
+        self.exit_windows_hidden = true;
+        if let Some(window) = self.current_window.upgrade() {
+            if forced_window_size().is_none() && window.fullscreen().is_none() {
+                self.settings.window_maximized = window.is_maximized();
+                // The last restored size and position already belong to a maximized window.
+                if !self.settings.window_maximized && !window.is_minimized().unwrap_or(false) {
+                    let size = window.inner_size();
+                    let scale = window.scale_factor();
+                    if size.width > 0 && size.height > 0 {
+                        self.settings.window_width = (size.width as f64 / scale) as u32;
+                        self.settings.window_height = (size.height as f64 / scale) as u32;
+                        if let Ok(pos) = window.outer_position() {
+                            self.settings.window_x = Some(pos.x);
+                            self.settings.window_y = Some(pos.y);
+                        }
+                    }
+                }
+            }
+            window.set_visible(false);
+        }
+        if let Some(window) = &self.retired_window {
+            window.set_visible(false);
+        }
+    }
+
+    pub fn requested_vr_restart(&self) -> Option<crate::camera::VrView> {
+        self.restart_into_vr.then_some(self.vr_requested_mode)
     }
 
     fn record_inventory_logout(&mut self) {
@@ -8103,6 +8238,11 @@ impl App {
             return;
         }
         let was_drag = self.right_drag;
+        if pressed && self.mouse_mode == MouseMode::AvatarKeepOrbit {
+            // Legacy Viewer: RMB while holding the kept-camera left drag starts walk/steer
+            self.camera.fold_orbit(&mut self.world.agent);
+            self.begin_mouse_steer();
+        }
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
             self.right_gesture = RightGesture {
@@ -8687,6 +8827,7 @@ impl App {
                     self.alt_codes.alt_pressed();
                 }
             } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && !self.exit_prompt.open
                 && self.egui_ctx.egui_wants_keyboard_input()
             {
                 self.alt_text.push(text);
@@ -8821,6 +8962,18 @@ impl App {
             // (app_settings/key_bindings.xml).
             i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
+        // Route only the keyboard. Controls, the joystick and mouse steering
+        // still send their own movement, even when they share a held direction.
+        let temp_run = (self.temp_run.is_some() || self.joystick.running) && !self.world.rlva.has("temprun");
+        let seated_camera = self.world.agent.is_sitting()
+            && self.in_world()
+            && !self.avatar_studio.active
+            && self.vr_camera.is_none()
+            && !self.joystick.active
+            && self.camera.free().is_none()
+            && !self.camera.mouselook()
+            && !self.camera.sit_camera_active();
+        let seated = SeatedCameraKeys::take(&mut i, &self.world.script_controls, seated_camera, self.always_run, temp_run);
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
         i.forward |= held(Action::Forward);
@@ -8893,13 +9046,18 @@ impl App {
             self.lr_since = None;
             self.up_since = None;
             self.turn_since = None;
-            self.cam_key_since = [None; 10];
+            self.cam_key_since = [None; 12];
             return;
         }
         if self.mouse_mode == MouseMode::Steer && self.steer_by_right && !self.right_drag {
             // the right button that steered was let go without its release
             // (exit prompt, lost focus, mouselook): steering ends with it
             self.end_mouse_drag();
+        }
+        if self.mouse_mode == MouseMode::AvatarKeepOrbit && player_movement_input {
+            // Route the first walking frame through steering as well.
+            self.camera.fold_orbit(&mut self.world.agent);
+            self.begin_mouse_steer();
         }
         if self.mouse_mode == MouseMode::Steer {
             // Mouse steering (LLToolCamera::mMouseSteering): the mouse turns
@@ -8915,10 +9073,7 @@ impl App {
             // the left one when the right one steers (MMO-style buttons)
             i.forward |= self.mouse_walks();
         }
-        i.run = self.temp_run.is_some() || self.joystick.running;
-        if self.world.rlva.has("temprun") {
-            i.run = false;
-        }
+        i.run = temp_run;
         if self.world.rlva.has("jump") && !self.world.agent.flying {
             i.up = false;
         }
@@ -8940,8 +9095,11 @@ impl App {
             self.world.agent.record_jump_input(now);
         }
         // agent_jump (indra/newview/llviewerinput.cpp) takes off through
-        // LLAgent::setFlying, which refuses where LLAgent::canFly says no
+        // LLAgent::setFlying, which refuses where LLAgent::canFly says no.
+        // upGrabbed (llTakeControls CONTROL_UP, pass_on false) still sends
+        // the hold to the script but must not start automatic fly.
         if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
+            && !self.world.script_controls.up_grabbed()
             && self.movement_runtime.native_fly_allowed()
             && !self.world.agent.flying
             && !self.world.agent.seated
@@ -8999,7 +9157,7 @@ impl App {
         self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;
-        const CAMERA_KEYS: [A; 10] = [
+        const CAMERA_KEYS: [A; 12] = [
             A::CamOrbitCw,
             A::CamOrbitCcw,
             A::CamOrbitOver,
@@ -9010,11 +9168,27 @@ impl App {
             A::CamPanRight,
             A::CamPanUp,
             A::CamPanDown,
+            A::CamRollLeft,
+            A::CamRollRight,
         ];
-        let mut rate = [0.0f32; 10];
+        let mut rate = [0.0f32; 12];
+        let mut unlock = false;
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
             let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
-            if self.in_world() && (key || self.controls_held.contains(&a)) {
+            let explicit = key || self.controls_held.contains(&a);
+            let sitting_active = match n {
+                0 => seated.orbit_cw,
+                1 => seated.orbit_ccw,
+                2 => seated.orbit_up,
+                3 => seated.orbit_down,
+                4 => seated.zoom_in,
+                5 => seated.zoom_out,
+                _ => false,
+            };
+            if self.in_world() && (explicit || sitting_active) {
+                if explicit {
+                    unlock = true;
+                }
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
@@ -9024,6 +9198,9 @@ impl App {
         // the photo viewfinder's camera pad, held like the keys
         if let Some(pad) = self.viewfinder_pad(dt) {
             for (r, p) in rate.iter_mut().zip(pad) {
+                if p > 0.0 {
+                    unlock = true;
+                }
                 *r = r.max(p);
             }
         }
@@ -9038,8 +9215,11 @@ impl App {
             pan_right: rate[7],
             pan_up: rate[8],
             pan_down: rate[9],
+            roll_left: rate[10],
+            roll_right: rate[11],
         };
-        self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
+        self.camera
+            .apply_keys(keys, unlock, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
         if gamepad
             && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
@@ -10216,15 +10396,8 @@ impl App {
             self.inventory_ui.expand_all = Some(true);
         }
         self.sync_chat_log();
-        while !still && let Ok((sent, ev)) = self.net.events.try_recv() {
-            // (`sent`: when the session read the datagram, the time its
-            // motion starts from)
-            self.receive_event(ev, sent);
-            let now = Instant::now();
-            self.net_profile.event_applied(sent, now);
-            if now.duration_since(t_ev) > Duration::from_millis(8) {
-                break;
-            }
+        if !still {
+            self.pump_network_events(t_ev);
         }
         self.net_profile.events_left(self.net.events.len());
         let corrections = self.world.agent.take_corrections();
@@ -10328,6 +10501,7 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        self.world.omnifilter_frame(self.settings.omnifilter, Instant::now());
         if self.in_world() {
             self.sync_friends_only();
             self.step_gestures();
@@ -10543,7 +10717,9 @@ impl App {
             self.camera.vr_body_offset(self.vr_body_follow.offset());
         }
         self.apply_local_imports(&mut gfx.renderer);
-        self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
+        self.wearable_ui
+            .preview
+            .apply(&mut self.world, &mut self.scene, &mut gfx.renderer, Some(&self.egui_ctx));
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
             self.send(command);
         }
@@ -11016,8 +11192,9 @@ impl App {
             gfx.renderer.cut_motion_history();
         }
         let studio_view = self.studio_view(aspect);
-        let render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
-        let render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
+        // (both follow `view` when the late camera update rebuilds it, below)
+        let mut render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
+        let mut render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
             crate::avatar_studio::FOV
         } else {
             self.camera.fov_y
@@ -11184,7 +11361,10 @@ impl App {
             if !self.egui_ctx.input(|i| i.pointer.any_down()) && self.ik_editor.sync_poser_settings(&mut self.settings.poser) {
                 self.settings.save();
             }
-            self.scene.poser = self.ik_editor.pose_layers(&self.world);
+            let poser = self
+                .ik_editor
+                .pose_layers_with_base(&self.world, |id| self.scene.skeleton_base(&id));
+            self.scene.poser = poser;
             self.outfit_portrait_pose();
             self.ik_editor.tick_pose_storage(&self.scene.jobs, &self.egui_ctx, &self.world);
             if !self.scene.poser.is_empty() {
@@ -11415,6 +11595,13 @@ impl App {
                 };
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
+                // The renderer places objects relative to `camera_pos` and
+                // turns them with the view's rotation alone: a position read
+                // before this update drew the world one camera step behind
+                // its own view (#3645: mouselook trailing, the manipulator
+                // and the selection outlines off the edited object).
+                render_eye = self.camera.position;
+                render_fov = self.camera.fov_y;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
                     self.camera.forward(),
                     texture_aspect,
@@ -12087,6 +12274,24 @@ impl App {
             let snowing = if self.weather_now.snowing() { self.weather_now.fall() } else { 0.0 };
             crate::scene::snow_trail::SnowTrails::press(&mut self.scene, &self.world, centre, reach, world_clock(), snowing);
         }
+        // demo: every frame drawn from the camera has the position its view
+        // looks from (#3645). The Avatar Studio and VR place their own eyes,
+        // and the shake pans the view alone.
+        if self.demo && studio_view.is_none() && !gfx.renderer.vr_engaged() && self.camera.shake == Vec3::ZERO {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static BEHIND: AtomicU32 = AtomicU32::new(0);
+            let gap = crate::camera::view_eye_gap(view, render_eye);
+            if gap.is_nan() || gap > crate::camera::VIEW_EYE_GAP_MAX {
+                let n = BEHIND.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_multiple_of(600) {
+                    log::warn!(
+                        "render: world drawn {:.1} mm from its view's eye at frame {} ({n} such frames)",
+                        gap * 1000.0,
+                        self.frame_count
+                    );
+                }
+            }
+        }
         let mut fp = FrameParams {
             // (a window behind past the driver's budget, or on a card another
             // program keeps busy, pauses its 3D drawing: its 3D targets
@@ -12371,6 +12576,7 @@ impl App {
                             | "aurora-keyboard"
                             | "aurora-keyboard-fold"
                             | "aurora-keyboard-wide"
+                            | "enter-key"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                         || v.starts_with("delete-")
@@ -12869,6 +13075,12 @@ impl App {
                 full.platform_output.cursor_image = None;
             }
         }
+        if self.typing_pointer.hidden_for(&self.egui_ctx) {
+            // typing in a field (#3211): egui shows the pointer again by
+            // itself once this stops, at the next move
+            full.platform_output.cursor_icon = egui::CursorIcon::None;
+            full.platform_output.cursor_image = None;
+        }
         if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
@@ -13124,7 +13336,12 @@ impl App {
         } else {
             &self.empty_lists
         };
-        gfx.renderer.set_rain_surfaces(raining);
+        // (not once quitting: out of the world the weather is the user's own,
+        // and rain there would compile a pipeline set the closing renderer
+        // has to wait for)
+        if !self.exit_prompt.quitting() {
+            gfx.renderer.set_rain_surfaces(raining);
+        }
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
@@ -13135,7 +13352,7 @@ impl App {
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         self.busy_pause_frame(gfx.renderer.vr_engaged());
-        if stats.presented && !gfx.shown {
+        if stats.presented && !gfx.shown && !self.exit_windows_hidden {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
             // it until its client area already contains a rendered image;
@@ -13536,6 +13753,17 @@ impl App {
             && let Some(handle) = self.world.main_region
         {
             for event in crate::demo::sim_version::events(self.frame_count, handle) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::omnifilter::on() {
+            if self.frame_count == crate::demo::omnifilter::OPEN {
+                ui::widgets::open_floater(&self.egui_ctx, ui::omnifilter::WINDOW, &mut self.panels.omnifilter);
+            }
+            let agent = self.world.agent_id;
+            for event in crate::demo::omnifilter::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -14002,6 +14230,12 @@ impl App {
             } else if self.frame_count == 900 {
                 self.on_left_release();
                 self.shift = false;
+            }
+        }
+        // AURORA_DEMO_HUDS=slide: the HUD's script moves its card once, at frame 720.
+        if self.demo && self.frame_count == 720 && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "slide") {
+            for ev in crate::demo::hud::slide_events() {
+                self.world.apply(ev);
             }
         }
         if self.demo
@@ -17310,7 +17544,9 @@ impl App {
             &self.ui_images,
         );
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
-        ui::bars::clock::set_chat_format(self.system_island().clock_format);
+        let island = self.system_island();
+        ui::bars::clock::set_chat_format(island.clock_format);
+        ui::bars::clock::set_zone(island.clock_zone);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -17871,6 +18107,7 @@ impl App {
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),
+                    home_entry: self.world.rlva_home_entry_enabled(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
                     god_level: self.world.god_level,
@@ -19606,6 +19843,14 @@ impl App {
                         self.open_web_link(u, None);
                     }
                 }
+                // an Omnifilter rule's "Gotopage" (callback_load_url ->
+                // LLWeb::loadURL): web links only, through the same link
+                // checks and browser routing as a click on "Go to page"
+                for u in self.world.take_omnifilter_urls() {
+                    if u.starts_with("https://") || u.starts_with("http://") {
+                        self.open_web_link(u, None);
+                    }
+                }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
@@ -19742,6 +19987,13 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                self.omnifilter_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world.omnifilter,
+                    &mut self.settings,
+                    &mut self.panels.omnifilter,
+                );
                 self.conversation_log_window(&ctx, &p);
                 self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
@@ -20558,8 +20810,14 @@ impl ApplicationHandler for App {
             }
         };
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
+        // The native Window menu makes Cmd+M minimize and Ctrl+Cmd+F enter
+        // full screen before the viewer's own shortcuts see them
+        // (mac_window_menu.rs).
         #[cfg(target_os = "macos")]
-        crate::mac_quit::route_quit_to_close();
+        {
+            crate::mac_quit::route_quit_to_close();
+            crate::mac_window_menu::install();
+        }
         sync_auto_render_scale(&mut self.settings, window.scale_factor());
         let created = self.open_renderer(&window);
         let renderer = match created {
@@ -22413,6 +22671,11 @@ impl ApplicationHandler for App {
                     landmark.asset_id = crate::demo::place::landmark_ids(1).1;
                     self.world.inventory.add_items(vec![landmark]);
                 }
+                if view == "enter-key" {
+                    self.settings.inventory = ui::inventory::InventoryPreferences::default();
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    self.inventory_ui.expand_all = Some(true);
+                }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view == "outfit-menu-loading" {
@@ -22835,7 +23098,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.expand_all = Some(true);
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8001));
                     } else if view == "new-folder" {
-                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
+                        if let Ok(change) =
+                            crate::world::inventory::actions::create_folder(id, crate::text_validation::default_name("common-new-folder"))
+                        {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
                     } else if matches!(view.as_str(), "new-script" | "new-note") {
@@ -22926,9 +23191,9 @@ impl ApplicationHandler for App {
                             it.asset_id = uuid::Uuid::nil();
                         }
                         self.inventory_ui.preview = Some(id);
-                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id, None));
                     } else if matches!(view.as_str(), "animation-open" | "animation-play-local" | "animation-play-world") {
-                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id, None));
                         if view != "animation-open"
                             && let Some(asset) = self.world.inventory.items.get(&id).map(|item| item.asset_id)
                         {
@@ -22957,7 +23222,10 @@ impl ApplicationHandler for App {
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else if !configured_view && crate::world::inventory::demo::big().is_none() {
+                } else if !configured_view
+                    && crate::world::inventory::demo::big().is_none()
+                    && !matches!(view.as_str(), "enter-key" | "aurora-enter-key")
+                {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in crate::world::appearance::sync_commands(
@@ -23502,17 +23770,25 @@ impl ApplicationHandler for App {
     /// closed connection and every exit ended in a segmentation fault (before
     /// the browsers' private profiles were cleaned up).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.hide_windows_for_exit();
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // the emoji a remote desktop types as two halves, which winit loses,
+        // given back to the press of the second (wide_chars.rs)
+        #[cfg(windows)]
+        let mut event = event;
+        #[cfg(windows)]
+        crate::wide_chars::attach(id, &mut event);
         // the window of a lost device, on screen until its successor has
         // presented: its redraws and sizes are not the new renderer's
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
         // here, with no release to come. Like egui-winit, and like
@@ -23543,8 +23819,35 @@ impl ApplicationHandler for App {
             return;
         }
 
+        if let WindowEvent::Ime(ime) = &event {
+            use winit::event::Ime;
+            match ime {
+                Ime::Preedit(text, _) => self.ime_preedit = !text.is_empty(),
+                Ime::Commit(_) | Ime::Disabled => self.ime_preedit = false,
+                Ime::Enabled => {}
+            }
+            if self.exit_prompt.open {
+                return;
+            }
+        }
+        // The prompt has no text field. Releases still clear held movement.
+        if self.exit_prompt.open
+            && let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && ke.state == ElementState::Pressed
+        {
+            self.track_alt_graph(ke);
+            if !ke.repeat
+                && let Some(key) = exit_prompt_key(&ke.logical_key, self.ime_preedit)
+            {
+                self.exit_prompt.key(key, exit_prompt_modifiers(self.key_mods(ke), self.super_held));
+                self.egui_ctx.request_repaint();
+            }
+            return;
+        }
+
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
+        let pending_alt_chars = self.alt_text.len();
         if self.alt_code_key(&event) {
             return;
         }
@@ -23587,6 +23890,8 @@ impl ApplicationHandler for App {
         // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
         // it never hovers, clicks or scrolls the windows (#1343)
         let held_pointer = self.cursor_hold.held() && cursor_hold::held_from_ui(&event);
+        // Repeated position reports must not put egui's hover back while typing.
+        let stationary_hidden_pointer = self.typing_pointer.hidden() && matches!(event, WindowEvent::CursorMoved { .. });
         // AltGr's shortcut key must not also reach egui as a plain key:
         // for example G would snap a selection while Ctrl+Alt+G runs.
         // Releases still clear any key pressed before AltGr was held.
@@ -23645,14 +23950,23 @@ impl ApplicationHandler for App {
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || web_tab || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
-            egui_winit::EventResponse {
-                consumed: false,
-                repaint: true,
-            }
-        } else {
-            g.egui_state.on_window_event(&g.window, &event)
-        };
+        let first_event = g.egui_state.egui_input().events.len();
+        let resp =
+            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
+                egui_winit::EventResponse {
+                    consumed: false,
+                    repaint: true,
+                }
+            } else {
+                g.egui_state.on_window_event(&g.window, &event)
+            };
+        let events = &mut g.egui_state.egui_input_mut().events;
+        if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
+            && !self.cursor_hold.held()
+            && !self.clicks.scripted()
+        {
+            self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+        }
         match &event {
             WindowEvent::CloseRequested => {
                 self.request_exit();
@@ -23678,10 +23992,9 @@ impl ApplicationHandler for App {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
                 self.geom_changed = Some(Instant::now());
             }
-            WindowEvent::RedrawRequested => {
-                self.frame(event_loop);
-            }
+            WindowEvent::RedrawRequested if !self.exit_windows_hidden => self.frame(event_loop),
             WindowEvent::ModifiersChanged(m) => {
+                self.super_held = m.state().super_key();
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
                 self.alt = m.state().alt_key();
@@ -23709,6 +24022,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.super_held = false;
+                self.ime_preedit = false;
                 self.options_ui.cancel_joystick_capture();
                 self.alt_codes.reset();
                 self.chat_ui.cancel_gesture_key();
@@ -24159,6 +24474,24 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         crate::crash::pumped();
+        if self.exit_windows_hidden {
+            // A hidden window need not receive redraws. Finish the last scene
+            // capture if requested, then only pump LogoutReply and the quit timer.
+            if self.exit_prompt.quitting() {
+                if self.want_scene_capture || self.scene_capture_pending {
+                    self.frame(event_loop);
+                } else {
+                    self.pump_network_events(Instant::now());
+                    if self.exit_prompt.finish(!self.in_world() || self.demo, Instant::now()).is_some() {
+                        self.shutdown(event_loop);
+                    }
+                }
+                event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(16),
+                ));
+            }
+            return;
+        }
         self.sync_minimized_mute();
         if self.settings.window_fullscreen != self.fullscreen_applied {
             self.apply_fullscreen_setting();
@@ -24252,6 +24585,65 @@ fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now:
     now.duration_since(*since.get_or_insert(now)).as_secs_f32() > FLY_TIME
 }
 
+/// The movement keys a seated avatar hands to the camera: W / S zoom, A / D
+/// orbit around the avatar, E / C tilt it (camera_move_forward_sitting,
+/// camera_move_backward_sitting, camera_spin_around_cw_sitting,
+/// camera_spin_around_ccw_sitting, camera_spin_over_sitting and
+/// camera_spin_under_sitting, indra/newview/llviewerinput.cpp, originally
+/// LGPL 2.1). Each key goes to the avatar instead when its Legacy condition
+/// says so.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SeatedCameraKeys {
+    zoom_in: bool,
+    zoom_out: bool,
+    /// The turn-left key: spin_around_cw (the camera orbits right).
+    orbit_cw: bool,
+    /// The turn-right key: spin_around_ccw (the camera orbits left).
+    orbit_ccw: bool,
+    orbit_up: bool,
+    orbit_down: bool,
+}
+
+impl SeatedCameraKeys {
+    /// Take the held keyboard directions used by the seated third-person camera.
+    ///
+    /// - A script that took a control outright keeps it (forwardGrabbed,
+    ///   backwardGrabbed, rotateGrabbed, upGrabbed, downGrabbed: only the
+    ///   controls taken without pass-on; a pass-on hold does not stop the
+    ///   camera).
+    /// - A script-defined sit camera (sitCameraEnabled) keeps every key.
+    /// - A / D also go to the avatar while it runs: `getRunning()`, that is
+    ///   Always Run (`always_run`, mbAlwaysRun) or a temporary run
+    ///   (`temp_run`, mbTempRun: double-tap, joystick run button).
+    /// - W / S go to the avatar while it runs only by a temporary run:
+    ///   `getRunning() && !getAlwaysRun()`. With Always Run on they zoom,
+    ///   even after a double-tap (the Legacy Viewer never sets mbTempRun
+    ///   while Always Run is on).
+    /// - E / C have no run condition.
+    fn take(
+        keys: &mut MoveInput,
+        script: &aurora_net::script_controls::ScriptControls,
+        enabled: bool,
+        always_run: bool,
+        temp_run: bool,
+    ) -> Self {
+        if !enabled {
+            return Self::default();
+        }
+        let running = always_run || temp_run;
+        let temp_running = temp_run && !always_run;
+        let take = |key: &mut bool, blocked: bool| !blocked && std::mem::take(key);
+        Self {
+            zoom_in: take(&mut keys.forward, script.forward_grabbed() || temp_running),
+            zoom_out: take(&mut keys.back, script.backward_grabbed() || temp_running),
+            orbit_cw: take(&mut keys.turn_left, script.rotate_grabbed() || running),
+            orbit_ccw: take(&mut keys.turn_right, script.rotate_grabbed() || running),
+            orbit_up: take(&mut keys.up, script.up_grabbed()),
+            orbit_down: take(&mut keys.down, script.down_grabbed()),
+        }
+    }
+}
+
 /// Name of the swapchain's presentation mode for the profile and the bug
 /// reports; `unknown` until the renderer has answered a frame.
 fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static str {
@@ -24284,7 +24676,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 /// Start this viewer again with `--vr`, as the process ends: the identity
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
-fn restart_with_vr(mode: crate::camera::VrView) {
+pub fn restart_with_vr(mode: crate::camera::VrView) {
     let cli = crate::cli::get();
     let Ok(exe) = std::env::current_exe() else {
         log::warn!("restart into VR: the viewer's path is unknown");
@@ -24314,9 +24706,30 @@ fn restart_with_vr(mode: crate::camera::VrView) {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
+    use super::{
+        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
+    };
+    use crate::keybinds::Mods;
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_quit_prompt_answers_enter_and_escape_including_the_keypad() {
+        use winit::keyboard::{Key, NamedKey};
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), false), Some(egui::Key::Enter));
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Escape), false), Some(egui::Key::Escape));
+        assert_eq!(exit_prompt_key(&Key::Character("a".into()), false), None);
+        assert_eq!(exit_prompt_key(&Key::Dead(Some('^')), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Process), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), true), None);
+        assert!(exit_prompt_modifiers(Mods::default(), false).is_none());
+        assert!(!exit_prompt_modifiers(Mods::default(), true).is_none());
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert!(!exit_prompt_modifiers(ctrl, false).is_none());
+    }
 
     #[test]
     fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {
@@ -24420,6 +24833,165 @@ mod tests {
         assert!(!super::synthetic_press(true, Released));
         assert!(!super::synthetic_press(false, Pressed));
         assert!(!super::synthetic_press(false, Released));
+    }
+
+    /// Seated keys against the script controls and the run state, as the
+    /// Legacy Viewer's camera_*_sitting functions decide them.
+    mod seated_camera_keys {
+        use super::super::SeatedCameraKeys;
+        use crate::agent::MoveInput;
+        use aurora_net::control;
+        use aurora_net::script_controls::ScriptControls;
+
+        /// W, S, A, D, E and C all held.
+        fn all_held() -> MoveInput {
+            MoveInput {
+                forward: true,
+                back: true,
+                turn_left: true,
+                turn_right: true,
+                up: true,
+                down: true,
+                ..Default::default()
+            }
+        }
+
+        fn of(script: &ScriptControls, sit_camera: bool, always_run: bool, temp_run: bool) -> SeatedCameraKeys {
+            SeatedCameraKeys::take(&mut all_held(), script, !sit_camera, always_run, temp_run)
+        }
+
+        fn all_to_the_camera() -> SeatedCameraKeys {
+            SeatedCameraKeys {
+                zoom_in: true,
+                zoom_out: true,
+                orbit_cw: true,
+                orbit_ccw: true,
+                orbit_up: true,
+                orbit_down: true,
+            }
+        }
+
+        #[test]
+        fn free_seat_gives_every_key_to_the_camera() {
+            assert_eq!(of(&ScriptControls::default(), false, false, false), all_to_the_camera());
+        }
+
+        #[test]
+        fn a_key_not_held_stays_with_the_avatar() {
+            let mut keys = MoveInput {
+                forward: true,
+                ..Default::default()
+            };
+            let seated = SeatedCameraKeys::take(&mut keys, &ScriptControls::default(), true, false, false);
+            assert_eq!(
+                seated,
+                SeatedCameraKeys {
+                    zoom_in: true,
+                    ..Default::default()
+                }
+            );
+        }
+
+        #[test]
+        fn controls_taken_outright_keep_their_key() {
+            for (flag, key) in [
+                (control::AT_POS, "zoom_in"),
+                (control::AT_NEG, "zoom_out"),
+                (control::YAW_POS, "orbit_cw and orbit_ccw"),
+                (control::YAW_NEG, "orbit_cw and orbit_ccw"),
+                (control::UP_POS, "orbit_up"),
+                (control::UP_NEG, "orbit_down"),
+            ] {
+                let mut script = ScriptControls::default();
+                script.apply(true, flag, false);
+                let seated = of(&script, false, false, false);
+                let mut expected = all_to_the_camera();
+                match flag {
+                    control::AT_POS => expected.zoom_in = false,
+                    control::AT_NEG => expected.zoom_out = false,
+                    control::YAW_POS | control::YAW_NEG => {
+                        expected.orbit_cw = false;
+                        expected.orbit_ccw = false;
+                    }
+                    control::UP_POS => expected.orbit_up = false,
+                    _ => expected.orbit_down = false,
+                }
+                assert_eq!(seated, expected, "{key} goes to the script");
+            }
+        }
+
+        #[test]
+        fn controls_passed_on_do_not_stop_the_camera() {
+            // llTakeControls(..., TRUE, ...): the script listens, the camera
+            // keeps its keys (mControlsTakenCount only, not the pass-on count)
+            let mut script = ScriptControls::default();
+            script.apply(
+                true,
+                control::AT_POS | control::AT_NEG | control::YAW_POS | control::YAW_NEG | control::UP_POS | control::UP_NEG,
+                true,
+            );
+            assert!(script.any());
+            assert_eq!(of(&script, false, false, false), all_to_the_camera());
+        }
+
+        #[test]
+        fn a_sit_camera_keeps_every_key_for_the_avatar() {
+            let mut keys = all_held();
+            assert_eq!(
+                SeatedCameraKeys::take(&mut keys, &ScriptControls::default(), false, false, false),
+                SeatedCameraKeys::default()
+            );
+            assert!(keys.forward && keys.back && keys.turn_left && keys.turn_right && keys.up && keys.down);
+        }
+
+        #[test]
+        fn routing_key_presses_preserves_independent_avatar_input() {
+            let mut script = ScriptControls::default();
+            script.apply(true, control::YAW_POS, false);
+            let mut keys = MoveInput {
+                strafe_left: true,
+                ..all_held()
+            };
+            let seated = SeatedCameraKeys::take(&mut keys, &script, true, false, false);
+            assert!(seated.zoom_in && seated.zoom_out && seated.orbit_up && seated.orbit_down);
+            assert!(!seated.orbit_cw && !seated.orbit_ccw);
+            assert!(!keys.forward && !keys.back && !keys.up && !keys.down);
+            assert!(keys.turn_left && keys.turn_right && keys.strafe_left);
+
+            let mut stick = crate::joystick::Motion::default();
+            stick.axes[0] = 1.0;
+            stick.fall = true;
+            stick.apply_avatar(&mut keys);
+            assert!(keys.forward && keys.down);
+            assert!(!keys.back && !keys.up);
+        }
+
+        #[test]
+        fn a_temporary_run_sends_every_walk_and_turn_key_to_the_avatar() {
+            let seated = of(&ScriptControls::default(), false, false, true);
+            assert!(!seated.zoom_in && !seated.zoom_out, "W / S push the avatar");
+            assert!(!seated.orbit_cw && !seated.orbit_ccw, "A / D turn the avatar");
+            assert!(seated.orbit_up && seated.orbit_down, "E / C have no run condition");
+        }
+
+        #[test]
+        fn always_run_sends_the_turn_keys_to_the_avatar_but_not_w_and_s() {
+            let seated = of(&ScriptControls::default(), false, true, false);
+            assert!(seated.zoom_in && seated.zoom_out, "getRunning() && !getAlwaysRun() is false");
+            assert!(!seated.orbit_cw && !seated.orbit_ccw, "getRunning() is true");
+            assert!(seated.orbit_up && seated.orbit_down);
+        }
+
+        #[test]
+        fn a_double_tap_under_always_run_still_zooms() {
+            // Aurora marks a double-tap run even with Always Run on; the Legacy
+            // Viewer never does (run_forward checks !getRunning()), so W / S
+            // behave as with Always Run alone
+            assert_eq!(
+                of(&ScriptControls::default(), false, true, true),
+                of(&ScriptControls::default(), false, true, false)
+            );
+        }
     }
 
     #[test]

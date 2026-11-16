@@ -114,7 +114,8 @@ pub fn content(
                     p,
                     &mut settings.remember_password,
                     aurora_i18n::tr!("ui-login-remember-password"),
-                );
+                )
+                .on_hover_text(super::remember_password_hint());
                 Some(response)
             } else {
                 None

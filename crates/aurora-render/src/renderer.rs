@@ -2064,6 +2064,9 @@ pub(crate) struct Backend {
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// The pipeline workers still running, a set no longer wanted included:
+    /// waited for when the renderer is dropped (`wait_pipeline_workers`).
+    pipeline_workers: Vec<std::thread::JoinHandle<()>>,
     /// Rain prototype's wetness memory bookkeeping.
     rain_wet: RainWet,
     snow_trail: SnowTrail,
@@ -2111,6 +2114,7 @@ impl Drop for Backend {
             log::warn!("GPU device lost: the window surface is left to the process");
             return;
         }
+        self.wait_pipeline_workers();
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -4423,6 +4427,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
@@ -6789,7 +6794,10 @@ impl Backend {
                 if s.ssr { "on" } else { "off" },
                 if s.gbuffer() { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer()));
+            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer());
+            self.pipeline_workers.retain(|w| !w.is_finished());
+            self.pipeline_workers.extend(worker);
+            self.pipeline_build = Some(build);
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -6846,7 +6854,7 @@ impl Backend {
     }
 
     /// Compile the pipelines for `samples` and `ssr` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> PipelineBuild {
+    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -6867,16 +6875,63 @@ impl Backend {
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
-        if let Err(e) = spawned {
-            // the receiver reports the worker gone: compiled on this thread
-            log::error!("cannot start the pipeline worker: {e}");
-        }
-        PipelineBuild {
+        let worker = spawned
+            .inspect_err(|e| {
+                // the receiver reports the worker gone: compiled on this thread
+                log::error!("cannot start the pipeline worker: {e}");
+            })
+            .ok();
+        let build = PipelineBuild {
             samples,
             ssr,
             started: std::time::Instant::now(),
             done,
+        };
+        (build, worker)
+    }
+
+    /// Take over `other`'s pipeline workers, to wait for them when this one
+    /// goes: a backend dropped while the viewer goes on (a remade renderer,
+    /// the VR eyes) must not hold the frame for them.
+    fn adopt_pipeline_workers(&mut self, other: &mut Backend) {
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        self.pipeline_workers.append(&mut other.pipeline_workers);
+    }
+
+    /// The VR eye backends' workers, before the XR world is dropped.
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    fn adopt_eye_workers(&mut self, world: &mut XrWorld) {
+        for eye in &mut world.backends {
+            self.adopt_pipeline_workers(eye);
         }
+    }
+
+    /// Wait for the pipeline workers still compiling, as the renderer goes.
+    /// A set still compiling when the process ran `exit` crashed it with the
+    /// NVIDIA driver: the main thread in the driver's teardown
+    /// (libGLX_nvidia), the `aurora-pipelines` worker segfaulting in its
+    /// compiler (libnvidia-glcore). Rain starting or the ground drying starts
+    /// a set, as the weather turning to the user's own at a quit did.
+    /// Bounded: a driver that never returns does not hold the viewer open.
+    fn wait_pipeline_workers(&mut self) {
+        const LONGEST: std::time::Duration = std::time::Duration::from_secs(60);
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        if self.pipeline_workers.is_empty() {
+            return;
+        }
+        log::info!("waiting for {} pipeline worker(s) before closing", self.pipeline_workers.len());
+        let started = Instant::now();
+        while self.pipeline_workers.iter().any(|w| !w.is_finished()) {
+            if started.elapsed() >= LONGEST {
+                log::warn!("pipeline worker still compiling after {} s: left to the process", LONGEST.as_secs());
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for worker in self.pipeline_workers.drain(..) {
+            let _ = worker.join();
+        }
+        log::info!("pipeline workers done in {} ms", started.elapsed().as_millis());
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
@@ -7707,6 +7762,7 @@ impl Backend {
             }
             Err(e) => {
                 log::info!("XR world ended: {e}");
+                self.adopt_eye_workers(&mut world);
                 if world.session.runtime_lost {
                     log::warn!("XR runtime closing: VR ends, the viewer goes on without it");
                     self.vr.lose_runtime();
@@ -7826,6 +7882,7 @@ impl Backend {
         );
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
+            self.adopt_eye_workers(&mut world);
             self.vr.finish(true);
             self.motion_cut = true;
             crate::present::configure(&self.surface, &self.device, &self.config);
@@ -7944,10 +8001,14 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                // (a set still compiling is the new one's to wait for: the
+                // old one's drop would hold this frame for it)
+                fresh.adopt_pipeline_workers(self);
                 *self = fresh;
             }
-            Ok(_) => {
+            Ok(mut refused) => {
                 log::info!("renderer: try refused ({took} ms)");
+                self.adopt_pipeline_workers(&mut refused);
                 self.oom.targets_failed(Instant::now());
             }
             // (a lost device, which ends the viewer: egui's renderer stays

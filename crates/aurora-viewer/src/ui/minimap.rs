@@ -393,13 +393,6 @@ impl MiniMap {
             return actions;
         }
         let id = egui::Id::unique("minimap");
-        // File › Close All Windows. Ctrl+W does not pick it: no title bar,
-        // so it is not in the frontmost floater list.
-        if super::close_key::take(ctx, id) {
-            *open = false;
-            return actions;
-        }
-        super::close_key::shown_extra(ctx, id);
         super::sound_cues::floater_shown(ctx, id);
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
@@ -427,7 +420,15 @@ impl MiniMap {
             default,
             vec2(64.0, 64.0),
             opts.mini_locked,
+            true,
             |ui| {
+                // The Legacy Viewer closes the frontmost visible floater, including
+                // LLFloaterMap in mouselook. A map hidden with the UI is kept open.
+                if super::close_key::take(ctx, id) {
+                    *open = false;
+                    return;
+                }
+                super::close_key::shown(ctx, id);
                 let size = ui.available_size().max(vec2(60.0, 60.0));
                 actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
             },

@@ -493,6 +493,7 @@ impl App {
             let items = crate::demo::texture_library::cascade_items(kind);
             self.apply_inventory_action(crate::ui::inventory::InvAction::Preview(
                 items[((self.frame_count - 620) / 20) as usize],
+                None,
             ));
         }
         if self.demo
@@ -655,7 +656,7 @@ impl App {
                         let action = if item.asset_type == 3 {
                             ui::inventory::InvAction::AboutLandmark(id, item.asset_id)
                         } else {
-                            ui::inventory::InvAction::Preview(id)
+                            ui::inventory::InvAction::Preview(id, None)
                         };
                         self.apply_inventory_action(action);
                     }

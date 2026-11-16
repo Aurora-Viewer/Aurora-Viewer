@@ -366,6 +366,20 @@ pub(super) fn phase2() -> Vec<Case> {
                 "its prim is gone",
             ),
         ),
+        // RlvHandler::setSitSource (rlvhandler.cpp): a sit asked under
+        // @standtp keeps where the avatar stood. The rule is released before
+        // the avatar stands, so that the run never teleports it back.
+        Step::Say(Who::Controller, "@standtp=n"),
+        Step::Expect(
+            "@standtp is held",
+            test(|w, c| {
+                if !w.rlva.has("standtp") {
+                    return Err("not held".to_owned());
+                }
+                c.stood = w.main_region.map(|handle| (handle, w.agent.position));
+                Ok(())
+            }),
+        ),
         Step::Say(Who::Controller, "@sit:{seat}=force"),
         Step::Expect(
             "the avatar sits on its prim",
@@ -378,6 +392,19 @@ pub(super) fn phase2() -> Vec<Case> {
                     Err("not seated".to_owned())
                 }
             }),
+        ),
+        Step::Now(
+            "@standtp kept the place the avatar stood (#2738)",
+            test(|w, c| match (w.rlva.stand_origin, c.stood) {
+                (Some((region, at)), Some((stood_region, stood))) if region == stood_region && at.distance(stood) <= 1.0 => Ok(()),
+                (Some(_), _) => Err("another place is kept".to_owned()),
+                (None, _) => Err("no place is kept".to_owned()),
+            }),
+        ),
+        Step::Say(Who::Controller, "@standtp=y"),
+        Step::Expect(
+            "no return is owed once @standtp is released",
+            holds(|w, c| w.rlva.stand_origin.is_none() || c.foreign_rules(w), "a return is still owed"),
         ),
         Step::Say(Who::Controller, "@unsit=n"),
         Step::Expect("the seat is locked", holds(seat(|w, i| w.rlva_locked_seat(i)), "not locked")),

@@ -99,6 +99,7 @@ pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
 pub mod panorama;
@@ -243,6 +244,8 @@ pub struct Panels {
     pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
+    pub omnifilter: bool,
     /// The conversation log (toolbar `conversation_log`, Communicate ›
     /// Conversation log…).
     pub conversation_log: bool,
@@ -319,6 +322,7 @@ impl Panels {
             quick_prefs: false,
             director: false,
             voice_controls: false,
+            omnifilter: false,
             conversation_log: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
