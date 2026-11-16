@@ -6,16 +6,17 @@ name: Measure CI deps (temporary)
 # workspace crates staying at 0, on the same hosted runners as the merge
 # queue. The final commit of the branch removes this file.
 #
-# It starts when the pull request is opened or reopened, never on a push:
-# each run is started on purpose. The first attempt is the cold one (the
-# dependencies are rebuilt), a re-run of the same run is a warm one (the
-# cache its first attempt saved, kept for this pull request only).
+# Second state, the warm runs: the first state's run (opened pull request)
+# built the dependencies cold and saved one cache per opt-level, kept for
+# this pull request only. This state runs on a push and reads those caches;
+# a re-run of its run is one more sample. The cold jobs (clippy, Linux,
+# macOS from nothing) ran once in the first state and are gone from here.
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [synchronize]
 
 concurrency:
-  group: measure-ci-deps
+  group: measure-ci-deps-warm
   cancel-in-progress: false
 
 permissions:
@@ -29,14 +30,8 @@ jobs:
     # The three parts of ci.yml's tests job, for each opt-level. Build and
     # run are two steps here so that each has its own time.
     #
-    # opt 0 is the control: main's cache and today's profile, in the warm
-    # attempts only (the cold one keeps the runners for the builds).
-    #
-    # Cold attempt, opt 1 and 3: "interface" builds from nothing and saves
-    # the cache, as main does when the cache key changes; its test step then
-    # rebuilds the workspace crates the save dropped, as a warm queue run
-    # does. "chat" and "rest" start from main's unoptimised cache, as a
-    # queue entry does right after the profile changes.
+    # opt 0 is the control: main's cache and today's profile. opt 1 and 3
+    # read the cache the first state's run saved for them: a warm queue run.
     name: m tests (opt ${{ matrix.opt }}, ${{ matrix.part }})
     runs-on: windows-latest
     timeout-minutes: 90
@@ -55,15 +50,16 @@ jobs:
           - part: rest
             filter: "--skip ui::"
     steps:
-      - name: Control in the warm attempts only
+      - name: Every job runs (the control too)
         id: go
         shell: bash
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
+      # the hosted runners are not all the same machine: the processor says
+      # which times compare
+      - name: Runner's processor
         run: |
-          if [ "${{ matrix.opt }}" = 0 ] && [ "${{ github.run_attempt }}" = 1 ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+          (Get-CimInstance Win32_Processor).Name
+          "logical processors: $env:NUMBER_OF_PROCESSORS"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.go.outputs.run == 'true'
         with:
@@ -85,133 +81,17 @@ jobs:
         if: steps.go.outputs.run == 'true' && matrix.opt == 0
         with:
           name: tests
-      # the cache the cold attempt saved for this opt-level
+      # the cache the first state's run saved for this opt-level; nothing is
+      # saved from here
       - name: Cache (this opt-level's)
         uses: ./.github/actions/rust-cache
         id: own
         if: steps.go.outputs.run == 'true' && matrix.opt != 0
         with:
           name: tests-opt${{ matrix.opt }}
-      - name: Cache (main's unoptimised one, cold chat and rest)
-        uses: ./.github/actions/rust-cache
-        if: steps.go.outputs.run == 'true' && matrix.opt != 0 && steps.own.outputs.cache-hit != 'true' && matrix.part != 'interface'
-        with:
-          name: tests
       - name: Build the tests
         if: steps.go.outputs.run == 'true'
         run: cargo test --profile ci --workspace --locked --no-run
-      - name: Save the cache
-        if: steps.go.outputs.run == 'true' && matrix.opt != 0 && matrix.part == 'interface' && steps.own.outputs.cache-hit != 'true'
-        timeout-minutes: 15
-        uses: ./.github/actions/rust-cache/save
-        with:
-          key: ${{ steps.own.outputs.key }}
       - name: Tests (${{ matrix.part }})
         if: steps.go.outputs.run == 'true'
         run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
-
-  clippy:
-    # Clippy from nothing, as main runs it when the cache key changes: the
-    # build scripts, the proc macros and their dependencies are really
-    # compiled, at the dependencies' opt-level.
-    name: m clippy cold (opt ${{ matrix.opt }})
-    needs: tests
-    if: ${{ !cancelled() && github.run_attempt == 1 }}
-    runs-on: windows-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        opt: [1, 3]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          filter: blob:none
-      - name: Rust stable
-        run: |
-          rustup toolchain install --profile minimal --no-self-update
-          rustup component add rustfmt clippy
-      - name: Opt-level of the dependencies
-        shell: bash
-        run: |
-          mkdir -p .cargo
-          printf '[profile.ci.package."*"]\nopt-level = %s\n' "${{ matrix.opt }}" > .cargo/config.toml
-      - name: Clippy (from nothing)
-        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
-      - name: Size the cache would have
-        continue-on-error: true
-        shell: bash
-        run: bash .github/measure-cache-size.sh
-
-  linux:
-    # The Linux job of main from nothing: clippy, the build of the tests,
-    # then every test. The size step drops the workspace's outputs as the
-    # cache save does, so the test step rebuilds them as a warm run does.
-    name: m linux cold (opt ${{ matrix.opt }})
-    needs: tests
-    if: ${{ !cancelled() && github.run_attempt == 1 }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        opt: [1, 3]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          filter: blob:none
-      - name: System libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
-      - name: Rust stable
-        run: |
-          rustup toolchain install --profile minimal --no-self-update
-          rustup component add clippy
-      - name: Opt-level of the dependencies
-        run: |
-          mkdir -p .cargo
-          printf '[profile.ci.package."*"]\nopt-level = %s\n' "${{ matrix.opt }}" > .cargo/config.toml
-      - name: Clippy (from nothing)
-        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
-      - name: Build the tests
-        run: cargo test --profile ci --workspace --locked --no-run
-      - name: Size the cache would have
-        continue-on-error: true
-        run: bash .github/measure-cache-size.sh
-      - name: Tests
-        run: cargo test --profile ci --workspace --locked
-
-  macos:
-    # The cold cost on GitHub's macOS runner (3 cores), the slowest machine:
-    # what main builds there when the cache key changes. opt 3 only, the
-    # most expensive setting; no test is run (one runner of the five).
-    name: m macos cold (opt 3)
-    needs: tests
-    if: ${{ !cancelled() && github.run_attempt == 1 }}
-    runs-on: macos-15
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          filter: blob:none
-      - name: Rust stable
-        run: |
-          rustup toolchain install --profile minimal --no-self-update
-          rustup component add clippy
-      - name: Opt-level of the dependencies
-        run: |
-          mkdir -p .cargo
-          printf '[profile.ci.package."*"]\nopt-level = 3\n' > .cargo/config.toml
-      - name: Clippy (from nothing)
-        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
-      - name: Build the tests and the viewer
-        run: |
-          cargo test --profile ci --workspace --locked --no-run
-          cargo build --profile ci --locked -p aurora-viewer
-      - name: Size the cache would have
-        continue-on-error: true
-        run: bash .github/measure-cache-size.sh
