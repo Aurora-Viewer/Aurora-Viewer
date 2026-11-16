@@ -279,6 +279,11 @@ pub struct Mutation {
     /// Interactive inventory commands can display AIS-created folders before
     /// fetching their contents. Dependent construction jobs keep readback.
     pub defer_folder_contents: bool,
+    /// A batch of new folders and moves (Auto-sort): each moved entry is
+    /// read back by itself (AIS item and category records), never its
+    /// destination's whole contents, which grow to thousands of entries over
+    /// a large run and would be sent again with every batch.
+    pub confirm_each: bool,
 }
 
 impl Mutation {
@@ -301,6 +306,10 @@ pub struct Reply {
     pub copies: Vec<CopyItem>,
     pub removed: Vec<Uuid>,
     pub created: HashMap<Uuid, Uuid>,
+    /// The moved entries as the server now has them (`confirm_each`), for
+    /// the inventory to place them without reading their folders.
+    pub moved_items: Vec<super::InvItem>,
+    pub moved_folders: Vec<super::InvFolder>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,6 +651,8 @@ where
             copies,
             removed: change.removed,
             created,
+            moved_items: Vec::new(),
+            moved_folders: Vec::new(),
         });
     }
     progress(Progress {
@@ -649,6 +660,58 @@ where
         completed: 0,
         total: refresh.len(),
     });
+    // Auto-sort's batches: each moved entry read back by itself
+    if change.confirm_each
+        && udp.is_none()
+        && change.operations.iter().all(|op| {
+            matches!(op, Operation::Folder { .. })
+                || matches!(op, Operation::Patch { body, .. } if body.as_map().is_some_and(|m| m.len() == 1 && m.contains_key("parent_id")))
+        })
+    {
+        let expected: Vec<(Uuid, bool, Uuid)> = change
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                Operation::Patch { id, folder, body } => {
+                    Some((resolve(&created, *id), *folder, resolve(&created, body["parent_id"].as_uuid())))
+                }
+                _ => None,
+            })
+            .collect();
+        let items: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| !folder).map(|(id, _, _)| *id).collect();
+        let moved: Vec<Uuid> = expected.iter().filter(|(_, folder, _)| *folder).map(|(id, _, _)| *id).collect();
+        for attempt in 0..=5u32 {
+            let read_items = super::ais::read_items(http, cap, owner, &items).await;
+            let read_folders = super::ais::read_folders(http, cap, &moved).await;
+            let placed = |id: Uuid, folder: bool, parent: Uuid| {
+                if folder {
+                    read_folders.iter().any(|f| f.id == id && f.parent == parent)
+                } else {
+                    read_items.items.iter().any(|it| it.id == id && it.parent == parent)
+                }
+            };
+            if expected.iter().all(|(id, folder, parent)| placed(*id, *folder, *parent)) {
+                return Ok(Reply {
+                    contents: Vec::new(),
+                    folders,
+                    moves_queued: false,
+                    refresh,
+                    copies,
+                    removed: change.removed,
+                    created,
+                    moved_items: read_items.items,
+                    moved_folders: read_folders,
+                });
+            }
+            if attempt == 5 {
+                break;
+            }
+            // a move can show a moment after its request: read again, never
+            // write again
+            tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
+        }
+        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into());
+    }
     let mut contents = Vec::new();
     let favorite_changed = change
         .operations
@@ -733,6 +796,8 @@ where
         copies,
         removed: change.removed,
         created,
+        moved_items: Vec::new(),
+        moved_folders: Vec::new(),
     })
 }
 
@@ -1219,6 +1284,89 @@ mod tests {
             requests
         });
         (url, task)
+    }
+
+    /// A `confirm_each` batch (Auto-sort's) reads back each moved entry by
+    /// itself: the moved item and the moved folder, never a destination's
+    /// whole contents (no FetchInventoryDescendents2 request at all).
+    #[tokio::test]
+    async fn a_confirm_each_batch_reads_back_only_what_it_moved() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            // one read of the item and one of the folder
+            for _ in 0..2 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0u8; 4096];
+                    let n = socket.read(&mut chunk).await.expect("read");
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if n == 0 || bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let line = String::from_utf8_lossy(&bytes).lines().next().unwrap_or_default().to_owned();
+                let reply = if line.contains("/item/") {
+                    llsd_map! {
+                        "item_id" => id(10), "parent_id" => id(20), "type" => 6, "inv_type" => 6,
+                        "asset_id" => id(11), "name" => "Chair",
+                        "permissions" => llsd_map! { "owner_id" => id(2), "owner_mask" => 0x7fffffff }
+                    }
+                } else {
+                    llsd_map! { "category_id" => id(30), "parent_id" => id(20), "name" => "Box", "type_default" => -1, "version" => 3 }
+                };
+                let body = aurora_llsd::to_xml(&reply);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(header.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
+                lines.push(line);
+            }
+            lines
+        });
+        let change = Mutation {
+            operations: vec![
+                Operation::Patch {
+                    id: id(10),
+                    folder: false,
+                    body: llsd_map! { "parent_id" => id(20) },
+                },
+                Operation::Patch {
+                    id: id(30),
+                    folder: true,
+                    body: llsd_map! { "parent_id" => id(20) },
+                },
+            ],
+            refresh: vec![id(20)],
+            confirm_each: true,
+            ..Default::default()
+        };
+        let http = reqwest::Client::new();
+        let reply = mutate_with_moves(&http, &url, &format!("{url}/fetch"), id(2), change, |_| async { Ok(()) })
+            .await
+            .expect("confirmed");
+        let lines = server.await.expect("server");
+        assert!(lines.iter().all(|l| l.starts_with("GET ")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("/item/")) && lines.iter().any(|l| l.contains("/category/")));
+        assert!(!lines.iter().any(|l| l.contains("/fetch")), "no folder read again");
+        assert!(reply.contents.is_empty());
+        assert_eq!(
+            reply.moved_items.iter().map(|it| (it.id, it.parent)).collect::<Vec<_>>(),
+            vec![(id(10), id(20))]
+        );
+        assert_eq!(
+            reply.moved_folders.iter().map(|f| (f.id, f.parent)).collect::<Vec<_>>(),
+            vec![(id(30), id(20))]
+        );
     }
 
     fn firestorm_embedded_headers(data: &[u8]) -> bool {

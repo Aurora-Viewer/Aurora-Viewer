@@ -672,6 +672,8 @@ mod tests {
     /// A reply that creates the copy's folder (asked 100, made 101).
     fn created_reply(copies: Vec<CopyItem>) -> Reply {
         Reply {
+            moved_items: Vec::new(),
+            moved_folders: Vec::new(),
             contents: Vec::new(),
             folders: vec![InvFolder {
                 id: id(101),

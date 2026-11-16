@@ -2483,6 +2483,8 @@ pub fn step(
     if change.operations.is_empty() {
         return Step::Done;
     }
+    // each move read back by itself, never a destination's whole contents
+    change.confirm_each = true;
     change.refresh.sort_unstable();
     change.refresh.dedup();
     Step::Change(Box::new(change), sent)

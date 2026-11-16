@@ -1929,6 +1929,8 @@ mod tests {
         h.st.watch_copy(
             id(99),
             &aurora_net::inventory::operations::Reply {
+                moved_items: Vec::new(),
+                moved_folders: Vec::new(),
                 contents: Vec::new(),
                 folders: Vec::new(),
                 moves_queued: false,

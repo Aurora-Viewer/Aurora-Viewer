@@ -2447,6 +2447,8 @@ impl Session<'_> {
                         NetEvent::InventoryEdited {
                             request,
                             result: Ok(crate::inventory::operations::Reply {
+                                moved_items: Vec::new(),
+                                moved_folders: Vec::new(),
                                 contents: Vec::new(),
                                 folders: Vec::new(),
                                 moves_queued: false,
@@ -2478,6 +2480,8 @@ impl Session<'_> {
                             })
                         })
                         .map(|()| crate::inventory::operations::Reply {
+                            moved_items: Vec::new(),
+                            moved_folders: Vec::new(),
                             contents: Vec::new(),
                             folders: Vec::new(),
                             moves_queued: true,

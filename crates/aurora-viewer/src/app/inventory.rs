@@ -749,6 +749,11 @@ impl App {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
+                // entries read back one by one (Auto-sort): placed as the
+                // server has them, no folder read again
+                if !reply.moved_folders.is_empty() || !reply.moved_items.is_empty() {
+                    self.world.inventory.server_updated(reply.moved_folders, reply.moved_items);
+                }
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     let sync = crate::world::appearance::sync_plan_keeping(
                         &self.world.inventory,
