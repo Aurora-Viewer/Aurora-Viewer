@@ -23004,7 +23004,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.expand_all = Some(true);
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8001));
                     } else if view == "new-folder" {
-                        if let Ok(change) = crate::world::inventory::actions::create_folder(id, aurora_i18n::tr!("common-new-folder")) {
+                        if let Ok(change) =
+                            crate::world::inventory::actions::create_folder(id, crate::text_validation::default_name("common-new-folder"))
+                        {
                             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
                         }
                     } else if matches!(view.as_str(), "new-script" | "new-note") {
