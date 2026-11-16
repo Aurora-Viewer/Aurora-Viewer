@@ -83,7 +83,15 @@ pub fn draw(
     }
     let painter = super::hud::world_painter(ctx);
     for &(at, kind) in markers {
-        marker(ctx, &painter, proj, at, color(p, kind), f32::from(s.width.clamp(1, 16)), [0.125, 0.5]);
+        marker(
+            ctx,
+            &painter,
+            proj,
+            at,
+            color(p, kind),
+            f32::from(s.width.clamp(1, 16)),
+            [0.125, 0.5],
+        );
     }
     if s.info {
         // Keep the source legend above the nearby-chat console, which
