@@ -67,6 +67,7 @@ mod dev_toolbox;
 mod folders;
 mod hover_pick;
 mod texture_picker;
+mod typing_pointer;
 use folders::chat_log_root;
 mod admin_status;
 mod avatar_studio;
@@ -574,6 +575,8 @@ pub struct App {
     cursor_hold: cursor_hold::CursorHold,
     /// Alt held in mouselook: the cursor given back, the view still.
     alt_cursor: cursor_hold::AltCursor,
+    /// The pointer hidden while a text field takes typing (#3211).
+    typing_pointer: typing_pointer::TypingPointer,
     numeric_drag: ui::numeric_drag::NumericDrag,
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
@@ -1832,6 +1835,7 @@ impl App {
             sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
             alt_cursor: Default::default(),
+            typing_pointer: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
@@ -12964,6 +12968,12 @@ impl App {
                 full.platform_output.cursor_image = None;
             }
         }
+        if self.typing_pointer.hidden_for(&self.egui_ctx) {
+            // typing in a field (#3211): egui shows the pointer again by
+            // itself once this stops, at the next move
+            full.platform_output.cursor_icon = egui::CursorIcon::None;
+            full.platform_output.cursor_image = None;
+        }
         if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
@@ -23640,6 +23650,7 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
         // here, with no release to come. Like egui-winit, and like
@@ -23698,6 +23709,7 @@ impl ApplicationHandler for App {
 
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
+        let pending_alt_chars = self.alt_text.len();
         if self.alt_code_key(&event) {
             return;
         }
@@ -23740,6 +23752,8 @@ impl ApplicationHandler for App {
         // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
         // it never hovers, clicks or scrolls the windows (#1343)
         let held_pointer = self.cursor_hold.held() && cursor_hold::held_from_ui(&event);
+        // Repeated position reports must not put egui's hover back while typing.
+        let stationary_hidden_pointer = self.typing_pointer.hidden() && matches!(event, WindowEvent::CursorMoved { .. });
         // AltGr's shortcut key must not also reach egui as a plain key:
         // for example G would snap a selection while Ctrl+Alt+G runs.
         // Releases still clear any key pressed before AltGr was held.
@@ -23798,14 +23812,23 @@ impl ApplicationHandler for App {
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || web_tab || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
-            egui_winit::EventResponse {
-                consumed: false,
-                repaint: true,
-            }
-        } else {
-            g.egui_state.on_window_event(&g.window, &event)
-        };
+        let first_event = g.egui_state.egui_input().events.len();
+        let resp =
+            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
+                egui_winit::EventResponse {
+                    consumed: false,
+                    repaint: true,
+                }
+            } else {
+                g.egui_state.on_window_event(&g.window, &event)
+            };
+        let events = &mut g.egui_state.egui_input_mut().events;
+        if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
+            && !self.cursor_hold.held()
+            && !self.clicks.scripted()
+        {
+            self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+        }
         match &event {
             WindowEvent::CloseRequested => {
                 self.request_exit();
