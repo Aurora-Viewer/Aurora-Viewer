@@ -293,7 +293,8 @@ in one timeline:
    forward, left and up in metres from your facing, and a turn. **Face to
    face** stands B half a metre in front of you, facing you; **Reset place**
    puts them back. Their animation does not change; the placement note
-   follows where you put them. Avatar Studio's Hover lifts both people.
+   follows where you put them. Avatar Studio's Hover lifts both people; in
+   its menu, **Person B** gives B a hover of their own (**You** sets yours).
 4. **Save .anim** and **Export .bvh** write both people in the folder you
    choose: `<name> A`, `<name> B` and `<name> placement.txt`, which gives B's
    position and turn from A, for the sit targets. **Prepare .anim import**

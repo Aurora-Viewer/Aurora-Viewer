@@ -182,6 +182,12 @@ pub struct Studio {
     pub hover_height: f32,
     /// Smoothed display value, so small changes do not visibly step the rig.
     pub display_hover_height: f32,
+    /// The animation editor's Person B (couple mode): their own hover, or
+    /// None to follow `hover_height`, so the pair keeps its spacing.
+    pub partner_hover_height: Option<f32>,
+    pub display_partner_hover_height: f32,
+    /// Whether the Hover menu sets Person B's hover rather than the user's.
+    pub hover_partner: bool,
     /// Furniture root and linkset-bounds centre in that root's local frame.
     pub podium_center: Option<(uuid::Uuid, Vec3)>,
     height: f32,
@@ -341,12 +347,30 @@ impl Studio {
         self.distance += (self.target_distance - self.distance) * weight;
         self.pan += (self.target_pan - self.pan) * weight;
         self.display_hover_height += (self.hover_height - self.display_hover_height) * weight;
+        let partner = self.partner_hover_height.unwrap_or(self.hover_height);
+        self.display_partner_hover_height += (partner - self.display_partner_hover_height) * weight;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn person_b_follows_the_user_s_hover_until_given_their_own() {
+        let mut studio = Studio::default();
+        studio.hover_height = 0.3;
+        for _ in 0..200 {
+            studio.update(0.05);
+        }
+        assert!((studio.display_partner_hover_height - 0.3).abs() < 1e-4, "B follows the user");
+        studio.partner_hover_height = Some(0.8);
+        for _ in 0..200 {
+            studio.update(0.05);
+        }
+        assert!((studio.display_partner_hover_height - 0.8).abs() < 1e-4, "B's own hover");
+        assert!((studio.display_hover_height - 0.3).abs() < 1e-4, "the user's stays");
+    }
 
     #[test]
     fn photo_handoff_frames_the_studio_and_restores_the_world_camera_and_aim() {

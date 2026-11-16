@@ -10,6 +10,7 @@ avatar-studio-lighting-environment = Current environment
 avatar-studio-hover-height = Hover · { $height } m
 avatar-studio-hover-height-hint = Lift the displayed avatar above the stage without changing its animation.
 avatar-studio-hover-height-suffix = { " m" }
+avatar-studio-hover-you = You
 avatar-studio-rotate-tip = Hold the left mouse button and drag to rotate around your avatar; drag up or down to see it from below or above.
 avatar-studio-focus-tip = Hold the right mouse button and drag up or down to adjust the focus height.
 avatar-studio-pan-tip = Hold the middle mouse button and drag to pan the view.

@@ -717,6 +717,9 @@ pub struct World {
     /// Avatar Studio's display-only hover height (metres) that our avatar's
     /// entry of `avatar_poses` carries, as the scene last posed it.
     pub avatar_studio_lift: f32,
+    /// Avatar Studio's Hover Height for the animation editor's Person B
+    /// (their own, or the user's when they follow it): `couple_shift`.
+    pub couple_hover: f32,
     /// The base our avatar's IK edit session poses on, as the scene last
     /// applied it (`scene::ik::EditBase`); `None` outside an edit session.
     pub ik_edit_base: Option<std::sync::Arc<crate::scene::ik::EditBase>>,
@@ -1092,6 +1095,7 @@ impl World {
             concealed_attachment: Uuid::nil(),
             avatar_studio: false,
             avatar_studio_lift: 0.0,
+            couple_hover: 0.0,
             ik_edit_base: None,
             parcel: None,
             land: land::Land::default(),
@@ -1934,10 +1938,10 @@ impl World {
     /// model is now `model`: back to where they stood when couple mode took
     /// them, whatever they do in the world since, then by `couple_place`,
     /// the turn about their pelvis. Avatar Studio's Hover Height lifts B
-    /// with the agent, so the pair keeps its spacing. None for anyone else,
+    /// by `couple_hover` (the agent's own hover unless B has one). None for anyone else,
     /// or when B is drawn where the world has them.
     pub fn couple_shift(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
-        let lift = if self.avatar_studio { self.avatar_studio_lift } else { 0.0 };
+        let lift = if self.avatar_studio { self.couple_hover } else { 0.0 };
         self.couple_shift_lifted(id, model, lift)
     }
 
@@ -7136,8 +7140,9 @@ mod motion_tests {
         let model = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
         assert!(world.couple_shift(partner, model).is_none(), "nothing to move");
         world.avatar_studio = true;
-        world.avatar_studio_lift = 0.4;
-        let shift = world.couple_shift(partner, model).expect("the hover lifts B");
+        world.avatar_studio_lift = 0.1;
+        world.couple_hover = 0.4;
+        let shift = world.couple_shift(partner, model).expect("B's hover lifts B");
         assert!((shift.transform_point3(Vec3::ZERO) - Vec3::new(0.0, 0.0, 0.4)).length() < 1e-5);
         assert!(world.couple_move(partner, model).is_none(), "the note leaves the lift out");
         assert!(world.couple_shift(Uuid::from_u128(982), model).is_none(), "only the partner");
