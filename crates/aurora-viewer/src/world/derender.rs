@@ -277,8 +277,9 @@ impl Derender {
     /// the list has keeps its name and date, and takes the file's sound
     /// categories and permanence. Saved once. The number of entries added
     /// or updated, and the new objects and residents, to take out of the
-    /// world.
-    fn merge(&mut self, file: FileEntries) -> (usize, Vec<Uuid>) {
+    /// world; on a failed save the list stays as it was, in the file too.
+    fn merge(&mut self, file: FileEntries) -> std::io::Result<(usize, Vec<Uuid>)> {
+        let (entries, other) = (self.entries.clone(), self.other.len());
         let mut changed = 0;
         let mut hide = Vec::new();
         for (id, entry) in file.entries {
@@ -307,17 +308,48 @@ impl Derender {
             }
         }
         if changed > 0 {
-            self.generation = self.generation.wrapping_add(1);
+            if let Err(e) = self.write_now() {
+                self.entries = entries;
+                self.other.truncate(other);
+                return Err(e);
+            }
+            // again by the save thread, flushed to the disk, after any save
+            // it still holds
             self.save();
+            self.generation = self.generation.wrapping_add(1);
         }
-        (changed, hide)
+        Ok((changed, hide))
     }
 
-    /// FSAssetBlacklist::saveBlacklist: the permanent entries only.
+    /// FSAssetBlacklist::saveBlacklist, written by a save thread (saves.rs):
+    /// an edit no longer waits for the disk on the frame.
     fn save(&self) {
-        let Some(path) = &self.path else {
+        let Some((path, xml)) = self.file() else {
             return;
         };
+        crate::saves::replace(path.clone(), move || {
+            if let Err(e) = OWED.write(&path, xml) {
+                log::warn!("asset blacklist not saved ({e}); kept, tried again later");
+            }
+        });
+    }
+
+    /// In one step, for a caller that has to know it worked: a full disk
+    /// leaves the old file. No disk flush: on the frame thread; the save
+    /// that follows flushes it.
+    fn write_now(&self) -> std::io::Result<()> {
+        let Some((path, xml)) = self.file() else {
+            return Ok(());
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        crate::atomic_file::publish(&path, &xml)
+    }
+
+    /// The file's path and contents: the permanent entries only.
+    fn file(&self) -> Option<(std::path::PathBuf, Vec<u8>)> {
+        let path = self.path.as_ref()?;
         let mut map = aurora_llsd::Map::new();
         for (key, value) in &self.other {
             map.insert(key.clone(), value.clone());
@@ -336,15 +368,7 @@ impl Derender {
             data.insert("asset_permanent".into(), Llsd::from(true));
             map.insert(mask(*id).to_string(), Llsd::Map(data));
         }
-        // written by a save thread (saves.rs): an edit no longer waits for
-        // the disk on the frame
-        let xml = aurora_llsd::to_xml(&Llsd::Map(map));
-        let path = path.clone();
-        crate::saves::replace(path.clone(), move || {
-            if let Err(e) = OWED.write(&path, xml) {
-                log::warn!("asset blacklist not saved ({e}); kept, tried again later");
-            }
-        });
+        Some((path.clone(), aurora_llsd::to_xml(&Llsd::Map(map))))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -782,17 +806,17 @@ impl super::World {
     /// though its sounds can be blocked like anyone's (`sound_blacklisted`).
     /// The number of entries added or updated, and whether our avatar sat
     /// on one of them and was taken off (the app stands it up).
-    pub fn merge_derender(&mut self, mut file: FileEntries) -> (usize, bool) {
+    pub fn merge_derender(&mut self, mut file: FileEntries) -> std::io::Result<(usize, bool)> {
         let me = self.agent_id;
         file.entries.retain(|(id, entry)| *id != me || matches!(entry.kind, Kind::Sound(_)));
-        let (changed, hide) = self.derender.merge(file);
+        let (changed, hide) = self.derender.merge(file)?;
         let mut unseated = false;
         for id in hide {
             if let Some(idx) = self.objects.index_of_uuid(&id) {
                 unseated |= self.take_out(idx, id);
             }
         }
-        (changed, unseated)
+        Ok((changed, unseated))
     }
 
     /// Entries removed from the list (the Asset blacklist window).
@@ -917,7 +941,7 @@ mod tests {
         list.add(sounds, entry(Kind::Sound(1), true));
         list.add(temporary, entry(Kind::Object, false));
 
-        let (changed, hide) = list.merge(file());
+        let (changed, hide) = list.merge(file()).expect("no file to save");
         assert_eq!(changed, 4, "new, its texture, the sound category, the permanence");
         assert_eq!(hide, [new]);
         assert_eq!(list.entries[&kept].name, "ours");
@@ -926,7 +950,7 @@ mod tests {
         assert!(list.entries[&temporary].permanent);
 
         let generation = list.generation;
-        assert_eq!(list.merge(file()), (0, Vec::new()));
+        assert_eq!(list.merge(file()).expect("no file to save"), (0, Vec::new()));
         assert_eq!(list.generation, generation);
     }
 
@@ -942,7 +966,7 @@ mod tests {
             .1
             .full_id;
         let file = vec![file_entry(me, AT_PERSON, 0, "me"), file_entry(object, AT_OBJECT, 0, "an object")];
-        let (changed, unseated) = world.merge_derender(legacy_file(file));
+        let (changed, unseated) = world.merge_derender(legacy_file(file)).expect("no file to save");
         assert_eq!((changed, unseated), (1, false));
         assert!(!world.derender.contains(&me));
         assert!(world.objects.index_of_uuid(&object).is_none());
@@ -953,7 +977,7 @@ mod tests {
         let (mut world, _) = demo_world();
         let me = world.agent_id;
         let file = vec![file_entry(me, AT_SOUND, 4, "my gestures")];
-        assert_eq!(world.merge_derender(legacy_file(file)), (1, false));
+        assert_eq!(world.merge_derender(legacy_file(file)).expect("no file to save"), (1, false));
         assert!(world.derender.sound_blocked(Uuid::nil(), me, 4));
     }
 
