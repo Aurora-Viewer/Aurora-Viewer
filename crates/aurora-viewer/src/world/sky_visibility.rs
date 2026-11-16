@@ -18,9 +18,14 @@
 //!   the rule; a seated one follows its seat's linkset, and what an avatar
 //!   wears follows the avatar.
 //! - A moving or physical linkset (a vehicle, with its riders) never
-//!   floats.
+//!   floats. Avatars do not get this exemption: the simulator reports
+//!   them as physical, and a flying one moves.
 //! - Our own avatar, what it wears and the linkset it sits on are always
 //!   shown; the build tools show everything while they are open.
+//! - While the camera is focused on a point (Alt and a click, a focus on an
+//!   object), the gap is measured from that point too, and the linkset of
+//!   the focused object is always shown: orbiting a skybox from far away
+//!   keeps it.
 //!
 //! What is hidden goes through the same path as the parcel isolation
 //! (`World::object_shown`): released from the GPU, no texture or mesh
@@ -144,9 +149,10 @@ impl SkyVisibility {
 
 impl World {
     /// Measures the linksets that arrived or changed, and hides or shows the
-    /// floating ones for a camera at `eye` (render space). `enabled`: the
-    /// setting is on and the build tools are closed.
-    pub fn update_sky_visibility(&mut self, enabled: bool, eye: Vec3) {
+    /// floating ones for a camera at `eye` (render space), focused on
+    /// `focus` (a point, or an object) when it is not on our avatar.
+    /// `enabled`: the setting is on and the build tools are closed.
+    pub fn update_sky_visibility(&mut self, enabled: bool, eye: Vec3, focus: Option<Vec3>, focus_object: Option<Uuid>) {
         let mut sky = std::mem::take(&mut self.sky_visibility);
         if !enabled {
             for idx in 0..sky.roots.len() {
@@ -165,6 +171,9 @@ impl World {
         }
         sky.roots.resize(n, None);
         let seat = self.own_seat_root();
+        let focused = focus_object
+            .and_then(|id| self.objects.index_of_uuid(&id))
+            .map(|idx| self.objects.linkset_root(idx));
         let window = sky.cursor..sky.cursor + REFRESH_SLOTS;
         for idx in 0..n {
             let Some(o) = self.objects.get(idx) else {
@@ -172,13 +181,14 @@ impl World {
                 continue;
             };
             // a root: nothing above it (a seated avatar follows its seat)
-            if o.parent_id != 0 || o.full_id == self.agent_id || Some(idx) == seat {
+            if o.parent_id != 0 || o.full_id == self.agent_id || Some(idx) == seat || Some(idx) == focused {
                 sky.forget(idx);
                 continue;
             }
             let known = sky.roots[idx].filter(|r| r.id == o.full_id);
-            let floating = if o.update_flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 || o.has_motion() {
-                // a vehicle and what moves never float
+            let vehicle = !o.is_avatar() && (o.update_flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 || o.has_motion());
+            let floating = if vehicle {
+                // a vehicle and what moves never float (an avatar does)
                 None
             } else if known.is_none() || o.is_avatar() || window.contains(&idx) {
                 self.floating_extent(idx, now)
@@ -194,7 +204,10 @@ impl World {
                 floating,
                 hidden: was_hidden,
             });
-            let hidden = floating.is_some_and(|e| stays_hidden(was_hidden, e.gap(eye.z)));
+            let hidden = floating.is_some_and(|e| {
+                let gap = focus.map_or(e.gap(eye.z), |f| e.gap(eye.z).min(e.gap(f.z)));
+                stays_hidden(was_hidden, gap)
+            });
             sky.set_hidden(idx, hidden);
         }
         sky.cursor = if window.end >= n { 0 } else { window.end };
@@ -308,7 +321,7 @@ mod tests {
     #[test]
     fn from_the_ground_skyboxes_and_the_people_in_them_are_hidden() {
         let mut world = world();
-        world.update_sky_visibility(true, Vec3::new(140.0, 130.0, 30.0));
+        world.update_sky_visibility(true, Vec3::new(140.0, 130.0, 30.0), None, None);
         for local in [SKYBOX, SKYBOX_WALL, ISLAND, HUT, BELOW] {
             assert!(!world.object_shown(prim(&world, local)), "{local} floats far above");
         }
@@ -329,7 +342,7 @@ mod tests {
     #[test]
     fn in_a_skybox_it_shows_and_what_is_far_below_does_not() {
         let mut world = world();
-        world.update_sky_visibility(true, scene::SKYBOX + Vec3::new(0.0, 0.0, 2.0));
+        world.update_sky_visibility(true, scene::SKYBOX + Vec3::new(0.0, 0.0, 2.0), None, None);
         assert!(world.object_shown(prim(&world, SKYBOX)));
         assert!(world.object_shown(prim(&world, SKYBOX_WALL)));
         assert!(world.object_shown(avatar(&world, scene::SKY_RESIDENT)));
@@ -340,13 +353,13 @@ mod tests {
     #[test]
     fn skyboxes_under_a_floating_island_are_hidden_from_it_and_it_from_them() {
         let mut world = world();
-        world.update_sky_visibility(true, scene::ISLAND + Vec3::new(0.0, 0.0, 8.0));
+        world.update_sky_visibility(true, scene::ISLAND + Vec3::new(0.0, 0.0, 8.0), None, None);
         assert!(world.object_shown(prim(&world, ISLAND)));
         assert!(world.object_shown(prim(&world, HUT)));
         assert!(world.object_shown(avatar(&world, scene::ISLAND_RESIDENT)));
         assert!(!world.object_shown(prim(&world, BELOW)), "200 m under the island");
         assert!(!world.object_shown(avatar(&world, scene::BELOW_RESIDENT)));
-        world.update_sky_visibility(true, scene::BELOW + Vec3::new(0.0, 0.0, 2.0));
+        world.update_sky_visibility(true, scene::BELOW + Vec3::new(0.0, 0.0, 2.0), None, None);
         assert!(world.object_shown(prim(&world, BELOW)));
         assert!(!world.object_shown(prim(&world, ISLAND)), "200 m above the skybox");
     }
@@ -356,17 +369,17 @@ mod tests {
         let mut world = world();
         let bottom = scene::SKYBOX.z - 0.25;
         let at = |z: f32| Vec3::new(150.0, 140.0, z);
-        world.update_sky_visibility(true, at(30.0));
+        world.update_sky_visibility(true, at(30.0), None, None);
         let skybox = prim(&world, SKYBOX);
         assert!(!world.object_shown(skybox));
-        world.update_sky_visibility(true, at(bottom - 55.0));
+        world.update_sky_visibility(true, at(bottom - 55.0), None, None);
         assert!(!world.object_shown(skybox), "still hidden within the margin");
-        world.update_sky_visibility(true, at(bottom - 45.0));
+        world.update_sky_visibility(true, at(bottom - 45.0), None, None);
         assert!(world.object_shown(skybox), "shown within 50 m");
         assert!(world.sky_visibility.changed.contains(&skybox), "the scene syncs it again");
-        world.update_sky_visibility(true, at(bottom - 55.0));
+        world.update_sky_visibility(true, at(bottom - 55.0), None, None);
         assert!(world.object_shown(skybox), "still shown within the margin");
-        world.update_sky_visibility(true, at(bottom - 65.0));
+        world.update_sky_visibility(true, at(bottom - 65.0), None, None);
         assert!(!world.object_shown(skybox));
     }
 
@@ -377,16 +390,48 @@ mod tests {
         let seat = world.objects.get(skybox).expect("skybox").key.local_id;
         let me = avatar(&world, world.agent_id);
         world.objects.get_mut(me).expect("our avatar").parent_id = seat;
-        world.update_sky_visibility(true, Vec3::new(140.0, 130.0, 30.0));
+        world.update_sky_visibility(true, Vec3::new(140.0, 130.0, 30.0), None, None);
         assert!(world.object_shown(skybox), "what we sit on");
         assert!(world.object_shown(prim(&world, SKYBOX_WALL)));
         assert!(!world.object_shown(prim(&world, ISLAND)));
         world.sky_visibility.changed.clear();
-        world.update_sky_visibility(false, Vec3::new(140.0, 130.0, 30.0));
+        world.update_sky_visibility(false, Vec3::new(140.0, 130.0, 30.0), None, None);
         assert!(world.object_shown(prim(&world, ISLAND)));
         assert!(world.object_shown(avatar(&world, scene::BELOW_RESIDENT)));
         assert!(world.sky_visibility.changed.contains(&prim(&world, ISLAND)), "synced again");
         assert!(!world.sky_visibility.active());
+    }
+
+    #[test]
+    fn a_physical_or_moving_avatar_high_up_is_still_hidden() {
+        let mut world = world();
+        let resident = avatar(&world, scene::SKY_RESIDENT);
+        let flyer = avatar(&world, scene::FLYING_RESIDENT);
+        // the simulator reports avatars as physical; a flying one moves
+        world.objects.get_mut(resident).expect("resident").update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+        world.objects.get_mut(flyer).expect("flyer").velocity = Vec3::new(3.0, 0.0, 0.0);
+        world.update_sky_visibility(true, Vec3::new(140.0, 130.0, 30.0), None, None);
+        assert!(!world.object_shown(resident));
+        assert!(!world.object_shown(flyer));
+        assert!(world.object_shown(prim(&world, VEHICLE)), "a physical object still never floats");
+    }
+
+    #[test]
+    fn the_camera_focus_keeps_a_skybox_orbited_from_afar() {
+        let mut world = world();
+        let ground = Vec3::new(140.0, 130.0, 30.0);
+        let skybox = prim(&world, SKYBOX);
+        // focused on a point of the skybox, the camera swung far below it
+        world.update_sky_visibility(true, ground, Some(scene::SKYBOX), None);
+        assert!(world.object_shown(skybox));
+        assert!(world.object_shown(avatar(&world, scene::SKY_RESIDENT)));
+        assert!(!world.object_shown(prim(&world, ISLAND)), "only near the focus");
+        // focused on the island's hut: its whole linkset stays
+        let hut = world.objects.get(prim(&world, HUT)).expect("hut").full_id;
+        world.update_sky_visibility(true, ground, None, Some(hut));
+        assert!(world.object_shown(prim(&world, ISLAND)));
+        assert!(world.object_shown(prim(&world, HUT)));
+        assert!(!world.object_shown(skybox), "the focus is back on the ground");
     }
 
     #[test]
