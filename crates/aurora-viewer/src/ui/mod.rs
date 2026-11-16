@@ -171,6 +171,8 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Favorite Wearables window (`ui/appearance/wearable_favorites.rs`).
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
@@ -272,6 +274,7 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
             snapshot_pano: false,
             people: settings.show_people,

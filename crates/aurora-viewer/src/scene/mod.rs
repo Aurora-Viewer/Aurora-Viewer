@@ -6062,6 +6062,9 @@ impl Scene {
         }
         self.palettes = pal;
         for (_, motions, _, owner, _, physics) in work.drain(..) {
+            if owner == world.agent_id {
+                world.ik_edit_base.clone_from(&motions.ik.edit_base);
+            }
             self.motions.insert(owner, motions);
             if let Some(job) = physics {
                 self.physics.insert(owner, job.state);
