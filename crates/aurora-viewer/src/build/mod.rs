@@ -381,6 +381,11 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     if !world.rlva_can_edit(idx) || linking::permanent(world, idx) || linking::permanent(world, root_of(world, idx)) {
         return false;
     }
+    // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
+    // held on under @unsit or @sittp neither moves nor changes.
+    if world.rlva_restrained_seat(idx) {
+        return false;
+    }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
     let Some(root) = world.objects.get(root_of(world, idx)) else {
         return false;
@@ -1077,7 +1082,7 @@ pub fn select_type(world: &World, mut idx: usize) -> SelectType {
 /// World objects and what our avatar wears, HUDs included; the attachments
 /// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
-    if !world.rlva_can_edit(idx) {
+    if !world.rlva_can_edit(idx) || !world.rlva_within_fartouch(idx) {
         return false;
     }
     let mut i = idx;
@@ -1604,9 +1609,11 @@ impl BuildTool {
     }
 
     /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
-    /// outside attachments.
+    /// outside attachments, and under @unsit no linkset the agent sits on.
     pub fn can_unlink(&self, world: &World) -> bool {
-        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+        !self.attachment_selected(world)
+            && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+            && self.roots(world).iter().all(|&r| world.rlva_can_unlink(r))
     }
 
     fn advance_link(&mut self, world: &mut World, now: Instant) {
@@ -1676,7 +1683,8 @@ impl BuildTool {
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
             && !self.manip.dragging()
-            && let Some(max) = s.select_limit()
+            // deselectAllIfTooFar: in the tools, @fartouch stands for the limit
+            && let Some(max) = self.open.then(|| world.rlva_select_limit()).flatten().or(s.select_limit())
             && let Some(b) = self.bounds(world, now)
             && b.center.distance(world.agent.position) > max
         {
@@ -1932,7 +1940,7 @@ impl BuildTool {
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
-        if self.attachment_selected(world) {
+        if self.attachment_selected(world) || !self.roots(world).iter().all(|&r| world.rlva_can_unlink(r)) {
             return;
         }
         let prims: Vec<usize> = self
@@ -2325,6 +2333,11 @@ impl BuildTool {
                 if mods.shift || mods.ctrl {
                     // Shift / Ctrl click selects instead (LLToolCompCreate)
                     self.click_select(world, s, pick, true);
+                    return true;
+                }
+                // LLToolPlacer::placeObject: under @rez or @interact the
+                // click does nothing, and plays no sound.
+                if !world.rlva_can_rez(None) {
                     return true;
                 }
                 if s.copy_selection {

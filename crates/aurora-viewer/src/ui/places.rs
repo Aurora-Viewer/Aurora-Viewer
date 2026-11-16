@@ -332,6 +332,12 @@ pub struct PlacesUi {
 }
 
 impl PlacesUi {
+    /// The session ended: a question left open ends with it.
+    pub fn forget_question(&mut self) {
+        self.confirm = None;
+        self.dont_ask = false;
+    }
+
     /// "open_landmark_tab" / "open_teleport_history_tab": the lists on a tab.
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
@@ -825,7 +831,9 @@ impl PlacesUi {
                 name: it.name.clone(),
             });
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), resolved.is_some())
+        // LLLandmarksPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = resolved.is_some() && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some(g) = resolved
         {
             actions.push(PlacesAction::ShowOnMap(g));
@@ -1011,7 +1019,9 @@ impl PlacesUi {
         {
             actions.push(history_profile(it));
         }
-        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), some)
+        // LLTeleportHistoryPanel::isActionEnabled ("show_on_map"): not under @showworldmap
+        let mappable = some && super::context::can_show_on_map(world);
+        if super::menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), mappable)
             && let Some((_, it)) = &sel
         {
             actions.push(PlacesAction::ShowOnMap(it.global));
@@ -1121,7 +1131,8 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-map"),
                 aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                map_target.is_some(),
+                // LLTeleportHistoryPanel::updateVerbs: not under @showworldmap
+                map_target.is_some() && super::context::can_show_on_map(world),
                 w,
             )) && let Some(g) = map_target
             {
@@ -1206,7 +1217,8 @@ impl PlacesUi {
                     look,
                     aurora_i18n::tr!("common-map"),
                     aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                    place.global.is_some(),
+                    // LLPanelPlaces::updateVerbs: not under @showworldmap
+                    place.global.is_some() && super::context::can_show_on_map(world),
                 ) && let Some(g) = place.global
                 {
                     actions.push(PlacesAction::ShowOnMap(g));
@@ -1626,6 +1638,15 @@ mod tests {
         let actions = answer_confirm(&mut ui, true, &[dont_ask, aurora_i18n::tr!("common-cancel")]);
         assert!(actions.is_empty());
         assert!(ui.confirm.is_none() && !ui.dont_ask);
+
+        // A checkbox ticked without answering belongs to the session that ended.
+        let mut ui = pending();
+        assert!(answer_confirm(&mut ui, true, &[dont_ask]).is_empty());
+        assert!(ui.dont_ask);
+        ui.forget_question();
+        assert!(ui.confirm.is_none());
+        ui.confirm_landmark(asset, "Landmark".into());
+        assert!(matches!(&answer_confirm(&mut ui, true, &[teleport])[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
 
         // turned off: no question, a history entry too
         let mut ui = pending();

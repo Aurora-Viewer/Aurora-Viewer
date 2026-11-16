@@ -68,6 +68,12 @@ impl PlaceFacts {
         arrived: bool,
     ) -> PlaceFacts {
         let mut facts = PlaceFacts::default();
+        // @showloc: the classification, the arrival point, the head count and
+        // the map tile each tell the place apart; the Legacy Viewer's progress
+        // view (LLProgressView) shows none of them.
+        if world.rlva.has("showloc") {
+            return facts;
+        }
         if let Some(pos) = position {
             facts.position = format!("{:.0}, {:.0}, {:.0}", pos.x, pos.y, pos.z);
         }
@@ -114,6 +120,24 @@ pub fn split_destination(dest: &str) -> (&str, Option<glam::Vec3>) {
         (Some(Ok(x)), Some(Ok(y)), Some(Ok(z)), None) => (name.trim(), Some(glam::Vec3::new(x, y, z))),
         _ => (dest.trim(), None),
     }
+}
+
+/// The region a teleport screen names, and the arrival point it may show,
+/// from the destination "Region (x, y, z)" (empty: the region we are in).
+/// Under @showloc neither is told: the screen says what the location bar
+/// says of the current region (RlvStrings::getString(RlvStringKeys::Hidden::
+/// Region)); the Legacy Viewer's own progress view never names the place.
+pub fn banner_place(world: &crate::world::World, dest: &str) -> (String, Option<glam::Vec3>) {
+    if world.rlva.has("showloc") {
+        return (world.rlva_region_label(), None);
+    }
+    let (region, point) = split_destination(dest);
+    let name = if region.is_empty() {
+        world.region_name()
+    } else {
+        region.to_owned()
+    };
+    (name, point)
 }
 
 /// Fade-out duration of the loading / teleport screens.
@@ -568,6 +592,44 @@ mod tests {
         assert_eq!(split_destination("Port (nord)"), ("Port (nord)", None));
         assert_eq!(split_destination("Domicile"), ("Domicile", None));
         assert_eq!(split_destination(""), ("", None));
+    }
+
+    /// @showloc: the screen tells neither the destination nor a fact of it.
+    #[test]
+    fn rlva_showloc_hides_the_destination_and_its_facts() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let here = world.region_name();
+        assert!(!here.is_empty());
+        let point = glam::Vec3::new(128.0, 64.0, 30.0);
+        assert_eq!(banner_place(&world, "Lagune (128, 64, 30)"), ("Lagune".to_owned(), Some(point)));
+        assert_eq!(banner_place(&world, ""), (here.clone(), None));
+        let mut tiles = crate::ui::map_tiles::MapTiles::new();
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert_eq!(facts.position, "128, 64, 30");
+        assert!(facts.pin.is_some());
+
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(99),
+            owner_id: uuid::Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@showloc=n".into(),
+        }));
+        for dest in ["Lagune (128, 64, 30)", "Lagune", ""] {
+            let (name, arrival) = banner_place(&world, dest);
+            assert!(!name.contains("Lagune") && name != here && !name.is_empty(), "{dest:?}: {name}");
+            assert_eq!(arrival, None);
+        }
+        let facts = PlaceFacts::gather(&mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.position.is_empty() && facts.maturity.is_empty());
+        assert!(facts.residents.is_none() && facts.tile.is_none() && facts.pin.is_none());
     }
 
     #[test]

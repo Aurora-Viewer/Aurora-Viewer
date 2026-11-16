@@ -169,8 +169,12 @@ impl BuildTool {
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
-    /// A god may, whatever the object (isGodlike() first).
+    /// A god may, whatever the object (isGodlike() first); nobody may in a
+    /// locked attachment or the restraining seat (`rlva_contents_locked`).
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
+        if world.rlva_contents_locked(idx) {
+            return false;
+        }
         if world.god_level > 0 {
             return world.objects.get(idx).is_some();
         }

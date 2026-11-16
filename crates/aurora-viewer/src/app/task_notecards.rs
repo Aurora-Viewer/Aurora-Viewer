@@ -101,6 +101,17 @@ impl App {
         let Some(metadata) = self.task_notecard_item(object, item) else {
             return;
         };
+        // LLTaskNotecardBridge::openItem (llpanelobjectinventory.cpp): the
+        // notecards of an attachment that cannot be taken off stay closed.
+        if metadata.asset_type == 7
+            && self
+                .world
+                .objects
+                .index_of_uuid(&object)
+                .is_some_and(|i| self.world.rlva_locked_attachment(i))
+        {
+            return;
+        }
         // a preview: the rule of the contents' Open entries, on the raw item
         if metadata.asset_type != 7
             && !self
