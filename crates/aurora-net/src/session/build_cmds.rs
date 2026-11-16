@@ -7,9 +7,35 @@ use crate::types::NetEvent;
 use aurora_llsd::Llsd;
 use aurora_msg::msgs::{self, *};
 use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
+use std::ops::Range;
+
+/// The capability of LLViewerObject::createInventoryItem.
+const CREATE_TASK_ITEM: &str = "CreateTaskInventoryItem";
 
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
-const MAX_PER_PACKET: usize = 254;
+pub(super) const MAX_PER_PACKET: usize = 254;
+
+/// Keep variable-length object-name and description messages within the UDP
+/// packet limit as well as the protocol's block-count limit.
+pub(super) fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = (start + MAX_PER_PACKET).min(items.len());
+        while end > start + 1 && packet_len(&items[start..end]) > aurora_msg::packet::MTU {
+            end -= 1;
+        }
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
+}
+
+pub(super) fn encoded_packet_len<M: Msg>(message: &M) -> usize {
+    let mut bytes = Vec::new();
+    aurora_msg::build_packet(message, 0, true, false, &[], &mut bytes);
+    bytes.len()
+}
 
 impl Session<'_> {
     pub(super) fn on_build(&mut self, c: BuildCmd) {
@@ -194,31 +220,67 @@ impl Session<'_> {
                     .collect();
                 self.send(addr, &m, true);
             }
-            BuildCmd::SetName { handle, local_id, name } => {
+            BuildCmd::SetName { handle, local_ids, name } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
-                let mut m = ObjectName::default();
-                m.agent_data.agent_id = agent_id;
-                m.agent_data.session_id = session_id;
-                m.object_data = vec![object_name::ObjectData {
-                    local_id,
-                    name: str_field(&name),
-                }];
-                self.send(addr, &m, true);
+                let ranges = mtu_bounded_ranges(&local_ids, |chunk| {
+                    let mut m = ObjectName::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&local_id| object_name::ObjectData {
+                            local_id,
+                            name: str_field(&name),
+                        })
+                        .collect();
+                    encoded_packet_len(&m)
+                });
+                for range in ranges {
+                    let mut m = ObjectName::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = local_ids[range]
+                        .iter()
+                        .map(|&local_id| object_name::ObjectData {
+                            local_id,
+                            name: str_field(&name),
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
             }
             BuildCmd::SetDescription {
                 handle,
-                local_id,
+                local_ids,
                 description,
             } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
-                let mut m = ObjectDescription::default();
-                m.agent_data.agent_id = agent_id;
-                m.agent_data.session_id = session_id;
-                m.object_data = vec![object_description::ObjectData {
-                    local_id,
-                    description: str_field(&description),
-                }];
-                self.send(addr, &m, true);
+                let ranges = mtu_bounded_ranges(&local_ids, |chunk| {
+                    let mut m = ObjectDescription::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&local_id| object_description::ObjectData {
+                            local_id,
+                            description: str_field(&description),
+                        })
+                        .collect();
+                    encoded_packet_len(&m)
+                });
+                for range in ranges {
+                    let mut m = ObjectDescription::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = local_ids[range]
+                        .iter()
+                        .map(|&local_id| object_description::ObjectData {
+                            local_id,
+                            description: str_field(&description),
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
             }
             BuildCmd::SetFlags {
                 handle,
@@ -355,12 +417,17 @@ impl Session<'_> {
     fn on_build_more(&mut self, c: BuildCmd) {
         let (agent_id, session_id) = (self.agent_id(), self.session_id());
         let Some(addr) = build_handle(&c).and_then(|h| self.sim_for_handle(h)) else {
-            if let BuildCmd::Cap { tag, cap, .. } = c {
+            let failed = match c {
+                BuildCmd::Cap { tag, cap, .. } => Some((tag, cap)),
+                BuildCmd::CreateTaskItem { tag, .. } => Some((tag, CREATE_TASK_ITEM.to_owned())),
+                _ => None,
+            };
+            if let Some((tag, cap)) = failed {
                 emit(
                     self.sh,
                     NetEvent::CapReply {
                         tag,
-                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap.to_string())),
+                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap)),
                     },
                 );
             }
@@ -369,7 +436,10 @@ impl Session<'_> {
         match c {
             BuildCmd::RezInventory(rez) => {
                 if rez.ray_start.is_finite() && rez.ray_end.is_finite() {
-                    self.send(addr, &rez.message(agent_id, session_id), true);
+                    match rez.notecard {
+                        Some(from) => self.send(addr, &rez.notecard_message(agent_id, session_id, from), true),
+                        None => self.send(addr, &rez.message(agent_id, session_id), true),
+                    }
                 }
             }
             BuildCmd::SetPhysicsParams {
@@ -772,6 +842,17 @@ impl Session<'_> {
                 m.script.item_id = item_id;
                 self.send(addr, &m, true);
             }
+            BuildCmd::CreateTaskItem { handle, item, tag } => {
+                // an LLSD POST, answered like the other region capabilities
+                let body = crate::task_inventory::create_item_body(&item);
+                self.on_build_more(BuildCmd::Cap {
+                    handle,
+                    cap: CREATE_TASK_ITEM.into(),
+                    put: false,
+                    body,
+                    tag,
+                });
+            }
             BuildCmd::Cap { cap, put, body, tag, .. } => {
                 let url = self.sims.get(&addr).and_then(|s| s.caps.get(&cap).cloned());
                 let Some(url) = url else {
@@ -811,7 +892,7 @@ impl Session<'_> {
                     object_id: m.script.object_id,
                     item_id: m.script.item_id,
                     running: m.script.running,
-                    mono: None,
+                    compile: None,
                 },
             );
         } else {
@@ -843,7 +924,8 @@ impl Session<'_> {
                     .collect();
                 emit(self.sh, NetEvent::PhysicsProperties(list));
             }
-            // the event queue form carries the Mono flag (LLLiveLSLEditor)
+            // the event queue form carries the Mono, Luau and LuauLanguage
+            // flags (LLLiveLSLEditor::processScriptRunningReply)
             "ScriptRunningReply" => {
                 let s = &b["Script"][0];
                 emit(
@@ -852,7 +934,13 @@ impl Session<'_> {
                         object_id: s["ObjectID"].as_uuid(),
                         item_id: s["ItemID"].as_uuid(),
                         running: s["Running"].as_bool(),
-                        mono: s.has("Mono").then(|| s["Mono"].as_bool()),
+                        compile: (s.has("Mono") || s.has("Luau")).then(|| {
+                            crate::scripts::CompileTarget::from_running(
+                                s["Mono"].as_bool(),
+                                s["Luau"].as_bool(),
+                                s["LuauLanguage"].as_bool(),
+                            )
+                        }),
                     },
                 );
             }
@@ -889,6 +977,7 @@ fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
         | BuildCmd::MoveTaskInventory { handle, .. }
         | BuildCmd::UpdateTaskInventory { handle, .. }
         | BuildCmd::RezScript { handle, .. }
+        | BuildCmd::CreateTaskItem { handle, .. }
         | BuildCmd::ScriptReset { handle, .. }
         | BuildCmd::SetScriptRunning { handle, .. }
         | BuildCmd::GetScriptRunning { handle, .. }
@@ -919,6 +1008,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             category: b.category,
             inventory_serial: b.inventory_serial,
             folder_id: b.folder_id,
+            from_task_id: b.from_task_id,
             name: field_str(&b.name),
             description: field_str(&b.description),
             touch_name: field_str(&b.touch_name),
@@ -947,5 +1037,88 @@ pub(super) fn parse_family(m: &msgs::ObjectPropertiesFamily) -> ObjectProps {
         name: field_str(&b.name),
         description: field_str(&b.description),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_root_name_packets_stay_within_mtu_and_preserve_every_root() {
+        let local_ids: Vec<u32> = (1..=254).collect();
+        let name = "x".repeat(63);
+        let ranges = mtu_bounded_ranges(&local_ids, |chunk| {
+            let mut message = ObjectName::default();
+            message.agent_data.agent_id = uuid::Uuid::from_bytes([0xff; 16]);
+            message.agent_data.session_id = uuid::Uuid::from_bytes([0xfe; 16]);
+            message.object_data = chunk
+                .iter()
+                .map(|&local_id| object_name::ObjectData {
+                    local_id,
+                    name: str_field(&name),
+                })
+                .collect();
+            encoded_packet_len(&message)
+        });
+
+        assert!(ranges.len() > 1, "long names should split before the 254-root cap");
+        let mut emitted = Vec::new();
+        for range in ranges {
+            let chunk = &local_ids[range];
+            assert!(chunk.len() <= MAX_PER_PACKET);
+            let mut message = ObjectName::default();
+            message.agent_data.agent_id = uuid::Uuid::from_bytes([0xff; 16]);
+            message.agent_data.session_id = uuid::Uuid::from_bytes([0xfe; 16]);
+            message.object_data = chunk
+                .iter()
+                .map(|&local_id| object_name::ObjectData {
+                    local_id,
+                    name: str_field(&name),
+                })
+                .collect();
+            assert!(encoded_packet_len(&message) <= aurora_msg::packet::MTU);
+            emitted.extend(chunk.iter().copied());
+        }
+        assert_eq!(emitted, local_ids);
+    }
+
+    #[test]
+    fn multi_root_description_packets_stay_within_mtu_and_preserve_every_root() {
+        let local_ids: Vec<u32> = (1..=254).collect();
+        let description = "x".repeat(63);
+        let ranges = mtu_bounded_ranges(&local_ids, |chunk| {
+            let mut message = ObjectDescription::default();
+            message.agent_data.agent_id = uuid::Uuid::from_bytes([0xff; 16]);
+            message.agent_data.session_id = uuid::Uuid::from_bytes([0xfe; 16]);
+            message.object_data = chunk
+                .iter()
+                .map(|&local_id| object_description::ObjectData {
+                    local_id,
+                    description: str_field(&description),
+                })
+                .collect();
+            encoded_packet_len(&message)
+        });
+
+        assert!(ranges.len() > 1, "long descriptions should split before the 254-root cap");
+        let mut emitted = Vec::new();
+        for range in ranges {
+            let chunk = &local_ids[range];
+            assert!(chunk.len() <= MAX_PER_PACKET);
+            let mut message = ObjectDescription::default();
+            message.agent_data.agent_id = uuid::Uuid::from_bytes([0xff; 16]);
+            message.agent_data.session_id = uuid::Uuid::from_bytes([0xfe; 16]);
+            message.object_data = chunk
+                .iter()
+                .map(|&local_id| object_description::ObjectData {
+                    local_id,
+                    description: str_field(&description),
+                })
+                .collect();
+            assert!(encoded_packet_len(&message) <= aurora_msg::packet::MTU);
+            emitted.extend(chunk.iter().copied());
+        }
+        assert_eq!(emitted, local_ids);
     }
 }

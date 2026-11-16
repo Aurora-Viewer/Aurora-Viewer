@@ -13,8 +13,8 @@
 //! A row changes the very field its Preferences row edits, with the same
 //! range and the same clamp (`Settings::sanitized`), and the app applies and
 //! saves the change like a change of Preferences, so the two never differ.
-//! Aurora's ranges win over the Legacy Viewer's (draw distance 32..512 m
-//! against 32..1024, volume LOD 0.5..4 against 0..4, fully rendered avatars
+//! Some Aurora ranges differ from the Legacy Viewer's (volume LOD 0.5..4
+//! against 0..4, fully rendered avatars
 //! 1..100 against 1..66, bandwidth 50..4000 against 50..3000). Left out for
 //! lack of an Aurora setting: FSNameTagZOffsetCorrection ("Tags Offset") and
 //! DebugShowColor ("Color Under Cursor"). Not here yet: the editor of the
@@ -85,7 +85,7 @@ impl Slot {
     /// The slider's range: the one of Preferences.
     pub fn range(self) -> RangeInclusive<f64> {
         match self {
-            Slot::DrawDistance => 32.0..=512.0,
+            Slot::DrawDistance => f64::from(crate::settings::DRAW_DISTANCE_MIN)..=f64::from(crate::settings::DRAW_DISTANCE_MAX),
             Slot::Particles => 0.0..=8192.0,
             Slot::PhysicsDetail => 0.0..=1.0,
             Slot::Lod => 0.5..=4.0,
@@ -260,7 +260,24 @@ impl QuickPrefsUi {
                 out.changed |= slot_row(ui, p, settings, Slot::Bandwidth);
                 out.changed |= complexity_row(ui, p, settings);
                 widgets::divider(ui, p);
-                env.selector_body(ui, p, view, loading, None, LABEL_W, lighting, &mut out.env);
+                // Aurora Weather after "Personal lighting", each with its own
+                // arrow back to the region's, as in the Environment window
+                // (its window is drawn with that one's)
+                let mut weather_open = env.weather_open;
+                let before = settings.weather.region_weather;
+                env.selector_body(
+                    ui,
+                    p,
+                    view,
+                    loading,
+                    None,
+                    LABEL_W,
+                    lighting,
+                    Some((&mut weather_open, &mut settings.weather)),
+                    &mut out.env,
+                );
+                env.weather_open = weather_open;
+                out.changed |= settings.weather.region_weather != before;
             });
         // saved once the button is released, not at every frame of a drag
         self.unsaved |= out.changed;

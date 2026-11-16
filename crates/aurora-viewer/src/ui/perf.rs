@@ -683,7 +683,7 @@ pub fn last_rates(d: &PerfData) -> (f32, f32) {
 
 /// The GPU parts of a frame, in [`GpuElement::ALL`] order: name and help
 /// (the resource monitor's breakdown).
-pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); 7] {
+pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); GpuElement::ALL.len()] {
     GpuElement::ALL.map(|el| match el {
         GpuElement::ShadowsDepth => (
             aurora_i18n::tr!("ui-perf-shadows-and-depth"),
@@ -708,6 +708,10 @@ pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); 7] {
         GpuElement::Transparent => (
             aurora_i18n::tr!("ui-perf-transparent-objects-and-particles"),
             aurora_i18n::tr!("ui-perf-semi-transparent-faces-and-particles"),
+        ),
+        GpuElement::Weather => (
+            aurora_i18n::tr!("ui-perf-weather"),
+            aurora_i18n::tr!("ui-perf-rain-and-wet-surfaces"),
         ),
         GpuElement::Post => (
             aurora_i18n::tr!("ui-perf-post-processing"),

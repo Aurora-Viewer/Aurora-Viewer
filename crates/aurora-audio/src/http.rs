@@ -41,12 +41,15 @@ pub(crate) enum HttpError {
     Status(u16),
     #[error("too many redirects")]
     Redirects,
+    #[error("radio playlist links must stay on the same HTTP(S) origin")]
+    PlaylistOrigin,
     #[error("stopped")]
     Stopped,
 }
 
 /// Body + interesting headers of a successful response.
 pub(crate) struct HttpResponse {
+    pub url: Url,
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
@@ -332,10 +335,24 @@ fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
 
 /// Opens `url` for streaming, following redirects. Sends `Icy-MetaData: 1`.
 pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, HttpError> {
+    open_with_origin(url, stop, None)
+}
+
+/// Discovered playlist links cannot acquire access to another site, including
+/// through a redirect. Ordinary stream redirects retain their existing policy.
+pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
+        }
+        if origin.is_some_and(|base| {
+            !matches!(url.scheme(), "http" | "https")
+                || url.origin() != base.origin()
+                || !url.username().is_empty()
+                || url.password().is_some()
+        }) {
+            return Err(HttpError::PlaylistOrigin);
         }
         let mut conn = connect(&url)?;
         let req = format!(
@@ -370,6 +387,7 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
                     Box::new(reader)
                 };
                 return Ok(HttpResponse {
+                    url,
                     content_type,
                     metaint,
                     body,

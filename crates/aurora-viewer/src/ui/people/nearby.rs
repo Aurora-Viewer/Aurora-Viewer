@@ -4,10 +4,10 @@
 //! one line each for a crowd; sort pills; and the sheet of the person
 //! held, at the right (`sheet.rs`). The data, rules, options and menus
 //! are those of Firestorm's radar table (`radar.rs`: FSRadar,
-//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences › Aurora
-//! › People brings back.
+//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences â€º Aurora
+//! â€º People brings back.
 
-use super::radar::{self, Column, Payment, RadarData, Row};
+use super::radar::{self, Age, Column, Payment, RadarData, RadarSettings, Row};
 use super::{PeopleAction, PeopleUi};
 use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList, CtxAction};
@@ -28,6 +28,11 @@ const BAND_H: f32 = 24.0;
 const DIST_W: f32 = 58.0;
 const COMPACT_DIST_W: f32 = 46.0;
 const SEEN_W: f32 = 44.0;
+/// Width reserved for Columns › Age on a Near you row (#2999): the cake
+/// and up to five digits.
+const AGE_W: f32 = 52.0;
+/// Space between the cake and the age figure.
+const AGE_ICON_GAP: f32 = 3.0;
 /// Height of the toolbar (search, density, options).
 const TOOLBAR_H: f32 = 30.0;
 /// Width of the sheet, and the width the list keeps beside it: a window
@@ -75,7 +80,7 @@ impl Band {
         }
     }
 
-    /// "Whisper · 10 m".
+    /// "Whisper Â· 10 m".
     pub(super) fn title(self) -> String {
         let m = |r: f32| aurora_i18n::number(f64::from(r), 0);
         let r = chat_ranges();
@@ -108,10 +113,10 @@ pub(super) fn seen_text(seconds: f64) -> String {
     }
 }
 
-/// The badges of a row in the mock-up's order (friend, voice, typing,
+/// The badges of a row in order (friend, voice, region, typing,
 /// sitting, payment info, note), with the text each shows on hover. Only
 /// what is so: no payment info, Firestorm's grey card, is in the sheet.
-fn badges(p: &Palette, row: &Row) -> Vec<(&'static str, Color32, String)> {
+fn badges(p: &Palette, settings: &RadarSettings, row: &Row) -> Vec<(&'static str, Color32, String)> {
     let mut out = Vec::new();
     if row.muted {
         out.push(("ban", p.muted_dim, aurora_i18n::tr!("common-blocked").to_owned()));
@@ -119,26 +124,70 @@ fn badges(p: &Palette, row: &Row) -> Vec<(&'static str, Color32, String)> {
     if row.friend {
         out.push(("heart-filled", p.success, aurora_i18n::tr!("ui-profile-aurora-friend").to_owned()));
     }
-    match row.voice {
-        Some(true) => out.push(("microphone-filled", p.success, aurora_i18n::tr!("radar-voice-speaking").to_owned())),
-        Some(false) => out.push(("microphone-filled", p.muted, aurora_i18n::tr!("radar-voice-connected").to_owned())),
-        None => {}
+    // Columns › … of the gear menu used to change nothing in Aurora Near you
+    // (#2999): the Legacy radar table honoured them, these badges did not.
+    if settings.shows(Column::Voice) {
+        match row.voice {
+            Some(true) => out.push(("microphone-filled", p.success, aurora_i18n::tr!("radar-voice-speaking").to_owned())),
+            Some(false) => out.push(("microphone-filled", p.muted, aurora_i18n::tr!("radar-voice-connected").to_owned())),
+            None => {}
+        }
     }
-    if row.typing {
+    if settings.shows(Column::Region) && row.same_region {
+        out.push((
+            Column::Region.icon(),
+            p.violet_light,
+            aurora_i18n::tr!("radar-col-region").to_owned(),
+        ));
+    }
+    if settings.shows(Column::Typing) && row.typing {
         out.push(("keyboard-filled", p.violet_light, aurora_i18n::tr!("radar-col-typing").to_owned()));
     }
-    if row.sitting {
+    if settings.shows(Column::Sitting) && row.sitting {
         out.push(("armchair", p.muted, aurora_i18n::tr!("radar-col-sitting").to_owned()));
     }
-    match row.payment {
-        Payment::OnFile => out.push(("credit-card-filled", p.amber, aurora_i18n::tr!("radar-payment-on-file").to_owned())),
-        Payment::Used => out.push(("credit-card-filled", p.success, aurora_i18n::tr!("radar-payment-used").to_owned())),
-        Payment::None | Payment::Unknown => {}
+    if settings.shows(Column::Payment) {
+        match row.payment {
+            Payment::OnFile => out.push(("credit-card-filled", p.amber, aurora_i18n::tr!("radar-payment-on-file").to_owned())),
+            Payment::Used => out.push(("credit-card-filled", p.success, aurora_i18n::tr!("radar-payment-used").to_owned())),
+            Payment::None | Payment::Unknown => {}
+        }
     }
-    if !row.note.is_empty() {
+    if settings.shows(Column::Notes) && !row.note.is_empty() {
         out.push(("note", p.teal, row.note.clone()));
     }
     out
+}
+
+/// Age text for a Near you row when Columns › Age is on.
+fn age_text(row: &Row, settings: &RadarSettings) -> Option<(String, bool)> {
+    if row.anonymous || !settings.shows(Column::Age) {
+        return None;
+    }
+    match row.age {
+        Age::Unknown => None,
+        Age::Hidden => Some((aurora_i18n::tr!("radar-age-hidden").to_owned(), false)),
+        Age::Days(days) => {
+            let young = (0..=i64::from(settings.age_alert_days)).contains(&days);
+            Some((format!("{days}"), young))
+        }
+    }
+}
+
+/// The age figure in `cell`, against its right edge, after the cake of
+/// Columns › Age: the Legacy table names the figure with its "Age" header,
+/// the Aurora rows have none, so the icon says what the number is. Its
+/// colour follows the figure (red under the age alert).
+fn paint_age(ui: &egui::Ui, p: &Palette, cell: Rect, text: String, young: bool, size: f32) {
+    let color = if young { p.danger } else { p.muted };
+    let format = egui::TextFormat::simple(FontId::proportional(size), color);
+    let mut job = egui::text::LayoutJob::single_section(text, format);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(cell.width() - size - AGE_ICON_GAP);
+    let galley = ui.painter().layout_job(job);
+    let left = (cell.right() - galley.size().x).max(cell.left() + size + AGE_ICON_GAP);
+    let icon = Rect::from_center_size(Pos2::new(left - AGE_ICON_GAP - size / 2.0, cell.center().y), Vec2::splat(size));
+    radar::icon(ui, Column::Age.icon(), icon, size, color);
+    crate::ui::widgets::paint_row_text(&ui.painter().with_clip_rect(cell), galley, left, cell.center().y, color);
 }
 
 /// A semi-bold text format (the mock-up's weight 600).
@@ -259,6 +308,7 @@ pub fn tab(
             data,
             st,
             id,
+            crate::world::names::NameScope::World,
             true,
             true,
             actions,
@@ -332,7 +382,7 @@ fn list_part(
     let compact = data.settings.compact;
     toolbar(ui, p, data, st, blocked);
     ui.add_space(if compact { 6.0 } else { 4.0 });
-    if data.settings.show_minimap {
+    if radar::shows_minimap(world, data.settings) {
         ui.vertical_centered(|ui| map(ui, Vec2::new(ui.available_width().min(320.0), 150.0)));
         ui.add_space(6.0);
     }
@@ -346,12 +396,20 @@ fn list_part(
     }
     let filter = st.filter.trim().to_lowercase();
     let list = radar::rows(world, data, &filter);
+    // the rules of the radar's table under @shownames (`radar::names_hidden`):
+    // no menu, no friendship offer, and none of the row's own shortcuts
+    // to the resident behind an anonymous name
+    let anonymous = radar::names_hidden(world);
     summary(
         ui,
         p,
-        data.radar.total,
-        list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
-        list.iter().filter(|r| r.friend).count(),
+        (!radar::nearby_hidden(world)).then(|| {
+            [
+                data.radar.total,
+                list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
+                list.iter().filter(|r| r.friend).count(),
+            ]
+        }),
     );
     ui.add_space(if compact { 4.0 } else { 3.0 });
     let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
@@ -364,7 +422,7 @@ fn list_part(
             ui.spacing_mut().item_spacing.y = if compact { 0.0 } else { RICH_GAP };
             if list.is_empty() {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(aurora_i18n::tr!("radar-empty")).size(12.0).color(p.muted));
+                ui.label(egui::RichText::new(radar::empty_text(world)).size(12.0).color(p.muted));
             }
             let mut band = None;
             for (i, row) in list.iter().enumerate() {
@@ -375,12 +433,24 @@ fn list_part(
                 let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
                 let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, if compact { COMPACT_H } else { RICH_H }));
                 let count = 4 + usize::from(!row.friend && row.id != world.agent_id);
-                let badge_count = badges(p, row).len();
-                let (rect, resp) = ui.allocate_exact_size(bounds.size(), Sense::click_and_drag());
+                let badge_count = badges(p, data.settings, row).len();
+                let (rect, resp) = super::rows::allocate(ui, row.id, bounds.size());
+                widgets::reveal_search_selection(
+                    ui,
+                    &resp,
+                    st.radar_anchor
+                        .filter(|id| st.radar_selected.contains(id))
+                        .or_else(|| st.radar_selected.last().copied())
+                        .or(st.sheet)
+                        == Some(row.id),
+                );
                 if !ui.is_rect_visible(rect) {
+                    if !anonymous {
+                        super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    }
                     continue;
                 }
-                if !data.pics.contains_key(&row.id) {
+                if !anonymous && !data.pics.contains_key(&row.id) {
                     st.want_pic(row.id, now);
                 }
                 let selected = st.radar_selected.contains(&row.id) || st.sheet == Some(row.id);
@@ -391,7 +461,16 @@ fn list_part(
                 let pointer = resp.hover_pos();
                 let hot =
                     (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
-                let end = right_end(rect, names_left(rect, compact), badge_count, hot.then_some(count), compact);
+                let shortcuts = (hot && !anonymous).then_some(count);
+                let end = right_end(
+                    rect,
+                    names_left(rect, compact),
+                    badge_count,
+                    shortcuts,
+                    compact,
+                    data.settings.shows(Column::Seen),
+                    !anonymous && row.age != Age::Unknown && data.settings.shows(Column::Age),
+                );
                 let tip = if compact {
                     paint_compact(ui, p, world, data, st, row, rect, &end, i, selected, hot, pointer, actions)
                 } else {
@@ -399,28 +478,18 @@ fn list_part(
                 };
                 ui.set_opacity(opacity);
                 let action = super::rows::select(ui, &resp, &mut st.radar_selected, &mut st.radar_anchor, &order, row.id);
-                if action.sheet {
+                if action.sheet && !anonymous {
                     open_sheet(st, row.id);
                 }
-                // double click: the camera goes to the avatar and follows it, when it is
-                // drawn (LLAvatarActions::zoomIn, FSPanelRadar)
+                // double click: the camera goes to the avatar and follows it
+                // (LLAvatarActions::zoomIn, FSPanelRadar)
                 if action.activate {
-                    if row.loaded {
-                        context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
-                    } else {
-                        actions.push(PeopleAction::TooFarToZoom);
-                    }
+                    radar::zoom_from_list(ui, st, row, data, actions);
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
-                let several = st.radar_selected.len() > 1 && st.radar_selected.contains(&row.id);
-                let chosen = st.radar_selected.clone();
-                menu::context_menu(&resp, p, |ui| {
-                    if several {
-                        context::avatars_menu(ui, p, world, &chosen);
-                    } else {
-                        context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
-                    }
-                });
+                if !anonymous {
+                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                }
                 super::rows::contact_tip(resp, tip.as_deref());
             }
         });
@@ -440,7 +509,7 @@ fn toolbar(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData, st: &mut People
         });
         density(ui, p, &mut data.settings.compact);
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
     });
 }
 
@@ -541,21 +610,24 @@ fn choose_sort(data: &mut RadarData, column: Column) {
     }
 }
 
-/// "16 near you · 7 within earshot · 2 friends": the figures in the ink,
+/// "16 near you Â· 7 within earshot Â· 2 friends": the figures in the ink,
 /// their words in the muted color.
-fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: usize) {
+fn summary(ui: &mut egui::Ui, p: &Palette, counts: Option<[usize; 3]>) {
     // a line of text, not of buttons
     ui.spacing_mut().interact_size.y = 16.0;
     ui.horizontal_wrapped(|ui| {
         ui.add_space(2.0);
         ui.spacing_mut().item_spacing.x = 12.0;
+        // the words of no avatar and a dash for each figure under @shownearby
+        let [total, chat, friends] = counts.unwrap_or_default();
         for (n, words) in [
             (total, aurora_i18n::tr!("people-sum-nearby", count = total as i64)),
             (chat, aurora_i18n::tr!("people-sum-earshot", count = chat as i64)),
             (friends, aurora_i18n::tr!("people-sum-friends", count = friends as i64)),
         ] {
             let mut job = egui::text::LayoutJob::default();
-            job.append(&aurora_i18n::integer(n as i64), 0.0, semibold(ui, 12.0, p.ink));
+            let figure = counts.map_or_else(|| "-".to_owned(), |_| aurora_i18n::integer(n as i64));
+            job.append(&figure, 0.0, semibold(ui, 12.0, p.ink));
             job.append(&words, 4.0, egui::TextFormat::simple(FontId::proportional(12.0), p.muted));
             ui.label(job);
         }
@@ -567,7 +639,7 @@ fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
     section_header(ui, p, &band.title());
 }
 
-/// The header of a part of a list ("Whisper · 10 m", "Online · 2").
+/// The header of a part of a list ("Whisper Â· 10 m", "Online Â· 2").
 pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
@@ -585,10 +657,10 @@ pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     }
 }
 
-/// The most badges a row can carry: blocked, friend, voice, typing,
+/// The most badges a row can carry: blocked, friend, voice, region, typing,
 /// sitting, payment info, note.
 #[cfg(test)]
-const MAX_BADGES: usize = 7;
+const MAX_BADGES: usize = 8;
 
 /// The measures of a row's right end, rich or compact.
 struct Metrics {
@@ -648,6 +720,7 @@ pub(super) struct RightEnd {
     /// The "+2" of the others, and how many it stands for.
     pub more: Option<(Rect, usize)>,
     pub seen: Option<Rect>,
+    pub age: Option<Rect>,
     pub dist: Option<Rect>,
     /// The pill of the quick actions, with one rectangle per button.
     pub actions: Option<(Rect, Vec<Rect>)>,
@@ -670,15 +743,35 @@ impl RightEnd {
 /// The right end of `row` for `badges` badges, its names starting at
 /// `names_left`; `actions` replaces the time and distance while the row
 /// is under the pointer, without covering the avatar or changing row height.
-pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Option<usize>, compact: bool) -> RightEnd {
+pub(super) fn right_end(
+    row: Rect,
+    names_left: f32,
+    badges: usize,
+    actions: Option<usize>,
+    compact: bool,
+    show_seen: bool,
+    show_age: bool,
+) -> RightEnd {
     let m = metrics(compact);
     let right = row.right() - m.pad;
     let y = row.center().y;
     let dist = Rect::from_min_max(Pos2::new(right - m.dist, row.top()), Pos2::new(right, row.bottom()));
-    let seen = (m.seen > 0.0).then(|| {
+    // Age and Seen drop on a narrow list so the name keeps its minimum, as
+    // the badges already do.
+    let names_floor = names_left + m.names_min + NAMES_GAP;
+    let age_w = if show_age { AGE_W } else { 0.0 };
+    let age = (age_w > 0.0 && dist.left() - 6.0 - age_w >= names_floor).then(|| {
         Rect::from_min_max(
-            Pos2::new(dist.left() - 6.0 - m.seen, row.top()),
+            Pos2::new(dist.left() - 6.0 - age_w, row.top()),
             Pos2::new(dist.left() - 6.0, row.bottom()),
+        )
+    });
+    let seen_w = if show_seen { m.seen } else { 0.0 };
+    let after_age = age.map_or(dist.left(), |a| a.left());
+    let seen = (seen_w > 0.0 && after_age - 6.0 - seen_w >= names_floor).then(|| {
+        Rect::from_min_max(
+            Pos2::new(after_age - 6.0 - seen_w, row.top()),
+            Pos2::new(after_age - 6.0, row.bottom()),
         )
     });
     let actions = actions.map(|n| {
@@ -686,9 +779,11 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
         let slot = super::rows::actions_slot(row, left, right, n, m.button);
         super::rows::action_rects(slot, n, m.button)
     });
-    let zone = actions
-        .as_ref()
-        .map_or_else(|| seen.map_or(dist.left(), |s| s.left()), |(pill, _)| pill.left());
+    let figures = seen
+        .map(|s| s.left())
+        .or_else(|| age.map(|a| a.left()))
+        .unwrap_or_else(|| dist.left());
+    let zone = actions.as_ref().map_or(figures, |(pill, _)| pill.left());
     let badges_right = zone - BADGES_GAP;
     let room = badges_right - (names_left + m.names_min + NAMES_GAP);
     let width = |k: usize| if k == 0 { 0.0 } else { k as f32 * m.badge + (k - 1) as f32 * m.gap };
@@ -717,13 +812,14 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
     let first = rects.first().map(|r| r.left()).or(more.map(|(r, _)| r.left())).unwrap_or(zone);
     // Hover controls cover the name instead of shortening its normal text layout.
     let names_right = if actions.is_some() {
-        right_end(row, names_left, badges, None, compact).names_right
+        right_end(row, names_left, badges, None, compact, show_seen, show_age).names_right
     } else {
         first - NAMES_GAP
     };
     RightEnd {
         badges: rects,
         more,
+        age: if actions.is_none() { age } else { None },
         seen: if actions.is_none() { seen } else { None },
         dist: actions.is_none().then_some(dist),
         actions,
@@ -816,12 +912,16 @@ fn paint_rich(
     // the picture, round, with its status dot
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), RICH_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, identity.center().y), Vec2::splat(30.0));
-    widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    // (a profile picture would name an anonymous row; so would its mark,
+    // which `ring` leaves out)
+    let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+    widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
     }
-    let list = badges(p, row);
+    let list = badges(p, data.settings, row);
     let left = names_left(rect, false);
     // Quick actions take the place of the range and arrival time.
     let band = Band::of(row.range);
@@ -833,6 +933,9 @@ fn paint_rich(
         ));
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
+    }
+    if let (Some(age), Some((text, young))) = (end.age, age_text(row, data.settings)) {
+        paint_age(ui, p, age, text, young, 12.0);
     }
     if let Some(seen) = end.seen {
         let galley = ui
@@ -859,7 +962,11 @@ fn paint_rich(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
     let cut = name_g.elided;
-    let user = second_line(world, &row.id, data.settings.name_format);
+    let user = if row.anonymous {
+        String::new()
+    } else {
+        second_line(world, &row.id, data.settings.name_format)
+    };
     let mut job = egui::text::LayoutJob::single_section(user, egui::TextFormat::simple(FontId::proportional(11.5), p.muted));
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let user_g = ui.painter().layout_job(job);
@@ -915,12 +1022,14 @@ fn paint_compact(
     }
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), COMPACT_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, identity.center().y), Vec2::splat(20.0));
-    widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+    widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
     }
-    let list = badges(p, row);
+    let list = badges(p, data.settings, row);
     let left = names_left(rect, true);
     let band = Band::of(row.range);
     if let Some(dist) = end.dist {
@@ -931,6 +1040,9 @@ fn paint_compact(
         ));
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
+    }
+    if let (Some(age), Some((text, young))) = (end.age, age_text(row, data.settings)) {
+        paint_age(ui, p, age, text, young, 11.0);
     }
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
@@ -1029,6 +1141,7 @@ mod tests {
             settings: &mut settings,
             voice: &voice,
             draw_distance: 96.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
@@ -1050,6 +1163,7 @@ mod tests {
                     range: Some(4.7),
                     loaded: true,
                     left_behind: false,
+                    anonymous: false,
                 };
                 let buttons = quick_actions(&world, &row);
                 assert_eq!(buttons.len(), if friend { 4 } else { 5 });
@@ -1059,9 +1173,11 @@ mod tests {
                     let end = right_end(
                         base,
                         names_left(base, compact),
-                        badges(&p, &row).len(),
+                        badges(&p, data.settings, &row).len(),
                         Some(buttons.len()),
                         compact,
+                        true,
+                        true,
                     );
                     let full = base;
                     let (pill, cells) = end.actions.as_ref().expect("every action has a slot");
@@ -1076,7 +1192,10 @@ mod tests {
                         "the avatar remains clickable"
                     );
                     assert_eq!(pill.right(), base.right() - metrics(compact).pad);
-                    assert!(end.dist.is_none() && end.seen.is_none(), "actions replace the time and distance");
+                    assert!(
+                        end.dist.is_none() && end.seen.is_none() && end.age.is_none(),
+                        "actions replace the time, age and distance"
+                    );
                     let info = cells[cells.len() - 2].center();
                     let mut st = PeopleUi::default();
                     let mut actions = Vec::new();
@@ -1174,15 +1293,16 @@ mod tests {
                 let left = names_left(row, compact);
                 for badges in 0..=MAX_BADGES {
                     for actions in [None, Some(3), Some(4), Some(5)] {
-                        let end = right_end(row, left, badges, actions, compact);
+                        let end = right_end(row, left, badges, actions, compact, true, true);
                         assert_eq!(
                             end.names_right,
-                            right_end(row, left, badges, None, compact).names_right,
+                            right_end(row, left, badges, None, compact, true, true).names_right,
                             "hover actions never shorten the name's normal layout"
                         );
                         let mut parts: Vec<Rect> = end.badges.clone();
                         parts.extend(end.more.map(|(r, _)| r));
                         let shown_badges = parts.len();
+                        parts.extend(end.age);
                         parts.extend(end.seen);
                         parts.extend(end.dist);
                         if let Some((pill, buttons)) = &end.actions {
@@ -1190,7 +1310,7 @@ mod tests {
                             assert_eq!(buttons.len(), actions.unwrap_or(0));
                             assert!(buttons.iter().all(|b| pill.contains_rect(*b)), "buttons in their pill");
                             assert!(buttons.iter().all(|b| b.width() >= 14.0), "icons retain their full width");
-                            assert!(end.dist.is_none() && end.seen.is_none());
+                            assert!(end.dist.is_none() && end.seen.is_none() && end.age.is_none());
                             assert_eq!(
                                 pill.right(),
                                 row.right() - m.pad,
@@ -1224,15 +1344,104 @@ mod tests {
                     }
                 }
             }
-            // a usual window shows all seven badges beside the actions
+            // a usual window shows every badge beside the actions
             let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, RICH_H));
             if !compact {
-                let end = right_end(row, names_left(row, false), MAX_BADGES, Some(4), false);
+                let end = right_end(row, names_left(row, false), MAX_BADGES, Some(4), false, true, true);
                 assert_eq!((end.badges.len(), end.more.is_none()), (MAX_BADGES, true));
             }
         }
         // only a window too narrow even for the "+2" shows no badge at all
         assert!(narrowest_cut);
+    }
+
+    #[test]
+    fn aurora_near_you_honours_the_columns_menu() {
+        let p = crate::theme::Theme::default().palette();
+        let mut row = Row {
+            id: Uuid::from_u128(1),
+            name: "Ada".into(),
+            range: Some(3.0),
+            seen: 12.0,
+            voice: Some(true),
+            typing: true,
+            sitting: true,
+            payment: Payment::OnFile,
+            note: "hi".into(),
+            muted: false,
+            friend: false,
+            same_region: true,
+            age: Age::Days(9),
+            loaded: true,
+            left_behind: false,
+            anonymous: false,
+        };
+        let mut settings = RadarSettings {
+            columns: 0,
+            ..Default::default()
+        };
+        assert!(badges(&p, &settings, &row).is_empty(), "optional columns off");
+        assert!(age_text(&row, &settings).is_none());
+        settings.columns = Column::Region.bit();
+        assert_eq!(
+            badges(&p, &settings, &row).first().map(|badge| badge.0),
+            Some(Column::Region.icon())
+        );
+        row.same_region = false;
+        assert!(badges(&p, &settings, &row).is_empty());
+        settings.columns = Column::Age.bit() | Column::Voice.bit() | Column::Notes.bit();
+        let shown: Vec<_> = badges(&p, &settings, &row).into_iter().map(|(icon, _, _)| icon).collect();
+        assert_eq!(shown, ["microphone-filled", "note"]);
+        assert_eq!(age_text(&row, &settings), Some(("9".into(), false)));
+        settings.age_alert_days = 14;
+        assert_eq!(age_text(&row, &settings), Some(("9".into(), true)));
+        row.anonymous = true;
+        assert!(age_text(&row, &settings).is_none());
+        row.anonymous = false;
+        row.age = Age::Unknown;
+        assert!(age_text(&row, &settings).is_none());
+        row.age = Age::Hidden;
+        assert_eq!(
+            age_text(&row, &settings).map(|(t, _)| t),
+            Some(aurora_i18n::tr!("radar-age-hidden").to_owned())
+        );
+        let layout = right_end(
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, RICH_H)),
+            48.0,
+            2,
+            None,
+            false,
+            settings.shows(Column::Seen),
+            settings.shows(Column::Age),
+        );
+        assert!(layout.age.is_some());
+        assert!(layout.seen.is_none(), "Seen column bit is off");
+    }
+
+    #[test]
+    fn age_labels_keep_the_cake_and_text_inside_their_column() {
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let cell = Rect::from_min_size(Pos2::new(140.0, 30.0), Vec2::new(AGE_W, RICH_H));
+        for size in [11.0, 12.0] {
+            for text in ["9", "12345", "該当なし", "123456789012345"] {
+                let mut output = ctx.run_ui(Default::default(), |ui| paint_age(ui, &palette, cell, text.into(), false, size));
+                output.textures_delta.clear();
+                let label = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(label) if label.galley.text() == text => Some(label),
+                        _ => None,
+                    })
+                    .expect("age label");
+                assert!(label.pos.x >= cell.left() + size + AGE_ICON_GAP - 0.5);
+                assert!(label.pos.x + label.galley.size().x <= cell.right() + 0.5);
+                if text == "12345" {
+                    assert!(!label.galley.elided, "five figures fit beside the cake");
+                }
+            }
+        }
     }
 
     #[test]

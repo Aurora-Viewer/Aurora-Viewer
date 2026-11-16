@@ -1,6 +1,7 @@
 //! Reliable UDP circuit bookkeeping (port of the essentials of
 //! `llmessage/llcircuit.cpp`): sequence numbers, resends, acks, dedupe.
 
+use crate::packet_loss::PacketLoss;
 use crate::stats::NetStats;
 use aurora_msg::packet::{PacketFlags, build_raw};
 use aurora_msg::{Msg, Writer};
@@ -56,16 +57,14 @@ pub struct Circuit {
     pub rtt: Duration,
     ping_id: u8,
     ping_sent: Option<(u8, Instant)>,
+    /// Oldest ping still unanswered: new pings must not shorten the loss
+    /// grace during a stall (getPingInTransitTime, llcircuit.cpp).
+    ping_wait_started: Option<Instant>,
     buf: Vec<u8>,
     /// Reliable packets given up on since the last `take_dropped`.
     dropped: Vec<u32>,
-    /// Highest sequence number received, for the loss counters.
-    highest_seq: Option<u32>,
+    packet_loss: PacketLoss,
 }
-
-/// A sequence number this far below the highest one is the simulator
-/// starting over, not a late packet.
-const SEQUENCE_RESET: u32 = 100_000;
 
 impl Circuit {
     pub fn new(addr: SocketAddr) -> Self {
@@ -81,27 +80,22 @@ impl Circuit {
             rtt: Duration::from_millis(300),
             ping_id: 0,
             ping_sent: None,
+            ping_wait_started: None,
             buf: Vec::with_capacity(1500),
             dropped: Vec::new(),
-            highest_seq: None,
+            packet_loss: PacketLoss::default(),
         }
     }
 
-    /// Count what the sequence number of a new packet tells about losses:
-    /// the numbers it skips (`seq_gaps`), or that it comes after a later
-    /// one (`seq_late`: a resend or a reordered packet filling a gap).
-    pub fn note_sequence(&mut self, seq: u32, stats: &NetStats) {
-        match self.highest_seq {
-            Some(high) if seq > high => {
-                stats.seq_gaps.fetch_add(u64::from(seq - high - 1), Ordering::Relaxed);
-                self.highest_seq = Some(seq);
-            }
-            Some(high) if high - seq > SEQUENCE_RESET => self.highest_seq = Some(seq),
-            Some(high) if seq < high => {
-                stats.seq_late.fetch_add(1, Ordering::Relaxed);
-            }
-            Some(_) => {}
-            None => self.highest_seq = Some(seq),
+    /// Record provisional holes and recoveries; only the circuit tick
+    /// confirms losses after the ping-dependent grace period.
+    pub fn note_sequence(&mut self, seq: u32, resent: bool, stats: &NetStats) {
+        let (gaps, late) = self.packet_loss.receive(seq, resent, Instant::now());
+        if gaps > 0 {
+            stats.seq_gaps.fetch_add(gaps, Ordering::Relaxed);
+        }
+        if late > 0 {
+            stats.seq_late.fetch_add(late, Ordering::Relaxed);
         }
     }
 
@@ -223,6 +217,13 @@ impl Circuit {
     /// Resend timed-out reliable packets and flush standalone acks.
     pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
         let now = Instant::now();
+        let loss_rtt = self
+            .ping_wait_started
+            .map_or(self.rtt, |at| self.rtt.max(now.saturating_duration_since(at)));
+        let lost = self.packet_loss.expire(now, loss_rtt);
+        if lost > 0 {
+            stats.packets_lost.fetch_add(lost, Ordering::Relaxed);
+        }
         let ping_timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
@@ -282,7 +283,9 @@ impl Circuit {
     /// Start a ping; returns the ping id and the oldest unacked sequence.
     pub fn next_ping(&mut self) -> (u8, u32) {
         self.ping_id = self.ping_id.wrapping_add(1);
-        self.ping_sent = Some((self.ping_id, Instant::now()));
+        let now = Instant::now();
+        self.ping_sent = Some((self.ping_id, now));
+        self.ping_wait_started.get_or_insert(now);
         let oldest = self.unacked.keys().min().copied().unwrap_or(self.next_seq);
         (self.ping_id, oldest)
     }
@@ -295,6 +298,7 @@ impl Circuit {
             // Smooth like TCP's SRTT.
             self.rtt = (self.rtt * 7 + rtt) / 8;
             self.ping_sent = None;
+            self.ping_wait_started = None;
             return Some(rtt);
         }
         None
@@ -342,21 +346,21 @@ mod tests {
         let mut c = circuit();
         let seen = |stats: &NetStats| (stats.seq_gaps.load(Ordering::Relaxed), stats.seq_late.load(Ordering::Relaxed));
         // the first packet is where the count starts, whatever its number
-        c.note_sequence(10, &stats);
-        c.note_sequence(11, &stats);
+        c.note_sequence(10, false, &stats);
+        c.note_sequence(11, false, &stats);
         assert_eq!(seen(&stats), (0, 0));
         // 12 and 13 are missing, then 12 arrives (resent): one still missing
-        c.note_sequence(14, &stats);
-        c.note_sequence(12, &stats);
+        c.note_sequence(14, false, &stats);
+        c.note_sequence(12, true, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the same number twice is neither
-        c.note_sequence(14, &stats);
+        c.note_sequence(14, false, &stats);
         assert_eq!(seen(&stats), (2, 1));
         // the simulator starts its numbers over: not a late packet
-        c.note_sequence(500_000, &stats);
+        c.note_sequence(500_000, false, &stats);
         let gaps = stats.seq_gaps.load(Ordering::Relaxed);
-        c.note_sequence(1, &stats);
-        c.note_sequence(2, &stats);
+        c.note_sequence(1, false, &stats);
+        c.note_sequence(2, false, &stats);
         assert_eq!(seen(&stats), (gaps, 1));
     }
 
@@ -366,6 +370,41 @@ mod tests {
         assert!(c.on_receive(0, 1, &[]));
         c.accept(0, 1);
         assert!(c.pending_acks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn packet_loss_circuit_tick_confirms_a_loss_without_more_datagrams() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let before = Instant::now() - Duration::from_secs(10);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
+    }
+
+    #[tokio::test]
+    async fn packet_loss_an_unanswered_ping_extends_the_grace_until_a_reply() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(10);
+        let before = Instant::now() - Duration::from_secs(2);
+        c.packet_loss.receive(1, false, before);
+        c.packet_loss.receive(3, false, before);
+        c.ping_wait_started = Some(before);
+        let (id, _) = c.next_ping();
+        assert_eq!(c.ping_wait_started, Some(before), "a newer ping must not reset the wait");
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 0);
+        assert!(c.on_ping_reply(id).is_some());
+        assert!(c.ping_wait_started.is_none());
+        c.tick(&sock, &stats);
+        assert_eq!(stats.snapshot().packets_lost, 1);
     }
 
     #[tokio::test]
