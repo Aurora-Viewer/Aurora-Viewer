@@ -334,9 +334,9 @@ Before each significant commit, and always before the PR:
     hook of `.claude/settings.json` (`.claude/hooks/shell-rules.sh`): a
     recursive `grep`, `findstr` or `Get-ChildItem | Select-String` where
     `rg` is installed, `cargo test -p <crate>`, `cargo +<toolchain>`, and
-    an override of the compiler wrapper (`RUSTC_WRAPPER`,
-    `--config build.rustc-wrapper`; section 3). Its message names the
-    command to use: use it, do not reword the refused one to get it
+    an override of the compiler wrapper, which goes around the build gate
+    (`RUSTC_WRAPPER`, `--config build.rustc-wrapper`). Its message names
+    the command to use: use it, do not reword the refused one to get it
     through. If it refuses a command that breaks none of these rules, tell
     your human. A rule that changes here changes in the hook and in its
     test table (`scripts/test-agent-hook.ps1`) in the same PR.

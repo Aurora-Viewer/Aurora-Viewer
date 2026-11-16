@@ -391,13 +391,14 @@ forbids and names the command to use instead:
 | A recursive `grep`, `findstr` or `Get-ChildItem \| Select-String`, once `rg` is installed | `rg` skips the build folders, the others read them (GB) |
 | `cargo test -p <crate>` | one crate alone builds its dependencies a second time; `cargo test --workspace <filter>` |
 | `cargo +<toolchain>` (except `cargo +nightly fuzz`, on Linux) | another toolchain recompiles everything |
-| `RUSTC_WRAPPER=…`, `--config build.rustc-wrapper…` | the wrapper the scripts set for every build of the PC would be skipped |
+| `RUSTC_WRAPPER=…`, `--config build.rustc-wrapper…` | they go around the build gate and the shared compiler cache |
 
 It only sees the commands of the agents, never what you type in a terminal,
 and takes about 0.05 s per command. It runs in Git Bash, which comes with
 Git for Windows. A missing tool turns its rule off: nothing is refused for
-`grep` on a PC without `rg`. The other agents (Codex…) only have the rule
-written in AGENTS.md. `./scripts/test-agent-hook.ps1` (a step of
+`grep` on a PC without `rg`. A hook that cannot run (an older bash, a
+missing file) lets every command through. The other agents (Codex…) only
+have the rule written in AGENTS.md. `./scripts/test-agent-hook.ps1` (a step of
 `check.ps1`) tests it on a table of commands.
 
 ## The up-to-date viewer of `main`, in `--release`

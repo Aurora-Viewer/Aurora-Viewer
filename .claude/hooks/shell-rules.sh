@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook of Claude Code (.claude/settings.json): runs before every
 # command an agent sends through its Bash or PowerShell tool, and refuses the
-# few that AGENTS.md forbids (section 5, "Tools" and "Tests"; section 3 for
-# the compiler wrapper), naming the command to use instead. A rule in a file
+# few that AGENTS.md forbids (section 5: "Tools", "Tests" and "Build slots"),
+# naming the command to use instead. A rule in a file
 # can be forgotten in a long session; this cannot. Only the agents' tool
 # calls come here: never a human's own terminal.
 #
@@ -73,14 +73,15 @@ rg_installed() {
 }
 use_rg='recursive text search goes through ripgrep, for example: rg -n "pattern" <folder> (AGENTS.md section 5, "Tools").'
 
-# --- The compiler wrapper (AGENTS.md section 3) ---------------------------------
-# <project folder>\.cargo\config.toml sets it for every build of the PC; the
-# environment variable and --config both win over that file.
+# --- The compiler wrapper (AGENTS.md sections 3 and 5, "Build slots") -----------
+# <project folder>\.cargo\config.toml sets it for every build of the PC: the
+# build gate, then the shared compiler cache. The environment variable and
+# --config both win over that file, and so go around the gate.
 re_wrapper_env='(^|[^a-z0-9_"'$sq'])(cargo_build_)?rustc_wrapper='
 re_wrapper_ps='\$env:(cargo_build_)?rustc_wrapper[[:space:]]*='
 re_wrapper_config='--config[[:space:]=]+["'$sq']?build\.rustc-wrapper'
 if [[ $cmd =~ $re_wrapper_env || $cmd =~ $re_wrapper_ps || $cmd =~ $re_wrapper_config ]]; then
-    refuse 'leave the rustc wrapper of Cargo to <project folder>\.cargo\config.toml, which the scripts write for every build of this PC: no RUSTC_WRAPPER, no --config build.rustc-wrapper (AGENTS.md section 3).'
+    refuse 'leave the rustc wrapper of Cargo to <project folder>\.cargo\config.toml, which carries the build gate and the shared compiler cache: no RUSTC_WRAPPER, no --config build.rustc-wrapper (AGENTS.md section 5, "Build slots").'
 fi
 
 # --- Get-ChildItem -Recurse into Select-String (PowerShell) ---------------------
