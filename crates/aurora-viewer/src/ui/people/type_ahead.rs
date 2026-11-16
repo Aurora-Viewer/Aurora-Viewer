@@ -7,9 +7,8 @@
 //!
 //! The Legacy Viewer searches the first text column of its list (the username
 //! of the friend list). Aurora's rows show the chosen name, so every form the
-//! row knows is matched: the visible name first, then the username and the
-//! full name. A superset of the Legacy Viewer, never a different row when the
-//! username is the one typed.
+//! row knows is matched. When a display name and another person's username
+//! share a prefix, the first matching row in the current list order wins.
 
 use egui::{Align, Id, Key, Rect, Ui};
 use uuid::Uuid;
@@ -46,10 +45,25 @@ impl Navigation {
             background.request_focus();
         }
         let key = focus.with("type-ahead");
-        if !background.has_focus() || background.gained_focus() {
+        let has_focus = background.has_focus();
+        if !has_focus || background.gained_focus() {
             ui.ctx().data_mut(|data| data.remove::<Search>(key));
         }
-        let chosen = if background.has_focus() && ui.input(|input| input.events.iter().any(is_search_event)) {
+        if has_focus {
+            // Offer native composition at the list, as TextEdit does at its caret.
+            let to_global = ui.ctx().layer_transform_to_global(ui.layer_id()).unwrap_or_default();
+            let rect = background.interact_rect;
+            let cursor = Rect::from_min_size(rect.min, egui::vec2(1.0, ui.spacing().interact_size.y));
+            ui.output_mut(|out| {
+                out.ime = Some(egui::output::IMEOutput {
+                    purpose: egui::IMEPurpose::Normal,
+                    rect: to_global * rect,
+                    cursor_rect: to_global * cursor,
+                    should_interrupt_composition: false,
+                });
+            });
+        }
+        let chosen = if has_focus && ui.input(|input| input.events.iter().any(is_search_event)) {
             keys(ui, key, &entries(), selected)
         } else {
             None
@@ -72,6 +86,7 @@ fn is_search_event(event: &egui::Event) -> bool {
     matches!(
         event,
         egui::Event::Text(_)
+            | egui::Event::Ime(egui::ImeEvent::Commit(_))
             | egui::Event::Key {
                 key: Key::Backspace,
                 pressed: true,
@@ -88,7 +103,7 @@ fn keys(ui: &Ui, key: Id, entries: &[Entry<'_>], selected: Option<Uuid>) -> Opti
     ui.input(|i| {
         for event in &i.events {
             match event {
-                egui::Event::Text(text) => {
+                egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                     for c in text.chars() {
                         if let Some(id) = typed(&mut search, entries, chosen.or(selected), c, now) {
                             chosen = Some(id);
@@ -264,6 +279,39 @@ mod tests {
         assert_eq!(frame(vec![egui::Event::Text("ignored".into())], Id::new("elsewhere"), None), None);
         assert_eq!(frame(vec![egui::Event::Text("b".into())], focus, None), Some(friends[3].id));
         assert_eq!(built, 2, "idle and unfocused lists never build search entries");
+    }
+
+    #[test]
+    fn composing_a_name_jumps_only_when_the_ime_commits_to_the_focused_list() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let friends = entries(&[("山田", ""), ("山本", ""), ("山本A", "")]);
+        let focus = Id::new("composed-name-list");
+        let preedit = |text: &str| {
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: text.into(),
+                active_range_chars: None,
+            })
+        };
+        let commit = |text: &str| egui::Event::Ime(egui::ImeEvent::Commit(text.into()));
+        let mut frame = |events, owner, selected| {
+            let mut chosen = None;
+            let (_, output) = frames.run_with_output(events, |ui| {
+                if !ui.memory(|mem| mem.has_focus(owner)) {
+                    ui.memory_mut(|mem| mem.request_focus(owner));
+                }
+                chosen = Navigation::new(ui, focus, selected, || friends.clone()).chosen;
+            });
+            (chosen, output.ime.is_some())
+        };
+        assert_eq!(frame(vec![], focus, None), (None, true));
+        assert_eq!(frame(vec![preedit("山")], focus, None), (None, true));
+        assert_eq!(frame(vec![preedit(""), commit("山")], focus, None), (Some(friends[0].id), true));
+        assert_eq!(
+            frame(vec![commit("本"), egui::Event::Text("A".into())], focus, Some(friends[0].id)),
+            (Some(friends[2].id), true)
+        );
+        assert_eq!(frame(vec![commit("山")], Id::new("another-widget"), None), (None, false));
+        assert_eq!(frame(vec![commit("山本A")], focus, None), (Some(friends[2].id), true));
     }
 
     #[test]
