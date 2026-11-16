@@ -792,39 +792,25 @@ pub(super) fn card(
     out
 }
 
-/// The windows a scripted object opens that Close Window closes: the Legacy
-/// Viewer's `LLScriptFloater` types -- `ScriptDialog` (llDialog and
-/// llTextBox), `LoadWebPage` (llLoadURL), `ObjectGiveItem` and
-/// `OwnObjectGiveItem` (llGiveInventory) -- and, beyond the Legacy Viewer, a
-/// permission question (`ScriptQuestion`).
-///
-/// A permission question is `LLToastScriptQuestion`, a toast, in the Legacy
-/// Viewer: Close Window never reaches it there. Aurora stacks it with the
-/// script windows, though, so Ctrl+W on the top card would otherwise skip it
-/// and close the card below, surprising the user. Closing it refuses the
-/// request, as its own cross does (the `ScriptAnswer` with no permission
-/// bit).
-fn script_window(n: &Notification) -> bool {
-    matches!(
-        n.data,
-        Data::Dialog { .. } | Data::TextBox { .. } | Data::Url(_) | Data::Inventory { task: true, .. } | Data::Permissions { .. }
-    )
-}
-
-/// Script windows are windows for Close Window while they show as toasts and
-/// for Close All wherever they show. Dismissing one uses the existing
-/// close/ignore response.
+/// Close Window takes the newest visible LLScriptFloater (llDialog, llTextBox,
+/// llLoadURL and object inventory offers). Aurora also stacks permission
+/// questions here, so their shortcut follows their cross without answering.
+/// Cards kept in the list receive Close All only.
 pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification, window: bool) -> bool {
-    if !script_window(n) {
+    if !n.stays_until_answered() {
         return false;
     }
     let id = egui::Id::NULL.with(("script_prompt", n.id));
+    // Apply the shortcut to prompts already shown when the key was pressed.
+    if super::close_key::take(ctx, id) {
+        return true;
+    }
     if window {
         super::close_key::shown_prompt(ctx, id, n.id);
     } else {
         super::close_key::shown_extra(ctx, id);
     }
-    super::close_key::take(ctx, id)
+    false
 }
 
 /// Lines of an llTextBox reply shown before it scrolls: the 50 pixels of the
@@ -1121,15 +1107,12 @@ pub fn show(
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
-                        if close_script_prompt(ctx, n, true) {
-                            answers.push((id, Response::Dismiss));
-                            nui.toasts.retain(|(t, _)| *t != id);
-                            continue;
-                        }
-                        // the card keeps its own row spacing; the stack's
-                        // spacing stands only between the cards
-                        let r = ui
-                            .scope(|ui| {
+                        let r = if close_script_prompt(ctx, n, true) {
+                            Some(Response::Dismiss)
+                        } else {
+                            // the card keeps its own row spacing; the stack's
+                            // spacing stands only between the cards
+                            ui.scope(|ui| {
                                 ui.spacing_mut().item_spacing.y = CARD_ROW_SPACING;
                                 if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                                     person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
@@ -1137,7 +1120,8 @@ pub fn show(
                                     card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
                                 }
                             })
-                            .inner;
+                            .inner
+                        };
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)
@@ -1237,9 +1221,120 @@ mod tests {
                 caution: None,
             },
         ] {
-            assert!(script_window(&note(data)));
+            let visible = note(data);
+            let new_prompt = Notification {
+                id: 2,
+                ..note(Data::Url("https://example.invalid".into()))
+            };
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            frames.run(Vec::new(), |ui| {
+                super::super::close_key::begin(ui.ctx());
+                assert!(!close_script_prompt(ui.ctx(), &visible, true));
+            });
+            let close_all = egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            };
+            let mut dismissed = false;
+            frames.run(vec![close_all], |ui| {
+                super::super::close_key::begin(ui.ctx());
+                dismissed |= close_script_prompt(ui.ctx(), &visible, true);
+                assert!(!close_script_prompt(ui.ctx(), &new_prompt, true));
+            });
+            assert!(dismissed);
         }
-        assert!(!script_window(&note(offer(false, Uuid::from_u128(7)))));
+        assert!(!note(offer(false, Uuid::from_u128(7))).stays_until_answered());
+    }
+
+    /// NotificationTipToastLifeTime's default (settings.xml).
+    const TOAST_TIP: f64 = 10.0;
+
+    #[test]
+    fn closing_a_script_permission_or_object_offer_uses_its_visible_cross() {
+        use crate::world::notifications::im;
+        use aurora_net::NetCommand;
+
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let icons = Icons::default();
+        let pics = HashMap::new();
+        let images = HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        for legacy in [false, true] {
+            for (index, permission) in [(1, true), (3, false)] {
+                let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+                theme.apply(&frames.ctx, 1.0);
+                let mut list = Notifications::default();
+                let id = super::super::notification_center::tests::scripted_windows(&mut list)[index];
+                list.list.retain(|n| n.id == id);
+                let mut nui = NotifUi {
+                    bell: Some(egui::Rect::from_min_size(egui::pos2(550.0, 12.0), egui::vec2(32.0, 32.0))),
+                    ..Default::default()
+                };
+                let mut hist = Default::default();
+                let mut frame = |list: &mut Notifications, nui: &mut NotifUi, events| {
+                    let mut result = Vec::new();
+                    frames.run(events, |ui| {
+                        super::super::close_key::begin(ui.ctx());
+                        let mut env = ToastEnv {
+                            pics: &pics,
+                            images: &images,
+                            emoji: &mut emoji,
+                            hidden: false,
+                            message_seconds: 30.0,
+                            tip_seconds: TOAST_TIP,
+                            restart: None,
+                            presence_at: Default::default(),
+                            classic_bars: true,
+                            toast_gap: crate::settings::TOAST_GAP,
+                        };
+                        let draw = if legacy { show } else { super::super::notification_center::show };
+                        result.extend(draw(ui.ctx(), &p, &icons, &world, list, &mut hist, nui, &mut env, false).0);
+                    });
+                    result
+                };
+                let key = |pressed, modifiers| egui::Event::Key {
+                    key: egui::Key::W,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                };
+                for _ in 0..4 {
+                    assert!(frame(&mut list, &mut nui, vec![]).is_empty());
+                }
+                let command = egui::Modifiers::COMMAND;
+                let mut answer = frame(&mut list, &mut nui, vec![key(true, command)]);
+                if legacy {
+                    assert!(answer.is_empty(), "hiding sends nothing");
+                    assert!(nui.hidden.contains(&id));
+                    assert!(list.listed().any(|n| n.id == id));
+                    assert!(!shown_toasts(&list, &nui, false).0.contains(&id));
+                    nui.open = true;
+                    assert!(frame(&mut list, &mut nui, vec![key(false, command)]).is_empty());
+                    assert!(frame(&mut list, &mut nui, vec![]).is_empty());
+                    answer = frame(&mut list, &mut nui, vec![key(true, command | egui::Modifiers::SHIFT)]);
+                }
+                assert!(matches!(answer.as_slice(), [(got, Response::Dismiss)] if *got == id));
+                let (out, url) = list.respond(id, Response::Dismiss, |_| Uuid::nil(), Uuid::nil());
+                assert!(url.is_none() && !list.listed().any(|n| n.id == id));
+                if permission {
+                    assert!(out.is_empty(), "a permission question is closed silently");
+                } else {
+                    assert!(matches!(
+                        out.as_slice(),
+                        [NetCommand::SendImDialog {
+                            dialog: im::TASK_INVENTORY_DECLINED,
+                            ..
+                        }]
+                    ));
+                }
+            }
+        }
     }
 
     #[test]
