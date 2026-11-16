@@ -4573,6 +4573,7 @@ ui-inventory-context-play-in-second-life = Jouer dans Second Life
 ui-inventory-dialogs-play-for-everyone = Jouer devant tout le monde
 ui-land-media-loop-media-when-playback-ends-it-starts-again = Jouer le média en boucle. Lorsque le média aura fini de jouer, il recommencera.
 common-play-locally = Jouer localement
+common-play-in-world = Jouer dans le monde
 ui-options-session-log = Journal de la session
 ui-options-logs = Journaux
 world-appearance-skirt = Jupe

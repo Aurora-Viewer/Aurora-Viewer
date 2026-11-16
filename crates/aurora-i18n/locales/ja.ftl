@@ -4542,6 +4542,7 @@ ui-inventory-context-play-in-second-life = Second Lifeで再生
 ui-inventory-dialogs-play-for-everyone = 全員に再生
 ui-land-media-loop-media-when-playback-ends-it-starts-again = メディアをループ再生します。再生が終わると再び最初から再生します。
 common-play-locally = ローカルで再生
+common-play-in-world = ワールド内で再生
 ui-options-session-log = セッションログ
 ui-options-logs = ログ
 world-appearance-skirt = スカート
