@@ -122,6 +122,22 @@ pub(super) fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
     !g.rigged && !g.is_avatar && g.owner_avatar.is_some() && o.visual_volume().is_mesh()
 }
 
+/// Where an avatar's click box stands: where its body is drawn. The
+/// animation editor's couple partner is drawn away from their place
+/// (`World::couple_shift`), and a click on them where they show picks them.
+fn avatar_center(world: &World, idx: usize, g: &ObjGpu) -> Vec3 {
+    world
+        .objects
+        .get(idx)
+        .and_then(|o| {
+            world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+        })
+        .map_or(g.center, |shift| shift.transform_point3(g.center))
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -593,7 +609,7 @@ impl Scene {
                 || g.rigged
                 || o.extra.reflection_probe.is_some()
                 || !self.first_person_object_visible(idx, g)
-                || !ray_may_hit(g, ray)
+                || (!g.is_avatar && !ray_may_hit(g, ray))
             {
                 return None;
             }
@@ -604,8 +620,8 @@ impl Scene {
                     ray_box(
                         ray.0,
                         ray.1,
-                        g.center - Vec3::new(0.35, 0.35, 1.0),
-                        g.center + Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                     )?,
                     None,
                 )
@@ -750,8 +766,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
                 self.face_hit_mode(world, idx, ray, now, false, FacePick::Inventory).map(|h| h.t)
@@ -1556,8 +1572,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if mode == FacePick::Left {
                 self.face_hit_mode(world, idx, ray, now, false, mode).map(|h| h.t)
@@ -1640,8 +1656,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
                 self.face_hit_mode(world, idx, ray, now, clicker, FacePick::Left).map(|h| h.t)
@@ -3488,6 +3504,20 @@ pub(crate) mod tests {
             .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
             .unwrap();
         assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
+    }
+
+    #[test]
+    fn the_couple_partner_is_clicked_where_the_animation_editor_draws_them() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let id = world.objects.get(front).unwrap().full_id;
+        scene.gpu[front].is_avatar = true;
+        scene.gpu[front].center = Vec3::new(10.0, 10.0, 1.0);
+        world.avatar_models.insert(id, Mat4::from_translation(Vec3::new(10.0, 10.0, 0.0)));
+        assert_eq!(avatar_center(&world, front, &scene.gpu[front]), Vec3::new(10.0, 10.0, 1.0));
+        world.couple_partner = Some(id);
+        world.couple_place = (Vec3::new(0.0, 2.0, 0.0), 0.0);
+        let at = avatar_center(&world, front, &scene.gpu[front]);
+        assert!(at.abs_diff_eq(Vec3::new(10.0, 12.0, 1.0), 1e-4), "{at}");
     }
 
     #[test]
