@@ -808,6 +808,20 @@ impl Job {
         }
     }
 
+    /// The moves still unsure, as journal entries with no known place.
+    fn unsure_entries(&mut self) -> Vec<sorter::journal::Entry> {
+        std::mem::take(&mut self.unsure)
+            .into_iter()
+            .map(|(m, _, _)| sorter::journal::Entry {
+                id: m.id,
+                folder: m.folder,
+                from: m.from,
+                name: m.name,
+                to: None,
+            })
+            .collect()
+    }
+
     /// A failed batch's moves, unsure until found or forgotten: once each
     /// (a later failure of the same move replaces the earlier one).
     fn mark_unsure(&mut self, moves: &[Move], failed: bool, now: Instant) {
@@ -1010,6 +1024,7 @@ impl State {
             });
             let mut confirmed = std::mem::take(&mut job.confirmed);
             confirmed.extend(flying);
+            confirmed.extend(job.unsure_entries());
             if !confirmed.is_empty() {
                 self.journal.record_in(job.run, confirmed);
                 self.unsaved += 1;
@@ -1510,7 +1525,11 @@ pub(super) fn show(
                 let run = job.run;
                 let undoes = job.undoes;
                 let earlier = std::mem::take(&mut job.earlier_runs);
-                let last = placed(inv, std::mem::take(&mut job.confirmed));
+                // a refused batch's moves the server may have applied
+                // after all, not seen yet: journaled too (Undo leaves an
+                // entry still where it was), never lost from Undo
+                let mut last = placed(inv, std::mem::take(&mut job.confirmed));
+                last.extend(job.unsure_entries());
                 state.journal.record_in(run, last);
                 state.job = None;
                 // only a run that moved something (or a resume) ends the run
@@ -1874,10 +1893,11 @@ pub(super) fn show(
         // the batch on its way finishes; nothing after it is sent, not even
         // its retries
         job.stopping = true;
-        job.skipped += job.queue.len();
-        // what was waiting to be resent is skipped, not unsure any more
-        let flying: HashSet<Uuid> = job.in_flight.iter().flat_map(|b| b.moves.iter().map(|m| m.id)).collect();
-        job.unsure.retain(|(m, failed, _)| *failed || flying.contains(&m.id));
+        // what was waiting to be resent stays unsure (the server may have
+        // applied it: counted once seen, journaled at the run's end); the
+        // rest is skipped
+        let unsure: HashSet<Uuid> = job.unsure.iter().map(|(m, _, _)| m.id).collect();
+        job.skipped += job.queue.iter().filter(|m| !unsure.contains(&m.id)).count();
         job.queue.clear();
     }
     if stop && let Some(trash) = state.trash.as_mut() {
@@ -2790,6 +2810,18 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     // never a run from a preview of other options, or while a newer one is
     // being made: the user sorts what they saw
     if state.planning.is_some() || *options != prefs.sorter {
+        state.status = aurora_i18n::tr!("inventory-sorter-updating").into();
+        return;
+    }
+    // a whole sort waits for every folder it opens to be read: a run never
+    // starts on part of the inventory
+    if matches!(state.source, Some(Source::Whole))
+        && plan.unfetched.iter().any(|id| {
+            inv.folders
+                .get(id)
+                .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching))
+        })
+    {
         state.status = aurora_i18n::tr!("inventory-sorter-updating").into();
         return;
     }

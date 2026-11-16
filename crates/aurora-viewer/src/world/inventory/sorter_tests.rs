@@ -421,7 +421,10 @@ fn squish_versions_always_get_their_own_folder() {
 
 #[test]
 fn the_store_is_read_from_the_creators_tag() {
-    assert_eq!(store("[Birch Hollow] + Tucker Round Gothic Table").as_deref(), Some("Birch Hollow"));
+    assert_eq!(
+        store("[Birch Hollow] + Bramble Round Gothic Table").as_deref(),
+        Some("Birch Hollow")
+    );
     assert_eq!(store("*Neverlace* Neon Heart Shelf").as_deref(), Some("Neverlace"));
     assert_eq!(store(".QZ. Vixen Dress").as_deref(), Some("QZ"));
     assert_eq!(store("Kitty - Hex Dress (Reborn Squish) - FATPACK").as_deref(), Some("Kitty"));
@@ -435,7 +438,7 @@ fn the_store_is_read_from_the_creators_tag() {
         Some(Dest::Path(path)) => path.join("/"),
         other => format!("{other:?}"),
     };
-    assert_eq!(to("[Birch Hollow] + Semaj Pillow Couch (black)"), "Furniture/Birch Hollow");
+    assert_eq!(to("[Birch Hollow] + Orlen Pillow Couch (black)"), "Furniture/Birch Hollow");
     assert_eq!(to("*Neverlace* Mystery Crate"), "Stores/Neverlace");
 }
 
@@ -596,6 +599,16 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     }
     assert!(moved.contains(&id(81)) && moved.contains(&id(85)), "products move whole");
     assert!(moved.contains(&id(201)), "a loose item of Stuff is sorted");
+    assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
+    // shelves named for a kind are opened, whatever their subfolders
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 95, 1, "Dresses");
+    add_folder(&mut inv, 96, 95, "Reborn");
+    add_folder(&mut inv, 97, 1, "Shoes");
+    add_folder(&mut inv, 98, 97, "Shoes Reborn");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(95)) && !moved.contains(&id(97)), "shelves are opened");
     // a product of folders with no tag: its versions keep it whole
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 90, 1, "Hex Dress");
@@ -607,7 +620,6 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
     assert!(moved.contains(&id(90)), "the product moves whole");
     assert!(![91, 92, 203, 204].iter().any(|n| moved.contains(&id(*n))), "never opened");
-    assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
 }
 
 /// A Pre-Trash word rule taking denim, freebies, the Hex dress and anything
@@ -1034,7 +1046,7 @@ fn real_creator_names_find_their_folders() {
             format!("Reborn/{}/Larkspur/Waifus", cat(Lingerie)),
         ),
         (
-            "Fenwick - Rihanna Top - Black - [Waifus size Squish]",
+            "Fenwick - Marisol Top - Black - [Waifus size Squish]",
             6,
             format!("Reborn/{}/Fenwick/Waifus Squish", cat(Tops)),
         ),

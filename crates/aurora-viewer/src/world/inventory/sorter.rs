@@ -100,8 +100,8 @@ impl Rule {
     /// incomplete rather than taking everything.
     pub fn usable(&self) -> bool {
         self.enabled
-            && !joined_words(&self.words).is_empty()
-            && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
+            && !read_rule(&self.words, |r| r.joined.is_empty())
+            && (self.pre_trash || self.target.is_some() || !read_path(&self.folder))
     }
 
     /// The rule's words meet the name's.
@@ -113,16 +113,69 @@ impl Rule {
     pub fn named(&self, name_words: &[String]) -> bool {
         // a rule's own words are read joined (`women's` is `womens`): its
         // parts (`s`) would meet every name with an apostrophe
-        let wanted = joined_words(&self.words);
-        !wanted.is_empty()
-            && match self.mode {
-                Match::All => wanted.iter().all(|w| name_words.contains(w)),
-                Match::Any => wanted.iter().any(|w| name_words.contains(w)),
-                // a phrase reads both ways, like the name: `red women's`
-                // meets `red women's dress` as it always did
-                Match::Phrase => has(name_words, &wanted.join(" ")) || has(name_words, &words(&self.words).join(" ")),
-            }
+        read_rule(&self.words, |r| {
+            !r.joined.is_empty()
+                && match self.mode {
+                    Match::All => r.joined.iter().all(|w| name_words.contains(w)),
+                    Match::Any => r.joined.iter().any(|w| name_words.contains(w)),
+                    // a phrase reads both ways, like the name: `red women's`
+                    // meets `red women's dress` as it always did
+                    Match::Phrase => has(name_words, &r.joined_phrase) || has(name_words, &r.split_phrase),
+                }
+        })
     }
+}
+
+/// A rule's words, read once (not once per entry of a 400,000-item plan).
+struct RuleWords {
+    joined: Vec<String>,
+    joined_phrase: String,
+    split_phrase: String,
+}
+
+thread_local! {
+    /// Per planning thread: rules are few, entries many, and nothing is
+    /// shared between threads (no lock in the parallel reading of names).
+    static RULE_WORDS: std::cell::RefCell<HashMap<String, std::rc::Rc<RuleWords>>> = Default::default();
+    static RULE_PATHS: std::cell::RefCell<HashMap<String, bool>> = Default::default();
+}
+
+/// `f` of the rule words `text`, read once per thread.
+fn read_rule<R>(text: &str, f: impl FnOnce(&RuleWords) -> R) -> R {
+    let read = RULE_WORDS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        if let Some(read) = cache.get(text) {
+            return std::rc::Rc::clone(read);
+        }
+        let joined = joined_words(text);
+        let read = std::rc::Rc::new(RuleWords {
+            joined_phrase: joined.join(" "),
+            split_phrase: words(text).join(" "),
+            joined,
+        });
+        cache.insert(text.to_owned(), std::rc::Rc::clone(&read));
+        read
+    });
+    f(&read)
+}
+
+/// A rule's folder path makes no folder, read once per thread.
+fn read_path(path: &str) -> bool {
+    RULE_PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        if let Some(empty) = cache.get(path) {
+            return *empty;
+        }
+        let empty = split_path(path).is_empty();
+        cache.insert(path.to_owned(), empty);
+        empty
+    })
 }
 
 /// Saved with the inventory preferences.
@@ -1208,6 +1261,39 @@ pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
 /// The sorter's folder names (`reserved`) are worked out once by the caller,
 /// for loops over thousands of folders.
 fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) -> bool {
+    // judged once per folder and inventory change on each planning thread:
+    // a plan asks several times (sources, Pre-Trash, Clean up) about the
+    // same 30,000 folders
+    thread_local! {
+        static JUDGED: std::cell::RefCell<((u64, usize, usize, usize, usize), HashMap<Uuid, bool>)> = Default::default();
+    }
+    // (the inventory's address and size too: a copy of another one, or a
+    // test's, may share its generation)
+    let key = (
+        inv.generation,
+        std::ptr::from_ref(inv) as usize,
+        inv.folders.len(),
+        inv.items.len(),
+        reserved.len(),
+    );
+    if let Some(known) = JUDGED.with(|j| {
+        let j = j.borrow();
+        (j.0 == key).then(|| j.1.get(&folder).copied()).flatten()
+    }) {
+        return known;
+    }
+    let judged = judge_product_folder(inv, folder, reserved);
+    JUDGED.with(|j| {
+        let mut j = j.borrow_mut();
+        if j.0 != key {
+            *j = (key, HashMap::new());
+        }
+        j.1.insert(folder, judged);
+    });
+    judged
+}
+
+fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) -> bool {
     let Some(f) = inv.folders.get(&folder) else { return false };
     let name = f.info.name.trim();
     if f.info.type_default != -1 || reserved.contains(&name.to_lowercase()) {
@@ -1236,12 +1322,68 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
 
 /// Every subfolder of `f` is a version of the product named `name`: a body,
 /// a Squish or Waifus variant, or the product's name again.
+/// Only for a name that names one product (`Hex Dress`), never a kind or a
+/// shelf of the user's (`Dresses`, `Shoes`, `My Dresses`, `Dresses 2024`).
 fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
-    let product = name.to_lowercase();
+    if !names_a_product(name) {
+        return false;
+    }
+    let product = words(name);
     f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
+        let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
-        read.body.is_some() || read.squish || read.waifus || sub_name.to_lowercase().contains(&product)
+        // the product's name again, word for word (`Hex Dress Legacy`)
+        sub_words.starts_with(&product)
+            || read.body.is_some()
+            || read.squish
+            || read.waifus
+            // a fatpack's own folders
+            || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
+    })
+}
+
+/// The folders a product's delivery holds beside its body versions.
+const VERSION_WORDS: [&str; 10] = [
+    "hud", "huds", "textures", "texture", "colors", "colours", "color", "colour", "extras", "addons",
+];
+
+/// Words a user names a shelf of their own with, never a product.
+const SHELF_WORDS: [&str; 22] = [
+    "my",
+    "old",
+    "new",
+    "misc",
+    "stuff",
+    "other",
+    "others",
+    "more",
+    "all",
+    "various",
+    "random",
+    "extra",
+    "extras",
+    "mine",
+    "saved",
+    "fav",
+    "favs",
+    "favorites",
+    "favourites",
+    "unpacked",
+    "temp",
+    "sorted",
+];
+
+/// A name with a word of its own beyond kinds, bodies, shelf words and
+/// numbers: `Hex Dress` names a product, `Dresses`, `My Dresses` or
+/// `Dresses 2024` a shelf.
+fn names_a_product(name: &str) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    words(name).iter().any(|w| {
+        !is_kind(w)
+            && !SHELF_WORDS.contains(&w.as_str())
+            && !w.chars().all(|c| c.is_ascii_digit())
+            && body(std::slice::from_ref(w)).is_none()
     })
 }
 
