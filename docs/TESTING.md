@@ -6104,6 +6104,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova]` | The conversation options of Preferences › Chat: tabs ordered by type, tab names, group moderators, "(You)", system messages in brackets, faded history, opening on offline messages |
+| `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
@@ -7349,6 +7350,24 @@ failure. Grid validation and any paid upload are performed by the human.
   conversation at frame 780.
   `AURORA_DEMO_OPTIONS=chat:conversation-options` or `chat:history-fade`
   opens Preferences on the rows. Capture at `800` or later.
+- **`AURORA_DEMO_OIIA=<seconds>`**: the spinning cat (`crate::oiia`, an
+  easter egg) starts by itself at frame 300, without
+  its warning, in front of the avatar and a little to its right. It follows
+  the timings of the video the show plays its music from, from that second
+  of the show, on the clock and without the video, its window or its sound.
+  The first drop's four looks: 4 (a tint per beat), 10 (the colours turning,
+  blocks on the kicks), 17 (duotones), 23 (glowing outlines swelling on the
+  kicks). Then 35: the cat sways in a soft glow; 46: the silence, the cat
+  looking around; 51.5: a hit of bass, the cat jumps and a wave of outlines
+  spreads; 60: the climb, as outlines; 75: the wait before the second drop;
+  80: the second drop and the other cats; 97: the finale; 101: the cat
+  leaves. The show flashes: do not watch it if you are photosensitive. To
+  look for: the cat faces the avatar at rest and its spin ends on whole
+  turns; with Reduce motion (Preferences › Accessibility) the view only
+  takes a tint per bar by a slow fade, with no split of the colours, no
+  bulge, no outlines and no flash. In a normal run the show
+  only starts from its key sequence (`oiia/konami.rs`) and its warning, and
+  Stop or Escape ends it.
 - **`AURORA_DEMO_DELIVERY=1|several|open|history`**: the Marketplace inbox
   (Received items) appears at frame 600 with an earlier purchase, which is
   not announced; at 700 a new delivery lands in it the way the server's
