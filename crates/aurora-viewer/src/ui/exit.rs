@@ -18,23 +18,32 @@ pub enum Action {
 pub struct ExitPrompt {
     pub open: bool,
     pending: Option<(Action, Instant)>,
+    focus_move: Option<egui::FocusDirection>,
+    answer_key: Option<egui::Key>,
 }
 
 impl ExitPrompt {
     pub fn request(&mut self) {
-        self.open = true;
-    }
-    /// The prompt's own key, before the screen behind reads it: Enter quits
-    /// (the default button, as `widgets::modal_keys` gives it) and Escape
-    /// cancels. Nothing while a logout is in flight, and only a plain key.
-    pub fn key(&self, key: egui::Key, modifiers: egui::Modifiers) -> Option<Action> {
-        if self.pending.is_some() || !modifiers.is_none() {
-            return None;
+        if !self.open {
+            self.focus_move = None;
+            self.answer_key = None;
+            self.open = true;
         }
-        match key {
-            egui::Key::Enter => Some(Action::Quit),
-            egui::Key::Escape => Some(Action::Cancel),
-            _ => None,
+    }
+    /// Keep keys out of the background and answer them when the dialog's
+    /// buttons take focus. Tab followed by Enter can arrive in one frame.
+    pub fn key(&mut self, key: egui::Key, modifiers: egui::Modifiers) {
+        if self.pending.is_some() || self.answer_key.is_some() {
+            return;
+        }
+        if key == egui::Key::Tab && (modifiers.is_none() || modifiers == egui::Modifiers::SHIFT) {
+            self.focus_move = Some(if modifiers.shift {
+                egui::FocusDirection::Previous
+            } else {
+                egui::FocusDirection::Next
+            });
+        } else if modifiers.is_none() && matches!(key, egui::Key::Enter | egui::Key::Space | egui::Key::Escape) {
+            self.answer_key = Some(key);
         }
     }
     pub fn confirm(&mut self, action: Action, now: Instant) -> bool {
@@ -61,18 +70,24 @@ impl ExitPrompt {
     pub fn quitting(&self) -> bool {
         matches!(self.pending, Some((Action::Quit, _)))
     }
-    pub fn show(&self, ctx: &egui::Context, p: &Palette, can_logout: bool) -> Option<Action> {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, can_logout: bool) -> Option<Action> {
         if !self.open {
             return None;
         }
         let id = Id::unique("viewer_exit");
         aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(id).layer());
         let busy = self.pending.is_some();
-        let mut action = None;
+        let key = self.answer_key.take();
+        let mut action = (!busy && key == Some(egui::Key::Enter)).then_some(Action::Quit);
+        let activate = matches!(key, Some(egui::Key::Enter | egui::Key::Space));
+        let clicked = |button: egui::Response| button.clicked() || (activate && button.enabled() && button.has_focus());
         let width = (ctx.content_rect().width() - 80.0).clamp(240.0, 440.0);
         // the dialogs' surface (widgets::Modal), over this prompt's own
         // blurred backdrop instead of a dimmed one
         let response = widgets::Modal::new(id).transparent_backdrop().show(ctx, |ui| {
+            if let Some(direction) = self.focus_move.take() {
+                ctx.memory_mut(|m| m.move_focus(direction));
+            }
             ui.set_width(width);
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
             ui.horizontal(|ui| {
@@ -94,20 +109,33 @@ impl ExitPrompt {
             ui.add_enabled_ui(!busy, |ui| {
                 ui.horizontal(|ui| {
                     let size = Vec2::new((width - 16.0) / 3.0, 32.0);
-                    if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    if clicked(widgets::action_button(
+                        ui,
+                        p,
+                        "x",
+                        aurora_i18n::tr!("common-cancel"),
+                        ActionKind::Flat,
+                        size,
+                    )) {
                         action = Some(Action::Cancel);
                     }
-                    if ui
-                        .add_enabled_ui(can_logout, |ui| {
+                    if clicked(
+                        ui.add_enabled_ui(can_logout, |ui| {
                             widgets::action_button(ui, p, "logout", aurora_i18n::tr!("exit-logout"), ActionKind::Flat, size)
                         })
                         .inner
-                        .on_hover_text(aurora_i18n::tr!("exit-logout-hint"))
-                        .clicked()
-                    {
+                        .on_hover_text(aurora_i18n::tr!("exit-logout-hint")),
+                    ) {
                         action = Some(Action::Logout);
                     }
-                    if widgets::action_button(ui, p, "power", aurora_i18n::tr!("exit-quit"), ActionKind::Danger, size).clicked() {
+                    if clicked(widgets::action_button(
+                        ui,
+                        p,
+                        "power",
+                        aurora_i18n::tr!("exit-quit"),
+                        ActionKind::Danger,
+                        size,
+                    )) {
                         action = Some(Action::Quit);
                     }
                 });
@@ -115,7 +143,10 @@ impl ExitPrompt {
         });
         // Clicking the blurred backdrop leaves the choice open. Escape is
         // cancel only, never a destructive default; ignore it while logging out.
-        if !busy && response.is_top_modal && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if !busy
+            && (key == Some(egui::Key::Escape)
+                || response.is_top_modal && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
+        {
             action = Some(Action::Cancel);
         }
         action
@@ -254,18 +285,39 @@ mod tests {
     #[test]
     fn the_prompt_takes_enter_and_escape_before_the_screen_behind() {
         let none = egui::Modifiers::NONE;
-        let mut prompt = ExitPrompt::default();
-        prompt.request();
-        assert_eq!(prompt.key(egui::Key::Enter, none), Some(Action::Quit));
-        assert_eq!(prompt.key(egui::Key::Escape, none), Some(Action::Cancel));
-        assert_eq!(prompt.key(egui::Key::A, none), None);
+        let mut f = Fixture::new(false);
+        f.prompt.key(egui::Key::Enter, none);
+        assert_eq!(f.show(vec![]).0, Some(Action::Quit));
+        f.prompt.key(egui::Key::Escape, none);
+        assert_eq!(f.show(vec![]).0, Some(Action::Cancel));
+        f.prompt.key(egui::Key::A, none);
+        assert_eq!(f.show(vec![]).0, None);
         for modifiers in [egui::Modifiers::SHIFT, egui::Modifiers::CTRL, egui::Modifiers::ALT] {
-            assert_eq!(prompt.key(egui::Key::Enter, modifiers), None);
-            assert_eq!(prompt.key(egui::Key::Escape, modifiers), None);
+            f.prompt.key(egui::Key::Enter, modifiers);
+            f.prompt.key(egui::Key::Escape, modifiers);
+            assert_eq!(f.show(vec![]).0, None);
         }
-        prompt.confirm(Action::Quit, Instant::now());
-        assert_eq!(prompt.key(egui::Key::Enter, none), None, "waiting for the logout");
-        assert_eq!(prompt.key(egui::Key::Escape, none), None, "pending logout cannot be cancelled");
+        f.prompt.confirm(Action::Quit, Instant::now());
+        f.prompt.key(egui::Key::Enter, none);
+        f.prompt.key(egui::Key::Escape, none);
+        assert_eq!(f.show(vec![]).0, None, "waiting for the logout");
+    }
+
+    #[test]
+    fn tab_then_enter_activates_the_focused_button() {
+        let mut f = Fixture::new(false);
+        f.ctx.memory_mut(|m| m.stop_text_input());
+        f.prompt.key(egui::Key::Tab, egui::Modifiers::NONE);
+        f.prompt.key(egui::Key::Enter, egui::Modifiers::NONE);
+        assert_eq!(f.show(vec![]).0, Some(Action::Cancel));
+        f.prompt.key(egui::Key::Tab, egui::Modifiers::NONE);
+        f.prompt.key(egui::Key::Space, egui::Modifiers::NONE);
+        assert_eq!(f.show(vec![]).0, Some(Action::Quit), "disabled Logout is skipped");
+        f.prompt.key(egui::Key::Tab, egui::Modifiers::SHIFT);
+        f.show(vec![]);
+        f.prompt.key(egui::Key::Enter, egui::Modifiers::NONE);
+        assert_eq!(f.show(vec![]).0, Some(Action::Cancel));
+        assert!(!f.background_clicked);
     }
 
     #[test]

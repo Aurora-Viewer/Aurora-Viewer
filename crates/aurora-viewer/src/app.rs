@@ -498,6 +498,8 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
+    super_held: bool,
+    ime_preedit: bool,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1274,22 +1276,30 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
     matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
-/// The key the quit prompt answers itself: Enter (the keypad's too) quits,
-/// Escape cancels. It has no text field, so no other key is its own.
-fn exit_prompt_key(code: KeyCode) -> Option<egui::Key> {
-    match code {
-        KeyCode::Enter | KeyCode::NumpadEnter => Some(egui::Key::Enter),
-        KeyCode::Escape => Some(egui::Key::Escape),
+/// Read the logical key, so an IME or a remapped Return is not a quit.
+/// The regular and keypad Enter both report NamedKey::Enter.
+fn exit_prompt_key(key: &winit::keyboard::Key, composing: bool) -> Option<egui::Key> {
+    use winit::keyboard::{Key, NamedKey};
+    if composing {
+        return None;
+    }
+    match key {
+        Key::Named(NamedKey::Enter) => Some(egui::Key::Enter),
+        Key::Named(NamedKey::Escape) => Some(egui::Key::Escape),
+        Key::Named(NamedKey::Tab) => Some(egui::Key::Tab),
+        Key::Named(NamedKey::Space) => Some(egui::Key::Space),
+        Key::Character(s) if s == " " => Some(egui::Key::Space),
         _ => None,
     }
 }
 
 /// The shortcut mask as egui reads it, for the prompt's own keys.
-fn exit_prompt_modifiers(mods: Mods) -> egui::Modifiers {
+fn exit_prompt_modifiers(mods: Mods, super_held: bool) -> egui::Modifiers {
     egui::Modifiers {
         alt: mods.alt,
         ctrl: mods.ctrl,
         shift: mods.shift,
+        command: super_held,
         ..egui::Modifiers::NONE
     }
 }
@@ -1779,6 +1789,8 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
+            super_held: false,
+            ime_preedit: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -8722,6 +8734,7 @@ impl App {
                     self.alt_codes.alt_pressed();
                 }
             } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && !self.exit_prompt.open
                 && self.egui_ctx.egui_wants_keyboard_input()
             {
                 self.alt_text.push(text);
@@ -23594,19 +23607,28 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // The quit prompt owns the keyboard: no press reaches the screen
-        // behind it (the login's Enter, a chat field, a menu). Enter quits,
-        // Escape cancels; it has no text field for any other key.
+        if let WindowEvent::Ime(ime) = &event {
+            use winit::event::Ime;
+            match ime {
+                Ime::Preedit(text, _) => self.ime_preedit = !text.is_empty(),
+                Ime::Commit(_) | Ime::Disabled => self.ime_preedit = false,
+                Ime::Enabled => {}
+            }
+            if self.exit_prompt.open {
+                return;
+            }
+        }
+        // The prompt has no text field. Releases still clear held movement.
         if self.exit_prompt.open
             && let WindowEvent::KeyboardInput { event: ke, .. } = &event
             && ke.state == ElementState::Pressed
         {
+            self.track_alt_graph(ke);
             if !ke.repeat
-                && let PhysicalKey::Code(code) = ke.physical_key
-                && let Some(key) = exit_prompt_key(code)
-                && let Some(action) = self.exit_prompt.key(key, exit_prompt_modifiers(self.key_mods(ke)))
+                && let Some(key) = exit_prompt_key(&ke.logical_key, self.ime_preedit)
             {
-                self.confirm_exit(action);
+                self.exit_prompt.key(key, exit_prompt_modifiers(self.key_mods(ke), self.super_held));
+                self.egui_ctx.request_repaint();
             }
             return;
         }
@@ -23750,6 +23772,7 @@ impl ApplicationHandler for App {
                 self.frame(event_loop);
             }
             WindowEvent::ModifiersChanged(m) => {
+                self.super_held = m.state().super_key();
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
                 self.alt = m.state().alt_key();
@@ -23777,6 +23800,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.super_held = false;
+                self.ime_preedit = false;
                 self.options_ui.cancel_joystick_capture();
                 self.alt_codes.reset();
                 self.chat_ui.cancel_gesture_key();
@@ -24391,17 +24416,20 @@ mod tests {
 
     #[test]
     fn the_quit_prompt_answers_enter_and_escape_including_the_keypad() {
-        use winit::keyboard::KeyCode;
-        assert_eq!(exit_prompt_key(KeyCode::Enter), Some(egui::Key::Enter));
-        assert_eq!(exit_prompt_key(KeyCode::NumpadEnter), Some(egui::Key::Enter));
-        assert_eq!(exit_prompt_key(KeyCode::Escape), Some(egui::Key::Escape));
-        assert_eq!(exit_prompt_key(KeyCode::KeyA), None);
-        assert!(exit_prompt_modifiers(Mods::default()).is_none());
+        use winit::keyboard::{Key, NamedKey};
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), false), Some(egui::Key::Enter));
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Escape), false), Some(egui::Key::Escape));
+        assert_eq!(exit_prompt_key(&Key::Character("a".into()), false), None);
+        assert_eq!(exit_prompt_key(&Key::Dead(Some('^')), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Process), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), true), None);
+        assert!(exit_prompt_modifiers(Mods::default(), false).is_none());
+        assert!(!exit_prompt_modifiers(Mods::default(), true).is_none());
         let ctrl = Mods {
             ctrl: true,
             ..Mods::default()
         };
-        assert!(!exit_prompt_modifiers(ctrl).is_none());
+        assert!(!exit_prompt_modifiers(ctrl, false).is_none());
     }
 
     #[test]
