@@ -2029,3 +2029,43 @@ fn imported_paths_types_and_names_are_bounded() {
     let mine = Preferences::default();
     assert!(!found.changes(&mine).iter().any(|(k, _, _)| *k == OptionKind::Base));
 }
+
+/// After a change of language, the sort folder and Pre-Trash made in the
+/// old one are still Auto-sort's: found, reused, never sorted.
+#[test]
+fn the_sort_and_pre_trash_folders_are_found_in_another_language() {
+    let mut inv = fixture(&["Velvet Sofa"]);
+    let sorted_fr = inventory_name(aurora_i18n::text_in("fr", "inventory-sorter-default-base"), "Sorted");
+    let pre_trash_fr = inventory_name(aurora_i18n::text_in("fr", "inventory-sorter-pre-trash"), "Pre-Trash");
+    // the test runs in English: the French names differ
+    assert_ne!(sorted_fr, Preferences::default().base_name());
+    add_folder(&mut inv, 50, 1, &sorted_fr);
+    add_folder(&mut inv, 60, 1, &pre_trash_fr);
+    let prefs = Preferences::default();
+    assert_eq!(base_folder(&inv, &prefs), Some(id(50)));
+    assert_eq!(base_name_in(&inv, &prefs), sorted_fr);
+    assert_eq!(pre_trash(&inv), Some(id(60)));
+    assert!(!target_allowed(&inv, id(60)), "still Pre-Trash");
+    // a whole sort never takes them as sources
+    let whole = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
+    assert!(whole.moves.iter().all(|m| m.id != id(50) && m.id != id(60)));
+    // a sort files into the French sort folder instead of making another
+    let planned = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    let mut queue: VecDeque<Move> = planned.moves.into();
+    let mut skipped = 0;
+    let base = base_name_in(&inv, &prefs);
+    let Step::Change(change, _) = step(&mut inv, &base, &mut queue, &HashSet::new(), &HashSet::new(), &mut skipped) else {
+        panic!("a batch")
+    };
+    let made_at_root = change
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Folder { parent, .. } if *parent == id(1)));
+    assert!(!made_at_root, "no second sort folder at the root");
+    // a name the user typed is only ever that name
+    let named = Preferences {
+        base: "Tidy".into(),
+        ..Default::default()
+    };
+    assert_eq!(base_folder(&inv, &named), None);
+}

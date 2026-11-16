@@ -239,13 +239,59 @@ pub fn base_refused(name: &str) -> bool {
     let lower = name.trim().to_lowercase();
     lower.is_empty()
         || VIEWER_FOLDERS.iter().any(|name| name.eq_ignore_ascii_case(&lower))
-        || lower == pre_trash_name().to_lowercase()
+        || every_language("inventory-sorter-pre-trash", "Pre-Trash")
+            .iter()
+            .any(|pre| pre.eq_ignore_ascii_case(&lower))
         || DEFAULTS.contains(&lower.as_str())
 }
 
-/// The Pre-Trash folder, when it exists.
+/// A folder name Auto-sort gives, in every language the viewer speaks, as
+/// the inventory keeps it: after a change of language, the folders made in
+/// the old one are still recognised.
+fn every_language(key: &'static str, fallback: &str) -> Vec<String> {
+    let mut names: Vec<String> = aurora_i18n::available_languages()
+        .map(|(code, _)| inventory_name(aurora_i18n::text_in(code, key), fallback))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The Pre-Trash folder, when it exists: by its name in the language in use,
+/// else in another one the viewer speaks.
 pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
-    child(inv, inv.root, &pre_trash_name())
+    child(inv, inv.root, &pre_trash_name()).or_else(|| {
+        every_language("inventory-sorter-pre-trash", "Pre-Trash")
+            .iter()
+            .find_map(|name| child(inv, inv.root, name))
+    })
+}
+
+/// The sort folder, when it exists: by its name; for the default name, in
+/// the language in use, else in another one the viewer speaks (a folder
+/// named by the user is only ever that name).
+pub fn base_folder(inv: &Inventory, prefs: &Preferences) -> Option<Uuid> {
+    child(inv, inv.root, &prefs.base_name()).or_else(|| {
+        prefs
+            .base
+            .trim()
+            .is_empty()
+            .then(|| {
+                every_language("inventory-sorter-default-base", "Sorted")
+                    .iter()
+                    .find_map(|name| child(inv, inv.root, name))
+            })
+            .flatten()
+    })
+}
+
+/// The sort folder's name as the inventory has it (an existing one made in
+/// another language included), else the name it will be given.
+pub fn base_name_in(inv: &Inventory, prefs: &Preferences) -> String {
+    base_folder(inv, prefs)
+        .and_then(|id| inv.folders.get(&id))
+        .map_or_else(|| prefs.base_name(), |f| f.info.name.clone())
 }
 
 /// What waits in the Pre-Trash folder: its direct contents.
@@ -943,7 +989,7 @@ struct Places {
 impl Places {
     fn of(inv: &Inventory, prefs: &Preferences) -> Self {
         Self {
-            base: child(inv, inv.root, &prefs.base_name()),
+            base: base_folder(inv, prefs),
             waiting: pre_trash(inv),
             reserved: sorter_folder_names(prefs),
         }
@@ -1352,6 +1398,14 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     let mut names: HashSet<String> = VOCABULARY.bodies.iter().map(|b| b.body.to_lowercase()).collect();
     names.insert(Body::Several.folder().to_lowercase());
     names.insert(prefs.base_name().to_lowercase());
+    // the names Auto-sort gave its folders in another language stay its own
+    for key in [
+        "inventory-sorter-default-base",
+        "inventory-sorter-pre-trash",
+        "inventory-sorter-stores",
+    ] {
+        names.extend(every_language(key, "").into_iter().map(|n| n.to_lowercase()));
+    }
     names.insert(pre_trash_name().to_lowercase());
     for (waifus, squish) in [(true, false), (false, true), (true, true)] {
         names.insert(variant_folder(waifus, squish).to_lowercase());
@@ -1427,7 +1481,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
     if !has_pre_trash_rule(prefs) {
         return scan;
     }
-    let base = child(inv, inv.root, &prefs.base_name());
+    let base = base_folder(inv, prefs);
     let in_sorted = |id: Uuid| base.is_some_and(|b| id == b || actions::under(inv, id, b));
     let mut stack = vec![source];
     if let Some(base) = base
@@ -1739,7 +1793,7 @@ pub fn plan_cleanup(
         return plan;
     }
     let source = if cleanup.whole { inv.root } else { source };
-    let base = child(inv, inv.root, &prefs.base_name());
+    let base = base_folder(inv, prefs);
     let reserved = sorter_folder_names(prefs);
     let holds_worn = actions::worn_ancestors(inv, worn);
     let pre_trash_at = pre_trash(inv);
@@ -1952,7 +2006,7 @@ fn plan_with(
     let known: HashSet<Uuid> = entries.iter().copied().collect();
     entries.extend(pre_trashed.into_iter().filter(|id| !known.contains(id)));
     let holds_worn = actions::worn_ancestors(inv, worn);
-    let base = child(inv, inv.root, &prefs.base_name());
+    let base = base_folder(inv, prefs);
     // in the sort folder's tree, the "Everywhere except Sorted" rules are
     // left out
     let sorted_rules: Vec<Rule> = prefs.rules.iter().filter(|r| !(r.pre_trash && r.skip_sorted)).cloned().collect();
@@ -1995,7 +2049,7 @@ fn plan_with(
             (id, folder, from, name, to, unpacker)
         })
         .collect();
-    let base_name = prefs.base_name();
+    let base_name = base_name_in(inv, prefs);
     let pre_trash_at = pre_trash(inv);
     let pre_trash_label = format!("{} / {}", folder_path(inv, inv.root), pre_trash_name());
     for (id, folder, from, name, to, unpacker) in read {
@@ -2110,7 +2164,12 @@ pub fn step(
                 continue;
             }
             Dest::Path(path) => base_path.iter().chain(path).cloned().collect(),
-            Dest::PreTrash => vec![pre_trash_name()],
+            // the Pre-Trash folder as it is named, in any language
+            Dest::PreTrash => vec![
+                pre_trash(inv)
+                    .and_then(|p| inv.folders.get(&p))
+                    .map_or_else(pre_trash_name, |f| f.info.name.clone()),
+            ],
         };
         let to_pre_trash = matches!(next.to, Dest::PreTrash);
         let mut parent = match next.to {

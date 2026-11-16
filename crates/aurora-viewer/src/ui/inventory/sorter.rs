@@ -1022,7 +1022,7 @@ pub(super) fn show(
     }
     if state.autostart && state.preview.is_some() {
         state.autostart = false;
-        start(state, prefs);
+        start(state, inv, prefs);
     }
     let mut open = true;
     let mut go = false;
@@ -1142,7 +1142,7 @@ pub(super) fn show(
                 let moves = plan.moves(&state.skipped);
                 if !moves.is_empty() && state.job.is_none() {
                     state.status.clear();
-                    state.job = Some(Job::new(moves.into(), prefs.sorter.base_name()));
+                    state.job = Some(Job::new(moves.into(), sorter::base_name_in(inv, &prefs.sorter)));
                 }
             }
         }
@@ -1173,7 +1173,7 @@ pub(super) fn show(
             state.understood = false;
             state.confirm = Some(Confirm::Whole);
         } else {
-            start(state, prefs);
+            start(state, inv, prefs);
         }
     }
     if pause && let Some(job) = state.job.as_mut() {
@@ -1890,7 +1890,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
         return;
     }
     match asked {
-        Confirm::Whole => start(&mut st.sorter, prefs),
+        Confirm::Whole => start(&mut st.sorter, inv, prefs),
         Confirm::Unlock(Some(id), _) => {
             if !prefs.sorter.unlocked.contains(&id) {
                 prefs.sorter.unlocked.push(id);
@@ -1933,7 +1933,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
     }
 }
 
-fn start(state: &mut State, prefs: &InventoryPreferences) {
+fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     let Some((_, options, plan)) = state.preview.as_ref() else { return };
     // never a run from a preview of other options, or while a newer one is
     // being made: the user sorts what they saw
@@ -1946,7 +1946,7 @@ fn start(state: &mut State, prefs: &InventoryPreferences) {
         state.status = aurora_i18n::tr!("inventory-sorter-nothing").into();
         return;
     }
-    let mut job = Job::new(plan.moves.iter().cloned().collect(), prefs.sorter.base_name());
+    let mut job = Job::new(plan.moves.iter().cloned().collect(), sorter::base_name_in(inv, &prefs.sorter));
     if let Some(Source::Saved(_, restoring)) = &state.source {
         job.restoring = Some(*restoring);
         if let (Restoring::Resume, Some(unfinished)) = (restoring, &state.unfinished) {
