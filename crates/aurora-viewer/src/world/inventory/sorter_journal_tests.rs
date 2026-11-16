@@ -582,3 +582,21 @@ fn a_layout_restore_puts_nothing_back_into_pre_trash() {
     .expect("same account");
     assert!(moves.iter().all(|m| m.id != id(100)));
 }
+
+/// A layout to share goes to the Desktop, else Documents, else the current
+/// folder, named for its date.
+#[test]
+fn a_shared_layout_goes_to_the_desktop_then_documents_then_here() {
+    use std::path::PathBuf;
+    let (desk, docs, here) = (PathBuf::from("desk"), PathBuf::from("docs"), PathBuf::from("here"));
+    let name = "Aurora inventory snapshot 2026-11-16 21-40.json";
+    assert_eq!(
+        share_path(Some(desk.clone()), Some(docs.clone()), here.clone(), "2026-11-16 21-40"),
+        desk.join(name)
+    );
+    assert_eq!(
+        share_path(None, Some(docs.clone()), here.clone(), "2026-11-16 21-40"),
+        docs.join(name)
+    );
+    assert_eq!(share_path(None, None, here.clone(), "2026-11-16 21-40"), here.join(name));
+}

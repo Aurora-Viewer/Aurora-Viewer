@@ -83,8 +83,20 @@ struct Picker {
     built: Option<Instant>,
 }
 
+/// The layout saved to the Desktop to share (`Save my inventory layout`).
+enum Share {
+    /// The whole inventory is read first (since when).
+    Loading(Instant),
+    /// Written on another thread.
+    Saving(std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>),
+    Saved(std::path::PathBuf),
+    Failed(String),
+}
+
 #[derive(Default)]
 pub(super) struct State {
+    /// The layout saved to share, on its way or done.
+    shared: Option<Share>,
     source: Option<Source>,
     open: bool,
     tab: usize,
@@ -1381,6 +1393,7 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     st.sorter.held = hold;
+    share_step(inv, &mut st.sorter, agent);
     // the default folders the user allowed, for the hands-off rule
     let unlocked = prefs.sorter.unlocked_set(inv);
     if inv.sorter_unlocked != unlocked {
@@ -3591,6 +3604,139 @@ fn snapshot_date(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0).map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M").to_string())
 }
 
+/// How long the whole inventory is waited for before a layout to share is
+/// saved with what is loaded (a folder the server never gives).
+const SHARE_LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The layout to share: the whole inventory read first (a few folders a
+/// frame, like the inventory's own search), then written to the Desktop on
+/// another thread. Folder and item names and where each is, never an asset
+/// id; nothing moves.
+fn share_step(inv: &mut Inventory, state: &mut State, agent: Uuid) {
+    match state.shared.as_ref() {
+        Some(Share::Loading(since)) => {
+            let loaded = crate::world::inventory::actions::request_tree(inv, inv.root);
+            if !loaded && since.elapsed() < SHARE_LOAD_LIMIT {
+                return;
+            }
+            let at = unix_now();
+            let snapshot = sorter::journal::Snapshot::take(inv, at, agent);
+            let when = chrono::DateTime::from_timestamp(at, 0).map_or_else(
+                || at.to_string(),
+                |t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H-%M").to_string(),
+            );
+            let dirs = directories::UserDirs::new();
+            let path = sorter::journal::share_path(
+                dirs.as_ref().and_then(|d| d.desktop_dir().map(std::path::Path::to_path_buf)),
+                dirs.as_ref().and_then(|d| d.document_dir().map(std::path::Path::to_path_buf)),
+                std::env::current_dir().unwrap_or_default(),
+                &when,
+            );
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = sorter::journal::save_shared(&path, &snapshot)
+                    .map(|()| path)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            });
+            state.shared = Some(Share::Saving(rx));
+        }
+        Some(Share::Saving(rx)) => {
+            if let Ok(result) = rx.try_recv() {
+                state.shared = Some(match result {
+                    Ok(path) => Share::Saved(path),
+                    Err(e) => {
+                        log::warn!("auto-sort: the layout to share could not be saved: {e}");
+                        Share::Failed(e)
+                    }
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The button that saves the layout to share, and where it went.
+fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
+    use crate::ui::widgets::{ActionKind, action_button};
+    let size = Vec2::new(0.0, 26.0);
+    let working = matches!(state.shared, Some(Share::Loading(_) | Share::Saving(_)));
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled_ui(!working, |ui| {
+                action_button(
+                    ui,
+                    p,
+                    "device-floppy-filled",
+                    aurora_i18n::tr!("inventory-sorter-share-layout"),
+                    ActionKind::Flat,
+                    size,
+                )
+            })
+            .inner
+            .clicked()
+        {
+            state.shared = Some(Share::Loading(Instant::now()));
+        }
+    });
+    ui.label(
+        RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-hint"))
+            .small()
+            .color(p.muted),
+    );
+    let mut reveal = None;
+    match &state.shared {
+        Some(Share::Loading(_)) => {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-loading"))
+                    .small()
+                    .color(p.muted),
+            );
+        }
+        Some(Share::Saving(_)) => {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-saving"))
+                    .small()
+                    .color(p.muted),
+            );
+        }
+        Some(Share::Saved(path)) => {
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "inventory-sorter-share-layout-saved",
+                    path = path.display().to_string()
+                ))
+                .small(),
+            );
+            if action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("inventory-sorter-share-layout-show"),
+                ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                reveal = Some(path.clone());
+            }
+        }
+        Some(Share::Failed(error)) => {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-failed", error = error.as_str()))
+                    .small()
+                    .color(p.warn),
+            );
+        }
+        None => {}
+    }
+    if let Some(path) = reveal
+        && let Some(folder) = path.parent()
+    {
+        crate::snapshot::gallery::reveal(folder, Some(&path));
+    }
+}
+
 /// Undo the last run, put a snapshot's layout back, resume a stopped run,
 /// take a snapshot: each opens its preview; nothing moves before Sort.
 fn undo_and_snapshots(
@@ -3722,6 +3868,7 @@ fn undo_and_snapshots(
             state.snapshot(inv);
         }
     });
+    share_row(ui, p, state);
     let mut restore = None;
     for (at, path) in &state.snapshots {
         ui.horizontal(|ui| {

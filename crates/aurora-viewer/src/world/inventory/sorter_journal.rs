@@ -470,6 +470,29 @@ pub struct Unfinished {
     pub runs: Vec<u64>,
 }
 
+/// Where a layout saved to share goes: the Desktop, else Documents, else
+/// the current folder; `when` (a date and time a file name may hold)
+/// names it.
+pub fn share_path(desktop: Option<PathBuf>, documents: Option<PathBuf>, here: PathBuf, when: &str) -> PathBuf {
+    desktop
+        .or(documents)
+        .unwrap_or(here)
+        .join(format!("Aurora inventory snapshot {when}.json"))
+}
+
+/// Write a layout to share as plain JSON (anyone can open it), through a
+/// temporary file.
+pub fn save_shared(path: &Path, snapshot: &Snapshot) -> std::io::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension("tmp");
+    {
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&temporary)?);
+        serde_json::to_writer(&mut file, snapshot).map_err(std::io::Error::other)?;
+        file.flush()?;
+    }
+    std::fs::rename(&temporary, path)
+}
+
 /// The folder of Auto-sort's files for one account.
 pub fn folder(account: &Path) -> PathBuf {
     account.join("auto-sort")
