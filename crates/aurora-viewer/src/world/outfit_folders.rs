@@ -1014,8 +1014,9 @@ mod tests {
     fn the_filter_applies_to_date_orders_too() {
         let inv = dated(&[(702, 400), (703, 100), (704, 200), (705, 300)]);
         let found = |sort| -> Vec<u128> { tree(&inv, "o", sort, Order::List).iter().map(|e| e.id.as_u128()).collect() };
-        // "Cop" and "Neurolab" hold the letter: the two newer outfits do not
-        assert_eq!(found(by(SortBy::Newest)), [704, 703]);
-        assert_eq!(found(by(SortBy::Oldest)), [703, 704]);
+        // "Cop" and "Neurolab" hold the letter, "Leather Jacket" in its
+        // items' names; the newest outfit, empty, does not
+        assert_eq!(found(by(SortBy::Newest)), [705, 704, 703]);
+        assert_eq!(found(by(SortBy::Oldest)), [703, 704, 705]);
     }
 }
