@@ -960,6 +960,7 @@ impl App {
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
+            CtxAction::JoinGroup(id) => self.group_profile_ui.request_join(&mut self.world, id),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
             CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
             CtxAction::GroupChat(id) => {

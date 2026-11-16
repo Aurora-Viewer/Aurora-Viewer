@@ -182,6 +182,55 @@ fn group_name(world: &mut World, id: Uuid) -> String {
         .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into())
 }
 
+/// A group name with the Firestorm-style right-click actions.
+fn group_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, name: &str) -> bool {
+    use crate::ui::context::{self, CtxAction};
+    use crate::ui::menu;
+
+    let response = ui
+        .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
+        .on_hover_text(aurora_i18n::tr!("build-ui-general-open-profile"));
+
+    menu::context_menu(&response, p, |ui| {
+        let member = world.groups.is_member(&id);
+
+        if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info")) {
+            crate::ui::group_profile::request_open(ui.ctx(), id);
+        }
+
+        if menu::item_if(
+            ui,
+            p,
+            "circle-check-filled",
+            aurora_i18n::tr!("common-activate"),
+            member && world.groups.active != id,
+        ) {
+            context::request(ui.ctx(), CtxAction::ActivateGroup(id));
+        }
+
+        let can_join = !member && world.search.groups.get(&id).is_none_or(|group| group.open_enrollment);
+        if menu::item_if(ui, p, "users-plus", aurora_i18n::tr!("search-group-join"), can_join) {
+            context::request(ui.ctx(), CtxAction::JoinGroup(id));
+        }
+
+        if menu::item_if(ui, p, "logout", aurora_i18n::tr!("ui-contacts-leave-group"), member) {
+            context::request(ui.ctx(), CtxAction::LeaveGroup(id));
+        }
+
+        menu::separator(ui, p);
+
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("search-group-copy-name")) {
+            ui.ctx().copy_text(name.to_owned());
+        }
+
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
+            ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
+        }
+    });
+
+    response.clicked()
+}
+
 /// The shared General editor and its detached property dialogs must use
 /// current objects and full properties. LLViewerObject::isPermanentEnforced
 /// prevents editing permanent objects in a neighbouring region.
@@ -413,7 +462,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if group_owned {
                 let name = group_name(world, first.group_id);
-                if name_link(ui, p, &name) {
+                if group_link(ui, p, world, first.group_id, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else if person_link(ui, p, world, first.owner_id) {
@@ -425,7 +474,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 return;
             }
             if first.last_owner_id == first.group_id {
-                if name_link(ui, p, &group_name(world, first.group_id)) {
+                let name = group_name(world, first.group_id);
+                if group_link(ui, p, world, first.group_id, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else if person_link(ui, p, world, first.last_owner_id) {
@@ -435,7 +485,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         row(ui, p, aurora_i18n::tr!("common-group-2"), identity_width, |ui| {
             if same(&|x| x.group_id) && !first.group_id.is_nil() {
                 let name = group_name(world, first.group_id);
-                if name_link(ui, p, &name) {
+                if group_link(ui, p, world, first.group_id, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else {

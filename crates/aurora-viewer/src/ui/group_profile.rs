@@ -212,6 +212,8 @@ pub struct GroupProfileUi {
     pub(super) experiences: experiences::ExperiencesState,
     pub(super) admin: administration::AdminState,
     confirm: Option<Confirm>,
+    /// A group join requested while its profile data is being fetched.
+    pending_join: Option<Uuid>,
     /// "Invite to the group".
     pub invite: invite::InviteUi,
     /// "Create a group".
@@ -308,6 +310,16 @@ impl GroupProfileUi {
         self.group.filter(|_| self.open)
     }
 
+    /// Start joining a group from a context menu, fetching its profile first.
+    pub fn request_join(&mut self, world: &mut World, group: Uuid) {
+        if group.is_nil() || world.groups.is_member(&group) {
+            return;
+        }
+
+        self.pending_join = Some(group);
+        world.search.request_group(group);
+    }
+
     /// Join from search or the profile through the same confirmation,
     /// without needing to open the profile (LLGroupActions::join).
     pub fn join(&mut self, world: &World, group: Uuid) {
@@ -335,6 +347,20 @@ impl GroupProfileUi {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env) -> Vec<GroupAction> {
+        if let Some(group) = self.pending_join {
+            if c.world.groups.is_member(&group) {
+                self.pending_join = None;
+            } else if let Some(profile) = c.world.search.groups.get(&group) {
+                let open_enrollment = profile.open_enrollment;
+                self.pending_join = None;
+
+                if open_enrollment {
+                    self.join(c.world, group);
+                } else {
+                    request_open(ctx, group);
+                }
+            }
+        }
         let mut actions = self.create.show(ctx, c, env);
         // "Invite to group" of a resident's menu: the group picker, and the
         // chosen group's data asked again
