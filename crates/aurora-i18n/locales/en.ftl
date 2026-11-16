@@ -14420,6 +14420,7 @@ inventory-sorter-rules-hint = Your rules come first, from the top: the first one
 inventory-sorter-rule-words = When the name has
 inventory-sorter-rule-folder = Folder path, such as Home/Chairs
 inventory-sorter-menu-entries = Auto-sort
+inventory-sorter-busy-elsewhere = Auto-sort is already running in another inventory window: wait for it to finish there.
 inventory-sorter-trash-gone = (no longer in the inventory)
 inventory-sorter-trash-more = …and { $count } more
 inventory-sorter-vocab-title = Vocabulary check
@@ -14470,7 +14471,7 @@ inventory-sorter-exclude-add = Add a folder…
 inventory-sorter-exclude-remove = Remove from the list
 inventory-sorter-whole = Whole inventory
 inventory-sorter-whole-tip = Sort the loose items of My Inventory, Objects and your own folders
-inventory-sorter-whole-intro = Sorts the loose items of My Inventory, the contents of Objects and of your own folders; deliveries move whole, never opened. Never touched: every other default folder (Clothing, Body Parts, Landmarks…), outfits, the Trash, Marketplace, Received Items, Lost and Found, #RLV, #Firestorm, #Aurora and Animation Overrides (other # folders are your own), excluded and locked folders.
+inventory-sorter-whole-intro = Sorts the loose items of My Inventory, the contents of Objects and of your own folders, and the default folders you allowed in Options; deliveries move whole, never opened. Never touched: the other default folders (Clothing, Body Parts, Landmarks…), Lost and Found unless its switch is on, outfits, the Trash, Marketplace, Received Items, #RLV, #Firestorm, #Aurora and Animation Overrides (other # folders are your own), excluded and locked folders.
 inventory-sorter-whole-title = Sort the whole inventory?
 inventory-sorter-whole-text = { $count ->
     [one] 1 entry from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted.
@@ -14535,7 +14536,7 @@ inventory-cleanup-where = Where
 inventory-cleanup-whole = Whole inventory
 inventory-cleanup-this-folder = This folder
 inventory-cleanup-include-sorted = Include the { $folder } folder
-inventory-cleanup-never = Never touched: the Trash, Marketplace Listings, the Library, outfits, Favorites, excluded and locked folders, worn items and links.
+inventory-cleanup-never = Never touched: the default folders other than Objects (unless you allowed them in Options), Lost and Found unless its switch is on, the Trash, Marketplace, the Library, outfits, Favorites, Received Items, #RLV, #Firestorm, #Aurora, Animation Overrides, excluded and locked folders, worn items and links.
 inventory-cleanup-loading = { $count ->
     [one] Loading 1 folder…
    *[other] Loading { $count } folders…
@@ -14612,7 +14613,7 @@ inventory-import-add = Add to mine
 inventory-import-replace = Replace mine
 inventory-import-done = Imported.
 inventory-import-replace-title = Replace your rules and store hints?
-inventory-import-replace-text = Your rules and store hints that are not in this text are removed, and the ticked ones are added. Your rules to your own folders and your excluded folders stay.
+inventory-import-replace-text = Your rules and store hints that are not in this text are removed, and the ticked rules, hints and options are added. Your rules to your own folders and your excluded folders stay.
 inventory-sorter-kept-worn = Stays: worn, or holds something worn
 inventory-sorter-kept-link = Stays: links (they belong to their folder)
 inventory-sorter-kept-locked = Stays: in a locked folder

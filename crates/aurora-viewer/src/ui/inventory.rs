@@ -2297,8 +2297,9 @@ pub fn show(
             let Some(creator) = hint.creator else { continue };
             world.social.want_name(creator);
             let name = world.social.name_of(&creator);
+            let name: String = name.chars().take(64).collect();
             if name != "…" && hint.creator_name != name {
-                hint.creator_name = name.chars().take(64).collect();
+                hint.creator_name = name;
             }
         }
     }

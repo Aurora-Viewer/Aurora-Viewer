@@ -239,9 +239,7 @@ pub fn base_refused(name: &str) -> bool {
     let lower = name.trim().to_lowercase();
     lower.is_empty()
         || VIEWER_FOLDERS.iter().any(|name| name.eq_ignore_ascii_case(&lower))
-        || every_language("inventory-sorter-pre-trash", "Pre-Trash")
-            .iter()
-            .any(|pre| pre.eq_ignore_ascii_case(&lower))
+        || pre_trash_names().iter().any(|pre| pre.eq_ignore_ascii_case(&lower))
         || DEFAULTS.contains(&lower.as_str())
 }
 
@@ -258,14 +256,22 @@ fn every_language(key: &'static str, fallback: &str) -> Vec<String> {
     names
 }
 
-/// The Pre-Trash folder, when it exists: by its name in the language in use,
-/// else in another one the viewer speaks.
+/// Pre-Trash's name in every language the viewer speaks (read once).
+fn pre_trash_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| every_language("inventory-sorter-pre-trash", "Pre-Trash"))
+}
+
+/// The default sort folder's name in every language (read once).
+fn default_base_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| every_language("inventory-sorter-default-base", "Sorted"))
+}
+
+/// The Pre-Trash folder, when it exists: at the root, by its name in the
+/// language in use, else in another one the viewer speaks.
 pub fn pre_trash(inv: &Inventory) -> Option<Uuid> {
-    child(inv, inv.root, &pre_trash_name()).or_else(|| {
-        every_language("inventory-sorter-pre-trash", "Pre-Trash")
-            .iter()
-            .find_map(|name| child(inv, inv.root, name))
-    })
+    child(inv, inv.root, &pre_trash_name()).or_else(|| pre_trash_names().iter().find_map(|name| child(inv, inv.root, name)))
 }
 
 /// The sort folder, when it exists: by its name; for the default name, in
@@ -277,11 +283,7 @@ pub fn base_folder(inv: &Inventory, prefs: &Preferences) -> Option<Uuid> {
             .base
             .trim()
             .is_empty()
-            .then(|| {
-                every_language("inventory-sorter-default-base", "Sorted")
-                    .iter()
-                    .find_map(|name| child(inv, inv.root, name))
-            })
+            .then(|| default_base_names().iter().find_map(|name| child(inv, inv.root, name)))
             .flatten()
     })
 }
@@ -1291,23 +1293,24 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, wo
 /// sends none then: "unknown / multiple", LLPermissions::accumulate), the
 /// account it came from (its last owner: the store's vendor or Marketplace
 /// account), never its owner.
-fn maker(it: &InvItem) -> Option<Uuid> {
+fn maker(inv: &Inventory, it: &InvItem) -> Option<Uuid> {
     if !it.creator.is_nil() {
         return Some(it.creator);
     }
-    (!it.last_owner.is_nil() && it.last_owner != it.owner).then_some(it.last_owner)
+    let own = it.last_owner == it.owner || it.last_owner == inv.owner;
+    (!it.last_owner.is_nil() && !own).then_some(it.last_owner)
 }
 
 /// Who made an entry: an item's [`maker`], or for a folder (a fatpack) the
 /// maker of most of its items.
 pub fn creator_of(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if let Some(it) = inv.items.get(&id) {
-        return maker(it);
+        return maker(inv, it);
     }
     let folder = inv.folders.get(&id)?;
     let mut counts: HashMap<Uuid, usize> = HashMap::new();
     for it in folder.items.iter().filter_map(|i| inv.items.get(i)) {
-        if let Some(who) = maker(it) {
+        if let Some(who) = maker(inv, it) {
             *counts.entry(who).or_default() += 1;
         }
     }
@@ -1422,14 +1425,6 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     let mut names: HashSet<String> = VOCABULARY.bodies.iter().map(|b| b.body.to_lowercase()).collect();
     names.insert(Body::Several.folder().to_lowercase());
     names.insert(prefs.base_name().to_lowercase());
-    // the names Auto-sort gave its folders in another language stay its own
-    for key in [
-        "inventory-sorter-default-base",
-        "inventory-sorter-pre-trash",
-        "inventory-sorter-stores",
-    ] {
-        names.extend(every_language(key, "").into_iter().map(|n| n.to_lowercase()));
-    }
     names.insert(pre_trash_name().to_lowercase());
     for (waifus, squish) in [(true, false), (false, true), (true, true)] {
         names.insert(variant_folder(waifus, squish).to_lowercase());

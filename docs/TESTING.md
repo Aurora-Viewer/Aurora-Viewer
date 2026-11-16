@@ -7163,10 +7163,13 @@ failure. Grid validation and any paid upload are performed by the human.
   word rule fills a root `Pre-Trash` folder that only its own confirmation sends
   to the Trash; Whole inventory asks twice. `AURORA_DEMO_SORTER_TAB` (with one of these
   modes) fills the demo's own Auto-sort settings with three rules (a path, one of my
-  folders, Pre-Trash), two store hints and an excluded folder, then opens a tab
+  folders, Pre-Trash), two store hints, a creator hint and an excluded folder, then opens a tab
   (`preview`, `rules`, `options`, `cleanup`; `cleanup-custom` picks June 2013, three
   types and empty folders), the Share or Import window (`import` pastes a friend's
-  text: two rules already there, a new one, a broken line), the folder picker or the
+  text: rules and hints already there, a new rule, a new Pre-Trash rule shown in red and
+  unticked, a sort folder renamed `Tidy` (unticked) and the store option flipped, each
+  listed old → new under "This file changes N of your defaults", and a broken line), the
+  folder picker or the
   whole-inventory confirmation. Capture after about 700 frames. The Clean up tab: a delivery folder
   entirely from 2010 (`Retro Mall`) taken whole, the mixed Hex Dress FATPACK left
   whole, and two root folders (`Old freebies`, `Places I liked`) with every

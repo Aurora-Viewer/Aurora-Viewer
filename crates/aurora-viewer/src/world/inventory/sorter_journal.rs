@@ -41,6 +41,11 @@ pub enum RunKind {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
+    /// Its own number in the journal: what is recorded, undone and
+    /// forgotten is found by it, never by its time (two runs may start in
+    /// the same second).
+    #[serde(default)]
+    pub id: u64,
     /// Seconds since 1970.
     pub at: i64,
     pub kind: RunKind,
@@ -53,9 +58,11 @@ pub struct Journal {
 }
 
 impl Journal {
-    /// A new run, the oldest dropped past [`RUNS`].
-    pub fn begin(&mut self, kind: RunKind, at: i64) {
+    /// A new run, the oldest dropped past [`RUNS`]; its id.
+    pub fn begin(&mut self, kind: RunKind, at: i64) -> u64 {
+        let id = self.runs.iter().map(|run| run.id).max().unwrap_or(0) + 1;
         self.runs.push_back(Run {
+            id,
             at,
             kind,
             entries: Vec::new(),
@@ -63,9 +70,27 @@ impl Journal {
         while self.runs.len() > RUNS {
             self.runs.pop_front();
         }
+        id
+    }
+
+    /// Runs read from an older file have no id: numbered in order.
+    pub fn number_runs(&mut self) {
+        let mut next = self.runs.iter().map(|run| run.id).max().unwrap_or(0);
+        for run in self.runs.iter_mut().filter(|run| run.id == 0) {
+            next += 1;
+            run.id = next;
+        }
+    }
+
+    /// Confirmed moves of the run `id` (nothing when it was dropped).
+    pub fn record_in(&mut self, id: u64, entries: impl IntoIterator<Item = Entry>) {
+        if let Some(run) = self.runs.iter_mut().find(|run| run.id == id) {
+            run.entries.extend(entries);
+        }
     }
 
     /// Confirmed moves of the run in progress.
+    #[cfg(test)]
     pub fn record(&mut self, entries: impl IntoIterator<Item = Entry>) {
         if let Some(run) = self.runs.back_mut() {
             run.entries.extend(entries);
@@ -77,20 +102,19 @@ impl Journal {
         self.runs.iter().rev().find(|run| !run.entries.is_empty())
     }
 
-    /// After an Undo of the run that began at `undone`: the undo's own run
-    /// (the last one) goes, and from the undone run only the entries it put
-    /// back; that run goes once nothing is left in it. A stopped or partial
-    /// undo leaves the rest to undo later; an undo that moved nothing
-    /// forgets nothing.
-    pub fn forget_undone(&mut self, undone: i64) {
-        // the undo's run is the last one; the run it undid comes before it.
-        // Either missing (pruned, never begun): the journal stays as it is.
-        let Some(undo_index) = self.runs.len().checked_sub(1) else { return };
-        let Some(index) = self.runs.iter().take(undo_index).rposition(|run| run.at == undone) else {
+    /// After the Undo run `undo` of the run `undone`: the undo's own run
+    /// goes, and from the undone run only the entries it put back; that run
+    /// goes once nothing is left in it. A stopped or partial undo leaves the
+    /// rest to undo later; an undo that moved nothing forgets nothing.
+    pub fn forget_undone(&mut self, undo: u64, undone: u64) {
+        let Some(undo_index) = self.runs.iter().position(|run| run.id == undo) else {
             return;
         };
         let Some(undo) = self.runs.remove(undo_index) else { return };
         let back: HashSet<Uuid> = undo.entries.iter().map(|e| e.id).collect();
+        let Some(index) = self.runs.iter().position(|run| run.id == undone) else {
+            return;
+        };
         let run = &mut self.runs[index];
         run.entries.retain(|e| !back.contains(&e.id));
         if run.entries.is_empty() {

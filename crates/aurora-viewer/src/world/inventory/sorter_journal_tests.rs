@@ -121,34 +121,55 @@ fn entry(n: u128) -> Entry {
 }
 
 /// An undo forgets what it put back, and only that: a stopped or partial
-/// undo leaves the rest to undo, an undo that moved nothing forgets nothing.
+/// undo leaves the rest to undo, an undo that moved nothing forgets nothing,
+/// and runs are told apart by their id, never by their time.
 #[test]
 fn an_undo_forgets_only_what_it_put_back() {
     let mut journal = Journal::default();
-    journal.begin(RunKind::Move, 10);
-    journal.record([entry(1)]);
-    journal.begin(RunKind::Move, 20);
-    journal.record([entry(2), entry(3), entry(4)]);
-    // a partial undo of the run of 20: two of three put back
-    journal.begin(RunKind::Move, 30);
-    journal.record([entry(2), entry(3)]);
-    journal.forget_undone(20);
-    let last = journal.last().expect("a run");
-    assert_eq!(last.at, 20);
-    assert_eq!(last.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![id(4)]);
-    // an undo that moved nothing: the undone run stays whole, the older one too
-    journal.begin(RunKind::Move, 40);
-    journal.forget_undone(20);
-    assert_eq!(journal.runs.iter().map(|r| r.at).collect::<Vec<_>>(), vec![10, 20]);
-    // the rest put back: the run goes, the older run is untouched
-    journal.begin(RunKind::Move, 50);
-    journal.record([entry(4)]);
-    journal.forget_undone(20);
-    assert_eq!(journal.runs.iter().map(|r| r.at).collect::<Vec<_>>(), vec![10]);
-    // the undone run no longer there (pruned): nothing is forgotten
-    journal.begin(RunKind::Move, 60);
-    journal.forget_undone(999);
-    assert_eq!(journal.runs.iter().map(|r| r.at).collect::<Vec<_>>(), vec![10, 60]);
+    let old = journal.begin(RunKind::Move, 10);
+    journal.record_in(old, [entry(1)]);
+    // a run begun in the same second as the next one
+    let run = journal.begin(RunKind::Move, 20);
+    journal.record_in(run, [entry(2), entry(3), entry(4)]);
+    let other = journal.begin(RunKind::Trash, 20);
+    // a partial undo of `run`: two of three put back
+    let undo = journal.begin(RunKind::Move, 30);
+    journal.record_in(undo, [entry(2), entry(3)]);
+    journal.forget_undone(undo, run);
+    let left: Vec<u64> = journal.runs.iter().map(|r| r.id).collect();
+    assert_eq!(left, vec![old, run, other]);
+    let kept = journal.runs.iter().find(|r| r.id == run).expect("the run");
+    assert_eq!(kept.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![id(4)]);
+    // an undo that moved nothing: the undone run stays whole
+    let undo = journal.begin(RunKind::Move, 40);
+    journal.forget_undone(undo, run);
+    assert!(journal.runs.iter().any(|r| r.id == run && r.entries.len() == 1));
+    // the rest put back: the run goes, the others are untouched
+    let undo = journal.begin(RunKind::Move, 50);
+    journal.record_in(undo, [entry(4)]);
+    journal.forget_undone(undo, run);
+    assert_eq!(journal.runs.iter().map(|r| r.id).collect::<Vec<_>>(), vec![old, other]);
+    // the undone run no longer there (pruned): only the undo's run goes
+    let undo = journal.begin(RunKind::Move, 60);
+    journal.forget_undone(undo, 999);
+    assert_eq!(journal.runs.iter().map(|r| r.id).collect::<Vec<_>>(), vec![old, other]);
+}
+
+/// Runs read from an older file get ids, in order, after the ones they have.
+#[test]
+fn runs_from_an_older_file_are_numbered() {
+    let mut journal = Journal::default();
+    for at in [1, 2, 3] {
+        journal.runs.push_back(Run {
+            id: 0,
+            at,
+            kind: RunKind::Move,
+            entries: Vec::new(),
+        });
+    }
+    journal.number_runs();
+    assert_eq!(journal.runs.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+    assert_eq!(journal.begin(RunKind::Move, 4), 4);
 }
 
 #[test]

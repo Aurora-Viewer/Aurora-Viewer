@@ -146,8 +146,13 @@ pub(super) struct State {
     /// snapshot, nothing taken on the frame.
     layout: Option<(u64, sorter::journal::Snapshot)>,
     cleaning: Option<Planning<CleanupPlan>>,
-    /// The run an Undo puts back (its start time in the journal).
-    undoing: Option<i64>,
+    /// The run an Undo puts back (its id in the journal).
+    undoing: Option<u64>,
+    /// This window, for the account's one run at a time.
+    window: Uuid,
+    /// The rules and hints the Share window's boxes were ticked for: when
+    /// they change while it is open, its boxes are unticked again.
+    shared_for: Option<(Vec<Rule>, Vec<sorter::StoreHint>)>,
 }
 
 /// A plan made on another thread from a copy of the inventory
@@ -207,7 +212,12 @@ impl<T: Send + 'static> Planning<T> {
 /// in one window and Undo in another see the same runs, and a save never
 /// writes one window's older copy over another's.
 #[derive(Clone, Default)]
-struct SharedJournal(std::sync::Arc<std::sync::Mutex<sorter::journal::Journal>>);
+struct SharedJournal(
+    std::sync::Arc<std::sync::Mutex<sorter::journal::Journal>>,
+    /// The window whose run or Trash run is going, and when it last said so:
+    /// one at a time per account, so two windows never mix their runs.
+    std::sync::Arc<std::sync::Mutex<Option<(Uuid, Instant)>>>,
+);
 
 impl SharedJournal {
     /// The account's journal, read from its file the first time.
@@ -217,25 +227,74 @@ impl SharedJournal {
         let mut journals = journals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         journals
             .entry(account)
-            .or_insert_with(|| Self(std::sync::Arc::new(std::sync::Mutex::new(read()))))
+            .or_insert_with(|| {
+                let mut journal = read();
+                journal.number_runs();
+                Self(std::sync::Arc::new(std::sync::Mutex::new(journal)), Default::default())
+            })
             .clone()
+    }
+
+    fn runner(&self) -> std::sync::MutexGuard<'_, Option<(Uuid, Instant)>> {
+        self.1.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Another window's run is going on this account.
+    fn busy_elsewhere(&self, window: Uuid) -> bool {
+        self.runner()
+            .is_some_and(|(other, seen)| other != window && seen.elapsed() < RUNNER_LIMIT)
+    }
+
+    /// This window's run is going (said every frame while it is).
+    fn claim(&self, window: Uuid) {
+        let mut runner = self.runner();
+        if runner.is_none_or(|(other, seen)| other == window || seen.elapsed() >= RUNNER_LIMIT) {
+            *runner = Some((window, Instant::now()));
+        }
+    }
+
+    fn release(&self, window: Uuid) {
+        let mut runner = self.runner();
+        if runner.is_some_and(|(other, _)| other == window) {
+            *runner = None;
+        }
+    }
+
+    fn holds(&self, window: Uuid) -> bool {
+        self.runner().is_some_and(|(other, _)| other == window)
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut sorter::journal::Journal) -> R) -> R {
         f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
-    fn record(&self, entries: impl IntoIterator<Item = sorter::journal::Entry>) {
-        self.with(|j| j.record(entries));
+    fn record_in(&self, run: Option<u64>, entries: impl IntoIterator<Item = sorter::journal::Entry>) {
+        if let Some(run) = run {
+            self.with(|j| j.record_in(run, entries));
+        }
     }
 
-    fn begin(&self, kind: sorter::journal::RunKind, at: i64) {
-        self.with(|j| j.begin(kind, at));
+    fn begin(&self, kind: sorter::journal::RunKind, at: i64) -> u64 {
+        self.with(|j| j.begin(kind, at))
     }
 
-    fn forget_undone(&self, undone: i64) {
-        self.with(|j| j.forget_undone(undone));
+    fn forget_undone(&self, undo: u64, undone: u64) {
+        self.with(|j| j.forget_undone(undo, undone));
     }
+}
+
+/// A window that stopped saying its run is going (closed, gone) for this
+/// long no longer holds the account's journal.
+const RUNNER_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wait (a short while at most) for Auto-sort's files queued so far to be
+/// written: at quit, after the last flush.
+pub(crate) fn wait_for_writes(limit: std::time::Duration) {
+    let (done, wait) = std::sync::mpsc::channel();
+    in_order(move || {
+        let _ = done.send(());
+    });
+    let _ = wait.recv_timeout(limit);
 }
 
 /// Auto-sort's files (journal, run to resume, snapshots) are written by one
@@ -310,7 +369,38 @@ struct TrashJob {
     next_at: Option<Instant>,
     /// The journal and the snapshot of its start are taken.
     begun: bool,
+    /// Entries of a finished delete request not seen in the Trash yet, and
+    /// until when they are waited for (the inventory may show the move a
+    /// little after the request is over).
+    unsure: Vec<(Uuid, Uuid)>,
+    unsure_until: Option<Instant>,
+    /// Its run in the journal.
+    run: Option<u64>,
 }
+
+impl TrashJob {
+    fn new(ids: Vec<(Uuid, Uuid)>) -> Self {
+        Self {
+            total: ids.len(),
+            queue: ids.into(),
+            sent: 0,
+            failed: 0,
+            skipped: 0,
+            in_flight: None,
+            next_at: None,
+            begun: false,
+            unsure: Vec::new(),
+            unsure_until: None,
+            run: None,
+        }
+    }
+}
+
+/// How long the moves of an unanswered or refused batch may still turn up
+/// at their destination and count as done.
+const UNSURE_LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+/// How long a Trash batch's entries may take to show in the Trash.
+const TRASH_SHOW_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The time between two batches of a job, after the server's reply: about
 /// 200 moves a second at most, so a 400,000-item sort neither floods the
@@ -356,7 +446,9 @@ struct Job {
     /// counted as failed (else they went back to the queue): the server may
     /// still have applied them, late or in part. Each one found where it
     /// was sent counts as done and goes in the journal, for Undo.
-    unsure: Vec<(Move, bool)>,
+    unsure: Vec<(Move, bool, Instant)>,
+    /// Its run in the journal.
+    run: Option<u64>,
 }
 
 struct InFlight {
@@ -394,6 +486,7 @@ impl Job {
             begun: false,
             stopping: false,
             unsure: Vec::new(),
+            run: None,
         }
     }
 
@@ -420,6 +513,8 @@ impl Job {
         }
         match error {
             None => {
+                // a batch that went through on a retry: no longer unsure
+                self.unsure.retain(|(m, _, _)| !batch.moves.iter().any(|b| b.id == m.id));
                 self.done += batch.moves.len();
                 self.confirmed.extend(batch.moves.iter().map(|m| sorter::journal::Entry {
                     id: m.id,
@@ -433,7 +528,7 @@ impl Job {
             }
             Some(error) if self.retries < RETRIES && !self.stopping => {
                 self.retries += 1;
-                self.unsure.extend(batch.moves.iter().cloned().map(|m| (m, false)));
+                self.mark_unsure(&batch.moves, false, now);
                 self.requeue(batch.moves);
                 self.next_at = Some(now + std::time::Duration::from_secs(1 << self.retries));
                 Some(aurora_i18n::tr!("inventory-sorter-retrying", error = error, attempt = self.retries))
@@ -441,7 +536,7 @@ impl Job {
             Some(error) => {
                 // never the whole job for one refused batch: it stays put
                 self.failed += batch.moves.len();
-                self.unsure.extend(batch.moves.into_iter().map(|m| (m, true)));
+                self.mark_unsure(&batch.moves, true, now);
                 self.retries = 0;
                 self.next_at = Some(now + PACE);
                 Some(error.to_owned())
@@ -457,8 +552,18 @@ impl Job {
             return;
         }
         let base = self.base.clone();
+        let flying: HashSet<Uuid> = self.in_flight.iter().flat_map(|b| b.moves.iter().map(|m| m.id)).collect();
         let mut arrived = Vec::new();
-        self.unsure.retain(|(m, failed)| {
+        self.unsure.retain(|(m, failed, since)| {
+            // the server answers late, not minutes later: past that, an
+            // entry found at its destination was moved there by hand
+            if since.elapsed() > UNSURE_LIMIT {
+                return false;
+            }
+            // on its way again: its own answer counts it
+            if flying.contains(&m.id) {
+                return true;
+            }
             let here = sorter::arrived(inv, &base, m);
             if here {
                 arrived.push((m.clone(), *failed));
@@ -479,6 +584,13 @@ impl Job {
                 name: m.name.clone(),
             });
         }
+    }
+
+    /// A failed batch's moves, unsure until found or forgotten: once each
+    /// (a later failure of the same move replaces the earlier one).
+    fn mark_unsure(&mut self, moves: &[Move], failed: bool, now: Instant) {
+        self.unsure.retain(|(m, _, _)| !moves.iter().any(|b| b.id == m.id));
+        self.unsure.extend(moves.iter().cloned().map(|m| (m, failed, now)));
     }
 
     /// The time left, from the pace so far.
@@ -529,6 +641,9 @@ impl State {
         self.unsaved = 0;
         let Some(dir) = self.account_dir() else { return };
         let journal = self.journal.with(|j| j.clone());
+        // only the window whose run is going (or just ended) writes or
+        // removes the run to resume: another one's save leaves it alone
+        let owns_run = self.job.is_some() || self.journal.holds(self.window);
         let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
             base: job.base.clone(),
             moves: job
@@ -543,6 +658,9 @@ impl State {
             use sorter::journal as j;
             if let Err(error) = j::save(&j::journal_path(&dir), &journal) {
                 log::warn!("auto-sort: the journal could not be saved: {error}");
+            }
+            if !owns_run {
+                return;
             }
             let path = j::unfinished_path(&dir);
             match unfinished.filter(|u| !u.moves.is_empty()) {
@@ -592,7 +710,7 @@ impl State {
             && !job.confirmed.is_empty()
         {
             let confirmed = std::mem::take(&mut job.confirmed);
-            self.journal.record(confirmed);
+            self.journal.record_in(job.run, confirmed);
             self.unsaved += 1;
         }
         if self.unsaved > 0 || self.job.is_some() {
@@ -766,6 +884,12 @@ impl InventoryUi {
         }
     }
 
+    /// At quit, after the last flush: Auto-sort's files written (a few
+    /// seconds at most).
+    pub(crate) fn wait_for_sorter_writes(&self) {
+        wait_for_writes(std::time::Duration::from_secs(3));
+    }
+
     pub(crate) fn claim_sorter_request(&mut self, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
         fn claim(state: &mut State, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
             let Some(batch) = state.job.as_mut().and_then(|job| job.in_flight.as_mut()) else {
@@ -843,6 +967,15 @@ pub(super) fn show(
     if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
         st.sorter.load_account(agent);
     }
+    // one run at a time per account, across inventory windows
+    if st.sorter.window.is_nil() {
+        st.sorter.window = Uuid::new_v4();
+    }
+    if st.sorter.job.is_some() || st.sorter.trash.is_some() {
+        st.sorter.journal.claim(st.sorter.window);
+    } else {
+        st.sorter.journal.release(st.sorter.window);
+    }
     if let Some(shown) = st.sorter.requested.take() {
         let source = default_source(inv, st, shown);
         st.sorter.set_source(Source::Folder(source));
@@ -886,7 +1019,7 @@ pub(super) fn show(
     if let Some(job) = state.job.as_mut() {
         if !job.confirmed.is_empty() {
             let confirmed = std::mem::take(&mut job.confirmed);
-            state.journal.record(confirmed);
+            state.journal.record_in(job.run, confirmed);
             state.unsaved += 1;
         }
         if job.done == 0 && job.in_flight.is_none() && !job.begun {
@@ -896,7 +1029,10 @@ pub(super) fn show(
     }
     if begin {
         // a run starts: its journal, and a snapshot of the layout first
-        state.journal.begin(sorter::journal::RunKind::Move, unix_now());
+        let run = state.journal.begin(sorter::journal::RunKind::Move, unix_now());
+        if let Some(job) = state.job.as_mut() {
+            job.run = Some(run);
+        }
         state.snapshot(inv);
     }
     if state.unsaved >= SAVE_EVERY {
@@ -967,16 +1103,17 @@ pub(super) fn show(
                     aurora_i18n::tr!("inventory-sorter-done", count = job.done)
                 };
                 let restoring = job.restoring;
+                let run = job.run;
                 state.job = None;
                 state.preview = None;
                 state.cleanup = None;
                 if restoring == Some(Restoring::Undo)
-                    && let Some(undone) = state.undoing.take()
+                    && let (Some(undone), Some(run)) = (state.undoing.take(), run)
                 {
                     // the undo's own run goes, and from the run it undid
                     // only the entries it put back: what it could not is
                     // still there to undo
-                    state.journal.forget_undone(undone);
+                    state.journal.forget_undone(run, undone);
                 }
                 if restoring == Some(Restoring::Resume) {
                     state.unfinished = None;
@@ -1237,7 +1374,7 @@ pub(super) fn show(
                 && state.cleaning.is_none()
             {
                 let moves = plan.moves(&state.skipped);
-                if !moves.is_empty() && state.job.is_none() {
+                if !moves.is_empty() && state.job.is_none() && !busy_elsewhere(state) {
                     state.status.clear();
                     state.job = Some(Job::new(moves.into(), sorter::base_name_in(inv, &prefs.sorter)));
                 }
@@ -1282,6 +1419,9 @@ pub(super) fn show(
         // its retries
         job.stopping = true;
         job.skipped += job.queue.len();
+        // what was waiting to be resent is skipped, not unsure any more
+        let flying: HashSet<Uuid> = job.in_flight.iter().flat_map(|b| b.moves.iter().map(|m| m.id)).collect();
+        job.unsure.retain(|(m, failed, _)| *failed || flying.contains(&m.id));
         job.queue.clear();
     }
     if stop && let Some(trash) = state.trash.as_mut() {
@@ -1397,8 +1537,19 @@ fn hint_line(hint: &sorter::StoreHint) -> String {
 fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &sorter::Preferences) {
     use crate::ui::widgets::{ActionKind, action_button, checkbox};
     let Some(share) = st.sorter.share.as_mut() else { return };
-    // rules and hints added while Share is open (the rules tab, Import, a
-    // right-click) start unticked; removed ones take their box with them
+    // the boxes stand by row: rules or hints added, removed or moved while
+    // Share is open would shift a tick onto another rule, so a change
+    // unticks everything (nothing private goes out by mistake)
+    let now = (prefs.rules.clone(), prefs.store_hints.clone());
+    match &st.sorter.shared_for {
+        Some(seen) if *seen == now => {}
+        Some(_) => {
+            share.rules = vec![false; prefs.rules.len()];
+            share.hints = vec![false; prefs.store_hints.len()];
+            st.sorter.shared_for = Some(now);
+        }
+        None => st.sorter.shared_for = Some(now),
+    }
     share.rules.resize(prefs.rules.len(), false);
     share.hints.resize(prefs.store_hints.len(), false);
     let mut open = true;
@@ -1540,6 +1691,9 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
             .show(ui, |ui| {
                 ui.add(
                     egui::TextEdit::multiline(&mut import.text)
+                        // while Replace asks, the text it replaces with
+                        // stays the one the user saw
+                        .interactive(!replace_open)
                         .char_limit(sorter::share::MAX_TEXT)
                         .hint_text(sorter::share::HEADER)
                         .desired_rows(4)
@@ -1690,10 +1844,11 @@ fn send_trash_batch(
     let now = Instant::now();
     if st.sorter.trash.as_ref().is_some_and(|trash| !trash.begun) {
         // a Trash run starts: its journal, and a snapshot of the layout first
-        st.sorter.journal.begin(sorter::journal::RunKind::Trash, unix_now());
+        let run = st.sorter.journal.begin(sorter::journal::RunKind::Trash, unix_now());
         st.sorter.snapshot(inv);
         if let Some(trash) = st.sorter.trash.as_mut() {
             trash.begun = true;
+            trash.run = Some(run);
         }
     }
     let Some(trash) = st.sorter.trash.as_mut() else { return };
@@ -1703,34 +1858,20 @@ fn send_trash_batch(
         *frames += 1;
         *taken |= deleting;
         if *taken && !deleting {
-            // what the delete really did: an entry now in the Trash went
-            // (and goes in the journal, for Undo); one still elsewhere did
-            // not, whatever the request answered
-            let bin = rules::system(inv, 14);
-            let (went, stayed): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = batch.iter().copied().partition(|(id, _)| {
-                crate::world::inventory::actions::parent(inv, *id)
-                    .is_some_and(|p| bin.is_some_and(|t| p == t || crate::world::inventory::actions::under(inv, p, t)))
-            });
-            if !stayed.is_empty() {
-                log::warn!(
-                    "auto-sort: a Trash batch left {} of {} entries where they were",
-                    stayed.len(),
-                    batch.len()
-                );
-            }
-            trash.sent += went.len();
-            trash.failed += stayed.len();
-            st.sorter.journal.record(went.iter().map(|(id, from)| sorter::journal::Entry {
-                id: *id,
-                folder: inv.folders.contains_key(id),
-                from: *from,
-                name: rules::name(inv, *id),
-            }));
-            st.sorter.unsaved += 1;
+            // what the delete really did is read from the inventory: each
+            // entry counts once it shows in the Trash (below), a little
+            // after the request if need be
+            trash.unsure.append(batch);
+            trash.unsure_until = Some(now + TRASH_SHOW_LIMIT);
             trash.in_flight = None;
             trash.next_at = Some(now + PACE);
         } else if !*taken && *frames > 2 {
-            for entry in batch.drain(..).rev() {
+            // never taken (another change went first): what is in the Trash
+            // already went another way and counts; the rest goes back
+            let bin = rules::system(inv, 14);
+            let (went, back): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = batch.drain(..).partition(|(id, _)| in_bin(inv, bin, *id));
+            trash.unsure.extend(went);
+            for entry in back.into_iter().rev() {
                 trash.queue.push_front(entry);
             }
             trash.in_flight = None;
@@ -1738,10 +1879,40 @@ fn send_trash_batch(
             return;
         }
     }
+    // entries seen in the Trash: sent and journaled (for Undo); still
+    // elsewhere once the wait is over: the delete left them, a failure
+    if !trash.unsure.is_empty() {
+        let bin = rules::system(inv, 14);
+        let (went, waiting): (Vec<(Uuid, Uuid)>, Vec<(Uuid, Uuid)>) = std::mem::take(&mut trash.unsure)
+            .into_iter()
+            .partition(|(id, _)| in_bin(inv, bin, *id));
+        let over = trash.unsure_until.is_none_or(|until| now >= until);
+        if over && !waiting.is_empty() {
+            log::warn!("auto-sort: a Trash batch left {} entries where they were", waiting.len());
+            trash.failed += waiting.len();
+        } else {
+            trash.unsure = waiting;
+        }
+        if !went.is_empty() {
+            trash.sent += went.len();
+            let run = trash.run;
+            st.sorter.journal.record_in(
+                run,
+                went.iter().map(|(id, from)| sorter::journal::Entry {
+                    id: *id,
+                    folder: inv.folders.contains_key(id),
+                    from: *from,
+                    name: rules::name(inv, *id),
+                }),
+            );
+            st.sorter.unsaved += 1;
+        }
+    }
+    let Some(trash) = st.sorter.trash.as_mut() else { return };
     if !free || trash.next_at.is_some_and(|at| now < at) {
         return;
     }
-    if trash.queue.is_empty() {
+    if trash.queue.is_empty() && trash.unsure.is_empty() {
         st.sorter.status = if trash.failed > 0 {
             aurora_i18n::tr!(
                 "inventory-sorter-done-failed",
@@ -1787,6 +1958,12 @@ fn send_trash_batch(
     }
 }
 
+/// `id` is in the Trash (at any depth).
+fn in_bin(inv: &Inventory, bin: Option<Uuid>, id: Uuid) -> bool {
+    use crate::world::inventory::actions;
+    actions::parent(inv, id).is_some_and(|p| bin.is_some_and(|t| p == t || actions::under(inv, p, t)))
+}
+
 /// What waits in Pre-Trash, and the step that sends it to the Trash.
 fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], waiting_in: Option<Uuid>, busy: bool) {
     crate::ui::widgets::surface(ui, p, |ui| {
@@ -1825,8 +2002,12 @@ const DOOMED_ROWS: usize = 300;
 /// The entries a Trash confirmation sends, each with the folder it is in,
 /// folders first, in a scrolled list.
 fn doomed_list(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, ids: &[(Uuid, Uuid)]) {
-    let mut rows: Vec<(bool, String, String)> = ids
-        .iter()
+    // folders first across the whole list (the riskiest entries), then the
+    // first rows of that order
+    let (folders, items): (Vec<&(Uuid, Uuid)>, Vec<&(Uuid, Uuid)>) = ids.iter().partition(|(id, _)| inv.folders.contains_key(id));
+    let mut rows: Vec<(bool, String, String)> = folders
+        .into_iter()
+        .chain(items)
         .take(DOOMED_ROWS)
         .map(|(id, from)| {
             let (folder, name) = match (inv.folders.get(id), inv.items.get(id)) {
@@ -2026,36 +2207,37 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
         }
         Confirm::Trash(ids) => {
             st.sorter.status.clear();
-            st.sorter.trash = Some(TrashJob {
-                total: ids.len(),
-                queue: ids.into(),
-                sent: 0,
-                failed: 0,
-                skipped: 0,
-                in_flight: None,
-                next_at: None,
-                begun: false,
-            });
+            if busy_elsewhere(&mut st.sorter) {
+                return;
+            }
+            st.sorter.trash = Some(TrashJob::new(ids));
         }
         Confirm::PreTrash(ids) => {
             // the same batches as Clean up's Trash: at most 200 per delete
             // request, each entry re-checked before it goes
             st.sorter.status.clear();
-            st.sorter.trash = Some(TrashJob {
-                total: ids.len(),
-                queue: ids.into(),
-                sent: 0,
-                failed: 0,
-                skipped: 0,
-                in_flight: None,
-                next_at: None,
-                begun: false,
-            });
+            if busy_elsewhere(&mut st.sorter) {
+                return;
+            }
+            st.sorter.trash = Some(TrashJob::new(ids));
         }
     }
 }
 
+/// Another inventory window is running Auto-sort on this account: nothing
+/// starts here meanwhile (its status says so).
+fn busy_elsewhere(state: &mut State) -> bool {
+    let busy = state.journal.busy_elsewhere(state.window);
+    if busy {
+        state.status = aurora_i18n::tr!("inventory-sorter-busy-elsewhere").into();
+    }
+    busy
+}
+
 fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
+    if busy_elsewhere(state) {
+        return;
+    }
     let Some((_, options, plan)) = state.preview.as_ref() else { return };
     // never a run from a preview of other options, or while a newer one is
     // being made: the user sorts what they saw
@@ -2684,7 +2866,7 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
                     .journal
                     .with(|j| j.last().map(|run| sorter::journal::undo_moves(inv, run, &protected, worn)))
                     .unwrap_or_default();
-                state.undoing = Some(at);
+                state.undoing = state.journal.with(|j| j.last().map(|run| run.id));
                 state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
                 state.tab = PREVIEW;
             }

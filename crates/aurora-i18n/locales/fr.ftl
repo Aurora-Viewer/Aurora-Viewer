@@ -14425,6 +14425,7 @@ inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : l
 inventory-sorter-rule-words = Quand le nom contient
 inventory-sorter-rule-folder = Chemin du dossier, par exemple Maison/Chaises
 inventory-sorter-menu-entries = Tri automatique
+inventory-sorter-busy-elsewhere = Le tri automatique tourne déjà dans une autre fenêtre d’inventaire : attendez qu’il y termine.
 inventory-sorter-trash-gone = (n’est plus dans l’inventaire)
 inventory-sorter-trash-more = …et { $count } de plus
 inventory-sorter-vocab-title = Vérification du vocabulaire
@@ -14475,7 +14476,7 @@ inventory-sorter-exclude-add = Ajouter un dossier…
 inventory-sorter-exclude-remove = Retirer de la liste
 inventory-sorter-whole = Tout l’inventaire
 inventory-sorter-whole-tip = Trier les éléments en vrac de Mon inventaire, d’Objets et de vos propres dossiers
-inventory-sorter-whole-intro = Trie les éléments en vrac de Mon inventaire, le contenu d’Objets et de vos propres dossiers ; les livraisons sont déplacées d’un bloc, jamais ouvertes. Jamais touchés : les autres dossiers par défaut (Habits, Parties du corps, Repères…), les tenues, la corbeille, la Place du marché, les objets reçus, les objets trouvés, #RLV, #Firestorm, #Aurora et Animation Overrides (les autres dossiers # sont les vôtres), les dossiers exclus et verrouillés.
+inventory-sorter-whole-intro = Trie les éléments en vrac de Mon inventaire, le contenu d’Objets et de vos propres dossiers, et les dossiers par défaut que vous avez autorisés dans les options ; les livraisons sont déplacées d’un bloc, jamais ouvertes. Jamais touchés : les autres dossiers par défaut (Habits, Parties du corps, Repères…), les objets trouvés sauf si leur interrupteur est activé, les tenues, la corbeille, la Place du marché, les objets reçus, #RLV, #Firestorm, #Aurora et Animation Overrides (les autres dossiers # sont les vôtres), les dossiers exclus et verrouillés.
 inventory-sorter-whole-title = Trier tout l’inventaire ?
 inventory-sorter-whole-text = { $count ->
     [one] { $count } élément de tout votre inventaire va être déplacé dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé.
@@ -14540,7 +14541,7 @@ inventory-cleanup-where = Où
 inventory-cleanup-whole = Tout l'inventaire
 inventory-cleanup-this-folder = Ce dossier
 inventory-cleanup-include-sorted = Inclure le dossier { $folder }
-inventory-cleanup-never = Jamais touchés : la corbeille, Marketplace Listings, la bibliothèque, les tenues, les favoris, les dossiers exclus et verrouillés, les objets portés et les liens.
+inventory-cleanup-never = Jamais touchés : les dossiers par défaut autres qu’Objets (sauf ceux autorisés dans les options), les objets trouvés sauf si leur interrupteur est activé, la corbeille, la Place du marché, la bibliothèque, les tenues, les favoris, les objets reçus, #RLV, #Firestorm, #Aurora, Animation Overrides, les dossiers exclus et verrouillés, les objets portés et les liens.
 inventory-cleanup-loading = { $count ->
     [one] Chargement d'un dossier…
    *[other] Chargement de { $count } dossiers…
@@ -14617,7 +14618,7 @@ inventory-import-add = Ajouter aux miens
 inventory-import-replace = Remplacer les miens
 inventory-import-done = Importé.
 inventory-import-replace-title = Remplacer vos règles et indices de boutique ?
-inventory-import-replace-text = Vos règles et indices de boutique absents de ce texte sont retirés, et ceux cochés sont ajoutés. Vos règles vers vos propres dossiers et vos dossiers exclus restent.
+inventory-import-replace-text = Vos règles et indices de boutique absents de ce texte sont retirés, et les règles, indices et options cochés sont ajoutés. Vos règles vers vos propres dossiers et vos dossiers exclus restent.
 inventory-sorter-kept-worn = Restent : portés, ou contenant un objet porté
 inventory-sorter-kept-link = Restent : liens (ils appartiennent à leur dossier)
 inventory-sorter-kept-locked = Restent : dans un dossier verrouillé

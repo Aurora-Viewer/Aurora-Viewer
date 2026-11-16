@@ -7135,6 +7135,10 @@ impl App {
         self.imports.flush_local_registry();
         // a rule changed just before closing is kept, as at a logout
         self.world.omnifilter.save_before_exit();
+        // an Auto-sort run's confirmed moves and its run to resume, written
+        // before the viewer goes
+        self.inventory_ui.flush_sorter();
+        self.inventory_ui.wait_for_sorter_writes();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();

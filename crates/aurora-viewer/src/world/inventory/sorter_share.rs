@@ -210,7 +210,8 @@ pub fn export(prefs: &Preferences, share: &Share) -> String {
     if share.folders {
         out.push(format!("option: folders = {}", on_off(prefs.folders)));
     }
-    if share.kinds {
+    // no type at all is no list a text can carry (an import refuses it)
+    if share.kinds && !prefs.kinds.is_empty() {
         out.push(format!(
             "option: kinds = {}",
             prefs.kinds.iter().map(|k| k.key()).collect::<Vec<_>>().join(", ")

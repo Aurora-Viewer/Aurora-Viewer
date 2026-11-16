@@ -361,35 +361,49 @@ fn a_trash_batch_counts_what_reached_the_trash() {
             .collect(),
     );
     let mut st = InventoryUi::default();
-    st.sorter.journal.begin(crate::world::inventory::sorter::journal::RunKind::Trash, 1);
-    st.sorter.trash = Some(TrashJob {
-        queue: VecDeque::new(),
-        skipped: 0,
-        total: 2,
-        sent: 0,
-        failed: 0,
-        // taken by the app, and its delete is over
-        in_flight: Some((
-            vec![
-                (Uuid::from_u128(9000), Uuid::from_u128(2)),
-                (Uuid::from_u128(9001), Uuid::from_u128(2)),
-            ],
-            3,
-            true,
-        )),
-        next_at: None,
-        begun: true,
-    });
+    let run = st.sorter.journal.begin(crate::world::inventory::sorter::journal::RunKind::Trash, 1);
+    let mut trash = TrashJob::new(Vec::new());
+    trash.total = 2;
+    trash.begun = true;
+    trash.run = Some(run);
+    // taken by the app, and its delete is over
+    trash.in_flight = Some((
+        vec![
+            (Uuid::from_u128(9000), Uuid::from_u128(2)),
+            (Uuid::from_u128(9001), Uuid::from_u128(2)),
+        ],
+        3,
+        true,
+    ));
+    st.sorter.trash = Some(trash);
     let prefs = InventoryPreferences::default();
     let mut actions = Vec::new();
     send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
+    // the one in the Trash counts at once; the other is waited for (the
+    // inventory may show the move a moment later), not failed yet
     let trash = st.sorter.trash.as_ref().expect("the job goes on");
-    assert_eq!((trash.sent, trash.failed), (1, 1));
+    assert_eq!((trash.sent, trash.failed, trash.unsure.len()), (1, 0, 1));
+    // it shows in the Trash a moment later: sent, and journaled
+    if let Some(it) = inv.items.get_mut(&Uuid::from_u128(9001)) {
+        it.parent = Uuid::from_u128(14);
+    }
+    send_trash_batch(&inv, &mut st, &prefs, &HashSet::new(), &mut actions, false);
+    let trash = st.sorter.trash.as_ref().expect("the job goes on");
+    assert_eq!((trash.sent, trash.failed), (2, 0));
     let ids = st
         .sorter
         .journal
         .with(|j| j.last().map(|run| run.entries.iter().map(|e| e.id).collect::<Vec<_>>()));
-    assert_eq!(ids, Some(vec![Uuid::from_u128(9000)]));
+    assert_eq!(ids, Some(vec![Uuid::from_u128(9000), Uuid::from_u128(9001)]));
+    // one the delete left where it was, once the wait is over: a failure
+    let mut st2 = InventoryUi::default();
+    let mut left = TrashJob::new(Vec::new());
+    left.begun = true;
+    left.unsure = vec![(Uuid::from_u128(9002), Uuid::from_u128(2))];
+    left.unsure_until = Some(Instant::now());
+    st2.sorter.trash = Some(left);
+    send_trash_batch(&inv, &mut st2, &prefs, &HashSet::new(), &mut actions, false);
+    assert!(st2.sorter.trash.as_ref().is_some_and(|t| t.failed == 1 && t.unsure.is_empty()));
 }
 
 /// Two inventory windows of one account share its journal: a run recorded
@@ -400,14 +414,68 @@ fn every_window_of_an_account_shares_its_journal() {
     let account = Uuid::new_v4();
     let first = SharedJournal::of(account, Journal::default);
     let second = SharedJournal::of(account, || panic!("read once per account"));
-    first.begin(RunKind::Move, 10);
-    first.record([Entry {
-        id: Uuid::from_u128(9000),
-        folder: false,
-        from: Uuid::from_u128(1),
-        name: "x".into(),
-    }]);
+    let run = first.begin(RunKind::Move, 10);
+    first.record_in(
+        Some(run),
+        [Entry {
+            id: Uuid::from_u128(9000),
+            folder: false,
+            from: Uuid::from_u128(1),
+            name: "x".into(),
+        }],
+    );
     assert_eq!(second.with(|j| j.last().map(|run| (run.at, run.entries.len()))), Some((10, 1)));
     let other = SharedJournal::of(Uuid::new_v4(), Journal::default);
     assert!(other.with(|j| j.last().is_none()));
+}
+
+/// A batch refused once and accepted on its retry counts once: its moves
+/// leave the unsure list with the answer, never counted again when they
+/// are seen at their destination.
+#[test]
+fn a_batch_accepted_on_its_retry_counts_once() {
+    let mut st = InventoryUi::default();
+    st.open_sorter(Uuid::from_u128(8000));
+    in_flight(&mut st, 0..3, Uuid::from_u128(500));
+    st.finish_sorter(Uuid::from_u128(500), Some("busy"));
+    let unsure = st.sorter.job.as_ref().map_or(0, |job| job.unsure.len());
+    assert_eq!(unsure, 3);
+    // resent, and accepted
+    if let Some(job) = st.sorter.job.as_mut() {
+        let batch: Vec<Move> = job.queue.drain(..).collect();
+        job.in_flight = Some(InFlight {
+            moves: batch,
+            request: Some(Uuid::from_u128(501)),
+            frames: 0,
+            sent_at: Instant::now(),
+        });
+    }
+    st.finish_sorter(Uuid::from_u128(501), None);
+    let job = st.sorter.job.as_ref().expect("job");
+    assert_eq!(job.done, 3);
+    assert!(job.unsure.is_empty(), "nothing left to count twice");
+    assert_eq!(job.confirmed.len(), 3);
+}
+
+/// One Auto-sort run at a time per account: another window's run blocks a
+/// start here, until it ends or that window stops saying it runs.
+#[test]
+fn one_run_at_a_time_per_account() {
+    let account = Uuid::new_v4();
+    let journal = SharedJournal::of(account, Default::default);
+    let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+    journal.claim(a);
+    assert!(journal.busy_elsewhere(b) && !journal.busy_elsewhere(a));
+    journal.claim(b);
+    assert!(journal.holds(a), "a running window keeps it");
+    journal.release(a);
+    assert!(!journal.busy_elsewhere(b));
+    let mut state = State {
+        journal: journal.clone(),
+        window: b,
+        ..Default::default()
+    };
+    journal.claim(a);
+    assert!(busy_elsewhere(&mut state));
+    assert!(!state.status.is_empty(), "the window says why");
 }

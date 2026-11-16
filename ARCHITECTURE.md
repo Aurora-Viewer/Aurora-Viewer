@@ -2569,7 +2569,7 @@ name (body tags, category keywords, unpackers, then the asset or wearable type)
 and the user's word rules into a `<base>/<body>/<category>`
 path (with a store and a Squish folder when asked), one of the user's folders
 or the root Pre-Trash folder, plans the moves of one folder's direct contents,
-chosen entries or the whole inventory's system folders with the drag rules
+chosen entries or the whole inventory (My Inventory's loose items, Objects and the user's own folders; every other place is hands-off, `hands_off` / `folder_open`) with the drag rules
 (`relocatable`, nothing worn, no link, never the Trash, Marketplace Listings or
 an excluded folder) and builds bounded mutations that create the missing folders and move
 the entries in one request. Its Clean up (`plan_cleanup`) lists what was acquired before a date, of the chosen kinds, at any depth (a delivery folder whole or not at all). `sorter_share.rs` writes and reads the settings as shareable text (never a folder id; creator hints carry the creator's public id). `sorter_vocab.rs` reads the vocabulary (bodies, category words, skin tones, unpackers, variants, store tag patterns) from `assets/auto-sort/vocabulary.json`, checks it, and sorts the golden corpus `assets/auto-sort/corpus.json` for its test and the `sorter-vocab` demo (docs/AUTO_SORT_VOCABULARY.md). `sorter_journal.rs` keeps the last runs' confirmed moves (Undo), layout snapshots and a stopped run's remaining moves, per account, gzip-compressed. `sorter_demo.rs` seeds its demo inventory.
