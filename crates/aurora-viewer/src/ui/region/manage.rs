@@ -35,12 +35,15 @@ pub(super) enum Section {
     Experiences,
     Covenant,
     Interventions,
+    /// Aurora-Sim based grids only: "Region settings".
+    OpenSettings,
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 8] = [
+    pub(super) const ALL: [Section; 9] = [
         Section::Access,
         Section::Rules,
+        Section::OpenSettings,
         Section::Terrain,
         Section::Scripts,
         Section::Environment,
@@ -59,6 +62,7 @@ impl Section {
             Section::Experiences => "flask-filled",
             Section::Covenant => "gavel",
             Section::Interventions => "bolt-filled",
+            Section::OpenSettings => super::opensim::ICON,
         }
     }
 
@@ -72,6 +76,7 @@ impl Section {
             Section::Experiences => aurora_i18n::tr!("ui-land-manage-experiences"),
             Section::Covenant => aurora_i18n::tr!("region-manage-covenant"),
             Section::Interventions => aurora_i18n::tr!("region-manage-interventions"),
+            Section::OpenSettings => super::opensim::label(),
         }
     }
 }
@@ -84,6 +89,7 @@ pub(super) struct ManageState {
     pub rules: Draft<RegionRules>,
     pub terrain: Draft<TerrainSettings>,
     pub debug: Draft<RegionDebug>,
+    pub open_settings: Draft<aurora_net::open_region::OpenRegionSettings>,
     /// The terrain texture the texture picker is choosing.
     pub picking: Option<usize>,
     /// AURORA_DEMO_REGION's section, changes and question, set up once the
@@ -113,6 +119,7 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
         Some(5) => Section::Environment,
         Some(6) => Section::Experiences,
         Some(7) => Section::Covenant,
+        Some(8) => Section::OpenSettings,
         _ => Section::Access,
     };
     if section != Section::Access || d.pending {
@@ -163,6 +170,15 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
         r.agent_limit = 50.0;
         r.object_bonus = 1.5;
         s.manage.rules.set(&rules, r);
+    }
+    if d.pending
+        && section == Section::OpenSettings
+        && let Some(server) = super::opensim::server(world, v)
+    {
+        let mut o = server;
+        o.draw_distance = 512.0;
+        o.allow_minimap = false;
+        s.manage.open_settings.set(&server, o);
     }
     if d.pending && section == Section::Terrain || heights {
         let mut t = terrain;
@@ -238,12 +254,17 @@ pub(super) fn show(
         }
     };
     let tail = |_: &mut egui::Ui| {};
+    let open_settings = super::opensim::available(world, v);
+    let sections: Vec<Section> = Section::ALL
+        .into_iter()
+        .filter(|sec| *sec != Section::OpenSettings || open_settings)
+        .collect();
     let mut state = std::mem::take(&mut s.manage.nav);
     sheet::sections_with(
         ui,
         p,
         "region_estate_manage",
-        &Section::ALL,
+        &sections,
         &mut state,
         compact,
         nav,
@@ -257,6 +278,7 @@ pub(super) fn show(
             Section::Experiences => super::estate_wide::experiences(ui, p, s, v, world),
             Section::Covenant => super::estate_wide::covenant(ui, p, s, v, world),
             Section::Interventions => super::interventions::section(ui, p, s, v, world),
+            Section::OpenSettings => super::opensim::section(ui, p, s, v, world),
         },
     );
     s.manage.nav = state;
@@ -271,14 +293,14 @@ fn title(ui: &mut egui::Ui, p: &Palette, sec: Section, right: impl FnOnce(&mut e
 }
 
 /// A switch at the right end of a row.
-fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool, can: bool) -> bool {
+pub(super) fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool, can: bool) -> bool {
     editable(ui, can, |ui| widgets::switch(ui, p, on).changed())
 }
 
 /// A number field of the mockup: right aligned, `decimals` after the
 /// point, a unit.
 #[allow(clippy::too_many_arguments)]
-fn number(
+pub(super) fn number(
     ui: &mut egui::Ui,
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
@@ -387,9 +409,25 @@ pub(super) fn access(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View,
     }
 }
 
-/// The Estate panel's "Apply": a Linden estate is confirmed first
-/// (LLPanelEstateInfo::sendUpdate, ChangeLindenEstate).
+/// The Estate panel's "Apply": a change that shuts people out is confirmed
+/// first (Aurora's own question: a misclick can send half a region home),
+/// then a Linden estate's (LLPanelEstateInfo::sendUpdate, ChangeLindenEstate).
 fn apply_access(s: &mut RegionUi, v: &View, world: &mut World) {
+    let Some(server) = server_access(world) else {
+        return;
+    };
+    let before = s.manage.access.base(&server);
+    let what = s.manage.access.editing().map_or(0, |a| a.restrictions(before));
+    if what != 0 {
+        let here = crate::world::radar::coarse_in(world, v.handle).count();
+        s.ask = Some(Ask::RestrictAccess { what, here });
+    } else {
+        access_confirmed(s, v, world);
+    }
+}
+
+/// The access change once its restrictions are confirmed.
+pub(super) fn access_confirmed(s: &mut RegionUi, v: &View, world: &mut World) {
     if world.estate.estate.as_ref().is_some_and(|e| e.id <= ESTATE_LAST_LINDEN) {
         s.ask = Some(Ask::LindenEstate);
     } else {
@@ -621,7 +659,7 @@ pub(super) fn scripts(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View
 }
 
 /// A row that says the simulator has not answered yet.
-fn loading(ui: &mut egui::Ui, p: &Palette) {
+pub(super) fn loading(ui: &mut egui::Ui, p: &Palette) {
     ui.label(RichText::new(aurora_i18n::tr!("common-loading")).size(12.0).color(p.muted));
 }
 
@@ -843,6 +881,7 @@ fn swatches(
                         s.texture.open(&title, *id);
                     }
                 }
+                s.texture.drop_target_slot(ui, rect, materials, can, i);
             });
         }
         ui.add_enabled_ui(can && can_cancel, |ui| {

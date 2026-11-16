@@ -33,6 +33,10 @@ pub struct MoveInput {
     pub up: bool,
     pub down: bool,
     pub run: bool,
+    /// Stop moving held (Space): the simulator brakes the avatar, on the
+    /// ground and in the air (stop_moving -> AGENT_CONTROL_STOP,
+    /// indra/newview/llviewerinput.cpp).
+    pub stop: bool,
     /// First moments of a key press: small "nudge" steps (LLAgent::moveAtNudge).
     pub nudge_fb: bool,
     pub nudge_lr: bool,
@@ -45,6 +49,19 @@ pub struct MoveInput {
 }
 
 impl MoveInput {
+    pub(crate) fn keyboard_yaw(&self) -> f32 {
+        (i32::from(self.turn_left) - i32::from(self.turn_right)) as f32 * TURN_RATE * yaw_rate(self.turn_held)
+    }
+
+    pub(crate) fn vr_lateral_keys(&mut self, mouse_look: bool) {
+        let left = self.turn_left || self.strafe_left;
+        let right = self.turn_right || self.strafe_right;
+        self.turn_left = left && !mouse_look;
+        self.turn_right = right && !mouse_look;
+        self.strafe_left = left && mouse_look;
+        self.strafe_right = right && mouse_look;
+    }
+
     /// LLAgent::moveAt/moveLeft/moveUp/moveYaw (indra/newview/llagent.cpp):
     /// movement returns the camera to the avatar, except latched crouching.
     pub fn resets_camera(&self, crouch_latched: bool) -> bool {
@@ -86,6 +103,10 @@ pub struct AgentState {
     has_server: bool,
     last_jump_input: Option<Instant>,
     corrections: Corrections,
+    /// Metres of the reports more than `CORRECTION_MIN` from the
+    /// extrapolated position, since the start (the viewer statistics'
+    /// AgentPositionSnaps).
+    position_snaps: f64,
     /// Aurora's movement prediction (own_motion.rs): on while
     /// `set_predicting` says so.
     pub prediction: Prediction,
@@ -147,6 +168,7 @@ impl Default for AgentState {
             has_server: false,
             last_jump_input: None,
             corrections: Corrections::default(),
+            position_snaps: 0.0,
             prediction: Prediction::default(),
             predicting: false,
             lead: Vec3::ZERO,
@@ -318,6 +340,11 @@ impl AgentState {
             self.glide = Vec3::ZERO;
         } else {
             let gap = pos.distance(self.predicted_pos);
+            // LLViewerObject::processUpdateMessage records every snap of
+            // our avatar over half a metre (AGENT_POSITION_SNAP)
+            if gap > CORRECTION_MIN {
+                self.position_snaps += f64::from(gap);
+            }
             if gap <= CORRECTION_MAX {
                 self.corrections.count += u32::from(gap > CORRECTION_MIN);
                 self.corrections.largest = self.corrections.largest.max(gap);
@@ -385,6 +412,12 @@ impl AgentState {
 
     pub fn predicted_position(&self) -> Vec3 {
         self.predicted_pos
+    }
+
+    /// Metres of the simulator's corrections over half a metre since the
+    /// start, for the viewer statistics.
+    pub fn position_snaps(&self) -> f64 {
+        self.position_snaps
     }
 
     /// Corrections since the previous call.
@@ -600,19 +633,23 @@ impl AgentState {
         } else {
             1.0
         };
-        let mut horiz = dir.normalize_or_zero() * speed * nudge;
+        // Stop moving: a stand-in for the simulator's brake, slow enough to
+        // see in the demo (not its measured deceleration)
+        let brake = if input.stop { 0.25 } else { 1.0 };
+        let mut horiz = dir.normalize_or_zero() * speed * nudge * brake;
         let floor = ground.map(|g| g + STAND);
         let mut pos = self.server_pos;
         let mut vz = self.server_vel.z;
         let grounded = floor.is_some_and(|f| pos.z <= f + 0.05);
         if self.flying {
-            vz = if input.up {
+            let climb = if input.up {
                 4.0
             } else if input.down {
                 -4.0
             } else {
                 0.0
             };
+            vz = climb * brake;
         } else if grounded {
             vz = if input.up { 5.0 } else { 0.0 };
         } else {
@@ -648,9 +685,8 @@ impl AgentState {
     pub fn update(&mut self, input: &MoveInput, mouselook: bool, dt: f32, camera_distance: f32) {
         self.yaw += input.joystick_yaw * dt.clamp(0.0, 0.2);
         self.pitch = (self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2)).clamp(-1.55, 1.55);
-        if !mouselook && input.turn_left != input.turn_right {
-            let step = TURN_RATE * yaw_rate(input.turn_held) * dt;
-            self.yaw += if input.turn_left { step } else { -step };
+        if !mouselook {
+            self.yaw += input.keyboard_yaw() * dt;
         }
         self.yaw = (self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         if !self.has_local_control() {
@@ -790,6 +826,11 @@ impl AgentState {
         if mouselook {
             f |= control::MOUSELOOK;
         }
+        // sent with the movement keys, not instead of them: the simulator
+        // brakes whatever they ask
+        if input.stop {
+            f |= control::STOP;
+        }
         f
     }
 
@@ -847,6 +888,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn vr_lateral_keys_switch_between_turn_and_strafe() {
+        let mut keys = MoveInput {
+            strafe_left: true,
+            turn_held: 1.0,
+            up: true,
+            ..Default::default()
+        };
+        keys.vr_lateral_keys(false);
+        assert!(keys.turn_left && !keys.strafe_left && keys.up);
+        assert_eq!(keys.keyboard_yaw(), TURN_RATE);
+        keys.vr_lateral_keys(true);
+        assert!(!keys.turn_left && keys.strafe_left && keys.up);
+        assert_eq!(keys.keyboard_yaw(), 0.0);
+    }
+
     use std::time::Duration;
 
     fn moving(velocity: Vec3, acceleration: Vec3) -> (AgentState, Instant) {
@@ -884,6 +942,26 @@ mod tests {
         assert_eq!(AgentState::quickjump_flags(walking, false), walking);
         assert_eq!(AgentState::quickjump_flags(walking, true), walking | control::FINISH_ANIM);
         assert_eq!(AgentState::quickjump_flags(0, true), control::FINISH_ANIM);
+    }
+
+    /// Stop moving adds STOP to whatever the other keys send, walking or
+    /// flying (stop_moving only sets AGENT_CONTROL_STOP).
+    #[test]
+    fn stop_moving_adds_the_brake_to_the_keys() {
+        let mut agent = AgentState::default();
+        let idle = MoveInput::default();
+        assert_eq!(agent.control_flags(&idle, false) & control::STOP, 0);
+        let braking = MoveInput {
+            stop: true,
+            forward: true,
+            ..Default::default()
+        };
+        let flags = agent.control_flags(&braking, false);
+        assert_ne!(flags & control::STOP, 0);
+        assert_ne!(flags & control::AT_POS, 0, "the keys still go out");
+        agent.flying = true;
+        let flags = agent.control_flags(&braking, false);
+        assert_eq!(flags & (control::STOP | control::FLY), control::STOP | control::FLY);
     }
 
     /// With automatic takeoff off the agent never flies from a held Up, and
@@ -1033,6 +1111,8 @@ mod tests {
         let c = agent.take_corrections();
         assert_eq!(c.count, 1);
         assert!((c.largest - 2.0).abs() < 1e-3, "{c:?}");
+        // the viewer statistics' snaps: that one only, in metres
+        assert!((agent.position_snaps() - 2.0).abs() < 1e-3, "{}", agent.position_snaps());
         // a move across the region is not one, and taking empties the count
         agent.on_server_update_at(Vec3::X * 100.0, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.3));
         assert_eq!(agent.take_corrections(), Corrections::default());

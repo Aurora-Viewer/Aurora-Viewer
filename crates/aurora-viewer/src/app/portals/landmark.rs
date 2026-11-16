@@ -28,7 +28,7 @@ pub(in crate::app) fn access(shift: bool) -> Access {
     if shift { Access::Everyone } else { Access::Friends }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum DropDestination {
     Landmark { item: uuid::Uuid, asset: uuid::Uuid },
     Location(glam::DVec3),
@@ -95,6 +95,25 @@ fn destination_at(world: &mut World, global: glam::DVec3) -> Result<Option<auror
     }
 }
 
+/// The destination a dropped landmark opens a portal to, or the notice of
+/// its refusal. A portal has no Legacy Viewer counterpart: one made from a
+/// landmark goes where the landmark does, so RLVa refuses it where it refuses
+/// a teleport by that landmark (@tplm, or @unsit while seated; LLAgent::
+/// teleportViaLandmark). Crossing a portal stays a teleport to a location
+/// (@tploc), whoever made it.
+fn landmark_drop(world: &World, item: uuid::Uuid) -> Result<DropDestination, &'static str> {
+    let cargo = cargo(&world.inventory, item)
+        .filter(|item| !item.asset_id.is_nil())
+        .ok_or("portal-landmark-unavailable")?;
+    if !world.rlva_allows_command(&NetCommand::TeleportLandmark(cargo.asset_id), uuid::Uuid::nil()) {
+        return Err("rlva-blocked");
+    }
+    Ok(DropDestination::Landmark {
+        item: cargo.id,
+        asset: cargo.asset_id,
+    })
+}
+
 impl Pending {
     fn valid(&self, world: &World, now: Instant) -> bool {
         !world.teleporting
@@ -111,15 +130,10 @@ impl Pending {
 
 impl App {
     pub(in crate::app) fn queue_landmark_portal(&mut self, item: uuid::Uuid, point: Vec3, shift: bool) {
-        let Some(cargo) = cargo(&self.world.inventory, item).filter(|item| !item.asset_id.is_nil()) else {
-            self.portal_drop_notice("portal-landmark-unavailable");
-            return;
-        };
-        let destination = DropDestination::Landmark {
-            item: cargo.id,
-            asset: cargo.asset_id,
-        };
-        self.queue_place_portal(destination, point, shift);
+        match landmark_drop(&self.world, item) {
+            Ok(destination) => self.queue_place_portal(destination, point, shift),
+            Err(reason) => self.portal_drop_notice(reason),
+        }
     }
 
     pub(in crate::app) fn queue_location_portal(&mut self, target: ui::places::drag::Target, point: Vec3, shift: bool) {
@@ -156,8 +170,14 @@ impl App {
             "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
             "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
             "portal-place-unavailable" => aurora_i18n::tr!("portal-place-unavailable"),
+            "rlva-blocked" => aurora_i18n::tr!("rlva-blocked"),
             _ => aurora_i18n::tr!("rez-no-surface"),
         };
+        self.portal_notice(message);
+    }
+
+    /// A portal placed by a drop was refused: said in the window and in chat.
+    pub(in crate::app) fn portal_notice(&mut self, message: &str) {
         self.portal_ui.notice = Some(message.into());
         self.world.system_notice(message, crate::world::notice_topics::Topic::Items);
     }
@@ -169,6 +189,13 @@ impl App {
         }
         if !pending.valid(&self.world, Instant::now()) {
             self.portal_drop_notice(pending.destination.error_key());
+            return;
+        }
+        // a lock that came while the landmark was being resolved
+        if let DropDestination::Landmark { item, .. } = pending.destination
+            && let Err(reason) = landmark_drop(&self.world, item)
+        {
+            self.portal_drop_notice(reason);
             return;
         }
         match pending.destination.resolve(&mut self.world) {
@@ -260,6 +287,53 @@ mod tests {
         }
         let drag = frame(true, Some(false)).expect("release reaches the world");
         assert!(drag.released && drag.shift);
+    }
+
+    /// #2729: a landmark opens no portal where RLVa refuses the teleport by
+    /// that landmark; @tploc alone leaves the drop, since it is the crossing
+    /// that it refuses.
+    #[test]
+    fn a_landmark_drop_is_refused_where_rlva_refuses_the_landmark_teleport() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = uuid::Uuid::from_u128(1);
+        world.main_region = Some(256);
+        let (id, asset) = (uuid::Uuid::from_u128(2), uuid::Uuid::from_u128(3));
+        world.inventory.add_items(vec![InvItem {
+            id,
+            asset_id: asset,
+            asset_type: 3,
+            ..Default::default()
+        }]);
+        let say = |world: &mut World, text: &str| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Collar".to_owned(),
+                source_id: uuid::Uuid::from_u128(9),
+                owner_id: uuid::Uuid::nil(),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: text.to_owned(),
+            }));
+        };
+        let allowed = Ok(DropDestination::Landmark { item: id, asset });
+        assert_eq!(landmark_drop(&world, id), allowed, "RLVa off");
+        world.rlva_configure(true);
+        assert_eq!(landmark_drop(&world, id), allowed);
+        say(&mut world, "@tploc=n");
+        assert_eq!(landmark_drop(&world, id), allowed);
+        say(&mut world, "@tplm=n");
+        assert_eq!(landmark_drop(&world, id), Err("rlva-blocked"));
+        say(&mut world, "@tplm=y");
+        say(&mut world, "@unsit=n");
+        assert_eq!(landmark_drop(&world, id), allowed, "standing");
+        world.agent.ground_sit = true;
+        assert_eq!(landmark_drop(&world, id), Err("rlva-blocked"), "seated under @unsit");
+        assert_eq!(
+            landmark_drop(&world, uuid::Uuid::from_u128(7)),
+            Err("portal-landmark-unavailable"),
+            "no such landmark"
+        );
     }
 
     #[test]

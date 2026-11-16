@@ -358,6 +358,13 @@ well. The outline version is used in three cases:
   (`map`), hands (`hand-grab`, `hand-stop`), sitting (`armchair`), walking /
   running (`walk`, `run`)…
 
+**One exception: the Luau mark.** SLua scripts show the mark of the
+Legacy Viewer's `Inv_Script_Luau` (a tilted square with a square notch),
+hand-drawn in the Tabler filled style as `luau.svg` (and `luau-link.svg` for
+shortcuts), because Tabler has none. It is tinted like the other script
+icons (`teal`): only the shape tells an SLua script from an LSL one. It is
+the one hand-drawn icon allowed next to Tabler (decision on PR #2802).
+
 Do not force a filled icon that does not express the function. Two icons
 that go as a pair (link / unlink, plus / minus) stay in the same style.
 A function keeps the same icon everywhere (script = `code`, object = `box`,

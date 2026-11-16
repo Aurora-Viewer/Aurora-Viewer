@@ -8,8 +8,8 @@
 //! keeps the same layout, so the Legacy Viewer still lists every outfit.
 
 use super::appearance::{FT_MY_OUTFITS, FT_OUTFIT, base, system_folder};
-use super::inventory::Inventory;
 use super::inventory::actions;
+use super::inventory::{Folder, Inventory};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{Mutation, Operation};
 use uuid::Uuid;
@@ -125,9 +125,9 @@ pub enum Order {
 
 /// The outfit tree of My Outfits in display order (`Order`), each kind by
 /// name (`reverse` for Z to A). A filter (`needle`, lower case) keeps the
-/// outfits whose name or one of whose groups' names holds it, and the
-/// groups that keep one; without a filter every group shows, empty ones
-/// too, so that a new one can be used.
+/// outfits whose name, one of whose groups' names or one of whose items'
+/// names holds it, and the groups that keep one; without a filter every
+/// group shows, empty ones too, so that a new one can be used.
 pub fn tree(inv: &Inventory, needle: &str, reverse: bool, order: Order) -> Vec<Entry> {
     let mut entries = Vec::new();
     if let Some(my) = my_outfits(inv) {
@@ -168,7 +168,7 @@ impl Walk<'_> {
     fn outfits(&self, outfits: &[(String, Uuid)], depth: usize, matched: bool, out: &mut Vec<Entry>) -> usize {
         let mut count = 0;
         for (name, outfit) in outfits {
-            if matched || name.contains(self.needle) {
+            if matched || name.contains(self.needle) || self.contents(*outfit) {
                 out.push(Entry {
                     id: *outfit,
                     depth,
@@ -179,6 +179,35 @@ impl Walk<'_> {
             }
         }
         count
+    }
+
+    /// Whether an item of the outfit `id` has `needle` in its name, so that
+    /// the outfit is kept for what the Legacy Viewer shows inside it. Its
+    /// subfolders are walked, folder links and items that do not go on the
+    /// avatar left out, as LLWearableItemsList::updateList collects the
+    /// outfit's items with collectDescendentsIf and LLFindOutfitItems
+    /// (indra/newview/llwearableitemslist.cpp); the tab stays when the
+    /// outfit's title or one of those items matches
+    /// (LLOutfitsList::applyFilterToTab, lloutfitslist.cpp).
+    fn contents(&self, id: Uuid) -> bool {
+        contents_folders(self.inv, id).any(|folder| {
+            folder.items.iter().filter_map(|id| self.inv.items.get(id)).any(|item| {
+                if item.parent != folder.info.id {
+                    return false;
+                }
+                // LLViewerInventoryItem::getType/getName and Appearance's rows use the link target.
+                let original = if item.asset_type == 24 {
+                    let Some(target) = self.inv.items.get(&item.asset_id) else {
+                        // An unresolved wearable link's row shows its own label in grey.
+                        return matches!(item.inv_type, 6 | 17 | 18 | 20) && item.name.to_lowercase().contains(self.needle);
+                    };
+                    target
+                } else {
+                    item
+                };
+                matches!(original.asset_type, 5 | 6 | 13 | 21) && original.name.to_lowercase().contains(self.needle)
+            })
+        })
     }
 
     fn groups(&self, groups: &[(String, Uuid)], depth: usize, matched: bool, out: &mut Vec<Entry>) -> usize {
@@ -204,6 +233,28 @@ impl Walk<'_> {
         }
         count
     }
+}
+
+/// The real folders searched inside an outfit, including the outfit itself.
+pub fn contents_folders(inv: &Inventory, outfit: Uuid) -> impl Iterator<Item = &Folder> {
+    let mut pending = vec![outfit];
+    let mut seen = std::collections::HashSet::new();
+    std::iter::from_fn(move || {
+        loop {
+            let id = pending.pop()?;
+            let Some(folder) = inv.folders.get(&id).filter(|f| !f.library && seen.insert(id)) else {
+                continue;
+            };
+            pending.extend(
+                folder
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| inv.folders.get(child).is_some_and(|f| f.info.parent == id)),
+            );
+            return Some(folder);
+        }
+    })
 }
 
 /// Every group and outfit of My Outfits, for Appearance to keep loaded:
@@ -586,6 +637,72 @@ mod tests {
         let club = rows(&tree(&inv, "club", false, Order::List));
         assert_eq!(club, vec![(740, 0, true, 2), (745, 1, false, 0), (744, 1, false, 0)]);
         assert!(tree(&inv, "nothing", false, Order::List).is_empty());
+    }
+
+    #[test]
+    fn a_filter_also_keeps_the_outfits_that_contain_the_item() {
+        let inv = demo();
+        // "Earrings" is in "Neurolab" and "Leather Jacket" only, whatever
+        // their names: the Legacy Viewer keeps a tab whose items match
+        // (LLOutfitsList::applyFilterToTab with list->hasMatchedItems).
+        let earrings = inv.items[&id(718)].name.to_lowercase();
+        for order in [Order::List, Order::Gallery] {
+            let rows = rows(&tree(&inv, &earrings, false, order));
+            let mut found: Vec<_> = rows.iter().map(|r| (r.0, r.2)).collect();
+            found.sort();
+            assert_eq!(found, vec![(704, false), (705, false)]);
+        }
+    }
+
+    #[test]
+    fn a_filter_walks_the_subfolders_of_an_outfit() {
+        let mut inv = demo();
+        let outfit = id(702);
+        let inner = id(748);
+        let mut folder = inv.folders[&id(743)].clone();
+        folder.info.id = inner;
+        folder.info.parent = outfit;
+        folder.children.clear();
+        folder.items.clear();
+        inv.folders.insert(inner, folder);
+        let mut item = inv.items[&id(719)].clone();
+        item.id = id(750);
+        item.parent = inner;
+        item.name = "Zebra socks".into();
+        inv.items.insert(item.id, item.clone());
+        inv.folders.get_mut(&inner).expect("inner").items.push(item.id);
+        inv.folders.get_mut(&outfit).expect("outfit").children.push(inner);
+        assert_eq!(rows(&tree(&inv, "zebra", false, Order::List)), vec![(702, 0, false, 0)]);
+        inv.folders.get_mut(&inner).expect("inner").library = true;
+        assert!(
+            tree(&inv, "zebra", false, Order::List).is_empty(),
+            "the Library is outside the outfit"
+        );
+    }
+
+    #[test]
+    fn a_filter_matches_a_missing_wearable_links_grey_label_but_skips_folder_links() {
+        let mut inv = demo();
+        let outfit = id(704);
+        let mut link = inv.items[&inv.folders[&outfit].items[0]].clone();
+        link.id = id(9004);
+        link.parent = outfit;
+        link.asset_id = id(9005);
+        link.asset_type = 24;
+        link.inv_type = 18;
+        link.name = "Unresolved garment".into();
+        inv.missing_items.insert(link.asset_id);
+        let mut folder_link = link.clone();
+        folder_link.id = id(9006);
+        folder_link.asset_type = 25;
+        folder_link.asset_id = id(702);
+        folder_link.name = "Referenced folder".into();
+        inv.add_items(vec![link, folder_link]);
+        assert_eq!(
+            rows(&tree(&inv, "unresolved garment", false, Order::List)),
+            vec![(704, 0, false, 0)]
+        );
+        assert!(tree(&inv, "referenced folder", false, Order::List).is_empty());
     }
 
     #[test]

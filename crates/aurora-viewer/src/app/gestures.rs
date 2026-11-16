@@ -261,9 +261,9 @@ impl App {
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
-                    self.scene.anims.get(asset);
+                    self.scene.anims.preload_gesture(asset, &self.net.fetcher);
                 }
-                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.want(*asset),
+                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.preload_gesture(*asset, &self.net.fetcher),
                 _ => {}
             }
         }
@@ -549,6 +549,10 @@ impl App {
                 chat_type: ChatType::Normal,
             });
         }
+        if self.demo && matches!(self.frame_count, 650 | 1010) && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            log::info!("demo gesture one-shot: play at frame {}", self.frame_count);
+            self.gesture_play(Uuid::from_u128(DEMO_ONCE), None);
+        }
         self.tick_gestures();
     }
 
@@ -640,7 +644,7 @@ impl App {
         if editor.saving.is_some() || rules::library(&self.world.inventory, item) {
             return;
         }
-        if it.owner_mask & rules::MODIFY == 0
+        if rules::held(&self.world.inventory, it) & rules::MODIFY == 0
             && (editor.saved.as_ref().is_none_or(|g| g.steps != definition.steps) || it.desc != description)
         {
             editor.message = aurora_i18n::tr!("gesture-modify-denied").into();
@@ -689,6 +693,7 @@ impl App {
                 request,
                 item,
                 asset_type: 21,
+                lua: false,
                 data,
             });
         }
@@ -719,6 +724,7 @@ impl App {
                     request,
                     item,
                     asset_type: 21,
+                    lua: false,
                     data,
                 });
             }
@@ -789,6 +795,14 @@ impl App {
                 self.gesture_loaded(*item, *asset, definition);
                 true
             }
+            NetCommand::AgentAnimation { anim, start: false } if *anim == DEMO_ONCE_ANIM => {
+                // Offline simulator echo of requestStopMotion, retaining every
+                // unrelated signal. The real grid supplies AvatarAnimation.
+                if let Some(motions) = self.world.animations.get_mut(&self.world.agent_id) {
+                    motions.retain(|motion| motion.id != *anim);
+                }
+                true
+            }
             NetCommand::SetGestureActive { .. } | NetCommand::GestureSound { .. } => true,
             _ => false,
         }
@@ -796,6 +810,14 @@ impl App {
 
     pub(super) fn gesture_demo_input(&mut self, raw: &mut egui::RawInput) {
         let mode = std::env::var("AURORA_DEMO_GESTURES").unwrap_or_default();
+        if mode == "chat-keys" {
+            raw.focused = true;
+            if self.frame_count == 540 {
+                self.chat_ui.input = aurora_i18n::tr!("gesture-demo-replacement").into();
+                self.chat_ui.focus_request = true;
+            }
+            return;
+        }
         if matches!(mode.as_str(), "communicate" | "communicate-open") {
             raw.focused = true;
             let mouse = match self.frame_count {
@@ -891,6 +913,12 @@ impl App {
         }
         self.gesture_request(item, false, false, Some(true), false);
         let replay = std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay");
+        if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            let mut animation = crate::demo::loop_animation();
+            animation.looping = false;
+            let bound = crate::scene::anim::BoundAnim::bind(animation, &self.scene.avatar_lib.rig);
+            self.scene.anims.insert(DEMO_ONCE_ANIM, std::sync::Arc::new(bound));
+        }
         let (sound, clip) = crate::demo::chime();
         self.scene.sounds.insert(sound, clip);
         if let Some(mut sound_item) = self.world.inventory.items.get(&Uuid::from_u128(8105)).cloned() {
@@ -898,6 +926,27 @@ impl App {
             self.world.inventory.add_items(vec![sound_item]);
         }
         if let Some(template) = self.world.inventory.items.get(&item).cloned() {
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "chat-keys") {
+                for mask in [0, 1, 4, 5] {
+                    let shortcut = crate::gestures::keys::shortcut(0xa6, mask);
+                    let name = format!("{} ({shortcut})", template.name);
+                    self.seed_demo_gesture(
+                        &template,
+                        951200 + u128::from(mask),
+                        &name,
+                        Gesture {
+                            key: 0xa6,
+                            mask,
+                            steps: vec![Step::Chat {
+                                text: format!("{shortcut}: {}", aurora_i18n::tr!("gesture-demo-chat")),
+                                flags: 0,
+                            }],
+                            ..Default::default()
+                        },
+                        true,
+                    );
+                }
+            }
             for (id, name, trigger, key, steps, active) in [
                 (
                     951001,
@@ -951,6 +1000,34 @@ impl App {
                 };
                 self.seed_demo_gesture(&template, id, name, definition, active);
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+                self.seed_demo_gesture(
+                    &template,
+                    DEMO_ONCE,
+                    aurora_i18n::tr!("gesture-demo-animation-name"),
+                    Gesture {
+                        trigger: "/once".into(),
+                        key: 0xa6,
+                        steps: vec![
+                            Step::Animation {
+                                name: aurora_i18n::tr!("gesture-demo-animation-name").into(),
+                                asset: DEMO_ONCE_ANIM,
+                                flags: 0,
+                            },
+                            Step::Wait {
+                                seconds: 0.0,
+                                flags: aurora_assets::gesture::WAIT_ANIMATIONS,
+                            },
+                            Step::Chat {
+                                text: aurora_i18n::tr!("gesture-demo-finished").into(),
+                                flags: 0,
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    true,
+                );
+            }
             if replay {
                 for (id, name, definition) in demo_replay_gestures(sound) {
                     self.seed_demo_gesture(&template, id, name, definition, true);
@@ -987,7 +1064,8 @@ impl App {
             }
         }
         // the list of the chat bar is shown alone
-        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list");
+        self.panels.gestures =
+            !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list" || v == "chat-keys");
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }
@@ -1068,6 +1146,8 @@ fn demo_channel_replace_gesture() -> Gesture {
     }
 }
 
+const DEMO_ONCE: u128 = 951009;
+const DEMO_ONCE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_2931);
 const DEMO_CLAP_KEY: u8 = 0xa7;
 const DEMO_CTRL_B: u128 = 951005;
 

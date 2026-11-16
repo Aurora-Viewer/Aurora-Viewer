@@ -32,6 +32,7 @@ use crate::ui::place_details::Ctx;
 use crate::ui::texture_picker::TexturePicker;
 use crate::ui::widgets::{self, ActionKind, DialogButton, Floater};
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_llsd::Llsd;
 use aurora_net::groups::{GroupInfo, name};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
@@ -451,7 +452,7 @@ impl GroupCreateUi {
                 c.want_names.insert(me);
                 ui.label(small(aurora_i18n::tr!("ui-group-profile-founded-by").to_owned() + " "));
                 ui.label(
-                    egui::RichText::new(c.world.social.display_name_of(&me))
+                    egui::RichText::new(c.world.social.display_name_in(NameScope::Roster, &me))
                         .size(12.0)
                         .color(p.violet_light),
                 );
@@ -488,6 +489,7 @@ impl GroupCreateUi {
         if pick.clicked() && !self.sending {
             self.pick_insignia();
         }
+        self.texture.drop_target(ui, insignia_rect, false, !self.sending);
 
         // the badges the group will have
         let badges_top = id_top + 56.0 + 4.0;
@@ -524,7 +526,14 @@ impl GroupCreateUi {
                         charter_limit: CHARTER_BYTES,
                         insignia_card: false,
                     };
-                    change = administration::identity_cards(ui, c, &mut draft.info, Rating::Choice(&mut draft.rating), fields);
+                    change = administration::identity_cards(
+                        ui,
+                        c,
+                        &mut draft.info,
+                        Rating::Choice(&mut draft.rating),
+                        fields,
+                        &mut self.texture,
+                    );
                     clip_bytes(&mut draft.info.charter, CHARTER_BYTES);
                 };
                 if wide {
@@ -654,6 +663,7 @@ impl GroupCreateUi {
                     if pic.clicked() && enabled {
                         self.pick_insignia();
                     }
+                    self.texture.drop_target(ui, pic.rect, false, enabled);
                     ui.add_enabled_ui(enabled, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.draft.info.charter)

@@ -79,6 +79,19 @@ impl HistoryUi {
         }
     }
 
+    /// An import merged these transcripts: a page's place in the file is no
+    /// longer the same, so the one shown is read again from the start.
+    pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        let path = self.file.as_ref().map(|f| f.path.clone());
+        if self.open
+            && let Some(path) = path
+            && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| changed.contains(stem))
+        {
+            let title = std::mem::take(&mut self.title);
+            self.show_file(title, Some(path));
+        }
+    }
+
     fn go_to(&mut self, page: usize) {
         self.page = page;
         if self.loaded != Some(page)
@@ -413,6 +426,7 @@ impl HistoryUi {
             menu: Some(menu),
             bubbles: None,
             previews: None,
+            moderators: None,
         };
         let wash = find::wash(p);
         let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
@@ -434,6 +448,7 @@ impl HistoryUi {
                     find: &needle,
                     layout: super::view::Layout::Classic,
                     first_unread: None,
+                    blocked: Default::default(),
                 },
                 width,
             );

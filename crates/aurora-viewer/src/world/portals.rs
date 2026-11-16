@@ -1,6 +1,7 @@
 //! Region-local, voluntary portal crossings. Invitations are immutable for
 //! their lifetime: replaying one never moves it or resets its proximity gate.
 use super::World;
+use super::land::BuildRight;
 use aurora_net::{
     NetCommand,
     bridge::{
@@ -10,8 +11,9 @@ use aurora_net::{
     },
 };
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -19,8 +21,34 @@ use uuid::Uuid;
 pub const WIDTH: f32 = aurora_render::PORTAL_HALF_WIDTH;
 pub const HEIGHT: f32 = aurora_render::PORTAL_HALF_HEIGHT;
 const LIMIT: usize = 64;
+/// Entries one announcing avatar can hold: its own portal, plus a few returns
+/// it shares after travelling. One relay cannot fill the table.
+const PER_RELAY: usize = 4;
+/// Entries naming one creator, whoever announces them.
+const PER_CREATOR: usize = 4;
 const CLEARANCE: f32 = 1.0;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Why our portal was not opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Outside the region, expired, too long to share, or too many portals.
+    Invalid,
+    /// We may not build where it would stand.
+    NoBuild,
+    /// The parcel there is not known yet; it is asked for.
+    LandUnknown,
+}
+
+impl Refusal {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Invalid => aurora_i18n::tr!("portal-invalid"),
+            Self::NoBuild => aurora_i18n::tr!("portal-no-build"),
+            Self::LandUnknown => aurora_i18n::tr!("portal-land-checking"),
+        }
+    }
+}
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
     center.is_finite() && (WIDTH..=size[0] as f32 - WIDTH).contains(&center.x) && (WIDTH..=size[1] as f32 - WIDTH).contains(&center.y)
@@ -28,6 +56,52 @@ pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
 
 pub fn unix_time() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Preferences › Aurora › Behavior: whose portals are shown. Our own portals
+/// and the returns of our own journeys are always shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Sources {
+    Nobody,
+    #[default]
+    Friends,
+    /// Friends, and residents the grid lists in one of our groups.
+    FriendsAndGroups,
+    Everyone,
+}
+
+fn friend(world: &World, id: Uuid) -> bool {
+    world.social.friends.iter().any(|friend| friend.id == id)
+}
+
+/// A server-backed shared group: a loaded member list of one of our groups,
+/// or the groups of the resident's profile. Never a claim from a portal.
+fn shares_group(world: &World, id: Uuid) -> bool {
+    world.groups.groups.iter().any(|group| {
+        world.group_data.get(&group.id).is_some_and(|data| data.members.contains_key(&id))
+            || world
+                .profiles
+                .get(&id)
+                .is_some_and(|profile| profile.groups.iter().any(|g| g.id == group.id))
+    })
+}
+
+/// Whether the setting shows portals this resident announces or created.
+pub fn source_shown(world: &World, id: Uuid) -> bool {
+    !world.mutes.is_muted_id(&id)
+        && (id == world.agent_id
+            || match world.portal_sources {
+                Sources::Nobody => false,
+                Sources::Friends => friend(world, id),
+                Sources::FriendsAndGroups => friend(world, id) || shares_group(world, id),
+                Sources::Everyone => true,
+            })
+}
+
+/// Whether an announcement is kept at all. With groups, a resident's portal
+/// is kept hidden until their profile says whether they share a group.
+fn source_kept(world: &World, id: Uuid) -> bool {
+    source_shown(world, id) || (world.portal_sources == Sources::FriendsAndGroups && !world.mutes.is_muted_id(&id))
 }
 
 pub fn allowed(world: &World, owner: Uuid, access: Access) -> bool {
@@ -50,6 +124,9 @@ pub struct Entry {
     shared: bool,
     created: bool,
     return_pass: bool,
+    /// A return kept ours only because its land was not known yet: it is
+    /// announced once that land is known and open to us.
+    awaiting_land: bool,
 }
 
 impl Entry {
@@ -63,10 +140,40 @@ impl Entry {
         }
     }
 
+    /// Ours: created here, or a return of our own journey.
+    fn own(&self) -> bool {
+        self.created || self.return_pass
+    }
+
+    /// Shown by the setting: the announcing relays are checked as well as
+    /// the creator they name, a creator field being only a claim.
+    pub fn shown(&self, world: &World) -> bool {
+        if self.own() {
+            return !world.mutes.is_muted_id(&self.owner);
+        }
+        source_shown(world, self.owner) && self.relays.iter().any(|relay| source_shown(world, *relay))
+    }
+
+    fn kept(&self, world: &World) -> bool {
+        self.own() || (source_kept(world, self.owner) && self.relays.iter().any(|relay| source_kept(world, *relay)))
+    }
+
+    /// Someone who is not our friend opened or relays it: the first crossing
+    /// asks first. Ours, or a friend's relayed by a friend, does not.
+    pub fn opened_by_non_friend(&self, world: &World) -> bool {
+        !self.own()
+            && !((self.owner == world.agent_id || friend(world, self.owner))
+                && self
+                    .relays
+                    .iter()
+                    .any(|relay| friend(world, *relay) && !world.mutes.is_muted_id(relay)))
+    }
+
     pub fn allowed(&self, world: &World) -> bool {
-        self.details.as_ref().is_some_and(|details| {
-            !world.mutes.is_muted_id(&self.owner) && (self.return_pass || allowed(world, self.owner, details.access))
-        })
+        self.shown(world)
+            && self.details.as_ref().is_some_and(|details| {
+                !world.mutes.is_muted_id(&self.owner) && (self.return_pass || allowed(world, self.owner, details.access))
+            })
     }
 
     fn resolved(&self) -> Option<Portal> {
@@ -204,6 +311,11 @@ pub struct State {
     fetches: HashMap<(Uuid, Uuid), Fetch>,
     inquiries: HashMap<(Uuid, Uuid), Inquiry>,
     group_refresh: VecDeque<Uuid>,
+    /// Profiles to ask for, to learn whether a resident shares a group.
+    profile_wants: VecDeque<Uuid>,
+    /// Portals of non-friends whose crossing was confirmed (owner, id).
+    confirmed: HashSet<(Uuid, Uuid)>,
+    sources: Sources,
     pub failed: bool,
 }
 
@@ -223,8 +335,28 @@ impl State {
             self.endpoint = endpoint;
             self.discovered = false;
         }
-        self.entries
-            .retain(|entry| entry.portal.live(now) && Instant::now() < entry.expires_at && !world.mutes.is_muted_id(&entry.owner));
+        if self.sources != world.portal_sources {
+            // Another choice asks the region's bridges to announce again:
+            // portals left out before can now be shown.
+            if world.portal_sources != Sources::Nobody {
+                self.discovered = false;
+            }
+            self.sources = world.portal_sources;
+        }
+        // A muted relay's announcements go; an entry nobody else relays too.
+        for entry in &mut self.entries {
+            entry.relays.retain(|relay| !world.mutes.is_muted_id(relay));
+        }
+        self.entries.retain(|entry| {
+            entry.portal.live(now)
+                && Instant::now() < entry.expires_at
+                && !world.mutes.is_muted_id(&entry.owner)
+                && (entry.own() || !entry.relays.is_empty())
+                && entry.kept(world)
+        });
+        self.confirmed
+            .retain(|(owner, id)| self.entries.iter().any(|e| e.owner == *owner && e.portal.id == *id));
+        self.profile_wants.retain(|id| !source_shown(world, *id));
         self.ended.retain(|_, until| *until > now);
         self.discoveries.retain(|_, at| at.elapsed() < Duration::from_secs(30));
         self.fetches.retain(|(owner, id), _| {
@@ -261,7 +393,61 @@ impl State {
     /// The invitation, crossing guards and posed body cuts remain live.
     pub fn visible<'a>(&'a self, world: &'a World) -> impl Iterator<Item = &'a Entry> {
         let shown = !world.photo_isolation.applied();
-        self.entries.iter().filter(move |_| shown)
+        self.entries.iter().filter(move |entry| shown && entry.shown(world))
+    }
+
+    /// The entries the setting shows, photo isolation aside (body cuts).
+    pub fn shown<'a>(&'a self, world: &'a World) -> impl Iterator<Item = &'a Entry> {
+        self.entries.iter().filter(move |entry| entry.shown(world))
+    }
+
+    /// A profile to request, to learn whether a resident shares a group.
+    pub fn take_profile_want(&mut self) -> Option<Uuid> {
+        self.profile_wants.pop_front()
+    }
+
+    /// A crossing of this portal waits for the user's answer first: opened
+    /// or relayed by a non-friend, and not confirmed yet.
+    pub fn ask_before_crossing(&self, world: &World, owner: Uuid, id: Uuid) -> bool {
+        !self.confirmed.contains(&(owner, id))
+            && self
+                .entries
+                .iter()
+                .find(|entry| entry.owner == owner && entry.portal.id == id)
+                .is_none_or(|entry| entry.opened_by_non_friend(world))
+    }
+
+    /// The portal a question is about, while it can still be crossed.
+    pub fn crossable(&self, world: &World, owner: Uuid, id: Uuid) -> Option<&Entry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.owner == owner && entry.portal.id == id && entry.allowed(world))
+    }
+
+    /// The user said Go: later crossings of this portal ask no more.
+    pub fn confirm(&mut self, owner: Uuid, id: Uuid) {
+        if self.confirmed.len() < LIMIT * 2 {
+            self.confirmed.insert((owner, id));
+        }
+    }
+
+    /// Entries this relay announces, ours aside.
+    fn relayed_by(&self, relay: Uuid) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| !entry.own() && entry.relays.contains(&relay))
+            .count()
+    }
+
+    fn want_profile(&mut self, world: &World, id: Uuid) {
+        if world.portal_sources == Sources::FriendsAndGroups
+            && !source_shown(world, id)
+            && world.profiles.get(&id).is_none()
+            && !self.profile_wants.contains(&id)
+            && self.profile_wants.len() < LIMIT
+        {
+            self.profile_wants.push_back(id);
+        }
     }
 
     /// One fresh server-backed member list per group portal, shared by all
@@ -270,7 +456,15 @@ impl State {
         self.group_refresh.pop_front()
     }
 
-    pub fn create(&mut self, portal: Portal, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// Open our portal. Placing one needs the right to build (rez) where
+    /// it stands, the land test of [`crate::world::land::agent_can_build`]:
+    /// an unknown parcel refuses too. A refusal keeps the portal already open.
+    pub fn create(&mut self, portal: Portal, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> Result<(), Refusal> {
+        match build {
+            BuildRight::Allowed => {}
+            BuildRight::Denied => return Err(Refusal::NoBuild),
+            BuildRight::Unknown => return Err(Refusal::LandUnknown),
+        }
         let private_fits = portal.access == Access::Everyone
             || Message::Details {
                 region: portal.region,
@@ -285,14 +479,14 @@ impl State {
             || !private_fits
             || Message::Open(portal.announcement()).encode().is_none()
         {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if self.out.len() > LIMIT * 2 - 2 || self.entries.len() >= LIMIT && self.own().is_none() {
-            return false;
+            return Err(Refusal::Invalid);
         }
         self.close(unix);
         if self.entries.len() >= LIMIT {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if let Access::Group(id) = portal.access
             && !self.group_refresh.contains(&id)
@@ -311,8 +505,9 @@ impl State {
             shared: true,
             created: true,
             return_pass: false,
+            awaiting_land: false,
         });
-        true
+        Ok(())
     }
 
     pub fn close(&mut self, unix: u64) {
@@ -336,7 +531,13 @@ impl State {
 
     /// A crossing grants this traveler a return, without making their friends
     /// friends of the original creator. Only the creator can grant Friends.
-    pub fn share_return(&mut self, portal: Portal, creator: Uuid, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// It is announced only where the traveler may build (`build`, the land
+    /// test of [`create`](Self::create)); elsewhere, or while that land is
+    /// unknown, it stays the traveler's own: shown and crossable here,
+    /// announced to nobody.
+    pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
+        let share = build == BuildRight::Allowed;
+        let unknown = build == BuildRight::Unknown;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
@@ -361,7 +562,9 @@ impl State {
             entry.return_pass = true;
             entry.gate.clearance = CLEARANCE;
             entry.gate.ready_at = now;
-            entry.shared = true;
+            entry.shared |= share;
+            // never back from shared to private
+            entry.awaiting_land = unknown && !entry.shared;
             entry.portal.creator = Some(creator);
             announcement = entry.portal.clone();
         } else {
@@ -375,17 +578,59 @@ impl State {
                 gate: Gate::new(Vec3::from(portal.center), position, now),
                 expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                 relays: Vec::new(),
-                shared: true,
+                shared: share,
                 created: false,
                 return_pass: true,
+                awaiting_land: unknown,
             });
         }
-        if let Access::Group(group) = portal.access
+        if !share {
+            return true;
+        }
+        self.announce(announcement, portal.access)
+    }
+
+    fn announce(&mut self, announcement: Announcement, access: Access) -> bool {
+        if let Access::Group(group) = access
             && !self.group_refresh.contains(&group)
         {
             self.group_refresh.push_back(group);
         }
         self.queue(Uuid::nil(), Message::Open(announcement))
+    }
+
+    /// Our returns waiting for their land to be known: (creator, id, center).
+    pub fn awaiting_land(&self) -> Vec<(Uuid, Uuid, Vec3)> {
+        self.entries
+            .iter()
+            .filter(|e| e.awaiting_land)
+            .map(|e| (e.owner, e.portal.id, Vec3::from(e.portal.center)))
+            .collect()
+    }
+
+    /// The land under a waiting return became known: open to us, it is
+    /// announced like any return; closed, it stays ours alone for good. A
+    /// return gone or expired meanwhile is not brought back.
+    pub fn land_known(&mut self, creator: Uuid, id: Uuid, build: BuildRight, unix: u64) {
+        if build == BuildRight::Unknown {
+            return;
+        }
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.awaiting_land && e.owner == creator && e.portal.id == id)
+        else {
+            return;
+        };
+        entry.awaiting_land = false;
+        if build != BuildRight::Allowed || !entry.portal.live(unix) {
+            return;
+        }
+        entry.shared = true;
+        let (announcement, access) = (entry.portal.clone(), entry.details.as_ref().map_or(Access::Everyone, |d| d.access));
+        if !self.announce(announcement, access) {
+            self.failed = true;
+        }
     }
 
     fn remember(&mut self, owner: Uuid, id: Uuid, unix: u64) {
@@ -431,7 +676,8 @@ impl State {
             Message::Open(portal) => {
                 let creator = portal.creator.unwrap_or(owner);
                 if !portal.live(unix)
-                    || world.mutes.is_muted_id(&creator)
+                    || !source_kept(world, owner)
+                    || !source_kept(world, creator)
                     || world
                         .main()
                         .is_some_and(|region| !fits_region(Vec3::from(portal.center), [region.heightmap.size_x, region.heightmap.size_y]))
@@ -439,6 +685,7 @@ impl State {
                 {
                     return;
                 }
+                let relayed = self.relayed_by(owner);
                 if let Some(entry) = self.entries.iter_mut().find(|e| e.owner == creator && e.portal.id == portal.id) {
                     // Multiple travelers may relay one immutable return. Its
                     // geometry, permission gate and lifetime belong to the link.
@@ -448,16 +695,26 @@ impl State {
                         && entry.portal.destination == portal.destination
                         && !entry.relays.contains(&owner)
                         && entry.relays.len() < LIMIT
+                        && (entry.own() || relayed < PER_RELAY)
                     {
                         entry.relays.push(owner);
                     }
                     return;
                 }
-                if self.entries.len() >= LIMIT
+                // A creator other than the relay exists for travelers' returns
+                // (`share_return`). Such a claim never names us unless it joins
+                // a portal of ours (above); it never names the label
+                // (`label_owner`), and the relay passes the setting with it.
+                if creator == world.agent_id
+                    || self.entries.len() >= LIMIT
+                    || relayed >= PER_RELAY
+                    || self.entries.iter().filter(|e| !e.own() && e.owner == creator).count() >= PER_CREATOR
                     || (portal.creator.is_none() && self.entries.iter().any(|e| e.owner == owner && e.portal.creator.is_none()))
                 {
                     return;
                 }
+                self.want_profile(world, owner);
+                self.want_profile(world, creator);
                 self.entries.push(Entry {
                     owner: creator,
                     gate: Gate::observer(Vec3::from(portal.center), world.agent.position, now),
@@ -471,6 +728,7 @@ impl State {
                     shared: false,
                     created: false,
                     return_pass: false,
+                    awaiting_land: false,
                 });
             }
             Message::Close { id, .. } => {
@@ -481,7 +739,7 @@ impl State {
                     }
                 }
                 self.entries
-                    .retain(|entry| entry.portal.id != id || entry.shared || !entry.relays.is_empty());
+                    .retain(|entry| entry.portal.id != id || entry.shared || entry.return_pass || !entry.relays.is_empty());
                 self.fetches.remove(&(owner, id));
                 self.out
                     .retain(|(target, message)| !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id)));
@@ -625,11 +883,19 @@ impl State {
         }
         // A logical request has at most one retry. Its nonce remains valid
         // until portal expiry, including a delayed group-members response.
+        // A hidden portal asks nobody: no request reaches a resident the
+        // setting leaves out.
         let requests: Vec<_> = self
             .entries
             .iter()
-            .filter(|entry| entry.details.is_none())
-            .flat_map(|entry| entry.relays.iter().map(|relay| (*relay, entry.portal.id, entry.portal.region)))
+            .filter(|entry| entry.details.is_none() && entry.shown(world))
+            .flat_map(|entry| {
+                entry
+                    .relays
+                    .iter()
+                    .filter(|relay| source_shown(world, **relay))
+                    .map(|relay| (*relay, entry.portal.id, entry.portal.region))
+            })
             .collect();
         for (owner, id, region) in requests {
             let fetch = self.fetches.entry((owner, id)).or_insert_with(|| Fetch {
@@ -782,5 +1048,7 @@ impl State {
 
 #[cfg(test)]
 mod privacy_tests;
+#[cfg(test)]
+mod source_tests;
 #[cfg(test)]
 mod tests;

@@ -1,18 +1,11 @@
 # Experimental VR scene viewing
 
-Use the bottom-toolbar headset button. By default the view starts at the avatar's
-eyes, as in mouselook, with the head and what is worn on it hidden; Preferences ›
-Camera › VR, "Headset view", can start it where the desktop camera is instead.
-Either way the horizontal heading is kept, pitch/roll are levelled to the horizon,
-and headset rotation and small physical movements look around from there.
-Press **Esc with Aurora focused** to restore the original desktop camera and UI.
-Repeated normal entry/exit does not require restarting the viewer.
+Click **VR View** in the toolbar and choose **First Person**, **Avatar Mode**, or **Flycam**.
 
-**Viewing only:** there are no supported VR menus, chat, inventory, building,
-object interaction, locomotion, camera relocation, controller or hand controls.
-Exit VR to interact or reposition the camera. No viewer UI, nameplates, worn HUDs,
-selection outlines or editing overlays appear in the headset. The desktop is a
-left-eye mirror with an exit instruction, not an interactive second viewport.
+Keyboard and gamepad movement work while the headset view is active. VR hand
+controllers and in-headset menus are not implemented. No viewer UI, nameplates,
+worn HUDs, selection outlines or editing overlays appear in the headset.
+The desktop remains a left-eye mirror with an exit instruction.
 
 ## Platform status
 
@@ -34,13 +27,16 @@ tests, simulator rendering and physical headset streaming are separate gates.
   loader built in (`xr-static-loader`, CMake needed to build it; a local build
   without it loads the runtime's loader); Linux uses the distribution's loader package (WiVRn and Monado
   install it), macOS the installed loader. VR is set up when
-  Aurora starts: with the headset connected later, the headset button offers
-  "Restart in VR" (the viewer restarts with `--vr` and enters VR once the world
-  shows). VR is optional: without a runtime, the viewer starts as usual.
+  Aurora starts, and only once VR has been used (Preferences › Camera › VR ›
+  "Set up VR at startup", off by default: loading a runtime at every start
+  crashed PCs that never use VR, #2309). Until then, or with the headset
+  connected later, the headset button offers "Restart in VR" (the viewer
+  restarts with `--vr`, enters VR once the world shows and turns the setting
+  on). VR is optional: without a runtime, the viewer starts as usual.
 - Head-mounted display, two-view `PRIMARY_STEREO`, `LOCAL` and `VIEW` reference
   spaces, opaque composition and the selected RGBA8/BGRA8 eye format.
 - Eye images supporting color attachment and sampling; Vulkan also uses
-  transfer-source access. Eye dimensions are currently capped at 1600 x 1600.
+  transfer-source access. Per-eye dimensions are configurable in Preferences > VR.
 
 Attaching a headset without a restart, runtime restart/disconnect recovery, broader stereo
 visual validation and performance/memory benchmarks remain unfinished. A restart
@@ -141,3 +137,103 @@ CPU. Capture the Aurora window with OBS (PipeWire on Linux/Wayland; the native
 window source on other systems), using hardware encoding where available. The
 exit instruction is included. Capture/encoding adds overhead and the mirror
 cannot show headset streaming/compositor-only artifacts.
+
+## Movement and camera preferences
+
+The toolbar VR popup enters First Person, Avatar Mode, or Flycam. The
+gamepad view button cycles First Person → Avatar Mode → Flycam on desktop and in VR.
+
+Avatar mode reuses the normal gamepad camera: horizontal orbit, vertical pan,
+zoom, focus height and target-travel animation. Intentional controller orbit
+turns the view around the avatar. Starting a movement or camera input samples
+the headset for a gentle horizontal translation that preserves camera height
+and zoom. Continuing to hold that input leaves the sampled framing goal alone. Bumper target selection uses the normal
+move through space and timing, with a VR destination/view heading that avoids
+the automatic turn toward the other avatar's front. People and bumper target selection use the
+same tracked focus point. Arrival corrects framing by translation if the
+headset moved during travel. Zoom remains parallel to
+the ground and does not lower the camera during its settling frames.
+
+Flycam follows the headset's physical movement at 1:1 scale. Its steering pivot
+moves with the head, and forward travel follows full physical gaze, including
+looking up or down. Artificial stick pitch and roll remain disabled.
+
+First-person entry aligns the current tracked headset height with the avatar’s
+eye height. Walking follows horizontal gaze. Physical head movement remains
+1:1 and excludes animated eye offsets and camera shake. The avatar follows
+the head's ground-plane projection through the normal walking controls: it
+starts outside a 0.18 m horizontal offset and aims to stop inside 0.05 m. The separate
+thresholds prevent repeated starts and stops from small head motions. Manual
+locomotion takes priority; following does not enable running, flight or jumping.
+Flight and falls suspend automatic walking. Vertical avatar movement carries the
+headset rig without clearing its horizontal compensation.
+Body catch-up does not push the camera farther away from the avatar. Its
+arrival controller latches the physical world goal, brakes before delayed
+movement overshoots, and waits for the stopping response before retrying a
+shortfall even if the headset holds still. The avatar faces horizontal headset
+gaze and uses forward, backward and sideways walk controls to catch up.
+
+The body/origin separation follows the head-projected body model described by
+[Unity XR Body Transformer](https://docs.unity3d.com/Packages/com.unity.xr.interaction.toolkit@3.2/manual/xr-body-transformer.html)
+and its [locomotion architecture](https://docs.unity3d.com/Packages/com.unity.xr.interaction.toolkit@3.2/manual/locomotion.html).
+Walking-speed catch-up and the 0.18/0.05 m hysteresis are Aurora-specific comfort
+choices, not claimed toolkit defaults.
+
+Keyboard controls use the existing movement bindings. In First person and
+Flycam, lateral keys turn when mouse look is off and strafe when it is on.
+Jump and crouch use the normal avatar actions in First person and Avatar mode.
+In Flycam, those keys raise and lower the camera vertically.
+
+The Mouselook shortcut (M by default) and the gamepad view-cycle button
+switch the active VR camera. Choose the entry mode from the VR View toolbar menu. With mouse look
+enabled, horizontal mouse motion orbits the avatar in Avatar mode.
+
+Gamepad input follows headset session focus. An engaged headset retains normal
+frame pacing and scene resources even when the desktop mirror loses focus or
+is minimized. Physical tracking and stereo eye separation remain active.
+
+Mouse look is off by default. When enabled it turns horizontally only, and its
+warning icon explains that it may cause discomfort.
+
+Gamma (0.5–2.5) and Colour vibrancy (0–2) adjust the headset image live.
+Gamma and vibrancy default to 1.0. Saved adjustments are retained. The desktop mirror uses the unadjusted eye image.
+
+The automatic resolution choice displays the dimensions supplied by the runtime
+after the default 1600-per-side cap and device limits. The 2160 × 2160,
+2560 × 2560 and custom sizes are explicit alternatives. A saved 1600 × 1600
+selection remains available as a custom size. Restart the viewer after changing it.
+The runtime and GPU texture limits may reduce the requested dimensions.
+
+Headset validation: check native Avatar orbit and vertical pan, then framing
+while moving, using camera controls,
+changing avatar targets with the bumpers and zooming. Zoom must retain height, and the rig must
+not rotate to face a target. In Flycam, move physically 30 cm sideways and check
+1:1 view displacement and steering about the new head position. In First
+person, step outside the follow threshold and stop: the avatar should walk
+toward the head without dragging the view, then stop within the inner band.
+Check manual takeover, loss/regaining of headset focus, physical head turns,
+walking/running, seated views, mode cycling, mouse look, Escape exit and each
+resolution after restarting.
+
+
+While the headset is engaged, keyboard input is reserved for movement, gestures,
+the bound Mouselook shortcut that cycles VR modes, and Escape to exit. Desktop
+shortcuts and chat typing are suspended during VR because a headset UI has not
+yet been implemented. This prevents accidental input from opening invisible
+windows or causing confusing interactions.
+
+VR keeps the selected mode over creator seat cameras, scripted FollowCam and
+forced mouselook. A turret or combat seat that expects forced mouselook may
+therefore receive no mouselook mouse-button control events in Avatar or Flycam.
+First Person is the appropriate mode for features that require mouselook.
+
+Valid inferred eye poses continue rendering after initial anchoring. Body following
+and automatic framing pause while the head is untracked and resume on fresh
+tracked feedback. Initial anchoring and explicit first-person recentering require
+fully tracked poses.
+
+Older enabled joystick profiles assigned to gamepads are migrated once into the
+Gamepad page. Saved native axes, gains and button assignments are retained.
+Unclassified profiles remain pending across saves until the saved device appears.
+The Linux input-layout choice can correct X/Y for an unrecognized input driver;
+controller style selects the displayed button labels.

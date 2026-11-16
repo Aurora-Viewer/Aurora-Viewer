@@ -43,7 +43,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                     (Choice::Material, "droplet-filled", "glTF · GLB"),
                     (Choice::Mesh, "cube-3d-sphere", "DAE · glTF · GLB"),
                     (Choice::Bulk, "folder-open-filled", ""),
-                    (Choice::Local, "eye-filled", ""),
+                    (Choice::Local, widgets::local_texture::ICON, ""),
                 ] {
                     if choice == Choice::Bulk {
                         ui.add_space(6.0);

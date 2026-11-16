@@ -69,6 +69,27 @@ pub enum Lap {
     Tail,
 }
 
+/// One frame of a `click frames` line: its time, the main thread steps
+/// over 1 ms, the render thread and the GPU (with its largest element).
+fn click_frame(frame: &[f32; LAPS], render: &RenderStats) -> String {
+    let mut line = format!("{:.1}", frame.iter().sum::<f32>());
+    for (lap, ms) in Lap::ALL.iter().zip(frame) {
+        if *ms >= 1.0 {
+            line += &format!(" {}={ms:.1}", lap.key());
+        }
+    }
+    line += &format!(" rt={:.1}", render.thread_ms);
+    if let Some(g) = render.gpu_elements {
+        let (top, ms) = GpuElement::ALL
+            .iter()
+            .zip(g)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(("", 0.0), |(e, ms)| (e.key(), ms));
+        line += &format!(" gpu={:.1} g_{top}={ms:.1}", g.iter().sum::<f32>());
+    }
+    line
+}
+
 impl Lap {
     const ALL: [Lap; 21] = [
         Lap::Between,
@@ -416,6 +437,8 @@ struct Period {
     gpu_bloom: f32,
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
     gpu_effects: [f32; 4],
+    /// g_weather in parts: shelter map, memories, wet ground, drops.
+    gpu_weather: [f32; 4],
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -480,7 +503,22 @@ pub struct FrameProfile {
     /// Added to the summary lines: the variant an A/B run was on during
     /// the line's second (`xmode=`).
     mark: &'static str,
+    /// The frames that follow a click on the world (`click frames`).
+    click: Option<ClickFrames>,
 }
+
+/// AURORA_PROFILE: the frames from a click on the world to a few frames
+/// after it is answered, one line for them all, so that a spike in the
+/// frame graph at each click names its side (main thread step, render
+/// thread, GPU element). The GPU times come back two or three frames
+/// late: the line covers them.
+struct ClickFrames {
+    frames: Vec<String>,
+}
+
+/// Frames a click trace covers: the press, the two or three frames of the
+/// pick, the click run again, and the GPU times of those frames.
+const CLICK_FRAMES: usize = 9;
 
 impl Default for FrameProfile {
     fn default() -> Self {
@@ -503,6 +541,16 @@ impl FrameProfile {
             periods: 0,
             settings: String::new(),
             mark: "",
+            click: None,
+        }
+    }
+
+    /// A click on the world asked for the depth under the cursor: the
+    /// frames from this one on are written in a `click frames` line. A
+    /// click during a trace starts it again.
+    pub fn trace_click(&mut self) {
+        if self.enabled {
+            self.click = Some(ClickFrames { frames: Vec::new() });
         }
     }
 
@@ -621,6 +669,13 @@ impl FrameProfile {
         let started = *self.started.get_or_insert(now);
         let frame = std::mem::replace(&mut self.frame, [0.0; LAPS]);
         let cycles = std::mem::replace(&mut self.frame_cycles, [0; LAPS]);
+        if let Some(c) = &mut self.click {
+            c.frames.push(click_frame(&frame, render));
+            if c.frames.len() >= CLICK_FRAMES {
+                log::info!("click frames: {}", c.frames.join(" | "));
+                self.click = None;
+            }
+        }
         let p = &mut self.period;
         p.frames += 1;
         p.frame_ms.push(frame.iter().sum());
@@ -659,6 +714,9 @@ impl FrameProfile {
         p.gpu_bloom += render.gpu_bloom.unwrap_or(0.0);
         if let Some(e) = render.gpu_effects {
             add(&mut p.gpu_effects, &e);
+        }
+        if let Some(w) = render.gpu_weather {
+            add(&mut p.gpu_weather, &w);
         }
         p.draws += render.draws as u64;
         p.blend_triangles += render.blend_triangles;
@@ -967,6 +1025,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     }
     // the rest of g_effects, beside g_ssao and g_contact
     for (key, ms) in ["planar", "probe", "copy", "ssr"].iter().zip(p.gpu_effects) {
+        let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
+    }
+    // g_weather in parts
+    for (key, ms) in ["shelter", "weather_memory", "wet_ground", "drops"].iter().zip(p.gpu_weather) {
         let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
     }
     // shadows and depth in detail: culling, cascades, prepass; then the

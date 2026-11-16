@@ -12,11 +12,39 @@ use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
-/// A physical input: `Key("KeyW")`, `Mouse("Middle")`.
+/// A physical input: `Key("KeyW")`, `Mouse("Middle")`. The names are fixed
+/// identifiers, never translated: the label is `Input::label`'s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "SavedInput")]
 pub enum Input {
     Key(String),
     Mouse(String),
+}
+
+/// An [`Input`] as the settings file holds it. The mouse buttons used to be
+/// saved under their translated names, which Japanese wrote 中央, 戻る and
+/// 前進: those read back as the fixed names, whatever the language now.
+#[derive(Deserialize)]
+enum SavedInput {
+    Key(String),
+    Mouse(String),
+}
+
+impl From<SavedInput> for Input {
+    fn from(saved: SavedInput) -> Input {
+        match saved {
+            SavedInput::Key(key) => Input::Key(key),
+            SavedInput::Mouse(button) => Input::Mouse(
+                match button.as_str() {
+                    "中央" => "Middle",
+                    "戻る" => "Back",
+                    "前進" => "Forward",
+                    _ => return Input::Mouse(button),
+                }
+                .to_owned(),
+            ),
+        }
+    }
 }
 
 impl Input {
@@ -29,9 +57,9 @@ impl Input {
     pub fn mouse(b: MouseButton) -> Option<Input> {
         match b {
             MouseButton::Left | MouseButton::Right => None,
-            MouseButton::Middle => Some(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into())),
-            MouseButton::Back => Some(Input::Mouse(aurora_i18n::tr!("keybinds-back").into())),
-            MouseButton::Forward => Some(Input::Mouse(aurora_i18n::tr!("keybinds-forward").into())),
+            MouseButton::Middle => Some(Input::Mouse("Middle".into())),
+            MouseButton::Back => Some(Input::Mouse("Back".into())),
+            MouseButton::Forward => Some(Input::Mouse("Forward".into())),
             MouseButton::Other(n) => Some(Input::Mouse(format!("Other{n}"))),
         }
     }
@@ -112,6 +140,7 @@ fn key_label(k: &str) -> String {
         "ArrowRight" => aurora_i18n::tr!("keybinds-right-arrow"),
         "PageUp" => aurora_i18n::tr!("keybinds-previous-page"),
         "PageDown" => aurora_i18n::tr!("keybinds-next-page"),
+        // LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
         "Home" => aurora_i18n::tr!("keybinds-origin"),
         "End" => aurora_i18n::tr!("keybinds-end-2"),
         "Insert" => aurora_i18n::tr!("keybinds-insert"),
@@ -326,6 +355,9 @@ pub enum Action {
     StrafeRight,
     Up,
     Down,
+    /// Stop moving (Legacy Viewer key_bindings.xml: SPACE -> stop_moving):
+    /// held, the simulator brakes the avatar, on the ground and in flight.
+    StopMoving,
     Fly,
     /// Fly override (Legacy Viewer menu_viewer.xml "Fly Override",
     /// FSAlwaysFly, shortcut="control|alt|V").
@@ -348,6 +380,10 @@ pub enum Action {
     /// (handle_look_at_selection, H and Shift+H).
     FocusSelection,
     ZoomSelection,
+    /// Advanced › Shortcuts › Look at Last Chatter (View.LookAtLastChatter,
+    /// menu_viewer.xml, `shortcut="control|\"`): the camera over our
+    /// shoulder, on the last resident or object heard.
+    LookAtLastChatter,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -369,6 +405,8 @@ pub enum Action {
     CamPanRight,
     CamPanUp,
     CamPanDown,
+    CamRollLeft,
+    CamRollRight,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -433,11 +471,27 @@ pub enum Action {
     /// (Advanced.SetDoubleClickAction, Ctrl+Shift+D).
     DoubleClickTeleport,
     Beacons,
+    /// The contact sets' markers in the world (`Settings::contact_markers`).
+    ContactMarkers,
     PropertyLines,
     LandOwners,
     HideParticles,
+    /// Advanced › Rendering types, one kind each (menu_viewer.xml: Develop ›
+    /// Rendering Types, Ctrl+Alt+Shift+3 Tree … - Clouds).
+    RenderTrees,
+    RenderAvatars,
+    RenderTerrain,
+    RenderSky,
+    RenderWater,
+    RenderObjects,
+    RenderGrass,
+    RenderClouds,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
+    /// Advanced › Request Admin Status (menu_viewer.xml, control|alt|G).
+    RequestAdminStatus,
+    /// Advanced.ShowDebugSettings.
+    DebugSettings,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
     /// Avatar health's "Stop avatar animations", the scripts keeping their
@@ -491,6 +545,7 @@ pub fn is_held(a: Action) -> bool {
             | Action::StrafeRight
             | Action::Up
             | Action::Down
+            | Action::StopMoving
             | Action::PushToTalk
             | Action::CamOrbitCw
             | Action::CamOrbitCcw
@@ -502,6 +557,8 @@ pub fn is_held(a: Action) -> bool {
             | Action::CamPanRight
             | Action::CamPanUp
             | Action::CamPanDown
+            | Action::CamRollLeft
+            | Action::CamRollRight
             | Action::HudDrag
     )
 }
@@ -522,6 +579,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::StrafeRight, aurora_i18n::tr!("keybinds-strafe-right")),
                     (Action::Up, aurora_i18n::tr!("extra-jump-ascend")),
                     (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
+                    (Action::StopMoving, aurora_i18n::tr!("keybinds-stop-moving")),
                     (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
                     (Action::FlyOverride, aurora_i18n::tr!("ui-bars-fly-override")),
                     (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
@@ -539,6 +597,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
                     (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
                     (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
+                    (Action::LookAtLastChatter, aurora_i18n::tr!("keybinds-look-at-last-chatter")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -554,6 +613,8 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
                     (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
                     (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                    (Action::CamRollLeft, aurora_i18n::tr!("controls-roll-left")),
+                    (Action::CamRollRight, aurora_i18n::tr!("controls-roll-right")),
                 ],
             ),
             (
@@ -591,6 +652,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                     (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
+                    (Action::ContactMarkers, aurora_i18n::tr!("ui-options-contact-markers")),
                     (Action::DoubleClickTeleport, aurora_i18n::tr!("keybinds-double-click-teleport")),
                     (Action::Quit, aurora_i18n::tr!("ui-bars-quit-aurora-viewer")),
                 ],
@@ -632,12 +694,22 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 aurora_i18n::tr!("keybinds-debug"),
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
+                    (Action::RequestAdminStatus, aurora_i18n::tr!("god-mode-request")),
+                    (Action::DebugSettings, aurora_i18n::tr!("toolbar-command-debug-settings")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
                     (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
                     (Action::Beacons, aurora_i18n::tr!("beacons-title")),
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
                     (Action::HideParticles, aurora_i18n::tr!("world-hide-particles")),
+                    (Action::RenderTrees, aurora_i18n::tr!("keybinds-render-trees")),
+                    (Action::RenderAvatars, aurora_i18n::tr!("keybinds-render-avatars")),
+                    (Action::RenderTerrain, aurora_i18n::tr!("keybinds-render-terrain")),
+                    (Action::RenderSky, aurora_i18n::tr!("keybinds-render-sky")),
+                    (Action::RenderWater, aurora_i18n::tr!("keybinds-render-water")),
+                    (Action::RenderObjects, aurora_i18n::tr!("keybinds-render-objects")),
+                    (Action::RenderGrass, aurora_i18n::tr!("keybinds-render-grass")),
+                    (Action::RenderClouds, aurora_i18n::tr!("keybinds-render-clouds")),
                 ],
             ),
         ]
@@ -746,6 +818,7 @@ impl KeyBindings {
             (Action::StrafeRight, [None, None]),
             (Action::Up, [k(K::PageUp), k(K::KeyE)]),
             (Action::Down, [k(K::PageDown), k(K::KeyC)]),
+            (Action::StopMoving, [k(K::Space), None]),
             (Action::Fly, [k(K::Home), k(K::KeyF)]),
             (Action::FlyOverride, [kalt(K::KeyV, true, false), None]),
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
@@ -762,6 +835,8 @@ impl KeyBindings {
             // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
             (Action::FocusSelection, [k(K::KeyH), None]),
             (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
+            // menu_viewer.xml: Look at Last Chatter, shortcut="control|\"
+            (Action::LookAtLastChatter, [kmod(K::Backslash, true, false), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -783,14 +858,13 @@ impl KeyBindings {
             (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
+            (Action::CamRollLeft, [k(K::KeyR), None]),
+            (Action::CamRollRight, [k(K::KeyT), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
             // SL default push-to-talk: middle mouse button
-            (
-                Action::PushToTalk,
-                [Some(Binding::plain(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into()))), None],
-            ),
+            (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
@@ -846,6 +920,7 @@ impl KeyBindings {
             // menu_viewer.xml: Mute/unmute sound, DoubleClick Teleport, Show
             // Selection Outlines
             (Action::MuteAll, [kalt(K::KeyM, true, true), None]),
+            (Action::ContactMarkers, [None, None]),
             (Action::DoubleClickTeleport, [kmod(K::KeyD, true, true), None]),
             (Action::SelectionOutlines, [kalt(K::KeyH, true, false), None]),
             (
@@ -896,6 +971,18 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Develop › Rendering Types, control|alt|shift
+            // and 3 Tree, 4 Avatars, 5 Surface Patch, 6 Sky, 7 Water, 9
+            // Volume, 0 Grass, - Clouds (the digits keep their place, the
+            // minus follows the layout)
+            (Action::RenderTrees, [kalt(K::Digit3, true, true), None]),
+            (Action::RenderAvatars, [kalt(K::Digit4, true, true), None]),
+            (Action::RenderTerrain, [kalt(K::Digit5, true, true), None]),
+            (Action::RenderSky, [kalt(K::Digit6, true, true), None]),
+            (Action::RenderWater, [kalt(K::Digit7, true, true), None]),
+            (Action::RenderObjects, [kalt(K::Digit9, true, true), None]),
+            (Action::RenderGrass, [kalt(K::Digit0, true, true), None]),
+            (Action::RenderClouds, [kalt(K::Minus, true, true), None]),
             // menu_viewer.xml: Show HUD Attachments, shortcut="alt|shift|H"
             (Action::ShowHuds, [kalt(K::KeyH, false, true), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
@@ -926,6 +1013,9 @@ impl KeyBindings {
             ),
             // Aurora's Dev Toolbox (Advanced › Dev Toolbox)
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
+            // menu_viewer.xml: Request Admin Status
+            (Action::RequestAdminStatus, [kalt(K::KeyG, true, false), None]),
+            (Action::DebugSettings, [kalt(K::KeyS, true, true), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
             (Action::ResyncAnimations, [kmod(K::KeyS, true, false), None]),
@@ -1259,8 +1349,15 @@ impl KeyBindings {
         let defaults = KeyBindings::default();
         let mut seen = HashSet::new();
         self.map.retain(|(a, _)| seen.insert(*a));
-        for (a, b) in defaults.map {
+        for (a, mut b) in defaults.map {
             if !self.map.iter().any(|(x, _)| *x == a) {
+                // a new action's default key may already be the user's own
+                // choice for another action (Space for jumping): theirs stays
+                for slot in &mut b {
+                    if slot.as_ref().is_some_and(|d| !self.users(d).is_empty()) {
+                        *slot = None;
+                    }
+                }
                 self.map.push((a, b));
             }
         }
@@ -1462,6 +1559,47 @@ mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
 
+    /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
+    /// French keyboards print Début. Japanese keyboards print Home.
+    #[test]
+    fn the_home_key_is_labelled_home() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-origin"), "Début");
+        assert_eq!(key_label("Home"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-origin"));
+    }
+
+    /// LLKeyboard names KEY_END "End" (indra/llwindow/llkeyboard.cpp). Japanese
+    /// keyboards print End, as they print Home: 終了 read as "Quit".
+    #[test]
+    fn the_end_key_keeps_its_keyboard_name() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-end-2"), "Fin");
+        assert_eq!(key_label("End"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-end-2"));
+    }
+
+    /// Space stops moving while held, as the Legacy Viewer's stop_moving;
+    /// a settings file from before it keeps a Space the user gave to
+    /// another action.
+    #[test]
+    fn space_stops_moving_unless_the_user_already_uses_it() {
+        let kb = KeyBindings::default();
+        assert_eq!(kb.get(Action::StopMoving), [k(KeyCode::Space), None]);
+        assert!(is_held(Action::StopMoving));
+        let space: HashSet<Input> = [Input::key(KeyCode::Space)].into();
+        assert!(kb.held(Action::StopMoving, &space, Mods::default()));
+
+        let mut old = KeyBindings::default();
+        old.map.retain(|(a, _)| *a != Action::StopMoving);
+        let fresh = old.clone().sanitized();
+        assert_eq!(fresh.get(Action::StopMoving), [k(KeyCode::Space), None]);
+        old.set(Action::Up, 1, k(KeyCode::Space));
+        let kept = old.sanitized();
+        assert_eq!(kept.get(Action::StopMoving), [None, None]);
+        assert_eq!(kept.get(Action::Up)[1], k(KeyCode::Space));
+    }
+
     #[test]
     fn gesture_chat_uses_the_typed_slash_without_ctrl_or_alt() {
         use winit::keyboard::Key;
@@ -1647,6 +1785,61 @@ mod tests {
     }
 
     #[test]
+    fn camera_roll_defaults_hold_release_and_yield_to_modified_commands() {
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        for (action, code, command) in [
+            (Action::CamRollLeft, KeyCode::KeyR, Action::Rebake),
+            (Action::CamRollRight, KeyCode::KeyT, Action::ShowTransparency),
+        ] {
+            let input = Input::key(code);
+            assert_eq!(kb.get(action), [Some(Binding::plain(input.clone())), None]);
+            assert_eq!(kb.users(&Binding::plain(input.clone())), vec![action], "no other plain-key default");
+            let mut down = HashSet::new();
+            assert_eq!(kb.update_held_input(&mut down, &input, true, Mods::default()), None);
+            assert!(kb.held(action, &down, Mods::default()));
+            kb.update_held_input(&mut down, &input, false, Mods::default());
+            assert!(!kb.held(action, &down, Mods::default()));
+            let modified = Mods {
+                ctrl: true,
+                alt: true,
+                ..Default::default()
+            };
+            assert_eq!(kb.update_held_input(&mut down, &input, true, modified), Some(command));
+            assert!(!kb.held(action, &down, modified));
+            assert!(!kb.held(action, &down, Mods::default()));
+        }
+    }
+
+    #[test]
+    fn camera_roll_bindings_upgrade_without_replacing_custom_or_cleared_keys() {
+        for action in [Action::CamRollLeft, Action::CamRollRight] {
+            let mut kb = KeyBindings::default();
+            let defaults = kb.get(action);
+            kb.map.retain(|(a, _)| *a != action);
+            assert_eq!(kb.clone().sanitized().get(action), defaults);
+            kb.set(Action::CamPanUp, 0, defaults[0].clone());
+            let mut kb = kb.sanitized();
+            assert_eq!(kb.get(action), [None, None]);
+            assert_eq!(kb.get(Action::CamPanUp)[0], defaults[0]);
+            let binding = kalt(KeyCode::KeyB, false, false);
+            kb.set(action, 1, binding.clone());
+            let saved = serde_json::to_string(&kb).expect("save bindings");
+            let mut kb = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
+            assert_eq!(kb.get(action), [None, binding]);
+            assert!(kb.held(
+                action,
+                &HashSet::from([Input::key(KeyCode::KeyB)]),
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                }
+            ));
+            kb.set(action, 1, None);
+            assert_eq!(kb.sanitized().get(action), [None, None]);
+        }
+    }
+
+    #[test]
     fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
         let ctrl = Mods {
             ctrl: true,
@@ -1712,6 +1905,7 @@ mod tests {
             (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
             (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
             (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+            (KeyCode::Backslash, m(true, false, false), Action::LookAtLastChatter),
         ] {
             assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
             assert_eq!(
@@ -2131,7 +2325,8 @@ mod tests {
     /// N / X / J, added to older settings files and rebindable.
     #[test]
     fn environment_shortcuts_pick_the_legacy_times_of_day() {
-        let mut kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let layout = layout::current();
+        let mut kb = KeyBindings::us_places(layout.movement_keys());
         kb.map.retain(|(a, _)| a.time_of_day().is_none());
         let mut kb = kb.sanitized();
         let ctrl_shift = Mods {
@@ -2139,13 +2334,14 @@ mod tests {
             shift: true,
             ..Default::default()
         };
-        for (code, action, time) in [
+        for (us_code, action, time) in [
             (KeyCode::KeyU, Action::EnvSunrise, 1),
             (KeyCode::KeyY, Action::EnvMidday, 2),
             (KeyCode::KeyN, Action::EnvSunset, 3),
             (KeyCode::KeyX, Action::EnvMidnight, 4),
             (KeyCode::KeyJ, Action::EnvShared, 0),
         ] {
+            let code = layout.named_key(us_code);
             assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
             assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
             assert_eq!(action.time_of_day(), Some(time));
@@ -2267,13 +2463,23 @@ mod tests {
                 (true, true, true),
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
+            (Action::RenderTrees, (true, true, true), [K::Digit3; 4]),
+            (Action::RenderObjects, (true, true, true), [K::Digit9; 4]),
+            (Action::RenderGrass, (true, true, true), [K::Digit0; 4]),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
+            (Action::RequestAdminStatus, (true, false, true), [K::KeyG; 4]),
+            (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
+            (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
+            (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
+            (Action::EnvSunset, (true, true, false), [K::KeyN; 4]),
+            (Action::EnvMidnight, (true, true, false), [K::KeyX; 4]),
+            (Action::EnvShared, (true, true, false), [K::KeyJ; 4]),
         ];
         for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {
             let kb = KeyBindings::for_layout(layout);
@@ -2350,6 +2556,24 @@ mod tests {
         assert!(kb.held(Action::Forward, &down, shift));
         assert!(kb.held(Action::PushToTalk, &down, Mods::default()));
         assert!(!kb.held(Action::Back, &down, shift));
+    }
+
+    #[test]
+    fn mouse_buttons_keep_fixed_names_and_old_japanese_ones_read_back() {
+        for (button, name) in [
+            (MouseButton::Middle, "Middle"),
+            (MouseButton::Back, "Back"),
+            (MouseButton::Forward, "Forward"),
+        ] {
+            assert_eq!(Input::mouse(button), Some(Input::Mouse(name.into())));
+        }
+        for (saved, name) in [("中央", "Middle"), ("戻る", "Back"), ("前進", "Forward"), ("Other9", "Other9")] {
+            let json = serde_json::to_string(&Input::Mouse(saved.into())).expect("save input");
+            let input: Input = serde_json::from_str(&json).expect("read input");
+            assert_eq!(input, Input::Mouse(name.into()));
+        }
+        let key: Input = serde_json::from_str(r#"{"Key":"KeyW"}"#).expect("read key");
+        assert_eq!(key, Input::Key("KeyW".into()));
     }
 
     #[test]

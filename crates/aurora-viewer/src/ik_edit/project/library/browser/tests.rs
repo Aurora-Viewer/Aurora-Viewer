@@ -162,13 +162,14 @@ fn projects_tab_selects_and_manages_complete_projects_through_real_pointer_input
             "ik-library-notecard",
             "ik-project-title",
         ] {
-            assert!(
-                !output
-                    .shapes
-                    .iter()
-                    .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == aurora_i18n::text(key))),
-                "project management {key} leaked into {tab}"
-            );
+            // (the Projects tab may read the same: Japanese has no plural)
+            let drawn = output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == aurora_i18n::text(key)))
+                .count();
+            let tab_label = usize::from(aurora_i18n::text(key) == aurora_i18n::text("ik-edit-tab-projects"));
+            assert_eq!(drawn, tab_label, "project management {key} leaked into {tab}");
         }
     }
     let tab = centre(&output, aurora_i18n::text("ik-edit-tab-projects"));
@@ -247,14 +248,14 @@ fn projects_tab_selects_and_manages_complete_projects_through_real_pointer_input
     let file = row_action(&output, "Eyewear copy", 2);
     let _ = draw(&mut editor, click(file, true));
     let _ = draw(&mut editor, click(file, false));
-    assert!(matches!(editor.project.library.command.take(), Some(Command::Manage(id, Management::File)) if id == copy_id));
+    assert!(matches!(editor.project.library.command.take(), Some(Command::Manage(id, Management::File(_))) if id == copy_id));
     assert_eq!(editor.tab, 5);
     let output = draw(&mut editor, vec![]);
     let notecard = row_action(&output, "Eyewear copy", 3);
     let _ = draw(&mut editor, click(notecard, true));
     let _ = draw(&mut editor, click(notecard, false));
     let command = editor.project.library.command.take().unwrap();
-    assert!(matches!(command, Command::Manage(id, Management::Notecard) if id == copy_id));
+    assert!(matches!(command, Command::Manage(id, Management::Notecard(_)) if id == copy_id));
     let output = execute(&root, editor.project_document(), command, "Draft".into(), "Default".into()).unwrap();
     editor.library_output(&world, output);
     editor.project.owner = Some(world.agent_id);
@@ -271,7 +272,9 @@ fn projects_tab_selects_and_manages_complete_projects_through_real_pointer_input
     let exported = Document::decode(Notecard::decode(card.1).unwrap().text.as_bytes()).unwrap();
     assert_eq!(exported.project.as_ref().unwrap().id, copy_id);
     assert_eq!(exported.definition, glasses.definition);
-    assert_eq!(exported.animations, glasses.animations);
+    let mut expected = glasses.clone();
+    expected.name_assets(|_| None);
+    assert_eq!(exported.animations, expected.animations, "demo layers have no inventory item");
     let output = draw(&mut editor, vec![]);
     let delete = row_action(&output, "Eyewear copy", 4);
     let _ = draw(&mut editor, click(delete, true));

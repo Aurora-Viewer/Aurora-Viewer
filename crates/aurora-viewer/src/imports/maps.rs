@@ -23,11 +23,21 @@ impl Imports {
             return;
         };
         let asset = ids(value)[slot];
-        let current = asset.or_else(|| images[slot].as_ref().map(|image| image.asset.unwrap_or(image.key)));
+        let current = asset.or_else(|| {
+            images[slot].as_ref().map(|image| {
+                self.entries
+                    .iter()
+                    .find(|entry| {
+                        entry.local && matches!(&entry.source, Some(Source::Texture(pixels)) if Arc::ptr_eq(pixels, &image.pixels))
+                    })
+                    .map_or(image.asset.unwrap_or(image.key), |entry| entry.id)
+            })
+        });
         self.map_before = Some((asset, images[slot].clone()));
         self.map_target = Some((id, slot));
         self.map_picker
             .open_with_defaults(aurora_i18n::tr!("import-texture"), current.unwrap_or_default(), None, true);
+        self.map_picker.allow_local = true;
     }
 
     pub fn show_map_picker(
@@ -62,12 +72,46 @@ impl Imports {
         }
     }
 
+    /// A direct drop commits the map and ends an older reversible picker.
+    pub fn drop_map(&mut self, id: Uuid, slot: usize, asset: Uuid) {
+        self.map_picker.open = false;
+        self.map_target = None;
+        self.map_before = None;
+        self.select_map(id, slot, asset);
+    }
+
     pub fn select_map(&mut self, id: Uuid, slot: usize, asset: Uuid) {
+        // A local file contributes pixels to the material's normal upload
+        // path; its viewer-only UUID must never become a remote map asset.
+        let local = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == asset && entry.local)
+            .and_then(|entry| {
+                let Source::Texture(pixels) = entry.source.as_ref()? else {
+                    return None;
+                };
+                Some(LocalImage {
+                    path: Some(entry.path.clone()),
+                    key: Uuid::new_v4(),
+                    name: entry.name.clone(),
+                    pixels: pixels.clone(),
+                    asset: None,
+                    empty_alpha: entry.empty_alpha,
+                })
+            });
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id)
             && let Some(Source::Material { value, images }) = &mut entry.source
         {
-            images[slot] = None;
-            set(value, slot, (!asset.is_nil()).then_some(asset));
+            set(value, slot, (local.is_none() && !asset.is_nil()).then_some(asset));
+            if entry.local
+                && let Some(path) = local.as_ref().and_then(|image| image.path.as_ref())
+            {
+                let mut paths = entry.watch.take().map_or_else(Vec::new, |watch| watch.paths);
+                paths.push(path.clone());
+                entry.watch = Some(local::Watch::new(paths));
+            }
+            images[slot] = local;
             entry.preview_generation += 1;
             entry.model = None;
             entry.preview_error = None;
@@ -134,6 +178,44 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_map_picker_accepts_local_pixels_without_an_asset_reference() {
+        let pixels = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            components: 3,
+            data: vec![128, 128, 255],
+            discard: 0,
+        });
+        let mut texture = Entry::new("normal.png".into(), Ok(Source::Texture(pixels.clone())), Default::default());
+        texture.local = true;
+        let texture_id = texture.id;
+        let material = Entry::new(
+            "material.gltf".into(),
+            Ok(Source::Material {
+                value: PbrMaterial::default(),
+                images: Box::new(std::array::from_fn(|_| None)),
+            }),
+            Default::default(),
+        );
+        let material_id = material.id;
+        let mut imports = Imports {
+            entries: vec![texture, material],
+            ..Default::default()
+        };
+        imports.open_map_picker(material_id, 1);
+        assert!(imports.map_picker.allow_local);
+        imports.select_map(material_id, 1, texture_id);
+        let Some(Source::Material { value, images }) = &imports.entries[1].source else {
+            panic!("material")
+        };
+        assert_eq!(value.normal_texture, None);
+        let image = images[1].as_ref().unwrap();
+        assert_eq!(image.asset, None);
+        assert!(Arc::ptr_eq(&image.pixels, &pixels));
+        assert_ne!(image.key, texture_id);
+    }
 
     #[test]
     fn live_picker_restores_imported_pixels_and_keeps_its_target_until_confirmation() {

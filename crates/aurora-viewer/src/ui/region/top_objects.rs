@@ -117,12 +117,12 @@ pub(crate) fn sorted(objects: &[TopObject], sort: Option<(Column, bool)>) -> Vec
         rows.sort_by(|a, b| {
             let o = match col {
                 Column::Score => a.score.total_cmp(&b.score),
-                Column::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                Column::Name => crate::natural_order::cmp(&a.name, &b.name),
                 Column::Owner => a.owner.cmp(&b.owner),
                 Column::Location => a.position[0]
                     .total_cmp(&b.position[0])
                     .then(a.position[1].total_cmp(&b.position[1])),
-                Column::Parcel => a.parcel.to_lowercase().cmp(&b.parcel.to_lowercase()),
+                Column::Parcel => crate::natural_order::cmp(&a.parcel, &b.parcel),
                 Column::Time => a.time.cmp(&b.time),
                 Column::Memory => a.memory.total_cmp(&b.memory),
                 Column::Urls => a.urls.cmp(&b.urls),
@@ -236,7 +236,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
                     !waiting,
                 );
                 let w = ui.available_width().max(140.0);
-                let r = widgets::search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
+                let r = widgets::clearable_search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if filter.clicked() || enter && !waiting {
                     refresh(&mut s.top, v, world, true);
@@ -438,7 +438,8 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
         x += w;
     }
     let height = ui.available_height();
-    egui::ScrollArea::vertical()
+    let selected_row = rows.iter().position(|o| s.selected.contains(&o.task_id));
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 26.0)
         .id_salt("region_top_objects_list")
         .max_height(height)
         .min_scrolled_height(height)

@@ -36,6 +36,8 @@ pub(super) struct ObjectMenu {
     pub particle_hits: Vec<crate::scene::particles::ParticleHit>,
     /// SurfaceInfo of send_ObjectGrab_message, using the original click ray.
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
+    /// The original cursor ray, including across asynchronous GPU readback.
+    pub ray: Option<(Vec3, Vec3)>,
 }
 
 enum Confirm {
@@ -153,6 +155,7 @@ impl App {
         m.particle_only = particle_only;
         m.particle_hits.clear();
         m.touch = None;
+        m.ray = ray;
         let Some((origin, dir)) = ray else {
             return;
         };
@@ -205,11 +208,22 @@ impl App {
             f.take_copy = each.iter().all(|e| e.take_copy);
             f.delete = each.iter().any(|e| e.delete);
         }
-        f.link = !edit_linked
-            && roots.len() >= 2
-            && roots
-                .iter()
-                .any(|&r| flags_of(r) & flags::OBJECT_MODIFY != 0 && flags_of(r) & flags::AFFECTS_NAVMESH == 0);
+        // rlvCanDeleteOrReturn greys Take and Delete for the whole selection
+        // (enable_take, LLSelectMgr::canDoDelete); a copy is only refused of
+        // the seat the agent cannot leave (handle_take_copy).
+        if w.rlva.enabled() {
+            let removable = roots.iter().all(|&r| w.rlva_can_delete_or_return(r));
+            f.take &= removable;
+            f.delete &= removable;
+            f.take_copy &= roots.iter().all(|&r| w.rlva_can_take_copy(r));
+            f.unlink &= roots.iter().all(|&r| w.rlva_can_unlink(r));
+            // LLToolSelect::handleObjectSelection: beyond @fartouch nothing
+            // is selected, and these entries act on a selection
+            if !roots.iter().all(|&r| w.rlva_within_fartouch(r)) {
+                (f.take, f.delete, f.take_copy, f.unlink) = (false, false, false, false);
+            }
+        }
+        f.link = !edit_linked && self.build.link_allowed(w, &roots);
         // EditableSelected: a prim we may modify among those selected
         let prims: Vec<usize> = if kept {
             self.build.highlighted(w).into_iter().map(|(i, _)| i).collect()
@@ -221,7 +235,12 @@ impl App {
         f.scripts = prims
             .iter()
             .filter(|&&i| w.objects.get(i).is_some_and(|o| !o.is_avatar()))
-            .any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0);
+            .any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0)
+            // is_editable_selected (llviewermenu.cpp): not on an attachment
+            // that cannot be taken off, nor on what RLVa keeps from edits
+            && roots
+                .iter()
+                .all(|&r| w.rlva_can_edit(r) && !w.rlva_locked_attachment(r) && w.rlva_within_fartouch(r));
         let wearer = crate::ui::context::wearer(w, idx);
         // object_is_wearable / object_selected_and_point_valid
         let r = flags_of(root);
@@ -240,7 +259,11 @@ impl App {
             && r & flags::AFFECTS_NAVMESH == 0
             && !seated_on
             && !f.stand
-            && w.worn_attachment_points().len() < self.attachment_limit();
+            && w.worn_attachment_points().len() < self.attachment_limit()
+            // attaching takes the object from the world (@rez); the locks on
+            // the points grey their entries (`rlva_can_attach_object`)
+            && !w.rlva.has("rez")
+            && w.rlva_within_fartouch(root);
         if wearer == Some(w.agent_id) {
             let item = f.attachment_item.map(|id| linked_item(w, id));
             f.favorite = item.and_then(|id| w.inventory.items.get(&id)).map(|it| it.favorite);
@@ -280,6 +303,7 @@ impl App {
                 group: self.world.groups.group(&parcel.group_id),
                 health: self.world.health,
                 frozen: self.world.frozen,
+                god_level: self.world.god_level,
             }),
             // nothing known yet: the simulator decides
             _ => true,
@@ -326,6 +350,20 @@ impl App {
             local_id,
             surface,
         });
+    }
+
+    /// The first message `menu_touch` would send for the prim `key`, for the
+    /// menu to ask RLVa about the very touch its entry makes.
+    pub(super) fn menu_touch_command(&self, key: ObjKey) -> NetCommand {
+        match self.object_menu.touch.filter(|(k, _)| *k == key) {
+            Some((key, surface)) => NetCommand::ObjectGrab {
+                handle: key.region,
+                local_id: key.local_id,
+                offset: Vec3::ZERO,
+                surface,
+            },
+            None => NetCommand::Touch { local_id: key.local_id },
+        }
     }
 
     /// Object.Return: the roots of the selection, asked first.
@@ -414,7 +452,17 @@ impl App {
                 (o.full_id, o.update_flags, name)
             })
             .collect();
+        // handle_selected_script_action (llviewermenu.cpp): nothing runs when
+        // the selection holds an attachment that cannot be taken off.
+        let locked = self
+            .build
+            .highlighted(&self.world)
+            .into_iter()
+            .any(|(i, _)| self.world.rlva_locked_attachment(i));
         self.release_action_selection();
+        if locked {
+            return;
+        }
         match script_queue::queue_objects(&prims) {
             Err(scripted) => {
                 self.world
