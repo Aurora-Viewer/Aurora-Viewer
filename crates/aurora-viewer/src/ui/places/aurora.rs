@@ -832,13 +832,17 @@ impl PlacesUi {
             return;
         }
         let reorder = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         let mut rects: Vec<(Rect, Uuid)> = Vec::new();
         for l in lines {
             let (key, place) = match l {
                 Line::Title(t) => {
                     ui.add_space(10.0);
                     let at = ui.cursor().min + Vec2::new(10.0, 0.0);
-                    section(ui, p, t, at);
+                    let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 20.0));
+                    if ui.is_rect_visible(bounds) {
+                        section(ui, p, t, at);
+                    }
                     ui.add_space(20.0);
                     continue;
                 }
@@ -866,6 +870,7 @@ impl PlacesUi {
                 self.history_zone,
             );
             widgets::reveal_search_selection(ui, &out.resp, selected);
+            let visible = ui.is_rect_visible(out.resp.rect);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -880,9 +885,7 @@ impl PlacesUi {
             }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
-            if let Some(s) = spot
-                && ui.is_rect_visible(out.resp.rect)
-            {
+            if visible && let Some(s) = spot {
                 self.want_snapshots.push(s);
             }
             if let Some(fav) = place.favorite.filter(|_| reorder) {
@@ -907,11 +910,14 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            // asked every frame: the menu shows as long as it is open
-            menu::context_menu(&out.resp, p, |ui| {
-                self.select(key, place, &world.inventory, history, actions);
-                self.place_menu(ui, p, world, key, place, actions);
-            });
+            // A menu stays under the pointer when its row scrolls out of view.
+            // The row still owns its reorder rank and its expanded narrow details.
+            if visible || (popup_open && out.resp.context_menu_opened()) {
+                menu::context_menu(&out.resp, p, |ui| {
+                    self.select(key, place, &world.inventory, history, actions);
+                    self.place_menu(ui, p, world, key, place, actions);
+                });
+            }
             if !wide && self.aurora.selected == Some(key) {
                 self.narrow_details(ui, c, place, actions);
             }
