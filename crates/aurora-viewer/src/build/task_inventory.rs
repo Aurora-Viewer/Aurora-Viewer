@@ -157,7 +157,7 @@ pub fn contents_folder_name(object_name: &str) -> String {
     let name: String = object_name.chars().filter(|c| !c.is_control() && *c != '|').collect();
     let name = name.trim();
     if name.is_empty() {
-        crate::text_validation::generated_name(aurora_i18n::tr!("common-object"), 63)
+        crate::text_validation::generated_name(crate::text_validation::default_name("common-object"), 63)
     } else {
         crate::text_validation::generated_name(name, 63)
     }

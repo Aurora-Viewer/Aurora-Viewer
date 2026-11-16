@@ -27,7 +27,12 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/tools/pr-description.ps1"
 
 if ($BodyFile) {
-    $problems = @(Get-PrDescriptionProblems ([IO.File]::ReadAllText($BodyFile)))
+    # A relative path is taken from PowerShell's location: .NET would read it
+    # from the process's directory, which Set-Location does not move, and
+    # check the file of another folder.
+    $path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BodyFile)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Description file not found: $path" }
+    $problems = @(Get-PrDescriptionProblems ([IO.File]::ReadAllText($path)))
     if (-not $problems.Count) { Write-Host 'The description is complete.'; exit 0 }
     Write-Host 'The description misses:'
     $problems | ForEach-Object { Write-Host "- $_" }

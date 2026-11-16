@@ -1,7 +1,8 @@
 ﻿<#
 .SYNOPSIS
-    The CI checks, locally: syntax of the PowerShell scripts, formatting,
-    clippy (warnings = errors) and tests. Run it before each PR.
+    The CI checks, locally: syntax of the PowerShell scripts, the shell hook
+    of the agents (.claude/hooks), formatting, clippy (warnings = errors)
+    and tests. Run it before each PR.
 
     Clippy and the tests wait for a build slot when other heavy builds
     already run on the PC (AURORA_BUILD_SLOTS, 2 by default; common.ps1).
@@ -10,6 +11,9 @@
 
 Set-Location (git rev-parse --show-toplevel).Trim()
 Sync-BuildCache
+# the Rust version of rust-toolchain.toml, before the first Cargo command
+# installs it: one install at a time for the PC (common.ps1)
+Install-RustVersion (Get-Location).Path
 # Off Windows, clippy allows dead code, as the Linux and macOS CI jobs do:
 # Windows-only helpers have no caller in those builds. Windows PowerShell
 # (and check.ps1 there) still rejects it. $IsWindows is unset on 5.1.
@@ -17,6 +21,7 @@ $clippyArgs = @('-D', 'warnings')
 if ($PSVersionTable.PSEdition -ne 'Desktop' -and -not $IsWindows) { $clippyArgs += @('-A', 'dead-code') }
 $steps = @(
     @{ Name = 'PowerShell scripts (5.1 parser)'; Run = { & "$PSScriptRoot\check-scripts.ps1" } },
+    @{ Name = 'Shell hook of the agents'; Run = { & "$PSScriptRoot\test-agent-hook.ps1" } },
     @{ Name = 'Formatting (rustfmt)'; Run = { cargo fmt --all -- --check } },
     @{ Name = 'Clippy'; Heavy = $true; Run = { cargo clippy --workspace --all-targets --locked -- @clippyArgs } },
     @{ Name = 'Tests'; Heavy = $true; Run = { cargo test --workspace --locked } }
