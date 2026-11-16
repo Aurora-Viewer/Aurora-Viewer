@@ -35,7 +35,7 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
         let stdout = String::from_utf8_lossy(&result.stdout);
         assert!(
             result.status.success() && stdout.contains("1 passed"),
-            "{stdout}\\n{}",
+            "{stdout}\n{}",
             String::from_utf8_lossy(&result.stderr)
         );
         return;
@@ -66,7 +66,7 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
                 let button = |ctx: &egui::Context, texts: &[Text]| -> Option<egui::WidgetRect> {
                     let text = texts.iter().find(|t| t.source == label)?;
                     ctx.viewport(|v| {
-                        v.this_pass
+                        v.prev_pass
                             .widgets
                             .get_layer(layer)
                             .filter(|w| w.enabled && w.sense.senses_click() && w.rect.contains(text.rect.center()))
