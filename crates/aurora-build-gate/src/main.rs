@@ -22,6 +22,11 @@
 //!
 //! One file and the standard library only: the scripts build it with `rustc`
 //! alone, before Cargo can run. Keep it that way.
+//!
+//! The project's Cargo configuration names the gate built by the last script
+//! that wrote it. A fix that every worktree of the PC must get also changes
+//! the marker of that file (`$BuildCacheMarker` in `scripts/common.ps1`), or
+//! the scripts of an older worktree write their older gate back.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
