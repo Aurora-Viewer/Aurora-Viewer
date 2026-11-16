@@ -1674,7 +1674,9 @@ pub(super) fn show(
         && let Some(id) = state.to_request.pop()
     {
         // (a folder excluded since it was listed is never read)
-        if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Unknown) && !prefs.sorter.excludes(inv, id) {
+        // (an Undo reads what its run moved, excluded since or not)
+        let undo = state.undo_folders.contains(&id);
+        if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Unknown) && (undo || !prefs.sorter.excludes(inv, id)) {
             inv.request(id);
         }
     }
@@ -1738,10 +1740,11 @@ pub(super) fn show(
     };
     if let Some((task, plan)) = Planning::take(&mut state.cleaning)
         && let Some((choices, from, day)) = task.cleanup
+        // (made with older options, an exclusion since among them: dropped,
+        // and made again)
+        && task.options == prefs.sorter
     {
-        if task.options == prefs.sorter {
-            state.to_request.extend(plan.unfetched.iter().copied());
-        }
+        state.to_request.extend(plan.unfetched.iter().copied());
         state.cleanup = Some((task.generation, choices, from, day, plan));
     }
     if state.tab == CLEANUP && !busy && state.cleaning.is_none() {

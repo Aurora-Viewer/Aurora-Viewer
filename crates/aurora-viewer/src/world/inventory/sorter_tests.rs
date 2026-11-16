@@ -744,6 +744,30 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
         ![12, 13, 15, 16, 18, 19].iter().any(|n| moved.contains(&id(*n))),
         "deliveries never opened"
     );
+    // an AO, a car, a tattoo pack and a prefab with their working parts; a
+    // builder's shelf of textures and scripts stays a shelf
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 120, 1, "Elegance AO");
+    add_folder(&mut inv, 121, 120, "Stands");
+    add_folder(&mut inv, 122, 120, "Walks");
+    add_folder(&mut inv, 123, 1, "Speedster Car");
+    add_folder(&mut inv, 124, 123, "Textures");
+    add_folder(&mut inv, 125, 123, "Scripts");
+    add_folder(&mut inv, 126, 1, "Rose Sleeve Tattoo");
+    add_folder(&mut inv, 127, 126, "BOM");
+    add_folder(&mut inv, 128, 126, "Opacity");
+    add_folder(&mut inv, 129, 1, "Seaside Cottage Prefab");
+    add_folder(&mut inv, 130, 129, "Rez Box");
+    add_folder(&mut inv, 131, 1, "Builds");
+    add_folder(&mut inv, 132, 131, "Textures");
+    add_folder(&mut inv, 133, 131, "Scripts");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        ![121, 122, 124, 125, 127, 128, 130].iter().any(|n| moved.contains(&id(*n))),
+        "deliveries never opened"
+    );
+    assert!(!moved.contains(&id(131)), "Builds is a shelf");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

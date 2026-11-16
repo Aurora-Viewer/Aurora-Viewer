@@ -1387,6 +1387,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // `Skins`, `Boots`) are a shelf sorted by kind
     let (mut singular, mut plural) = (0, 0);
     let mut fatpack_seen = false;
+    let mut part_seen = false;
     let mut named_seen = false;
     let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
@@ -1416,14 +1417,22 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
                 singular += 1;
             }
         }
-        version || fatpack || kind_only
+        // a delivery's own working parts (`Teeth`, an AO's `Stands` and
+        // `Walks`, `Scripts`, a tattoo's `Opacity`, a prefab's `Rez Box`):
+        // they keep it whole only beside a name of its own
+        let part = sub_words.iter().any(|w| DELIVERY_PARTS.contains(&w.as_str()))
+            && sub_words
+                .iter()
+                .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()) || tone(w));
+        part_seen |= part;
+        version || fatpack || kind_only || part
     });
     // (a product named for what it is, with a folder repeating its name,
     // keeps its plural extras: `Lelutka Avalon Head` holding `Avalon HUD`,
     // `Skins`, `Shapes`)
     let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen);
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
-    all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen) && names_a_product(name))
+    all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen || part_seen) && names_a_product(name))
 }
 
 /// A kind word written as many (`Dresses`, `Shoes`, `Heads`): the word
@@ -1490,6 +1499,11 @@ const VERSION_WORDS: [&str; 35] = [
     "couples",
     "bento",
 ];
+
+/// A delivery's working parts: with a name of its own (`Elegance AO`
+/// holding `Stands`, `Walks`, `Sits`) they keep it whole; on a shelf
+/// (`Builds` holding `Textures`, `Scripts`) they say nothing.
+const DELIVERY_PARTS: [&str; 9] = ["teeth", "stands", "walks", "sits", "scripts", "script", "opacity", "rez", "box"];
 
 /// Words a user names a shelf of their own with, never a product.
 const SHELF_WORDS: [&str; 39] = [
