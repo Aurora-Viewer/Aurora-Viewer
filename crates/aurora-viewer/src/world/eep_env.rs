@@ -241,6 +241,8 @@ struct Slot {
     /// The day's settings map as received (None for Firestorm's default
     /// day, whose asset the settings streamer keeps).
     settings: Option<Arc<Llsd>>,
+    /// The names it was applied with (`DayNames`).
+    names: crate::weather::region::DayNames,
     length: f64,
     offset: f64,
     /// Bumped on every change: a new slot crossfades even with the same source.
@@ -361,6 +363,9 @@ pub struct EnvSelector {
     pending: VecDeque<Pending>,
     /// Aurora Weather by settings asset (`note_asset_weather`).
     asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
+    /// The same from the names of the inventory items picked
+    /// (`note_item_name`), for an asset whose own name carries none.
+    item_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
     /// Assets that could not be loaded, for the FailedToFindSettings message.
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
@@ -513,6 +518,7 @@ impl EnvSelector {
             handle,
             day,
             settings,
+            names: Default::default(),
             length,
             offset,
             generation: self.generation,
@@ -537,6 +543,7 @@ impl EnvSelector {
         self.next_fade = if ctx.teleporting { TRANSITION_FAST } else { TRANSITION_DEFAULT };
         let altitudes = answer.altitudes;
         let settings = answer.day_settings.clone();
+        let names = answer.names.clone();
         let day = answer.valid_day();
         if parcel_id == eep::REGION_PARCEL_ID {
             // a valid region day leaves the parcel's in place (RegionInfo
@@ -546,7 +553,9 @@ impl EnvSelector {
                     self.altitudes = altitudes;
                     self.default_pending = None;
                     let (length, offset) = (d.length, d.offset);
-                    self.region = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.region = Some(slot);
                     AnswerOutcome::RegionDay
                 }
                 None => {
@@ -567,7 +576,9 @@ impl EnvSelector {
             match day {
                 Some(d) => {
                     let (length, offset) = (d.length, d.offset);
-                    self.parcel = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.parcel = Some(slot);
                     AnswerOutcome::ParcelDay
                 }
                 None => {
@@ -685,6 +696,17 @@ impl EnvSelector {
         }
     }
 
+    /// The names the environment in effect was applied with (the parcel's,
+    /// else the region's), as [`EnvSelector::day_settings`] picks it.
+    pub fn day_names(&self, parcel: bool) -> crate::weather::region::DayNames {
+        let slot = if parcel {
+            self.parcel.as_ref().or(self.region.as_ref())
+        } else {
+            self.region.as_ref()
+        };
+        slot.map(|s| s.names.clone()).unwrap_or_default()
+    }
+
     /// Length and offset (s) of the region's day (LLPanelRegionEnvironment's
     /// mCurrentEnvironment), when it has one.
     pub fn region_timing(&self) -> Option<(f64, f64)> {
@@ -737,6 +759,22 @@ impl EnvSelector {
     /// panels' time of day follows), once.
     pub fn take_preset_change(&mut self) -> Option<u8> {
         std::mem::take(&mut self.preset_dropped).then_some(self.local_preset)
+    }
+
+    /// Each frame: the panels' time of day and the selector's follow each
+    /// other. While RLVa holds the environment the panels' choice is put
+    /// back to the preset shown, never kept for later: a choice made under
+    /// @setenv (a menu still open, a shortcut) is dropped, and nothing
+    /// changes when the restriction lifts, as in the Legacy Viewer, whose
+    /// greyed entries (menu_viewer.xml, RLV.EnableIfNot setenv) set nothing.
+    pub fn sync_time_of_day(&mut self, time_of_day: &mut u8) {
+        if let Some(p) = self.take_preset_change() {
+            *time_of_day = p;
+        }
+        if self.rlva_locked {
+            *time_of_day = self.local_preset;
+        }
+        self.set_time_of_day(*time_of_day);
     }
 
     /// FSEnvironmentManualTransitionTime (s, 0 = instant).
@@ -838,6 +876,20 @@ impl EnvSelector {
         self.local.as_ref().and_then(|l| l.weather.as_ref())
     }
 
+    /// An inventory item picked for myself, its asset `asset`: the weather
+    /// its name's code gives (a code typed into an item's name by hand is
+    /// not in its asset, whose name is read first).
+    pub fn note_item_name(&mut self, asset: Uuid, name: &str) {
+        match crate::weather::region::SkyWeather::from_name(name) {
+            Some(w) => {
+                self.item_weather.insert(asset, crate::weather::region::RegionDay::fixed(w));
+            }
+            None => {
+                self.item_weather.remove(&asset);
+            }
+        }
+    }
+
     /// The Aurora Weather of settings assets, read from their names as they
     /// load (scene/mod.rs): an item applied to myself carries it.
     pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
@@ -881,7 +933,11 @@ impl EnvSelector {
                     // a sky or a day sets the weather (or clears it); a water
                     // has none and leaves the sky's
                     if !matches!(*s, super::eep::Settings::Water(_)) {
-                        let weather = self.asset_weather.get(&p.asset).cloned();
+                        let weather = self
+                            .asset_weather
+                            .get(&p.asset)
+                            .or_else(|| self.item_weather.get(&p.asset))
+                            .cloned();
                         self.set_local_weather(weather);
                     }
                 }
@@ -1508,10 +1564,7 @@ impl super::World {
             now: self.env_clock.elapsed().as_secs_f64(),
             altitude: self.agent.position.z,
         };
-        if let Some(p) = self.eep.take_preset_change() {
-            *time_of_day = p;
-        }
-        self.eep.set_time_of_day(*time_of_day);
+        self.eep.sync_time_of_day(time_of_day);
         let (sky, water) = self.eep.frame(&input);
         self.rlva_environment_frames((sky, water))
     }
@@ -1597,6 +1650,29 @@ mod tests {
         sel.clear_experience(experience, 1.0);
         gamma(&mut sel, 4.0);
         assert!((gamma(&mut sel, 5.1) - 0.7).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
+    }
+
+    #[test]
+    fn experience_scene_switching_stays_above_refreshed_region_lighting() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        let scene = |value| {
+            llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! { "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => value } } },
+            }
+        };
+        sel.push_experience(experience, &scene(3.0));
+        assert_eq!(gamma(&mut sel, 1.0), 3.0);
+        sel.on_answer(REGION, -1, answer(-1, Some(1.2)), ctx(None));
+        assert_eq!(gamma(&mut sel, 2.0), 3.0, "a region refresh must not pin the viewer to its sky");
+        sel.push_experience(experience, &scene(2.0));
+        assert_eq!(gamma(&mut sel, 3.0), 2.0);
+        sel.clear_experience(experience, 0.0);
+        assert!((gamma(&mut sel, 4.0) - 1.2).abs() < 1e-6);
         assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
     }
 
@@ -2486,5 +2562,38 @@ mod tests {
         sel.apply_local_day(DayCycle::fixed(SkyFrame::default(), WaterFrame::default()));
         sel.frame(&input(4.0));
         assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
+    }
+
+    #[test]
+    fn a_time_of_day_chosen_while_rlva_holds_the_environment_is_dropped() {
+        let mut sel = region_selector();
+        // a preset chosen freely follows the panels
+        let mut panels = 2;
+        sel.sync_time_of_day(&mut panels);
+        library_sky_arrives(&mut sel, 2);
+        sel.frame(&input(1.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        // @setenv: another preset, then the shared environment, are refused
+        // and the panels go back to what is shown
+        sel.rlva_locked = true;
+        for chosen in [4, 0] {
+            panels = chosen;
+            sel.sync_time_of_day(&mut panels);
+            assert_eq!(panels, 2, "choice {chosen}");
+            assert!(sel.wanted_settings().is_empty());
+        }
+        // the restriction lifts: nothing was kept to apply now
+        sel.rlva_locked = false;
+        sel.sync_time_of_day(&mut panels);
+        sel.frame(&input(2.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        assert!(sel.wanted_settings().is_empty());
+        // and a choice made from then on applies again
+        panels = 4;
+        sel.sync_time_of_day(&mut panels);
+        assert_eq!(
+            sel.wanted_settings(),
+            vec![super::super::env::time_of_day_sky(4).expect("a preset")]
+        );
     }
 }

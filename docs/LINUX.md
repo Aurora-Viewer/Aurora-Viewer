@@ -118,6 +118,20 @@ Your settings, cache and logs are kept: they are not in the viewer's folder.
 | Cache | `~/.cache/auroraviewer` |
 | Logs, media plugins | `~/.local/share/auroraviewer` |
 
+## Saved passwords
+
+"Remember password" and the 30-day two-factor choice keep what they save in
+your desktop's wallet, through the Secret Service: KWallet, GNOME Keyring,
+KeePassXC with its Secret Service integration on, or any other provider of
+`org.freedesktop.secrets`. If none answers the first time the viewer reaches
+the wallet, which can be at the login itself, nothing is saved, in a file or
+anywhere else, until the viewer restarts.
+
+For a password, the chat says so after the login and "Remember password"
+turns itself off: start a wallet, restart the viewer and turn it on again.
+The two-factor choice gives no such message: the viewer asks for the code
+again at the next login.
+
 ## Second Life links
 
 Preferences › Language and updates › "Open SLURL and Hypergrid links in

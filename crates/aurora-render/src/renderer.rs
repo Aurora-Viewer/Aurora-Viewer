@@ -46,6 +46,17 @@ const MAX_LIGHTS: usize = 64;
 const XR_RETRIES: u8 = 3;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
+/// `AURORA_DEMO_VR_CLOSED`: the frame the VR runtime is taken as closing at.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn demo_vr_closed() -> Option<u64> {
+    static AT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *AT.get_or_init(|| std::env::var("AURORA_DEMO_VR_CLOSED").ok()?.trim().parse().ok())
+}
+/// How often the runtime's events are read while no VR session runs: often
+/// enough to let a closing runtime go within its grace of a few seconds
+/// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -207,6 +218,9 @@ struct FrameU {
     tex_lod: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
+    /// x: how far the snow lying is drawn (m), whatever falls
+    /// (`RainLook::snow_distance`); yzw unused.
+    snow_far: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -237,11 +251,15 @@ struct PostU {
     tonemap_mix: f32,
     /// Written on the GPU by `Exposure::encode`; 1 until then.
     auto_exposure: f32,
-    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
+    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view over
+    /// its checkerboard, 3 the live view over `cutout_key`.
     cutout: f32,
     _pad: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    /// The key color of a cut-out live view (`FrameParams::cutout_key`),
+    /// linear RGB.
+    cutout_key: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -366,6 +384,7 @@ impl Smaa {
             samples: 1,
             format: Some(format),
             gbuf: false,
+            range: None,
             depth_format: None,
             depth_bias: Default::default(),
             constants: &[],
@@ -524,7 +543,7 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
@@ -537,20 +556,20 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [
     // projectors' (`projector_shadows::shelter_slot`), so that none of them
     // loses its shadow; the last projector's only at the full budget. No
     // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
-    if let Some(slot) = shelter.filter(|&k| k < SPOT_SHADOWS) {
+    if let Some((slot, vp)) = shelter.filter(|&(k, _)| k < SPOT_SHADOWS) {
         views[slot] = Some((
             SpotShadow {
                 light: u32::MAX,
                 fade: 0.0,
             },
-            rain_shelter_matrix(f.camera_pos),
+            vp,
         ));
     }
     views
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
-/// the camera stays in its metre (what is built or moved under a roof shows
+/// the camera stays in its texel (what is built or moved under a roof shows
 /// within it).
 const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 
@@ -559,15 +578,26 @@ const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 const RAIN_SHELTER_LIGHT: i32 = -2;
 
 /// The shelter map: 80 m square around the camera, from 60 m above it to
-/// 60 m below, looking straight down; snapped to whole metres so that its
-/// texels do not crawl as the camera moves.
-fn rain_shelter_matrix(camera: Vec3) -> Mat4 {
+/// 60 m below, looking straight down, `map_px` texels a side; snapped to
+/// whole texels on the world's grid, so that a texel covers the same ground
+/// whatever the camera does. Snapped to whole metres (3.2 texels of a 256 px
+/// map, 6.4 of a 512 px one), every step moved the whole map onto a grid
+/// shifted by part of a texel: the edges of the lying snow, of the cover
+/// over it and of deep snow popped as the camera moved or orbited.
+fn rain_shelter_matrix(camera: Vec3, map_px: u32) -> Mat4 {
     // looking down -Z with +Y up, the view is a plain translation; the
     // orthographic projection (right-handed, depth 0 at the top to 1 at
     // the bottom, like the projectors' maps) then scales it
     const HALF: f32 = 40.0;
     const DEPTH: f32 = 120.0;
-    let (cx, cy, top) = (camera.x.round(), camera.y.round(), camera.z.round() + DEPTH * 0.5);
+    // (HALF is a whole number of texels at any power-of-two size: the map's
+    // edges, and so every texel boundary, fall on multiples of a texel)
+    let texel = 2.0 * HALF / map_px.max(2) as f32;
+    let (cx, cy, top) = (
+        (camera.x / texel).round() * texel,
+        (camera.y / texel).round() * texel,
+        camera.z.round() + DEPTH * 0.5,
+    );
     Mat4::from_cols(
         Vec4::new(1.0 / HALF, 0.0, 0.0, 0.0),
         Vec4::new(0.0, 1.0 / HALF, 0.0, 0.0),
@@ -664,6 +694,7 @@ impl Glow {
             samples: 1,
             format: Some(fmt),
             gbuf: false,
+            range: None,
             depth_format: None,
             depth_bias: Default::default(),
             constants: &[],
@@ -912,6 +943,9 @@ struct Targets {
     /// faces draw into, writing their depth as they go
     /// (`RiggedBlendDepth::Layered` and `Layers`, made on its first use).
     blend_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The lists of the blended fragments of each pixel
+    /// (`RiggedBlendDepth::Exact`, made on its first use).
+    blend_exact: Option<crate::blend_exact::Lists>,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
@@ -1009,10 +1043,25 @@ struct Pipelines {
     blend_depth_fringe: SidedPipelines,
     /// `Layers`: after each object's fringes, their depth from 1/255.
     blend_depth_fringe_depth: SidedPipelines,
-    /// The blended faces under the water (`DrawLists::blend_under_water`),
-    /// and their depth into the single-sampled scene depth.
+    /// `Exact`: every blended face once, lit and filed in the front of its
+    /// pixels (`fs_blend_once`), into the targets of the haze.
+    blend_once: SidedPipelines,
+    /// `Exact`, between runs of blended faces: the cut of each pixel into
+    /// the depth of the pass (`fs_blend_cut`).
+    blend_cut: wgpu::RenderPipeline,
+    /// `Exact`, over the screen: the light of the blended fragments over
+    /// what is drawn (`fs_blend_over`), then their glow (`fs_blend_glow`).
+    blend_over: wgpu::RenderPipeline,
+    blend_glow: wgpu::RenderPipeline,
+    /// The two in one draw (`fs_blend_both`), where the device blends from
+    /// two sources.
+    blend_both: Option<wgpu::RenderPipeline>,
+    /// The blended faces under the water (`DrawLists::blend_under_water`):
+    /// their colour, which writes no depth, then their depth into the
+    /// single-sampled scene depth and, with MSAA, the multisampled one.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
+    blend_under_depth_msaa: Option<SidedPipelines>,
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -1085,6 +1134,10 @@ struct Pipelines {
     refl_terrain: wgpu::RenderPipeline,
     refl_terrain_pbr: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// The mirror's blended faces (`fs_reflect_blend`): the rigged ones
+    /// writing depth, then the others reading it.
+    refl_blend_rigged: wgpu::RenderPipeline,
+    refl_blend: wgpu::RenderPipeline,
     /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
@@ -1092,6 +1145,13 @@ struct Pipelines {
     /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
     /// the other casters keep `fs_shadow` without the terrain's inputs.
     shadow_terrain: wgpu::RenderPipeline,
+    /// The rain's shelter map: `shadow` and `shadow_terrain` without the
+    /// depth bias. It is a height map, not a shadow: the slope's bias set
+    /// each slope's surface lower than it is, by twice its rise over a
+    /// texel (12 cm on a gentle 20 % slope at 31 cm texels), and the snow,
+    /// lying on what the map says, left every slope bare.
+    shelter: wgpu::RenderPipeline,
+    shelter_terrain: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1151,6 +1211,16 @@ struct GpuTimer {
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
+    /// The stochastic transparency's pass times summed over `st_n` frames,
+    /// logged every 120 (with `AURORA_PROFILE=1`).
+    st_sum: [f32; 4],
+    st_n: u32,
+    /// The last frame's stochastic pass times (`AURORA_PROFILE_FRAMES`).
+    last_st: Option<[f32; 4]>,
+    /// Whether each readback slot's frame drew the stochastic transparency:
+    /// its marks are written every frame (empty spans when it did not run),
+    /// so their timestamps alone cannot tell.
+    slot_st: [std::cell::Cell<bool>; 3],
     compare: PrepassCompare,
 }
 
@@ -1211,7 +1281,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 32;
+const GPU_MARKS: u32 = 37;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1287,6 +1357,15 @@ const MARK_SHELTER_BEGIN: u32 = 30;
 const MARK_SHELTER_END: u32 = 31;
 const MARK_WEATHER_MEMORY_BEGIN: u32 = 32;
 const MARK_WEATHER_MEMORY_END: u32 = 33;
+/// Depth-based stochastic transparency (oit_stochastic.rs), written every
+/// frame (empty spans, after the rain, when it is off): before its passes,
+/// after the total alpha, after the stochastic depth, after the accumulation,
+/// after the resolve and the composite.
+const MARK_ST_BEGIN: u32 = 34;
+const MARK_ST_ALPHA_END: u32 = 35;
+const MARK_ST_DEPTH_END: u32 = 36;
+const MARK_ST_ACCUM_END: u32 = 37;
+const MARK_ST_COMPOSITE_END: u32 = 38;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1400,6 +1479,10 @@ impl GpuTimer {
             last_ssao: None,
             last_contact: None,
             last_bloom: None,
+            st_sum: [0.0; 4],
+            st_n: 0,
+            last_st: None,
+            slot_st: Default::default(),
             last_effects: None,
             last_weather: None,
             slot_prepass: Default::default(),
@@ -1430,6 +1513,34 @@ impl GpuTimer {
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
+                            self.last_st = None;
+                            if self.slot_st[slot].get() {
+                                let parts = [
+                                    ms(MARK_ST_BEGIN, MARK_ST_ALPHA_END),
+                                    ms(MARK_ST_ALPHA_END, MARK_ST_DEPTH_END),
+                                    ms(MARK_ST_DEPTH_END, MARK_ST_ACCUM_END),
+                                    ms(MARK_ST_ACCUM_END, MARK_ST_COMPOSITE_END),
+                                ];
+                                self.last_st = Some(parts);
+                                for (sum, p) in self.st_sum.iter_mut().zip(parts) {
+                                    *sum += p;
+                                }
+                                self.st_n += 1;
+                                if self.st_n >= 120 {
+                                    let n = self.st_n as f32;
+                                    let p = self.st_sum.map(|v| v / n);
+                                    log::info!(
+                                        "oit stochastic gpu ms: alpha={:.3} depth={:.3} accum={:.3} resolve_composite={:.3} total={:.3}",
+                                        p[0],
+                                        p[1],
+                                        p[2],
+                                        p[3],
+                                        p.iter().sum::<f32>()
+                                    );
+                                    self.st_sum = [0.0; 4];
+                                    self.st_n = 0;
+                                }
+                            }
                             self.last_effects = Some(GPU_EFFECT_PARTS.map(sum));
                             self.last_weather = Some(GPU_WEATHER_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
@@ -1722,6 +1833,18 @@ impl FrameTarget {
 
 /// The passes of a frame and all they own. Lives on the render thread, or
 /// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
+/// What the stochastic transparency is made from the first frame it is on
+/// (`Backend::ensure_st`).
+struct StInit {
+    adapter: wgpu::Adapter,
+    instance_flags: wgpu::InstanceFlags,
+    /// the sample counts the colour, depth and transmittance formats take
+    pass_supported: Vec<u32>,
+    /// the scene's bind group layouts (frame, records, textures): the sample
+    /// mask route's shader is written against them
+    scene_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
+}
+
 pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -1741,6 +1864,10 @@ pub(crate) struct Backend {
     /// try may start (`XR_RETRIES`).
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_retry: (u8, Option<std::time::Instant>),
+    /// When the runtime's events were last read between VR sessions
+    /// (`XR_IDLE_POLL`).
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_polled: std::time::Instant,
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
     snapshot_window: Option<(u32, u32)>,
@@ -1791,6 +1918,12 @@ pub(crate) struct Backend {
     post_layout: wgpu::BindGroupLayout,
     gbuf_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
+    /// Order-independent transparency (oit_stochastic.rs): made the first
+    /// frame the method is on, with its pipelines for the scene's samples.
+    st: Option<crate::oit_stochastic::Stochastic>,
+    st_pipes: Option<crate::oit_stochastic::Pipes>,
+    /// What `make_st` needs that the Backend does not keep.
+    st_init: StInit,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
     water_effects: crate::water_effects::WaterGpu,
@@ -1851,8 +1984,11 @@ pub(crate) struct Backend {
     shelter_slot: usize,
     /// With the shadows off, the shelter map drawn alone: its matrix and
     /// when (kept in the atlas, which nothing else draws then; drawn again
-    /// when the camera crosses a metre, or after `SHELTER_REFRESH`).
+    /// when it follows the camera, or after `SHELTER_REFRESH`).
     shelter_drawn: Option<(Mat4, Instant)>,
+    /// Where the shelter map is centred (`follow_shelter`): the camera when
+    /// it last went a metre from it.
+    shelter_centre: Option<Vec3>,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -1914,6 +2050,9 @@ pub(crate) struct Backend {
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// The pipeline workers still running, a set no longer wanted included:
+    /// waited for when the renderer is dropped (`wait_pipeline_workers`).
+    pipeline_workers: Vec<std::thread::JoinHandle<()>>,
     /// Rain prototype's wetness memory bookkeeping.
     rain_wet: RainWet,
     snow_trail: SnowTrail,
@@ -1961,6 +2100,7 @@ impl Drop for Backend {
             log::warn!("GPU device lost: the window surface is left to the process");
             return;
         }
+        self.wait_pipeline_workers();
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -2019,6 +2159,11 @@ pub(crate) struct BackendInit {
     pub adapter_specific: bool,
     pub gpu_cull: bool,
     pub tex_layout: wgpu::BindGroupLayout,
+    /// its entries (the stochastic transparency's sample mask shader)
+    pub tex_layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
+    /// The flags the instance was made with (the sample mask shader's debug
+    /// information follows them).
+    pub instance_flags: wgpu::InstanceFlags,
     /// The scene's buffers at the start (first records bind group).
     pub scene: SceneGpu,
     pub anim_clock: crate::tex_anim::AnimClock,
@@ -2236,6 +2381,9 @@ struct PipeDesc<'a> {
     format: Option<wgpu::TextureFormat>,
     /// Second color target (G-buffer for SSR).
     gbuf: bool,
+    /// Second color target of the passes of the exact blend order
+    /// (`blend_exact::Lists::range`): its blend, and what is written.
+    range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
     depth_format: Option<wgpu::TextureFormat>,
     depth_bias: wgpu::DepthBiasState,
     constants: &'a [(&'a str, f64)],
@@ -2278,6 +2426,20 @@ fn cull_to_view(view_proj: Mat4, list: &[ShadowCaster]) -> Vec<DrawCmd> {
         .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
         .map(|c| c.cmd)
         .collect()
+}
+
+/// The mirror's blended faces (`DrawLists::reflection_blend`) that its view
+/// of `view_proj` touches: the first `rigged` of `list` in their order, then
+/// the others back to front from the mirror's camera at `eye` (its own
+/// distances, not the main view's: what is near the main camera may be far in
+/// the mirror). Equal distances keep their order.
+fn mirror_blend_order(view_proj: Mat4, eye: Vec3, list: &[DrawCmd], rigged: usize) -> [Vec<DrawCmd>; 2] {
+    let rigged = rigged.min(list.len());
+    let first = cull_cmds_to_view(view_proj, &list[..rigged]);
+    let mut rest = cull_cmds_to_view(view_proj, &list[rigged..]);
+    let distance = |c: &DrawCmd| eye.distance_squared(Vec3::new(c.bounds[0], c.bounds[1], c.bounds[2]));
+    rest.sort_by(|a, b| distance(b).total_cmp(&distance(a)));
+    [first, rest]
 }
 
 /// Draws of `list` whose `bounds` touch the view (radius 0: always kept).
@@ -2350,7 +2512,7 @@ fn begin_scene_b_on<'a>(
 }
 
 /// Rain prototype: the wetness memory's bookkeeping. The memory covers
-/// [`RAIN_WET_EXTENT`] m around the camera, its corner snapped to
+/// a square around the camera ([`wet_extent_for`]), its corner snapped to
 /// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
 /// the last one at the same places). `soak`: how wet a place new to it is
 /// (it rises as the rain goes on, then dries); the ground is drawn wet
@@ -2374,7 +2536,94 @@ struct RainWet {
     snow_cover: [f32; 4],
 }
 
-const RAIN_WET_EXTENT: f32 = 128.0;
+/// Deep snow's grid (env.wgsl `vs_snow_mesh`, which takes it from the frame:
+/// `snow_trail_step.zw`) at a weather quality and a reach set (m at High).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DeepSnowMesh {
+    /// Cells a side of each of its nested squares.
+    cells: u32,
+    /// How many squares, each twice as coarse as the one inside it, from
+    /// the finest (`SNOW_MESH_FIRST`, 5.12 m across).
+    levels: u32,
+    /// How far it reaches from my avatar (m): this quality's share of the
+    /// reach set.
+    reach: f32,
+}
+
+/// The finest square's side (m, env.wgsl `SNOW_MESH_FIRST`).
+const SNOW_MESH_FIRST: f32 = 5.12;
+/// Where deep snow has thinned to nothing toward its reach (a share of it,
+/// env.wgsl `SNOW_MESH_EDGE_END`): no square has to reach past it.
+const SNOW_MESH_EDGE_END: f32 = 0.98;
+
+impl DeepSnowMesh {
+    /// The grid at weather `quality` (0 Low, 1 Medium, 2 High) for a reach
+    /// of `reach` m at High: Low and Medium keep less of it, and coarser
+    /// cells, as before the reach could be set. As many squares as cover
+    /// where the snow still shows, whichever cell the outermost is snapped
+    /// to (its centre on twice its own cell: two cells of margin).
+    fn new(quality: u32, reach: f32) -> Self {
+        let (cells, share) = match quality {
+            0 => (64u32, 10.0 / 15.0),
+            1 => (96, 13.0 / 15.0),
+            _ => (128, 1.0),
+        };
+        let reach = reach.clamp(1.0, 60.0) * share;
+        let mut levels = 1u32;
+        loop {
+            let s = SNOW_MESH_FIRST / cells as f32 * (1u32 << (levels - 1)) as f32;
+            let half = cells as f32 * 0.5 * s;
+            if half - 2.0 * s >= reach * SNOW_MESH_EDGE_END || levels >= 8 {
+                return Self { cells, levels, reach };
+            }
+            levels += 1;
+        }
+    }
+
+    /// For the frame (`snow_trail_step.zw`): the reach, and the cells a
+    /// side times 16 plus the levels (both exact in an f32).
+    fn uniform(&self) -> [f32; 2] {
+        [self.reach, (self.cells * 16 + self.levels) as f32]
+    }
+
+    /// The vertices of its draw: six a cell, every square whole (the
+    /// cells another square covers, or past the reach, are dropped in the
+    /// vertex stage).
+    fn vertices(&self) -> u32 {
+        self.levels * self.cells * self.cells * 6
+    }
+}
+
+/// The wetness memory's square (m) for the weather drawn `reach` metres
+/// away (`RainLook::memory_reach`): 128 m by default, 256 m or 512 m for
+/// farther puddles or snow, always 4 texels a metre (512 to 2048 a side:
+/// 8 to 128 MB for its two textures). Its square must reach as far as
+/// what is drawn whichever way the camera looks: beyond it no puddle or
+/// snow shows. Its centre is snapped to `RAIN_WET_SNAP` (`rain_wet_origin`),
+/// so it reaches at least half its side less half a snap from the camera.
+/// Past 252 m (the slider's last 4 m) the largest square ends just short,
+/// within the last 2 % of the distance's fade, where nearly nothing shows.
+fn wet_extent_for(reach: f32) -> f32 {
+    [128.0, 256.0, 512.0]
+        .into_iter()
+        .find(|e| e * 0.5 - RAIN_WET_SNAP * 0.5 >= reach)
+        .unwrap_or(512.0)
+}
+
+/// The memory's square (m) to keep: `wet_extent_for` while `busy` (rain or
+/// snow falls, or the memory still holds some), the smallest while it is
+/// empty, so that a far distance holds no video memory in clear weather.
+fn wet_extent_wanted(reach: f32, busy: bool) -> f32 {
+    if busy { wet_extent_for(reach) } else { wet_extent_for(0.0) }
+}
+
+/// The wetness memory's corner for the camera at `at`: its centre the
+/// nearest multiple of `RAIN_WET_SNAP` (it moves only after the camera has),
+/// so the camera is never more than half a snap off its centre.
+fn rain_wet_origin(at: Vec2, extent: f32) -> Vec2 {
+    (at / RAIN_WET_SNAP).round() * RAIN_WET_SNAP - Vec2::splat(extent * 0.5)
+}
+const RAIN_WET_TEXELS_PER_M: f32 = 4.0;
 const RAIN_WET_SNAP: f32 = 8.0;
 const RAIN_WET_DRY: f32 = 0.02;
 /// How fast a place soaks while it rains (s, at full rain), and dries
@@ -2432,6 +2681,14 @@ impl SnowTrail {
     fn active(&self) -> bool {
         self.last.is_some()
     }
+
+    /// Every position moved by `by` (a border crossing): the map stays on
+    /// the ground it covers.
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
 }
 
 impl RainWet {
@@ -2442,9 +2699,25 @@ impl RainWet {
         (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY || self.step[2] < 0.0) && self.last.is_some()
     }
 
+    /// Every position moved by `by` (a border crossing): the memory stays
+    /// on the ground it covers (left in place, it was read 256 m off).
+    fn shift(&mut self, by: Vec2) {
+        if let Some(o) = &mut self.origin {
+            *o += by;
+        }
+    }
+
+    /// Its texels start again (a new size of its square): every place is
+    /// new to it, as wet and as snowed on as the open is now (`soak`, the
+    /// standing water and the snow so far are kept, so the ground does
+    /// not dry or melt at once).
+    fn restart_texels(&mut self) {
+        self.origin = None;
+    }
+
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
     /// `at`; `ice`: puddles freeze in the snow.
-    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool) {
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool, extent: f32) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
@@ -2464,15 +2737,9 @@ impl RainWet {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let snow = snow.clamp(0.0, 1.0);
-        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
-        // snows (demo captures, without waiting for it to build)
-        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
-        if snow > 0.0
-            && let Some(v) = lying
-        {
-            self.snow = self.snow.max(v.clamp(0.0, 1.0));
-        }
+        // (AURORA_SNOW_LYING reaches it as `RainLook::snow_lying`, the floor
+        // set before this step: the app reads it, and drops it with "Snow
+        // settles" off)
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
@@ -2486,11 +2753,11 @@ impl RainWet {
             *self = RainWet::default();
             return;
         }
-        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(RAIN_WET_EXTENT * 0.5);
+        let origin = rain_wet_origin(at, extent);
         self.origin = Some(origin);
         let fresh = was.is_none() || self.last.is_none();
         let prev = was.unwrap_or(origin);
-        self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
+        self.uniform = [origin.x, origin.y, extent, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
         // z: 1 while rain melts the snow, + 2 while puddles may freeze, + 4
         // deep snow (parallax)
@@ -2509,9 +2776,56 @@ impl Backend {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 
-    /// The projector map the shelter is drawn into this frame, if it is.
-    fn rain_shelter_map(&self, f: &FrameParams) -> Option<usize> {
-        self.rain_shelter(f).then_some(self.shelter_slot)
+    /// The projector map the shelter is drawn into this frame, if it is,
+    /// and its view-projection.
+    fn rain_shelter_map(&self, f: &FrameParams) -> Option<(usize, Mat4)> {
+        self.rain_shelter(f).then(|| (self.shelter_slot, self.shelter_matrix()))
+    }
+
+    /// The shelter map's view-projection this frame: around where it was
+    /// last centred (`follow_shelter`), on its own texels (`shadow_size / 2`
+    /// a side, as the projectors' maps). Every view of the frame reads it
+    /// (reflections, probe faces), as the one map drawn.
+    fn shelter_matrix(&self) -> Mat4 {
+        rain_shelter_matrix(self.shelter_centre.unwrap_or(Vec3::ZERO), self.shadow_size / 2)
+    }
+
+    /// The shelter map follows the camera once it has gone a metre from
+    /// where the map was centred (in any direction, height too), as it did
+    /// when it was snapped to whole metres: with the shadows off it is drawn
+    /// again only then (or after `SHELTER_REFRESH`). Snapped to its own
+    /// texels it would move, and be drawn again, every few centimetres.
+    fn follow_shelter(&mut self, camera: Vec3) {
+        if let Some(c) = shelter_centre_after(self.shelter_centre, camera) {
+            self.shelter_centre = Some(c);
+        }
+    }
+
+    /// A border crossing (`Renderer::shift_world`, `by` m): what this
+    /// renderer keeps in world positions moves with every position, once.
+    fn shift_weather(&mut self, by: [f32; 2]) {
+        if by == [0.0; 2] {
+            return;
+        }
+        let by = Vec2::from(by);
+        self.rain_wet.shift(by);
+        self.snow_trail.shift(by);
+        if let Some(c) = &mut self.shelter_centre {
+            *c += by.extend(0.0);
+        }
+    }
+}
+
+/// How far the camera goes from the shelter map's centre before the map
+/// follows it (m).
+const SHELTER_FOLLOW: f32 = 1.0;
+
+/// The shelter map's new centre for the camera at `camera`, if it moves
+/// (`Backend::follow_shelter`): none yet, or the camera a metre or more away.
+fn shelter_centre_after(centre: Option<Vec3>, camera: Vec3) -> Option<Vec3> {
+    match centre {
+        Some(c) if (camera - c).abs().max_element() < SHELTER_FOLLOW => None,
+        _ => Some(camera),
     }
 }
 
@@ -2532,14 +2846,14 @@ fn rain_share(quality: u32) -> f32 {
 }
 
 /// Rain prototype: `AURORA_RAIN_DEBUG=1`, the wet pass showing the wetness
-/// memory.
+/// memory; `=snow`, why the snow lies or not (env.wgsl `snow_debug_color`).
 fn rain_constants() -> &'static [(&'static str, f64)] {
     static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
     CONSTANTS.get_or_init(|| {
-        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") {
-            1.0
-        } else {
-            0.0
+        let debug = match std::env::var("AURORA_RAIN_DEBUG").as_deref() {
+            Ok("1") => 1.0,
+            Ok("snow") => 2.0,
+            _ => 0.0,
         };
         [("rain_debug", debug)]
     })
@@ -2563,6 +2877,13 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             format: GBUF_FORMAT,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
+        }));
+    }
+    if let Some((blend, write_mask)) = d.range {
+        targets.push(Some(wgpu::ColorTargetState {
+            format: crate::blend_exact::range_format(device.features()),
+            blend,
+            write_mask,
         }));
     }
     let options = wgpu::PipelineCompilationOptions {
@@ -3018,6 +3339,16 @@ impl Impostors {
         (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) = p;
     }
 
+    /// The pictures are drawn with the scene's own shaders.
+    fn shader_source(features: wgpu::Features) -> String {
+        format!(
+            "{}\n{}\n{}",
+            crate::common_shader_source(),
+            crate::object_shader_source(features),
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+        )
+    }
+
     fn make_pipelines(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
@@ -3027,15 +3358,9 @@ impl Impostors {
         samples: u32,
         ssr: bool,
     ) -> ImpostorPipelines {
-        let src = format!(
-            "{}\n{}\n{}",
-            crate::common_shader_source(),
-            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
-        );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
-            source: wgpu::ShaderSource::Wgsl(src.into()),
+            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features()).into()),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("impostors"),
@@ -3062,6 +3387,7 @@ impl Impostors {
             samples,
             format: Some(HDR_FORMAT),
             gbuf,
+            range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -3252,6 +3578,8 @@ struct Ranges {
     water_air_terrain: (u64, u32),
     water_air_terrain_pbr: (u64, u32),
     refl_mirror: (u64, u32),
+    /// The mirror's blended faces: the rigged, then the others back to front.
+    refl_mirror_blend: [(u64, u32); 2],
     refl_terrain_water: (u64, u32),
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
@@ -3349,6 +3677,8 @@ impl Backend {
             adapter_specific,
             gpu_cull,
             tex_layout,
+            tex_layout_entries,
+            instance_flags,
             scene,
             anim_clock,
             lost,
@@ -3394,245 +3724,249 @@ impl Backend {
         }
 
         // ---- layouts
+        // (the entries kept: the stochastic transparency's sample mask shader
+        // is written against them, oit_stochastic.rs)
+        let frame_entries = vec![
+            // snow footprints: how deep the snow is pressed down
+            wgpu::BindGroupLayoutEntry {
+                binding: 28,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // rain prototype: the wetness memory
+            wgpu::BindGroupLayoutEntry {
+                binding: 27,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // rain prototype: the terrain's heights around the camera
+            wgpu::BindGroupLayoutEntry {
+                binding: 26,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                // the vertex stage too: the rain prototype's splashes
+                // read where they land in the shelter map
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 16,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            uniform_entry(17, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            wgpu::BindGroupLayoutEntry {
+                binding: 18,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            float_tex(19),
+            float_tex(21),
+            float_tex(23),
+            wgpu::BindGroupLayoutEntry {
+                binding: 22,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 20,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            float_tex(3),
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            float_tex(5),
+            float_tex(6),
+            float_tex(7),
+            tex_entry(8, wgpu::TextureSampleType::Depth),
+            wgpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::CubeArray,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 11,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 12,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::CubeArray,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // the contact shadows' mask (contact_shadows.rs)
+            float_tex(13),
+            // GTAO's screen-space indirect light (gtao.rs)
+            float_tex(14),
+            // the night sky's stars (stars.rs)
+            wgpu::BindGroupLayoutEntry {
+                binding: 24,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // the Milky Way map (stars.rs milky_way_texels)
+            wgpu::BindGroupLayoutEntry {
+                binding: 25,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ];
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
-            entries: &[
-                // snow footprints: how deep the snow is pressed down
-                wgpu::BindGroupLayoutEntry {
-                    binding: 28,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // rain prototype: the wetness memory
-                wgpu::BindGroupLayoutEntry {
-                    binding: 27,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // rain prototype: the terrain's heights around the camera
-                wgpu::BindGroupLayoutEntry {
-                    binding: 26,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    // the vertex stage too: the rain prototype's splashes
-                    // read where they land in the shelter map
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 16,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                uniform_entry(17, wgpu::ShaderStages::VERTEX_FRAGMENT),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                float_tex(19),
-                float_tex(21),
-                float_tex(23),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 22,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 20,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                float_tex(3),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                float_tex(5),
-                float_tex(6),
-                float_tex(7),
-                tex_entry(8, wgpu::TextureSampleType::Depth),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // the contact shadows' mask (contact_shadows.rs)
-                float_tex(13),
-                // GTAO's screen-space indirect light (gtao.rs)
-                float_tex(14),
-                // the night sky's stars (stars.rs)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 24,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // the Milky Way map (stars.rs milky_way_texels)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 25,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &frame_entries,
         });
+        let records_entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // the last frame's palettes and model matrices
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("records"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // the last frame's palettes and model matrices
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &records_entries,
         });
         let shadow_layout = shadow_layout(&device);
         let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3792,6 +4126,30 @@ impl Backend {
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
+        // what the stochastic transparency is made from, the first frame the
+        // method is on (`make_st`): nothing of it exists before
+        let st_init = {
+            // the stochastic passes' own sample count (oit_stochastic.rs
+            // `pass_samples`): the colour, depth and transmittance (R16Float)
+            // formats all, 2 and 8 needing the adapter's own format
+            // features as the scene's
+            let r16_features = adapter.get_texture_format_features(wgpu::TextureFormat::R16Float);
+            let pass_supported: Vec<u32> = [2u32, 4, 8]
+                .into_iter()
+                .filter(|n| *n == 4 || adapter_specific)
+                .filter(|n| {
+                    fmt_features.flags.sample_count_supported(*n)
+                        && depth_features.flags.sample_count_supported(*n)
+                        && r16_features.flags.sample_count_supported(*n)
+                })
+                .collect();
+            StInit {
+                adapter: adapter.clone(),
+                instance_flags,
+                pass_supported,
+                scene_groups: vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
+            }
+        };
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -3943,6 +4301,8 @@ impl Backend {
             xr_finished: false,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_retry: (0, None),
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_polled: std::time::Instant::now(),
             snapshot_window: None,
             target_bytes: None,
             taa_bytes: 0,
@@ -3968,6 +4328,9 @@ impl Backend {
             post_layout,
             gbuf_layout,
             pipelines,
+            st: None,
+            st_pipes: None,
+            st_init,
             ssao,
             gtao,
             water_effects,
@@ -4005,6 +4368,7 @@ impl Backend {
             shadow_count: 2,
             shelter_slot: 2,
             shelter_drawn: None,
+            shelter_centre: None,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -4043,6 +4407,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
@@ -4119,6 +4484,252 @@ impl Backend {
         })
     }
 
+    /// The stochastic transparency's own: made the first frame the method is
+    /// on (`ensure_st`), never while it is off. `Stochastic` (layouts,
+    /// buffers, the resolve's module) once, its pipelines for each count of
+    /// the scene's samples. False when the passes cannot run here.
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_st(
+        st: &mut Option<crate::oit_stochastic::Stochastic>,
+        st_pipes: &mut Option<crate::oit_stochastic::Pipes>,
+        init: &StInit,
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        records_layout: &wgpu::BindGroupLayout,
+        tex_layout: &wgpu::BindGroupLayout,
+        samples: u32,
+    ) -> bool {
+        if st.is_none() {
+            let masks = crate::spirv_fix::SampleMaskShaders::new(&init.adapter, device, init.instance_flags);
+            *st = Some(crate::oit_stochastic::Stochastic::new(
+                device,
+                HDR_FORMAT,
+                DEPTH_FORMAT,
+                init.pass_supported.clone(),
+                masks,
+                init.scene_groups.clone(),
+            ));
+        }
+        let Some(st) = st.as_ref() else { return false };
+        if st.shared().pass_samples(samples) < 2 {
+            return false;
+        }
+        if st_pipes.as_ref().is_none_or(|p| p.samples != samples) {
+            let started = std::time::Instant::now();
+            *st_pipes = Some(Self::make_st_pipes(
+                device,
+                frame_layout,
+                records_layout,
+                tex_layout,
+                st.shared(),
+                samples,
+            ));
+            log::info!(
+                "oit stochastic: pipelines for {samples} sample(s) made in {:.0} ms",
+                started.elapsed().as_secs_f32() * 1000.0
+            );
+        }
+        true
+    }
+
+    /// Depth-based stochastic transparency's pipelines (oit_stochastic.rs):
+    /// the total alpha (the transmittance product, Zero / OneMinusSrcAlpha),
+    /// the stochastic depth (depth only, by route) and the accumulation
+    /// (fs_blend added into the samples at or in front of that depth), the
+    /// glow, and the resolve. From a scene module of their own, with the
+    /// passes in (`st_scene_source`); the sample mask route's module is
+    /// checked by a validation scope, and the index route replaces it when
+    /// the pipelines are refused.
+    fn make_st_pipes(
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        records_layout: &wgpu::BindGroupLayout,
+        tex_layout: &wgpu::BindGroupLayout,
+        st: &crate::oit_stochastic::Shared,
+        samples: u32,
+    ) -> crate::oit_stochastic::Pipes {
+        let src = crate::oit_stochastic::st_scene_source(device);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scene stochastic"),
+            source: wgpu::ShaderSource::Wgsl(src.as_str().into()),
+        });
+        let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene stochastic"),
+            bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
+            immediate_size: 0,
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene stochastic faces"),
+            bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(&st.face_layout)],
+            immediate_size: 0,
+        });
+        let base = |label: &'static str, vs: &'static str, fs: &'static str| PipeDesc {
+            label,
+            vs,
+            fs: Some(fs),
+            vb: Vb::Mesh,
+            cull: Some(wgpu::Face::Back),
+            blend: None,
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            a2c: false,
+            samples,
+            format: Some(HDR_FORMAT),
+            range: None,
+            gbuf: false,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_bias: Default::default(),
+            constants: &[],
+            polygon_line: false,
+            unclipped_depth: false,
+        };
+        // the stochastic depth and the accumulation at the passes' own
+        // count (oit_stochastic.rs `pass_samples`), the total alpha at the
+        // scene's
+        let pass_samples = st.pass_samples(samples);
+        let alpha_samples = samples;
+        let additive = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let transmittance = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        // The faces of rigged meshes (the first `n_depth` of the blended
+        // range) test against the opaque depth with Greater, the others with
+        // GreaterEqual like the sorted order (#3059, #3070: a decal at the
+        // depth of the surface under it stays).
+        let compare = |rigged: usize| {
+            if rigged == 0 {
+                wgpu::CompareFunction::Greater
+            } else {
+                wgpu::CompareFunction::GreaterEqual
+            }
+        };
+        let build = |mask_module: Option<&wgpu::ShaderModule>| {
+            let (depth_module, route_fs, depth_constants): (&wgpu::ShaderModule, &str, &[(&str, f64)]) = match mask_module {
+                Some(m) => (m, "fs_st_depth_mask", &[]),
+                None => (&module, "fs_st_depth_index", &[("WATER_CLIP", 1.0)]),
+            };
+            let alpha = std::array::from_fn(|rigged| {
+                std::array::from_fn(|side| {
+                    make_pipeline(
+                        device,
+                        &module,
+                        &layout,
+                        PipeDesc {
+                            cull: blend_cull(side != 0),
+                            format: Some(wgpu::TextureFormat::R16Float),
+                            blend: Some(transmittance),
+                            write_mask: wgpu::ColorWrites::ALL,
+                            depth_write: false,
+                            depth_compare: compare(rigged),
+                            constants: &[("WATER_CLIP", 1.0)],
+                            samples: alpha_samples,
+                            ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
+                        },
+                    )
+                })
+            });
+            let depth = std::array::from_fn(|rigged| {
+                std::array::from_fn(|side| {
+                    make_pipeline(
+                        device,
+                        depth_module,
+                        &layout,
+                        PipeDesc {
+                            cull: blend_cull(side != 0),
+                            format: None,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::empty(),
+                            depth_write: true,
+                            depth_compare: compare(rigged),
+                            constants: depth_constants,
+                            samples: pass_samples,
+                            ..base("stochastic depth", "vs_main", route_fs)
+                        },
+                    )
+                })
+            });
+            let accum = std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    &scene_layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        blend: Some(additive),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::GreaterEqual,
+                        constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
+                        samples: pass_samples,
+                        ..base("stochastic accumulation", "vs_main", "fs_blend")
+                    },
+                )
+            });
+            // the glowing faces' glow, accumulated as their colour (as
+            // `glow_water`: no culling, fs_glow tests the backs; clipped to
+            // the camera's side of the water)
+            let glow = make_pipeline(
+                device,
+                &module,
+                &scene_layout,
+                PipeDesc {
+                    cull: None,
+                    format: Some(wgpu::TextureFormat::R16Float),
+                    blend: Some(additive),
+                    write_mask: wgpu::ColorWrites::RED,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::GreaterEqual,
+                    constants: &[("WATER_CLIP", 1.0)],
+                    samples: pass_samples,
+                    ..base("stochastic glow", "vs_main", "fs_st_glow")
+                },
+            );
+            crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow }
+        };
+        // the sample mask route (the default): its own module without
+        // overrides, through spirv_fix (oit_stochastic.rs `mask_module`);
+        // the sample index route when that cannot be made, or when its
+        // pipelines are refused
+        let mask_module = st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
+        let (scene, refused) = crate::gpu_alloc::scoped(device, || build(mask_module.as_ref()));
+        let scene = if refused && mask_module.is_some() {
+            log::warn!("oit stochastic: the sample mask pipelines were refused: the sample index route");
+            build(None)
+        } else {
+            log::info!(
+                "oit stochastic: the {} route",
+                if mask_module.is_some() { "sample mask" } else { "sample index" }
+            );
+            scene
+        };
+        crate::oit_stochastic::Pipes {
+            samples,
+            scene,
+            resolve: crate::oit_stochastic::make_resolve(device, st, samples),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn make_pipelines(
         device: &wgpu::Device,
@@ -4132,15 +4743,18 @@ impl Backend {
         surface_format: wgpu::TextureFormat,
         ssr: bool,
     ) -> Pipelines {
+        // (without the stochastic transparency's passes: its own module,
+        // `make_st`, when the method is first on)
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+            crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
+        let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
-            source: wgpu::ShaderSource::Wgsl(src.into()),
+            source: wgpu::ShaderSource::Wgsl(src.as_str().into()),
         });
         let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scene"),
@@ -4170,6 +4784,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             gbuf: false,
+            range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -4183,6 +4798,7 @@ impl Backend {
             format: Some(surface_format),
             samples: 1,
             gbuf: false,
+            range: None,
             cull: None,
             blend,
             depth_write,
@@ -4333,10 +4949,15 @@ impl Backend {
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
         let blend_depth = blend_pipe("blend rigged", true, true, 1.0, wgpu::CompareFunction::Greater);
         // POOL_ALPHA_PRE_WATER: the blended faces under the water, before it,
-        // their part on the far side of the surface, writing depth from
-        // 1/255 ("needed for accurate water fog", lldrawpoolalpha.cpp): the
-        // water's refraction and fog then reach them, not the ground behind
-        let blend_under = blend_pipe("blend under water", true, true, 2.0, static_compare);
+        // their part on the far side of the surface. The Legacy Viewer
+        // writes their depth as it draws them ("needed for accurate water
+        // fog", lldrawpoolalpha.cpp), so a faint layer sorted behind the
+        // ones it covers (two sheets crossing each other, a wide one over
+        // small ones) cuts them out along its triangles. Here the colour
+        // writes no depth and every layer blends; the depth the water's
+        // refraction and fog need is written once they are all drawn
+        // (`blend_under_depth_ss`, `blend_under_depth_msaa`)
+        let blend_under = blend_pipe("blend under water", true, false, 2.0, static_compare);
         // The rigged faces' depth only where at least half covered
         // (fs_depth_contact): a soft fringe no longer hides the glass behind
         // it (#556). Before their colour with `RiggedBlendDepth::HalfCovered`
@@ -4402,6 +5023,110 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
+        });
+        // `RiggedBlendDepth::Exact` (blend_exact.rs): the fronts of the
+        // blended fragments in group 3, written by the first pass and read
+        // by the second. Both pass equal depths and write none, as `blend`.
+        let order_layouts = crate::blend_exact::layouts(device);
+        let [vis_layout, exact_layout] = order_layouts.each_ref().map(|lists| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scene with the blend order fronts"),
+                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(lists)],
+                immediate_size: 0,
+            })
+        });
+        let order_sided = |layout: &wgpu::PipelineLayout, desc: PipeDesc| -> SidedPipelines {
+            std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        ..desc
+                    },
+                )
+            })
+        };
+        // a sum
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let haze_blend = crate::blend_exact::once_blend();
+        let blend_once = order_sided(
+            &vis_layout,
+            PipeDesc {
+                blend: Some(haze_blend),
+                write_mask: wgpu::ColorWrites::ALL,
+                format: Some(crate::blend_exact::HAZE_FORMAT),
+                range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
+                samples: 1,
+                depth_write: false,
+                depth_compare: static_compare,
+                constants: &[("WATER_CLIP", 1.0)],
+                ..base("blend once", "vs_main", "fs_blend_once")
+            },
+        );
+        let blend_cut = make_pipeline(
+            device,
+            &module,
+            &vis_layout,
+            PipeDesc {
+                vb: Vb::None,
+                cull: None,
+                blend: None,
+                write_mask: wgpu::ColorWrites::empty(),
+                format: Some(crate::blend_exact::HAZE_FORMAT),
+                range: Some((None, wgpu::ColorWrites::empty())),
+                samples: 1,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("blend cut", "vs_sky", "fs_blend_cut")
+            },
+        );
+        // over the screen, whatever the depth
+        let screen = |label: &'static str, fs: &'static str, blend: wgpu::BlendState, write_mask: wgpu::ColorWrites| {
+            make_pipeline(
+                device,
+                &module,
+                &exact_layout,
+                PipeDesc {
+                    vb: Vb::None,
+                    cull: None,
+                    blend: Some(blend),
+                    write_mask,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    ..base(label, "vs_sky", fs)
+                },
+            )
+        };
+        // the light of the blended fragments over what is drawn so far,
+        // colour and glow, which they dim by what they stop (the alpha)
+        let over = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let blend_over = screen("blend over", "fs_blend_over", over, wgpu::ColorWrites::ALL);
+        let summed = wgpu::BlendState { color: add, alpha: add };
+        let blend_glow = screen("blend glow", "fs_blend_glow", summed, wgpu::ColorWrites::ALPHA);
+        let blend_both = device.features().contains(crate::blend_exact::TWO_SOURCES).then(|| {
+            screen(
+                "blend both",
+                "fs_blend_both",
+                crate::blend_exact::both_blend(),
+                wgpu::ColorWrites::ALL,
+            )
         });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
@@ -4781,19 +5506,32 @@ impl Backend {
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
-        // the depth of the blended faces under the water, from 1/255, into
-        // the single-sampled scene depth the water samples for its
-        // refraction and fog (with MSAA the scene pass writes another)
+        // the depth of the blended faces under the water, drawn after their
+        // colour: into the single-sampled scene depth the water samples for
+        // its refraction and its shallow-water fade, and with MSAA into the
+        // multisampled one too, which what is drawn after the water tests
         // (culled as their colour pass: a face seen from behind, which draws
-        // no colour, must not give the water a depth either)
-        let blend_under_depth_ss = sided_pipe(PipeDesc {
-            fs: Some("fs_depth_contact"),
-            samples: 1,
-            format: None,
-            depth_compare: wgpu::CompareFunction::Greater,
-            constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 2.0)],
-            ..base("blend under water depth", "vs_main", "fs_opaque")
-        });
+        // no colour, must not give the water a depth either). Only where a
+        // face is at least half covered (DEPTH_CONTACT_ALPHA's default), not
+        // from 1/255 as LLDrawPoolAlpha::forwardRender writes it
+        // (indra/newview/lldrawpoolalpha.cpp, "needed for accurate water
+        // fog"): the fog no longer reads this depth (common.wgsl
+        // water_fogs_source), and a faint sheet just under the surface,
+        // foam or a caustic, would take the water's reflection away over
+        // its whole shape (waterF.glsl's `fade`), which showed its triangles
+        // wherever it crossed the water plane
+        let under_depth = |label: &'static str, samples: u32| {
+            sided_pipe(PipeDesc {
+                fs: Some("fs_depth_contact"),
+                samples,
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("WATER_CLIP", 2.0)],
+                ..base(label, "vs_main", "fs_opaque")
+            })
+        };
+        let blend_under_depth_ss = under_depth("blend under water depth", 1);
+        let blend_under_depth_msaa = (samples > 1).then(|| under_depth("blend under water msaa depth", samples));
         // the same with GTAO's mesh normals (gtao.rs)
         let pre_n = |label: &'static str, vs: &'static str, fs: &'static str, cull: Option<wgpu::Face>| {
             pipe(PipeDesc {
@@ -4943,6 +5681,21 @@ impl Backend {
             ..pick_desc("mask interaction pick 2s", None)
         });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
+        // the mirror's blended faces, as the main view's with
+        // `RiggedBlendDepth::Write` (the Legacy Viewer's rule): the rigged
+        // write their depth from 1/255 as they are drawn, the others only
+        // read it; the reflection's alpha stays whole
+        let refl_blend_desc = |label: &'static str, depth_write: bool, depth_compare| PipeDesc {
+            vb: Vb::Mesh,
+            cull: None,
+            samples: 1,
+            blend: Some(premultiplied()),
+            depth_write,
+            depth_compare,
+            ..base(label, "vs_main", "fs_reflect_blend")
+        };
+        let refl_blend_rigged = pipe(refl_blend_desc("reflection blended rigged", true, wgpu::CompareFunction::Greater));
+        let refl_blend = pipe(refl_blend_desc("reflection blended", false, wgpu::CompareFunction::GreaterEqual));
         let shadow_desc = |label, fs| PipeDesc {
             label,
             vs: "vs_shadow",
@@ -4957,6 +5710,7 @@ impl Backend {
             samples: 1,
             format: None,
             gbuf: false,
+            range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
                 constant: 2,
@@ -4980,6 +5734,30 @@ impl Backend {
             PipeDesc {
                 vs: "vs_shadow_terrain",
                 ..shadow_desc("shadow terrain", Some("fs_shadow_terrain"))
+            },
+        );
+        let level = wgpu::DepthBiasState {
+            constant: 0,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        };
+        let shelter = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                depth_bias: level,
+                ..shadow_desc("rain shelter", Some("fs_shadow"))
+            },
+        );
+        let shelter_terrain = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                vs: "vs_shadow_terrain",
+                depth_bias: level,
+                ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
             },
         );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5009,6 +5787,7 @@ impl Backend {
                 samples: 1,
                 format: Some(surface_format),
                 gbuf: false,
+                range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
                 constants: &[],
@@ -5047,8 +5826,14 @@ impl Backend {
             blend_depth_solid,
             blend_depth_fringe,
             blend_depth_fringe_depth,
+            blend_once,
+            blend_cut,
+            blend_over,
+            blend_glow,
+            blend_both,
             blend_under,
             blend_under_depth_ss,
+            blend_under_depth_msaa,
             particles,
             water_particles,
             water_particles_under,
@@ -5092,9 +5877,13 @@ impl Backend {
             refl_terrain,
             refl_terrain_pbr,
             refl_obj,
+            refl_blend_rigged,
+            refl_blend,
             shadow,
             shadow_depth,
             shadow_terrain,
+            shelter,
+            shelter_terrain,
             post,
             pick,
             pick_terrain,
@@ -5147,6 +5936,7 @@ impl Backend {
                     samples: 1,
                     format: Some(AO_FORMAT),
                     gbuf: false,
+                    range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
                     constants: &[],
@@ -5316,6 +6106,7 @@ impl Backend {
             depth_msaa,
             depth_msaa_tex,
             blend_layers: None,
+            blend_exact: None,
             depth_ss,
             water_interface,
             water_mask,
@@ -5699,27 +6490,13 @@ impl Backend {
         let show = t.gtao.is_some() && (gtao || t.ao.is_none());
         if show != t.gtao_shown {
             self.targets.gtao_shown = show;
-            self.groups = Self::make_frame_groups(
-                &self.device,
-                &self.frame_layout,
-                &self.frame_buffer,
-                &self.refl_buffers,
-                &self.shadow_view,
-                &self.probe_shadow_view,
-                &self.shadow_sampler,
-                &self.lin_clamp,
-                &self.dummies,
-                &self.targets,
-                &self.probes,
-                &self.water_effects,
-                &self.stars,
-                &self.milky_way,
-            );
+            self.remake_frame_groups();
         }
     }
 
-    /// Recreate every bind group that references size- or setting-dependent targets.
-    fn rebuild_bind_groups(&mut self) {
+    /// The frame groups made again, bound to the targets and memories as
+    /// they are now: alone, when only one of these changed.
+    fn remake_frame_groups(&mut self) {
         self.groups = Self::make_frame_groups(
             &self.device,
             &self.frame_layout,
@@ -5736,6 +6513,11 @@ impl Backend {
             &self.stars,
             &self.milky_way,
         );
+    }
+
+    /// Recreate every bind group that references size- or setting-dependent targets.
+    fn rebuild_bind_groups(&mut self) {
+        self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
@@ -5852,6 +6634,7 @@ impl Backend {
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
         self.targets.blend_layers = None;
+        self.targets.blend_exact = None;
         self.rlva_spheres = None;
         self.rlva_scaled = None;
         self.selection = None;
@@ -5961,6 +6744,13 @@ impl Backend {
         &self.msaa_supported
     }
 
+    /// Whether the device can draw the blended faces in the exact order of
+    /// their fragments (`RiggedBlendDepth::Exact`): it tests the depth
+    /// before the shader that files them.
+    pub fn blend_exact_supported(&self) -> bool {
+        self.device.features().contains(crate::blend_exact::EARLY_TEST)
+    }
+
     /// Apply quality settings (rebuilds pipelines / targets only when
     /// needed). The anisotropy belongs to the scene's texture table.
     pub fn apply_settings(&mut self, s: RenderSettings) {
@@ -5984,7 +6774,10 @@ impl Backend {
                 if s.ssr { "on" } else { "off" },
                 if s.gbuffer() { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer()));
+            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer());
+            self.pipeline_workers.retain(|w| !w.is_finished());
+            self.pipeline_workers.extend(worker);
+            self.pipeline_build = Some(build);
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -6041,7 +6834,7 @@ impl Backend {
     }
 
     /// Compile the pipelines for `samples` and `ssr` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> PipelineBuild {
+    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -6062,16 +6855,63 @@ impl Backend {
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
-        if let Err(e) = spawned {
-            // the receiver reports the worker gone: compiled on this thread
-            log::error!("cannot start the pipeline worker: {e}");
-        }
-        PipelineBuild {
+        let worker = spawned
+            .inspect_err(|e| {
+                // the receiver reports the worker gone: compiled on this thread
+                log::error!("cannot start the pipeline worker: {e}");
+            })
+            .ok();
+        let build = PipelineBuild {
             samples,
             ssr,
             started: std::time::Instant::now(),
             done,
+        };
+        (build, worker)
+    }
+
+    /// Take over `other`'s pipeline workers, to wait for them when this one
+    /// goes: a backend dropped while the viewer goes on (a remade renderer,
+    /// the VR eyes) must not hold the frame for them.
+    fn adopt_pipeline_workers(&mut self, other: &mut Backend) {
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        self.pipeline_workers.append(&mut other.pipeline_workers);
+    }
+
+    /// The VR eye backends' workers, before the XR world is dropped.
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    fn adopt_eye_workers(&mut self, world: &mut XrWorld) {
+        for eye in &mut world.backends {
+            self.adopt_pipeline_workers(eye);
         }
+    }
+
+    /// Wait for the pipeline workers still compiling, as the renderer goes.
+    /// A set still compiling when the process ran `exit` crashed it with the
+    /// NVIDIA driver: the main thread in the driver's teardown
+    /// (libGLX_nvidia), the `aurora-pipelines` worker segfaulting in its
+    /// compiler (libnvidia-glcore). Rain starting or the ground drying starts
+    /// a set, as the weather turning to the user's own at a quit did.
+    /// Bounded: a driver that never returns does not hold the viewer open.
+    fn wait_pipeline_workers(&mut self) {
+        const LONGEST: std::time::Duration = std::time::Duration::from_secs(60);
+        self.pipeline_workers.retain(|w| !w.is_finished());
+        if self.pipeline_workers.is_empty() {
+            return;
+        }
+        log::info!("waiting for {} pipeline worker(s) before closing", self.pipeline_workers.len());
+        let started = Instant::now();
+        while self.pipeline_workers.iter().any(|w| !w.is_finished()) {
+            if started.elapsed() >= LONGEST {
+                log::warn!("pipeline worker still compiling after {} s: left to the process", LONGEST.as_secs());
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for worker in self.pipeline_workers.drain(..) {
+            let _ = worker.join();
+        }
+        log::info!("pipeline workers done in {} ms", started.elapsed().as_millis());
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
@@ -6194,6 +7034,7 @@ impl Backend {
                 samples: 1,
                 format: Some(HDR_FORMAT),
                 gbuf: false,
+                range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
                 constants: &[],
@@ -6434,17 +7275,26 @@ impl Backend {
         u.rain_wet_step = self.rain_wet.step;
         u.snow_cover = self.rain_wet.snow_cover;
         u.snow_cover[3] = f.rain_look.snow_detail as f32;
+        // + 8: "Snow settles" off, no lying snow drawn (env.wgsl
+        // `snow_hidden`)
+        if !f.rain_look.snow_settles {
+            u.snow_cover[2] += 8.0;
+        }
         u.snow_trail = self.snow_trail.uniform;
         // my avatar: deep snow's grid centred on it, not on the camera (an
         // orbiting camera would move it, and its cells resample what they
         // cover: narrow strips spiking as it pans)
-        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], 0.0, 0.0];
+        // zw: deep snow's grid (`DeepSnowMesh::uniform`, env.wgsl
+        // `snow_mesh_grid`), the draw's own
+        let [reach, grid] = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach).uniform();
+        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], reach, grid];
         u.snow_stamps = f.rain_look.snow_stamps;
         for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
             u.snow_stamp_z[i / 4][i % 4] = *z;
         }
         u.lightning = f.rain_look.lightning;
         u.aurora = f.rain_look.aurora;
+        u.snow_far = [f.rain_look.snow_distance, 0.0, 0.0, 0.0];
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -6559,7 +7409,7 @@ impl Backend {
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         // Aurora Weather: the shelter map's slot + 1, 0 when it is not drawn
         // (env.wgsl `rain_shelter_on`)
-        u.features[1] = self.rain_shelter_map(f).map_or(0, |k| k as u32 + 1);
+        u.features[1] = self.rain_shelter_map(f).map_or(0, |(k, _)| k as u32 + 1);
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -6685,6 +7535,11 @@ impl Backend {
     /// swapchain keeps the window's (it is not reconfigured).
     fn begin_snapshot(&mut self, s: SnapshotSpec) {
         self.snapshot_window = Some((self.config.width, self.config.height));
+        // the stochastic transparency's targets go before the photo's memory
+        // is taken: its tiles draw the sorted order
+        if let Some(st) = &mut self.st {
+            st.release();
+        }
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
@@ -6804,6 +7659,15 @@ impl Backend {
         let Some(mut world) = self.xr_world.take() else {
             return Err(Box::new(packet));
         };
+        // a border crossing moves each renderer's weather memory once: both
+        // eyes' (each keeps its own) and the window's, idle while the
+        // headset draws and drawing again after it or on a frame the
+        // headset skips (the packet goes on without it, never applied twice)
+        let shift = std::mem::take(&mut packet.world_shift);
+        for eye in &mut world.backends {
+            eye.shift_weather(shift);
+        }
+        self.shift_weather(shift);
         if !self.vr.wanted() {
             world.session.request_stop();
         }
@@ -6829,7 +7693,13 @@ impl Backend {
             }
             Err(e) => {
                 log::info!("XR world ended: {e}");
-                self.vr.finish(false);
+                self.adopt_eye_workers(&mut world);
+                if world.session.runtime_lost {
+                    log::warn!("XR runtime closing: VR ends, the viewer goes on without it");
+                    self.vr.lose_runtime();
+                } else {
+                    self.vr.finish(false);
+                }
                 self.motion_cut = true;
                 crate::present::configure(&self.surface, &self.device, &self.config);
                 return Err(Box::new(packet));
@@ -6883,6 +7753,8 @@ impl Backend {
             capture: None,
             histogram: None,
             motion_cut: packet.motion_cut,
+            // (moved above, every renderer once)
+            world_shift: [0.0; 2],
             input_at: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
@@ -6940,6 +7812,7 @@ impl Backend {
         );
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
+            self.adopt_eye_workers(&mut world);
             self.vr.finish(true);
             self.motion_cut = true;
             crate::present::configure(&self.surface, &self.device, &self.config);
@@ -6960,6 +7833,27 @@ impl Backend {
         if !self.xr_finished && self.xr_seed.is_some() && packet.index >= 600 && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
             self.xr_finished = true;
             self.vr.request(true);
+        }
+        // AURORA_DEMO_VR_CLOSED=<frame>: as if the VR runtime announced its
+        // closing at that frame (the viewer's renderer only, not an eye's)
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if !self.external && demo_vr_closed() == Some(packet.index) {
+            log::warn!("AURORA_DEMO_VR_CLOSED: the VR runtime is taken as closing");
+            self.vr.lose_runtime();
+        }
+        // between sessions, the runtime may announce it is closing
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.xr_world.is_none()
+            && !self.vr.wanted()
+            && !self.vr.runtime_lost()
+            && self.xr_polled.elapsed() >= XR_IDLE_POLL
+            && let Some((runtime, _)) = self.xr_seed.as_ref().and_then(|seed| seed.xr.as_ref())
+        {
+            self.xr_polled = std::time::Instant::now();
+            if crate::xr_frame::runtime_leaving(runtime) {
+                log::warn!("XR runtime closing: the viewer goes on without it");
+                self.vr.lose_runtime();
+            }
         }
         // a new VR request starts its tries afresh
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -7015,10 +7909,14 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                // (a set still compiling is the new one's to wait for: the
+                // old one's drop would hold this frame for it)
+                fresh.adopt_pipeline_workers(self);
                 *self = fresh;
             }
-            Ok(_) => {
+            Ok(mut refused) => {
                 log::info!("renderer: try refused ({took} ms)");
+                self.adopt_pipeline_workers(&mut refused);
                 self.oom.targets_failed(Instant::now());
             }
             // (a lost device, which ends the viewer: egui's renderer stays
@@ -7069,10 +7967,12 @@ impl Backend {
             capture: wanted,
             histogram,
             motion_cut,
+            world_shift,
             input_at,
         } = packet;
         let external_output = output.is_some();
         self.motion_cut |= motion_cut;
+        self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
             t.harvest();
@@ -7509,9 +8409,35 @@ impl Backend {
             self.rain_wet = RainWet::default();
             self.rain_wet.snow = 1.0;
         }
+        // the memory's square, as far as the weather is drawn, while there
+        // is weather to keep (falling, or still on the ground); the
+        // smallest while it is empty, which loses nothing. A new size makes
+        // its textures anew (the old ones kept if video memory refuses
+        // them, tried again later) and starts its texels again from the
+        // open's wetness and snow so far
+        let busy = rain > 0.0 || snow > 0.0 || f.rain_look.snow_lying > 0.0 || self.rain_wet.origin.is_some();
+        let wet_texels = (wet_extent_wanted(f.rain_look.memory_reach, busy) * RAIN_WET_TEXELS_PER_M) as u32;
+        if wet_texels != self.water_effects.rain_wet_size {
+            let lost = self.lost.get();
+            let made = extra(&mut self.oom, &self.device, lost, "weather memory, a new size", |d| {
+                crate::water_effects::wet_textures(d, wet_texels)
+            });
+            if let Some(made) = made {
+                log::info!(
+                    "weather memory: {} m square ({wet_texels} texels a side)",
+                    wet_texels as f32 / RAIN_WET_TEXELS_PER_M
+                );
+                self.water_effects.install_wet(made, wet_texels);
+                // (only the frame groups bind it: the TAA history stays)
+                self.remake_frame_groups();
+                self.rain_wet.restart_texels();
+            }
+        }
+        let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
+        self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet
-            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);
+            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted
         let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
         let trail_extent = f.rain_look.trail_extent.clamp(16.0, 128.0);
@@ -7786,18 +8712,29 @@ impl Backend {
                 self.hud_depth = Some((self.config.width, self.config.height, depth.create_view(&Default::default())));
             }
         }
-        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32| {
+        // `lit`: the mirror, lit as the main view (the Legacy Viewer's hero
+        // probe is a cube snapshot of the deferred pipeline: the sun's
+        // shadows, gDeferredSunProbeProgram having hasShadows, and the
+        // reflection probes, mRadiancePass, LLHeroProbeManager::renderProbes).
+        // Its shadows are the main view's cascades (shadow_factor picks them
+        // from the real camera); without the probes its surfaces took the
+        // sky's light, pale skin and black latex turned blue (#3479)
+        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32, lit: bool| {
             let m = reflection_matrix(n, d);
             let mut rf = f.clone();
-            rf.shadows = false;
+            rf.shadows = lit && f.shadows;
             let mut u = this.frame_uniforms(&rf, f.view * m, None, &cascades, &splits);
             // 2: a reflection pass whose view is mirrored (mirrored_pass, common.wgsl)
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = n.extend(d + keep_offset).to_array();
+            if lit {
+                u.light_sets.mode[2] |= crate::probes::capture_lighting::LIT;
+            }
             u
         };
         let mut water_vp = Mat4::IDENTITY;
         let mut mirror_vp = Mat4::IDENTITY;
+        let mut mirror_eye = Vec3::ZERO;
         // the reflections' own pixel size, for the stars' footprint
         let star_pass = |t: &Option<ReflTarget>| {
             t.as_ref().map_or([0.0; 4], |t| {
@@ -7806,16 +8743,17 @@ impl Backend {
             })
         };
         if do_water_refl {
-            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05);
+            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));
         }
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
-            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01);
+            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
+            mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
@@ -7915,7 +8853,7 @@ impl Backend {
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter_map.is_some_and(|k| i == CASCADES + k)), 0, 0, 0],
+                kind: [u32::from(shelter_map.is_some_and(|(k, _)| i == CASCADES + k)), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
@@ -7994,13 +8932,15 @@ impl Backend {
                 f.tonemap_mix.clamp(0.0, 1.0)
             },
             auto_exposure: 1.0,
-            cutout: match (f.cutout, snapshot.is_some()) {
-                (false, _) => 0.0,
-                (true, true) => 1.0,
-                (true, false) => 2.0,
+            cutout: match (f.cutout, snapshot.is_some() || f.cutout_alpha, f.cutout_key) {
+                (false, ..) => 0.0,
+                (true, true, _) => 1.0,
+                (true, false, None) => 2.0,
+                (true, false, Some(_)) => 3.0,
             },
             _pad: 0.0,
             photo_part: photo_part(f.photo_tile),
+            cutout_key: f.cutout_key.map_or([0.0; 4], |[r, g, b]| [r, g, b, 1.0]),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -8145,7 +9085,7 @@ impl Backend {
             let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
             // the shelter map: what stands still, glass too (as the GPU's
             // shelter bin), not the shadows' casters
-            let casters = if shelter_map == Some(k) {
+            let casters = if shelter_map.is_some_and(|(s, _)| s == k) {
                 &lists.shelter_casters
             } else {
                 &lists.shadow_casters
@@ -8320,6 +9260,8 @@ impl Backend {
         }
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
+            let [rigged, rest] = mirror_blend_order(mirror_vp, mirror_eye, &lists.reflection_blend, lists.reflection_blend_rigged);
+            rg.refl_mirror_blend = [push(cpu, &rigged), push(cpu, &rest)];
         }
         // terrain of the reflection passes, each culled to its own frustum
         if capture.is_some() {
@@ -8587,11 +9529,11 @@ impl Backend {
         let shelter_kept = shelter_only
             && self
                 .shelter_drawn
-                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos) && at.elapsed() < SHELTER_REFRESH);
+                .is_some_and(|(m, at)| m == self.shelter_matrix() && at.elapsed() < SHELTER_REFRESH);
         if f.shadows || !shelter {
             self.shelter_drawn = None;
         } else if shelter_only && !shelter_kept {
-            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos), Instant::now()));
+            self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
@@ -8713,12 +9655,17 @@ impl Backend {
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.spot_terrain[k]);
+                                let (objects, terrain) = if shelter && k == self.shelter_slot {
+                                    (&self.pipelines.shelter, &self.pipelines.shelter_terrain)
+                                } else {
+                                    (&self.pipelines.shadow, &self.pipelines.shadow_terrain)
+                                };
+                                draw(&mut pass, terrain, rg.spot_terrain[k]);
                                 let (off, count) = rg.spot[k];
                                 if count == 0 && !gpu_on {
                                     continue;
                                 }
-                                pass.set_pipeline(&self.pipelines.shadow);
+                                pass.set_pipeline(objects);
                                 if count > 0 {
                                     pass.multi_draw_indexed_indirect(&self.indirect, off, count);
                                     calls.set(calls.get() + 1);
@@ -9033,6 +9980,7 @@ impl Backend {
                 rg.refl_water,
                 (rg.refl_terrain_water, rg.refl_terrain_pbr_water),
                 BIN_REFL_WATER,
+                [(0, 0); 2],
             ),
             (
                 mirror.is_some(),
@@ -9042,9 +9990,10 @@ impl Backend {
                 rg.refl_mirror,
                 (rg.refl_terrain_mirror, rg.refl_terrain_pbr_mirror),
                 BIN_REFL_MIRROR,
+                rg.refl_mirror_blend,
             ),
         ];
-        for (enabled, target, bg, label, objects, terrain, bin) in refl_passes {
+        for (enabled, target, bg, label, objects, terrain, bin, blended) in refl_passes {
             let (true, Some(t)) = (enabled, target) else {
                 continue;
             };
@@ -9079,6 +10028,8 @@ impl Backend {
             draw(&mut pass, &self.pipelines.refl_terrain_pbr, terrain.1);
             draw(&mut pass, &self.pipelines.refl_obj, objects);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
+            draw(&mut pass, &self.pipelines.refl_blend_rigged, blended[0]);
+            draw(&mut pass, &self.pipelines.refl_blend, blended[1]);
         }
 
         mark(&mut encoder, MARK_WATER_AIR_BEGIN);
@@ -9513,8 +10464,8 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             let size = wgpu::Extent3d {
-                width: crate::water_effects::RAIN_WET_SIZE,
-                height: crate::water_effects::RAIN_WET_SIZE,
+                width: self.water_effects.rain_wet_size,
+                height: self.water_effects.rain_wet_size,
                 depth_or_array_layers: 1,
             };
             encoder.copy_texture_to_texture(
@@ -9586,17 +10537,49 @@ impl Backend {
         }
         // ---- the blended faces under the water (POOL_ALPHA_PRE_WATER), while
         // the camera is above it: before the water and the copy it refracts,
-        // writing depth, without glow, each clipped to the far side of the
-        // surface (`DrawLists::blend_under_water`). The water's refraction
-        // and fog then cover them, instead of their being drawn over it.
+        // without glow, each clipped to the far side of the surface
+        // (`DrawLists::blend_under_water`). The water's refraction and fog
+        // then cover them, instead of their being drawn over it. Their
+        // colour writes no depth, so that none hides another whatever their
+        // order; their depth, from 1/255, follows in passes of its own, for
+        // the water and what is drawn after it.
         // (The frame group without the scene copy and the depth: the depth
-        // is written here.)
+        // passes write it.)
         let (_, n_under) = rg.blend_under;
         if n_under > 0 {
+            let under_depth =
+                |encoder: &mut wgpu::CommandEncoder, label: &'static str, view: &wgpu::TextureView, pipes: &SidedPipelines| {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some(label),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_under(&mut pass, pipes, rg.blend_under);
+                };
             {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, true);
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, false);
                 bind_mesh(&mut pass, &self.groups.a);
                 draw_under(&mut pass, &self.pipelines.blend_under, rg.blend_under);
+            }
+            match (&self.targets.depth_msaa, &self.pipelines.blend_under_depth_msaa) {
+                (Some(view), Some(pipes)) => under_depth(&mut encoder, "blend under water msaa depth", view, pipes),
+                _ => under_depth(
+                    &mut encoder,
+                    "blend under water depth",
+                    &self.targets.depth_ss,
+                    &self.pipelines.blend_under_depth_ss,
+                ),
             }
             if self.targets.color_msaa.is_some() {
                 // the copy reads the resolved colour, and the water samples
@@ -9618,23 +10601,12 @@ impl Backend {
                     multiview_mask: None,
                 });
                 drop(_resolve);
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("blend under water depth"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.targets.depth_ss,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                bind_mesh(&mut pass, &self.groups.a);
-                draw_under(&mut pass, &self.pipelines.blend_under_depth_ss, rg.blend_under);
+                under_depth(
+                    &mut encoder,
+                    "blend under water depth",
+                    &self.targets.depth_ss,
+                    &self.pipelines.blend_under_depth_ss,
+                );
             }
         }
         // ---- scene copy (refraction / SSR source)
@@ -9662,12 +10634,13 @@ impl Backend {
         mark(&mut encoder, MARK_COPY_END);
 
         // the copy of the depth `RiggedBlendDepth::Layered` and `Layers`
-        // draw into, made on its first use (the size and samples of the
-        // scene depth)
-        if matches!(lists.blend_depth_mode, RiggedBlendDepth::Layered | RiggedBlendDepth::Layers)
-            && lists.blend_depth > 0
-            && self.targets.blend_layers.is_none()
-        {
+        // draw into, and `Exact` writes its cut into, made on its first use
+        // (the size and samples of the scene depth)
+        let layers_wanted = match lists.blend_depth_mode {
+            RiggedBlendDepth::Layered | RiggedBlendDepth::Layers => lists.blend_depth > 0,
+            _ => false,
+        };
+        if layers_wanted && self.targets.blend_layers.is_none() {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
             let (layers, refused) = crate::gpu_alloc::scoped(&self.device, || {
@@ -9686,6 +10659,43 @@ impl Backend {
             // again
             first_use(&mut self.oom, "rigged blend layers depth", true, refused && !self.lost.get());
         }
+        // the fronts of `RiggedBlendDepth::Exact`, made on their first use
+        // (the size of the scene depth)
+        let exact_mode = matches!(lists.blend_depth_mode, RiggedBlendDepth::Exact);
+        if exact_mode && rg.blend.1 > 0 && self.targets.blend_exact.is_none() {
+            let size = self.targets.depth_ss_tex.size();
+            let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                crate::blend_exact::Lists::new(&self.device, (size.width, size.height), DEPTH_FORMAT)
+            });
+            self.targets.blend_exact = order;
+            first_use(&mut self.oom, "blend order fronts", true, refused && !self.lost.get());
+        }
+        // their pool follows what the views take of it: larger where many
+        // pixels have many layers, smaller again once they are gone. (The
+        // views until the larger one is there mix what found no page.)
+        let pool = self
+            .targets
+            .blend_exact
+            .as_ref()
+            .filter(|_| exact_mode)
+            .and_then(|order| Some((order.size(), order.pool_wanted(&self.device)?)));
+        if let Some((size, pages)) = pool {
+            let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                crate::blend_exact::Lists::with_pool(&self.device, size, DEPTH_FORMAT, pages)
+            });
+            match order {
+                Some(order) if !refused => {
+                    log::info!("blend order: a pool of {pages} pages");
+                    self.targets.blend_exact = Some(order);
+                }
+                _ => {
+                    log::warn!("blend order: no memory for a pool of {pages} pages, the one there is kept");
+                    if let Some(order) = &self.targets.blend_exact {
+                        order.pool_refused();
+                    }
+                }
+            }
+        }
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
         // (`DrawLists::blend_depth`, LLDrawPoolAlpha::forwardRender(true)):
@@ -9693,7 +10703,82 @@ impl Backend {
         let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
         let (b0, bn) = rg.blend;
         let n_depth = (lists.blend_depth as u32).min(bn);
-        let split = n_depth > 0;
+        // Order-independent transparency (oit_stochastic.rs): the blended
+        // faces, rigged or not, drawn with depth-based stochastic
+        // transparency (in every anti-aliasing mode: its passes have their
+        // own multisampled targets) instead of the sorted order below. The
+        // plain main view only: a photo, its tiles and a snapshot have a
+        // size and a history of their own.
+        let method = crate::oit_stochastic::method(self.settings.oit);
+        let plain_view =
+            f.photo_tile == Mat4::IDENTITY && f.photo_context == crate::types::PhotoContext::None && self.snapshot_window.is_none();
+        let want_st = crate::oit_stochastic::frame_wants_method(method, bn, plain_view);
+        // the glowing blended faces (their glow accumulated with the
+        // method, as `blended` adds it after each face in order)
+        let st_glow: Vec<u32> = if want_st && glow_on && glow_skip & 8 == 0 {
+            (0..bn)
+                .filter(|&i| lists.blend_glow.get(i as usize).copied().unwrap_or(false))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let st_on = want_st && {
+            let size = self.targets.depth_ss_tex.size();
+            let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
+            // the scene's own history, after the composite (FSR runs at
+            // the render size like the scene, its reactive mask comparing
+            // the scene copy with the composited colour as with the
+            // sorted order)
+            let history = match self.settings.aa {
+                AntiAliasing::Taa => crate::oit_stochastic::SceneHistory::Taa,
+                AntiAliasing::Fsr(_) => crate::oit_stochastic::SceneHistory::Fsr,
+                _ => crate::oit_stochastic::SceneHistory::None,
+            };
+            let frame = crate::oit_stochastic::Frame {
+                width: size.width,
+                height: size.height,
+                samples,
+                reproj: main.motion_reproj,
+                glow: !st_glow.is_empty(),
+                history,
+                cut: self.motion_cut,
+            };
+            Self::ensure_st(
+                &mut self.st,
+                &mut self.st_pipes,
+                &self.st_init,
+                &self.device,
+                &self.frame_layout,
+                &self.records_layout,
+                &self.tex_layout,
+                samples,
+            ) && self.st.as_mut().is_some_and(|s| s.prepare(&self.device, &self.queue, &frame))
+        };
+        // the targets go with the method (as `Bloom::release`), with a photo
+        // or a snapshot (its memory is planned without them), and after a
+        // while without a blended face
+        if let Some(s) = &mut self.st {
+            if method != crate::oit_stochastic::Method::Stochastic && plain_view && crate::oit_stochastic::alternates() {
+                s.pause();
+            } else if method != crate::oit_stochastic::Method::Stochastic || !plain_view {
+                s.release();
+            } else if !st_on {
+                s.unused_frame();
+            }
+        }
+        // (without the stochastic method:) every blended face in the true
+        // order of its fragments
+        // (blend_exact.rs), in passes of their own like the rigged ones
+        // (not with MSAA yet: the pass of the blended faces has targets of
+        // its own, of one sample)
+        let exact = self
+            .targets
+            .blend_exact
+            .as_ref()
+            .filter(|_| exact_mode && bn > 0 && self.targets.depth_msaa.is_none() && !st_on);
+        let split = (n_depth > 0 || exact.is_some()) && !st_on;
+        // the first blended face the last part still draws over the others
+        let rest_from = if exact.is_some() { bn } else { n_depth };
         let blend_pipe = self
             .pipelines
             .blend_late
@@ -9716,10 +10801,16 @@ impl Backend {
         };
         // the other blended faces, the overlays and the particles
         let rest = |pass: &mut wgpu::RenderPass| {
-            // The local hologram leaves world depth and the SSR G-buffer
-            // untouched; transparent world faces still cover it normally.
-            draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
-            blended(pass, blend_pipe, n_depth, bn);
+            if !st_on {
+                // The local hologram leaves world depth and the SSR G-buffer
+                // untouched; transparent world faces still cover it normally.
+                // (With `st_on` or the exact order, drawn before their
+                // composite.)
+                if exact.is_none() {
+                    draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
+                }
+                blended(pass, blend_pipe, rest_from, bn);
+            }
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -9785,23 +10876,20 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        let exact_glow = glow_on && glow_skip & 8 == 0;
         {
             // deep snow: its surface, before the rest of pass B (what is
             // drawn there, the wet pass and the blended faces, comes over
             // it); it writes the depth, so the frame group without it
             let snow_on = f.rain_look.snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY;
             if f.rain_look.deep_snow && snow_on && !f.cutout && self.rain_shelter(f) {
-                let cells: u32 = match f.rain_look.quality {
-                    0 => 128,
-                    1 => 192,
-                    _ => 256,
-                };
+                let mesh = DeepSnowMesh::new(f.rain_look.quality, f.rain_look.deep_reach);
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "deep snow", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
                 pass.set_pipeline(&self.pipelines.snow_mesh);
-                pass.draw(0..cells * cells * 6, 0..1);
+                pass.draw(0..mesh.vertices(), 0..1);
             }
-            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
             if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
@@ -9842,15 +10930,163 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
-            if !split {
+            if exact.is_some() {
+                // before the blended faces, which dim it as they dim the
+                // rest of what is drawn
+                draw(&mut pass, &self.pipelines.creation_preview, rg.creation_preview);
+            }
+            if !split && !st_on {
                 rest(&mut pass);
             }
         }
-        if split {
+        if let (true, Some(st), Some(st_pipes)) = (st_on, &self.st, &self.st_pipes) {
+            let (pipes, resolve) = (&st_pipes.scene, &st_pipes.resolve);
+            let t = &self.targets;
+            let scene_depth_tex = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+            let scene_depth = t.depth_msaa.as_ref().unwrap_or(&t.depth_ss);
+            // the rigged faces first in the blended range (Greater against
+            // the opaque depth), then the others (GreaterEqual, as the
+            // sorted order)
+            let rigged = (b0, n_depth);
+            let others = (b0 + u64::from(n_depth) * stride, bn - n_depth);
+            mark(&mut encoder, MARK_ST_BEGIN);
+            // 2. the total alpha of every sample
+            if let Some(mut pass) = st.begin_alpha(&mut encoder, scene_depth) {
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, st.face_group(), &[]);
+                draw_sided(&mut pass, &pipes.alpha[0], rigged, 0);
+                draw_sided(&mut pass, &pipes.alpha[1], others, n_depth);
+            }
+            mark(&mut encoder, MARK_ST_ALPHA_END);
+            // 3 and 4: the stochastic depth, then the accumulation
+            st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
+            if let Some(mut pass) = st.begin_depth(&mut encoder) {
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, st.face_group(), &[]);
+                draw_sided(&mut pass, &pipes.depth[0], rigged, 0);
+                draw_sided(&mut pass, &pipes.depth[1], others, n_depth);
+            }
+            mark(&mut encoder, MARK_ST_DEPTH_END);
+            if let Some(mut pass) = st.begin_accum(&mut encoder) {
+                bind_mesh(&mut pass, &self.groups.b);
+                draw_sided(&mut pass, &pipes.accum, (b0, bn), 0);
+            }
+            if !st_glow.is_empty()
+                && let Some(mut pass) = st.begin_glow(&mut encoder)
+            {
+                bind_mesh(&mut pass, &self.groups.b);
+                for &g in &st_glow {
+                    draw(&mut pass, &pipes.glow, (b0 + u64::from(g) * stride, 1));
+                }
+            }
+            mark(&mut encoder, MARK_ST_ACCUM_END);
+            // 5. the resolve, then the composite over the scene (the
+            // creation preview under it, as under the blended faces)
+            st.resolve(&mut encoder, resolve);
+            {
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b stochastic composite", false, false);
+                bind_mesh(&mut pass, &self.groups.b);
+                draw(&mut pass, &self.pipelines.creation_preview, rg.creation_preview);
+                st.composite(&mut pass, resolve);
+            }
+            mark(&mut encoder, MARK_ST_COMPOSITE_END);
+            // the rigged faces' depth for what follows, as the sorted
+            // order leaves it (`DrawLists::blend_depth_mode`): where at
+            // least half covered for the modes that keep the scene depth
+            // clear of the fringes (#556), from 1/255 as the Legacy Viewer
+            // for `Write` and `Split`
+            if n_depth > 0 {
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend depth", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                let pipe = match lists.blend_depth_mode {
+                    RiggedBlendDepth::Write | RiggedBlendDepth::Split => &self.pipelines.blend_depth_fringe_depth,
+                    RiggedBlendDepth::HalfCovered
+                    | RiggedBlendDepth::Layered
+                    | RiggedBlendDepth::Runs
+                    | RiggedBlendDepth::Layers
+                    | RiggedBlendDepth::Exact => &self.pipelines.blend_depth_mask,
+                };
+                draw_sided(&mut pass, pipe, rigged, 0);
+            }
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
+            bind_mesh(&mut pass, &self.groups.b);
+            rest(&mut pass);
+        }
+        // `Exact`: every blended face once, lit and filed pixel by pixel,
+        // into the targets of the haze, against the depth of the opaque
+        // scene
+        if let Some(order) = exact {
+            let t = &self.targets;
+            order.set_faint(&self.queue, lists.blend_precision.faint());
+            order.clear(&mut encoder);
+            encoder.copy_texture_to_texture(
+                t.depth_ss_tex.as_image_copy(),
+                order.depth_tex.as_image_copy(),
+                t.depth_ss_tex.size(),
+            );
+            {
+                let haze = |view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("scene b blend once"),
+                    color_attachments: &[haze(&order.haze), haze(&order.range)],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &order.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, &order.write, &[]);
+                // the faces come nearest first: between runs of them, the cut
+                // of each pixel goes into the depth, and what lies under it
+                // in the next runs is left out before its shader
+                let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
+                let mut from = 0u32;
+                for to in crate::blend_exact::runs(bn) {
+                    if from > 0 {
+                        pass.set_pipeline(&self.pipelines.blend_cut);
+                        pass.draw(0..3, 0..1);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_sided(
+                        &mut pass,
+                        &self.pipelines.blend_once,
+                        (b0 + u64::from(from) * stride, to - from),
+                        from,
+                    );
+                    from = to;
+                }
+            }
+            order.count_pool(&mut encoder);
+            // the rigged faces in the scene depth where at least half
+            // covered, for the particles drawn after them (#556)
+            if n_depth > 0 {
+                let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
+            }
+        } else if split {
             // (the frame group without the scene copy and the depth: the
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
-                RiggedBlendDepth::Write => {
+                // the lists could not be made: as the Legacy Viewer
+                RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
@@ -9964,12 +11200,50 @@ impl Backend {
                     }
                 }
             }
+        }
+        if split {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
+            if let Some(order) = exact {
+                // the fronts sorted and laid over what is drawn
+                pass.set_bind_group(3, &order.read, &[]);
+                if let Some(both) = self.pipelines.blend_both.as_ref().filter(|_| exact_glow) {
+                    pass.set_pipeline(both);
+                    pass.draw(0..3, 0..1);
+                    calls.set(calls.get() + 1);
+                } else {
+                    pass.set_pipeline(&self.pipelines.blend_over);
+                    pass.draw(0..3, 0..1);
+                    calls.set(calls.get() + 1);
+                    if exact_glow {
+                        pass.set_pipeline(&self.pipelines.blend_glow);
+                        pass.draw(0..3, 0..1);
+                        calls.set(calls.get() + 1);
+                    }
+                }
+            }
             rest(&mut pass);
         }
 
         prof.mark("scene_b");
+        let st_ran = st_on && self.st.is_some() && self.st_pipes.is_some();
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            t.slot_st[slot].set(st_ran);
+        }
+        if !st_ran {
+            // every mark is written each frame (empty spans, after the rain
+            // when the stochastic transparency is off), so every timestamp
+            // is fresh each frame
+            for m in [
+                MARK_ST_BEGIN,
+                MARK_ST_ALPHA_END,
+                MARK_ST_DEPTH_END,
+                MARK_ST_ACCUM_END,
+                MARK_ST_COMPOSITE_END,
+            ] {
+                mark(&mut encoder, m);
+            }
+        }
         mark(&mut encoder, MARK_SCENE_END);
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
@@ -10804,6 +12078,9 @@ impl Backend {
                 }
             });
         }
+        if let Some(order) = &self.targets.blend_exact {
+            order.after_submit();
+        }
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
@@ -10861,9 +12138,20 @@ impl Backend {
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
         if profile_frames && let Some(e) = stats.gpu_elements {
-            let mut out = String::new();
+            let mut out = format!("gpu={:.3} ", stats.gpu_ms.unwrap_or(0.0));
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
                 out.push_str(&format!("{}={ms:.3} ", el.key()));
+            }
+            // the stochastic transparency's passes (oit_stochastic.rs)
+            if let Some(st) = self.timer.as_ref().and_then(|t| t.last_st) {
+                out.push_str(&format!(
+                    "st={:.3} st_alpha={:.3} st_depth={:.3} st_accum={:.3} st_resolve={:.3}",
+                    st.iter().sum::<f32>(),
+                    st[0],
+                    st[1],
+                    st[2],
+                    st[3]
+                ));
             }
             log::info!("gpu profile: {out}");
         }
@@ -11018,8 +12306,227 @@ impl Backend {
 mod tests {
     use super::*;
 
+    #[test]
+    fn deep_snow_has_enough_levels_for_its_reach() {
+        // High at the default 15 m: four squares (the finest 5.12 m across,
+        // the fourth 41 m), as many cells as the one warped grid had
+        let high = DeepSnowMesh::new(2, 15.0);
+        assert_eq!((high.cells, high.levels, high.reach), (128, 4, 15.0));
+        assert_eq!(high.vertices(), 256 * 256 * 6);
+        // 40 m: five (the fifth reaches 39.68 m whatever its snap, past
+        // 39.2 m, where the snow has thinned to nothing): a quarter more
+        // vertices than at 15 m, not half more
+        let far = DeepSnowMesh::new(2, 40.0);
+        assert_eq!((far.cells, far.levels), (128, 5));
+        assert_eq!(far.vertices() * 4, high.vertices() * 5);
+        // Low and Medium keep their share of the reach, coarser
+        assert_eq!(DeepSnowMesh::new(0, 15.0).reach, 10.0);
+        assert_eq!(DeepSnowMesh::new(1, 15.0).cells, 96);
+        // the outermost square reaches where the snow still shows, whatever
+        // its snap, and a morph ends before each square's edge (10 % of a
+        // half side is at least two cells)
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 25.0, 40.0] {
+                let m = DeepSnowMesh::new(q, reach);
+                let s = SNOW_MESH_FIRST / m.cells as f32 * (1u32 << (m.levels - 1)) as f32;
+                let share = [10.0 / 15.0, 13.0 / 15.0, 1.0][q as usize];
+                assert_eq!(m.reach, reach * share);
+                assert!(m.cells as f32 * 0.5 * s - 2.0 * s >= m.reach * SNOW_MESH_EDGE_END, "{q} {reach}");
+                assert!(0.1 * m.cells as f32 * 0.5 >= 2.0);
+                // one fewer would not do: no square drawn for nothing
+                let s = s * 0.5;
+                assert!(
+                    m.levels == 1 || m.cells as f32 * 0.5 * s - 2.0 * s < m.reach * SNOW_MESH_EDGE_END,
+                    "{q} {reach}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_shader_reads_deep_snows_grid_as_the_draw_has_it() {
+        // env.wgsl `snow_mesh_grid`: cells = w / 16, levels = w % 16, reach z
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 40.0] {
+                let m = DeepSnowMesh::new(q, reach);
+                let [z, w] = m.uniform();
+                let packed = (w + 0.5) as u32;
+                assert_eq!((packed / 16, packed % 16, z), (m.cells, m.levels, m.reach));
+                assert!(m.levels < 16);
+            }
+        }
+    }
+
+    #[test]
+    fn the_shelter_map_follows_the_camera_a_metre_at_a_time() {
+        // walking 10 m in 1 cm steps: drawn again (with the shadows off)
+        // about once a metre, as when it was snapped to whole metres; on
+        // its texels it would have moved 32 times at 256 px, 128 at 1024 px
+        let mut centre = None;
+        let mut moves = 0;
+        for step in 0..=1000 {
+            let camera = Vec3::new(100.0 + step as f32 * 0.01, 60.0, 30.0);
+            if let Some(c) = shelter_centre_after(centre, camera) {
+                centre = Some(c);
+                moves += 1;
+            }
+            let c = centre.expect("centred on the first frame");
+            assert!((camera - c).abs().max_element() < SHELTER_FOLLOW);
+        }
+        // (the first frame centres it)
+        assert!((10..=11).contains(&moves), "{moves}");
+        // turning, or going up and down less than a metre, moves nothing
+        let c = Vec3::new(10.0, 10.0, 22.0);
+        assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.4, -0.6, 0.9)), None);
+        assert_eq!(
+            shelter_centre_after(Some(c), c + Vec3::new(0.0, 0.0, 1.2)),
+            Some(c + Vec3::new(0.0, 0.0, 1.2))
+        );
+    }
+
+    #[test]
+    fn the_shelter_map_keeps_its_texels_on_the_ground() {
+        // a point on the ground keeps its place in its texel (the part of
+        // a texel it is at) wherever the camera goes: the map's texels do
+        // not crawl over the ground, nothing sampled from them pops
+        for px in [256u32, 512, 1024] {
+            let ground = Vec3::new(123.37, 77.91, 20.0);
+            let within = |camera: Vec3| {
+                let p = rain_shelter_matrix(camera, px).project_point3(ground);
+                let u = (p.x * 0.5 + 0.5) * px as f32;
+                let v = (0.5 - p.y * 0.5) * px as f32;
+                (u.rem_euclid(1.0), v.rem_euclid(1.0))
+            };
+            let first = within(Vec3::new(100.0, 60.0, 30.0));
+            for step in 1..60 {
+                let camera = Vec3::new(100.0 + step as f32 * 0.37, 60.0 + step as f32 * 0.23, 30.0 + step as f32 * 0.11);
+                let (u, v) = within(camera);
+                assert!(
+                    (u - first.0).abs() < 2e-3 && (v - first.1).abs() < 2e-3,
+                    "{px} px, step {step}: {u},{v} vs {first:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_weather_memory_covers_what_is_drawn() {
+        // today's defaults (puddles 38 m, snow 60 m): the same 128 m as before
+        assert_eq!(wet_extent_for(60.0), 128.0);
+        assert_eq!(wet_extent_for(61.0), 256.0);
+        assert_eq!(wet_extent_for(124.0), 256.0);
+        assert_eq!(wet_extent_for(125.0), 512.0);
+        assert_eq!(wet_extent_for(256.0), 512.0);
+        // never more than 512 m (2048 texels)
+        assert_eq!(wet_extent_for(1000.0), 512.0);
+        assert_eq!((wet_extent_for(256.0) * RAIN_WET_TEXELS_PER_M) as u32, 2048);
+        // the square reaches that far on every side, wherever the camera is
+        // in its snap (with the corner floored, it fell 8 m short on the
+        // east and north sides: 56 m for the default 60 m)
+        for reach in [20.0f32, 38.0, 60.0, 61.0, 100.0, 124.0, 125.0, 200.0, 252.0] {
+            let extent = wet_extent_for(reach);
+            for i in 0..=160 {
+                let at = Vec2::new(-40.0 + i as f32 * 0.1, 300.0 - i as f32 * 0.07);
+                let o = rain_wet_origin(at, extent);
+                let near = (at - o).min(o + Vec2::splat(extent) - at).min_element();
+                assert!(near >= reach - 1e-3, "{reach} m at {at}: {near}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_weather_memory_is_small_while_empty() {
+        // a far distance holds no video memory in clear weather (8 MB, not
+        // 128): the memory grows when rain or snow comes, nothing in it lost
+        assert_eq!(wet_extent_wanted(256.0, false), 128.0);
+        assert_eq!(wet_extent_wanted(256.0, true), 512.0);
+        assert_eq!(wet_extent_wanted(60.0, true), 128.0);
+    }
+
+    #[test]
+    fn a_new_size_keeps_the_weather_so_far() {
+        let mut wet = RainWet::default();
+        for _ in 0..3 {
+            wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 128.0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (soak, level) = (wet.soak, wet.level);
+        assert!(soak > 0.0 && level > 0.0);
+        assert!(wet.step[2] >= 0.0);
+        // the texels start again (every place new to it, `step.z` -1),
+        // as wet as the open is: not dried, not drained
+        wet.restart_texels();
+        wet.advance(1.0, 0.0, Vec2::new(10.0, 20.0), false, false, 256.0);
+        assert_eq!(wet.step[2], -1.0);
+        assert!(wet.soak >= soak && wet.level >= level);
+        assert_eq!(wet.step[3], wet.soak);
+        assert_eq!(wet.uniform[2], 256.0);
+    }
+
+    #[test]
+    fn a_border_crossing_moves_the_weathers_memories() {
+        // a crossing to the east neighbour: every position 256 m less in x;
+        // the memories move with them, so the next frame reads the same
+        // ground (not fresh, the old corner where the new one is)
+        let at = Vec2::new(250.0, 40.0);
+        let mut wet = RainWet::default();
+        wet.advance(1.0, 0.0, at, false, false, 128.0);
+        let mut trail = SnowTrail::default();
+        trail.advance(true, 1.0, at, 0.0, 32.0);
+        let by = Vec2::new(-256.0, 0.0);
+        wet.shift(by);
+        trail.shift(by);
+        std::thread::sleep(Duration::from_millis(2));
+        wet.advance(1.0, 0.0, at + by, false, false, 128.0);
+        trail.advance(true, 1.0, at + by, 0.0, 32.0);
+        assert!(wet.step[2] >= 0.0);
+        assert_eq!([wet.step[0], wet.step[1]], [wet.uniform[0], wet.uniform[1]]);
+        assert!(trail.step[2] >= 0.0);
+        assert_eq!([trail.step[0], trail.step[1]], [trail.uniform[0], trail.uniform[1]]);
+    }
+
+    /// The mirror's blended faces: those it does not see left out, the rigged
+    /// first in their own order, then the others back to front from the
+    /// mirror's camera (#3479).
+    #[test]
+    fn mirror_blend_order_culls_and_sorts_from_the_mirror_camera() {
+        let eye = Vec3::new(10.0, 0.0, 2.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+        let cmd = |record: u32, x: f32| {
+            DrawCmd {
+                index_count: 3,
+                first_index: 0,
+                base_vertex: 0,
+                record,
+                bounds: [0.0; 4],
+            }
+            .with_bounds(Vec3::new(10.0 + x, 0.0, 2.0), 0.5)
+        };
+        // rigged: a far one before a near one (their attachment order), one
+        // behind the camera; then the others, one behind the camera
+        let list = [
+            cmd(1, 6.0),
+            cmd(2, 2.0),
+            cmd(3, -4.0),
+            cmd(4, 2.0),
+            cmd(5, 8.0),
+            cmd(6, -3.0),
+            cmd(7, 4.0),
+        ];
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list, 3);
+        let records = |l: &[DrawCmd]| l.iter().map(|c| c.record).collect::<Vec<_>>();
+        assert_eq!(records(&rigged), [1, 2]);
+        assert_eq!(records(&rest), [5, 7, 4]);
+        // more rigged than entries: all of them rigged, nothing left over
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list[..2], 9);
+        assert_eq!((records(&rigged), rest.len()), (vec![1, 2], 0));
+    }
+
     /// The frame's timestamps in the order the GPU writes them (every mark
-    /// is written each frame, empty spans included).
+    /// is written each frame, empty spans included), with the stochastic
+    /// transparency off; on, its marks come between `MARK_GLOW_END` and
+    /// `MARK_BLEND_END`, inside the same element.
     const MARK_ORDER: [u32; GPU_TIMESTAMPS as usize] = [
         0,
         MARK_SHADOW_BEGIN,
@@ -11051,6 +12558,11 @@ mod tests {
         MARK_BLEND_END,
         MARK_RAIN_BEGIN,
         MARK_RAIN_END,
+        MARK_ST_BEGIN,
+        MARK_ST_ALPHA_END,
+        MARK_ST_DEPTH_END,
+        MARK_ST_ACCUM_END,
+        MARK_ST_COMPOSITE_END,
         MARK_SCENE_END,
         MARK_BLOOM_BEGIN,
         MARK_BLOOM_END,
@@ -11198,6 +12710,24 @@ mod tests {
         assert_eq!(blend_runs(&[true; 5], 0..5).collect::<Vec<_>>(), [(0..5, true)]);
         assert_eq!(blend_runs(&[], 0..2).collect::<Vec<_>>(), [(0..2, false)]);
         assert_eq!(blend_runs(&sides, 2..2).count(), 0);
+    }
+
+    /// The impostors' module on a device without the early depth test, as
+    /// on Metal: naga refused all of it there, at every start (#3751).
+    #[test]
+    fn impostor_shader_is_valid_without_the_early_depth_test() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let valid = |src: &str| {
+            let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            Validator::new(ValidationFlags::all(), Capabilities::all() - Capabilities::EARLY_DEPTH_TEST)
+                .validate(&module)
+                .map_err(|e| e.emit_to_string(src))
+        };
+        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty())) {
+            panic!("{e}");
+        }
+        // the source a device with the test takes is refused there
+        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST)).is_err());
     }
 
     #[test]
@@ -11528,7 +13058,7 @@ mod tests {
                 format!(
                     "{}\n{}\n{}",
                     crate::common_shader_source(),
-                    crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+                    crate::object_shader_source(device.features()),
                     crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
                 )
                 .into(),

@@ -21,6 +21,20 @@ pub const NO_ROTATE_ANIMS: [Uuid; 3] = [
     Uuid::from_u128(0x3da1d753_028a_5446_24f3_9c9b856d9422),
 ];
 
+/// A seated avatar turned on purpose (Face nearest avatar, the Compass): the
+/// rotation it is drawn with, relative to its seat, until the simulator
+/// reports its own. Standing avatars use `Body` instead.
+#[derive(Debug, Clone, Copy)]
+pub struct SeatSnap {
+    /// The seat the snap was made on.
+    pub parent_id: u32,
+    /// The avatar's reported rotation at the time: a new report differs,
+    /// and the simulator's rotation takes over.
+    pub reported: Quat,
+    /// The drawn rotation relative to the seat.
+    pub local: Quat,
+}
+
 const PELVIS_LAG_FLYING: f32 = 0.22;
 const PELVIS_LAG_WALKING: f32 = 0.4;
 const PELVIS_LAG_MOUSELOOK: f32 = 0.15;
@@ -88,6 +102,17 @@ impl Body {
             rotation: Quat::from_rotation_z(fwd.y.atan2(fwd.x)),
             turning: false,
             speed_accum: 0.0,
+        }
+    }
+
+    /// Face `prim_dir` at once, without the lag nor a turn animation
+    /// (FSAvatarAlignBase::snapAvatarBody / snapRemoteAvatarBody: mRoot set
+    /// to the new heading).
+    pub fn snap(&mut self, prim_dir: Vec3) {
+        let fwd = flat(prim_dir);
+        if fwd != Vec3::ZERO {
+            self.rotation = Quat::from_rotation_z(fwd.y.atan2(fwd.x));
+            self.turning = false;
         }
     }
 
