@@ -1498,7 +1498,7 @@ const MASS_KINDS: [&str; 10] = [
 /// A set's versions by finish, colour, material or season (`Vesper Ring
 /// Sets` holding `Gold`, `Silver`; `Nimbus Hair Packs` holding `Blondes`,
 /// `Reds`).
-const FINISHES: [&str; 115] = [
+const FINISHES: [&str; 116] = [
     "gold",
     "silver",
     "rose",
@@ -1614,6 +1614,7 @@ const FINISHES: [&str; 115] = [
     "mustard",
     "lilac",
     "aqua",
+    "ivory",
 ];
 
 /// The pack words of a name that sell many of one thing (`Kyoto Kimono
@@ -1719,11 +1720,17 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
             if classify(sub, -1, 0).body.is_some() || is_kind(&sub_words.join(" ")) {
                 return true;
             }
+            // (a number dates a kind, `Ring 2`, a finish's; beside a delivery's
+            // own part, `HUD 2`, `Scripts 2`, it is that part's)
+            let kind_word = sub_words
+                .iter()
+                .any(|w| is_kind(w) && !VERSION_WORDS.contains(&w.as_str()) && !DELIVERY_PARTS.contains(&w.as_str()));
             sub_words.iter().all(|w| {
                 VERSION_WORDS.contains(&w.as_str())
                     || DELIVERY_PARTS.contains(&w.as_str())
                     || is_kind(w)
-                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w) || number(w))
+                    || number(w) && (!structural || !kind_word)
+                    || !structural && (FINISHES.contains(&w.as_str()) || tone(w))
             })
         };
         // (one `Gold` folder beside `Vesper` and `Opal` is a shelf's: finishes
@@ -3579,22 +3586,22 @@ pub fn step_with(
     // what this batch moves and where it sends, for the moves after
     let mut sent_folders: Vec<Uuid> = Vec::new();
     let mut used: Vec<Uuid> = Vec::new();
-    // (a few batches' worth of refused moves a frame at most: a folder of
-    // 400,000 excluded mid-run is skipped over several frames, never in one)
-    let mut refusals = 0;
+    // (a few batches' worth of skipped moves a frame at most: a folder of
+    // 400,000 excluded mid-run, or an Undo of entries all moved by hand
+    // since, is skipped over several frames, never in one)
+    let skipped_before = *skipped;
     'moves: while sent.len() < BATCH {
+        if *skipped - skipped_before >= 4 * BATCH {
+            if change.operations.is_empty() {
+                return Step::Wait;
+            }
+            break 'moves;
+        }
         let Some(next) = queue.front() else { break };
         // (refused since the plan: skipped before anything is loaded for it)
         if refused(inv, next) {
             queue.pop_front();
             *skipped += 1;
-            refusals += 1;
-            if refusals >= 4 * BATCH {
-                if change.operations.is_empty() {
-                    return Step::Wait;
-                }
-                break 'moves;
-            }
             continue;
         }
         // a folder whose tree is still loading waits for it (Resume and

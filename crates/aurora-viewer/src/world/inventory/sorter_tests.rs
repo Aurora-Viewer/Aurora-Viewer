@@ -3073,10 +3073,12 @@ fn a_refused_folder_move_is_skipped_before_its_tree_loads() {
 #[test]
 fn sets_with_one_odd_folder_stay_whole_and_a_dated_kind_is_a_shelf() {
     let none = HashSet::new();
-    let whole: [(&str, &[&str]); 3] = [
+    let whole: [(&str, &[&str]); 5] = [
         ("Halcyon Dress Packs", &["Black", "White", "Burgundy"]),
         ("Rivet Boot Packs", &["Black", "Brown", "Plum"]),
         ("Vesper Ring Sets", &["Gold", "Silver", "Demo"]),
+        ("Kyoto Kimono Sets", &["Sakura", "Hanami", "HUD 2"]),
+        ("Speedster Car Packs", &["Roadster", "Coupe", "Scripts 2"]),
     ];
     for (name, subs) in whole {
         let mut inv = fixture(&[]);
@@ -3121,6 +3123,32 @@ fn refused_moves_are_skipped_a_few_batches_a_frame() {
     let none = HashSet::new();
     let mut skipped = 0;
     let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| true);
+    assert!(matches!(step, Step::Wait));
+    assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
+}
+
+/// Moves no longer where the run left them (an Undo of entries all moved by
+/// hand since) are skipped a few batches' worth a frame too.
+#[test]
+fn stale_moves_are_skipped_a_few_batches_a_frame() {
+    let mut inv = fixture(&["Lace Bra"]);
+    let gone = Move {
+        id: id(100),
+        folder: false,
+        name: "Lace Bra".into(),
+        // (not where it is now)
+        from: id(1),
+        to: Dest::Path(vec!["Lingerie".into()]),
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+        from_trash: false,
+        snapshot: false,
+    };
+    let mut queue: VecDeque<Move> = std::iter::repeat_n(gone, 4 * BATCH + 5).collect();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| false);
     assert!(matches!(step, Step::Wait));
     assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
 }
