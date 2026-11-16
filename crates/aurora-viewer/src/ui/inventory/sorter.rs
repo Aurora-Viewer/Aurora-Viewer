@@ -1634,7 +1634,8 @@ pub(super) fn show(
             _ => {
                 let mut read: HashSet<Uuid> = moves.iter().map(|m| m.from).collect();
                 for m in moves.iter().filter(|m| m.folder) {
-                    read.extend(sorter::unloaded_below(inv, m.id, &prefs.sorter.excluded));
+                    let undo = m.restore && !m.snapshot;
+                    read.extend(sorter::unloaded_below(inv, m.id, if undo { &[] } else { &prefs.sorter.excluded }));
                 }
                 let loaded = ask_for(inv, read);
                 state.source_loaded = Some((inv.generation, loaded));
@@ -1789,7 +1790,7 @@ pub(super) fn show(
     let pre_trash_loaded = match state.pre_trash_loaded {
         Some((generation, loaded)) if generation == inv.generation => loaded,
         _ => {
-            let loaded = waiting_in.is_none_or(|id| ask_for(inv, sorter::unloaded_below(inv, id, &[])));
+            let loaded = waiting_in.is_none_or(|id| ask_for(inv, sorter::unloaded_below(inv, id, &prefs.sorter.excluded)));
             state.pre_trash_loaded = Some((inv.generation, loaded));
             loaded
         }

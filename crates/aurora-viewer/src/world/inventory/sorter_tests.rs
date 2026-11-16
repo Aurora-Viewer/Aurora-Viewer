@@ -710,6 +710,23 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     assert!(![31, 32, 34, 35, 37, 38].iter().any(|n| moved.contains(&id(*n))), "never opened");
     // (Kira Avatar names no kind: it stays whole where it is)
     assert!([30, 36].iter().all(|n| moved.contains(&id(*n))), "they move whole");
+    // a delivery with only its HUD and textures folders, and an occasion
+    // shelf of a plural kind with body folders
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 20, 1, "Velmora Aphrodite");
+    add_folder(&mut inv, 21, 20, "HUD");
+    add_folder(&mut inv, 22, 20, "Textures");
+    add_item(&mut inv, 215, 21, "Aphrodite HUD", 0);
+    add_folder(&mut inv, 23, 1, "Party Dresses");
+    add_folder(&mut inv, 24, 23, "Maitreya");
+    add_folder(&mut inv, 25, 23, "Reborn");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        ![21, 22, 215].iter().any(|n| moved.contains(&id(*n))),
+        "the delivery is never opened"
+    );
+    assert!(!moved.contains(&id(23)), "Party Dresses is a shelf");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

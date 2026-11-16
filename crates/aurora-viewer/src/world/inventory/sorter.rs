@@ -1354,6 +1354,28 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     if !names_a_product(name) && !occasion {
         return false;
     }
+    // an occasion beside a plural kind is a shelf (`Party Dresses`,
+    // `Christmas Sweaters`), unless that kind is a pair or a set sold as one
+    // product (`Winter Boots`, `Summer Shorts`)
+    const SOLD_AS_MANY: [&str; 14] = [
+        "shoes",
+        "boots",
+        "heels",
+        "sandals",
+        "sneakers",
+        "stockings",
+        "socks",
+        "tights",
+        "pants",
+        "shorts",
+        "jeans",
+        "leggings",
+        "gloves",
+        "earrings",
+    ];
+    if occasion && words(name).iter().any(|w| plural_kind(w) && !SOLD_AS_MANY.contains(&w.as_str())) {
+        return false;
+    }
     let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
     // the product's own words (`aphrodite`, `hex`): a subfolder sharing one
     // is a version of it (`Aphrodite HUD`, `Hex HUD`), the store's name
@@ -1364,6 +1386,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // `Shape`) are a delivery's parts; all of them plural (`Heads`,
     // `Skins`, `Boots`) are a shelf sorted by kind
     let (mut singular, mut plural) = (0, 0);
+    let mut fatpack_seen = false;
     let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
@@ -1377,6 +1400,7 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         // Waifus, or the product's own name again
         let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && !many || read.squish || read.waifus;
         versions |= version;
+        fatpack_seen |= fatpack;
         if kind_only && !version {
             if many {
                 plural += 1;
@@ -1387,7 +1411,8 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         version || fatpack || kind_only
     });
     let shelf_by_kind = plural > 0 && singular == 0;
-    all && !shelf_by_kind && (versions || named && !occasion || singular > 0 && names_a_product(name))
+    // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
+    all && !shelf_by_kind && (versions || named && !occasion || (singular > 0 || fatpack_seen) && names_a_product(name))
 }
 
 /// A kind word written as many (`Dresses`, `Shoes`, `Heads`): the word
@@ -1974,7 +1999,10 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
                 Dest::Path(_) | Dest::PreTrash => true,
             }
         {
-            let unloaded = unloaded_below(inv, m.id, &prefs.excluded);
+            // (an Undo puts back what its run moved, a folder excluded since
+            // inside it included: its tree is read like any)
+            let undo = m.restore && !m.snapshot;
+            let unloaded = unloaded_below(inv, m.id, if undo { &[] } else { &prefs.excluded });
             if !unloaded.is_empty() {
                 // the run waits for its tree before it goes (step), so it is
                 // never left out of a Resume or an Undo
