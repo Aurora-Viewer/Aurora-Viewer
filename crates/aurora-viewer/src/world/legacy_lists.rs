@@ -239,7 +239,13 @@ impl super::World {
             }
         }
         if let Some(file) = lists.derender {
-            (report.derender, report.unseated) = self.merge_derender(file);
+            match self.merge_derender(file) {
+                Ok(merged) => (report.derender, report.unseated) = merged,
+                Err(e) => {
+                    log::warn!("asset blacklist not saved: {e}");
+                    report.unsaved.push(derender::FILE);
+                }
+            }
         }
         if let Some(data) = lists.contact_sets {
             let adds = data.adds(&self.contact_sets);
@@ -383,6 +389,24 @@ mod tests {
             (1, 1, 1),
             "the other lists still come in"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_asset_blacklist_that_cannot_be_saved_stays_as_it_was() {
+        let dir = folder("derender-unsaved");
+        write_lists(&dir);
+        let (mut world, _) = demo_world();
+        // a file where the account's folder should be
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "").expect("blocker");
+        world.derender = derender::Derender::load(blocker.join(derender::FILE));
+        let report = world.merge_legacy_lists(read(&dir));
+        assert_eq!(report.unsaved, [derender::FILE]);
+        assert_eq!(report.derender, 0);
+        let thing: uuid::Uuid = "7d4581af-c4ca-6003-e2a4-3038efea2a25".parse().expect("uuid");
+        assert!(!world.derender.contains(&thing), "nothing kept in memory either");
+        assert_eq!((report.teleports, report.media), (1, 1), "the other lists still come in");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
