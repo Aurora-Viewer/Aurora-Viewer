@@ -304,25 +304,24 @@ mod tests {
 
     #[test]
     fn title_ends_with_the_build_profile() {
+        // the catalogue's own words: a language may join the name, the
+        // version and the title another way than " - " (Japanese does), and
+        // translate "Debug"
+        let named = |version: &str, title: &str| aurora_i18n::tr!("cli-aurora-viewer-2", version = version, t = title);
+        let plain = |version: &str| aurora_i18n::tr!("cli-aurora-viewer", version = version);
         assert_eq!(
             title_with(Some("Test ombres"), "debug", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - Test ombres (Dev)").as_str()
+            format!("{} (Dev)", named("0.2.0", "Test ombres"))
         );
-        assert_eq!(
-            title_with(None, "release", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Release)").as_str()
-        );
+        assert_eq!(title_with(None, "release", "0.2.0"), format!("{} (Release)", plain("0.2.0")));
         assert_eq!(
             title_with(None, "debugging", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 (Debug)").as_str()
+            format!("{} ({})", plain("0.2.0"), aurora_i18n::tr!("common-debug"))
         );
-        assert_eq!(
-            title_with(Some("X"), "unknown", "0.2.0"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0 - X").as_str()
-        );
+        assert_eq!(title_with(Some("X"), "unknown", "0.2.0"), named("0.2.0", "X"));
         assert_eq!(
             title_with(None, "debug", "0.2.0+7.gabcdef123"),
-            aurora_i18n::tr!("cli-aurora-viewer", version = "0.2.0+7.gabcdef123 (Dev)").as_str()
+            format!("{} (Dev)", plain("0.2.0+7.gabcdef123"))
         );
     }
 

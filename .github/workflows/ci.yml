@@ -73,6 +73,11 @@ jobs:
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         shell: powershell
         run: ./scripts/check-scripts.ps1
+      # the hook Claude Code runs before each shell command of an agent
+      # (.claude/hooks), on its table of refused and allowed commands
+      - name: Shell hook of the agents
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
+        run: ./scripts/test-agent-hook.ps1
       - name: Formatting
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check
