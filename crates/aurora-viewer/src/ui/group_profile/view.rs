@@ -11,6 +11,7 @@ use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind, hero};
 use crate::world::World;
 use crate::world::group_data::GroupData;
+use crate::world::names::NameScope;
 use aurora_net::GroupMembership;
 use aurora_net::groups::powers;
 use aurora_net::search::GroupProfile;
@@ -36,6 +37,9 @@ pub struct View<'a> {
     pub member: Option<&'a GroupMembership>,
     pub data: Option<&'a GroupData>,
     pub active: bool,
+    /// The region applies the ability to post links in group chat: the
+    /// role editor lists it (abilities::catalogue).
+    pub post_links: bool,
     member_count: Option<i64>,
 }
 
@@ -58,6 +62,7 @@ impl<'a> View<'a> {
             member,
             data: world.group_data.get(&id),
             active: world.groups.active == id && !id.is_nil(),
+            post_links: world.group_chat_post_links(),
             member_count: world.group_member_count(id),
         }
     }
@@ -334,7 +339,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
         if let Some(g) = v.profile.filter(|g| !g.founder.is_nil()) {
             ui.label(small(aurora_i18n::tr!("ui-group-profile-founded-by").to_owned() + " "));
             c.want_names.insert(g.founder);
-            let founder = c.world.social.display_name_of(&g.founder).to_string();
+            let founder = c.world.social.display_name_in(NameScope::Roster, &g.founder).to_string();
             let link = ui.add(egui::Label::new(egui::RichText::new(founder).size(12.5).color(p.violet_light)).sense(Sense::click()));
             if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 crate::ui::profile::request_open(ui.ctx(), g.founder);

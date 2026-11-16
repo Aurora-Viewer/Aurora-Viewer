@@ -56,10 +56,17 @@ fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Save the layout now (on exit, after a restored backup).
+/// Save the layout now (on exit, after a restored backup), on a save
+/// thread (saves.rs); the exit waits for it.
 pub fn save(ctx: &egui::Context) {
     let (generation, mem) = snapshot(ctx);
-    write(generation, &mem);
+    queue(generation, mem);
+}
+
+/// Hands the snapshot's write to a save thread: one after the other, a
+/// snapshot not written yet replaced by the newer one.
+fn queue(generation: u64, mem: egui::Memory) {
+    crate::saves::replace(path(), move || write(generation, &mem));
 }
 
 /// The layout as `ui_layout.ron` holds it (and a settings backup).
@@ -153,12 +160,7 @@ impl Autosave {
         self.room = Some(room);
         if self.mark(released || resized, now) {
             let (generation, mem) = snapshot(ctx);
-            let spawned = std::thread::Builder::new()
-                .name("aurora-layout-save".into())
-                .spawn(move || write(generation, &mem));
-            if let Err(e) = spawned {
-                log::warn!("ui layout not saved: {e}");
-            }
+            queue(generation, mem);
         }
     }
 

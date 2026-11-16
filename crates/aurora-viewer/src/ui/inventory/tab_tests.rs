@@ -198,7 +198,7 @@ fn preview_tabs_notecards_keep_background_saves_and_cancelled_closure_independen
     let mut f = Fixture::new(7);
     let ids = [9101, 9102].map(Uuid::from_u128);
     for id in ids {
-        f.state.open_document(&f.ctx, id, 7);
+        f.state.open_document(&f.ctx, id, 7, None);
         f.state
             .windows
             .last_mut()
@@ -251,7 +251,7 @@ fn preview_tabs_media_can_switch_and_close_without_replacing_their_item_states()
         let mut f = Fixture::new(kind);
         let ids = [9101, 9102].map(Uuid::from_u128);
         for id in ids {
-            f.state.open_document(&f.ctx, id, kind);
+            f.state.open_document(&f.ctx, id, kind, None);
         }
         f.state.group_documents(&ids);
         f.settle();

@@ -1,7 +1,7 @@
 //! Shared import action for People and Conversations. Native file selection
 //! and XML parsing run on a worker; only its originating account may apply it.
 use super::*;
-use crate::world::contact_sets::importing::ImportData;
+use crate::world::contact_sets::importing::{Begun, ImportData};
 use std::io::Read;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -12,11 +12,11 @@ pub(super) struct Job {
 
 impl ContactsUi {
     pub(crate) fn can_import_contact_sets(&self) -> bool {
-        self.import_job.is_none()
+        self.import_job.is_none() && self.import_saving.is_none()
     }
 
     pub(crate) fn import_contact_sets(&mut self, ctx: &egui::Context, account: Uuid) {
-        if self.import_job.is_some() {
+        if !self.can_import_contact_sets() {
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -56,6 +56,9 @@ fn read_import(path: &std::path::Path) -> Result<ImportData, String> {
 }
 
 pub(super) fn poll(world: &mut World, st: &mut ContactsUi) {
+    if let Some(result) = finish_saving(world, st) {
+        announce(world, st, result);
+    }
     let Some(job) = &st.import_job else {
         return;
     };
@@ -70,13 +73,44 @@ pub(super) fn poll(world: &mut World, st: &mut ContactsUi) {
     };
     st.import_job = None;
     let result = match result {
-        Ok(Some(data)) => world
+        // the file is written by a save thread; the sets change once it is
+        // on the disk (`finish_saving`)
+        Ok(Some(data)) => match world
             .contact_sets
-            .merge_import(data, |id| world.social.is_friend(id))
-            .map_err(|e| e.to_string()),
+            .begin_import(data, |id| world.social.is_friend(id))
+            .map_err(|e| e.to_string())
+        {
+            Ok(Begun::Done(count)) => Ok(count),
+            Ok(Begun::Saving(saving)) => {
+                st.import_saving = Some((world.agent_id, saving));
+                return;
+            }
+            Err(e) => Err(e),
+        },
         Ok(None) => return,
         Err(e) => Err(e),
     };
+    announce(world, st, result);
+}
+
+/// The import whose file the save thread wrote, once it answered; dropped
+/// when the account changed meanwhile.
+fn finish_saving(world: &mut World, st: &mut ContactsUi) -> Option<Result<usize, String>> {
+    let (account, _) = st.import_saving.as_ref()?;
+    if *account != world.agent_id {
+        st.import_saving = None;
+        return None;
+    }
+    let mut saving = st.import_saving.take().map(|(_, saving)| saving);
+    let social = &world.social;
+    let result = world.contact_sets.finish_import(&mut saving, |id| social.is_friend(id));
+    if let Some(saving) = saving {
+        st.import_saving = Some((world.agent_id, saving));
+    }
+    result.map(|r| r.map_err(|e| e.to_string()))
+}
+
+fn announce(world: &mut World, st: &mut ContactsUi, result: Result<usize, String>) {
     let (kind, body) = match result {
         Ok(count) => {
             st.set_choice = Some(contact_sets::ALL_SETS.to_owned());

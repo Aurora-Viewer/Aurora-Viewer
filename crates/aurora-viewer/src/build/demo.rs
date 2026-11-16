@@ -78,6 +78,8 @@ pub enum Step {
     Contents,
     ContentsProperties,
     ContentsSelection(bool),
+    /// "New notecard" then "New script" in the Contents tab.
+    ContentsNew,
     TakeTask(bool),
     /// Every item, selected and dropped together on the inventory root.
     TakeAll,
@@ -481,7 +483,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
-            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            260 if parts[0] == "contents-new" => vec![Step::ContentsNew],
+            260 if !matches!(parts[0], "contents-ready" | "contents-new") => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
     }
@@ -683,6 +686,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             }
             None => Vec::new(),
         },
+        // what the drag left, for a restriction arriving during it
+        251 | 275 | 300 if handle.is_some() => {
+            log::info!(
+                "demo build: frame {frame} drag={} selection={} position={:?}",
+                tool.manip.drag.is_some(),
+                tool.selection.len(),
+                object.and_then(|idx| world.objects.get(idx)).map(|o| o.position),
+            );
+            if frame == 300 || tool.manip.drag.is_none() {
+                return Vec::new();
+            }
+            let k = (frame - 250) as f32 / 40.0;
+            vec![Step::Cursor(x_start(tool) + dx * k, y_start(tool) + dy * k)]
+        }
         251..=290 if handle.is_some() && tool.manip.drag.is_some() => {
             let k = (frame - 250) as f32 / 40.0;
             let (ex, ey) = edge.unwrap_or((x_start(tool) + dx, y_start(tool) + dy));

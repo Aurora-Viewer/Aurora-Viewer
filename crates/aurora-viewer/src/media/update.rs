@@ -501,7 +501,7 @@ impl MediaManager {
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
     /// unloaded, a refused one is no longer wanted. Media on items we wear
-    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// (whoever made them) is not asked about (`filter_trust_own_worn`). A
     /// script, a file of this computer or a browser page never loads, with
     /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
@@ -647,8 +647,9 @@ impl MediaManager {
     fn drive_plugins(&mut self, f: &MediaFrame, now: Instant) -> Vec<(Uuid, u8, String)> {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
+        let mut links = Vec::new();
         let paths = self.paths.clone();
-        let browser = browser_settings(f.cache_dir, f.language);
+        let browser = browser_settings(f.cache_dir, f.language, f.settings);
         for m in &mut self.impls {
             if m.priority == Priority::Unloaded {
                 if m.plugin.take().is_some() {
@@ -735,6 +736,9 @@ impl MediaManager {
             p.idle();
             let mut close = false;
             for ev in p.take_events() {
+                if let Some(url) = ev.clicked_url() {
+                    links.push(url.to_owned());
+                }
                 let complete = matches!(ev, MediaEvent::NavigateComplete { .. });
                 match ev {
                     MediaEvent::StatusChanged(s) => m.status = s,
@@ -802,6 +806,7 @@ impl MediaManager {
             }
         }
         self.messages.extend(messages);
+        self.links.extend(links);
         navs
     }
 
@@ -1153,6 +1158,24 @@ mod tests {
         );
         apply_entry_to_plugin(&mut running, (1024, 512, true, true), &changed);
         assert_eq!(running.calls, 3, "an unchanged entry must not reconfigure the plugin");
+    }
+
+    #[test]
+    fn custom_scheme_links_in_media_act_only_on_a_click() {
+        let link = |nav_type: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/chat/824619/hello".into(),
+            nav_type: nav_type.into(),
+        };
+        assert_eq!(link("clicked").clicked_url(), Some("secondlife:///app/chat/824619/hello"));
+        assert_eq!(link("navigated").clicked_url(), None);
+        assert_eq!(
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: String::new(),
+                nav_type: "clicked".into()
+            }),
+            None
+        );
+        assert_eq!(MediaEvent::CloseRequest.clicked_url(), None);
     }
 
     #[test]

@@ -229,7 +229,8 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
 
 fn object_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, env: &mut Env) {
     let width = widgets::scrolled_width(ui).max(1.0);
-    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0), egui::Sense::hover());
+    let scale = common::font_scale(ui);
+    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0 * scale), egui::Sense::hover());
     let mut left = slot(ui, canvas, [10.0, 5.0, 106.0, 1000.0], "legacy-object-vectors");
     object::show_flags(&mut left, p, tool, world);
     left.add_space(8.0);
@@ -316,7 +317,7 @@ pub(super) fn body(
                 }
                 let height = (ui.available_height() - 17.0).max(30.0);
                 let width = widgets::scrolled_width(ui).max(1.0);
-                egui::ScrollArea::vertical()
+                let _scrolled = egui::ScrollArea::vertical()
                     .id_salt(("legacy-build-body", tool.tool as u8, tool.tab))
                     .max_height(height)
                     .auto_shrink([false, false])
@@ -347,6 +348,11 @@ pub(super) fn body(
                             });
                         }
                     });
+                // The bar is reserved beside the content (not drawn over it).
+                // Tests wheel that strip: a number field would take the wheel.
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::unique("legacy-build-scroll"), _scrolled.inner_rect));
             }
             let icon = if s.expanded { "caret-up-filled" } else { "caret-down-filled" };
             let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, vec2(ui.available_width(), 14.0))

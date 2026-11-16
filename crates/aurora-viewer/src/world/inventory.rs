@@ -59,6 +59,10 @@ pub struct Inventory {
     /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
+    /// Folders the server refuses even at depth 0: over its per-folder reply
+    /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
+    /// items cannot be read; search and refresh do not ask again in a loop.
+    pub too_big: HashSet<Uuid>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
@@ -244,9 +248,14 @@ impl Inventory {
         }
     }
 
-    pub fn apply(&mut self, contents: Vec<FolderContents>) {
+    /// Apply folder snapshots. A snapshot older than the contents already
+    /// confirmed locally is not applied: the folder is queued again, like
+    /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
+    /// Returns the folders that were stale and queued.
+    pub fn apply(&mut self, contents: Vec<FolderContents>) -> Vec<Uuid> {
         self.generation += 1;
         let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        let mut stale = Vec::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
@@ -256,6 +265,7 @@ impl Inventory {
                 .get(&c.folder_id)
                 .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
             {
+                stale.push(c.folder_id);
                 continue;
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
@@ -302,6 +312,9 @@ impl Inventory {
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
+            // A folder that fits again (the resident split it, or a later read
+            // succeeded) is no longer over the limit.
+            self.too_big.remove(&c.folder_id);
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
@@ -331,6 +344,13 @@ impl Inventory {
             self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
             self.deferred_parents.retain(|id, _| self.items.contains_key(id));
         }
+        for id in &stale {
+            if let Some(folder) = self.folders.get_mut(id) {
+                folder.state = FetchState::Unknown;
+            }
+            self.request(*id);
+        }
+        stale
     }
 
     /// Items fetched by id (FetchInventory2), listed in their folder when
@@ -642,13 +662,20 @@ impl Inventory {
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("tmp");
-        if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
-        }
+        // The document is the snapshot; its encoding, sealing and writing
+        // go to a save thread (saves.rs): a large inventory on a slow disk
+        // held the frame for over a minute at exit (#3466). The exit waits
+        // for it with a bound, and the next login's read waits for it.
+        let path = path.to_path_buf();
+        crate::saves::replace(path.clone(), move || {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = path.with_extension("tmp");
+            if crate::cache::write(&tmp, &aurora_llsd::to_binary(&doc)).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        });
     }
 
     /// Restore cached folders whose version still matches the login
@@ -741,6 +768,8 @@ pub struct CachedInventory {
 /// the file, its LLSD document, the items and their order in each folder,
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
+    // a relogin reads what the logout's save thread writes
+    crate::saves::wait_for(path, std::time::Duration::from_secs(10));
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
     // Older files were populated by legacy reads that could discard other

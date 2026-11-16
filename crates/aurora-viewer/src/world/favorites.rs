@@ -78,21 +78,15 @@ impl Favorites {
                 }
             };
             let _ = loaded_tx.send(order);
-            while let Ok(mut order) = writes.recv() {
-                while let Ok(newer) = writes.try_recv() {
-                    order = newer;
+            // a refused write is tried again, and once more when the
+            // storage goes (save_retry)
+            crate::save_retry::write_latest("favourites' order", &writes, |order| {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
                 }
-                let save = || -> std::io::Result<()> {
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    let bytes = serde_json::to_vec(&order).map_err(std::io::Error::other)?;
-                    crate::atomic_file::write(&path, &bytes)
-                };
-                if let Err(error) = save() {
-                    log::warn!("Cannot save the favourites' order: {error}");
-                }
-            }
+                let bytes = serde_json::to_vec(order).map_err(std::io::Error::other)?;
+                crate::atomic_file::write(&path, &bytes)
+            });
         });
         match worker {
             Ok(worker) => Favorites {

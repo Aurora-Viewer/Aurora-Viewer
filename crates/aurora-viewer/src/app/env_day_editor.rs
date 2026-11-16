@@ -89,7 +89,16 @@ impl App {
         // the question's "ignore": its default answer, Yes, without asking
         let ask = make_no_trans && self.settings.confirm_no_transfer_settings;
         match (purpose, result) {
-            (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data) {
+            (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data).map(|mut frame| {
+                // its weather as its inventory item's name gives it (a code
+                // typed there by hand is not in the asset)
+                if let Some(it) = self.world.inventory.items.get(&item)
+                    && crate::weather::region::SkyWeather::from_name(&it.name).is_some()
+                {
+                    frame.set_name(&it.name);
+                }
+                frame
+            }) {
                 Some(frame) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Frame(frame)),
                 Some(frame) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Frame(frame), &mut out),
                 Some(frame) => self.day_editor.put_loaded_frame(&frame, &mut out),
@@ -183,7 +192,15 @@ impl App {
                 DayAction::SaveAs(name) => self.day_editor_save(Some(name)),
                 DayAction::ApplyLocal => {
                     if let Some(day) = self.day_editor.rendered().cloned() {
+                        let (length, offset) = (day.length, day.offset);
                         self.world.eep.apply_local_day(day);
+                        // its Aurora Weather (the ground track's) with it
+                        let weather = self
+                            .day_editor
+                            .doc
+                            .as_ref()
+                            .and_then(|d| crate::weather::region::RegionDay::read(&d.to_llsd(), 0, length, offset));
+                        self.world.eep.set_local_weather(weather);
                         self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-applied").into(), false));
                     }
                 }
@@ -210,6 +227,13 @@ impl App {
         if self.day_editor.saving.is_some() {
             return;
         }
+        // a day whose key frames carry weather says so by its name's code
+        // (the inventory's [Aurora Weather] tag reads the name; the skies'
+        // codes are inside the day)
+        let settings = doc.to_llsd();
+        let name = crate::weather::region::day_name_for(doc.name(), &settings);
+        doc.set_name(&name);
+        let new_name = new_name.map(|n| crate::weather::region::day_name_for(&n, &settings));
         let request = Uuid::new_v4();
         let item = self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
         match (new_name, item) {
@@ -230,6 +254,9 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-copied").into(), false));
             }
             (None, Some(it)) => {
+                // renamed too when saved over with another name, as
+                // LLSettingsVOBase::updateInventoryItem does (update_name)
+                self.rename_settings_item(&it, doc.name());
                 self.day_editor.saving = Some(request);
                 self.send(NetCommand::SaveInventoryContent {
                     request,
@@ -279,7 +306,13 @@ impl App {
     pub(super) fn day_editor_saved(&mut self, result: Result<aurora_net::inventory::InvItem, String>) {
         self.day_editor.saving = None;
         match result {
-            Ok(it) => {
+            Ok(mut it) => {
+                if self.day_editor.item == Some(it.id)
+                    && let Some(doc) = &self.day_editor.doc
+                {
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
+                }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.day_editor.saved(
                     it.id,

@@ -84,11 +84,38 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             | "note-landmark"
             | "note-copy"
             | "note-menu-right"
+            | "note-rez"
     ) {
         return Vec::new();
     }
     let Some(item) = st.preview else { return Vec::new() };
     let editor = egui::Id::unique(("inventory_document_text", st.ui_id, item));
+    // note-rez: the embedded object dragged out of the text from frame 650,
+    // released over the world at frame 680 (RezObjectFromNotecard)
+    if mode == "note-rez" {
+        let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", '\u{100002}')))) else {
+            return Vec::new();
+        };
+        let start = rect.center();
+        let screen = ctx.content_rect();
+        let target = egui::pos2(screen.right() - screen.width() * 0.12, screen.bottom() - screen.height() * 0.3);
+        let pos = match frame {
+            650 => start,
+            651..=679 => start + (target - start) * ((frame - 650) as f32 / 30.0),
+            680 => target,
+            _ => return Vec::new(),
+        };
+        let mut events = vec![egui::Event::PointerMoved(pos)];
+        if matches!(frame, 650 | 680) {
+            events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: frame == 650,
+                modifiers: Default::default(),
+            });
+        }
+        return events;
+    }
     if mode == "note-drop" {
         let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))) else {
             return Vec::new();
@@ -207,20 +234,21 @@ impl InventoryUi {
             .or_else(|| inv.items.values().find(|item| matches(item)))
             .map(|item| item.id);
         if let Some(item) = item {
-            self.open_document(ctx, item, 20);
+            self.open_document(ctx, item, 20, None);
         }
     }
 
     /// LLFloaterReg::showInstance: each item owns its document. Opening an
     /// existing item raises/restores it without replacing an unsaved draft.
-    pub fn open_document(&mut self, ctx: &egui::Context, item: Uuid, kind: i32) -> bool {
+    pub fn open_document(&mut self, ctx: &egui::Context, item: Uuid, kind: i32, owner: Option<egui::Id>) -> bool {
         let existing = if self.preview == Some(item) {
+            self.document_owner = owner;
             Some((self.ui_id, self.preview_text.is_none()))
         } else {
-            self.windows
-                .iter()
-                .find(|w| w.state.preview == Some(item))
-                .map(|w| (w.state.ui_id, w.state.preview_text.is_none()))
+            self.windows.iter_mut().find(|w| w.state.preview == Some(item)).map(|w| {
+                w.state.document_owner = owner;
+                (w.state.ui_id, w.state.preview_text.is_none())
+            })
         };
         if let Some((editor, loading)) = existing {
             let id = self
@@ -231,7 +259,8 @@ impl InventoryUi {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
             return loading;
         }
-        let state = Self::document(item);
+        let mut state = Self::document(item);
+        state.document_owner = owner;
         self.windows.push(InventoryWindow {
             id: state.ui_id,
             root: Uuid::nil(),
@@ -472,7 +501,7 @@ mod tests {
         );
         for item in items {
             let mut state = draft("Unsaved note");
-            state.open_document(&ctx, item, 20);
+            state.open_document(&ctx, item, 20, None);
             let editor = state.windows[0].id;
             state.windows[0].state.animation_description = Some((item, "Edited description".into()));
             for _ in 0..3 {
@@ -536,7 +565,7 @@ mod tests {
         let mut state = InventoryUi::default();
         let mut frame = 0;
         for (n, item) in items.into_iter().enumerate() {
-            assert!(state.open_document(&ctx, item, 7));
+            assert!(state.open_document(&ctx, item, 7, None));
             state.windows[n].state.load_document(7, true, &Ok(b"Original".to_vec()));
             for _ in 0..8 {
                 frame += 1;
@@ -579,7 +608,7 @@ mod tests {
             .collect();
         assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
         crate::ui::widgets::minimize_floater(&ctx, &ids[0]);
-        assert!(!state.open_document(&ctx, items[0], 7));
+        assert!(!state.open_document(&ctx, items[0], 7, None));
         assert_eq!(state.windows.len(), 2);
         assert!(state.windows.iter().all(|w| w.root.is_nil() && !w.open && w.state.preview_dirty));
         assert_eq!(state.windows[0].state.preview_text, Some(Ok("Draft 0".into())));

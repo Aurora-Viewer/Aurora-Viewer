@@ -149,6 +149,7 @@ fn check_part_rasterization(instance: wgpu::Instance) {
             samples: 1,
             format: None,
             gbuf: false,
+            range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
