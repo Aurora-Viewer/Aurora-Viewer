@@ -20,6 +20,8 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -183,7 +185,8 @@ impl Harness {
         };
         self.frame(vec![egui::Event::PointerMoved(at)]);
         self.frame(vec![button(true)]);
-        for _ in 0..36 {
+        // past the hold that opens a sheet (`rows::SHEET_HOLD_SECONDS`)
+        for _ in 0..72 {
             self.frame(Vec::new());
         }
         self.frame(vec![button(false)]);

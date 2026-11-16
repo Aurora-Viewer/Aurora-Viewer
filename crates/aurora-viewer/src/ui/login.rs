@@ -453,7 +453,7 @@ fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str
 
 /// A strip whose color runs through `stops` (position 0..1, color) from left
 /// to right.
-fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
+pub(crate) fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
     let mut mesh = egui::Mesh::default();
     for (at, color) in stops {
         let x = egui::lerp(r.left()..=r.right(), *at);

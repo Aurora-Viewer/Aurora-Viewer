@@ -314,6 +314,7 @@ impl Environment {
             halo_texture: 0,
             // set by the caller from the preferences (world/night_sky.rs)
             stars: Default::default(),
+            studio_aurora: [[0.0; 4]; 4],
         };
         let water_params = WaterParams {
             fog_color: water.fog_color,

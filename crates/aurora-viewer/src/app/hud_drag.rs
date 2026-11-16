@@ -29,7 +29,7 @@ impl App {
             // originally LGPL 2.1): a HUD selection zooms the entire HUD view.
             // No hit under the cursor is needed; local scale profiles stay intact.
             if self.hud_drag.is_none() && !self.build.manip.dragging() && self.interactions.held.is_none() {
-                self.world.hud_zoom = hud_view_zoom(self.world.hud_zoom, steps);
+                self.world.hud_zoom = hud_view_zoom(self.world.hud_zoom, steps).max(self.world.hud_zoom_min());
             }
             return true;
         }

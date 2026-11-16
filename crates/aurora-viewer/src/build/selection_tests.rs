@@ -683,7 +683,7 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
     tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     assert!(tool.selection.is_empty());
 }
 
@@ -995,7 +995,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
     tool.out.clear();
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     for cmd in std::mem::take(&mut tool.out) {
         if let NetCommand::Build(cmd) = cmd {
             for event in sim.reply(&world, &cmd) {
@@ -1177,7 +1177,75 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
 }
 
 #[test]
-fn selection_filters_persist_and_sit_under_the_reflection_probes() {
+fn select_only_locked_and_copyable_objects_follow_the_root_rights() {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_COPY, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(child).unwrap().update_flags = OBJECT_MOVE | OBJECT_COPY;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    settings.select_locked_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "a part follows its movable root");
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(passes_select_filters(&world, &settings, child));
+    // a permanent object is locked outside the agent's region only
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | AFFECTS_NAVMESH;
+    world.main_region = Some(world.objects.get(root).unwrap().key.region);
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.main_region = None;
+    assert!(passes_select_filters(&world, &settings, root));
+    settings.select_locked_only = false;
+    settings.select_copyable_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "the root may not be copied");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_COPY;
+    assert!(passes_select_filters(&world, &settings, child));
+    // both locked and movable: nothing passes, as in the Legacy Viewer
+    settings.select_copyable_only = false;
+    settings.select_locked_only = true;
+    settings.select_movable_only = true;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(!passes_select_filters(&world, &settings, root));
+}
+
+#[test]
+fn group_owned_objects_leave_only_the_rectangle_and_the_menu_round_trips() {
+    use crate::ui::context::flags::{OBJECT_GROUP_OWNED, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | OBJECT_GROUP_OWNED;
+    assert!(settings.select_group_owned, "FSSelectIncludeGroupOwned is on by default");
+    assert!(passes_rect_filters(&world, &settings, child));
+    settings.select_group_owned = false;
+    assert!(
+        !passes_rect_filters(&world, &settings, child),
+        "a part follows its group-owned root"
+    );
+    assert!(passes_select_filters(&world, &settings, child), "a click still takes it");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(passes_rect_filters(&world, &settings, child));
+    // Build › Options reads and writes the same switches
+    let mut options = MenuOptions::of(&settings);
+    assert!(!options.group_owned && options.highlight && !options.probe_volumes);
+    options.locked_only = true;
+    options.light_radius = true;
+    options.probe_volumes = true;
+    options.apply(&mut settings);
+    assert!(settings.select_locked_only && settings.show_light_radius && settings.show_probe_volumes);
+    assert_eq!(MenuOptions::of(&settings), options);
+    // saved, except the probe volumes (Persist=0)
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(restored.select_locked_only && restored.show_light_radius && !restored.select_group_owned);
+    assert!(!restored.show_probe_volumes);
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(!old.select_locked_only && !old.select_copyable_only && old.select_group_owned);
+    assert!(!old.show_hidden_selection && !old.show_light_radius);
+}
+
+#[test]
+fn selection_filters_persist_and_use_the_current_settings_defaults() {
     use layout::{Item, Layout, Panel};
     let mut settings = BuildSettings::default();
     assert!(!settings.select_owned_only && !settings.select_movable_only);
@@ -1187,19 +1255,36 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     assert!(restored.select_owned_only && restored.select_movable_only);
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
     assert!(!old.select_owned_only && !old.select_movable_only);
-    // a layout saved before the filters existed gets them right under the probes
+    // Missing filters return to Settings without losing the other entries' order.
     let mut saved = Layout::default();
+    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
+    let existing: Vec<_> = saved
+        .in_panel(Panel::Settings)
+        .into_iter()
+        .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+        .collect();
     saved.order.retain(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly));
     saved.locations.remove(&Item::OwnedOnly);
     saved.locations.remove(&Item::MovableOnly);
-    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
     saved.normalize();
     let panel = saved.in_panel(Panel::Settings);
-    let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
-    assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(panel[..2], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(
+        panel
+            .into_iter()
+            .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+            .collect::<Vec<_>>(),
+        existing
+    );
     assert_eq!(
         Layout::default().in_panel(Panel::Settings)[..5],
-        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
+        [
+            Item::OwnedOnly,
+            Item::MovableOnly,
+            Item::Surrounding,
+            Item::LandGroup,
+            Item::FollowEdit
+        ]
     );
     // notecards exported before them still load, with the filters off
     let (_, tool, _) = fixture();
@@ -1316,6 +1401,8 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
     assert!(settings.rez_under_land_group);
     let roots = [object(&world, 99610), object(&world, 99614)];
     let keys: Vec<_> = roots.iter().map(|&idx| world.objects.get(idx).unwrap().key).collect();
+    // RezScript is the fallback of a region without CreateTaskInventoryItem
+    Arc::make_mut(&mut world.regions.get_mut(&keys[0].region).unwrap().caps).remove(contents::CREATE_TASK_ITEM_CAP);
     for active in [Uuid::from_u128(8800), Uuid::from_u128(8801), Uuid::nil()] {
         world.apply(NetEvent::ActiveGroup {
             id: active,
@@ -1328,7 +1415,7 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             "the parcel group must differ from the message group"
         );
         tool.out.clear();
-        tool.new_script(&world, roots[0]);
+        tool.new_script(&world, roots[0], false);
         let scripts: Vec<_> = tool
             .out
             .iter()
@@ -1351,6 +1438,14 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             (item.owner_id, item.group_id, item.asset_type),
             (world.agent_id, Uuid::nil(), contents::AT_LSL_TEXT)
         );
+        assert_eq!(item.flags, 0, "LSL");
+        // an SLua script carries SST_LUA in its flags
+        tool.out.clear();
+        tool.new_script(&world, roots[0], true);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::RezScript { item, .. }) if aurora_net::scripts::is_slua_item(item.flags)
+        )));
         for action in 0..5 {
             tool.selection = keys.clone();
             tool.out.clear();
@@ -1539,6 +1634,32 @@ fn right_click_outside_build_selects_one_object_at_a_time() {
 }
 
 #[test]
+fn select_same_faces_picks_the_matching_faces_of_the_whole_linkset() {
+    let (mut world, mut tool, settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = family(&world, root)[1];
+    let (other, wanted) = (uuid::Uuid::from_u128(5), uuid::Uuid::from_u128(77));
+    for (idx, face) in [(root, 0), (child, 1)] {
+        let o = world.objects.get_mut(idx).unwrap();
+        let mut te = o.te.as_deref().unwrap().clone();
+        te.faces.resize(aurora_prim::te::MAX_TES, te.faces[0]);
+        te.faces.iter_mut().for_each(|f| f.texture = other);
+        te.faces[face].texture = wanted;
+        o.te = Some(Arc::new(te));
+    }
+    tool.click_select(&mut world, &settings, Some(child), false);
+    let diffuse = |_: &mut BuildTool, w: &World, idx: usize, f: u8| w.objects.get(idx)?.te.as_ref().map(|te| te.face(f as usize).texture);
+    tool.select_same_faces(&world, uuid::Uuid::from_u128(404), diffuse);
+    assert_eq!(selected(&tool), [950], "no matching face keeps the selection");
+    tool.select_same_faces(&world, wanted, diffuse);
+    let (root_key, child_key) = (world.objects.get(root).unwrap().key, world.objects.get(child).unwrap().key);
+    assert_eq!(tool.selection, [root_key, child_key], "the root stays primary");
+    assert!(tool.selection_linked);
+    assert_eq!(tool.faces[&root_key], [0]);
+    assert_eq!(tool.faces[&child_key], [1]);
+}
+
+#[test]
 fn photo_mode_releases_menu_selection_and_deselects_objects() {
     let (mut world, mut tool, settings) = fixture();
     tool.open = false;
@@ -1625,4 +1746,57 @@ fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
     assert_eq!(tool.sel_te(&world), (0..n as u8).map(|f| (idx, f)).collect::<Vec<_>>());
     tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
     assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
+}
+
+/// Two linked mesh prims (root 970000, child 970001) and a lone mesh 970002.
+fn mesh_linkset_fixture(update_flags: u32) -> (World, BuildTool, BuildSettings, [usize; 3]) {
+    let (mut world, tool, settings) = fixture();
+    let handle = world.main_region.expect("demo region");
+    let updates = [(970_000, 0), (970_001, 970_000), (970_002, 0)]
+        .map(|(local_id, parent_id)| {
+            let mut update = crate::demo::action_avatar(false);
+            update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            update.local_id = local_id;
+            update.full_id = Uuid::from_u128(u128::from(local_id));
+            update.parent_id = parent_id;
+            update.update_flags = update_flags;
+            update.extra = Default::default();
+            update.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                texture: Uuid::from_u128(1),
+                sculpt_type: 5,
+            });
+            update
+        })
+        .to_vec();
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    let idx = [970_000u32, 970_001, 970_002].map(|id| world.objects.index_of_uuid(&Uuid::from_u128(u128::from(id))).unwrap());
+    (world, tool, settings, idx)
+}
+
+#[test]
+fn animated_mesh_checkbox_takes_a_whole_linkset_like_the_legacy_panel() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, mut settings, [root, child, lone]) = mesh_linkset_fixture(OBJECT_MODIFY | OBJECT_MOVE);
+    assert_eq!(root_of(&world, child), root);
+    // A whole two-prim linkset: one root, its two prims.
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_prims(&world).len(), 2);
+    assert!(tool.animated_mesh_editable(&world));
+    // A lone mesh prim.
+    tool.click_select(&mut world, &settings, Some(lone), false);
+    assert!(tool.animated_mesh_editable(&world));
+    // Two linksets.
+    tool.click_select(&mut world, &settings, Some(root), true);
+    assert!(!tool.animated_mesh_editable(&world));
+    // Edit linked: the root prim alone, then the child prim alone.
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(root), false);
+    assert!(tool.animated_mesh_editable(&world));
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
+
+    // No modify right on the linkset.
+    let (mut world, mut tool, settings, [_, child, _]) = mesh_linkset_fixture(OBJECT_MOVE);
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
 }

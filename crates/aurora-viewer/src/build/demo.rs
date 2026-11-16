@@ -78,6 +78,8 @@ pub enum Step {
     Contents,
     ContentsProperties,
     ContentsSelection(bool),
+    /// "New notecard" then "New script" in the Contents tab.
+    ContentsNew,
     TakeTask(bool),
     /// Every item, selected and dropped together on the inventory root.
     TakeAll,
@@ -206,7 +208,7 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
-            "next-owner" => tool.ui.contents_show_next_owner = true,
+            "next-owner" => tool.ui.contents_rights = crate::ui::inventory::permissions::Rights::Both,
             _ => {}
         }
     }
@@ -481,7 +483,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
-            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            260 if parts[0] == "contents-new" => vec![Step::ContentsNew],
+            260 if !matches!(parts[0], "contents-ready" | "contents-new") => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
     }
