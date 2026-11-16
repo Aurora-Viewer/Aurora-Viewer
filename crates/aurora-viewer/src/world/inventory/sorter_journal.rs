@@ -343,7 +343,10 @@ pub fn restore_moves(
             summary.trashed += 1;
             return;
         }
-        if !inv.folders.contains_key(&was_in) || !restore_target_allowed(inv, was_in) {
+        // a layout puts nothing back into Pre-Trash: what the user took
+        // out of it stays out (only Undo of a Trash run goes back there)
+        let into_pre_trash = super::pre_trash_folders(inv).contains(&was_in);
+        if !inv.folders.contains_key(&was_in) || into_pre_trash || !restore_target_allowed(inv, was_in) {
             summary.folder_gone += 1;
             return;
         }

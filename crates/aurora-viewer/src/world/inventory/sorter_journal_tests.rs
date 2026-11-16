@@ -494,3 +494,21 @@ fn an_undone_run_is_kept_while_it_is_undone() {
     assert!(journal.runs.iter().all(|r| r.undoes.is_none()));
     assert!(journal.runs.iter().all(|r| r.id != oldest), "all of it went back");
 }
+
+/// A layout restore never puts an entry back into Pre-Trash: what the user
+/// took out of it stays out.
+#[test]
+fn a_layout_restore_puts_nothing_back_into_pre_trash() {
+    let mut inv = fixture();
+    add_folder(&mut inv, 20, 1, &super::super::pre_trash_name(), -1);
+    if let Some(it) = inv.items.get_mut(&id(100)) {
+        it.parent = id(20);
+    }
+    let snapshot = Snapshot::take(&inv, 1, id(AGENT));
+    // the user takes it out of Pre-Trash by hand
+    if let Some(it) = inv.items.get_mut(&id(100)) {
+        it.parent = id(12);
+    }
+    let (moves, _) = restore_moves(&inv, &snapshot, id(AGENT), &HashSet::new(), &HashSet::new(), &HashSet::new()).expect("same account");
+    assert!(moves.iter().all(|m| m.id != id(100)));
+}

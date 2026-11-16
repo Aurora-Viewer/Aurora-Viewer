@@ -754,12 +754,22 @@ impl State {
     /// What a run has confirmed so far is written before the inventory
     /// goes away (logout): Undo and Resume find it at the next session.
     fn flush(&mut self) {
-        if let Some(job) = self.job.as_mut()
-            && !job.confirmed.is_empty()
-        {
-            let confirmed = std::mem::take(&mut job.confirmed);
-            self.journal.record_in(job.run, confirmed);
-            self.unsaved += 1;
+        if let Some(job) = self.job.as_mut() {
+            // the batch on its way may have been applied: journaled too, as
+            // Undo leaves an entry still where it was
+            let flying = job.in_flight.iter().flat_map(|b| b.moves.iter()).map(|m| sorter::journal::Entry {
+                id: m.id,
+                folder: m.folder,
+                from: m.from,
+                name: m.name.clone(),
+                to: None,
+            });
+            let mut confirmed = std::mem::take(&mut job.confirmed);
+            confirmed.extend(flying);
+            if !confirmed.is_empty() {
+                self.journal.record_in(job.run, confirmed);
+                self.unsaved += 1;
+            }
         }
         if self.unsaved > 0 || self.job.is_some() {
             self.save_progress();
@@ -944,7 +954,7 @@ impl InventoryUi {
     /// At quit, after the last flush: Auto-sort's files written (a few
     /// seconds at most).
     pub(crate) fn wait_for_sorter_writes(&self) {
-        wait_for_writes(std::time::Duration::from_secs(3));
+        wait_for_writes(std::time::Duration::from_secs(5));
     }
 
     pub(crate) fn claim_sorter_request(&mut self, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
@@ -1123,6 +1133,22 @@ pub(super) fn show(
         && !job.paused
         && job.next_at.is_none_or(|at| now >= at)
     {
+        // a folder excluded during the run: its moves still queued stay
+        // (the next batch's are checked, a few hundred at most)
+        if !prefs.sorter.excluded.is_empty() {
+            let mut kept = 0;
+            let mut checked = 0;
+            job.queue.retain(|m| {
+                checked += 1;
+                if checked > sorter::BATCH * 2 || m.restore {
+                    return true;
+                }
+                let out = prefs.sorter.excludes(inv, m.id);
+                kept += usize::from(out);
+                !out
+            });
+            job.skipped += kept;
+        }
         match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped) {
             Step::Change(change, moves) => {
                 job.in_flight = Some(InFlight {
@@ -1366,6 +1392,12 @@ pub(super) fn show(
         .waiting
         .as_ref()
         .map_or((std::sync::Arc::default(), None), |(_, w, at)| (std::sync::Arc::clone(w), *at));
+    // Pre-Trash is emptied once loaded (all its entries known), asked for
+    // when it is not yet
+    let pre_trash_loaded = waiting_in.is_none_or(|id| inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched));
+    if !pre_trash_loaded && let Some(id) = waiting_in {
+        inv.request(id);
+    }
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -1421,7 +1453,7 @@ pub(super) fn show(
                 CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
                 _ => {
                     if !waiting.is_empty() {
-                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy);
+                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy || !pre_trash_loaded);
                         ui.add_space(6.0);
                     }
                     // the default folders the user opened, named in every preview
