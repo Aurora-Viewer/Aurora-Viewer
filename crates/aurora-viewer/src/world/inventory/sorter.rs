@@ -117,7 +117,9 @@ impl Rule {
             && match self.mode {
                 Match::All => wanted.iter().all(|w| name_words.contains(w)),
                 Match::Any => wanted.iter().any(|w| name_words.contains(w)),
-                Match::Phrase => has(name_words, &wanted.join(" ")),
+                // a phrase reads both ways, like the name: `red women's`
+                // meets `red women's dress` as it always did
+                Match::Phrase => has(name_words, &wanted.join(" ")) || has(name_words, &words(&self.words).join(" ")),
             }
     }
 }
@@ -706,6 +708,9 @@ pub fn split_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Folders asked for at once while a folder to move waits for its tree.
+const LOADS_AT_ONCE: usize = 16;
+
 /// The most folders a rule's path makes below the sort folder.
 const MAX_PATH_DEPTH: usize = 8;
 
@@ -1020,6 +1025,8 @@ pub struct Move {
 #[derive(Debug, Default, Clone)]
 pub struct Plan {
     pub moves: Vec<Move>,
+    /// How many moves are unpackers, counted by [`order`](Self::order).
+    pub unpacker_count: usize,
     /// Names that say nothing the sorter knows.
     pub unknown: Vec<String>,
     /// Entries that cannot move: worn, links, locked or system folders.
@@ -1065,6 +1072,7 @@ impl Plan {
     /// one): what stays sorted by reason, keeping each reason's order.
     pub fn order(&mut self) {
         self.kept_list.sort_by_key(|(_, why)| *why);
+        self.unpacker_count = self.unpackers();
     }
 
     pub fn unpackers(&self) -> usize {
@@ -1445,9 +1453,10 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
         if here && m.folder {
             let unloaded = unloaded_below(inv, m.id);
             if !unloaded.is_empty() {
+                // the run waits for its tree before it goes (step), so it is
+                // never left out of a Resume or an Undo
                 plan.unfetched.extend(unloaded);
-                plan.kept += 1;
-                plan.kept_list.push((m.name.clone(), Kept::Loading));
+                plan.moves.push(m.clone());
                 continue;
             }
         }
@@ -2341,6 +2350,9 @@ pub enum Step {
     Change(Box<Mutation>, Vec<Move>),
     /// A destination folder is loading: ask again next frame.
     Wait,
+    /// A folder to move whole is loading its subfolders: ask again next
+    /// frame (only that move gives up after a while).
+    Loading,
     Done,
 }
 
@@ -2377,14 +2389,25 @@ pub fn step(
         // a folder whose tree is still loading waits for it (Resume and
         // Undo read runs in folders not opened this session): skipped only
         // once it is loaded and still cannot move
-        if next.folder && actions::parent(inv, next.id) == Some(next.from) {
+        // (the cheap checks first: a worn, locked or protected folder is
+        // never loaded only to be skipped)
+        if next.folder
+            && actions::parent(inv, next.id) == Some(next.from)
+            && actions::relocatable(inv, next.id, protected)
+            && !holds_worn.contains(&next.id)
+        {
             let loading = unloaded_below(inv, next.id);
             if !loading.is_empty() {
+                // a few at a time beside the inventory's own loading, never
+                // a whole deep tree in one frame
                 for id in loading {
+                    if inv.queue.len() >= LOADS_AT_ONCE {
+                        break;
+                    }
                     inv.request(id);
                 }
                 if change.operations.is_empty() {
-                    return Step::Wait;
+                    return Step::Loading;
                 }
                 break 'moves;
             }

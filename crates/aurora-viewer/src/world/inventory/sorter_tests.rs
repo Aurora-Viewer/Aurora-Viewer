@@ -2177,6 +2177,16 @@ fn status_tags_apostrophes_bodies_and_accents_are_read_right() {
     assert!(rule.named(&words("Women's Boots")));
     assert!(!rule.named(&words("Kat's Dress")));
     assert!(!rule.named(&words("Women Boots")));
+    // a phrase with an apostrophe word after another still meets it
+    let phrase = Rule {
+        words: "red women's".into(),
+        mode: Match::Phrase,
+        enabled: true,
+        folder: "W".into(),
+        ..Default::default()
+    };
+    assert!(phrase.named(&words("Red Women's Dress")));
+    assert!(!phrase.named(&words("Red Dress for Women's")));
     assert!(!sorted_as("[桜屋] something", 6, &[]).contains(&stores_folder()));
     // a folder of the user's named with a dash is not a product by its store
     let mut inv = fixture(&[]);

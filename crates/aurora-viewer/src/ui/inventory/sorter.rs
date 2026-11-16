@@ -53,9 +53,10 @@ fn unix_now() -> i64 {
 enum Confirm {
     Whole,
     /// Pre-Trash's entries and the folder they wait in.
-    PreTrash(Vec<(Uuid, Uuid)>),
+    /// Shared, never copied per frame while the confirmation is open.
+    PreTrash(std::sync::Arc<[(Uuid, Uuid)]>),
     /// Clean up's entries, straight to the Trash.
-    Trash(Vec<(Uuid, Uuid)>),
+    Trash(std::sync::Arc<[(Uuid, Uuid)]>),
     /// Imported settings replacing the user's rules and store hints.
     Replace,
     /// Allow Auto-sort into a default folder (its id and name), or Lost
@@ -138,6 +139,8 @@ pub(super) struct State {
     to_request: Vec<Uuid>,
     /// What waits in Pre-Trash and where, at an inventory generation.
     waiting: Option<(u64, std::sync::Arc<Vec<Uuid>>, Option<Uuid>)>,
+    /// Whether Pre-Trash is loaded with all it holds, at a generation.
+    pre_trash_loaded: Option<(u64, bool)>,
     /// The preview and Clean up's list being made off the frame, for a
     /// large inventory.
     planning: Option<Planning<(Plan, sorter::journal::Snapshot)>>,
@@ -477,6 +480,10 @@ const RETRIES: u32 = 3;
 /// skipped and the job goes on.
 const WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// A folder moved whole waits this long for its subfolders to load (a deep
+/// tree of a large inventory loads level by level).
+const LOADING_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// A sort or a move to Pre-Trash, sent as paced batches: one at a time,
 /// counted only once the server confirmed it.
 struct Job {
@@ -520,6 +527,12 @@ struct Job {
     earlier_runs: Vec<u64>,
     /// The sort folder's id when the run began, for a resume.
     base_id: Option<Uuid>,
+    /// The folders a refused batch's moves came from, to read again: the
+    /// inventory moved them here before the server answered, so until those
+    /// folders are read again an entry would look arrived when it is not.
+    recheck: Vec<Uuid>,
+    /// Those folders being read: nothing is counted or sent meanwhile.
+    rechecking: HashSet<Uuid>,
     /// How many moves the run-to-resume file held when last written (None:
     /// not written yet). It is written again only once the run shrank by a
     /// fifth: a large run's whole queue is not copied every few seconds,
@@ -566,6 +579,8 @@ impl Job {
             undoes: None,
             earlier_runs: Vec::new(),
             base_id: None,
+            recheck: Vec::new(),
+            rechecking: HashSet::new(),
             unfinished_len: None,
         }
     }
@@ -590,6 +605,9 @@ impl Job {
                 folders,
                 self.retries + 1
             );
+        }
+        if error.is_some() {
+            self.recheck.extend(batch.moves.iter().map(|m| m.from));
         }
         match error {
             None => {
@@ -629,7 +647,7 @@ impl Job {
     /// applied them late, or in part): done and journaled, out of the queue
     /// or of the failed count. The rest stay unsure until the job ends.
     fn settle(&mut self, inv: &Inventory) {
-        if self.unsure.is_empty() {
+        if self.unsure.is_empty() || !self.rechecking.is_empty() {
             return;
         }
         let base = self.base.clone();
@@ -1202,6 +1220,20 @@ pub(super) fn show(
     // a refused batch the server applied after all: done, not resent (before
     // the journal takes this frame's confirmed moves, so none is left out)
     if let Some(job) = state.job.as_mut() {
+        // a refused batch's sources read again first (their entries' place
+        // as the server has it), then what arrived is counted
+        for id in std::mem::take(&mut job.recheck) {
+            if let Some(f) = inv.folders.get_mut(&id) {
+                f.state = FetchState::Unknown;
+                inv.request(id);
+                job.rechecking.insert(id);
+            }
+        }
+        job.rechecking.retain(|id| {
+            inv.folders
+                .get(id)
+                .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching))
+        });
         job.settle(inv);
     }
     // The journal takes what the server confirmed; saved every few batches
@@ -1247,6 +1279,7 @@ pub(super) fn show(
         && !state.submitted
         && let Some(job) = state.job.as_mut()
         && !job.paused
+        && job.rechecking.is_empty()
         && job.next_at.is_none_or(|at| now >= at)
     {
         // a folder excluded during the run: its moves still queued stay
@@ -1282,6 +1315,22 @@ pub(super) fn show(
                 job.waiting_since = None;
                 state.submitted = true;
                 actions.push(InvAction::Edit(*change));
+            }
+            Step::Loading => {
+                // a folder to move whole whose subfolders load slowly: only
+                // that move is given up after a longer wait, never the moves
+                // to the same place
+                let since = *job.waiting_since.get_or_insert(now);
+                if now.duration_since(since) > LOADING_LIMIT {
+                    if job.queue.pop_front().is_some() {
+                        job.skipped += 1;
+                        log::warn!(
+                            "auto-sort: a folder's subfolders did not load in {} s: it stays",
+                            LOADING_LIMIT.as_secs()
+                        );
+                    }
+                    job.waiting_since = None;
+                }
             }
             Step::Wait => {
                 // a destination that never loads: its move is skipped
@@ -1522,7 +1571,15 @@ pub(super) fn show(
         .map_or((std::sync::Arc::default(), None), |(_, w, at)| (std::sync::Arc::clone(w), *at));
     // Pre-Trash is emptied once loaded with all it holds (every entry and
     // subfolder known), asked for when it is not yet
-    let pre_trash_loaded = waiting_in.is_none_or(|id| ask_for(inv, sorter::unloaded_below(inv, id)));
+    // (read again only when the inventory changes, never every frame)
+    let pre_trash_loaded = match state.pre_trash_loaded {
+        Some((generation, loaded)) if generation == inv.generation => loaded,
+        _ => {
+            let loaded = waiting_in.is_none_or(|id| ask_for(inv, sorter::unloaded_below(inv, id)));
+            state.pre_trash_loaded = Some((inv.generation, loaded));
+            loaded
+        }
+    };
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -1639,7 +1696,7 @@ pub(super) fn show(
                     .map(|r| (r.id, r.from))
                     .collect();
                 if !ids.is_empty() {
-                    state.confirm = Some(Confirm::Trash(folders_first(inv, ids)));
+                    state.confirm = Some(Confirm::Trash(folders_first(inv, ids).into()));
                 }
             }
         }
@@ -2311,10 +2368,9 @@ fn pre_trash_card(
         if send.inner.clicked()
             && let Some(folder) = waiting_in
         {
-            state.confirm = Some(Confirm::PreTrash(folders_first(
-                inv,
-                waiting.iter().map(|id| (*id, folder)).collect(),
-            )));
+            state.confirm = Some(Confirm::PreTrash(
+                folders_first(inv, waiting.iter().map(|id| (*id, folder)).collect()).into(),
+            ));
         }
     });
 }
@@ -2539,7 +2595,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 return;
             }
             st.sorter.journal.claim(st.sorter.window);
-            st.sorter.trash = Some(TrashJob::new(ids));
+            st.sorter.trash = Some(TrashJob::new(ids.to_vec()));
         }
         Confirm::PreTrash(ids) => {
             // the same batches as Clean up's Trash: at most 200 per delete
@@ -2549,7 +2605,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 return;
             }
             st.sorter.journal.claim(st.sorter.window);
-            st.sorter.trash = Some(TrashJob::new(ids));
+            st.sorter.trash = Some(TrashJob::new(ids.to_vec()));
         }
     }
 }
@@ -3586,7 +3642,7 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
     }
     if !plan.moves.is_empty() {
         let mut summary = aurora_i18n::tr!("inventory-sorter-moves", count = plan.moves.len()).to_owned();
-        let unpackers = plan.unpackers();
+        let unpackers = plan.unpacker_count;
         if unpackers > 0 {
             summary.push_str(", ");
             summary.push_str(&aurora_i18n::tr!("inventory-sorter-unpackers", count = unpackers));

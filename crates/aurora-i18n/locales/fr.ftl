@@ -14444,7 +14444,7 @@ inventory-sorter-menu-creator = Tri automatique par ce créateur
 inventory-sorter-by-creator = Par { $name }
 inventory-sorter-creator-unknown = un créateur inconnu
 inventory-sorter-hint-store-optional = Dossier de la boutique (facultatif)
-inventory-sorter-hint-store-optional-tip = Laissez vide pour utiliser la boutique lue dans les noms des objets ; saisissez-en une pour ranger les objets de ce créateur dans ce dossier de boutique.
+inventory-sorter-hint-store-optional-tip = Laissez vide pour utiliser la boutique lue dans les noms des objets (quand le tri par boutique est actif) ; saisissez-en une pour ranger les objets de ce créateur dans ce dossier de boutique.
 inventory-sorter-open = Tri automatique : ranger les éléments en vrac par corps et par genre
 inventory-sorter-source = Dossier à trier
 inventory-sorter-selection = { $count ->
@@ -14645,9 +14645,9 @@ inventory-sorter-done-failed = { $count ->
         [one] { $count } trié
        *[other] { $count } triés
     } ; { $skipped ->
-        [one] { $skipped } ignoré
-       *[other] { $skipped } ignorés
-    } (changés depuis l'aperçu) ; { $failed ->
+        [one] { $skipped } ignoré (changé depuis l'aperçu)
+       *[other] { $skipped } ignorés (changés depuis l'aperçu)
+    } ; { $failed ->
         [one] { $failed } refusé par le serveur et laissé en place.
        *[other] { $failed } refusés par le serveur et laissés en place.
     }
