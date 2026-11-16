@@ -915,16 +915,14 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
         wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*min(glint,2.0)*sh)*wet;
     }
-    // the caustics under the shadow this surface already read (sh)
-    let caustics = water_caustic_light(in.world_pos, n) * sh;
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*caustics, a);
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh, a);
         var color=hazed*water_scene_light(in.world_pos);
         if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
-    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*caustics;
+    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh;
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
@@ -950,21 +948,19 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
     // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
     let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
-    // the caustics under the shadow this surface already read (sh)
-    let caustics = water_caustic_light(in.world_pos, n) * sh;
     var color: vec3<f32>;
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
             + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = ll_haze(color + material.color.rgb * caustics, a);
+        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * sh, a);
         if (water_fogs_source(in.world_pos)) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
     } else {
         color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
-        color += material.color.rgb * caustics;
+        color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
         color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
     }
     color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
@@ -1429,6 +1425,60 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         return vec4<f32>(water_underside(in.world_pos,in.level,view_vec,n),1.0);
     }
 
+    let d0 = scene_depth_at(uv);
+    // The foam of enhanced water, how much of it: here, while the terrain
+    // and the swell it shares with the normal are at hand (kept any longer,
+    // they weigh on the whole shader, the plain water included), and before
+    // the sun's shadow, looked up only where the glint or the foam shows it.
+    var foam = 0.0;
+    if((water_fx.counts.z &14u)!=0u) {
+        let p=in.world_pos.xy;let depth=max(in.level-bed.x,0.0);
+        // Shore depth always comes from terrain, never an avatar or submerged
+        // mesh in the opaque depth. Contact refinement is masked below.
+        foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
+        if(water_fx_on(2u) && depth<2.0) {
+            // Travel along the depth gradient: the front approaches every coast orientation.
+            let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
+            let breaker=pow(max(sin(phase),0.0),4.0);
+            let runup=0.12+0.28*sin(frame.camera_pos.w*0.6+water_fx_noise(p*0.15));
+            let front=exp(-pow((depth-0.18-runup)*5.0,2.0));
+            foam=max(foam,front*breaker*0.95);
+            foam=max(foam,breaker*exp(-pow((depth-0.7)*2.8,2.0))*0.65);
+        }
+        if(water_fx_on(4u) && d0>0.0) {
+            // the obstacles' field is read only where something stands
+            // behind the surface
+            let contact=water_fx_sample(p).w;
+            if(contact>0.02) {
+                let hit=world_from_depth(uv,d0);
+                let ground=water_fx_bed(hit.xy).x;
+                let clearance=in.level-hit.z;
+                // The visible intersection refines the proxy to the actual mesh silhouette.
+                let obstacle=smoothstep(0.18,0.55,hit.z-ground);
+                foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*contact;
+            }
+        }
+        // crests: the wind patches are worked out only where the swell
+        // folds enough to whiten (the first smoothstep is 0 under 0.08)
+        if(water_fx_on(8u) && swell.compression>0.08) {
+            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
+            foam+=smoothstep(0.08,0.2,swell.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
+        }
+        // Fine breaking filaments already have a narrow, resolved footprint.
+        // Applying the coarse accumulation threshold twice erased slow swimmers.
+        // The torn pattern is the costly part: one for both, and none where
+        // neither the field (under 0.08) nor a wake has foam to tear.
+        var wake_foam=0.0;
+        if(water_fx_on(4u)){wake_foam=smoothstep(0.018,0.18,wake.w);}
+        if(foam>=0.08 || wake_foam>0.0) {
+            let pattern=water_foam_pattern(p,footprint);
+            foam=water_foam_coverage(foam,pattern)+wake_foam*water_foam_coverage(1.0,pattern)*0.55;
+        } else {
+            foam=0.0;
+        }
+        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+    }
+
     // fresnel (calculateFresnelFactors)
     let fs = frame.water_params.y;
     let fo = frame.water_params.z;
@@ -1444,7 +1494,6 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var distortion=waver.xy*ref_scale/max(dmod,1.0)*2.0;
     if(water_fx_on(1u) || water_fx_on(16u)){distortion=n.xy*0.08/max(dmod,1.0);}
     var distort2=clamp(uv+distortion,vec2<f32>(0.0),vec2<f32>(0.999));
-    let d0 = scene_depth_at(uv);
     let surf_dist = dist;
     var refr_dist = 1e5;
     if (d0 > 0.0) {
@@ -1531,56 +1580,6 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let gn = select(n, legacy_glint_n, legacy_water);
-    // The foam of enhanced water, how much of it: before the sun's shadow,
-    // which is looked up only where the glint or the foam shows it.
-    var foam = 0.0;
-    if((water_fx.counts.z &14u)!=0u) {
-        let p=in.world_pos.xy;let depth=max(in.level-bed.x,0.0);
-        // Shore depth always comes from terrain, never an avatar or submerged
-        // mesh in the opaque depth. Contact refinement is masked below.
-        foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
-        if(water_fx_on(2u) && depth<2.0) {
-            // Travel along the depth gradient: the front approaches every coast orientation.
-            let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
-            let breaker=pow(max(sin(phase),0.0),4.0);
-            let runup=0.12+0.28*sin(frame.camera_pos.w*0.6+water_fx_noise(p*0.15));
-            let front=exp(-pow((depth-0.18-runup)*5.0,2.0));
-            foam=max(foam,front*breaker*0.95);
-            foam=max(foam,breaker*exp(-pow((depth-0.7)*2.8,2.0))*0.65);
-        }
-        if(water_fx_on(4u) && d0>0.0) {
-            // the obstacles' field is read only where something stands
-            // behind the surface
-            let contact=water_fx_sample(p).w;
-            if(contact>0.02) {
-                let hit=world_from_depth(uv,d0);
-                let ground=water_fx_bed(hit.xy).x;
-                let clearance=in.level-hit.z;
-                // The visible intersection refines the proxy to the actual mesh silhouette.
-                let obstacle=smoothstep(0.18,0.55,hit.z-ground);
-                foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*contact;
-            }
-        }
-        // crests: the wind patches are worked out only where the swell
-        // folds enough to whiten (the first smoothstep is 0 under 0.08)
-        if(water_fx_on(8u) && swell.compression>0.08) {
-            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
-            foam+=smoothstep(0.08,0.2,swell.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
-        }
-        // Fine breaking filaments already have a narrow, resolved footprint.
-        // Applying the coarse accumulation threshold twice erased slow swimmers.
-        // The torn pattern is the costly part: one for both, and none where
-        // neither the field (under 0.08) nor a wake has foam to tear.
-        var wake_foam=0.0;
-        if(water_fx_on(4u)){wake_foam=smoothstep(0.018,0.18,wake.w);}
-        if(foam>=0.08 || wake_foam>0.0) {
-            let pattern=water_foam_pattern(p,footprint);
-            foam=water_foam_coverage(foam,pattern)+wake_foam*water_foam_coverage(1.0,pattern)*0.55;
-        } else {
-            foam=0.0;
-        }
-        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
-    }
     // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
     // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
     // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
