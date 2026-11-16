@@ -248,14 +248,25 @@ fn twelve_hours(format: ClockFormat) -> bool {
 /// 24 hours until the first frame.
 static CHAT_12H: AtomicBool = AtomicBool::new(false);
 
-/// Publishes the clock's format for the chat's times (once per UI frame).
-pub(crate) fn set_chat_format(format: ClockFormat) {
+/// Whether the chat's times have their seconds this frame
+/// (`Settings::chat_time_seconds`, apart from the clock's own seconds).
+static CHAT_SECONDS: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the clock's format and the seconds choice for the chat's times
+/// (once per UI frame).
+pub(crate) fn set_chat_format(format: ClockFormat, seconds: bool) {
     CHAT_12H.store(twelve_hours(format), Ordering::Relaxed);
+    CHAT_SECONDS.store(seconds, Ordering::Relaxed);
 }
 
 /// Whether the chat's times are written in 12 hours.
 pub(crate) fn chat_twelve_hours() -> bool {
     CHAT_12H.load(Ordering::Relaxed)
+}
+
+/// Whether the chat's times are written with their seconds.
+pub(crate) fn chat_seconds() -> bool {
+    CHAT_SECONDS.load(Ordering::Relaxed)
 }
 
 /// "14:05", "14:05:09", "2:05 PM" or "2:05:09 PM", at `offset` seconds
