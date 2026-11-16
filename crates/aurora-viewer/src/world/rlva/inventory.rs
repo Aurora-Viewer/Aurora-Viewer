@@ -140,15 +140,22 @@ impl World {
     /// RlvFolderLocks::getLockedItems (rlvlocks.cpp) locks a worn item when
     /// the folder of the item itself is locked, or the folder of any of its
     /// links under #RLV. An item worn from a link in a locked folder stays on.
-    pub(super) fn rlva_item_folders_removable_in(&self, locks: &FolderLocks, item: Uuid, parent: Uuid, except: Uuid) -> bool {
+    /// Every check of a worn item asks here (taking it off, the watchdog,
+    /// the locked HUDs, Release Keys, the presence queries), so that none
+    /// forgets the links.
+    ///
+    /// Deliberately stricter than the Legacy Viewer: an item whose own
+    /// record is not loaded yet is still held by its links under #RLV. The
+    /// reference only walks the worn items its inventory holds, and would
+    /// let such an item go until its folder arrives.
+    pub(super) fn rlva_item_folders_removable_in(&self, locks: &FolderLocks, item: Uuid, except: Uuid) -> bool {
         if !self.rlva_has_folder_rule() {
             return true;
         }
-        self.rlva_folder_signature_in(locks, parent, false, except).is_empty()
-            && locks
-                .link_folders(self, item)
-                .iter()
-                .all(|folder| self.rlva_folder_signature_in(locks, *folder, false, except).is_empty())
+        let own = self.inventory.items.get(&item).map(|it| it.parent);
+        own.iter()
+            .chain(locks.link_folders(self, item))
+            .all(|folder| self.rlva_folder_signature_in(locks, *folder, false, except).is_empty())
     }
 }
 
@@ -1036,7 +1043,9 @@ impl World {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor);
+            // no record of its own: its links under #RLV still hold it
+            return (self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor))
+                && self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil());
         };
         // Nostrip is the user's override of scripted undressing. It does not
         // prevent the user manually removing an item.
@@ -1059,7 +1068,7 @@ impl World {
         } else if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("remoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
         }
-        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, it.parent, Uuid::nil())
+        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil())
     }
 
     pub fn rlva_can_add(&self, item: Uuid, at: u8, actor: Uuid) -> bool {
@@ -1268,10 +1277,7 @@ impl World {
         {
             return false;
         }
-        self.inventory
-            .items
-            .get(&item)
-            .is_none_or(|it| self.rlva_item_folders_removable_in(&FolderLocks::default(), item, it.parent, except))
+        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, except)
     }
 
     pub fn rlva_inventory_query(&mut self, c: &Command, source: Uuid) -> Option<String> {

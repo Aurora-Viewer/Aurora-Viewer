@@ -12,19 +12,16 @@ impl World {
             && self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
                 self.avatar_lib.attach_points.get(&point).is_some_and(|point| point.hud)
                     && (!self.rlva_attachment_remove_at(item, point, Uuid::nil())
-                        || self
-                            .inventory
-                            .items
-                            .get(&item)
-                            .is_some_and(|it| !self.rlva_item_folders_removable_in(&locks, item, it.parent, Uuid::nil())))
+                        || !self.rlva_item_folders_removable_in(&locks, item, Uuid::nil()))
             })
     }
 
     /// RlvAttachmentLocks::hasLockedAttachmentPoint(RLV_LOCK_REMOVE)
     /// (rlvlocks.h): a point is locked against removal (@remattach, or
     /// @detach with a point, worn or not), or a worn attachment cannot come
-    /// off (its own @detach=n, a folder lock). Advanced › Release Keys is
-    /// greyed out then (LLToolsEnableReleaseKeys, llviewermenu.cpp).
+    /// off (its own @detach=n, a lock on its folder or on the folder of one
+    /// of its links under #RLV). Advanced › Release Keys is greyed out then
+    /// (LLToolsEnableReleaseKeys, llviewermenu.cpp).
     pub fn rlva_has_locked_attachment(&self) -> bool {
         if !self.rlva.inventory_locked() {
             return false;
@@ -37,12 +34,7 @@ impl World {
         }
         let locks = super::inventory::FolderLocks::default();
         self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
-            !self.rlva_attachment_remove_at(item, point, nil)
-                || self
-                    .inventory
-                    .items
-                    .get(&item)
-                    .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, nil))
+            !self.rlva_attachment_remove_at(item, point, nil) || !self.rlva_item_folders_removable_in(&locks, item, nil)
         })
     }
 

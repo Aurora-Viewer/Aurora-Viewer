@@ -323,11 +323,7 @@ impl super::super::World {
                         // The snapshot already resolves each point. Do not
                         // rebuild the world's worn-item map per attachment.
                         let allowed = self.rlva_attachment_remove_at(*item, attachment.point, Uuid::nil())
-                            && self
-                                .inventory
-                                .items
-                                .get(item)
-                                .is_none_or(|it| self.rlva_item_folders_removable_in(&locks, *item, it.parent, Uuid::nil()));
+                            && self.rlva_item_folders_removable_in(&locks, *item, Uuid::nil());
                         (!allowed).then_some(*item)
                     })
                     .collect();

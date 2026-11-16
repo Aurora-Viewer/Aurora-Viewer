@@ -1145,3 +1145,7 @@ pub fn is_emote(text: &str) -> bool {
 #[cfg(test)]
 #[path = "rlva/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rlva/link_lock_tests.rs"]
+pub(crate) mod link_lock_tests;
