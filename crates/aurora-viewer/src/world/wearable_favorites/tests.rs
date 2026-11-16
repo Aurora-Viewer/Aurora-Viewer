@@ -45,7 +45,7 @@ fn targets(entries: &[Entry]) -> Vec<u128> {
 fn the_folder_is_created_once_in_the_viewer_folder() {
     let mut inv = bare();
     assert!(folder(&inv).is_none());
-    let change = create_plan(&inv).expect("both folders to create");
+    let change = create_plan(&inv, true).expect("both folders to create");
     // #Aurora, then #Wearable Favorites inside it
     let names: Vec<_> = change
         .operations
@@ -58,14 +58,30 @@ fn the_folder_is_created_once_in_the_viewer_folder() {
     assert_eq!(names, [ROOT, FOLDER]);
     demo_mutate(&mut inv, AGENT, change).expect("created");
     let favorites = folder(&inv).expect("found by name");
-    assert!(create_plan(&inv).is_none(), "nothing more to create");
+    assert!(create_plan(&inv, true).is_none(), "nothing more to create");
     // an existing #Aurora only gets the subfolder
     let mut inv2 = bare();
     let (brand, _) = create_folder(inv2.root, ROOT);
     demo_mutate(&mut inv2, AGENT, brand).expect("brand");
-    let change = create_plan(&inv2).expect("subfolder");
+    let change = create_plan(&inv2, true).expect("subfolder");
     assert_eq!(change.operations.len(), 1);
     assert!(entries(&inv, favorites, favorites).is_empty());
+}
+
+#[test]
+fn the_folder_waits_for_the_bridge_to_make_aurora() {
+    // the bridge is making `#Aurora`: no second one is asked for
+    let mut inv = bare();
+    assert!(create_plan(&inv, false).is_none());
+    // once its `#Aurora` is listed, only the favorites folder, in it
+    let (brand, _) = create_folder(inv.root, ROOT);
+    demo_mutate(&mut inv, AGENT, brand).expect("brand");
+    let change = create_plan(&inv, false).expect("subfolder");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Folder { name, .. }] if name == FOLDER),
+        "{:?}",
+        change.operations
+    );
 }
 
 #[test]

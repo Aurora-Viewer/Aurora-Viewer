@@ -74,14 +74,21 @@ pub fn legacy_folder(inv: &Inventory) -> Option<Uuid> {
 }
 
 /// initCategory: the folders to create when it does not exist yet, the
-/// viewer's root folder too when that one is missing. `None` when there is
-/// nothing to create or no inventory yet.
-pub fn create_plan(inv: &Inventory) -> Option<Mutation> {
+/// viewer's root folder too when that one is missing and `make_root` (false
+/// while the bridge is about to make `#Aurora`: two requests in the same
+/// seconds would leave two, `Bridge::makes_brand_folder`). `None` when
+/// there is nothing to create, `#Aurora` is left to the bridge, or there is
+/// no inventory yet.
+pub fn create_plan(inv: &Inventory, make_root: bool) -> Option<Mutation> {
     if inv.root.is_nil() || !inv.folders.contains_key(&inv.root) || folder(inv).is_some() {
         return None;
     }
+    let root = child(inv, inv.root, ROOT);
+    if root.is_none() && !make_root {
+        return None;
+    }
     let mut change = Mutation::default();
-    let root = child(inv, inv.root, ROOT).unwrap_or_else(|| new_folder(&mut change, inv.root, ROOT));
+    let root = root.unwrap_or_else(|| new_folder(&mut change, inv.root, ROOT));
     new_folder(&mut change, root, FOLDER);
     change.refresh.sort();
     change.refresh.dedup();

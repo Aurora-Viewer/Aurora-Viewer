@@ -90,11 +90,13 @@ enum Dialog {
 
 /// While the window is open: the folders of the favorites are fetched, and
 /// the folder is created once when it does not exist (onOpen, initCategory).
-/// `writable` when an inventory change may be sent now. Deliberate
+/// `writable` when an inventory change may be sent now; `brand_by_bridge`
+/// while the bridge is about to make `#Aurora` (the folder waits for it,
+/// and is asked for on a later frame). Deliberate
 /// difference: the Legacy Viewer also calls initCategory at every login
 /// (llstartup.cpp), so the folder appears in every account's inventory;
 /// Aurora creates it only once the window is opened.
-pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool) -> Option<Mutation> {
+pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool, brand_by_bridge: bool) -> Option<Mutation> {
     let st = &mut st.wearable_favorites;
     if let Some(root) = model::folder(inv) {
         crate::world::inventory::actions::request_tree(inv, root);
@@ -107,7 +109,7 @@ pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool) -> Op
     if st.created || !writable {
         return None;
     }
-    let change = model::create_plan(inv)?;
+    let change = model::create_plan(inv, !brand_by_bridge)?;
     log::info!(
         "wearable favorites: creating the folder ({} folders to create)",
         change.operations.len()

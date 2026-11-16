@@ -8,7 +8,9 @@ impl App {
         if self.panels.wearable_favorites {
             // an inventory change already on its way would refuse ours
             let writable = (self.demo || self.world.inventory_writable()) && self.inventory_ui.pending.is_none();
-            if let Some(change) = ui::appearance::wearable_favorites::prepare(&mut self.world.inventory, &mut self.appearance_ui, writable)
+            let brand_by_bridge = self.bridge_runtime.makes_brand_folder(&self.world);
+            if let Some(change) =
+                ui::appearance::wearable_favorites::prepare(&mut self.world.inventory, &mut self.appearance_ui, writable, brand_by_bridge)
             {
                 self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
             }
