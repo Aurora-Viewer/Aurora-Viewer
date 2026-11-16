@@ -1181,11 +1181,9 @@ fn depth_of_field(cx: &mut Cx) {
     });
 }
 
-/// Scope and rendering exceptions use the same saved identities and list controls.
 /// The environments saved for parcels (`world/parcel_env.rs`), set from the
 /// Environment window and the inventory: this list only removes them.
 fn parcel_environments(cx: &mut Cx) {
-    use crate::ui::widgets;
     use aurora_i18n::tr;
     let p = cx.p;
     let field = field!(parcel_environments);
@@ -1201,30 +1199,9 @@ fn parcel_environments(cx: &mut Cx) {
                     ui.label(RichText::new(tr!("parcel-environment-empty")).color(p.muted));
                     return;
                 }
-                let mut remove = None;
-                egui::ScrollArea::vertical()
-                    .id_salt("parcel_environments")
-                    .max_height(180.0)
-                    .min_scrolled_height(180.0)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        for (i, entry) in entries.iter().enumerate() {
-                            ui.push_id((&entry.grid, entry.parcel), |ui| {
-                                ui.horizontal_top(|ui| {
-                                    let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
-                                    ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                        ui.set_min_width(width);
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.add(egui::Label::new(RichText::new(&entry.name).strong()).wrap());
-                                        ui.add(egui::Label::new(RichText::new(&entry.region_name).size(12.0).color(p.muted)).wrap());
-                                    });
-                                    if widgets::icon_button(ui, &p, "trash-filled", tr!("common-remove"), true) {
-                                        remove = Some(i);
-                                    }
-                                });
-                            });
-                        }
-                    });
+                let remove = parcel_rows(ui, &p, "parcel_environments", entries, |e| {
+                    ((&e.grid, e.parcel), &e.name, &e.region_name)
+                });
                 if let Some(i) = remove {
                     entries.remove(i);
                     changed = true;
@@ -1239,6 +1216,7 @@ fn parcel_environments(cx: &mut Cx) {
     );
 }
 
+/// Scope and rendering exceptions use the same saved identities and list controls.
 fn parcel_list(
     cx: &mut Cx,
     label: &str,
@@ -1246,7 +1224,6 @@ fn parcel_list(
     field: &super::super::cx::F<Vec<crate::world::parcel_visibility::Entry>>,
     selected: bool,
 ) {
-    use crate::ui::widgets;
     use aurora_i18n::tr;
     let p = cx.p;
     let get = field.get_mut;
@@ -1274,32 +1251,7 @@ fn parcel_list(
                 return;
             }
 
-            let mut remove = None;
-            egui::ScrollArea::vertical()
-                .id_salt(field.path)
-                .max_height(180.0)
-                // Cx measures controls from a short first-frame placeholder.
-                // Let the list establish its height, then shrink to its content.
-                .min_scrolled_height(180.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for (i, entry) in entries.iter().enumerate() {
-                        ui.push_id((entry.region, entry.local_id), |ui| {
-                            ui.horizontal_top(|ui| {
-                                let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
-                                ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.set_min_width(width);
-                                    ui.spacing_mut().item_spacing.y = 2.0;
-                                    ui.add(egui::Label::new(RichText::new(&entry.name).strong()).wrap());
-                                    ui.add(egui::Label::new(RichText::new(&entry.region_name).size(12.0).color(p.muted)).wrap());
-                                });
-                                if widgets::icon_button(ui, &p, "trash-filled", tr!("common-remove"), true) {
-                                    remove = Some(i);
-                                }
-                            });
-                        });
-                    }
-                });
+            let remove = parcel_rows(ui, &p, field.path, entries, |e| ((e.region, e.local_id), &e.name, &e.region_name));
             if let Some(i) = remove {
                 entries.remove(i);
                 changed = true;
@@ -1307,4 +1259,47 @@ fn parcel_list(
         });
         changed
     });
+}
+
+/// The rows of a saved parcel list: the parcel's name over its region, and a
+/// remove button. Returns the index of the row whose button was clicked.
+/// Shared by the scope and rendering exceptions (`parcel_list`) and the
+/// parcels' saved environments (`parcel_environments`).
+fn parcel_rows<'a, T, K: egui::AsIdSalt>(
+    ui: &mut egui::Ui,
+    p: &crate::theme::Palette,
+    salt: impl egui::AsIdSalt,
+    entries: &'a [T],
+    row: impl Fn(&'a T) -> (K, &'a str, &'a str),
+) -> Option<usize> {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let mut remove = None;
+    egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .max_height(180.0)
+        // Cx measures controls from a short first-frame placeholder.
+        // Let the list establish its height, then shrink to its content.
+        .min_scrolled_height(180.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (i, entry) in entries.iter().enumerate() {
+                let (key, name, region) = row(entry);
+                ui.push_id(key, |ui| {
+                    ui.horizontal_top(|ui| {
+                        let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
+                        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_min_width(width);
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.add(egui::Label::new(RichText::new(name).strong()).wrap());
+                            ui.add(egui::Label::new(RichText::new(region).size(12.0).color(p.muted)).wrap());
+                        });
+                        if widgets::icon_button(ui, p, "trash-filled", tr!("common-remove"), true) {
+                            remove = Some(i);
+                        }
+                    });
+                });
+            }
+        });
+    remove
 }
