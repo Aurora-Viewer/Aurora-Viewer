@@ -127,6 +127,15 @@ fn grounded(w: &World, _: &Ctx) -> Option<String> {
     w.agent.flying.then(|| "the avatar is flying: @fly=n would land it".to_owned())
 }
 
+/// A HUD the avatar wears, whichever comes first.
+fn worn_hud(w: &World) -> Option<usize> {
+    w.objects.iter().map(|(i, _)| i).find(|i| w.hud_root(*i) == Some(*i))
+}
+
+fn wears_hud(w: &World, _: &Ctx) -> Option<String> {
+    worn_hud(w).is_none().then(|| "the avatar wears no HUD".to_owned())
+}
+
 fn clothed(w: &World, _: &Ctx) -> Option<String> {
     worn_layer(w).is_none().then(|| "the avatar wears no clothing layer".to_owned())
 }
@@ -167,6 +176,19 @@ const RULES: &[Rule] = &[
         "creating an object refused",
         |w, _| can(w, &probe_add(w)),
     ),
+    // LLViewerWindow::cursorIntersect: a HUD's pick is dropped like the
+    // world's, so its click and its menu go too
+    Rule {
+        needs: Some(wears_hud),
+        ..rule(
+            "A02b",
+            "@interact on a HUD",
+            "@interact=n",
+            "@interact=y",
+            "the click and the menu of a worn HUD refused",
+            |w, _| worn_hud(w).is_some_and(|i| w.rlva_can_interact_at(i, None) && w.rlva_can_designate(i, None)),
+        )
+    },
     rule(
         "A03",
         "@edit with @rez",
