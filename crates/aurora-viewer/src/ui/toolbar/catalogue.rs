@@ -105,13 +105,13 @@ pub const COMMANDS: &[Command] = commands![
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
+    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
-    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
+    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", true;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
     "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;

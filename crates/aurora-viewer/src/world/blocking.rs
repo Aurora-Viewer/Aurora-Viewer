@@ -209,7 +209,7 @@ impl World {
         }
         if self.groups.report_blocks {
             let shown_name = if kind == MuteType::Agent && !self.rlva_can_name(id) {
-                super::rlva::privacy::anonymous(id).display_name.clone()
+                self.rlva_anonymous(id).display_name.clone()
             } else {
                 name.clone()
             };
@@ -479,7 +479,7 @@ mod tests {
         let notice = &w.chat.back().expect("block notice").text;
         assert!(!notice.contains("Demo Owner"));
         assert!(!notice.contains("A custom display name"));
-        assert!(notice.contains(&super::super::rlva::privacy::anonymous(owner).display_name));
+        assert!(notice.contains(&w.rlva_anonymous(owner).display_name));
     }
 
     #[test]

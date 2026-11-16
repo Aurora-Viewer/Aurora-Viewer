@@ -1636,7 +1636,8 @@ when unfocused") is ignored during a screenshot.
   Preferences › Camera keeps the interface there.
   `locked` sits on the ground and adds RLVa `@unsit=n` at 300: Stand stays
   shown but greyed (capture at 460). `fly-rlva` takes off and adds
-  `@fly=n` at 300 (the log at 470 tells whether the flight went on).
+  `@fly=n` at 300: the avatar lands (the log at 470 says `flying false`)
+  and "Stop flying" is gone.
   Preferences › Layout › Bars has a switch that hides the panel.
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
@@ -3196,6 +3197,15 @@ and IK Edit reload scenarios remain direct offline rendering fixtures. Real
 LSL compilation and regional announcements across two viewers require human
 grid validation with the current complete publisher export.
 
+**Bridge container:** `AURORA_DEMO_MOVELOCK=container` wears the new bridge as
+the Library container looks (a 60 cm grey sphere; the bridge is worn on a HUD
+point, so it fills the middle of the screen), on a simulator that applies none
+of the looks the viewer sends and whose scripts never answer. Nothing must
+show while the Movelock window says the bridge is being prepared (capture at
+frame 1500); once the factory gives up (60 s, the window shows the failure)
+the sphere is drawn. The factory tests check the size, shape and texture entry
+sent when the container is worn, before any script is saved.
+
 **Native Movelock choice (2026-10-18):** `AURORA_DEMO_MOVELOCK=native`
 opens the same options with native sitting selected and an offline full-body
 P4 standing AO above a P3 constrained sit. `native-missing` disables Aurora's
@@ -4634,10 +4644,12 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
+| `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
+| `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
-| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
+| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
@@ -4654,9 +4666,20 @@ both open states and the selection count. Capture at frame 620.
   settles" off still hides it; without the variable it builds over minutes:
   a dusting, then a white cover on what faces up, none on walls or steep
   roofs).
-  `AURORA_SNOW_DEEP` and `AURORA_WEATHER_QUALITY` set deep snow and the
+  `AURORA_SNOW_DEEP`, `AURORA_SNOW_DEEP_REACH` (metres) and `AURORA_WEATHER_QUALITY` set deep snow, its reach and the
   quality the same way, to measure each with `AURORA_PROFILE`. The wind,
   the puddles and the thunder come from the settings.
+  `AURORA_DEMO_SNOW_ROOF=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)
+  sets four canopies 3 m above the plaza, north of the arrival, and looks
+  at them from the side: a plain one (snow on it, bare ground under it),
+  one whose top face is fully transparent while its underside still shows
+  (a skybox's painted ceiling: the snow falls through it onto the ground
+  under it), a glass one at 30 % (bare ground under it; the snow on
+  blended faces is not drawn), and leaves: the same open top over a
+  blended underside at 70 %, as a tree's cards facing down (bare ground
+  under it). The rain's shelter map holds what is seen from above: a face
+  turned down is left out, unless it is two-sided or has alpha (masked or
+  blended).
   `AURORA_DEMO_SNOW_SPIN=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)
   sets three flat red boxes in a row 6 m north of the arrival from frame
   60: one turning at 0.005 rad/s, one at 0.3 rad/s, and one turned 15°
@@ -4674,7 +4697,12 @@ both open states and the selection count. Capture at frame 620.
   off). `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
-  cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike
+  cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
+  the snow lies or not: white, deep snow's own surface; red, no snow in the
+  memory there; yellow, too steep by the surface's facing; blue, off the
+  surface the shelter map has there (under cover, or not in the map),
+  purple the same beyond the near map; green, lying (darker beyond the
+  near map). `AURORA_THUNDER_AT=<s>` makes one strike
   1 km away, `s` seconds after the start, whether Thunder is on or not: its
   flash at once and, for most strikes, a bolt in the sky in its direction,
   then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
@@ -6018,6 +6046,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1\|off\|global\|text\|burst` | Synthetic offer, script prompt and sound floods with Protections controls; `burst` many sources at once, one grouped notice |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
+| `AURORA_DEMO_RLVA=selftest` | Runs the RLVa self-test (Dev Toolbox T1), both phases, against the demo's simulated region |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
@@ -6074,6 +6103,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
+| `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova]` | The conversation options of Preferences › Chat: tabs ordered by type, tab names, group moderators, "(You)", system messages in brackets, faded history, opening on offline messages |
+| `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
@@ -6143,6 +6174,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
@@ -6191,6 +6223,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 | `AURORA_DEMO_GRID_STATUS=open\|new\|none\|error` | Help › Grid status: the grid's incidents, and its toolbar button's flash |
+| `AURORA_DEMO_CONVERSATION_LOG=open\|name\|filter\|off\|empty\|live` | The conversation log window with demo conversations |
 
 ### Details
 
@@ -6287,6 +6320,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
   capture after frame 850 to inspect the final ground-sitting pose.
+  `selftest` runs the RLVa self-test of the Dev Toolbox (T1,
+  [docs/DEV_TOOLBOX.md](DEV_TOOLBOX.md#the-rlva-self-test)): its
+  confirmation dialog opens at frame 300 with the in-world cases ticked and
+  is answered at frame 420 (capture it at 360). It is the one start that no
+  human pressed, in demo mode only. Both phases run against the demo's
+  simulated region; the relay scripts are simulated (no script engine), so
+  each command arrives as the owner-say of the worn test object. RLVa is
+  turned on for the run. The tool's window shows the progress, then the
+  report; the same lines are in the log with the prefix `rlva-selftest:`.
+  The run's waits are in seconds, not in frames (about fifteen seconds in
+  all), so capture late: `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 60 `PASS`,
+  C4 `KNOWN`, B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
+  notices that pile up during the run are the cases' own refused attempts;
+  the avatar ends beside where its seat was. No grid is contacted.
 
 - **`AURORA_DEMO_GRIDS=1|pages`** opens the grid manager with synthetic metadata
   without contacting a grid; `pages` selects its Web pages tab. Combine with
@@ -7281,6 +7329,45 @@ failure. Grid validation and any paid upload are performed by the human.
   700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
   Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
   the top of a rise; 730: its bottom), `760` for `menu`.
+- **`AURORA_DEMO_CONV_OPTIONS=aurora|compact|bubbles|legacy[:on][:group|nova]`**: the
+  options of Preferences › Chat › Conversations (tab order, tab names,
+  moderators, "(You)", brackets) and › History (faded history, opening on
+  offline messages), in the chat style named, the Conversations window
+  closed and placed at 700 × 560. At login Nova's conversation holds two
+  greyed lines of yesterday's transcript, then our line, hers, our emote, a
+  system line ("Teleport offer sent to …") and hers again. The offline
+  messages arrive once logged in: two from Orion Example and an invitation
+  to the Plaza Market group chat. Frame 640: Aurora Builders' chat opens
+  (Tess Touch is a moderator there); 660: a conference; 700: Tess writes
+  privately; 760: Tess, then we, write in Aurora Builders. `on` turns every
+  option on for the run (never saved): tabs by type (groups, conferences,
+  private), "username (display name)" on private tabs, moderators' names
+  bold and their text in italics, our own lines signed "(You)" (not the
+  emote nor the transcript), the system line in brackets, transcript lines
+  at 0.4 and the window opening by itself on the offline messages. Without
+  `on`, today's look: open the window from the chat bar and compare. Add
+  `group` (`legacy:on:group`) or `nova` to open Aurora Builders' or Nova's
+  conversation at frame 780.
+  `AURORA_DEMO_OPTIONS=chat:conversation-options` or `chat:history-fade`
+  opens Preferences on the rows. Capture at `800` or later.
+- **`AURORA_DEMO_OIIA=<seconds>`**: the spinning cat (`crate::oiia`, an
+  easter egg) starts by itself at frame 300, without
+  its warning, in front of the avatar and a little to its right. It follows
+  the timings of the video the show plays its music from, from that second
+  of the show, on the clock and without the video, its window or its sound.
+  The first drop's four looks: 4 (a tint per beat), 10 (the colours turning,
+  blocks on the kicks), 17 (duotones), 23 (glowing outlines swelling on the
+  kicks). Then 35: the cat sways in a soft glow; 46: the silence, the cat
+  looking around; 51.5: a hit of bass, the cat jumps and a wave of outlines
+  spreads; 60: the climb, as outlines; 75: the wait before the second drop;
+  80: the second drop and the other cats; 97: the finale; 101: the cat
+  leaves. The show flashes: do not watch it if you are photosensitive. To
+  look for: the cat faces the avatar at rest and its spin ends on whole
+  turns; with Reduce motion (Preferences › Accessibility) the view only
+  takes a tint per bar by a slow fade, with no split of the colours, no
+  bulge, no outlines and no flash. In a normal run the show
+  only starts from its key sequence (`oiia/konami.rs`) and its warning, and
+  Stop or Escape ends it.
 - **`AURORA_DEMO_DELIVERY=1|several|open|history`**: the Marketplace inbox
   (Received items) appears at frame 600 with an earlier purchase, which is
   not announced; at 700 a new delivery lands in it the way the server's
@@ -8876,6 +8963,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_PEOPLE=sets[:width]`** and its scenes: People › Contact sets with three demo sets, each with a badge and a look (Family tinted and bordered, Clubbing tinted, Shop bordered), so that their tiles show the cases; Nova sits in two sets (her chips). From 470 points wide the sets have a column (try `sets:560`), narrower (`sets:380`) or beside a sheet they are a picker above the members. `sets-select` chooses two members (the selection bar); `sets-editor` opens Family's editor on Look, `sets-editor-badges` with the badge grid unfolded, `sets-editor-marker` scrolled to the marker's choices, `sets-editor-thin` in a window 560 wide (narrower than 700 the preview is a strip on top), `sets-editor-behaviour`, `sets-editor-replies` and `sets-editor-members` on those tabs; `sets-sort` opens Quick sort on the friends in no set; `sets-options` the options shared by every set. What to look for: the tiles follow each set's Nameplate background (tint) and Nameplate border switches; dragging a set in the column carries its card under the pointer while the others slide out of the way, and releasing it reorders the priority; the preview follows every switch at once, and the marker's preview shows while the marker is on.
 - **`AURORA_DEMO_RADAR_MARKS=1|legacy`**: radar marks, with
   `AURORA_DEMO_CROWD=<n>` (20 is enough). The first six residents of the
   crowd ("Foule0" to "Foule5 Resident") are marked: red, green, blue,
@@ -9070,10 +9158,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
-  `config` opens the set's settings window on its switches
-  ("Show notifications"); `config-responses` scrolls it down to the three
-  custom responses, below the appearance options; `config-bottom` to "All
-  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  `config` opens the set's editor on its Behaviour tab
+  ("Show notifications"); `config-responses` on its Auto-replies tab (the
+  three custom responses); `config-bottom` opens the options of all contact
+  sets beside it (the two choices of the sets' notices). `chat` opens Conversations on
   nearby chat: at frames 300 and 360 Nova and another demo friend go
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set
@@ -9511,6 +9599,27 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
+- **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create|import|import-done`**: the
+  Favorite Wearables window (the toolbar's Favorite wearables command, Me ›
+  Favorite wearables) opens at frame 300 on the outfit of the Appearance demo (seeded
+  unless `AURORA_DEMO_APPEARANCE` is set) and `#Aurora/#Wearable Favorites`
+  with seven links (worn clothing and attachments in bold with their worn
+  tag, a spare shirt, a spare attachment, the hair body part) and an
+  "Evening" folder of two. `1`: All Favorites, sorted by type then name;
+  `evening`: the Evening folder picked; `recent`: sorted by most recent;
+  `create`: no favorites yet, the window creates both folders (the demo
+  inventory answers) and shows "Drag wearable items here…"; `import`: the
+  Legacy Viewer's folder (`#Firestorm/#Wearable Favorites`) sits beside
+  ours (a link ours has, one it lacks, a broken link, an "Evening" folder
+  ours has and a "Party" one it lacks), so the window shows "Import
+  favourites from the Legacy Viewer": the click links 4 originals (3 in
+  place, 2 of them in the new Party folder), creates only Party, touches
+  nothing of the Legacy folder, and the button disappears (`import-done`
+  opens the window as it is after that click). Drag a
+  wearable from the inventory onto the list to link it in the folder
+  shown; a double click wears or takes off; the row's menu has Assign to
+  Folder; New, Rename and Delete folder, Remove, the filter and the sort
+  menu act on the demo inventory.
 - **`AURORA_DEMO_ACTIVE_GROUP=none`**: starts the demo session with no active group
   (`world.groups.active` nil and no group title worn). Used e.g. with `AURORA_DEMO_CONTACTS=groups`
   to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.
@@ -9834,6 +9943,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   where the incident is first and marked "New". `none`: a grid without a
   feed ("This grid does not publish its status."); `error`: a feed that
   cannot be read ("The grid status could not be loaded." and the reason).
+- **`AURORA_DEMO_CONVERSATION_LOG=open|name|filter|off|empty|live`** (`1`
+  is `open`): the conversation log filled at frame 590 from memory (no file
+  is read or written) with the demo's residents and groups, then its window
+  opened at frame 600 (capture at frame 640). `open`: by date with friends
+  first (the defaults): the demo friend first, then Nova Example two hours
+  ago with the violet inbox mark of unread offline messages, a group, a
+  resident, a conference and older entries; Loup Example, blocked in the
+  demo, stays hidden until the view menu's Show blocked. `name`: sorted by
+  name.
+  `filter`: "no" typed in the filter, the matching letters in violet.
+  `off`: logging turned off, the entries still listed. `empty`: logging on
+  and nothing from before: only the demo's open group chat, logged as it
+  opens. `live`: an
+  empty log; at frame 600 a message Nova Example sent while we were
+  offline opens a conversation, which the log lists at once with its
+  inbox mark (the log says `conversation log demo: … entries`).
 
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
@@ -10703,6 +10828,15 @@ separate searches enabled and disabled; that preference controls only the text.
   All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
   "Quick search" in the search options) brings quick search back with its
   text. The demo keeps saved searches in memory only.
+- `recent-date`, `aurora-recent-date`: the Recent tab in advanced mode
+  under the Date rule "newer than 5 days", the filter items dated a day
+  apart: six of them are listed, where the tab alone (since the last
+  logout, a day on a first launch) lists two. The rule replaces the tab's
+  limit, as the finder's hours ago replace "Since Logoff" on the Recent
+  Items panel of the Legacy Viewer; a rule on another field keeps it.
+  `recent-date` shows the classic window with the rule builder open in
+  the Filters floater, `aurora-recent-date` Aurora's narrow window with
+  its chip bar.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
