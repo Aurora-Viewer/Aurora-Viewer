@@ -763,7 +763,7 @@ mod tests {
         w.social.session_mut(Uuid::from_u128(0xC0C0));
         w.poll_transcripts();
         assert_eq!(w.chat_log.conversations.list.len(), 2);
-        std::fs::remove_dir_all(&root).unwrap();
+        clean(&w, &root);
     }
 
     fn im(from: Uuid, name: &str, text: &str) -> InstantMessage {
