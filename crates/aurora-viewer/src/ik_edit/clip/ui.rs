@@ -835,15 +835,14 @@ impl Editor {
         let mut peers: Vec<(Uuid, String, f32)> = world
             .objects
             .iter()
-            .filter_map(|(_, object)| {
-                (object.is_avatar() && object.full_id != world.agent_id && poser_consent::nearby(world, object.full_id)).then(|| {
-                    let id = object.full_id;
-                    (
-                        id,
-                        poser_consent::name(world, id),
-                        poser_consent::distance(world, id).unwrap_or(f32::MAX),
-                    )
-                })
+            .filter(|(_, object)| object.is_avatar() && object.full_id != world.agent_id && poser_consent::nearby(world, object.full_id))
+            .map(|(_, object)| {
+                let id = object.full_id;
+                (
+                    id,
+                    poser_consent::name(world, id),
+                    poser_consent::distance(world, id).unwrap_or(f32::MAX),
+                )
             })
             .collect();
         peers.sort_by(|a, b| a.2.total_cmp(&b.2));
