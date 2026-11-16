@@ -51,7 +51,8 @@ pub fn tab_from_name(name: &str) -> Option<usize> {
     match name.trim().to_lowercase().as_str() {
         "favorites" | "favoris" | "0" => Some(TAB_FAVORITES),
         "landmarks" | "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
-        "history" | "historique" | "2" => Some(TAB_HISTORY),
+        // history-big: same tab, a large demo history (#2955)
+        "history" | "historique" | "history-big" | "2" => Some(TAB_HISTORY),
         _ => None,
     }
 }
@@ -225,11 +226,12 @@ fn add_rows(
 /// zone's, `history_offset`.
 pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64, offset: f64) -> Vec<(usize, Vec<usize>)> {
     let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+    let section_for = tphistory::history_section_lookup(now, offset);
     for (i, it) in items.iter().enumerate().rev() {
         if !tphistory::history_matches(&it.title, filter) {
             continue;
         }
-        let s = tphistory::history_section(it.date, now, offset);
+        let s = section_for(it.date);
         match out.last_mut() {
             Some((last, v)) if *last == s => v.push(i),
             _ => out.push((s, vec![i])),
@@ -935,6 +937,7 @@ impl PlacesUi {
             ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).wrap());
             return;
         }
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         for (section, indices) in sections {
             // every section opens while filtering
             let open = !filter.is_empty() || !self.collapsed.contains(&section);
@@ -990,7 +993,9 @@ impl PlacesUi {
                         title: it.title.clone(),
                     });
                 }
-                super::menu::context_menu(&r.response, p, |ui| self.history_item_menu(ui, p, world, actions));
+                if ui.is_rect_visible(r.response.rect) || (popup_open && r.response.context_menu_opened()) {
+                    super::menu::context_menu(&r.response, p, |ui| self.history_item_menu(ui, p, world, actions));
+                }
             }
         }
     }
@@ -1277,6 +1282,14 @@ fn list_row(
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
     widgets::reveal_search_selection(ui, &response, selected);
+    // large Teleport History (#2955): skip paint and text layout off screen
+    if !ui.is_rect_visible(rect) {
+        return RowResponse {
+            response,
+            toggle: false,
+            info: false,
+        };
+    }
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));
