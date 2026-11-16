@@ -3,3 +3,6 @@ contact_links:
   - name: Feature request
     url: https://feedback.aurora-viewer.org
     about: Suggest a feature or an improvement, and vote for the ideas of others, on our feedback board.
+  - name: Security vulnerability
+    url: https://github.com/Aurora-Viewer/Aurora-Viewer/security/advisories/new
+    about: Report a security problem privately to the maintainers; never in a public issue. See SECURITY.md.
