@@ -7,6 +7,58 @@ use std::collections::VecDeque;
 use uuid::Uuid;
 
 impl App {
+    fn offer_feedback(&mut self, reason: crate::world::inventory::outgoing::Feedback) {
+        let text = reason.text();
+        self.inventory_ui.message.clone_from(&text);
+        self.world.system_notice(text, crate::world::notice_topics::Topic::Items);
+    }
+
+    pub(super) fn poll_inventory_offers(&mut self) {
+        use crate::world::inventory::outgoing::Effect;
+        let session = self.world.login.as_ref().map(|login| login.session_id);
+        for effect in self.world.inventory.poll_offers(session) {
+            match effect {
+                Effect::Sent { recipient, name, folder } => {
+                    self.world.inventory_offer_sent(recipient, &name, folder);
+                    self.fire_beam(recipient, glam::DVec3::ZERO);
+                }
+                Effect::Feedback(reason) => self.offer_feedback(reason),
+                Effect::Check(cmd) => self.send(*cmd),
+            }
+        }
+    }
+
+    pub(super) fn demo_inventory_offer(&mut self, cmd: &NetCommand) -> bool {
+        use aurora_net::{InventoryOfferStatus, inventory::ais::ItemReads};
+        match cmd {
+            NetCommand::OfferInventory { receipt, .. } => {
+                let mode = std::env::var("AURORA_DEMO_INVENTORY").unwrap_or_default();
+                if mode != "offer-unsent" {
+                    let _ = receipt.try_send(InventoryOfferStatus::Transmitted);
+                    if mode != "offer-uncertain" {
+                        let _ = receipt.try_send(InventoryOfferStatus::Acknowledged);
+                    }
+                }
+            }
+            NetCommand::CheckInventoryOffer { items, reply, .. } => {
+                // The synthetic simulator processed the offer but lost its ACK.
+                let mut reads = ItemReads::default();
+                for id in items {
+                    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "offer-uncertain") && *id == Uuid::from_u128(8109) {
+                        reads.missing.push(*id);
+                    } else if let Some(it) = self.world.inventory.items.get(id) {
+                        reads.items.push(it.clone());
+                    } else {
+                        reads.missing.push(*id);
+                    }
+                }
+                let _ = reply.try_send(reads);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// `AURORA_DEMO_INVENTORY=big,toggle=…,churn=…`: open and close the
     /// window, and change one item now and then, once in the world.
     pub(super) fn demo_big_inventory(&mut self, big: &crate::world::inventory::demo::Big) {
@@ -325,13 +377,6 @@ impl App {
     }
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
-        if let InvAction::Share { resident, .. } = &action
-            && !self.world.rlva.allows("share", &resident.to_string())
-        {
-            self.world
-                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-            return;
-        }
         match action {
             InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
@@ -584,46 +629,42 @@ impl App {
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
-            InvAction::Share { items, resident } => {
-                if resident == self.world.agent_id || resident.is_nil() {
-                    return;
-                }
-                let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
-                for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &worn) {
-                        Ok(bucket) => {
-                            // LLGiveInventory removes copy-protected originals
-                            // locally after the reliable offer, including folder contents.
-                            let removed: Vec<_> = bucket
-                                .as_chunks::<17>()
-                                .0
-                                .iter()
-                                .filter_map(|tuple| {
-                                    let id = Uuid::from_slice(&tuple[1..]).ok()?;
+            InvAction::Share { items, residents } => {
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let roots = rules::roots(&self.world.inventory, &items);
+                let mut blocked = false;
+                for &resident in &residents {
+                    if resident == self.world.agent_id || resident.is_nil() {
+                        continue;
+                    }
+                    if !self.world.rlva.allows("share", &resident.to_string()) {
+                        blocked = true;
+                        continue;
+                    }
+                    for &id in &roots {
+                        match rules::offer_for_residents(&self.world.inventory, id, &worn, residents.len()) {
+                            Ok(bucket) => {
+                                let command =
                                     self.world
                                         .inventory
-                                        .items
-                                        .get(&id)
-                                        .filter(|it| rules::held(&self.world.inventory, it) & rules::COPY == 0)
-                                        .map(|_| id)
-                                })
-                                .collect();
-                            let name = rules::name(&self.world.inventory, id);
-                            let folder = self.world.inventory.folders.contains_key(&id);
-                            self.send(NetCommand::SendImDialog {
-                                to: resident,
-                                dialog: 4,
-                                id: Uuid::new_v4(),
-                                message: name.clone(),
-                                bucket,
-                            });
-                            self.world.inventory_offer_sent(resident, &name, folder);
-                            // FSCreateGiveInventoryParticleEffect (on)
-                            self.fire_beam(resident, glam::DVec3::ZERO);
-                            self.world.inventory.remove(&removed);
+                                        .begin_offer(self.world.login.as_ref().map(|l| l.session_id), resident, id, bucket);
+                                match command {
+                                    Ok(command) => {
+                                        if matches!(command, NetCommand::CheckInventoryOffer { .. }) {
+                                            self.offer_feedback(crate::world::inventory::outgoing::Feedback::Checking);
+                                        }
+                                        self.send(command);
+                                    }
+                                    Err(reason) => self.offer_feedback(reason),
+                                }
+                            }
+                            Err(reason) => self.inventory_ui.message = reason,
                         }
-                        Err(reason) => self.inventory_ui.message = reason,
                     }
+                }
+                if blocked {
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                 }
             }
             InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),

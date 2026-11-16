@@ -3,10 +3,9 @@
 
 use super::geom::Cam;
 use crate::theme::Palette;
+use aurora_render::WORLD_OVERLAY_NEAR_W;
 use egui::{Color32, FontId, Pos2, Shape, Stroke};
-use glam::{Quat, Vec3, Vec4};
-
-const NEAR_W: f32 = 0.02;
+use glam::{Quat, Vec3};
 
 pub struct Painter3d<'a> {
     pub painter: egui::Painter,
@@ -55,16 +54,7 @@ impl<'a> Painter3d<'a> {
     }
 
     fn clip_segment(&self, a: Vec3, b: Vec3) -> Option<(Pos2, Pos2)> {
-        let (mut ca, mut cb) = (self.cam.clip(a), self.cam.clip(b));
-        if ca.w < NEAR_W && cb.w < NEAR_W {
-            return None;
-        }
-        let cut = |p: Vec4, q: Vec4| p + (q - p) * ((NEAR_W - p.w) / (q.w - p.w));
-        if ca.w < NEAR_W {
-            ca = cut(ca, cb);
-        } else if cb.w < NEAR_W {
-            cb = cut(cb, ca);
-        }
+        let [ca, cb] = aurora_render::clip_world_line(self.cam.clip(a), self.cam.clip(b))?;
         Some((self.cam.clip_to_screen(ca), self.cam.clip_to_screen(cb)))
     }
 
@@ -121,7 +111,7 @@ impl<'a> Painter3d<'a> {
     /// theme are flat.
     pub fn tri_plain(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color32) {
         let (ca, cb, cc) = (self.cam.clip(a), self.cam.clip(b), self.cam.clip(c));
-        if ca.w < NEAR_W || cb.w < NEAR_W || cc.w < NEAR_W {
+        if ca.w < WORLD_OVERLAY_NEAR_W || cb.w < WORLD_OVERLAY_NEAR_W || cc.w < WORLD_OVERLAY_NEAR_W {
             return;
         }
         let depth = (ca.w + cb.w + cc.w) / 3.0;

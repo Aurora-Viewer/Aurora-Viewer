@@ -6,6 +6,12 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
+    /// Resident and group payments follow RLV `@pay`; object purchases use
+    /// the independent `@buy` restriction.
+    pub fn rlva_can_pay(&self) -> bool {
+        !self.rlva.has("pay")
+    }
+
     pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -59,7 +65,11 @@ impl World {
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
         // @interact is enforced when the object is picked
         // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
-        // RlvActions::canTouch and its @touchme override are asked.
+        // RlvActions::canTouch and its @touchme override are asked. A HUD's
+        // pick is dropped there too, by `rlva_drops_picks` where the click
+        // is read: this rule also answers the Touch entry of a worn object,
+        // which needs no pick and keeps a HUD's touch (handle_attachment_touch,
+        // llviewermenu.cpp).
         if !hud && r.has("interact") {
             return false;
         }
@@ -219,7 +229,7 @@ impl World {
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
-            NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
+            NetCommand::SendImDialog { to, dialog: 4, .. } | NetCommand::OfferInventory { to, .. } => r.allows("share", &to.to_string()),
             // A dialog shown before @sendchat (process_script_dialog_response,
             // llviewermessage.cpp): its public-chat answer is not sent.
             NetCommand::ScriptDialogReply { channel: 0, .. } => !r.has("sendchat"),
@@ -296,7 +306,10 @@ impl World {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
                     && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
-            NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
+            // One message for every kind of run (LLAgent::sendWalkRun): it is
+            // refused only when both restrictions leave nothing that may run.
+            // Each setter checks its own (set_always_run, walk_tap, running).
+            NetCommand::SetAlwaysRun(true) => !(blocked("alwaysrun") && blocked("temprun")),
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
@@ -438,142 +451,174 @@ impl World {
             if !self.rlva.enabled() {
                 break;
             }
-            if !self.rlva.controllers.accepts(source, c.param) {
-                continue;
-            }
-            if self.rlva_environment_command(source, &c) {
-                continue;
-            }
-            if c.behaviour.starts_with("getcam_")
-                || c.behaviour.starts_with("setcam_")
-                || c.behaviour.starts_with("getdebug_")
-                || c.behaviour.starts_with("setdebug_")
-                || matches!(c.behaviour.as_str(), "adjustheight" | "getheightoffset")
+            // RlvHandler::processCommand (rlvhandler.cpp) runs a force or a
+            // query when it is received: it reads the rules of that moment,
+            // whatever was released while it waited here. A lock set since
+            // still holds too, at the send boundary or just above: stricter
+            // than the Legacy Viewer there, never looser.
+            // A force with an effect of its own, sent nowhere (the sky, a
+            // take-off), has no boundary after it: the lock another object
+            // set since refuses it here.
+            if c.param == super::Param::Force
+                && ((c.behaviour.starts_with("setenv_") && self.rlva.has_except("setenv", source))
+                    || (c.behaviour == "fly" && super::option_bool(&c.option) != Some(false) && self.rlva.has_except("fly", source)))
             {
-                if self.rlva.viewer.len() < 256 {
-                    self.rlva.viewer.push((source, c));
-                }
                 continue;
             }
-            if let super::Param::Reply(channel) = c.param {
-                // (RlvHandler::processReplyCommand reads no option for
-                // @getgroup and @getsitid: one given changes nothing)
-                let text = match c.behaviour.as_str() {
-                    "getgroup" => Some(
-                        self.groups
-                            .groups
-                            .iter()
-                            .find(|g| g.id == self.groups.active)
-                            .map_or("none", |g| g.name.as_str())
-                            .to_owned(),
-                    ),
-                    "getsitid" => Some(self.rlva_sit_id().to_string()),
-                    name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
-                    _ => Some(String::new()),
-                };
-                if let Some(text) = text {
-                    self.rlva.reply(channel, &c.behaviour, text);
-                } else {
-                    self.rlva.pending.push((source, c));
-                    self.rlva.pending.extend(pending);
-                    break;
-                }
-                continue;
-            }
-            if c.behaviour == "detachme"
-                && c.option.is_empty()
-                && let Some(item) = self.rlva_attachment_item(source)
-                && let Some(key) = self.rlva_temporary_attachment(item)
-            {
-                if self.rlva_can_remove(item, source) {
-                    commands.push((
-                        source,
-                        NetCommand::DetachObject {
-                            handle: key.region,
-                            local_id: key.local_id,
-                        },
-                    ));
-                }
-                continue;
-            }
-            if super::inventory::force_kind(&c.behaviour).is_some() {
-                if !self.rlva_inventory_force(source, &c) {
-                    self.rlva.pending.push((source, c));
-                }
-                // The next force command of the same object joins this one's
-                // COF update (RlvForceWear::done runs once per batch); any
-                // other command waits for the update, as before.
-                let joins = pending
-                    .as_slice()
-                    .first()
-                    .is_some_and(|(next, c)| *next == source && super::inventory::force_kind(&c.behaviour).is_some());
-                if !self.rlva.pending.is_empty() || (!self.rlva.appearance.is_empty() && !joins) {
-                    self.rlva.pending.extend(pending);
-                    break;
-                }
-                continue;
-            }
-            if c.behaviour == "setgroup" {
-                commands.extend(self.rlva_group_force(source, &c, std::time::Instant::now()));
-                continue;
-            }
-            let command = match c.behaviour.as_str() {
-                "unsit" if c.option.is_empty() && self.agent.is_sitting() => Some(NetCommand::OneShotControl(control::STAND_UP)),
-                // RlvForceHandler<RLV_BHVR_SITGROUND>::onCommand reads no
-                // option; RlvForceHandler<RLV_BHVR_SIT> (rlvhandler.cpp) hands
-                // it the null key, which no option is too (LLUUID::set).
-                "sitground" => self.rlva_force_ground_sit(source),
-                "sit" if c.option.is_empty() => self.rlva_force_ground_sit(source),
-                "sit" => match Uuid::parse_str(&c.option) {
-                    Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
-                    Ok(id) => self
-                        .objects
-                        .index_of_uuid(&id)
-                        .and_then(|i| self.objects.get(i))
-                        .map(|o| NetCommand::RequestSit {
-                            handle: o.key.region,
-                            target: o.full_id,
-                            offset: Vec3::ZERO,
-                        }),
-                    Err(_) => None,
-                },
-                "setrot" => {
-                    if let Ok(angle) = c.option.parse::<f32>()
-                        && angle.is_finite()
-                    {
-                        self.agent.yaw = std::f32::consts::FRAC_PI_2 - angle;
-                    }
-                    None
-                }
-                "fly" => {
-                    let flying = if c.option.is_empty() {
-                        Some(true)
-                    } else {
-                        super::option_bool(&c.option)
-                    };
-                    if let Some(flying) = flying
-                        && (!flying || !self.rlva.has_except("fly", source))
-                    {
-                        self.agent.flying = flying;
-                    }
-                    None
-                }
-                "tpto" => teleport(&c.option),
-                _ => None,
-            };
-            if let Some(mut command) = command
-                && self.rlva_normalize_teleport(&mut command)
-                && self.rlva_allows_command(&command, source)
-            {
-                // LLAgent::teleportViaLocation: a teleport forced by @tpto
-                // cannot be cancelled (RlvHandler::setCanCancelTp(false))
-                if c.behaviour == "tpto" {
-                    self.tp_cancel.lock_for_rlva();
-                }
-                commands.push((source, command));
+            let live = self.rlva.rewind(&c);
+            let go_on = self.rlva_run_queued(source, c, &mut pending, &mut commands);
+            self.rlva.resume(live);
+            if !go_on {
+                break;
             }
         }
         commands
+    }
+
+    /// One queued command. False stops the queue: the commands after it wait
+    /// for what this one started.
+    fn rlva_run_queued(
+        &mut self,
+        source: Uuid,
+        c: super::Command,
+        pending: &mut std::vec::IntoIter<(Uuid, super::Command)>,
+        commands: &mut Vec<(Uuid, NetCommand)>,
+    ) -> bool {
+        if !self.rlva.controllers.accepts(source, c.param) {
+            return true;
+        }
+        if self.rlva_environment_command(source, &c) {
+            return true;
+        }
+        if c.behaviour.starts_with("getcam_")
+            || c.behaviour.starts_with("setcam_")
+            || c.behaviour.starts_with("getdebug_")
+            || c.behaviour.starts_with("setdebug_")
+            || matches!(c.behaviour.as_str(), "adjustheight" | "getheightoffset")
+        {
+            if self.rlva.viewer.len() < 256 {
+                self.rlva.viewer.push((source, c));
+            }
+            return true;
+        }
+        if let super::Param::Reply(channel) = c.param {
+            // (RlvHandler::processReplyCommand reads no option for
+            // @getgroup and @getsitid: one given changes nothing)
+            let text = match c.behaviour.as_str() {
+                "getgroup" => Some(
+                    self.groups
+                        .groups
+                        .iter()
+                        .find(|g| g.id == self.groups.active)
+                        .map_or("none", |g| g.name.as_str())
+                        .to_owned(),
+                ),
+                "getsitid" => Some(self.rlva_sit_id().to_string()),
+                name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
+                _ => Some(String::new()),
+            };
+            if let Some(text) = text {
+                self.rlva.reply(channel, &c.behaviour, text);
+            } else {
+                self.rlva.pending.push((source, c));
+                self.rlva.pending.extend(pending.by_ref());
+                return false;
+            }
+            return true;
+        }
+        if c.behaviour == "detachme"
+            && c.option.is_empty()
+            && let Some(item) = self.rlva_attachment_item(source)
+            && let Some(key) = self.rlva_temporary_attachment(item)
+        {
+            if self.rlva_can_remove(item, source) {
+                commands.push((
+                    source,
+                    NetCommand::DetachObject {
+                        handle: key.region,
+                        local_id: key.local_id,
+                    },
+                ));
+            }
+            return true;
+        }
+        if super::inventory::force_kind(&c.behaviour).is_some() {
+            if !self.rlva_inventory_force(source, &c) {
+                self.rlva.pending.push((source, c));
+            }
+            // The next force command of the same object joins this one's
+            // COF update (RlvForceWear::done runs once per batch); any
+            // other command waits for the update, as before.
+            let joins = pending
+                .as_slice()
+                .first()
+                .is_some_and(|(next, c)| *next == source && super::inventory::force_kind(&c.behaviour).is_some());
+            if !self.rlva.pending.is_empty() || (!self.rlva.appearance.is_empty() && !joins) {
+                self.rlva.pending.extend(pending.by_ref());
+                return false;
+            }
+            return true;
+        }
+        if c.behaviour == "setgroup" {
+            commands.extend(self.rlva_group_force(source, &c, std::time::Instant::now()));
+            return true;
+        }
+        let command = match c.behaviour.as_str() {
+            "unsit" if c.option.is_empty() && self.agent.is_sitting() => Some(NetCommand::OneShotControl(control::STAND_UP)),
+            // RlvForceHandler<RLV_BHVR_SITGROUND>::onCommand reads no
+            // option; RlvForceHandler<RLV_BHVR_SIT> (rlvhandler.cpp) hands
+            // it the null key, which no option is too (LLUUID::set).
+            "sitground" => self.rlva_force_ground_sit(source),
+            "sit" if c.option.is_empty() => self.rlva_force_ground_sit(source),
+            "sit" => match Uuid::parse_str(&c.option) {
+                Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
+                Ok(id) => self
+                    .objects
+                    .index_of_uuid(&id)
+                    .and_then(|i| self.objects.get(i))
+                    .map(|o| NetCommand::RequestSit {
+                        handle: o.key.region,
+                        target: o.full_id,
+                        offset: Vec3::ZERO,
+                    }),
+                Err(_) => None,
+            },
+            "setrot" => {
+                if let Ok(angle) = c.option.parse::<f32>()
+                    && angle.is_finite()
+                {
+                    self.agent.yaw = std::f32::consts::FRAC_PI_2 - angle;
+                }
+                None
+            }
+            "fly" => {
+                let flying = if c.option.is_empty() {
+                    Some(true)
+                } else {
+                    super::option_bool(&c.option)
+                };
+                if let Some(flying) = flying
+                    && (!flying || !self.rlva.has_except("fly", source))
+                {
+                    self.agent.flying = flying;
+                }
+                None
+            }
+            "tpto" => teleport(&c.option),
+            _ => None,
+        };
+        if let Some(mut command) = command
+            && self.rlva_normalize_teleport(&mut command)
+            && self.rlva_allows_command(&command, source)
+        {
+            // LLAgent::teleportViaLocation: a teleport forced by @tpto
+            // cannot be cancelled (RlvHandler::setCanCancelTp(false))
+            if c.behaviour == "tpto" {
+                self.tp_cancel.lock_for_rlva();
+            }
+            commands.push((source, command));
+        }
+        true
     }
 }
 

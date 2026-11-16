@@ -206,6 +206,12 @@ impl Editors {
         self.back_up_now(false);
     }
 
+    /// The viewer closing: as [`Self::back_up`], and a copy whose last
+    /// write was refused is tried again now rather than at the interval.
+    pub fn back_up_before_exit(&mut self) {
+        self.back_up_now(backup::any_refused());
+    }
+
     fn back_up_now(&mut self, force: bool) {
         let docs = self.documents.iter().map(|e| backup::Doc {
             target: e.target,

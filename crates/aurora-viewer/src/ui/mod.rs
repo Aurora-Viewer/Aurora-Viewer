@@ -113,6 +113,7 @@ pub mod place_card;
 pub mod place_details;
 pub mod places;
 pub mod portals;
+pub mod pose_stand;
 pub mod presence;
 pub mod profile;
 pub mod quick_prefs;
@@ -244,6 +245,8 @@ pub struct Panels {
     pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The pose stand (toolbar `pose_stand`).
+    pub pose_stand: bool,
     /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
     pub omnifilter: bool,
     /// The conversation log (toolbar `conversation_log`, Communicate ›
@@ -322,6 +325,7 @@ impl Panels {
             quick_prefs: false,
             director: false,
             voice_controls: false,
+            pose_stand: false,
             omnifilter: false,
             conversation_log: false,
             about: false,

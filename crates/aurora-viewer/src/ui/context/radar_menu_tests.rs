@@ -105,7 +105,10 @@ fn the_radar_menus_mark_one_resident_or_several() {
         &mut |ui| avatar_list_menu(ui, &p, &w, NOVA, AvatarList::Nearby),
         aurora_i18n::tr!("ui-minimap-custom-marker"),
     );
-    assert!(matches!(&asked[..], [CtxAction::MarkCustom(ids)] if ids == &[NOVA]), "{asked:?}");
+    assert!(
+        matches!(&asked[..], [CtxAction::MarkCustom { ids, source: AvatarList::Nearby }] if ids == &[NOVA]),
+        "{asked:?}"
+    );
     // several (menu_fs_radar_multiselect.xml)
     let several = [NOVA, Uuid::from_u128(0x8)];
     let blue = crate::world::avatar_marks::LEGACY_COLORS[2].1;

@@ -174,7 +174,7 @@ pub enum InvAction {
     Restore(Uuid),
     Share {
         items: Vec<Uuid>,
-        resident: Uuid,
+        residents: Vec<Uuid>,
     },
     /// Preview the item and return to its originating inventory list when it closes.
     Preview(Uuid, Option<egui::Id>),
@@ -369,7 +369,8 @@ impl Facts {
 pub enum EditDialog {
     Properties(Uuid),
     Discard(Uuid),
-    Share(Vec<Uuid>, Uuid),
+    /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
+    Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
     Empty(Uuid),
     Ungroup(Uuid),
@@ -2238,12 +2239,17 @@ pub fn show(
     // asked of the app (issue #1197)
     let mut wanted = Vec::new();
     for state in std::iter::once(&*st).chain(st.windows.iter().map(|w| &*w.state)) {
-        if let Some(EditDialog::Share(_, resident)) = &state.dialog {
-            world.social.want_name(*resident);
-            facts.names.insert(*resident, world.social.name_of(resident));
-            wanted.push(*resident);
-            if let Some(t) = pics.get(resident) {
-                facts.pictures.insert(*resident, t.clone());
+        if let Some(EditDialog::Share(_, residents)) = &state.dialog {
+            for resident in residents {
+                world.social.want_name(*resident);
+                facts.names.insert(*resident, world.social.name_of(resident));
+            }
+            // Only the first resident's portrait is shown.
+            if let Some(first) = residents.first() {
+                wanted.push(*first);
+                if let Some(t) = pics.get(first) {
+                    facts.pictures.insert(*first, t.clone());
+                }
             }
         }
     }
@@ -2368,9 +2374,9 @@ pub fn show(
         &mut actions,
     );
     if let Some(residents) = st.share_picker.show(ctx, p, world)
-        && let Some(resident) = residents.first()
+        && !residents.is_empty()
     {
-        st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), *resident));
+        st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), residents));
     }
     let mut windows = std::mem::take(&mut st.windows);
     let mut spawned = Vec::new();
@@ -2521,9 +2527,9 @@ pub fn show(
             &mut actions,
         );
         if let Some(residents) = w.state.share_picker.show(ctx, p, world)
-            && let Some(resident) = residents.first()
+            && !residents.is_empty()
         {
-            w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), *resident));
+            w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), residents));
         }
         st.wanted_images.extend(w.state.wanted_images.drain());
         st.wanted_hover_images.extend(w.state.wanted_hover_images.drain());
