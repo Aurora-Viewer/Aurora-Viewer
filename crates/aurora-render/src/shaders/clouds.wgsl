@@ -71,6 +71,9 @@ const AMB_GAIN: f32 = 0.9;
 fn yup(v: vec3f) -> vec3f { return vec3f(v.x, v.z, v.y); }
 
 // ---------------------------------------------------------------- hashing and periodic noise
+// The octaves and weights of the noise generators below follow
+// sebh/TileableVolumeNoise, Copyright(c) 2017 Sébastien Hillaire, MIT License
+// (its permission notice is in NOTICE.md).
 fn hash_u(x: u32) -> u32 {
     let v = x * 747796405u + 2891336453u;
     let w = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;

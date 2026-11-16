@@ -8,8 +8,8 @@
 //! The recipe is the one the shader has always had: periodic Perlin and
 //! Worley fractal noise, Perlin dilated by Worley (Schneider & Vos, SIGGRAPH
 //! 2015), with the octaves and weights of Hillaire's SIGGRAPH 2016 noise
-//! generator (sebh/TileableVolumeNoise, MIT, Copyright (c) 2016 Sebastien
-//! Hillaire): Worley fractal noise at scales 1, 2 and 4 with weights 0.625,
+//! generator (sebh/TileableVolumeNoise, MIT, Copyright(c) 2017 Sébastien
+//! Hillaire; its permission notice is in NOTICE.md): Worley fractal noise at scales 1, 2 and 4 with weights 0.625,
 //! 0.25 and 0.125. Only f32 sums, products, `floor` and `sqrt` are used, which
 //! are exact and ordered the same on every CPU, so the file is the same
 //! everywhere (a test pins its hash). The shader's generators stay as the
