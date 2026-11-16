@@ -982,9 +982,11 @@ visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 sync, it measures the linksets that arrived or changed (and a rolling slice of
 the others): a linkset floats when its lowest point is 100 m above the ground or
 water under its root; a moving or physical object never does (an avatar does).
-A floating linkset is hidden while the camera, and its focus point when it has
-one, are more than 60 m above or below its vertical extent, and shows again
-within 50 m; the focused object's linkset stays shown. Avatars are their own linksets, seated ones follow
+A floating linkset is hidden while the camera is more than 60 m above or below
+its vertical extent, and shows again within 50 m; while the camera is focused
+away from our avatar, the gap is measured to the whole height between the
+camera and its focus point and to our avatar's height, and the focused object's
+linkset stays shown. Avatars are their own linksets, seated ones follow
 their seat, worn objects their wearer; ours, our seat and everything while the
 build tools are open stay shown. `World::object_shown` combines it with the
 parcel isolation, so what it hides takes the same release path; the roots whose

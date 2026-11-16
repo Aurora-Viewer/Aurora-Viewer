@@ -23,9 +23,11 @@
 //! - Our own avatar, what it wears and the linkset it sits on are always
 //!   shown; the build tools show everything while they are open.
 //! - While the camera is focused on a point (Alt and a click, a focus on an
-//!   object), the gap is measured from that point too, and the linkset of
-//!   the focused object is always shown: orbiting a skybox from far away
-//!   keeps it.
+//!   object), the gap is measured to the whole height between the camera and
+//!   that point, and to our avatar's height; the linkset of the focused
+//!   object is always shown. Orbiting a skybox from far away keeps it, and
+//!   looking down at it from the island keeps the island and what is in
+//!   between: Alt-camming up and down a region finds its way.
 //!
 //! What is hidden goes through the same path as the parcel isolation
 //! (`World::object_shown`): released from the GPU, no texture or mesh
@@ -61,7 +63,13 @@ pub struct Extent {
 impl Extent {
     /// How far `z` is above or below it (0 within it).
     pub fn gap(self, z: f32) -> f32 {
-        (self.bottom - z).max(z - self.top).max(0.0)
+        self.gap_to(z, z)
+    }
+
+    /// How far the heights from `low` to `high` are from it (0 when they
+    /// meet it).
+    pub fn gap_to(self, low: f32, high: f32) -> f32 {
+        (self.bottom - high).max(low - self.top).max(0.0)
     }
 
     /// It floats above `floor` (the ground or the water under it).
@@ -171,6 +179,8 @@ impl World {
         }
         sky.roots.resize(n, None);
         let seat = self.own_seat_root();
+        // focused away: our avatar's height counts too
+        let me_z = focus.map(|_| self.agent.position.z);
         let focused = focus_object
             .and_then(|id| self.objects.index_of_uuid(&id))
             .map(|idx| self.objects.linkset_root(idx));
@@ -205,7 +215,8 @@ impl World {
                 hidden: was_hidden,
             });
             let hidden = floating.is_some_and(|e| {
-                let gap = focus.map_or(e.gap(eye.z), |f| e.gap(eye.z).min(e.gap(f.z)));
+                let band = focus.map_or(e.gap(eye.z), |f| e.gap_to(eye.z.min(f.z), eye.z.max(f.z)));
+                let gap = me_z.map_or(band, |z| band.min(e.gap(z)));
                 stays_hidden(was_hidden, gap)
             });
             sky.set_hidden(idx, hidden);
@@ -425,7 +436,7 @@ mod tests {
         world.update_sky_visibility(true, ground, Some(scene::SKYBOX), None);
         assert!(world.object_shown(skybox));
         assert!(world.object_shown(avatar(&world, scene::SKY_RESIDENT)));
-        assert!(!world.object_shown(prim(&world, ISLAND)), "only near the focus");
+        assert!(!world.object_shown(prim(&world, ISLAND)), "far above the camera, the focus and us");
         // focused on the island's hut: its whole linkset stays
         let hut = world.objects.get(prim(&world, HUT)).expect("hut").full_id;
         world.update_sky_visibility(true, ground, None, Some(hut));
@@ -435,11 +446,36 @@ mod tests {
     }
 
     #[test]
+    fn alt_camming_down_from_the_island_keeps_it_and_what_is_in_between() {
+        let mut world = world();
+        world.agent.position = scene::ISLAND + Vec3::new(0.0, 0.0, 6.0);
+        let island = prim(&world, ISLAND);
+        let below = prim(&world, BELOW);
+        // the camera out at the skybox's height, focused on it: the island
+        // stays, for our avatar is on it
+        let eye = scene::BELOW + Vec3::new(120.0, 0.0, 0.0);
+        world.update_sky_visibility(true, eye, Some(scene::BELOW), None);
+        assert!(world.object_shown(below));
+        assert!(world.object_shown(island), "our avatar's height");
+        // the camera up at the island, focused 200 m down: both and between
+        world.update_sky_visibility(true, scene::ISLAND, Some(scene::BELOW), None);
+        assert!(world.object_shown(below));
+        assert!(world.object_shown(island));
+        assert!(!world.object_shown(prim(&world, SKYBOX)), "3000 m below the band");
+        // the focus back on our avatar: from the island, the skybox hides
+        world.update_sky_visibility(true, scene::ISLAND, None, None);
+        assert!(!world.object_shown(below));
+    }
+
+    #[test]
     fn the_gap_is_measured_to_the_extent_above_and_below() {
         let e = Extent { bottom: 300.0, top: 320.0 };
         assert_eq!(e.gap(310.0), 0.0);
         assert_eq!(e.gap(250.0), 50.0);
         assert_eq!(e.gap(400.0), 80.0);
+        assert_eq!(e.gap_to(250.0, 400.0), 0.0, "a band across it");
+        assert_eq!(e.gap_to(100.0, 240.0), 60.0);
+        assert_eq!(e.gap_to(330.0, 400.0), 10.0);
     }
 
     #[test]
