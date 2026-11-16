@@ -25,9 +25,8 @@
 //! it came with. Unlike it, a lone half is dropped rather than typed.
 
 /// A message of the window's queue, as far as the join needs it.
-#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Msg {
+enum Msg {
     /// `WM_CHAR` / `WM_SYSCHAR` with its UTF-16 unit.
     Char(u16),
     /// `WM_KEYDOWN`, `WM_KEYUP` and their `SYS` versions.
@@ -35,19 +34,17 @@ pub enum Msg {
 }
 
 /// The high half of a pair waiting for its low half.
-#[cfg(any(windows, test))]
 #[derive(Debug, Default)]
-pub struct Pairs {
+struct Pairs {
     high: Option<u16>,
     /// A key message came after the high half: the halves belong to two
     /// presses, which winit does not join.
     split: bool,
 }
 
-#[cfg(any(windows, test))]
 impl Pairs {
     /// One message; the character the two halves make when winit drops it.
-    pub fn message(&mut self, msg: Msg) -> Option<char> {
+    fn message(&mut self, msg: Msg) -> Option<char> {
         match msg {
             Msg::Key => {
                 self.split |= self.high.is_some();
@@ -71,42 +68,101 @@ impl Pairs {
     }
 }
 
-thread_local! {
-    /// The character joined for the key event winit is about to send.
-    static PENDING: std::cell::Cell<Option<char>> = const { std::cell::Cell::new(None) };
+/// Only a text-less VK_PACKET press from the window that received both
+/// halves may get the reconstructed character. Focus changes, pointer
+/// presses and regular keys interrupt the sequence.
+#[derive(Default)]
+struct PacketInput {
+    window: Option<u64>,
+    pairs: Pairs,
+    pending: Option<char>,
 }
 
-/// Called by the message hook for each message, before winit handles it.
+impl PacketInput {
+    fn message(&mut self, window: u64, msg: Msg) {
+        if self.window != Some(window) {
+            if !matches!(msg, Msg::Key) {
+                return;
+            }
+            *self = Self::default();
+            self.window = Some(window);
+        }
+        self.pending = self.pairs.message(msg);
+    }
+
+    fn cancel(&mut self, window: u64) {
+        if self.window == Some(window) {
+            *self = Self::default();
+        }
+    }
+
+    fn take_for(&mut self, window: u64, packet_press: bool) -> Option<char> {
+        if self.window != Some(window) {
+            return None;
+        }
+        self.pending.take().filter(|_| packet_press)
+    }
+}
+
 #[cfg(windows)]
-pub fn hook(pairs: &mut Pairs, msg: &windows_sys::Win32::UI::WindowsAndMessaging::MSG) {
+thread_local! {
+    static INPUT: std::cell::RefCell<PacketInput> = std::cell::RefCell::default();
+}
+
+/// Called by the message hook before winit dispatches the message.
+#[cfg(windows)]
+pub fn hook(msg: &windows_sys::Win32::UI::WindowsAndMessaging::MSG) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_PACKET;
     use windows_sys::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP};
-    let msg = match msg.message {
+    // winit 0.30's Windows WindowId is the HWND converted to u64.
+    let window = msg.hwnd as isize as u64;
+    let message = match msg.message {
         WM_CHAR | WM_SYSCHAR => Msg::Char(msg.wParam as u16),
-        WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP => Msg::Key,
+        WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP if msg.wParam == usize::from(VK_PACKET) => Msg::Key,
+        WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP => {
+            INPUT.with_borrow_mut(|state| state.cancel(window));
+            return;
+        }
         _ => return,
     };
-    if let Some(c) = pairs.message(msg) {
-        PENDING.with(|p| p.set(Some(c)));
-    }
+    INPUT.with_borrow_mut(|state| state.message(window, message));
 }
 
-/// Before the window event reaches egui: the press of the low half, which
-/// winit sends without text, gets the character joined by the hook.
-pub fn attach(event: &mut winit::event::WindowEvent) {
-    let winit::event::WindowEvent::KeyboardInput { event: key, .. } = event else {
-        return;
-    };
-    if let Some(text) = take_for(key.state == winit::event::ElementState::Pressed, key.text.is_some()) {
-        key.logical_key = winit::keyboard::Key::Character(text.clone());
-        key.text = Some(text);
-    }
-}
+#[cfg(windows)]
+pub fn attach(window: winit::window::WindowId, event: &mut winit::event::WindowEvent) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_PACKET;
+    use winit::event::{ElementState, TouchPhase, WindowEvent};
+    use winit::keyboard::{Key, NativeKey};
 
-/// The joined character, taken by any key event so that it is never given
-/// late: kept only by a press that came without text.
-fn take_for(pressed: bool, has_text: bool) -> Option<winit::keyboard::SmolStr> {
-    let c = PENDING.with(std::cell::Cell::take)?;
-    (pressed && !has_text).then(|| winit::keyboard::SmolStr::new(c.to_string()))
+    let window = u64::from(window);
+    match event {
+        WindowEvent::Focused(_)
+        | WindowEvent::Destroyed
+        | WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            ..
+        }
+        | WindowEvent::Touch(winit::event::Touch {
+            phase: TouchPhase::Started,
+            ..
+        }) => {
+            INPUT.with_borrow_mut(|state| state.cancel(window));
+        }
+        WindowEvent::KeyboardInput {
+            event: key, is_synthetic, ..
+        } => {
+            let packet_press = !*is_synthetic
+                && key.state == ElementState::Pressed
+                && key.text.is_none()
+                && key.logical_key == Key::Unidentified(NativeKey::Windows(VK_PACKET));
+            if let Some(c) = INPUT.with_borrow_mut(|state| state.take_for(window, packet_press)) {
+                let text = winit::keyboard::SmolStr::new(c.to_string());
+                key.logical_key = Key::Character(text.clone());
+                key.text = Some(text);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -171,17 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn the_character_goes_to_the_next_press_without_text_only() {
-        // nothing joined: nothing given
-        assert_eq!(take_for(true, false), None);
-        PENDING.with(|p| p.set(Some('😀')));
-        // a release, or a press that has its own text, drops it
-        assert_eq!(take_for(false, false), None);
-        assert_eq!(take_for(true, false), None, "taken once, never given later");
-        PENDING.with(|p| p.set(Some('😀')));
-        assert_eq!(take_for(true, true), None);
-        PENDING.with(|p| p.set(Some('😀')));
-        assert_eq!(take_for(true, false).as_deref(), Some("😀"));
-        assert_eq!(take_for(true, false), None);
+    fn characters_stay_with_their_window_and_packet_press() {
+        let [high, low] = units("😀")[..] else { panic!("a pair") };
+        let mut input = PacketInput::default();
+        let start = |input: &mut PacketInput| {
+            input.message(1, Msg::Key);
+            input.message(1, Msg::Char(high));
+            input.message(1, Msg::Key);
+        };
+        start(&mut input);
+        input.message(2, Msg::Char(low));
+        assert_eq!(input.take_for(2, true), None);
+        start(&mut input);
+        input.cancel(1);
+        input.message(1, Msg::Char(low));
+        assert_eq!(input.take_for(1, true), None);
+        start(&mut input);
+        input.message(1, Msg::Char(low));
+        assert_eq!(input.take_for(2, true), None);
+        assert_eq!(input.take_for(1, false), None);
+        assert_eq!(input.take_for(1, true), None);
+        start(&mut input);
+        input.message(1, Msg::Char(low));
+        assert_eq!(input.take_for(1, true), Some('😀'));
+        assert_eq!(input.take_for(1, true), None);
     }
 }

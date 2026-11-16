@@ -62,7 +62,7 @@ fn list(root: &Path) -> Result<Vec<Identity>, String> {
     Ok(entries)
 }
 fn sort(entries: &mut [Identity]) {
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.id.cmp(&b.id)));
+    entries.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then(a.id.cmp(&b.id)));
 }
 #[derive(Clone, Copy)]
 enum EditKind {
@@ -482,7 +482,7 @@ impl Editor {
         }
         self.project_recovery_ui(ui, p);
         self.object_data_ui(ui, p, world);
-        self.project_import_ui(ui, world);
+        self.project_import_ui(ui, p, world);
         if let Some(message) = &self.project.message {
             ui.add(egui::Label::new(message).truncate()).on_hover_text(message);
         }

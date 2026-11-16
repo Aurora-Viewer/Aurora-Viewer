@@ -425,6 +425,7 @@ impl Assets {
             })
             .map(|it| (it.asset_type, it.asset_id, it.name.clone()))
             .collect();
-        self.choices.sort_by_cached_key(|(kind, _, name)| (*kind, name.to_lowercase()));
+        self.choices
+            .sort_by_cached_key(|(kind, _, name)| (*kind, crate::natural_order::key(name)));
     }
 }

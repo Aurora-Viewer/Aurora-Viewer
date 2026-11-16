@@ -136,10 +136,12 @@ impl Shortcut {
             Self::ToggleBuild => {
                 if tool.open {
                     tool.close(world, settings);
-                } else {
+                } else if world.rlva_can_build() {
                     tool.open_build(Tool::Create);
                 }
             }
+            // LLToolMgr::canEdit: no way into the build window under @edit and @rez
+            Self::Open(_) if !tool.open && !world.rlva_can_build() => {}
             Self::Open(which) => tool.open_build(which),
             Self::GridOptions => tool.ui.grid_options_open = !tool.ui.grid_options_open,
             // Esc first turns "Place on surface" off
@@ -147,7 +149,11 @@ impl Shortcut {
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
             Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),
-            Self::Link => tool.link(world),
+            Self::Link => {
+                if tool.can_link(world) {
+                    tool.link(world);
+                }
+            }
             Self::Unlink => tool.unlink(world),
             Self::EditLinked => {
                 let on = !settings.edit_linked;

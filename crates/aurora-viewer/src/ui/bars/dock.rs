@@ -194,18 +194,23 @@ pub fn bottom(
     chat.thumbnails.reserve(geo.thumbs, thumb(geo.button), true);
 
     // Autohidden (#1009), the island shows while the chat is used, without
-    // its button when the dock holds Conversations; out of use it goes
-    // away, or keeps its button alone when the dock has none (a saved dock
+    // its button when any toolbar holds Conversations (#2993); out of use it
+    // goes away, or keeps its button alone when none does (a saved dock
     // without Conversations keeps a way to the conversations). The geometry
-    // stays: nothing moves when the field comes and goes.
+    // stays: nothing moves when the field comes and goes. With the bar always
+    // shown, the same rule hides the island's button so a side toolbar cannot
+    // resurrect the "Nearby chat and Conversations" control.
     let shown = chat.bar_shown();
     if shown {
         let slot = geo.button - 4.0;
         let editor = crate::ui::chat::input::height(&ctx, crate::ui::chat::bar_input_id(), slot);
         geo.chat.min.y -= editor - slot;
+        if emoji.is_some() {
+            geo.chat.min.y -= chat.recent_emojis.height();
+        }
     }
     chat.bar_hovered = false;
-    let docked = chat.autohide && buttons.iter().any(|b| b.command == "conversations");
+    let docked = toolbar_settings.location("conversations", layout).is_some();
     let out = if shown {
         area(&ctx, p, "chat", geo.chat, |ui| {
             let out = chat_island(
@@ -312,12 +317,18 @@ fn chat_island(
     // the field and the button, centred in the islands' common height
     let slot = geo.button - 4.0;
     let inset = (geo.height - slot) / 2.0;
-    let top = island.bottom() - inset - slot;
+    // the recent emojis over the field, or at the island's foot with the
+    // Legacy chat style
+    let recent = if emoji.is_some() { chat.recent_emojis.height() } else { 0.0 };
+    let above = chat.recent_emojis.above;
+    let (over, under) = if above { (recent, 0.0) } else { (0.0, recent) };
+    let bottom = island.bottom() - under;
+    let top = bottom - inset - slot;
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
     let field = Rect::from_min_max(
-        Pos2::new(island.left() + PAD, island.top() + inset),
-        Pos2::new(field_right, island.bottom() - inset),
+        Pos2::new(island.left() + PAD, island.top() + inset + over),
+        Pos2::new(field_right, bottom - inset),
     );
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(field, radius, p.field);
@@ -361,6 +372,25 @@ fn chat_island(
             .desired_width(text.width())
             .align(egui::Align2::LEFT_CENTER)
     });
+    if recent > 0.0
+        && let Some(emoji) = emoji.as_deref_mut()
+    {
+        let row = if above {
+            Rect::from_min_max(
+                Pos2::new(field.left(), island.top() + inset),
+                Pos2::new(field.right(), island.top() + inset + recent - 2.0),
+            )
+        } else {
+            Rect::from_min_max(
+                Pos2::new(field.left(), island.bottom() - inset - (recent - 2.0)),
+                Pos2::new(field.right(), island.bottom() - inset),
+            )
+        };
+        let id = crate::ui::chat::bar_input_id();
+        if let Some(c) = chat.recent_emojis.row(ui, p, emoji, row, id) {
+            crate::ui::emoji::recent::insert(ui.ctx(), id, &mut chat.input, c);
+        }
+    }
     if chat.bar_emoji_open {
         emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
     }
@@ -411,6 +441,7 @@ fn emoji_picker(
     };
     let mut close = false;
     let mut escape = false;
+    let mut starred = false;
     let shown = egui::Area::new(Id::unique("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
@@ -419,7 +450,11 @@ fn emoji_picker(
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
-                let picked = emoji.picker(ui, p, icons);
+                let picked = emoji.picker(ui, p, icons, chat.recent_emojis.favorites());
+                if let Some(c) = picked.favorite {
+                    chat.recent_emojis.toggle_favorite(c);
+                    starred = true;
+                }
                 if let Some(c) = picked.chosen {
                     chat.input.push(c);
                     close = !ui.input(|i| i.modifiers.shift);
@@ -427,7 +462,8 @@ fn emoji_picker(
                 escape = picked.escape;
             });
         });
-    let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(button.expand(4.0));
+    // the emoji's menu can hang outside the picker: its click stays in it
+    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;
@@ -705,8 +741,10 @@ mod tests {
         flash: f32,
         /// What the last frame painted.
         shapes: Vec<egui::epaint::ClippedShape>,
-        /// A saved dock (None: the skin's).
+        /// A saved dock (None: the skin's, through DockLayout like the app).
         buttons: Option<Vec<crate::ui::skin::ToolButton>>,
+        left: Vec<crate::ui::skin::ToolButton>,
+        right: Vec<crate::ui::skin::ToolButton>,
     }
 
     impl Bench {
@@ -724,6 +762,8 @@ mod tests {
                 flash: 0.0,
                 shapes: Vec::new(),
                 buttons: None,
+                left: Vec::new(),
+                right: Vec::new(),
             }
         }
 
@@ -737,9 +777,14 @@ mod tests {
 
         fn frame(&mut self, events: Vec<egui::Event>) -> (Option<crate::ui::chat::OutgoingChat>, f32, bool) {
             let p = crate::theme::Theme::default().palette();
-            let layout = crate::ui::skin::Layout::default();
+            let skin = crate::ui::skin::Layout::default();
+            // Same as app.rs: the default dock leaves Conversations to the
+            // island unless the chat bar is autohidden.
+            let layout = DockLayout::default().of(&skin, self.chat.autohide).clone();
             let settings = crate::ui::toolbar::ToolbarSettings {
                 buttons: self.buttons.clone(),
+                left: self.left.clone(),
+                right: self.right.clone(),
                 ..Default::default()
             };
             let view = super::super::favorites::View::default();
@@ -1060,6 +1105,49 @@ mod tests {
             .expect("the button alone")
             .rect;
         assert!(button.right() < 2.0 * MARGIN + 2.0 * PAD + 40.0, "in the corner: {button:?}");
+    }
+
+    /// #2993: Conversations on a side toolbar keeps the island's
+    /// "Nearby chat and Conversations" button away, autohidden or not.
+    #[test]
+    fn conversations_on_a_side_toolbar_hides_the_island_button() {
+        let conv = crate::ui::skin::Layout::default()
+            .toolbar
+            .into_iter()
+            .find(|b| b.command == "conversations")
+            .expect("skin Conversations");
+        let without = DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone();
+        for (side, autohide) in [
+            (crate::ui::toolbar::Bar::Left, true),
+            (crate::ui::toolbar::Bar::Right, true),
+            (crate::ui::toolbar::Bar::Left, false),
+            (crate::ui::toolbar::Bar::Right, false),
+        ] {
+            let mut bench = Bench::new();
+            bench.chat.autohide = autohide;
+            bench.buttons = Some(without.clone());
+            match side {
+                crate::ui::toolbar::Bar::Left => bench.left = vec![conv.clone()],
+                crate::ui::toolbar::Bar::Right => bench.right = vec![conv.clone()],
+                crate::ui::toolbar::Bar::Bottom => unreachable!(),
+            }
+            if !autohide {
+                // Always-shown island: focus so the field is there to check.
+                bench.chat.focus_request = true;
+            }
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            assert!(
+                bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
+                "Conversations on {side:?}, autohide={autohide}: no island button"
+            );
+            if !autohide {
+                assert!(
+                    bench.text_rect(aurora_i18n::tr!("common-nearby-chat")).is_some(),
+                    "the nearby chat field stays"
+                );
+            }
+        }
     }
 
     /// The default dock keeps the skin's Conversations button while the

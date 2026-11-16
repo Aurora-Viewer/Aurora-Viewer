@@ -96,7 +96,6 @@ pub fn install(builder: &mut winit::event_loop::EventLoopBuilder<()>) {
     use winit::platform::windows::EventLoopBuilderExtWindows;
 
     let mut absolute = Absolute::default();
-    let mut pairs = crate::wide_chars::Pairs::default();
     builder.with_msg_hook(move |msg| {
         // SAFETY: winit gives the `MSG` it has just taken from the queue,
         // alive for the duration of the call.
@@ -105,7 +104,7 @@ pub fn install(builder: &mut winit::event_loop::EventLoopBuilder<()>) {
             let motion = read(msg.lParam).and_then(|packet| absolute.packet(packet, screen));
             PENDING.with(|pending| pending.set(motion));
         }
-        crate::wide_chars::hook(&mut pairs, msg);
+        crate::wide_chars::hook(msg);
         // winit handles the message as usual
         false
     });

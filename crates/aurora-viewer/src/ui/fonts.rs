@@ -276,7 +276,7 @@ pub fn system_fonts() -> Vec<SystemFont> {
             out.push(SystemFont { name, path });
         }
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
+    out.sort_by_key(|f| crate::natural_order::key(&f.name));
     out
 }
 
@@ -319,6 +319,7 @@ const DEFINITIONS_ID: &str = "aurora-font-definitions";
 const SEMIBOLD_ID: &str = "aurora-font-has-semibold";
 const SCALE_ID: &str = "aurora-font-scale";
 const BASELINE_ID: &str = "aurora-font-baseline";
+const INSTALLED_ID: &str = "aurora-font-installed";
 
 #[derive(Clone, Copy)]
 struct BaselineFace {
@@ -424,12 +425,14 @@ pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
+    let frame = ctx.cumulative_frame_nr();
     let heavier =
         definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
     ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
         data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
         data.insert_temp(egui::Id::unique(BASELINE_ID), BaselineFace::of(&definitions));
+        data.insert_temp(egui::Id::unique(INSTALLED_ID), frame);
     });
     let scale = scale(ctx);
     let mut scaled = definitions;
@@ -547,6 +550,13 @@ impl TextEmphasis {
 /// semi-bold texts with its regular face.
 pub fn has_semibold(ctx: &egui::Context) -> bool {
     ctx.data(|data| data.get_temp(egui::Id::unique(SEMIBOLD_ID))).unwrap_or(false)
+}
+
+/// The frame the fonts were last installed in: they are in use from the
+/// next one on (`Context::set_fonts`), so a text measured in a later frame
+/// was measured with them. `None` before any install (the tests).
+pub fn installed_at(ctx: &egui::Context) -> Option<u64> {
+    ctx.data(|data| data.get_temp(egui::Id::unique(INSTALLED_ID)))
 }
 
 fn has_weight_axis(font: &[u8]) -> bool {

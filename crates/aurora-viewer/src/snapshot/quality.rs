@@ -147,14 +147,20 @@ impl Held {
     }
 }
 
-/// The most each setting goes to (the top of its range in Aurora; Firestorm
-/// allows a draw distance of 1,024 m and a LOD factor of 8 by hand, Aurora
-/// draws up to 512 m and 4). Every avatar is drawn in full (no impostor up
-/// to Aurora's 100, no complexity limit): a photo shows people as they are.
+/// The most each setting goes to. The draw distance stays at 512 m on
+/// purpose, below Aurora's 1,024 m (the Legacy Viewer's slider): every metre
+/// beyond grows the ground's buffers by area ([`GROUND_BYTES_PER_M2`]), and a
+/// boost must not run a photo out of video memory; a user already at 1,024 m
+/// keeps it, since a boost never lowers a setting. The LOD factor goes to 4
+/// (the Legacy Viewer allows 8 by hand). Every avatar is drawn in full (no
+/// impostor up to Aurora's 100, no complexity limit): a photo shows people as
+/// they are.
 fn photo_maxima() -> Values {
     Values {
         draw_distance: 512.0,
         lod_factor: 4.0,
+        // the top of Preferences' Trees slider
+        tree_lod_factor: 1.0,
         max_avatars: 100,
         max_complexity: 0,
         shadow_quality: 4,
@@ -163,7 +169,7 @@ fn photo_maxima() -> Values {
         water_reflections: 4,
         mirrors: 4,
         reflection_probes: 3,
-        probe_count: 64,
+        probe_count: 256,
         anisotropy: 16,
         ..Preset::Deluxe.values()
     }
@@ -174,7 +180,7 @@ fn photo_maxima() -> Values {
 /// samples the GPU supports up to 8).
 pub const MSAA_8X: u8 = 4;
 
-/// The boosted values: each one at Aurora's most, never lower than the
+/// The boosted values: each one at the photo maxima, never lower than the
 /// user's (an unlimited complexity stays unlimited), the anti-aliasing at
 /// MSAA 8x. The particles, the screen-space reflections, the sharpening, the
 /// glow and Aurora's effects (bloom, contact shadows, indirect light) stay
@@ -185,6 +191,7 @@ pub fn boosted(user: Values) -> Values {
         antialiasing: MSAA_8X,
         draw_distance: user.draw_distance.max(top.draw_distance),
         lod_factor: user.lod_factor.max(top.lod_factor),
+        tree_lod_factor: user.tree_lod_factor.max(top.tree_lod_factor),
         max_avatars: user.max_avatars.max(top.max_avatars),
         max_complexity: top.max_complexity,
         shadow_quality: user.shadow_quality.max(top.shadow_quality),
@@ -322,7 +329,7 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     let ground = std::f64::consts::PI * f64::from(v.draw_distance).powi(2) * GROUND_BYTES_PER_M2;
     // HDR colour and depth at a fraction of the screen
     let reflection = |step: u8| (px * f64::from(Settings::reflection_scale(step)).powi(2) * 12.0) as u64;
-    let probes = u64::from(v.probe_count.clamp(8, 64)) * PROBE_BYTES;
+    let probes = u64::from(v.probe_count.clamp(8, 256)) * PROBE_BYTES;
     msaa + shadows + ground as u64 + reflection(v.water_reflections) + reflection(v.mirrors) + probes
 }
 
@@ -356,7 +363,7 @@ pub fn made_bytes(from: &Values, to: &Values, screen: Screen) -> u64 {
         }
     };
     let probes = if from.probe_count != to.probe_count {
-        u64::from(from.probe_count.clamp(8, 64)) * PROBE_BYTES
+        u64::from(from.probe_count.clamp(8, 256)) * PROBE_BYTES
     } else {
         0
     };
