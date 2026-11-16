@@ -271,6 +271,8 @@ impl Console {
             Vec2::new(340.0, 640.0),
         );
         window.min_size = Vec2::new(320.0, 560.0);
+        // the Legacy console's fixed width: only its height changes
+        window.height_only = true;
         window.show(ctx, p, &mut open, |ui| {
             let enabled = simulator != SimulatorStatus::NotEnabled;
             // Viewer status: what the Legacy Viewer reports about its navmesh
@@ -297,8 +299,8 @@ impl Console {
                 Tab::Test => 1,
             };
             let labels = [
-                (aurora_i18n::text("pathfinding-tab-view"), false),
-                (aurora_i18n::text("pathfinding-tab-test"), false),
+                (aurora_i18n::text("pathfinding-tab-view"), true),
+                (aurora_i18n::text("pathfinding-tab-test"), true),
             ];
             widgets::stretched_tabs(ui, p, &mut tab, &labels);
             self.tab = if tab == 1 { Tab::Test } else { Tab::View };
