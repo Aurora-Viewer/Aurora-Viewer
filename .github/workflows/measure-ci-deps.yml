@@ -37,11 +37,12 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      # the organisation has 20 hosted jobs at once, the merge queue first
-      max-parallel: 6
+      # the organisation has 20 hosted jobs at once, the merge queue first:
+      # three at a time, the three opt-levels of one part side by side
+      max-parallel: 3
       matrix:
-        opt: [0, 1, 3]
         part: [chat, interface, rest]
+        opt: [0, 1, 3]
         include:
           - part: chat
             filter: "ui::chat::"
