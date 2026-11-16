@@ -125,7 +125,14 @@ impl Profiles {
     }
 
     /// One of our picks saved (or created): its name in our profile too.
-    pub fn pick_saved(&mut self, owner: Uuid, pick: PickInfo) {
+    pub fn pick_saved(&mut self, owner: Uuid, mut pick: PickInfo) {
+        pick.creator = owner;
+        if let Some(old) = self.picks.get(&pick.id)
+            && old.parcel == pick.parcel
+            && old.pos_global == pick.pos_global
+        {
+            pick.sim_name.clone_from(&old.sim_name);
+        }
         if let Some(p) = self.map.get_mut(&owner) {
             match p.picks.iter_mut().find(|(id, _)| *id == pick.id) {
                 Some(e) => e.1 = pick.name.clone(),

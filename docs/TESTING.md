@@ -10002,6 +10002,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   offline opens a conversation, which the log lists at once with its
   inbox mark (the log says `conversation log demo: … entries`).
 
+  In `self:edit:2`, change a pick's description, save it and reopen the
+  profile. Its previous place stays. Set Location, save and change the text
+  again. The demo returns the parcel at the new position in both styles.
+
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
 underpants, skirt, alpha, tattoo or universal item. Optional modes are

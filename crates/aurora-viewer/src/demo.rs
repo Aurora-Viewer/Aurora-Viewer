@@ -2727,6 +2727,73 @@ const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0002), demo_snapshot(2)),
 ];
 
+/// A profile opened again in the demo keeps its saved picks. As on a grid,
+/// a read after Set Location returns the parcel at the saved coordinates.
+pub fn saved_profile_picks(profiles: &crate::world::profiles::Profiles, owner: Uuid, event: &mut NetEvent) {
+    match event {
+        NetEvent::AvatarProfile(profile) if profile.id == owner => {
+            if let Some(known) = profiles.get(&profile.id).filter(|p| !p.legacy) {
+                profile.picks.clone_from(&known.picks);
+            }
+        }
+        NetEvent::PickInfo(pick) if pick.creator == owner => {
+            if let Some(saved) = profiles.picks.get(&pick.id).filter(|p| p.creator == pick.creator) {
+                (**pick).clone_from(saved);
+                if pick.parcel.is_nil() {
+                    let (handle, _) = crate::world::place_details::remote_request_at(pick.pos_global);
+                    if let Ok(parcel) = place::parcel_id(handle)
+                        && let Some(NetEvent::ParcelInfo(info)) = place::parcel_info(parcel)
+                    {
+                        pick.parcel = parcel;
+                        pick.sim_name = info.sim_name;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod profile_pick_tests {
+    use super::*;
+
+    #[test]
+    fn saved_demo_pick_uses_the_parcel_at_its_location_and_reopens_in_its_owners_list() {
+        let owner = DEMO_AGENT;
+        let mut profiles = crate::world::profiles::Profiles::default();
+        profiles.insert(demo_profile(owner));
+        let id = Uuid::from_u128(99);
+        let saved = aurora_net::PickInfo {
+            id,
+            name: "New pick".into(),
+            desc: "Typed before reopening".into(),
+            pos_global: glam::DVec3::new(256_280.0, 256_040.0, 30.0),
+            ..Default::default()
+        };
+        profiles.pick_saved(owner, saved.clone());
+        let mut answer = demo_reply(&aurora_net::NetCommand::PickInfoRequest { creator: owner, pick: id })
+            .pop()
+            .unwrap();
+        saved_profile_picks(&profiles, owner, &mut answer);
+        let NetEvent::PickInfo(info) = answer else {
+            panic!("expected the pick")
+        };
+        assert_eq!(
+            info.parcel,
+            place::parcel_id(aurora_net::origin_to_handle(256_256, 256_000)).unwrap()
+        );
+        assert_ne!(info.parcel, land::PARCEL_UUID);
+        assert_eq!(
+            (info.pos_global, info.name.as_str(), info.desc.as_str()),
+            (saved.pos_global, "New pick", "Typed before reopening")
+        );
+        let mut profile = NetEvent::AvatarProfile(Box::new(demo_profile(owner)));
+        saved_profile_picks(&profiles, owner, &mut profile);
+        assert!(matches!(profile, NetEvent::AvatarProfile(p) if p.picks.iter().any(|(pick, name)| *pick == id && name == "New pick")));
+    }
+}
+
 fn demo_pick_name(pick: Uuid) -> &'static str {
     match pick.as_u128() & 0xF {
         1 => aurora_i18n::tr!("demo-aurora-beach"),

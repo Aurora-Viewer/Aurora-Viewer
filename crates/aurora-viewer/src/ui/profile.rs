@@ -253,6 +253,67 @@ impl Window {
         }
     }
 
+    /// A new pick or an explicit relocation asks the simulator for the parcel
+    /// it chose for those coordinates. A content-only save keeps that parcel.
+    fn save_pick(&mut self, actions: &mut Vec<ProfileAction>) {
+        let Some((edit, base)) = &mut self.pick_edit else {
+            return;
+        };
+        if edit == base {
+            return;
+        }
+        let refresh = edit.id.is_nil() || edit.location.is_some();
+        let pick = pick_of(edit);
+        let id = pick.id;
+        edit.id = id;
+        edit.location = None;
+        *base = edit.clone();
+        self.pick_sel = Some(id);
+        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
+        if refresh {
+            self.asked.remove(&id);
+            self.ask(
+                id,
+                NetCommand::PickInfoRequest {
+                    creator: self.id,
+                    pick: id,
+                },
+                actions,
+            );
+        }
+    }
+
+    /// Both styles edit a copy of the server's pick. A reply can resolve the
+    /// parcel while a name, description or picture is already being edited.
+    fn follow_pick(&mut self, info: &PickInfo) {
+        if let Some((edit, base)) = &mut self.pick_edit
+            && edit.id == info.id
+            && edit != base
+        {
+            // The simulator can also adjust the saved coordinates. A local
+            // Set Location remains the draft until Save or Cancel.
+            base.pos = info.pos_global;
+            base.parcel = info.parcel;
+            if edit.location.is_none() {
+                edit.pos = info.pos_global;
+                edit.parcel = info.parcel;
+            }
+            return;
+        }
+        let server = PickEdit {
+            id: info.id,
+            parcel: info.parcel,
+            name: info.name.clone(),
+            desc: info.desc.clone(),
+            snapshot: info.snapshot,
+            pos: info.pos_global,
+            location: None,
+        };
+        if self.pick_edit.as_ref().is_none_or(|(_, base)| *base != server) {
+            self.pick_edit = Some((server.clone(), server));
+        }
+    }
+
     fn ask(&mut self, id: Uuid, cmd: NetCommand, actions: &mut Vec<ProfileAction>) {
         if !id.is_nil() && self.asked.insert(id) {
             actions.push(ProfileAction::Net(cmd));
@@ -889,17 +950,7 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             actions.push(ProfileAction::Save { target: w.id, data });
         }
     }
-    if let Some((e, base)) = &mut w.pick_edit
-        && e != base
-    {
-        // a new pick gets its id once: saved again, it is the same pick
-        let pick = pick_of(e);
-        e.id = pick.id;
-        e.location = None;
-        *base = e.clone();
-        w.pick_sel = Some(pick.id);
-        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
-    }
+    w.save_pick(actions);
     if let Some((e, base)) = &mut w.classified_edit
         && e != base
     {
@@ -1959,27 +2010,12 @@ fn pick_detail(
 ) {
     let (p, world, own) = (c.p, c.world, c.own);
     let info = world.profiles.picks.get(&sel);
-    if !sel.is_nil() && info.is_none() {
+    if !sel.is_nil() && info.is_none_or(|i| i.parcel.is_nil()) {
         w.ask(sel, NetCommand::PickInfoRequest { creator: w.id, pick: sel }, actions);
     }
     // our own picks are edited in a copy of the server's
     if own && let Some(i) = info {
-        let server = PickEdit {
-            id: i.id,
-            parcel: i.parcel,
-            name: i.name.clone(),
-            desc: i.desc.clone(),
-            snapshot: i.snapshot,
-            pos: i.pos_global,
-            location: None,
-        };
-        let follow = match &w.pick_edit {
-            Some((e, base)) => e.id != i.id || (e == base && *base != server),
-            None => true,
-        };
-        if follow {
-            w.pick_edit = Some((server.clone(), server));
-        }
+        w.follow_pick(i);
     }
     let width = (ui.available_width() - 8.0).min(300.0);
     ui.set_max_width(width);
@@ -2093,13 +2129,13 @@ fn pick_detail(
             }
         }
     });
-    let mut created = None;
+    let mut save = false;
     if own && let Some((e, base)) = w.pick_edit.as_mut() {
         widgets::divider(ui, p);
         ui.horizontal(|ui| {
             if e.id.is_nil() {
                 if ui.button(aurora_i18n::tr!("ui-profile-create-place")).clicked() {
-                    created = Some(pick_of(e));
+                    save = true;
                 }
             } else {
                 let dirty = e != base;
@@ -2107,8 +2143,7 @@ fn pick_detail(
                     .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("ui-profile-save-location")))
                     .clicked()
                 {
-                    *base = e.clone();
-                    actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick_of(e)))));
+                    save = true;
                 }
                 if ui
                     .add_enabled(dirty, egui::Button::new(aurora_i18n::tr!("common-cancel")))
@@ -2119,10 +2154,8 @@ fn pick_detail(
             }
         });
     }
-    if let Some(pick) = created {
-        w.pick_sel = Some(pick.id);
-        w.pick_edit = None;
-        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
+    if save {
+        w.save_pick(actions);
     }
 }
 
@@ -2615,6 +2648,57 @@ mod tests {
         assert_eq!(saved.pos_global, edit.pos);
         assert_eq!(saved.id, edit.id);
         assert_eq!(saved.snapshot, edit.snapshot);
+    }
+
+    #[test]
+    fn relocating_a_pick_refreshes_its_parcel_and_keeps_newer_content_edits() {
+        let owner = Uuid::from_u128(40);
+        let mut w = Window::new(owner);
+        let mut info = PickInfo {
+            id: Uuid::from_u128(41),
+            parcel: Uuid::from_u128(42),
+            pos_global: DVec3::new(256_001.0, 256_002.0, 30.0),
+            ..Default::default()
+        };
+        w.follow_pick(&info);
+        w.asked.insert(info.id);
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.pos.x += 256.0;
+        edit.parcel = Uuid::nil();
+        edit.location = Some("Moved".into());
+        let mut actions = Vec::new();
+        w.save_pick(&mut actions);
+        assert!(matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick)),
+            ProfileAction::Net(NetCommand::PickInfoRequest { creator, pick: id })]
+            if pick.parcel.is_nil() && pick.pos_global.x == 256_257.0 && *creator == owner && *id == info.id));
+        w.ask(
+            info.id,
+            NetCommand::PickInfoRequest {
+                creator: owner,
+                pick: info.id,
+            },
+            &mut actions,
+        );
+        assert_eq!(actions.len(), 2);
+
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.desc = "New description".into();
+        info.pos_global = edit.pos + DVec3::new(0.0, 0.0, 0.001);
+        info.parcel = Uuid::from_u128(43);
+        w.follow_pick(&info);
+        actions.clear();
+        save_all(&mut w, &mut actions);
+        assert!(matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick))]
+            if pick.parcel == info.parcel && pick.pos_global == info.pos_global && pick.desc == "New description"));
+
+        let (edit, _) = w.pick_edit.as_mut().unwrap();
+        edit.pos.y += 256.0;
+        edit.parcel = Uuid::nil();
+        edit.location = Some("Moved again".into());
+        w.follow_pick(&info);
+        let (edit, base) = w.pick_edit.as_ref().unwrap();
+        assert!(edit.parcel.is_nil() && edit.location.is_some());
+        assert_eq!(base.parcel, info.parcel);
     }
 
     #[test]

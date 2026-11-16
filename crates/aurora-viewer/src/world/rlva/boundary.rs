@@ -44,6 +44,11 @@ impl World {
     /// added on the wire; the watchdog replaces what a replacing wear may
     /// replace once the object's point is known.
     pub fn rlva_note_sent(&mut self, command: &mut NetCommand, actor: Uuid, now: std::time::Instant) {
+        // @showloc compares a pick update to its previous saved position.
+        // Only a permitted update can become that position for the next edit.
+        if let NetCommand::PickUpdate(pick) = command {
+            self.profiles.pick_saved(self.agent_id, (**pick).clone());
+        }
         self.rlva_note_attachment_command(command, actor, now);
         self.note_outfit_command(command);
         self.rlva.note_sit_command(command, actor);
