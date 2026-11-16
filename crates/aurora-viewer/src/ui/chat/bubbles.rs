@@ -509,7 +509,9 @@ mod tests {
         );
         output.textures_delta.clear();
         let shapes: Vec<&egui::Shape> = output.shapes.iter().map(|c| &c.shape).collect();
-        // the ink of each text, glyph by glyph as the tessellator places them
+        // the ink of each text, glyph by glyph as the tessellator places them;
+        // Latin letters and digits only, as a kanji's ink rises above a
+        // capital's (a Japanese date marker reads 2020年1月1日)
         let texts = shapes
             .iter()
             .filter_map(|s| match s {
@@ -522,7 +524,7 @@ mod tests {
                     .rows
                     .iter()
                     .flat_map(|row| row.row.glyphs.iter().map(move |g| (row.pos.y, g)))
-                    .filter(|(_, g)| !g.uv_rect.is_nothing())
+                    .filter(|(_, g)| !g.uv_rect.is_nothing() && g.chr.is_ascii())
                     .map(|(row_y, g)| {
                         let top = t.pos.y + row_y + (g.pos.y + g.uv_rect.offset.y).round();
                         (top, top + g.uv_rect.size.y)

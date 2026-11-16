@@ -3810,7 +3810,10 @@ mod tests {
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
-        let label = world.inventory.folders[&Uuid::from_u128(703)].info.name.clone();
+        // The first tile of the gallery: the names sort in the language's
+        // order, and a filter would show every list group open.
+        let outfit = st.shown_outfits(&world.inventory)[0];
+        let label = world.inventory.folders[&outfit].info.name.clone();
         let pos = label_position(&ctx, &mut world, &mut st, &label) + egui::vec2(10.0, -50.0);
         let mut actions = Vec::new();
         for _ in 0..2 {
@@ -3837,7 +3840,7 @@ mod tests {
         }
         assert!(actions.is_empty(), "double-click must not dispatch Wear: {actions:?}");
         assert_eq!(st.tab, 1);
-        assert_eq!(st.outfit_selection.focus, Some(Uuid::from_u128(703)));
+        assert_eq!(st.outfit_selection.focus, Some(outfit));
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
         }
@@ -4624,7 +4627,9 @@ mod tests {
         let _icons = icons::Icons::load(&ctx, None);
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
-        let names: Vec<_> = [714, 715].map(|id| world.inventory.items[&Uuid::from_u128(id)].name.clone()).into();
+        // two worn clothing items (not the jacket: Japanese names it like the
+        // worn outfit, whose name heads the panel)
+        let names: Vec<_> = [714, 716].map(|id| world.inventory.items[&Uuid::from_u128(id)].name.clone()).into();
         let mut st = AppearanceUi::default();
         st.open(2, false);
         for _ in 0..5 {
