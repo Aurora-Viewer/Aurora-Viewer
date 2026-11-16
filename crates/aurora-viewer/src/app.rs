@@ -3342,6 +3342,8 @@ impl App {
         // would act on another session's objects
         self.delete_confirm = None;
         self.moderation_ask = None;
+        self.god_kick_ask = None;
+        self.group_chat_confirm = None;
         self.object_menu = Default::default();
         self.place_confirm = None;
         self.places_ui.forget_question();
