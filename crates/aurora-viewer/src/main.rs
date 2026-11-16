@@ -329,7 +329,7 @@ fn run_headless() -> anyhow::Result<()> {
     app.shutdown_headless();
     slurl_handoff::release();
     aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
-    settings::Settings::wait_saved(std::time::Duration::from_secs(5));
+    saves::wait(std::time::Duration::from_secs(5));
     drop(app);
     Ok(())
 }
