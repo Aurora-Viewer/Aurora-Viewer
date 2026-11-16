@@ -369,6 +369,7 @@ fn main_steps(f: &Averages) -> Vec<(RowId, f64)> {
             (Part::ParamsPartSources, RowId::SceneParticles),
             (Part::ParamsPartSim, RowId::SceneParticles),
             (Part::ParamsPartList, RowId::SceneParticles),
+            (Part::ParamsPartOrder, RowId::SceneParticles),
             (Part::ParamsLights, RowId::SceneLights),
             (Part::ParamsProbes, RowId::SceneLights),
             (Part::ParamsMirror, RowId::RenderWater),
