@@ -160,7 +160,11 @@ pub(super) fn new_menu(
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
-        submit(st, actions, rules::create_folder(id, aurora_i18n::tr!("common-new-folder")));
+        submit(
+            st,
+            actions,
+            rules::create_folder(id, crate::text_validation::default_name("common-new-folder")),
+        );
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),

@@ -1,3 +1,8 @@
+# The Rust version, the same on every PC and in the CI: rustup installs it by
+# itself at the first Cargo command. "stable" would be whatever each machine
+# already has: a PC one release behind the CI gets other clippy lints than
+# the CI does. A new stable release is taken by a pull request that changes
+# this line (Dependabot opens it, .github/dependabot.yml).
 [toolchain]
-channel = "stable"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

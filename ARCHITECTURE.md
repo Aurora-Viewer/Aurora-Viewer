@@ -1858,7 +1858,7 @@ displayed.
 ```
 aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace: version, edition, licence, common lints
-├─ rust-toolchain.toml          stable Rust (always the latest version)
+├─ rust-toolchain.toml          the Rust version, the same on every PC and in the CI (rustup installs it; Dependabot proposes the next stable release)
 ├─ rustfmt.toml                 formatting (140-character lines)
 ├─ README.md                    overview, differences from Firestorm, build
 ├─ AGENTS.md                    rules for AI agents (Claude, Codex…)
@@ -1887,6 +1887,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
 │  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude)
+├─ .claude/                     Claude Code settings shared by every contributor's agents: `settings.json` runs `hooks/shell-rules.sh` before each shell command of an agent, which refuses the ones AGENTS.md forbids (section 5, "Tools"; tested by `scripts/test-agent-hook.ps1`)
 └─ .github/                     CI and wiki publication (workflows/, actions/), release and nightly betas, PR template, Dependabot
 ```
 
@@ -1898,6 +1899,8 @@ one-line command (`scripts/setup.ps1`, then the tools):
 ├─ aurora-viewer\               the repository
 ├─ phoenix-firestorm\           official Firestorm sources (read-only)
 ├─ RELEASE\                     --release build of the latest main (scripts/build-release.ps1)
+├─ .cargo\                      Cargo configuration of the repository and of every task, written by the scripts: the build gate (`aurora-build-gate-*`, its `build-slots\`) and the compiler cache
+├─ .sccache\                    compiler cache shared by the tasks (sccache)
 └─ work\                        one git worktree per agent task
 ```
 
@@ -1918,6 +1921,7 @@ one-line command (`scripts/setup.ps1`, then the tools):
 | `aurora-audio` | Audio output: mixer with the SL volume channels, music streams, world sounds, wind noise; HTTPS radio uses rustls with platform certificate verification (`http.rs`), including intermediate-chain completion on Windows/macOS (#1628). `playlist.rs` resolves bounded PLS/M3U documents and the playlist exported by an AzuraCast public player before decoding, with discovered links and their redirects restricted to the same HTTP(S) origin. Stream failures are typed (`StreamError`: web page, playlist, HTTP status, TLS, connection, address, audio format, interruption), and a retry keeps the last error until audio returns (#2582). |
 | `aurora-voice` | SL voice over WebRTC (receiving and sending). `link_stats.rs`: one `voice stats:` log line every 5 s during a call (what waits in the receive and send queues, the arrival lag, the RTCP jitter and loss of both streams), to tell a delay built in the viewer from one on the network or the server |
 | `aurora-media` | Host of the SLPlugin media plugins (CEF for the web, LibVLC for video, GStreamer instead on Linux), taken from Aurora's media plugins pack or from a folder chosen in the preferences; pixels in Win32 or POSIX shared memory. On macOS the plugins live in `SLPlugin.app/Contents/Frameworks` (`PluginPaths::bundle_in`: the pack's `llplugin/`, a folder, or a Legacy Viewer's application), are `.dylib` files, and SLPlugin runs in that folder; the viewer's `media/keys.rs` sends CEF the Cocoa key data of the Legacy Viewer's window, and `Modifiers::command` carries the Command key. On Linux, `stream_volume.rs` sets a web page's volume on the sound server, which the Linux CEF plugin does not do |
+| `aurora-build-gate` | Development tool, not a part of the viewer: the compiler wrapper the scripts give Cargo (`rustc-wrapper` of `<project folder>\.cargo\config.toml`, written by `Sync-BuildCache` of `scripts/common.ps1`). Every compile of the viewer crate waits there for one of `AURORA_BUILD_SLOTS` build slots (a locked file of `.cargo\build-slots\`, freed by the system when the process ends), whatever the Cargo command; the other crates go straight through, and the compiler is handed over to sccache when it is installed. One file and the standard library only: the scripts build it with `rustc` alone, before Cargo can run. |
 
 Dependencies between crates (simplified):
 

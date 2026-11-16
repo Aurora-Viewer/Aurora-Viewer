@@ -162,6 +162,7 @@ pub(super) fn show(
                                 None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                                 Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                             },
+                            field_w,
                         );
                         super::input::prepare(ui, conv_input, local);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);

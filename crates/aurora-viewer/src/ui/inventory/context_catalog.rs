@@ -1187,7 +1187,7 @@ pub(super) fn execute(
     match command {
         Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
-        Command::Folder(id) => submit(rules::create_folder(id, aurora_i18n::tr!("common-new-folder"))),
+        Command::Folder(id) => submit(rules::create_folder(id, crate::text_validation::default_name("common-new-folder"))),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {
