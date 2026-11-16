@@ -6364,6 +6364,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
   capture after frame 850 to inspect the final ground-sitting pose.
+  `run-temprun`, `run-alwaysrun`, `run-both`, `run-none` and `run-late` send
+  a double tap through the input path at frames 720 to 722, held until 750,
+  under that restriction (`run-late`: @temprun arrives at 730, mid-run). The
+  log gives each `demo: SetAlwaysRun(...) sent`, the `tap gap` (over
+  0.25 s is a slow frame, no double tap: run it again) and, at frames 740
+  and 749, `temp_run=` and `running=`. Only `run-alwaysrun` and `run-none`
+  run; `run-late` stops at 730 with a `SetAlwaysRun(false)`. `run-autopilot`
+  runs to a point from frame 720 instead, with @temprun set at 730 and
+  released at 745: `SetAlwaysRun` goes true, false, then true.
+  `run-autopilot-always` turns Always run on at 715, runs to a point from
+  720 and gets @alwaysrun at 730: Always run goes off, the run to the point
+  goes on, so the `SetAlwaysRun` sent at 730 stays true.
   `selftest` runs the RLVa self-test of the Dev Toolbox (T1,
   [docs/DEV_TOOLBOX.md](DEV_TOOLBOX.md#the-rlva-self-test)): its
   confirmation dialog opens at frame 300 with the in-world cases ticked and
