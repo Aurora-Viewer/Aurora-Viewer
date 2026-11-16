@@ -727,6 +727,23 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
         "the delivery is never opened"
     );
     assert!(!moved.contains(&id(23)), "Party Dresses is a shelf");
+    // a mesh body's, a furniture set's and a skin pack's own folders
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 10, 1, "Velmora Body Delivery");
+    add_folder(&mut inv, 12, 10, "Hands");
+    add_folder(&mut inv, 13, 10, "Feet");
+    add_folder(&mut inv, 14, 1, "Boho Bedroom Set");
+    add_folder(&mut inv, 15, 14, "PG");
+    add_folder(&mut inv, 16, 14, "Adult");
+    add_folder(&mut inv, 17, 1, "Lumen Skin - Lelutka");
+    add_folder(&mut inv, 18, 17, "Light");
+    add_folder(&mut inv, 19, 17, "Dark");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        ![12, 13, 15, 16, 18, 19].iter().any(|n| moved.contains(&id(*n))),
+        "deliveries never opened"
+    );
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

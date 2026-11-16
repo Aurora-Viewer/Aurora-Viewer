@@ -1673,7 +1673,8 @@ pub(super) fn show(
     while inv.queue.len() < REQUESTS_AT_ONCE
         && let Some(id) = state.to_request.pop()
     {
-        if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Unknown) {
+        // (a folder excluded since it was listed is never read)
+        if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Unknown) && !prefs.sorter.excludes(inv, id) {
             inv.request(id);
         }
     }
@@ -1685,7 +1686,11 @@ pub(super) fn show(
     if let Some((task, (plan, layout))) = Planning::take(&mut state.planning)
         && task.source == source
     {
-        state.to_request.extend(plan.unfetched.iter().copied());
+        // (made with older options, an exclusion since among them: its
+        // folders to read are not taken, the next plan lists its own)
+        if task.options == prefs.sorter {
+            state.to_request.extend(plan.unfetched.iter().copied());
+        }
         state.layout = Some((task.generation, layout));
         state.preview = Some((task.generation, task.options, plan));
     }
@@ -1734,7 +1739,9 @@ pub(super) fn show(
     if let Some((task, plan)) = Planning::take(&mut state.cleaning)
         && let Some((choices, from, day)) = task.cleanup
     {
-        state.to_request.extend(plan.unfetched.iter().copied());
+        if task.options == prefs.sorter {
+            state.to_request.extend(plan.unfetched.iter().copied());
+        }
         state.cleanup = Some((task.generation, choices, from, day, plan));
     }
     if state.tab == CLEANUP && !busy && state.cleaning.is_none() {

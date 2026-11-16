@@ -1394,8 +1394,14 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let read = classify(sub_name, -1, 0);
         let named_again = sub_words.iter().any(|w| own.contains(w));
         // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
-        let fatpack = !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()));
-        let kind_only = !fatpack && !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w));
+        // (a skin's tones too: `Light`, `Tan`, `Dark`)
+        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+        let fatpack = !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || tone(w));
+        // (a kind written as a phrase: `Hair Base`)
+        let phrase_kind = is_kind(&sub_words.join(" "));
+        let kind_only = !fatpack
+            && !sub_words.is_empty()
+            && (phrase_kind || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w)));
         let many = kind_only && sub_words.iter().any(|w| plural_kind(w));
         // a body's or a head's version (`Lelutka`, `Catwa EvoX`), Squish,
         // Waifus, or the product's own name again
@@ -1447,7 +1453,7 @@ fn product_words(name: &str) -> Vec<String> {
 }
 
 /// The folders a product's delivery holds beside its body versions.
-const VERSION_WORDS: [&str; 28] = [
+const VERSION_WORDS: [&str; 35] = [
     "hud",
     "huds",
     "textures",
@@ -1476,6 +1482,13 @@ const VERSION_WORDS: [&str; 28] = [
     "appliers",
     "body",
     "head",
+    "hands",
+    "feet",
+    "pg",
+    "adult",
+    "singles",
+    "couples",
+    "bento",
 ];
 
 /// Words a user names a shelf of their own with, never a product.
