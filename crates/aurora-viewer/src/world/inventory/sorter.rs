@@ -1019,8 +1019,8 @@ fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
         // `(Mesh)`, `[DEMO]`, `*NEW*`: a status, not a store
         && !tag_words.iter().all(|w| VOCABULARY.store_stopwords.contains(w))
         // `~ Fave Rings ~`, `[My Rings]`: a shelf's name in decoration
-        && !(enclosed
-            && tag_words.iter().all(|w| {
+        // (`Clothes - Winter`, `Gifts: Mia` neither, before a dash)
+        && !(tag_words.iter().all(|w| {
                 SHELF_WORDS.contains(&w.as_str())
                     || VOCABULARY.store_stopwords.contains(w)
                     || VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w))
@@ -1650,7 +1650,14 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
                 && !loose_plural(w)
         })
         .collect();
-    if own.is_empty() || f.items.is_empty() {
+    // (a dated name is the user's: `Mia & Me 10.12.2016`)
+    let dated = name.split(|c: char| !c.is_ascii_digit() && c != '.').any(|token| {
+        let parts: Vec<&str> = token.split('.').filter(|p| !p.is_empty()).collect();
+        parts.len() >= 2
+            && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
+            && (parts.iter().any(|p| p.len() == 4) || parts.iter().all(|p| p.len() == 2))
+    });
+    if own.is_empty() || f.items.is_empty() || dated {
         return false;
     }
     let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
@@ -1658,7 +1665,10 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
     // holding `Harvester mesh`, two of its words at least)
     if let [only] = items.as_slice() {
         let item_words = words(only);
-        return own.len() >= 2 && own.iter().filter(|w| item_words.contains(w)).count() >= 2;
+        let held = own.iter().filter(|w| item_words.contains(w)).count();
+        // (one word of its own is enough beside a box's word: `Harvester
+        // mesh BOX` holding `Harvester mesh table`)
+        return held >= 2 || held == 1 && classify(name, -1, 0).unpacker;
     }
     // (beside a shelf word, `Group Gifts`, `Rare Gacha`, only an item whose
     // first word is the folder's own: a creator puts the brand first)
@@ -2200,7 +2210,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 45] = [
+const SHELF_WORDS: [&str; 52] = [
     "my",
     "old",
     "new",
@@ -2246,12 +2256,19 @@ const SHELF_WORDS: [&str; 45] = [
     "collections",
     "fave",
     "faves",
+    "female",
+    "male",
+    "women",
+    "womens",
+    "men",
+    "mens",
+    "unisex",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone
 /// (`Party Dresses`, `Christmas`), a product's beside a singular one
 /// (`Party Dress`, `Christmas Sweater`).
-const OCCASION_WORDS: [&str; 15] = [
+const OCCASION_WORDS: [&str; 19] = [
     "party",
     "casual",
     "formal",
@@ -2267,6 +2284,10 @@ const OCCASION_WORDS: [&str; 15] = [
     "winter",
     "spring",
     "autumn",
+    "xmas",
+    "easter",
+    "valentine",
+    "valentines",
 ];
 
 /// A name with a word of its own beyond kinds, bodies, shelf words and

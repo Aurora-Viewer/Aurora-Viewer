@@ -28,8 +28,12 @@ fn folder(id: Uuid, parent: Uuid, name: &str, kind: i32) -> Folder {
 
 /// My Inventory with an Objects folder, its contents named as creators do.
 fn fixture(names: &[&str]) -> Inventory {
+    // (each fixture its own generation: the folder judgement's memo is
+    // keyed by it, and a test's layouts are built in the same place)
+    static FIXTURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let mut inv = Inventory {
         root: id(1),
+        generation: FIXTURES.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed),
         ..Default::default()
     };
     inv.folders.insert(id(1), folder(id(1), Uuid::nil(), "My Inventory", 8));
@@ -556,6 +560,9 @@ const OLD: i64 = 1_400_000_000;
 const NEW: i64 = 1_700_000_000;
 
 fn add_folder(inv: &mut Inventory, at: u128, parent: u128, name: &str) {
+    // (a change, as the inventory counts one: the folder judgement's memo
+    // never answers for another layout built in the same place)
+    inv.generation += 1;
     inv.folders.insert(id(at), folder(id(at), id(parent), name, -1));
     inv.folders.get_mut(&id(parent)).expect("parent").children.push(id(at));
 }
@@ -3367,4 +3374,33 @@ fn a_folder_that_failed_to_load_is_unknown_never_empty() {
     };
     let plan = plan_cleanup(&inv, &Preferences::default(), &cleanup, inv.root, today(), &none, &none);
     assert!(!plan.rows.iter().any(|r| r.id == id(901) || r.id == id(900)));
+}
+
+/// Audit 44: a shelf word before a dash is no store, holidays and genders
+/// are no brand, a dated name is the user's, and a box's folder of one
+/// product with one word of its own stays whole.
+#[test]
+fn shelf_dashes_holidays_genders_and_dates_are_shelves() {
+    let none = HashSet::new();
+    let shelves: [(&str, &[&str]); 6] = [
+        ("Old - Dresses", &["Zephyr Gown", "Quillon Frock"]),
+        ("Xmas 2023", &["Xmas Tree by Velmora", "Kira Xmas Sweater", "Lumen Xmas Lights"]),
+        ("Xmas Decor", &["Zephyr Wreath", "Quillon Candle"]),
+        ("Female", &["Velmora Top Female", "Kira Hair Female", "Lumen Boots (Female)"]),
+        ("Swimwear Men", &["Zephyr Trunks", "Quillon Shorts"]),
+        ("Mia & Me 10.12.2016", &["Mia's gift", "Mia Birthday Card"]),
+    ];
+    for (name, items) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Harvester mesh BOX");
+    add_item(&mut inv, 950, 900, "Harvester mesh table", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(950)), "the box's folder stays whole");
 }
