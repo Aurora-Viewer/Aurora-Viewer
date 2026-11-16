@@ -52,7 +52,7 @@ use parking_lot::Mutex;
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
 pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
-pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
+pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE, MAX_RATE, MIN_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use reverb::ReverbParams;
@@ -278,6 +278,14 @@ impl AudioEngine {
     /// that has not played yet takes it at once.
     pub fn world_reverb_send(&self, id: u64, factor: f32) {
         let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
+    }
+
+    /// Playback rate of a world sound, its Doppler shift: above 1 higher
+    /// (coming closer), below 1 lower (going away), within
+    /// [`MIN_RATE`]..[`MAX_RATE`]. Glides over a buffer; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_rate(&self, id: u64, rate: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldRate(id, rate));
     }
 
     /// The reverb of the surroundings on with these parameters (they glide

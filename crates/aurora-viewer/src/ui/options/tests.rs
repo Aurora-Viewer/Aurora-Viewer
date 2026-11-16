@@ -124,6 +124,7 @@ const BEFORE: &[&str] = &[
     "show_perf",
     "show_minimap",
     "show_bug_report",
+    "show_stand_fly_panel",
     "place_bar_stretch",
     "place_bar_rights_text",
     "favorites_access",
@@ -210,6 +211,16 @@ const BEFORE: &[&str] = &[
     "chat_bubbles_hide_console",
     "typing_bubbles",
     "chat_bubble_opacity",
+    "window_opacity_active",
+    "window_opacity_inactive",
+    "conversations_opacity",
+    "conversations_active_opacity_override",
+    "bar_opacity",
+    "menu_opacity",
+    "console_opacity",
+    "minimap_opacity",
+    "pie_opacity_override",
+    "pie_opacity",
     "toast_friends_online",
     "friends_online_in_chat",
     "presence_position",
@@ -238,6 +249,7 @@ const BEFORE: &[&str] = &[
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
+    "log_legacy_layout",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
@@ -251,6 +263,7 @@ const BEFORE: &[&str] = &[
     "mouse_sensitivity",
     "invert_mouse",
     "world_mouse_walk",
+    "mmo_mouse_buttons",
     "arrows_strafe",
     "arrow_keys_always_move",
     "letter_keys_move",
@@ -397,8 +410,9 @@ fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
-        // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer;
+        // the colored sky ambient and order-independent transparency:
+        // Graphics, and Aurora with the other differences from the Legacy
+        // Viewer;
         // inventory delete confirm: Confirmations and Inventory (#2344)
         if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
@@ -657,7 +671,8 @@ fn the_search_finds_settings_on_their_pages() {
         .expect("inventory shortcut")
         .label();
     assert!(counts(&mut s, &inventory).hits(Page::Shortcuts) >= 1);
-    assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
+    let anti_spam = cx::fold(aurora_i18n::tr!("anti-spam-title"));
+    assert!(counts(&mut s, &anti_spam).hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());
@@ -1799,6 +1814,84 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
 }
 
+/// Confirmations lists every "don't ask / don't show again" answer, as the
+/// Legacy Viewer's Alerts tab: the questions of other pages (their own
+/// rows, counted on their page) and the warnings with no page of their
+/// own, which come back from there.
+#[test]
+fn the_confirmations_page_lists_every_question_and_warning() {
+    use aurora_i18n::tr;
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    s.gpu_driver_dismissed = "32.0.15.6094".into();
+    s.debug_settings_warning_ignored = true;
+    s.fly_override_warned = true;
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    }
+    let shows = |key: &str| texts.iter().any(|t| t.source == key);
+    for key in [
+        tr!("task-transfer-warn-move"),
+        tr!("task-transfer-warn-scripted"),
+        tr!("ui-options-confirm-no-transfer-settings"),
+        tr!("ui-options-warn-before-external-links"),
+        tr!("ui-options-group-snooze-ask"),
+        tr!("ui-options-confirm-hide-interface"),
+        tr!("poser-confirm-close"),
+        tr!("ui-options-debug-settings-warning"),
+        tr!("ui-options-fly-override-caution"),
+        tr!("ui-options-driver-warning"),
+        tr!("ui-options-skipped-update"),
+        "32.0.15.6094",
+    ] {
+        assert!(shows(key), "{key} on Confirmations");
+    }
+
+    // the dismissals count as changes of this page, the borrowed rows on theirs
+    s.warn_external_links = false;
+    let c = counts(&mut s, "");
+    assert_eq!(c.modified(Page::Confirmations), 3);
+    assert_eq!(c.modified(Page::Protections), 1);
+    let found = counts(&mut s, &cx::fold(tr!("ui-options-warn-before-external-links")));
+    assert_eq!(found.hits(Page::Confirmations), 0);
+
+    // "Show again" (the nearest to its row's label) brings the driver
+    // warning back
+    let label = |texts: &[crate::ui::widgets::elide_tests::Text], key: &str| {
+        texts
+            .iter()
+            .find(|t| t.source == key)
+            .unwrap_or_else(|| panic!("the row {key}"))
+            .rect
+    };
+    let driver = label(&texts, tr!("ui-options-driver-warning"));
+    let again = texts
+        .iter()
+        .filter(|t| t.source == tr!("ui-options-show-again"))
+        .min_by(|a, b| {
+            a.rect
+                .center()
+                .distance(driver.center())
+                .total_cmp(&b.rect.center().distance(driver.center()))
+        })
+        .expect("a Show again button")
+        .rect;
+    assert!(again.bottom() < 900.0, "the button is on the test screen");
+    for events in click(again.center()) {
+        page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, events);
+    }
+    assert!(s.gpu_driver_dismissed.is_empty());
+    assert!(r.changed);
+    texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    assert!(!texts.iter().any(|t| t.source == "32.0.15.6094"));
+
+    // the page's reset brings back its own warnings, not the borrowed rows
+    reset_page_settings(Page::Confirmations, &mut s);
+    assert!(!s.debug_settings_warning_ignored && !s.fly_override_warned);
+    assert!(!s.warn_external_links, "the link warning is reset with Protections");
+}
+
 #[test]
 fn the_weather_lives_in_graphics_only() {
     // (and in the Aurora Weather window; Preferences › Aurora, the choices
@@ -1809,6 +1902,41 @@ fn the_weather_lives_in_graphics_only() {
         .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
         .collect();
     assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}
+
+#[test]
+fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
+    // behind the puddles' cog, the wet ground's distance still acts with
+    // them off (the wet ground is drawn in any rain), their ice does not:
+    // the label's ink, found by a search for its own text (the tests may
+    // run in French)
+    let p = crate::theme::Theme::default().palette();
+    let ink = |label: &str| {
+        let mut s = Settings::default();
+        s.weather.puddles = false;
+        let d = Settings::default();
+        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+        let mut frames = Frames::new();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frames.shapes(Vec::new(), |ui| {
+                ui.set_width(700.0);
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Search, label);
+                // Sky and environment, where the weather is
+                run_page(&mut cx, Page::Graphics, Some(2));
+            });
+        }
+        shapes
+            .iter()
+            .find_map(|shape| match shape {
+                // a row behind a cog is found as "Puddles › <its label>"
+                egui::Shape::Text(t) if t.galley.text().ends_with(&format!("› {label}")) => Some(t.fallback_color),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the row {label}"))
+    };
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-distance")), p.ink, "the wet ground's distance");
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-ice")), p.muted, "the puddles' ice");
 }
 
 #[test]

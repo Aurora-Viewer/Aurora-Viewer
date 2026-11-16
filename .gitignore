@@ -49,5 +49,10 @@ Thumbs.db
 # Per-task scratch files (agents)
 /.scratch/
 
+# Claude Code: each person's own settings and the worktrees of its app. The
+# shared settings (.claude/settings.json) and hook (.claude/hooks/) are in git.
+/.claude/settings.local.json
+/.claude/worktrees/
+
 # Python's bytecode caches (scripts/*.py)
 __pycache__/

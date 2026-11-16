@@ -896,6 +896,12 @@ pub enum EstateCommand {
     /// The Estate panel's "Apply" (LLEstateInfoModel::sendEstateInfo):
     /// EstateChangeInfo, else `estatechangeinfo` with a new invoice.
     SetEstateInfo { handle: RegionHandle, info: EstateInfo },
+    /// The "Region settings" tab's "Apply" (Aurora-Sim based grids):
+    /// DispatchOpenRegionSettings, nothing without it.
+    SetOpenRegionSettings {
+        handle: RegionHandle,
+        settings: crate::open_region::OpenRegionSettings,
+    },
     /// The Terrain panel's "Apply".
     SetTerrain {
         handle: RegionHandle,

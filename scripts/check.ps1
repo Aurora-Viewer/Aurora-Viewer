@@ -1,7 +1,8 @@
 ﻿<#
 .SYNOPSIS
-    The CI checks, locally: syntax of the PowerShell scripts, formatting,
-    clippy (warnings = errors) and tests. Run it before each PR.
+    The CI checks, locally: syntax of the PowerShell scripts, the shell hook
+    of the agents (.claude/hooks), formatting, clippy (warnings = errors)
+    and tests. Run it before each PR.
 
     Clippy and the tests wait for a build slot when other heavy builds
     already run on the PC (AURORA_BUILD_SLOTS, 2 by default; common.ps1).
@@ -17,6 +18,7 @@ $clippyArgs = @('-D', 'warnings')
 if ($PSVersionTable.PSEdition -ne 'Desktop' -and -not $IsWindows) { $clippyArgs += @('-A', 'dead-code') }
 $steps = @(
     @{ Name = 'PowerShell scripts (5.1 parser)'; Run = { & "$PSScriptRoot\check-scripts.ps1" } },
+    @{ Name = 'Shell hook of the agents'; Run = { & "$PSScriptRoot\test-agent-hook.ps1" } },
     @{ Name = 'Formatting (rustfmt)'; Run = { cargo fmt --all -- --check } },
     @{ Name = 'Clippy'; Heavy = $true; Run = { cargo clippy --workspace --all-targets --locked -- @clippyArgs } },
     @{ Name = 'Tests'; Heavy = $true; Run = { cargo test --workspace --locked } }
