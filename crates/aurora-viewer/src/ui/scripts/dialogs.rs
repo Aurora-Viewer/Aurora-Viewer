@@ -166,7 +166,7 @@ impl Search {
         }
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-query"));
-            self.query_field(ui, id, source, 220.0);
+            self.query_field(ui, p, id, source, 220.0);
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-replacement"));
@@ -194,15 +194,13 @@ impl Search {
         ui.label(RichText::new(&self.status).color(p.muted));
     }
 
-    fn query_field(&mut self, ui: &mut egui::Ui, id: Id, source: &str, width: f32) {
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .id(Id::unique(Self::WINDOW).with("query"))
-                    .hint_text(aurora_i18n::tr!("script-search-query"))
-                    .desired_width(width),
-            )
-            .on_hover_text(aurora_i18n::tr!("script-search-query"));
+    fn query_field(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &str, width: f32) {
+        let response = crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| {
+            edit.id(Id::unique(Self::WINDOW).with("query"))
+                .hint_text(aurora_i18n::tr!("script-search-query"))
+                .desired_width(width)
+        })
+        .on_hover_text(aurora_i18n::tr!("script-search-query"));
         if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
             editing::select(ui.ctx(), response.id, 0..self.query.chars().count(), true);
         }
@@ -223,7 +221,7 @@ impl Search {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
-            self.query_field(ui, id, source, Self::INLINE_FIELD_WIDTH);
+            self.query_field(ui, p, id, source, Self::INLINE_FIELD_WIDTH);
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
             crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             if !self.status.is_empty() {
@@ -341,7 +339,7 @@ impl Preferences {
                     });
                     let preview = "/* LSL */\ninteger counter = 0;\ndefault\n{\n    state_entry()\n    {\n        string greeting = \"Hello\";\n        llSay(PUBLIC_CHANNEL, greeting);\n    }\n}";
                     egui::Frame::new().fill(settings.color(ColorRole::Background, p)).inner_margin(6.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false)));
+                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false, false)));
                     });
                     crate::ui::widgets::divider(ui, p);
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.word_wrap, aurora_i18n::tr!("script-preferences-word-wrap"));
@@ -386,6 +384,8 @@ impl Preferences {
 pub(super) struct Help {
     pub open: bool,
     pub keyword: String,
+    /// The script is SLua: its words and help are Lua's.
+    pub lua: bool,
     history: Vec<String>,
     at: usize,
     filter: String,
@@ -393,7 +393,7 @@ pub(super) struct Help {
 
 impl Help {
     pub fn visit(&mut self, name: &str) {
-        if reference::get(name).is_none() || self.keyword == name {
+        if reference::get(name, self.lua).is_none() || self.keyword == name {
             return;
         }
         self.history.truncate(self.at + 1);
@@ -406,7 +406,7 @@ impl Help {
             return false;
         }
         if settings.help_follows_cursor {
-            self.visit(editing::word(source, editing::cursor(ctx, id).primary.index.0));
+            self.visit(editing::word(source, editing::cursor(ctx, id).primary.index.0, self.lua));
         }
         let before = settings.help_follows_cursor;
         Floater::new(
@@ -433,17 +433,17 @@ impl Help {
                 }
                 crate::ui::widgets::checkbox(ui, p, &mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
             });
-            ui.text_edit_singleline(&mut self.filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| edit);
             let mut selected = None;
             egui::ComboBox::from_id_salt((id, "help_word"))
                 .selected_text(&self.keyword)
                 .height(220.0)
                 .show_ui(ui, |ui| {
-                    for entry in reference::all()
+                    for entry in reference::all(self.lua)
                         .iter()
                         .filter(|e| self.filter.is_empty() || e.name.to_lowercase().contains(&self.filter.to_lowercase()))
                     {
-                        if ui.selectable_label(entry.name == self.keyword, &entry.name).clicked() {
+                        if crate::ui::widgets::search_list_item(ui, entry.name == self.keyword, &entry.name).clicked() {
                             selected = Some(entry.name.clone());
                         }
                     }
@@ -456,12 +456,12 @@ impl Help {
                 self.at = self.history.len() - 1;
                 self.keyword = name;
             }
-            if let Some(entry) = reference::get(&self.keyword) {
+            if let Some(entry) = reference::get(&self.keyword, self.lua) {
                 ui.label(RichText::new(&entry.signature).monospace().color(p.teal));
                 egui::ScrollArea::vertical().max_height(225.0).show(ui, |ui| {
                     ui.label(&entry.tooltip);
                 });
-                ui.hyperlink_to(aurora_i18n::tr!("script-help-wiki"), reference::url(&entry.name));
+                ui.hyperlink_to(aurora_i18n::tr!("script-help-wiki"), reference::url(&entry.name, self.lua));
             } else {
                 ui.label(aurora_i18n::tr!("script-help-select"));
             }

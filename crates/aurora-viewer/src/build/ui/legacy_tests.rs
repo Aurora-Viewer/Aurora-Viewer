@@ -488,8 +488,15 @@ fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
 
 fn scroll_shape(inspector: &mut Inspector, delta: f32) {
     let (window, _) = inspector.show(vec![]);
+    // A wheel over a number field steps that field. The reserved scrollbar
+    // strip is beside the columns, and it stays clear while the content moves.
+    let at = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-scroll")))
+        .map(|content| egui::pos2(content.right() + 4.0, content.center().y))
+        .unwrap_or(egui::pos2(window.right() - 16.0, window.bottom() - 80.0));
     inspector.show(vec![
-        egui::Event::PointerMoved(egui::pos2(window.center().x, window.bottom() - 80.0)),
+        egui::Event::PointerMoved(at),
         egui::Event::MouseWheel {
             phase: egui::TouchPhase::Move,
             source: egui::MouseWheelSource::Wheel,
@@ -625,4 +632,48 @@ fn legacy_shape_restored_fields_commit_typed_values_for_extended_prims() {
         };
         assert!((got - value.parse::<f32>().unwrap()).abs() < 0.001, "{label}: {got}");
     }
+}
+
+#[test]
+fn legacy_texture_blinn_phong_keeps_rows_apart_at_large_text_size() {
+    let mut inspector = legacy();
+    crate::theme::Theme::default().apply(&inspector.ctx, 1.75);
+    crate::ui::fonts::apply(&inspector.ctx, crate::ui::fonts::DEFAULT);
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    inspector.screen = vec2(1600.0, 1400.0);
+    // Keep the normal Legacy width. Height is only enough to show the scaled
+    // Blinn-Phong canvas at 1.75×; the floater min_size itself does not grow.
+    let min = crate::build::ui::legacy::MIN_SIZE;
+    resize_inspector(&mut inspector, vec2(min.x, 900.0));
+    let (_, texts) = inspector.show(vec![]);
+    let glossiness = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-legacy-glossiness"))
+        .expect("Glossiness stays reachable at 1.75× text size")
+        .1;
+    let channel = [
+        aurora_i18n::tr!("build-ui-texture-diffuse"),
+        aurora_i18n::tr!("build-ui-texture-normal"),
+        aurora_i18n::tr!("build-ui-texture-specular"),
+    ]
+    .map(|label| {
+        texts
+            .iter()
+            .rev()
+            .find(|(text, rect)| *text == label && rect.top() >= glossiness.bottom() - 1.0)
+            .unwrap_or_else(|| panic!("{label} channel tab must sit below Glossiness"))
+            .1
+    });
+    assert!(
+        channel.windows(2).all(|pair| (pair[0].top() - pair[1].top()).abs() < 2.0),
+        "UV channel tabs stay on one row below the Blinn-Phong properties"
+    );
+    let maps = ["Diffuse", "Normal", "Specular"].map(|target| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", target.to_string()))))
+            .unwrap()
+    });
+    assert!(maps.windows(2).all(|pair| pair[0].bottom() <= pair[1].top() + 1.0));
 }

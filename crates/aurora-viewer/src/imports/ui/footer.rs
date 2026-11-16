@@ -167,8 +167,12 @@ pub(super) fn show(
             #[cfg(test)]
             ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_upload_action"), (upload.rect, ui.clip_rect(), can_upload)));
             if upload.clicked() {
-                imports.confirm = true;
-                imports.confirm_choice = Some(imports.choice);
+                if needs_confirmation(imports, world, total) {
+                    imports.confirm = true;
+                    imports.confirm_choice = Some(imports.choice);
+                } else {
+                    actions.push(start_action(imports.choice));
+                }
             }
         }
         if busy {
@@ -179,6 +183,14 @@ pub(super) fn show(
         }
     });
     ui.cursor().top() - footer_start
+}
+
+/// The confirmation is a payment check: an upload the account's benefits make
+/// free (L$0) starts at once, like the Legacy Viewer's upload buttons, which ask
+/// nothing more than their price. It stays when it still has something to say:
+/// the destination folders it will create.
+fn needs_confirmation(imports: &Imports, world: &crate::world::World, total: Option<i32>) -> bool {
+    total != Some(0) || (imports.folders.active() && !imports.folder_plan_ready(world))
 }
 
 #[cfg(test)]

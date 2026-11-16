@@ -111,37 +111,36 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.10 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Debug settings, like the Legacy Viewer</h3>
-      Every setting by name in one window, from the toolbar or
-      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
-      changed, and reset any of them to its default.
+      <h3>The Director</h3>
+      Film in the world: keep camera views as keyframes on a timeline,
+      play them back as one smooth shot with the world alone, and record
+      it to a video file with your own ffmpeg.
     </td>
     <td width="50%" valign="top">
-      <h3>More of the Legacy Viewer's options</h3>
-      Build preferences for new prims, a progressive draw distance, the
-      Trees detail, large surface protection, particles from worn objects,
-      camera smoothing up to 300 and a limit for the chat lines above the
-      chat bar.
+      <h3>Transparency in its true order</h3>
+      Glass, curtains and the layers of mesh hair show in the right order
+      at every pixel, even when they cross. Choose it in Preferences ›
+      Graphics, "Order of transparent surfaces"; the Stochastic choice
+      is thanks to Anne Skydancer.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>A fuller world</h3>
-      Neighbouring regions appear at your draw distance, objects no longer
-      vanish at some camera angles, and the world comes back by itself
-      after video memory was full at login. Media screens in busy regions
-      load again.
+      <h3>Weather and water</h3>
+      Aurora Weather reaches farther, with puddles and lying snow up to
+      256 m away and much steadier snow. Water and ambient occlusion cost
+      less for the same image.
     </td>
     <td valign="top">
-      <h3>Calls, music and chat</h3>
-      Private calls stay connected across teleports, parcel music no longer
-      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
-      the Japanese IME shows the active conversion segment.
+      <h3>More like the Legacy Viewer</h3>
+      The Conversation log, draw distance up to 1024 m, the Animation
+      Speed menu, beacons, radar marks, Doppler on moving sounds, and
+      objects saved as Collada or OBJ.
     </td>
   </tr>
 </table>
@@ -871,6 +870,14 @@ the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
 
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
+
 ### Hover height
 
 Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.
@@ -1069,8 +1076,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
@@ -1124,9 +1132,13 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
 With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
 Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
@@ -1149,6 +1161,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |

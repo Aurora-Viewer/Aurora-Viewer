@@ -522,14 +522,12 @@ dependencies = [
  "aurora-llsd",
  "base64 0.23.1",
  "cc",
- "crossbeam-channel",
  "flate2",
  "glam 0.34.1",
  "image",
  "log",
  "meshopt",
  "openjpeg-sys",
- "parking_lot 0.13.0",
  "parry3d",
  "rayon",
  "ring",
@@ -560,6 +558,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-build-gate"
+version = "0.1.0"
+
+[[package]]
 name = "aurora-i18n"
 version = "0.1.0"
 dependencies = [
@@ -567,7 +569,6 @@ dependencies = [
  "fluent-syntax",
  "log",
  "sys-locale",
- "unic-langid",
 ]
 
 [[package]]
@@ -614,7 +615,6 @@ dependencies = [
  "aurora-prim",
  "aurora-version",
  "base64 0.23.1",
- "bitflags 2.13.2",
  "crossbeam-channel",
  "glam 0.34.1",
  "log",
@@ -638,7 +638,6 @@ name = "aurora-prim"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -653,6 +652,7 @@ dependencies = [
  "bytemuck",
  "egui",
  "egui-wgpu",
+ "flate2",
  "glam 0.34.1",
  "intel_tex_2",
  "libc",
@@ -663,9 +663,8 @@ dependencies = [
  "openxr",
  "parking_lot 0.13.0",
  "pollster 1.0.1",
- "rayon",
+ "spirv",
  "thiserror 2.0.21",
- "uuid",
  "wgpu",
  "windows-sys 0.61.2",
 ]
@@ -720,7 +719,6 @@ dependencies = [
  "crossbeam-channel",
  "directories",
  "egui",
- "egui-wgpu",
  "egui-winit",
  "emojis",
  "encoding_rs",
@@ -744,6 +742,7 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
  "parking_lot 0.13.0",
  "png",
  "pulldown-cmark",
@@ -768,7 +767,6 @@ dependencies = [
  "unicode-bidi-mirroring",
  "uuid",
  "wayland-client",
- "wgpu",
  "windows",
  "windows-sys 0.61.2",
  "winit",

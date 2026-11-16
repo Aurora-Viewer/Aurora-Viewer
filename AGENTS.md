@@ -99,6 +99,16 @@ best implementation for Aurora.
   example: `Port of LLMotionController::updateMotionsByType
   (indra/llcharacter/llmotioncontroller.cpp, originally LGPL 2.1)`. This code
   is distributed under the GPLv3 (see [NOTICE.md](NOTICE.md)).
+- **Credit the authors of what you port, in the same PR.** Open the header
+  of the source file you follow: when its copyright names someone other than
+  Linden Research or The Phoenix Firestorm Project (a resident, another
+  viewer's project, a shader's author), add or extend their line in the
+  "Authors of the ported code" table of [NOTICE.md](NOTICE.md), with the
+  Aurora files that follow it. Code under another licence (MIT, BSD,
+  Apache…) keeps its notice: its own NOTICE.md section with the licence
+  text, and the notice at the top of the ported file. A test of `check.ps1`
+  fails when the table names a file that no longer exists: a renamed or
+  moved file takes its credit along. When in doubt, credit.
 - An implementation that differs from Firestorm's is normal. A difference in
   **visible behaviour** (feature, rendering, defaults) is not: only when it
   is justified (and then better for the user), and noted in the code and in
@@ -185,12 +195,15 @@ worktree, branch, `target` folder and logs.
 - The worktree is created in `../work/<name>` from an up-to-date
   `origin/main`. Its `target/` is its own: your builds do not disturb the
   other agents and theirs do not disturb you.
-- The first build of a worktree takes a few minutes; that is normal. When
-  sccache is installed, the scripts point Cargo at a compiler cache shared by
-  all the worktrees (`<project folder>\.sccache`, through
-  `<project folder>\.cargo\config.toml`): the dependencies another task
-  already built come from there. Do not change or delete these two, and do
-  not set `RUSTC_WRAPPER` yourself. A build that stops on `sccache.exe …
+- The first build of a worktree takes a few minutes; that is normal. The
+  scripts write `<project folder>\.cargo\config.toml`, which every Cargo
+  command of the repository and of the tasks reads. It runs each compiler
+  through the build gate (section 5, "Build slots") and, when sccache is
+  installed, through a compiler cache shared by all the worktrees
+  (`<project folder>\.sccache`): the dependencies another task already built
+  come from there. Do not change or delete that file, the gate next to it
+  (`aurora-build-gate-*`, `build-slots\`) nor the cache, and do not set
+  `RUSTC_WRAPPER` yourself. A build that stops on `sccache.exe …
   didn't exit successfully` with no compiler error lost the cache server
   (process killed): run it again.
 - **Build only in your worktree**, with its default `target/`: no custom
@@ -203,6 +216,14 @@ worktree, branch, `target` folder and logs.
   `--release` only to measure performance: it rebuilds everything a second
   time (about 3 GB more). For a `--release` exe of `main`, the human has
   `scripts/build-release.ps1`.
+  - One exception, which `Cargo.toml` applies on its own
+    (`[profile.test.package.aurora-viewer]`): the viewer crate's test
+    executable is built without optimisation, because it is the heaviest
+    compile of the workspace and only runs the tests. It keeps the line
+    tables of `dev`, and nothing else is built differently: the
+    dependencies, the other crates, clippy and the viewer of `cargo run`
+    keep the `dev` profile. Pass no `--profile` and no `--config profile.…`
+    yourself: another setting builds the executable a second time.
 - `new-task.ps1` frees, on its way, the `incremental/` caches of the tasks
   that have built nothing for 24 hours, and the whole `target/` of the tasks
   whose PR is merged or that have built nothing for 2 days (the code stays).
@@ -271,17 +292,64 @@ Before each significant commit, and always before the PR:
 ./scripts/check.ps1   # scripts parse in PowerShell 5.1, cargo fmt --check, clippy -D warnings, tests
 ```
 
-- **Build slots**: several agents share the PC. Before clippy and the tests,
-  `check.ps1` takes one of two build slots, and waits for one to be free
-  ("Waiting for a build slot…") while two other heavy builds run, then
-  holds it until the end. That wait is normal: let it run, do not kill it
-  nor go around it (`AURORA_BUILD_SLOTS` is the human's setting). A demo
-  launch (`cargo run`) takes no slot.
+- **Build slots**: several agents share the PC, and one compile of the
+  viewer crate takes 8 to 17 GB of memory. Two limits share the PC, each of
+  `AURORA_BUILD_SLOTS` slots (the human's setting, 2 by default):
+  - **the build gate**: every compile of the `aurora_viewer` crate waits for
+    a free slot, whatever started it (`cargo test`, `clippy`, `build`,
+    `run`, `check.ps1`). It waits without a message: a build that stays on
+    `aurora_viewer` while the processor is idle is behind the builds of
+    other tasks;
+  - **`check.ps1`** takes a slot of its own before clippy and the tests
+    ("Waiting for a build slot…") and holds it until the end. A demo launch
+    (`cargo run`) does not take this one: only the gate holds its compile.
+
+  Both waits are normal: let them run. Do not kill a waiting build to start
+  it again (it only waits again), and do not go around the gate (no
+  `RUSTC_WRAPPER`, no `--config`, no other `CARGO_HOME`).
 - **Tests: always the whole workspace**, filtered by name if needed:
   `cargo test --workspace <filter>`, never `cargo test -p <crate>` alone.
   One crate alone resolves the features of its dependencies differently, and
   Cargo builds them a second time (about a minute, then again at the next
   `--workspace` build).
+- **Fast feedback is clippy, not a test build.** While you develop, check
+  that the code compiles and lints with
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`: it is
+  the command of `check.ps1`, takes 1.5 to 4 minutes and 3 to 8 GB, and
+  `check.ps1` reuses what it built (`cargo check` costs the same and is not
+  reused). A test build (`cargo test --workspace <filter>`) rebuilds the
+  viewer's whole test executable: about 3 minutes and 13 GB the first time,
+  30 to 50 seconds and 9 to 10 GB after an edit (it is built without
+  optimisation, section 3), more memory than clippy either way. Run it once
+  the code compiles and lints, not after every edit.
+- **Tools.** "Repair / update" of `aurora-tools.cmd` installs `rg`
+  (ripgrep), `fd`, `jq` and `ast-grep`; Linux and macOS take them from
+  their packages ([docs/LINUX.md](docs/LINUX.md),
+  [docs/MACOS.md](docs/MACOS.md)). One that is missing is no reason to
+  stop: say so to your human and use what you have.
+  - **Search** text and files with your own search tools, or with `rg` and
+    `fd` in a shell, never with `grep -r`, `findstr` nor a recursive
+    `Get-ChildItem`: `rg` and `fd` skip what `.gitignore` names, where the
+    others read the GB of `target/`.
+  - **JSON** is filtered before you read it, with `jq` or `gh … --jq`: the
+    fields you need, not the whole reply.
+  - **A search or a rewrite by the shape of the code** (every call of a
+    function, the same change in many files) uses `ast-grep`
+    (`ast-grep -p '<pattern>' -l rust <folder>`): a regular expression
+    misses the calls split over several lines and matches the comments.
+  - **`cargo test` stays the test runner**, not `cargo nextest`: the run
+    takes seconds (the time is in the build), and the CI and `check.ps1` use
+    it.
+  - **Claude Code refuses the forbidden commands itself**, through the
+    hook of `.claude/settings.json` (`.claude/hooks/shell-rules.sh`): a
+    recursive `grep`, `findstr` or `Get-ChildItem | Select-String` where
+    `rg` is installed, `cargo test -p <crate>`, `cargo +<toolchain>`, and
+    an override of the compiler wrapper, which goes around the build gate
+    (`RUSTC_WRAPPER`, `--config build.rustc-wrapper`). Its message names
+    the command to use: use it, do not reword the refused one to get it
+    through. If it refuses a command that breaks none of these rules, tell
+    your human. A rule that changes here changes in the hook and in its
+    test table (`scripts/test-agent-hook.ps1`) in the same PR.
 
 - **macOS code is built on GitHub only.** The agents' PCs build Windows;
   the Linux and macOS paths (`cfg(unix)`, `cfg(target_os = "macos")`, the
@@ -314,6 +382,28 @@ Before each significant commit, and always before the PR:
 - **Up-to-date dependencies**: we use the latest versions (stable Rust,
   crates). A new dependency must be maintained, under a GPL v3 compatible
   licence (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), and justified in the PR.
+- **One Rust version for everyone**: `rust-toolchain.toml` names it, and
+  rustup installs it by itself at the first Cargo command, on every PC and
+  in the CI. A new stable release comes in through its own pull request,
+  which changes that line (Dependabot opens it; it is handled like its
+  other PRs, section 13): never change it in a task's PR, and never build
+  with another toolchain (`cargo +…`, `RUSTUP_TOOLCHAIN`). The only
+  exception is the fuzzing targets, which need nightly
+  (`cargo +nightly fuzz`, [docs/TESTING.md](docs/TESTING.md#fuzzing)). After
+  a pull that changes it, the next build downloads the new version and
+  recompiles everything once. `new-task.ps1` and `check.ps1` install it
+  first, one at a time for the PC: two Cargo commands that start together
+  on a PC that lacks it both install it, and one fails (`component download
+  failed`, or a `rustc` that is not found). Run it again, or run
+  `check.ps1` first after such a pull.
+- **Every change to `Cargo.lock`** (a dependency added, removed or updated,
+  Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
+  commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in
+  Help › About, so that every published build carries its crates' notices.
+  A test of `check.ps1` fails when the file names a crate version
+  `Cargo.lock` no longer has. A licence missing from
+  `packaging/licenses/about.toml` stops the script: add it there only once
+  it is checked to be GPL v3 compatible.
 - **Performance and smoothness first** (Rust, multithreading, Vulkan):
   - use the GPU to the full: GPU-driven work (culling, draw generation,
     compute), fewer round trips with the CPU, never a wait on the GPU in the
@@ -665,6 +755,7 @@ them):
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |
 | Creators' permissions | ✅ same as the Legacy Viewer or stricter, both interface styles |
+| Credits | ✅ authors of the ported files in NOTICE.md, THIRD-PARTY-LICENSES.md regenerated if Cargo.lock changed |
 | Secrets / personal data | ✅ none |
 | Docs (README, ARCHITECTURE, TASKS) | ✅ |
 
@@ -862,7 +953,7 @@ stands:
 | `In progress` | actively worked on | the agent that takes the issue |
 | `On hold` | paused on purpose, until something named in a comment unblocks it | an agent or the project manager |
 | `Waiting for user response` | waiting for an answer from the reporter or another user: information, a file, a reproduction, a test | the agent that asked for it |
-| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md) | the agent, at the end of the work |
+| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md); closed once the fix is released ("Reply and close") | the agent, at the end of the work |
 | `Done` | resolved and closed | the agent, or GitHub after `Closes #<n>` |
 
 - **`Waiting for user response`**: as soon as a comment asks the reporter (or
@@ -1001,7 +1092,8 @@ both are done:
   once and for all. Run it alone, with no `cd` or `;`.
 
 - **Resolved**: close only when the solution covers the whole issue, has
-  been verified (human validation if needed) and, if it requires a change to
+  been verified (human validation if needed, or its fix released: next
+  point) and, if it requires a change to
   the repository, its PR is merged. A question can be resolved by a verified
   answer with a link to the relevant documentation. `Closes #<n>` in the
   body of a PR to `main` closes the issue automatically on merge; use
@@ -1011,6 +1103,16 @@ both are done:
   Post a summary with the link of every PR that fixed it, the tests and the
   available version, or state that the fix is still waiting for a release.
   Check the final state, including after an automatic close.
+- **Fix released, validation pending** (🟡 in TASKS.md, `Waiting Review`):
+  once every PR that fixes the issue is in a published release, close it
+  with `--reason completed`, even before the QA's or the reporter's
+  validation. The comment names the PRs and the first version that has
+  them, says that the testers will still check it, and asks the reporter
+  to reply on the issue if the problem is still there, so that it is
+  reopened (a reporter cannot reopen an issue a maintainer closed). The 🟡
+  line stays in TASKS.md for the QA. Keep the issue open while a part is
+  left (a ⬜ line, an open PR that names it, a reporter who says it still
+  happens), and do not close an epic this way.
 - **Established duplicate**: explain the link with the reference issue (its
   number in the comment), then close with
   `gh issue close <n> --repo Aurora-Viewer/Aurora-Viewer --duplicate-of <reference-number>`.
@@ -1020,7 +1122,22 @@ both are done:
 - **Missing information, unreadable attachment, problem not reproduced or
   partial fix**: keep the issue open, say in a comment what is missing and
   set its Status to `Waiting for user response` when the reporter has to
-  answer, `On hold` when something else blocks it (above). A lack
-  of reply and a mere hypothesis are not enough to close it. If new evidence
+  answer, `On hold` when something else blocks it (above). A mere
+  hypothesis is not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.
+- **No reply for a week**: when the last comment is the team's question or
+  request to the reporter and nobody answered for more than 7 days, close
+  the issue with `--reason "not planned"`. The comment says that we asked
+  and did not hear back, and that a reply on the issue reopens it. Not when
+  the last comment is from another user the team has not answered, nor
+  when an open PR names the issue.
+- **Old crash reports** (sent from the crash window, the
+  `<!-- aurora-crash v1 -->` marker): a report from a version older than
+  0.9.4 lacks the details that tell its cause apart (the settings that were
+  on, the first GPU loss, what the card was doing). Close it with
+  `--reason "not planned"` and ask for a new report from the crash window
+  if the crash happens again on a current version. Reports of 0.9.4 and
+  later are grouped by the Crash triage workflow (docs/BUG_REPORTING.md,
+  "Crash triage"), never by their title alone: "GPU device lost" is a
+  symptom, not a cause.
