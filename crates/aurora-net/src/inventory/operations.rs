@@ -101,11 +101,13 @@ async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, id
     let mut reads = super::ais::ItemReads::default();
     for chunk in ids.chunks(50) {
         let body = super::fetch_items_body(chunk, owner);
-        match crate::caps::post_llsd(http, fetch, &body).await {
+        match crate::caps::post_llsd_as(http, fetch, &body, crate::probe::HttpKind::Inventory).await {
             Ok(answer) => {
                 let read = super::item_reads(&answer, chunk);
                 reads.items.extend(read.items);
-                reads.missing.extend(read.missing);
+                // left out of an answer is weaker than a 404: read again,
+                // never taken as deleted (the batch would count it done)
+                reads.failed.extend(read.missing);
                 reads.failed.extend(read.failed);
             }
             Err(error) => {

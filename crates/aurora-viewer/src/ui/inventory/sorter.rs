@@ -122,6 +122,9 @@ pub(super) struct State {
     journal: SharedJournal,
     /// A run the viewer stopped before its end, to resume.
     unfinished: Option<sorter::journal::Unfinished>,
+    /// That run being read off the frame (a stopped 400,000-move run is a
+    /// large file), when the window first opens.
+    unfinished_loading: Option<std::sync::mpsc::Receiver<Option<sorter::journal::Unfinished>>>,
     snapshots: Vec<(i64, std::path::PathBuf)>,
     /// Batches confirmed since the journal was last written.
     unsaved: usize,
@@ -155,6 +158,8 @@ pub(super) struct State {
     /// still loading: it opens its preview once they are (checked again
     /// when the inventory changes from this generation).
     undo_waiting: Option<u64>,
+    /// The folders Undo waits for (gathered once at the click).
+    undo_folders: Vec<Uuid>,
     /// Whether all a saved or whole-inventory source reads is loaded, at an
     /// inventory generation: checked again only when the inventory changes.
     source_loaded: Option<(u64, bool)>,
@@ -284,7 +289,15 @@ impl SharedJournal {
                 );
                 let slot = shared.clone();
                 let load = move || {
-                    let mut journal = read();
+                    // a reader that fails badly (a bug) never leaves the
+                    // history loading for the whole session
+                    let mut journal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|_| {
+                        log::warn!("auto-sort: the history could not be read: Undo starts empty");
+                        sorter::journal::Journal {
+                            read_only: true,
+                            ..Default::default()
+                        }
+                    });
                     journal.number_runs();
                     slot.with(|j| *j = journal);
                 };
@@ -848,9 +861,19 @@ impl State {
                 Default::default()
             }
         });
-        self.unfinished = j::load(&j::unfinished_path(&dir))
-            .ok()
-            .filter(|u: &j::Unfinished| !u.moves.is_empty());
+        let (send, read) = std::sync::mpsc::channel();
+        let path = j::unfinished_path(&dir);
+        let load = move || {
+            let unfinished = j::load(&path).ok().filter(|u: &j::Unfinished| !u.moves.is_empty());
+            let _ = send.send(unfinished);
+        };
+        if std::thread::Builder::new()
+            .name("auto-sort run to resume".into())
+            .spawn(load)
+            .is_ok()
+        {
+            self.unfinished_loading = Some(read);
+        }
         self.snapshots = j::snapshots(&dir);
     }
 
@@ -1270,6 +1293,15 @@ pub(super) fn show(
     }
     if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
         st.sorter.load_account(agent);
+        // the stopped run, once read; a run started meanwhile replaced it
+        if let Some(read) = &st.sorter.unfinished_loading
+            && let Ok(unfinished) = read.try_recv()
+        {
+            st.sorter.unfinished_loading = None;
+            if st.sorter.job.is_none() {
+                st.sorter.unfinished = unfinished;
+            }
+        }
     }
     // one run at a time per account, across inventory windows
     if st.sorter.window.is_nil() {
@@ -1517,6 +1549,8 @@ pub(super) fn show(
         // A folder moved whole is loaded with all it holds too, else it
         // would be kept as "not loaded". Read again only when the inventory
         // changes, never every frame.
+        // (not looked at while a run goes: nothing is planned then)
+        Source::Saved(..) if busy => true,
         Source::Saved(moves, _) => match state.source_loaded {
             Some((generation, loaded)) if generation == inv.generation => loaded,
             _ => {
@@ -3362,20 +3396,17 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
     if let Some(unfinished) = &state.unfinished {
         let label = aurora_i18n::tr!("inventory-sorter-resume-run", count = unfinished.moves.len());
         if action_button(ui, p, "player-play-filled", &label, ActionKind::Primary, size).clicked() {
-            // read again: the run may have been ended by another window
-            let fresh = state.account_dir().and_then(|dir| {
-                sorter::journal::load::<sorter::journal::Unfinished>(&sorter::journal::unfinished_path(&dir))
-                    .ok()
-                    .filter(|u| !u.moves.is_empty())
-            });
-            match fresh {
-                Some(unfinished) => {
-                    let moves = std::sync::Arc::new(unfinished.moves.clone());
-                    state.unfinished = Some(unfinished);
-                    state.set_source(Source::Saved(moves, Restoring::Resume));
-                    state.tab = PREVIEW;
-                }
-                None => state.unfinished = None,
+            // gone: the run was ended by another window (never read again on
+            // the frame, only looked for)
+            let there = state
+                .account_dir()
+                .is_some_and(|dir| sorter::journal::unfinished_path(&dir).exists());
+            if there {
+                let moves = std::sync::Arc::new(unfinished.moves.clone());
+                state.set_source(Source::Saved(moves, Restoring::Resume));
+                state.tab = PREVIEW;
+            } else {
+                state.unfinished = None;
             }
         }
     }
@@ -3408,17 +3439,27 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             if clicked || state.undo_waiting.is_some_and(|seen| seen != inv.generation) {
                 // the folders the runs put entries in are loaded first, else
                 // an entry not known yet would be counted as staying
-                let loading: Vec<Uuid> = state.journal.with(|j| {
-                    j.runs
-                        .iter()
-                        .filter(|run| run.undoes.is_none())
-                        .flat_map(|run| run.entries.iter().filter_map(|e| e.to))
-                        .filter(|to| unloaded(Some(*to)))
-                        .collect::<HashSet<_>>()
-                        .into_iter()
-                        .collect()
-                });
-                if loading.is_empty() {
+                // (gathered from the journal once, at the click; then only
+                // the folders still loading are looked at again)
+                if clicked {
+                    state.undo_folders = state.journal.with(|j| {
+                        j.runs
+                            .iter()
+                            .filter(|run| run.undoes.is_none())
+                            .flat_map(|run| run.entries.iter().filter_map(|e| e.to))
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect()
+                    });
+                }
+                state.undo_folders.retain(|to| unloaded(Some(*to)));
+                let loading: Vec<Uuid> = state
+                    .undo_folders
+                    .iter()
+                    .copied()
+                    .filter(|to| inv.folders.get(to).is_some_and(|f| f.state == FetchState::Unknown))
+                    .collect();
+                if state.undo_folders.is_empty() {
                     state.undo_waiting = None;
                     start_undo(inv, state, worn, &protected);
                 } else {
@@ -3431,7 +3472,13 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             }
         }
         None => {
-            ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-undo-none")).small().color(p.muted));
+            // (nothing yet while the history is still being read)
+            let text = if state.journal.with(|j| j.loading) {
+                aurora_i18n::tr!("inventory-sorter-history-loading")
+            } else {
+                aurora_i18n::tr!("inventory-sorter-undo-none")
+            };
+            ui.label(RichText::new(text).small().color(p.muted));
         }
     }
     ui.add_space(6.0);
@@ -3740,6 +3787,10 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
     }
 }
 
+/// Destination groups drawn in the preview (an Undo of a whole inventory has
+/// one per folder, tens of thousands): the rest are counted.
+const PREVIEW_GROUPS: usize = 300;
+
 /// Rows drawn in one preview group: the rest is counted.
 const PREVIEW_ROWS: usize = 300;
 
@@ -3762,7 +3813,9 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
         ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-kept", count = plan.kept)).color(p.muted));
     }
     ui.add_space(4.0);
-    for (label, rows) in plan.grouped() {
+    let groups = plan.grouped();
+    let shown = groups.len().min(PREVIEW_GROUPS);
+    for (label, rows) in groups.into_iter().take(shown) {
         let title = format!("{label}  ({})", rows.len());
         crate::ui::widgets::collapsing(ui, p, ("inventory_sorter_group", &label), title, false, |ui| {
             for m in rows.iter().take(PREVIEW_ROWS) {
@@ -3770,6 +3823,13 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
             }
             more(ui, p, rows.len());
         });
+    }
+    if plan.group_count() > shown {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("inventory-cleanup-more", count = plan.group_count() - shown))
+                .small()
+                .color(p.muted),
+        );
     }
     if !plan.unknown.is_empty() {
         let title = format!("{}  ({})", aurora_i18n::tr!("inventory-sorter-not-recognised"), plan.unknown.len());

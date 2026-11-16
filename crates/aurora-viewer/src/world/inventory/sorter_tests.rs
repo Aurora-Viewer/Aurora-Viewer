@@ -574,6 +574,31 @@ fn add_item(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i6
     add_typed(inv, at, parent, name, created, 6);
 }
 
+/// A whole sort opens the user's own folders, even named for a category or
+/// a body, and moves the products inside them whole.
+#[test]
+fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "My Dresses");
+    add_folder(&mut inv, 81, 80, "Kitoomi - Hex Dress");
+    add_item(&mut inv, 200, 81, "Kitoomi - Hex Dress Maitreya", 0);
+    add_folder(&mut inv, 82, 1, "Stuff");
+    add_item(&mut inv, 201, 82, "Velvet Hair Bow", 0);
+    add_folder(&mut inv, 83, 1, "Reborn Stuff");
+    add_folder(&mut inv, 84, 83, "Winter");
+    add_folder(&mut inv, 85, 84, "[Kitoomi] Coat");
+    add_item(&mut inv, 202, 85, "Coat", 0);
+    let none = HashSet::new();
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    for own in [80, 82, 83, 84] {
+        assert!(!moved.contains(&id(own)), "the user's folder {own} is opened, never moved");
+    }
+    assert!(moved.contains(&id(81)) && moved.contains(&id(85)), "products move whole");
+    assert!(moved.contains(&id(201)), "a loose item of Stuff is sorted");
+    assert!(!moved.contains(&id(200)) && !moved.contains(&id(202)), "a product is never opened");
+}
+
 /// A Pre-Trash word rule taking denim, freebies, the Hex dress and anything
 /// called old.
 fn word_rule(skip_sorted: bool) -> Preferences {

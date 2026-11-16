@@ -594,7 +594,13 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
                 .filter(|(_, k)| k.contains(' ') && has(&words, k))
                 .filter(|(_, k)| {
                     let phrase: Vec<String> = k.split(' ').map(str::to_owned).collect();
-                    matched.iter().any(|m| m.split(' ').count() < phrase.len() && has(&phrase, m))
+                    // the word it extends, and nowhere else in the name
+                    // (`Kiara Hair w/ Hair Flower` is still hair)
+                    matched.iter().any(|m| {
+                        m.split(' ').count() < phrase.len()
+                            && has(&phrase, m)
+                            && words.iter().filter(|w| *w == *m).count() <= phrase.iter().filter(|w| *w == *m).count()
+                    })
                 })
                 .max_by_key(|(_, k)| k.split(' ').count());
             Some(longer.map_or(*first, |(c, _)| c))
@@ -903,6 +909,13 @@ pub fn store<'a>(name: &'a str) -> Option<String> {
     .find_map(|(tag, enclosed)| store_tag(tag, enclosed))
 }
 
+/// A bracketed tag says more than a status and what the item is: `[Moon
+/// Hair]` keeps `moon`, `[Mesh Dress]` or `[Rigged Hair]` nothing.
+fn names_more_than_kind(tag_words: &[String]) -> bool {
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    tag_words.len() >= 2 && tag_words.iter().any(|w| !VOCABULARY.store_stopwords.contains(w) && !is_kind(w))
+}
+
 /// `tag` read as a store's name, when it is one.
 fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
@@ -916,7 +929,7 @@ fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
         && found.body.is_none()
         // `[Moon Hair]`, `[Mila Poses]`: a bracketed name of a few words
         // is the store's, even with a category word in it
-        && (found.category.is_none() || maker || enclosed && tag_words.len() >= 2 && !VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| *k == tag_words.join(" "))))
+        && (found.category.is_none() || maker || enclosed && names_more_than_kind(&tag_words))
         && !found.unpacker
         && !found.squish
         && !found.waifus
@@ -1075,6 +1088,9 @@ pub struct Plan {
     pub moves: Vec<Move>,
     /// How many moves are unpackers, counted by [`order`](Self::order).
     pub unpacker_count: usize,
+    /// The destination groups (ranges of `moves`) in the preview's order,
+    /// worked out once by [`order`](Self::order).
+    pub groups: Vec<std::ops::Range<usize>>,
     /// Names that say nothing the sorter knows.
     pub unknown: Vec<String>,
     /// Entries that cannot move: worn, links, locked or system folders.
@@ -1101,6 +1117,15 @@ impl Plan {
     /// moves are sorted by destination when the plan is made, so each
     /// group is one slice: nothing is copied or counted per frame.
     pub fn grouped(&self) -> Vec<(&str, &[Move])> {
+        // in the order worked out once by `order` (off the frame); a plan
+        // not ordered yet is ordered here
+        if !self.groups.is_empty() {
+            return self
+                .groups
+                .iter()
+                .map(|r| (self.moves[r.start].label.as_str(), &self.moves[r.clone()]))
+                .collect();
+        }
         let mut groups: Vec<(&str, &[Move])> = self
             .moves
             .chunk_by(|a, b| a.label == b.label)
@@ -1108,6 +1133,15 @@ impl Plan {
             .collect();
         groups.sort_by_cached_key(|(label, rows)| (rows[0].to != Dest::PreTrash, crate::natural_order::key(label)));
         groups
+    }
+
+    /// How many destination groups the preview has.
+    pub fn group_count(&self) -> usize {
+        if self.groups.is_empty() {
+            self.moves.chunk_by(|a, b| a.label == b.label).count()
+        } else {
+            self.groups.len()
+        }
     }
 
     /// What stays, by reason, each reason one slice of `kept_list` (in
@@ -1121,6 +1155,17 @@ impl Plan {
     pub fn order(&mut self) {
         self.kept_list.sort_by_key(|(_, why)| *why);
         self.unpacker_count = self.unpackers();
+        let mut groups: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut at = 0;
+        for rows in self.moves.chunk_by(|a, b| a.label == b.label) {
+            groups.push(at..at + rows.len());
+            at += rows.len();
+        }
+        groups.sort_by_cached_key(|r| {
+            let first = &self.moves[r.start];
+            (first.to != Dest::PreTrash, crate::natural_order::key(&first.label))
+        });
+        self.groups = groups;
     }
 
     pub fn unpackers(&self) -> usize {
@@ -1169,9 +1214,25 @@ fn product_folder_in(inv: &Inventory, folder: Uuid, reserved: &HashSet<String>) 
     let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
     // a store before a dash (`Clothes - Winter`) is too weak a sign for a
     // folder of the user's: only a tag (`[Store]`, `*Store*`) makes it one
-    let tagged = store(name).is_some() && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
-    target(name, -1, 0, None, &[], false).is_some() || tagged || !has_folders
+    let store_named = store(name).is_some();
+    let tagged = store_named && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
+    let named = target(name, -1, 0, None, &[], false).is_some();
+    if has_folders {
+        // a folder of folders is the user's own (`My Dresses`, `Reborn
+        // Stuff`, `Party Outfits`) unless it reads as a store's product: a
+        // tag, or a store and what it is (`Kitoomi - Hex Dress`)
+        tagged || store_named && named
+    } else {
+        // a folder of items alone is a product when its name says what or
+        // whose it is (`Hex Dress`, `[Kitoomi] Hex`); `Stuff`, `2024` or
+        // `Hunt Gifts` are opened
+        tagged || named || store_named
+    }
 }
+
+/// How deep a whole-inventory sort opens the user's own folders of folders
+/// (`Clothes/Winter/…`): below that, a folder moves whole or stays.
+const OPEN_DEPTH: usize = 4;
 
 /// What a whole-inventory sort reads, in an open place only: the loose
 /// items of My Inventory, the contents of Objects, and the direct contents of
@@ -1185,18 +1246,38 @@ pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
 
 fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
-    if let Some(root) = inv.folders.get(&inv.root) {
-        sources.extend(root.children.iter().copied().filter(|id| {
-            Some(*id) != places.base
-                && Some(*id) != places.waiting
-                && !places.pre_trash.contains(id)
-                && folder_open(inv, *id)
-                && !prefs.excludes(inv, *id)
-                && inv
-                    .folders
-                    .get(id)
-                    .is_some_and(|f| f.info.type_default != -1 || !product_folder_in(inv, *id, &places.reserved))
-        }));
+    // the root's open folders, then the user's own folders of folders below
+    // them (`Clothes/Winter`): each is opened, its products move whole. A
+    // folder not loaded yet is read first (it is judged once its contents
+    // are known).
+    let mut level: Vec<Uuid> = vec![inv.root];
+    for depth in 0..=OPEN_DEPTH {
+        let mut next = Vec::new();
+        for parent in &level {
+            let Some(folder) = inv.folders.get(parent) else { continue };
+            for id in folder.children.iter().copied() {
+                let Some(f) = inv.folders.get(&id) else { continue };
+                let open = Some(id) != places.base
+                    && Some(id) != places.waiting
+                    && !places.pre_trash.contains(&id)
+                    && folder_open(inv, id)
+                    && !prefs.excludes(inv, id)
+                    && (depth == 0 || f.info.type_default == -1 && !places.reserved.contains(&f.info.name.trim().to_lowercase()));
+                let own = f.info.type_default != -1 || f.state != FetchState::Fetched || !product_folder_in(inv, id, &places.reserved);
+                if open && own {
+                    sources.push(id);
+                    // (Objects and an unlocked default folder too: their
+                    // folders of folders are the user's own)
+                    if f.state == FetchState::Fetched {
+                        next.push(id);
+                    }
+                }
+            }
+        }
+        if next.is_empty() || depth == OPEN_DEPTH {
+            break;
+        }
+        level = next;
     }
     sources
 }
@@ -1238,6 +1319,8 @@ pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid
         entries.extend(contents_in(inv, *source, folders, &places));
     }
     let sources: HashSet<Uuid> = sources.into_iter().collect();
+    // a folder opened as a source is never moved as an entry of its parent
+    entries.retain(|id| !sources.contains(id));
     // a product's folder at the root moves whole
     if prefs.folders
         && let Some(root) = inv.folders.get(&inv.root)
