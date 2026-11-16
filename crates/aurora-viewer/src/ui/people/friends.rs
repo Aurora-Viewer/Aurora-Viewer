@@ -669,8 +669,10 @@ mod tests {
             pics: &pics,
         };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
-        let mut settings = super::super::FriendsSettings::default();
-        settings.sort = SORT_NAME;
+        let mut settings = super::super::FriendsSettings {
+            sort: SORT_NAME,
+            ..Default::default()
+        };
         let mut actions = Vec::new();
         let mut st = PeopleUi::default();
         let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(420.0, 400.0));

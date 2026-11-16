@@ -252,7 +252,7 @@ mod tests {
     fn batched_letters_cycle_from_the_last_match_and_focus_resets_the_prefix() {
         let mut frames = crate::ui::widgets::elide_tests::Frames::new();
         let friends = entries(&[("Alice", ""), ("Amber", ""), ("Aria", ""), ("Bob", "")]);
-        let focus = Id::new("list");
+        let focus = Id::unique("list");
         let mut built = 0;
         let mut frame = |events: Vec<egui::Event>, owner: Id, selected: Option<Uuid>| {
             let mut chosen = None;
@@ -276,7 +276,10 @@ mod tests {
             Some(friends[2].id)
         );
         // This frame belongs to another widget; the old "a" must not prefix "b".
-        assert_eq!(frame(vec![egui::Event::Text("ignored".into())], Id::new("elsewhere"), None), None);
+        assert_eq!(
+            frame(vec![egui::Event::Text("ignored".into())], Id::unique("elsewhere"), None),
+            None
+        );
         assert_eq!(frame(vec![egui::Event::Text("b".into())], focus, None), Some(friends[3].id));
         assert_eq!(built, 2, "idle and unfocused lists never build search entries");
     }
@@ -285,7 +288,7 @@ mod tests {
     fn composing_a_name_jumps_only_when_the_ime_commits_to_the_focused_list() {
         let mut frames = crate::ui::widgets::elide_tests::Frames::new();
         let friends = entries(&[("山田", ""), ("山本", ""), ("山本A", "")]);
-        let focus = Id::new("composed-name-list");
+        let focus = Id::unique("composed-name-list");
         let preedit = |text: &str| {
             egui::Event::Ime(egui::ImeEvent::Preedit {
                 text: text.into(),
@@ -310,7 +313,7 @@ mod tests {
             frame(vec![commit("本"), egui::Event::Text("A".into())], focus, Some(friends[0].id)),
             (Some(friends[2].id), true)
         );
-        assert_eq!(frame(vec![commit("山")], Id::new("another-widget"), None), (None, false));
+        assert_eq!(frame(vec![commit("山")], Id::unique("another-widget"), None), (None, false));
         assert_eq!(frame(vec![commit("山本A")], focus, None), (Some(friends[2].id), true));
     }
 
