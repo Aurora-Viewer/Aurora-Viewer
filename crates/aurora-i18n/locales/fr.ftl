@@ -2094,6 +2094,7 @@ demo-map-clubs = Clubs
 demo-map-walks = Balades
 demo-place-numbered-visit = Visite { $number }
 demo-map-markets = Marchés
+demo-map-outlets = Magasins d'usine
 demo-map-beaches = Plages
 demo-map-club = Club { $n }
 demo-map-beach = Plage { $n }

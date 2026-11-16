@@ -2073,6 +2073,7 @@ demo-map-clubs = クラブ
 demo-map-walks = 散歩道
 demo-place-numbered-visit = 訪問 { $number }
 demo-map-markets = マーケット
+demo-map-outlets = アウトレット
 demo-map-beaches = ビーチ
 demo-map-club = クラブ{ $n }
 demo-map-beach = ビーチ{ $n }
