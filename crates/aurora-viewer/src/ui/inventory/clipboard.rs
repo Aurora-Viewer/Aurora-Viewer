@@ -1382,25 +1382,40 @@ mod tests {
         }
     }
 
-    #[test]
-    fn closing_a_notecard_gives_the_list_its_keyboard_back() {
-        let mut h = Harness::new();
-        h.st.preview = Some(id(8103));
-        h.st.document_owner = Some(focus_id(&h.st));
+    fn close_inventory_note(h: &mut Harness, item: Uuid, owner: egui::Id) {
         for _ in 0..3 {
             h.frame(Vec::new());
         }
-        assert!(h.st.preview.is_some(), "the notecard opened");
-        let window = super::super::document::preview_window_id(h.st.ui_id, id(8103), 7);
+        let document = h.st.windows.iter().find(|w| w.state.preview == Some(item)).expect("the document window");
+        assert_eq!(document.state.document_owner, Some(owner));
+        let window = super::super::document::preview_window_id(document.state.ui_id, item, 7);
         crate::ui::widgets::close_floater(&h.ctx, &window);
         for _ in 0..6 {
             h.frame(Vec::new());
         }
-        assert!(h.st.preview.is_none(), "the notecard closed");
+        assert!(h.st.windows.iter().all(|w| w.state.preview != Some(item)), "the document window closed");
+    }
+
+    fn open_and_close_selected_note(h: &mut Harness, window: &str, owner: egui::Id) {
+        let item = id(8103);
+        h.click(h.row_in(item, window), Default::default());
+        let actions = h.frame(vec![enter_key()]);
         assert!(
-            h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
-            "the list has the keyboard again after the document closes"
+            matches!(actions.as_slice(), [InvAction::Preview(selected, Some(origin))] if *selected == item && *origin == owner),
+            "Enter should open the notecard from {window}"
         );
+        h.st.open_document(&h.ctx, item, 7, Some(owner));
+        close_inventory_note(h, item, owner);
+        assert!(h.ctx.memory(|m| m.has_focus(owner)), "the list that opened the document has the keyboard");
+        h.frame(vec![key(egui::Key::ArrowDown)]);
+    }
+
+    #[test]
+    fn closing_a_notecard_gives_the_list_its_keyboard_back() {
+        let mut h = Harness::new();
+        let owner = focus_id(&h.st);
+        open_and_close_selected_note(&mut h, "inventory", owner);
+        assert!(h.st.selected.is_some_and(|item| item != id(8103)), "Down moves the main list selection");
     }
 
     #[test]
@@ -1412,39 +1427,27 @@ mod tests {
         for _ in 0..4 {
             h.frame(Vec::new());
         }
-        let item = id(8103);
-        h.click(h.row_in(item, &window), Default::default());
-        let actions = h.frame(vec![enter_key()]);
-        let [InvAction::Preview(selected, Some(owner))] = actions.as_slice() else {
-            panic!("Enter should open the selected notecard from its folder window");
-        };
-        let owner = *owner;
-        assert_eq!(*selected, item);
-        assert_eq!(owner, focus_id(&h.st.windows[0].state));
+        let owner = focus_id(&h.st.windows[0].state);
         assert_ne!(owner, focus_id(&h.st));
+        let main_selection = h.st.selected;
+        open_and_close_selected_note(&mut h, &window, owner);
+        assert!(h.st.windows[0].state.selected.is_some_and(|item| item != id(8103)), "Down moves the folder selection");
+        assert_eq!(h.st.selected, main_selection, "Down leaves the main list alone");
+    }
+
+    #[test]
+    fn closing_a_notecard_preserves_an_active_inventory_search() {
+        let mut h = Harness::new();
+        h.st.focus_search = true;
+        h.frame(Vec::new());
+        let search = h.ctx.memory(|m| m.focused()).expect("the inventory search has focus");
+        let owner = focus_id(&h.st);
+        assert_ne!(search, owner);
+        let item = id(8103);
         h.st.open_document(&h.ctx, item, 7, Some(owner));
-        for _ in 0..3 {
-            h.frame(Vec::new());
-        }
-        let at =
-            h.st.windows
-                .iter()
-                .position(|w| w.state.preview == Some(item))
-                .expect("the document window");
-        assert_eq!(h.st.windows[at].state.document_owner, Some(owner));
-        let window = super::super::document::preview_window_id(h.st.windows[at].state.ui_id, item, 7);
-        crate::ui::widgets::close_floater(&h.ctx, &window);
-        for _ in 0..6 {
-            h.frame(Vec::new());
-        }
-        assert!(
-            h.st.windows.iter().all(|w| w.state.preview != Some(item)),
-            "the document window closed"
-        );
-        assert!(
-            h.ctx.memory(|m| m.has_focus(owner)),
-            "the list that opened the document has the keyboard"
-        );
+        close_inventory_note(&mut h, item, owner);
+        h.frame(vec![Event::Text("needle".into())]);
+        assert_eq!(h.st.search, "needle", "closing the note preserves the active search field");
     }
 
     #[test]
