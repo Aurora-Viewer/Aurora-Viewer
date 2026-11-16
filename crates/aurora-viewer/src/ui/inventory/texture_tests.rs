@@ -63,7 +63,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     true,
                 );
                 for action in &pass {
-                    if let InvAction::Preview(item) = action {
+                    if let InvAction::Preview(item, _) = action {
                         resources.open_preview(host.ctx(), &world, *item);
                     }
                 }
@@ -116,7 +116,11 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
     frame(button(row, false), &mut state);
     frame(button(row, true), &mut state);
     let actions = frame(button(row, false), &mut state).0;
-    assert!(actions.iter().any(|action| matches!(action, InvAction::Preview(id) if *id == item)));
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, InvAction::Preview(id, _) if *id == item))
+    );
     assert_eq!(state.preview, None, "resource windows do not replace document editors");
     for _ in 0..8 {
         frame(Vec::new(), &mut state);

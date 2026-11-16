@@ -174,6 +174,5 @@ mod tests;
 /// `rlvanonym`). A group owner stays named, as there. Stricter than the
 /// Legacy Viewer, which hides only an owner who is nearby.
 pub(crate) fn hidden_owner(world: &World, o: &crate::slapp::RemoteObject) -> Option<String> {
-    (!o.owner.is_nil() && !o.group_owned && !world.rlva_can_name(o.owner))
-        .then(|| crate::world::rlva::privacy::anonymous(o.owner).display_name.clone())
+    (!o.owner.is_nil() && !o.group_owned && !world.rlva_can_name(o.owner)).then(|| world.rlva_anonymous(o.owner).display_name.clone())
 }

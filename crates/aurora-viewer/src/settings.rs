@@ -503,6 +503,28 @@ impl DebugView {
 /// The former look-at range slider's maximum, which meant no limit.
 const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 
+/// The conversation log window's view menu (menu_conversation_log_view.xml).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConversationLogView {
+    /// CallLogSortOrder: by date (1, the default) or by name (0).
+    pub by_date: bool,
+    /// SortFriendsFirst (on).
+    pub friends_first: bool,
+    /// ShowBlockedConvHistory (off).
+    pub show_blocked: bool,
+}
+
+impl Default for ConversationLogView {
+    fn default() -> Self {
+        ConversationLogView {
+            by_date: true,
+            friends_first: true,
+            show_blocked: false,
+        }
+    }
+}
+
 /// The draw distance's range (m): the Legacy Viewer's Graphics slider
 /// (RenderFarClip, panel_preferences_graphics1.xml, 32 to 1024). A region
 /// sends what it allows of it (OpenSim's MaxDrawDistance, 512 by default).
@@ -872,6 +894,8 @@ pub struct Settings {
     pub show_appearance: bool,
     /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
     pub appearance_fill_previews: bool,
+    /// The order of the Favorite Wearables list (FSWearableFavoritesSortOrder).
+    pub wearable_favorites_sort: crate::world::wearable_favorites::SortOrder,
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
@@ -1136,6 +1160,13 @@ pub struct Settings {
     pub log_im: bool,
     /// Write the nearby chat too (Firestorm LogNearbyChat, off).
     pub log_nearby: bool,
+    /// Keep the conversation log: who we had an instant message, group chat
+    /// or conference with, and when (the Legacy Viewer's
+    /// KeepConversationLogTranscripts > 0, on). Independent of `log_im`
+    /// here; see `ui/conversation_log.rs`.
+    pub log_conversations: bool,
+    /// The conversation log window's order and filters.
+    pub conversation_log: ConversationLogView,
     /// Reopen the private conversations of the last session at login (the
     /// Legacy Viewer's FSRestoreOpenIMs, off).
     pub reopen_ims: bool,
@@ -1200,6 +1231,9 @@ pub struct Settings {
     pub hide_object_returns: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
+    /// The Omnifilter on or off and its rule set in use (OmnifilterEnabled,
+    /// OmnifilterRuleSetID); the rules are in `omnifilter.xml`.
+    pub omnifilter: crate::omnifilter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
@@ -1876,7 +1910,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 39;
+const SETTINGS_VERSION: u32 = 40;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2362,6 +2396,7 @@ impl Default for Settings {
             show_inventory: false,
             show_appearance: false,
             appearance_fill_previews: false,
+            wearable_favorites_sort: Default::default(),
             appearance_tab: 0,
             show_ao: false,
             ao: Default::default(),
@@ -2459,6 +2494,8 @@ impl Default for Settings {
             toast_gap: TOAST_GAP,
             log_im: true,
             log_nearby: false,
+            log_conversations: true,
+            conversation_log: Default::default(),
             reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
@@ -2480,6 +2517,7 @@ impl Default for Settings {
             sim_version_alert: false,
             hide_object_returns: false,
             object_im_filter: Default::default(),
+            omnifilter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
@@ -3351,6 +3389,18 @@ impl Settings {
             // default: a profile still exactly on Potato or Low keeps the
             // sorted order of these levels
             crate::graphics_presets::upgrade_blend_order(&mut self);
+        }
+        if self.settings_version < 40 {
+            // Only the exact former Recent default migrates; preserve other combinations.
+            // Keep historical values explicit so future defaults cannot change this migration.
+            let former = crate::ui::inventory::view::Sort {
+                by_date: true,
+                folders_by_name: false,
+                system_first: true,
+            };
+            if self.inventory.recent_sort == former {
+                self.inventory.recent_sort.system_first = false;
+            }
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4887,6 +4937,66 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    #[test]
+    fn recent_sort_migration_changes_only_the_former_default_and_only_once() {
+        use crate::ui::inventory::view::Sort;
+        let former = Sort {
+            by_date: true,
+            folders_by_name: false,
+            system_first: true,
+        };
+        for version in [39, 40] {
+            for by_date in [false, true] {
+                for folders_by_name in [false, true] {
+                    for system_first in [false, true] {
+                        let chosen = Sort {
+                            by_date,
+                            folders_by_name,
+                            system_first,
+                        };
+                        let mut saved = Settings {
+                            settings_version: version,
+                            ..Default::default()
+                        };
+                        saved.inventory.recent_sort = chosen;
+                        saved.inventory.sort = chosen;
+                        saved.inventory.received_sort = chosen;
+                        let json = serde_json::to_string(&saved).expect("save settings");
+                        let loaded = serde_json::from_str::<Settings>(&json).expect("load settings").sanitized();
+                        let expected = if version < 40 && chosen == former {
+                            Sort {
+                                system_first: false,
+                                ..chosen
+                            }
+                        } else {
+                            chosen
+                        };
+                        assert_eq!(loaded.inventory.recent_sort, expected, "version {version}, {chosen:?}");
+                        assert_eq!(loaded.inventory.sort, chosen, "main sort stays untouched");
+                        assert_eq!(loaded.inventory.received_sort, chosen, "Received sort stays untouched");
+                        assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+                        let json = serde_json::to_string(&loaded).expect("save migrated settings");
+                        let reloaded = serde_json::from_str::<Settings>(&json).expect("reload settings").sanitized();
+                        assert_eq!(reloaded.inventory.recent_sort, expected, "migration is not repeated");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recent_sort_missing_from_old_settings_gets_the_new_default() {
+        let loaded = serde_json::from_str::<Settings>(r#"{"settings_version":39,"inventory":{}}"#)
+            .expect("old settings without Recent sort")
+            .sanitized();
+        assert_eq!(loaded.inventory.recent_sort, Settings::default().inventory.recent_sort);
+        assert!(loaded.inventory.recent_sort.by_date);
+        assert!(!loaded.inventory.recent_sort.folders_by_name);
+        assert!(!loaded.inventory.recent_sort.system_first);
+        assert_eq!(loaded.inventory.sort, Settings::default().inventory.sort);
+        assert_eq!(loaded.inventory.received_sort, Settings::default().inventory.received_sort);
     }
 
     /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the

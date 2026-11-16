@@ -18,6 +18,7 @@
 
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::social::rights;
 use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
 use egui::Color32;
@@ -107,6 +108,21 @@ pub fn known(world: &World, id: &Uuid) -> Known {
 
 pub fn of(world: &World, id: &Uuid) -> Status {
     decide(known(world, id))
+}
+
+/// `of` for a row that names `id` in `scope`. A list of people known
+/// besides the world names a friend RLVa's `@shownames` hides around us:
+/// what the scene tells of them (around, away, busy) is left out there, or
+/// the row would say which friend is the stranger next to us. The Legacy
+/// Viewer's friends list shows the friendship's online status alone.
+pub fn of_in(world: &World, scope: NameScope, id: &Uuid) -> Status {
+    let mut known = known(world, id);
+    if scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, *id) {
+        known.nearby = false;
+        known.away = false;
+        known.busy = false;
+    }
+    decide(known)
 }
 
 /// The color of a status dot: the one place to change what the dots say.

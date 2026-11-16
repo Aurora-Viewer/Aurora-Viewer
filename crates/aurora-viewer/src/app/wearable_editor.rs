@@ -102,7 +102,7 @@ impl App {
         if self.wearable_ui.open
             && let Some(draft) = &self.wearable_ui.draft
         {
-            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, draft);
+            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, draft, Some(ctx));
             for command in commands {
                 if self.demo {
                     if let NetCommand::PreviewInventoryItem(item) = command {

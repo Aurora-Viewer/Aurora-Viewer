@@ -4,6 +4,16 @@
 $RepoUrl = 'https://github.com/Aurora-Viewer/Aurora-Viewer'
 $FirestormUrl = 'https://github.com/FirestormViewer/phoenix-firestorm'
 
+# The command-line tools the agents search with (AGENTS.md section 5,
+# "Tools"): winget package, program that must answer, name shown. Optional:
+# nothing else depends on them, and the agents work without them.
+$SearchTools = @(
+    @{ Id = 'BurntSushi.ripgrep.MSVC'; Exe = 'rg'; Name = 'ripgrep (rg)' }
+    @{ Id = 'sharkdp.fd'; Exe = 'fd'; Name = 'fd' }
+    @{ Id = 'jqlang.jq'; Exe = 'jq'; Name = 'jq' }
+    @{ Id = 'ast-grep.ast-grep'; Exe = 'ast-grep'; Name = 'ast-grep' }
+)
+
 function Get-Paths([string]$Root) {
     [pscustomobject]@{
         Root = $Root
@@ -28,6 +38,16 @@ function Get-CommonScript($P) {
     }
 }
 
+# The program of a search tool: in PATH, or just installed by winget (its
+# folder then reaches the PATH of the windows opened afterwards only).
+function Find-SearchTool($Tool) {
+    $cmd = Get-Command $Tool.Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    if (-not $env:LOCALAPPDATA) { return }
+    Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\$($Tool.Id)_*" -Recurse -Filter "$($Tool.Exe).exe" -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+
 function Get-MsvcName {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
@@ -35,8 +55,8 @@ function Get-MsvcName {
     }
 }
 
-# Everything the environment needs. -Offline skips the network checks (is
-# main, Firestorm or Rust behind?), which take a few seconds.
+# Everything the environment needs. -Offline skips the network checks (are
+# main or the Legacy Viewer sources behind?), which take a few seconds.
 function Get-Checks($P, [switch]$Offline) {
     $rows = New-Object System.Collections.ArrayList
     $add = { param($r) [void]$rows.Add($r) }
@@ -49,10 +69,15 @@ function Get-Checks($P, [switch]$Offline) {
     & $add (New-Check msvc 'Visual Studio C++ tools' $msvc $(if ($msvc) { 'ok' } else { 'todo' }) $(if ($msvc) { 'nothing to do' } else { 'installed with winget (several GB)' }))
 
     $rustup = if (Get-Command rustup -ErrorAction SilentlyContinue) { (rustup --version 2>$null) -replace '^rustup\s+(\S+).*$', 'rustup $1' }
+    # the Rust version the repository names (rust-toolchain.toml)
+    $pinned = $null
+    $toolchainFile = Join-Path $P.Repo 'rust-toolchain.toml'
+    if ((Test-Path -LiteralPath $toolchainFile) -and ((Get-Content -LiteralPath $toolchainFile -Raw) -match '(?m)^channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"')) { $pinned = $Matches[1] }
     if (-not $rustup) {
         & $add (New-Check rust 'Rust' $null todo 'installed with winget (rustup, for your account)')
-    } elseif (-not $Offline -and ((rustup check 2>$null) -match '^stable.*Update available')) {
-        & $add (New-Check rust 'Rust' "$rustup, stable behind" stale 'stable version updated')
+    } elseif ($pinned -and -not ((rustup toolchain list 2>$null) -match "^$([regex]::Escape($pinned))-")) {
+        # rustup would install it at the first build; the repair does it now
+        & $add (New-Check rust 'Rust' "$rustup, Rust $pinned missing" stale "Rust $pinned installed (rust-toolchain.toml)")
     } else {
         & $add (New-Check rust 'Rust' $rustup ok 'nothing to do')
     }
@@ -110,6 +135,17 @@ function Get-Checks($P, [switch]$Offline) {
         }
     }
 
+    # search tools of the agents: one row, the missing ones named
+    $all = @($SearchTools | ForEach-Object { $_.Exe }) -join ', '
+    $missing = @($SearchTools | Where-Object { -not (Find-SearchTool $_) } | ForEach-Object { $_.Exe })
+    if (-not $missing) {
+        & $add (New-Check search 'Search tools of the agents' $all ok 'nothing to do')
+    } elseif ($missing.Count -eq $SearchTools.Count) {
+        & $add (New-Check search 'Search tools of the agents' $null todo "installed with winget (for your account): $all")
+    } else {
+        & $add (New-Check search 'Search tools of the agents' "missing: $($missing -join ', ')" stale 'installed with winget (for your account)')
+    }
+
     $login = $null
     if ($gh) {
         gh auth status *> $null
@@ -150,6 +186,18 @@ function Install-Tool([string]$Id, [string]$What, [string[]]$Extra = @()) {
     winget install --id $Id --exact --source winget --accept-package-agreements --accept-source-agreements @Extra
     if ($LASTEXITCODE -ne 0) { throw "installing $What (code $LASTEXITCODE)." }
     Update-SessionPath
+}
+
+# ripgrep, fd, jq and ast-grep, for the searches of the agents. Optional: one
+# that does not install is reported and stops nothing (the agents then keep
+# their own search tools, and the hook of .claude/hooks leaves grep alone).
+function Install-SearchTools {
+    foreach ($t in $SearchTools) {
+        if (Find-SearchTool $t) { continue }
+        try { Install-Tool $t.Id $t.Name } catch { Write-Color "  $($t.Name) not installed ($($_.Exception.Message)): the agents work without it." warn }
+    }
+    $found = @($SearchTools | Where-Object { Find-SearchTool $_ } | ForEach-Object { $_.Exe })
+    if ($found) { Write-Color "  In place: $($found -join ', '). An agent or a terminal opened before finds them once reopened." success }
 }
 
 # Installs what is missing and updates what is behind; throws on failure.
@@ -206,12 +254,15 @@ function Invoke-Repair($P) {
     }
 
     Write-Title 'Rust toolchain and crates'
+    . (Get-CommonScript $P)
+    # rust-toolchain.toml: the project's Rust version, with rustfmt and clippy.
+    # One install at a time for the PC: an agent's build may be installing it
+    # at this very moment (Install-RustVersion, scripts/common.ps1)
+    Install-RustVersion $P.Repo
     Push-Location $P.Repo
     try {
-        # rust-toolchain.toml: the latest stable, with rustfmt and clippy
-        rustup toolchain install
+        rustup show active-toolchain
         if ($LASTEXITCODE -ne 0) { rustup show }
-        rustup update stable --no-self-update
         cargo fetch --locked
         if ($LASTEXITCODE -ne 0) { throw 'downloading the crates (cargo fetch).' }
     } finally {
@@ -220,7 +271,6 @@ function Invoke-Repair($P) {
 
     Write-Title 'Compiler cache (sccache)'
     # the tasks take the dependencies already built by another one from it
-    . (Get-CommonScript $P)
     if (-not (Find-Sccache)) {
         try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
     } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -230,6 +280,9 @@ function Invoke-Repair($P) {
     }
     Sync-BuildCache $P.Root
     if (Find-Sccache) { Write-Color "  Shared by the tasks: $(Join-Path $P.Root '.sccache')." success }
+
+    Write-Title 'Search tools of the agents (rg, fd, jq, ast-grep)'
+    Install-SearchTools
 
     Write-Title 'GitHub'
     gh auth status *> $null
