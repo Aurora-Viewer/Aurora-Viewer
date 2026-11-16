@@ -711,6 +711,24 @@ mod tests {
     }
 
     #[test]
+    fn the_timeline_names_person_b_without_their_resident_name() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = Uuid::from_u128(1);
+        let mut editor = couple_editor(&lib);
+        editor.open = true;
+        editor.clip.couple.as_mut().expect("couple").partner_name = "A Very Long Resident Name Indeed".into();
+        let palette = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+        frames.run(Vec::new(), &mut draw);
+        let texts = frames.run(Vec::new(), &mut draw);
+        assert!(texts.iter().any(|t| t.source == aurora_i18n::text("anim-couple-person-b")));
+        assert!(!texts.iter().any(|t| t.source.contains("Very Long Resident")));
+    }
+
+    #[test]
     fn a_switch_waits_while_the_edited_person_s_preview_is_building() {
         let lib = AvatarLibrary::load();
         let mut editor = couple_editor(&lib);

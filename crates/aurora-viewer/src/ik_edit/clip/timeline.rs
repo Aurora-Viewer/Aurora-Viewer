@@ -1237,12 +1237,6 @@ impl Editor {
         // couple mode: each person's lanes under their name, A first; the
         // person set aside's lanes show their keys, a click there switches
         let editing_b = self.clip.couple.as_ref().map(|couple| couple.editing_b);
-        let partner_name = self
-            .clip
-            .couple
-            .as_ref()
-            .map(|couple| couple.partner_name.clone())
-            .unwrap_or_default();
         let waiting_lanes = self
             .clip
             .couple
@@ -1350,7 +1344,7 @@ impl Editor {
                                 match row {
                                     Row::Track(track) => self.timeline_row(ui, palette, rig, frame, track, lanes),
                                     Row::Waiting(track) => self.timeline_waiting_row(ui, palette, track, lanes, editing_b == Some(false)),
-                                    Row::Person { b, edited } => self.timeline_person_row(ui, palette, *b, *edited, &partner_name, lanes),
+                                    Row::Person { b, edited } => self.timeline_person_row(ui, palette, *b, *edited, lanes),
                                 }
                             }
                         })
@@ -1608,7 +1602,7 @@ impl Editor {
 
     /// A person's name above their lanes in couple mode, in their colour;
     /// a click on the person set aside edits them.
-    fn timeline_person_row(&mut self, ui: &mut egui::Ui, palette: &Palette, b: bool, edited: bool, partner: &str, lanes: Lanes) {
+    fn timeline_person_row(&mut self, ui: &mut egui::Ui, palette: &Palette, b: bool, edited: bool, lanes: Lanes) {
         let (row, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click_and_drag());
         // a drag across the name row moves the playhead too
         if response.dragged()
@@ -1628,11 +1622,13 @@ impl Editor {
         }
         paint_key(ui.painter(), egui::pos2(row.left() + 10.0, row.center().y), KEY_HALF, color);
         let label = if b {
-            aurora_i18n::tr!("anim-couple-person-b", name = partner.to_owned())
+            aurora_i18n::tr!("anim-couple-person-b").to_string()
         } else {
             aurora_i18n::tr!("anim-couple-person-a").to_string()
         };
-        ui.painter().text(
+        // kept to the name column: it never runs into the lanes
+        let names = egui::Rect::from_min_size(row.min, egui::vec2(lanes.name_width, ROW_HEIGHT));
+        ui.painter().with_clip_rect(names.intersect(ui.clip_rect())).text(
             egui::pos2(row.left() + 22.0, row.center().y),
             egui::Align2::LEFT_CENTER,
             label,

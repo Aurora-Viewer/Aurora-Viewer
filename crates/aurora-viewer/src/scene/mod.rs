@@ -4767,7 +4767,15 @@ impl Scene {
                 renderer.records.set_placement(f.record, record_model, anchor);
             }
         }
-        let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, pos);
+        // the couple partner the animation editor moved (or held while they
+        // walk in the world) is drawn away from their place: their body is
+        // checked against where it is drawn, or it would be culled there
+        let drawn = world
+            .avatar_models
+            .get(&o.full_id)
+            .and_then(|model| world.couple_shift(o.full_id, *model))
+            .map_or(pos, |shift| shift.transform_point3(pos));
+        let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, drawn);
         let g = &mut self.gpu[idx];
         g.center = pos;
         g.radius = 1.2;
