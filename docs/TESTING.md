@@ -6117,6 +6117,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION_MESSAGE=1` | Messages to the whole region in the middle of the screen (#1404), one waiting behind the other |
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict[,returns]` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run; an object returned, its message hidden with `,returns` |
+| `AURORA_DEMO_OMNIFILTER=1` | The Omnifilter on with demo rules (never saved): chat, an IM and script dialogs hidden, replaced or answered; the Rules Editor open |
 | `AURORA_DEMO_ABOUT=info\|licences\|libraries[:end]` | Help › About Aurora Viewer opens on its Info, Licences or Libraries tab |
 | `AURORA_DEMO_SYSINFO=1` | "Send system information" chosen in the friend's conversation: its confirmation |
 | `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
@@ -7173,6 +7174,19 @@ failure. Grid validation and any paid upload are performed by the human.
   after the mode (`off,returns`) turns Preferences › Confirmations › "Hide
   'object returned' messages" on for the run: that line is not shown and
   the log has `object return message hidden`. Capture around frame 1000.
+- **`AURORA_DEMO_OMNIFILTER=1`**: the Omnifilter (Communicate ›
+  Omnifilter) on for this run with five rules of its own in the Default
+  set, kept in memory only (`omnifilter.xml` is not touched; the switch
+  is saved in the demo's own profile only). The Rules Editor opens at frame 640; at 60
+  frames a second, from frame 700: a resident "Shouty McShout" whose line
+  is hidden, an object's advertising line replaced by
+  "Omnifilter Replacement: (advertising hidden)", an ordinary line that
+  passes, an IM "free L$" dropped (no conversation opens), the "Greeter
+  Board" menu answered "Yes" one second later without being shown (the
+  log says `script dialog answered`), and the fountain's menu, which no
+  rule matches, shown as usual. The fifth rule is disabled and takes
+  nothing. Each match logs `omnifilter: rule "…" matched` and appears in
+  the editor's log with its SLT time. Capture around frame 1000.
 - **`AURORA_DEMO_PRESENCE=<place>`**: the friends' online / offline toasts
   of Aurora's notification center at `top-left`, `top-center`,
   `top-right`, `bottom-left`, `bottom-center` or `bottom-right`, for this

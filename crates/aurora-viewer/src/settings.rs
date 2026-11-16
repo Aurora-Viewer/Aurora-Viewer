@@ -1231,6 +1231,9 @@ pub struct Settings {
     pub hide_object_returns: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
+    /// The Omnifilter on or off and its rule set in use (OmnifilterEnabled,
+    /// OmnifilterRuleSetID); the rules are in `omnifilter.xml`.
+    pub omnifilter: crate::omnifilter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
@@ -2495,6 +2498,7 @@ impl Default for Settings {
             sim_version_alert: false,
             hide_object_returns: false,
             object_im_filter: Default::default(),
+            omnifilter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
