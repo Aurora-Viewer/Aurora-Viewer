@@ -110,8 +110,14 @@ script authors; the command lists below describe this branch specifically.
   responses are still sent on acceptance or an RLVa refusal. Blocked offers
   and requests use busy replies, without manufacturing a user decline.
   Invitation text is masked under recvim or showloc as appropriate.
-  standtp records the pre-sit location and returns only after a successful
-  forced sit followed by a stand.
+  standtp records the pre-sit location of a sit asked while it is held, by
+  hand or forced, and returns only after a successful sit followed by a
+  stand; a ground sit records none.
+  A landmark dropped in the world opens no portal where the teleport by that
+  landmark is refused (tplm, or unsit while seated); crossing a portal is a
+  teleport to a location, refused under tploc. The Teleport Home menu entries
+  are greyed under either tplm or tploc; the Home buttons and the teleport
+  itself give way only under both.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
   touchhud/this, interact and fartouch.
   Vendor payments obey buy; resident payments obey pay. Fartouch includes

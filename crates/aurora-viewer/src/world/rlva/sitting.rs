@@ -232,6 +232,58 @@ mod tests {
         assert_eq!(notices(&mut w), ["/unsat ground illegally"]);
     }
 
+    /// #2738: a sit asked by hand while @standtp is held records where the
+    /// avatar stood, like a forced one (handle_object_sit, llviewermenu.cpp;
+    /// RlvForceHandler<RLV_BHVR_SIT>, rlvhandler.cpp), and standing up brings
+    /// it back there. A lock that comes once seated has nothing to return
+    /// to, and a ground sit records nothing, as in the Legacy Viewer.
+    #[test]
+    fn rlva_standtp_returns_from_a_sit_asked_by_hand_or_by_a_script() {
+        use crate::world::rlva::Boundary;
+        let now = std::time::Instant::now();
+        let sit = |w: &mut World, actor: Uuid| {
+            let mut sit = NetCommand::RequestSit {
+                handle: w.main_region.unwrap(),
+                target: ROOT,
+                offset: glam::Vec3::ZERO,
+            };
+            assert_eq!(w.rlva_send_boundary(&mut sit, actor), Boundary::Send);
+            w.rlva_note_sent(&mut sit, actor, now);
+        };
+        for actor in [Uuid::nil(), A] {
+            let mut w = world();
+            restrict(&mut w, A, "standtp=n");
+            let origin = (w.main_region.unwrap(), w.agent.position);
+            sit(&mut w, actor);
+            assert_eq!(w.rlva.stand_origin, Some(origin), "{actor}");
+            w.rlva_update_stand();
+            assert!(w.rlva.stand_return.is_none(), "the sit is not answered yet");
+            seated(&mut w, true);
+            // the seat carries the avatar away
+            w.agent.position += glam::Vec3::X * 20.0;
+            w.rlva_update_stand();
+            assert!(w.rlva.stand_return.is_none());
+            seated(&mut w, false);
+            w.rlva_update_stand();
+            assert_eq!(w.rlva.stand_return, Some(origin), "{actor}: back where the sit was asked");
+            assert!(w.rlva.stand_origin.is_none());
+        }
+        // seated first, locked after: no place was recorded
+        let mut w = world();
+        sit(&mut w, Uuid::nil());
+        seated(&mut w, true);
+        restrict(&mut w, A, "standtp=n");
+        w.rlva_update_stand();
+        seated(&mut w, false);
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_origin.is_none() && w.rlva.stand_return.is_none());
+        // a ground sit records nothing either
+        let mut ground = NetCommand::OneShotControl(control::SIT_ON_GROUND);
+        assert_eq!(w.rlva_send_boundary(&mut ground, Uuid::nil()), Boundary::Send);
+        w.rlva_note_sent(&mut ground, Uuid::nil(), now);
+        assert!(w.rlva.stand_origin.is_none());
+    }
+
     #[test]
     fn rlva_delayed_ground_sit_rechecks_new_locks_and_yields_to_stand_returns_and_disable() {
         let mut w = world();
