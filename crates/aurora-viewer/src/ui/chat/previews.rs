@@ -58,6 +58,9 @@ const DEFAULT_ASPECT: f32 = 16.0 / 9.0;
 const MIN_VIDEO_CARD: f32 = 200.0;
 /// The player window's id (its place and size are remembered).
 const PLAYER_WINDOW: &str = "link_preview_player";
+/// The key of a video the viewer plays itself (`Previews::play_video`): no
+/// link of the chat has it.
+const OWN_VIDEO: u64 = u64::MAX;
 
 /// A picture made into textures.
 #[derive(Clone)]
@@ -567,6 +570,52 @@ impl Previews {
                 _ => w + VIDEO_EXTRA,
             })
             .fold(0.0, f32::max)
+    }
+
+    /// A video of the viewer's own choosing may play in the player window:
+    /// the resident did not hide YouTube's previews. (The media plugins
+    /// are the app's to check.)
+    pub fn can_play_video(&self) -> bool {
+        !self.settings.hidden_sites.iter().any(|site| site.contains("youtube"))
+    }
+
+    /// Plays a video of YouTube in the player window from `start` seconds
+    /// in, its page telling where the video is (`lp::video_time`): the
+    /// music of the viewer's own show (`crate::oiia`), not a link of the
+    /// chat. False when it may not (`can_play_video`).
+    pub fn play_video(&mut self, id: &str, start: u32, title: &str) -> bool {
+        if !self.can_play_video() {
+            return false;
+        }
+        let mut options = self.settings.player_options(aurora_i18n::language());
+        options.clock = true;
+        lp::forget_video_time();
+        let mut web = WebView::default();
+        web.navigate(&lp::Video { id: id.to_owned(), start }.player_page(&options));
+        self.playing = Some(Playing {
+            key: OWN_VIDEO,
+            link: format!("https://www.youtube.com/watch?v={id}&t={start}"),
+            title: title.to_owned(),
+            web,
+            window: true,
+            drawn: 0,
+            aspect: DEFAULT_ASPECT,
+            fitted: false,
+            chrome: Vec2::new(0.0, TITLE_BAR),
+        });
+        true
+    }
+
+    /// The video `play_video` started is still in its window.
+    pub fn own_video_playing(&self) -> bool {
+        self.playing.as_ref().is_some_and(|v| v.key == OWN_VIDEO)
+    }
+
+    /// Closes the video `play_video` started.
+    pub fn stop_own_video(&mut self) {
+        if self.own_video_playing() {
+            self.playing = None;
+        }
     }
 
     /// The video playing in a window: its window; the one of a card no

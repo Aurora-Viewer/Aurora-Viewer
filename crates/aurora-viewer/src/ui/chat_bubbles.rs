@@ -118,9 +118,9 @@ pub fn layout(painter: &egui::Painter, p: &Palette, world: &World, frame: &Frame
         return None;
     }
     // UserChatColor / AgentChatColor, then the contact set's chat colour
+    // (none for a resident whose name RLVa hides)
     let new = world
-        .contact_sets
-        .appearance(&id)
+        .rlva_contact_appearance(&id)
         .chat_text
         .map(|c| crate::interface_colors::on_panel(super::colors::set_color(c)))
         .unwrap_or(if own { p.violet_pale } else { p.ink });
