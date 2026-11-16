@@ -1689,7 +1689,7 @@ impl World {
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
         // not applied yet: the file holds more than the inventory in memory
-        if self.inventory_cache.is_some() {
+        if self.inventory_cache.is_some() && !self.inventory.outgoing.has_originals() {
             return;
         }
         if let Some(path) = self.inventory_cache_path() {

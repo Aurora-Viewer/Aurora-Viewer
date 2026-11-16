@@ -4157,3 +4157,24 @@ fn rlva_forced_wear_is_asked_again_once_its_object_came_and_left() {
         "the same object is asked for again"
     );
 }
+
+#[test]
+fn inventory_offer_receipts_preserve_the_share_restriction_and_its_resident_exception() {
+    use aurora_net::NetCommand;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    let (receipt, _) = crossbeam_channel::unbounded();
+    let offer = |to| NetCommand::OfferInventory {
+        session: Uuid::nil(),
+        to,
+        id: Uuid::nil(),
+        message: String::new(),
+        bucket: vec![],
+        receipt: receipt.clone(),
+    };
+    command(&mut world.rlva, A, "@share=n");
+    assert!(!world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
+    command(&mut world.rlva, A, &format!("@share:{TARGET}=add"));
+    assert!(world.rlva_allows_command(&offer(TARGET), Uuid::nil()));
+    assert!(!world.rlva_allows_command(&offer(B), Uuid::nil()));
+}

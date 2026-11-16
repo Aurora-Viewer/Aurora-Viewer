@@ -14,10 +14,12 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use uuid::Uuid;
 
+pub(crate) const INVENTORY_OFFERED: u8 = 4;
+
 /// IM_INVENTORY_OFFERED, IM_TASK_INVENTORY_OFFERED, IM_GROUP_NOTICE and
 /// IM_GROUP_NOTICE_REQUESTED (llinstantmessage.h): the offers that keep
 /// their sender.
-const OFFERS: [u8; 4] = [4, 9, 32, 37];
+const OFFERS: [u8; 4] = [INVENTORY_OFFERED, 9, 32, 37];
 
 /// Their answers: the offer's dialog + 1 to accept, + 2 to decline
 /// (IM_INVENTORY_ACCEPTED / _DECLINED, IM_TASK_INVENTORY_ACCEPTED /
