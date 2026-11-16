@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+Outfit recovery retains still-linked originals after the initial metadata
+grace period without sending repeated reads. Known attachments restore while
+late records remain pending; an accepted original resumes the bounded attachment
+confirmation/retry window. Explicit detaches, authoritative COF changes,
+confirmed absence and non-attachable originals cancel pending intent. Region
+readiness and the existing login-settling policy still apply.
+
 Inventory read recovery is owned jointly by the model and the session. The
 model's `retrying_folders` prevents UI producers from bypassing background
 cooldowns; delayed retries reconcile each target before reading it again.

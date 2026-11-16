@@ -47,7 +47,7 @@ walked for descendants without refetching; externally active targets wait;
 deleted or over-limit targets are not reset to Fetching. Partial recovery of a
 subset must leave healthy children intact.
 
-## Deferred outfit originals (local follow-up)
+## Deferred outfit originals
 
 The login restore's 15-second item-metadata grace period is not an existence
 test. It may move on to restore known objects, but must retain the intent for
@@ -61,8 +61,12 @@ explicit detach, confirmed missing result, already-worn target or non-attachable
 original cancels it. A refreshing COF or a region that is not ready cannot
 trigger a stale wear. Ready objects keep the existing region-settling policy;
 they do not wait for the entire inventory. Late object metadata for ordinary
-COF outfit changes follows the same existence rule. Human validation of this
-follow-up is still pending; earlier inventory-only validation does not cover it.
+COF outfit changes follows the same existence rule. The reporter manually tested
+candidate 5ce3791 and confirmed successful inventory and attachment restoration.
+The zero-cache session logs 37/37 attachments worn and completes 17,367 folders /
+219,982 items in 133.4 s with zero folders left. All 9,832 workspace tests pass,
+including six new deferred-wear regressions; the actual Windows executable was
+also built and tested by the reporter. See the sanitized evidence for scope.
 
 ## Existence and diagnostics
 
@@ -97,10 +101,11 @@ regressions fail on the original method bodies and pass on the corrected ones.
 The PR preparation branch integrates upstream main at
 `0d6ad174604ddcc257fe668615d284e07362d0d5`, preserving its `receive_event`
 dispatch before model-accepted acknowledgments. Its complete `scripts/check.ps1`
-run also passed: 9,826 tests, zero failures, 58 existing ignored tests;
-569 network tests and 8,291 viewer tests (18 viewer ignored). No new binary or
-human grid validation is claimed for the merged upstream changes; the human's
-tested recovery executable is the separately preserved d561809 candidate.
+run passed before the attachment follow-up: 9,826 tests, zero failures,
+58 existing ignored tests. Final candidate 5ce3791 then passed all 9,832 tests
+(569 network; 8,297 viewer, 18 viewer ignored), formatting, Clippy and script
+checks. The reporter manually tested its actual Windows executable, version
+0.9.10+27.g5ce37919d, and confirmed inventory and attachment restoration.
 
 The reporter manually validated the original candidate on a large account:
 four partial/warm-cache sessions completed with no terminal item/folder failure

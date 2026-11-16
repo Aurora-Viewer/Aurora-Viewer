@@ -1,0 +1,51 @@
+{
+  "events": [
+    {
+      "secondsFromStart": 0,
+      "message": "Aurora Viewer 0.9.10+27.g5ce37919d starting"
+    },
+    {
+      "secondsFromStart": 67.342,
+      "message": "inventory cache: 0 folders up to date (read in 17 ms off the main thread, applied in 0.0 ms)"
+    },
+    {
+      "secondsFromStart": 72.042,
+      "message": "outfit: COF version 141679 links 37 objects (24 to look up, 16 already worn)"
+    },
+    {
+      "secondsFromStart": 87.25,
+      "message": "outfit: 17 originals still loading; keeping their restore intent"
+    },
+    {
+      "secondsFromStart": 91.485,
+      "message": "outfit: the region put back 24 of 37 objects by itself, 23.6 s after arriving"
+    },
+    {
+      "secondsFromStart": 91.485,
+      "message": "outfit: wearing 8 attachments"
+    },
+    {
+      "secondsFromStart": 105.96,
+      "message": "outfit: wearing 1 looked-up attachments"
+    },
+    {
+      "secondsFromStart": 106.485,
+      "message": "outfit: wearing 1 looked-up attachments"
+    },
+    {
+      "secondsFromStart": 111.701,
+      "message": "outfit: wearing 3 looked-up attachments"
+    },
+    {
+      "secondsFromStart": 142.145,
+      "message": "outfit: 37 of 37 attachments worn"
+    },
+    {
+      "secondsFromStart": 201.229,
+      "message": "inventory background fetch: 17367 folders and 219982 items in 133.4 s (2909 requests, 0 folders left, 0 over the server's limit)"
+    }
+  ],
+  "http503RetryMessages": 353,
+  "terminalItemFailureResults": 0,
+  "exhaustedWarnings": 0
+}
