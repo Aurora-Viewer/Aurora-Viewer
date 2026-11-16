@@ -71,6 +71,12 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
     if let Some((_, material)) = world.local_assets.get(&texture) {
         return !material;
     }
+    // Predefined built-in textures (LLFloaterTexturePicker::onBtnBlank, onBtnTransparent,
+    // get_is_predefined_texture, indra/newview/lltexturectrl.cpp) are available to any wearable
+    // without requiring an inventory item.
+    if texture == aurora_prim::te::BLANK_TEXTURE || texture == aurora_prim::te::TRANSPARENT_TEXTURE {
+        return true;
+    }
     // init_texture_ctrl (indra/newview/llpaneleditwearable.cpp) sets both
     // filter masks of the wearable swatches to PERM_NONE, so
     // LLTextureCtrl::allowDrop takes any texture the agent has, whatever

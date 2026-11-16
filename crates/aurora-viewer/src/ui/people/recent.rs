@@ -9,6 +9,7 @@ use super::rows::{self, RICH_GAP, RICH_H};
 use super::{Ctx, PeopleAction, PeopleUi};
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, widgets};
+use crate::world::names::NameScope;
 use crate::world::recent::Met;
 use egui::{Rect, Vec2};
 use uuid::Uuid;
@@ -51,7 +52,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         .list()
         .iter()
         .map(|m| (m.clone(), rows::display_name(world, &m.id)))
-        .filter(|(met, name)| super::matches_name(world, &met.id, name, &filter))
+        .filter(|(met, name)| super::matches_name(world, NameScope::World, &met.id, name, &filter))
         .collect();
     let order: Vec<Uuid> = people.iter().map(|(m, _)| m.id).collect();
     st.sel.retain(|id| order.contains(id));
@@ -95,7 +96,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
+    let left = rows::picture(ui, p, world, NameScope::World, rect, data.pics.get(&id), id, name, false);
     let friend = world.social.is_friend(&id);
     // Near you's quick actions: profile, IM, a friendship offer, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {

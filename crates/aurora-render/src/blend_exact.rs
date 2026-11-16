@@ -80,15 +80,11 @@ fn fs_blend_both(@builtin(position) clip: vec4<f32>) -> BlendBoth {
 }
 ";
 
-/// The scene shader as the device takes it: without the attribute of the
-/// early depth test where the device does not know it, and with the one
-/// draw over the screen where the device blends from two sources.
+/// The scene shader as the device takes it: with the one draw over the
+/// screen where the device blends from two sources. (Its object.wgsl comes
+/// from `object_shader_source`, already without the attribute of the early
+/// depth test where the device does not know it.)
 pub(crate) fn scene_source(source: String, features: wgpu::Features) -> String {
-    let source = if features.contains(EARLY_TEST) {
-        source
-    } else {
-        source.replace("@early_depth_test(force)", "")
-    };
     if features.contains(TWO_SOURCES) {
         // (a directive: before everything else)
         format!("enable dual_source_blending;\n{source}\n{BOTH_SOURCE}")
@@ -589,8 +585,8 @@ mod tests {
             1,
             "the pass of the blended faces alone"
         );
-        assert!(scene_source(source.to_string(), EARLY_TEST).contains("@early_depth_test"));
-        assert!(!scene_source(source.to_string(), wgpu::Features::empty()).contains("@early_depth_test"));
+        assert_eq!(crate::object_shader_source(EARLY_TEST), source);
+        assert!(!crate::object_shader_source(wgpu::Features::empty()).contains("@early_depth_test"));
         // the one draw over the screen, and what it needs of the device
         let two = scene_source(source.to_string(), TWO_SOURCES);
         assert!(two.starts_with("enable dual_source_blending;"));

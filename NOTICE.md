@@ -70,7 +70,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Pie menu, `newview/piemenu.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ui/context/pie.rs` | Originally LGPL 2.1 |
 | Nearby chat, `newview/fsnearbychathub.cpp`, `fsfloaternearbychat.cpp` — Copyright © 2012 Zi Ree | `aurora-net/src/message_split.rs`, `session.rs`; `aurora-viewer/src/ui/chat.rs`, `ui/chat/`, `app/gestures.rs`, `world/bridge.rs`, `world/transcripts.rs`, `world/rlva/chat.rs` | Originally LGPL 2.1 |
 | Texture tab, `newview/fspanelface.cpp` — Copyright © 2024 Zi Ree | `aurora-viewer/src/build/ui/texture.rs`, `build/ui/texture_drop.rs`, `build/contents_drop.rs` | Originally LGPL 2.1 |
-| Object message filter, `newview/omnifilterengine.h` — Copyright © 2025 Zi Ree | `aurora-viewer/src/world/object_im_filter.rs` | Originally LGPL 2.1 |
+| Omnifilter and object message filter, `newview/omnifilterengine.cpp`, `omnifilterengine.h`, `omnifilter.cpp` — Copyright © 2025 Zi Ree | `aurora-viewer/src/omnifilter.rs`, `omnifilter/file.rs`, `ui/omnifilter.rs`, `world/omnifilter.rs`, `world/object_im_filter.rs` | Originally LGPL 2.1 |
 | Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
 | Radar, `newview/fsradar.cpp`, `fsradarentry.cpp`, `fspanelradar.cpp` — Copyright © 2013 Ansariel Hiller; `fsradarlistctrl.cpp` — Copyright © 2011 Arrehn Oberlander | `aurora-net/src/bridge/query.rs`; `aurora-viewer/src/world/radar.rs`, `ui/people/radar.rs`, `ui/people/nearby.rs`, `world/friend_join.rs`, `app.rs` | Originally LGPL 2.1 |
 | Money tracker, `newview/fsmoneytracker.cpp` — Copyright © 2011 Arrehn Oberlander, © 2015 Ansariel Hiller | `aurora-viewer/src/ui/money_tracker.rs` | Originally LGPL 2.1 |
@@ -91,6 +91,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Grids and SLURLs, `newview/fsgridhandler.cpp`, `fsslurl.cpp` — with modifications Copyright © 2012 arminweatherwax | `aurora-viewer/src/grids.rs`, `slurl.rs` | Originally LGPL 2.1 |
 | Media lists, `newview/floatermedialists.cpp` — Copyright © 2011 Sione Lomu | `aurora-viewer/src/media/filter.rs` | Originally LGPL 2.1 |
 | Simulator features, `newview/lfsimfeaturehandler.cpp` — Copyright © 2013 Liru Færs | `aurora-viewer/src/grid_status.rs`, `world/inventory/actions.rs` | Originally LGPL 2.1 |
+| Region settings of Aurora-Sim based grids, `newview/llpanelopenregionsettings.cpp` — Copyright © 2011 Patrick Sapinski, Matthew Beardmore | `aurora-net/src/open_region.rs`; `aurora-viewer/src/ui/region/opensim.rs` | Originally LGPL 2.1 |
 | Interface sounds, `newview/fspanelpreferenceuisounds.cpp` — Copyright © 2026 Firestorm Viewer Project | `aurora-viewer/src/ui_sound.rs`, `ui/options/pages/sound.rs` | Originally LGPL 2.1 |
 | Avatar alignment (Compass, Face nearest avatar), `newview/fsfloateravataralign.cpp` — Copyright © 2026 Ayane Lyla | `aurora-viewer/src/avatar_align.rs`, `app/avatar_align.rs`, `ui/avatar_align.rs` | Originally LGPL 2.1 |
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
@@ -129,6 +130,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | "Light Rain" by Jeffreys2 (https://freesound.org/people/Jeffreys2/sounds/137022/) and "Rain Indoor Cabin (loop)" by PhilllChabbb (https://freesound.org/people/PhilllChabbb/sounds/232731/), cut, levelled and looped (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/rain-light.ogg`, `assets/rain/rain-roof.ogg` | CC0 1.0 |
 | "Three mighty thunders in row" by Nimlos (https://freesound.org/people/Nimlos/sounds/522025/), cut into five clips and cleaned (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/thunder-*.ogg` | CC0 1.0 |
 | "Snow 004" from ambientCG (https://ambientcg.com/view?id=Snow004), downscaled and packed (built into the executable; changes in [README.md](assets/snow/README.md)) | `assets/snow/snow-normal-height.png`, `assets/snow/snow-color-roughness.png` | CC0 1.0 |
+| "Oiiaioooooiai Cat" by Zhuier (https://sketchfab.com/3d-models/oiiaioooooiai-cat-30d27bf7fb224849b76e208a6eccdb36); changed: texture reduced to 1024 x 1024 and packed with the model into one GLB (built into the executable; changes in [README.md](assets/models/README.md)) | `assets/models/spinning-cat.glb` | CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/) |
 
 Fonts keep their own license (the OFL allows bundling them with software under
 any license). The license texts of the fonts are next to them.

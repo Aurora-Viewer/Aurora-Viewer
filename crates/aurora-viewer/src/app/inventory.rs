@@ -122,7 +122,7 @@ impl App {
         self.inventory_ui.message = aurora_i18n::tr!("task-transfer-requested").into();
     }
 
-    fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+    pub(super) fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
         }
@@ -296,6 +296,34 @@ impl App {
         }
     }
 
+    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
+    /// a preview played stops first, then `asset` plays for everyone or
+    /// locally. An object's contents use it without opening the inventory's
+    /// own animation window.
+    pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
+        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
+            if was_local || self.demo {
+                self.world.preview_animation(playing, false);
+            }
+            if !was_local {
+                self.send(NetCommand::AgentAnimation {
+                    anim: playing,
+                    start: false,
+                });
+            }
+        }
+        if start {
+            self.record_library_asset(asset, 20);
+            if local || self.demo {
+                self.world.preview_animation(asset, true);
+            }
+            if !local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: true });
+            }
+            self.inventory_ui.playing = Some((asset, local));
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
@@ -366,28 +394,10 @@ impl App {
                 self.apply_appearance_action(action);
             }
             InvAction::Animation { asset, local, start } => {
-                if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-                    if was_local || self.demo {
-                        self.world.preview_animation(playing, false);
-                    }
-                    if !was_local {
-                        self.send(NetCommand::AgentAnimation {
-                            anim: playing,
-                            start: false,
-                        });
-                    }
-                }
                 if start {
-                    self.record_library_asset(asset, 20);
                     self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
-                    if local || self.demo {
-                        self.world.preview_animation(asset, true);
-                    }
-                    if !local {
-                        self.send(NetCommand::AgentAnimation { anim: asset, start: true });
-                    }
-                    self.inventory_ui.playing = Some((asset, local));
                 }
+                self.play_preview_animation(asset, local, start);
             }
             InvAction::Sound(asset) => {
                 self.record_library_asset(asset, 1);
@@ -400,7 +410,7 @@ impl App {
             }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
-            InvAction::Preview(id) => {
+            InvAction::Preview(id, owner) => {
                 if self
                     .world
                     .inventory
@@ -435,13 +445,16 @@ impl App {
                     }
                     if it.asset_type == 10 {
                         self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
-                        self.open_script(aurora_net::scripts::ScriptTarget {
-                            object: Uuid::nil(),
-                            item: id,
-                        });
+                        self.open_script_from(
+                            aurora_net::scripts::ScriptTarget {
+                                object: Uuid::nil(),
+                                item: id,
+                            },
+                            owner,
+                        );
                         return;
                     }
-                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
+                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type, owner) {
                         return;
                     }
                     // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
@@ -920,6 +933,10 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 self.inventory_ui.show_original(&self.world.inventory, id);
             }
+            return;
+        }
+        if let crate::world::appearance::Action::Gesture(ids, on) = action {
+            self.gesture_action(crate::ui::gestures::Action::Active(ids, on));
             return;
         }
         if let crate::world::appearance::Action::Favorite(id) = action {

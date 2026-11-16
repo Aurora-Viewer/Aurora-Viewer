@@ -64,6 +64,8 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -2281,7 +2283,11 @@ fn invitations_are_answered() {
 fn a_group_chat_snoozes_from_its_head_and_its_menu() {
     for style in ALL {
         let mut h = H::new(style);
-        h.world.groups.sessions.entry(GROUP).or_default().group = true;
+        let session = h.world.groups.sessions.entry(GROUP).or_default();
+        session.group = true;
+        // A name of its own: the unnamed fallback (Japanese 会話) is also the
+        // window's title and a section head.
+        session.name = "Builders".to_owned();
         let button = if style.workspace() {
             control_id("head-alarm-snooze-filled")
         } else {
@@ -2504,6 +2510,8 @@ fn ooc_shortcut_always_uses_normal_volume() {
                     h.st.conv_focus_request = true;
                     h.settle();
                 }
+                // This test types twice without clicking the field again.
+                h.st.keep_focus = true;
                 h.st.volume = volume;
                 h.type_text("brb");
                 h.history_key(egui::Key::Enter, egui::Modifiers::ALT);
@@ -2513,6 +2521,11 @@ fn ooc_shortcut_always_uses_normal_volume() {
                     "{style:?}, {volume:?}, detached={detached}: normal OOC"
                 );
                 assert_eq!(h.st.volume, volume);
+                let field = egui::Id::unique(("conv_input", None::<Uuid>));
+                assert!(
+                    h.frames.ctx.memory(|m| m.has_focus(field)),
+                    "{style:?}, detached={detached}: ready for the next message"
+                );
                 h.type_text("ordinary");
                 h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
                 let expected = match (style.workspace(), volume) {

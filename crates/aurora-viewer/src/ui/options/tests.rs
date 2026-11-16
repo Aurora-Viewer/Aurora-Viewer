@@ -265,6 +265,7 @@ const BEFORE: &[&str] = &[
     "mouse_sensitivity",
     "invert_mouse",
     "world_mouse_walk",
+    "mmo_mouse_buttons",
     "arrows_strafe",
     "arrow_keys_always_move",
     "letter_keys_move",
@@ -672,7 +673,8 @@ fn the_search_finds_settings_on_their_pages() {
         .expect("inventory shortcut")
         .label();
     assert!(counts(&mut s, &inventory).hits(Page::Shortcuts) >= 1);
-    assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
+    let anti_spam = cx::fold(aurora_i18n::tr!("anti-spam-title"));
+    assert!(counts(&mut s, &anti_spam).hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());
@@ -1056,6 +1058,7 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
         s: &mut Settings,
         st: &mut OptionsUi,
         view: (f32, Mode),
+        query: &str,
         events: Vec<egui::Event>,
     ) -> (Vec<egui::Shape>, bool) {
         let p = crate::theme::Theme::default().palette();
@@ -1065,7 +1068,7 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
         let shapes = frames.shapes(events, |ui| {
             ui.set_width(view.0);
             ui.spacing_mut().item_spacing.y = 0.0;
-            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, "parc");
+            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, query);
             run_page(&mut cx, Page::Graphics, Some(6));
             changed |= cx.changed;
         });
@@ -1080,6 +1083,30 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
             })
             .unwrap_or_else(|| panic!("missing parcel text: {source}"))
     }
+    // a search that finds both parcel lists, whatever the language: the
+    // longest text their two headings share ("parcels", 区画…)
+    let query = {
+        let (a, b) = (
+            cx::fold(aurora_i18n::tr!("parcel-visibility-parcels")),
+            cx::fold(aurora_i18n::tr!("parcel-visibility-always-visible")),
+        );
+        let a: Vec<char> = a.chars().collect();
+        let mut best = String::new();
+        for i in 0..a.len() {
+            for j in (i + 1..=a.len()).rev() {
+                if j - i <= best.chars().count() {
+                    break;
+                }
+                let part: String = a[i..j].iter().collect();
+                if b.contains(&part) {
+                    best = part;
+                    break;
+                }
+            }
+        }
+        best.trim().to_owned()
+    };
+    assert!(query.chars().count() >= 2, "{query:?}");
     for width in [420.0, 700.0, 900.0] {
         for mode in [Mode::Show, Mode::Search] {
             let mut frames = Frames::new();
@@ -1097,7 +1124,7 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
             let view = (width, mode);
             let mut shapes = Vec::new();
             for _ in 0..4 {
-                shapes = frame(&mut frames, &mut s, &mut st, view, Vec::new()).0;
+                shapes = frame(&mut frames, &mut s, &mut st, view, &query, Vec::new()).0;
             }
             let heading_label = aurora_i18n::tr!("parcel-visibility-always-visible");
             let heading = if mode == Mode::Show {
@@ -1149,7 +1176,7 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
             }
             let mut changed = false;
             for events in click(remove.expect("remove the first always-visible entry")) {
-                changed |= frame(&mut frames, &mut s, &mut st, view, events).1;
+                changed |= frame(&mut frames, &mut s, &mut st, view, &query, events).1;
             }
             assert!(changed, "removing a parcel must save the preference");
             assert_eq!(s.parcel_visibility.always_visible, entries[3..]);
@@ -1902,6 +1929,41 @@ fn the_weather_lives_in_graphics_only() {
         .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
         .collect();
     assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}
+
+#[test]
+fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
+    // behind the puddles' cog, the wet ground's distance still acts with
+    // them off (the wet ground is drawn in any rain), their ice does not:
+    // the label's ink, found by a search for its own text (the tests may
+    // run in French)
+    let p = crate::theme::Theme::default().palette();
+    let ink = |label: &str| {
+        let mut s = Settings::default();
+        s.weather.puddles = false;
+        let d = Settings::default();
+        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+        let mut frames = Frames::new();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frames.shapes(Vec::new(), |ui| {
+                ui.set_width(700.0);
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Search, label);
+                // Sky and environment, where the weather is
+                run_page(&mut cx, Page::Graphics, Some(2));
+            });
+        }
+        shapes
+            .iter()
+            .find_map(|shape| match shape {
+                // a row behind a cog is found as "Puddles › <its label>"
+                egui::Shape::Text(t) if t.galley.text().ends_with(&format!("› {label}")) => Some(t.fallback_color),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the row {label}"))
+    };
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-distance")), p.ink, "the wet ground's distance");
+    assert_eq!(ink(aurora_i18n::tr!("ui-weather-ice")), p.muted, "the puddles' ice");
 }
 
 #[test]

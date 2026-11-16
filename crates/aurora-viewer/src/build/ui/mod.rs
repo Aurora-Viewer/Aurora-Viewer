@@ -201,6 +201,8 @@ pub struct FloaterState {
     pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
+    /// (object, item) of the contents to open in its window: a notecard,
+    /// or the preview of a texture, a sound or an animation.
     pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,
@@ -508,6 +510,9 @@ pub fn show(
     if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
+    // Keep the user's Build size. Large Appearance › Text size reflows inside
+    // the floater (shape fields and Legacy Texture slots); it must not shove
+    // the window wider or taller on its own.
     floater.min_size = if s.legacy_window {
         legacy::MIN_SIZE
     } else {

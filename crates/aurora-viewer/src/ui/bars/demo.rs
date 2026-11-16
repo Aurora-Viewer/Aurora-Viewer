@@ -23,7 +23,8 @@
 //! places in the session, the back arrow's list of them open), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
 //! rate / its network, under the island); the clock: `clocklocal` (local
-//! time, whatever is saved: a click then does not change it), `noseconds`
+//! time, whatever is saved: a click then does not change it), `clockslt`
+//! (SLT, the same way), `noseconds`
 //! (without its seconds), `clock12` / `clock24` (12 / 24 hours). The hidden interface: `hidden`
 //! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
 //! the top edge: the top islands back), `peekleft` (hidden, the pointer held
@@ -222,6 +223,7 @@ pub fn parse(value: &str) -> DemoBars {
             "nobalance" => d.show_balance = Some(false),
             "balancemenu" => d.open = Some(Open::Account),
             "clocklocal" => d.clock_zone = Some(crate::settings::ClockZone::Local),
+            "clockslt" => d.clock_zone = Some(crate::settings::ClockZone::Slt),
             "clock12" => d.clock_format = Some(crate::settings::ClockFormat::H12),
             "clock24" => d.clock_format = Some(crate::settings::ClockFormat::H24),
             "noseconds" => d.clock_seconds = Some(false),
@@ -306,6 +308,7 @@ mod tests {
         let clock = parse("clocklocal,noseconds");
         assert_eq!(clock.clock_zone, Some(crate::settings::ClockZone::Local));
         assert_eq!(clock.clock_seconds, Some(false));
+        assert_eq!(parse("clockslt").clock_zone, Some(crate::settings::ClockZone::Slt));
         assert_eq!(parse("clock12").clock_format, Some(crate::settings::ClockFormat::H12));
         use crate::settings::ChatBar;
         assert_eq!(parse("autohide").chat_bar, Some(ChatBar::WhenTyping));

@@ -170,6 +170,11 @@ pub fn page(cx: &mut Cx) {
             &field!(sim_version_alert),
         );
         cx.toggle(
+            tr!("ui-options-hide-object-returns"),
+            tr!("ui-options-hide-object-returns-help"),
+            &field!(hide_object_returns),
+        );
+        cx.toggle(
             tr!("ui-options-script-count-alert"),
             tr!("ui-options-script-count-alert-help"),
             &field!(script_count_alert),

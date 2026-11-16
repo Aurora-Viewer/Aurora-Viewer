@@ -9,6 +9,7 @@ use crate::build::BuildTool;
 use crate::build::edits::{CLICK_ACTION_BUY, CLICK_ACTION_TOUCH, FLAGS_INCLUDE_IN_SEARCH};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_net::build::{ObjectProps, perm, perm_field};
 use egui::RichText;
 use uuid::Uuid;
@@ -166,12 +167,21 @@ fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
         .clicked()
 }
 
-fn person_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) -> bool {
-    if !world.rlva_can_name(id) {
+/// A resident named by a row of the panel, as RLVa's `@shownames` leaves
+/// them in `scope` (LLPanelPermissions::refresh,
+/// indra/newview/llpanelpermissions.cpp: the owner is hidden, the creator
+/// only when they also own the object or stand around). A name the row
+/// shows while the world hides it is plain text: its profile would open as
+/// a stranger's. Stricter than the Legacy Viewer, whose link opens it.
+fn person_link(ui: &mut egui::Ui, p: &Palette, world: &World, scope: NameScope, id: Uuid) -> bool {
+    if !world.rlva_shows_name(scope, id) {
         text(ui, p, aurora_i18n::tr!("scene-object-hidden-person"));
         false
+    } else if !world.rlva_shows_name(NameScope::World, id) {
+        text(ui, p, &world.social.name_in(scope, &id));
+        false
     } else {
-        name_link(ui, p, &world.social.name_of(&id))
+        name_link(ui, p, &world.social.name_in(scope, &id))
     }
 }
 
@@ -394,8 +404,21 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ui.add_space(4.0);
 
         // ---- creator, owner, previous owner, group
-        for id in [first.creator_id, first.owner_id, first.last_owner_id] {
-            if !id.is_nil() && id != first.group_id && world.rlva_can_name(id) {
+        // The creator of a selection of several owners is hidden as an
+        // owner is: the Legacy Viewer compares it with the first one alone.
+        let creator_scope = NameScope::Creator {
+            owner: if owners_identical { first.owner_id } else { first.creator_id },
+        };
+        // LLPanelPermissions::refresh: under `@shownames` the previous
+        // owner is hidden whoever they are but oneself, an exception
+        // (`@shownames:<uuid>`) included.
+        let previous_hidden = world.rlva.has("shownames") && first.last_owner_id != world.agent_id;
+        for (id, shown) in [
+            (first.creator_id, world.rlva_shows_name(creator_scope, first.creator_id)),
+            (first.owner_id, world.rlva_shows_name(NameScope::Owner, first.owner_id)),
+            (first.last_owner_id, !previous_hidden),
+        ] {
+            if !id.is_nil() && id != first.group_id && shown {
                 world.social.want_name(id);
             }
         }
@@ -404,7 +427,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if first.creator_id.is_nil() {
                 text(ui, p, aurora_i18n::tr!("status-nobody"));
-            } else if person_link(ui, p, world, first.creator_id) {
+            } else if person_link(ui, p, world, creator_scope, first.creator_id) {
                 tool.ui.requests.push(Request::Profile(first.creator_id));
             }
         });
@@ -416,7 +439,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if name_link(ui, p, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
-            } else if person_link(ui, p, world, first.owner_id) {
+            } else if person_link(ui, p, world, NameScope::Owner, first.owner_id) {
                 tool.ui.requests.push(Request::Profile(first.owner_id));
             }
         });
@@ -428,7 +451,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if name_link(ui, p, &group_name(world, first.group_id)) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
-            } else if person_link(ui, p, world, first.last_owner_id) {
+            } else if previous_hidden {
+                text(ui, p, aurora_i18n::tr!("scene-object-hidden-person"));
+            } else if person_link(ui, p, world, NameScope::Owner, first.last_owner_id) {
                 tool.ui.requests.push(Request::Profile(first.last_owner_id));
             }
         });

@@ -68,6 +68,10 @@ pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
+/// Nearby chat from near and from beyond the say range, the far lines
+/// dimmed (AURORA_DEMO_CHAT_RANGE).
+#[path = "demo_chat_range.rs"]
+pub mod chat_range;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -87,6 +91,11 @@ pub mod contact_markers;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// The Legacy Viewer's conversation options (AURORA_DEMO_CONV_OPTIONS).
+#[path = "demo_conv_options.rs"]
+pub mod conv_options;
+#[path = "demo_conversation_log.rs"]
+pub mod conversation_log;
 /// A blended face lying exactly on an opaque face of the same mesh
 /// (AURORA_DEMO_COPLANAR_DECAL).
 #[path = "demo_coplanar_decal.rs"]
@@ -180,6 +189,10 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+#[path = "demo_muted_chat.rs"]
+pub mod muted_chat;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -207,6 +220,10 @@ pub mod object_snap;
 /// AURORA_DEMO_OIT_COLUMN: a tall translucent textured column of nested tubes.
 #[path = "demo_oit_column.rs"]
 pub mod oit_column;
+/// The Omnifilter's own rules and messages it filters
+/// (AURORA_DEMO_OMNIFILTER).
+#[path = "demo_omnifilter.rs"]
+pub mod omnifilter;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -251,6 +268,10 @@ pub mod seat_kill;
 /// (AURORA_DEMO_SET_NOTICES).
 #[path = "demo_set_notices.rs"]
 pub mod set_notices;
+/// The Wolf and the crowd changing shape every few seconds, for the
+/// progressive shape changes (AURORA_DEMO_SHAPE_MORPH).
+#[path = "demo_shape_morph.rs"]
+pub mod shape_morph;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -266,10 +287,20 @@ pub mod sky;
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
 pub mod slideshow;
+/// AURORA_DEMO_SNOW_ROOF: canopies in the snow, one open at its top.
+#[path = "demo_snow_roof.rs"]
+pub mod snow_roof;
+/// AURORA_DEMO_SNOW_SPIN: turning boxes in lying snow (#3642).
+#[path = "demo_snow_spin.rs"]
+pub mod snow_spin;
 /// A resident's "Invite to group", "Add to contact set" and "Block
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
@@ -1461,6 +1492,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1698,6 +1731,8 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             kind,
             source,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1719,6 +1754,8 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             kind: crate::world::ChatKind::Im,
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1880,6 +1917,8 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -2688,6 +2727,77 @@ const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0002), demo_snapshot(2)),
 ];
 
+pub fn slow_pick_reply() -> bool {
+    std::env::var("AURORA_DEMO_PROFILE").is_ok_and(|v| v.split(':').any(|part| part == "slow-pick"))
+}
+
+/// A profile opened again in the demo keeps its saved picks. As on a grid,
+/// a read after Set Location returns the parcel at the saved coordinates.
+pub fn saved_profile_picks(profiles: &crate::world::profiles::Profiles, owner: Uuid, event: &mut NetEvent) {
+    match event {
+        NetEvent::AvatarProfile(profile) if profile.id == owner => {
+            if let Some(known) = profiles.get(&profile.id).filter(|p| !p.legacy) {
+                profile.picks.clone_from(&known.picks);
+            }
+        }
+        NetEvent::PickInfo(pick) if pick.creator == owner => {
+            if let Some(saved) = profiles.picks.get(&pick.id).filter(|p| p.creator == pick.creator) {
+                (**pick).clone_from(saved);
+                if pick.parcel.is_nil() {
+                    let (handle, _) = crate::world::place_details::remote_request_at(pick.pos_global);
+                    if let Ok(parcel) = place::parcel_id(handle)
+                        && let Some(NetEvent::ParcelInfo(info)) = place::parcel_info(parcel)
+                    {
+                        pick.parcel = parcel;
+                        pick.sim_name = info.sim_name;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod profile_pick_tests {
+    use super::*;
+
+    #[test]
+    fn saved_demo_pick_uses_the_parcel_at_its_location_and_reopens_in_its_owners_list() {
+        let owner = DEMO_AGENT;
+        let mut profiles = crate::world::profiles::Profiles::default();
+        profiles.insert(demo_profile(owner));
+        let id = Uuid::from_u128(99);
+        let saved = aurora_net::PickInfo {
+            id,
+            name: "New pick".into(),
+            desc: "Typed before reopening".into(),
+            pos_global: glam::DVec3::new(256_280.0, 256_040.0, 30.0),
+            ..Default::default()
+        };
+        profiles.pick_saved(owner, saved.clone());
+        let mut answer = demo_reply(&aurora_net::NetCommand::PickInfoRequest { creator: owner, pick: id })
+            .pop()
+            .unwrap();
+        saved_profile_picks(&profiles, owner, &mut answer);
+        let NetEvent::PickInfo(info) = answer else {
+            panic!("expected the pick")
+        };
+        assert_eq!(
+            info.parcel,
+            place::parcel_id(aurora_net::origin_to_handle(256_256, 256_000)).unwrap()
+        );
+        assert_ne!(info.parcel, land::PARCEL_UUID);
+        assert_eq!(
+            (info.pos_global, info.name.as_str(), info.desc.as_str()),
+            (saved.pos_global, "New pick", "Typed before reopening")
+        );
+        let mut profile = NetEvent::AvatarProfile(Box::new(demo_profile(owner)));
+        saved_profile_picks(&profiles, owner, &mut profile);
+        assert!(matches!(profile, NetEvent::AvatarProfile(p) if p.picks.iter().any(|(pick, name)| *pick == id && name == "New pick")));
+    }
+}
+
 fn demo_pick_name(pick: Uuid) -> &'static str {
     match pick.as_u128() & 0xF {
         1 => aurora_i18n::tr!("demo-aurora-beach"),
@@ -3402,6 +3512,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
             Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            // AURORA_DEMO_CONV_OPTIONS: Orion's and a group's
+            _ if conv_options::scene().is_some() => conv_options::offline_messages(DEMO_AGENT),
             _ => Vec::new(),
         },
         // a conference started by message (AURORA_DEMO_CALL=conference-legacy)
@@ -4411,6 +4523,8 @@ fn caps() -> std::collections::HashMap<String, String> {
     let mut caps: std::collections::HashMap<String, String> = [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
         .into_iter()
         .chain(sim_extras::caps())
+        .chain(crate::build::demo_sim::caps())
+        .chain(region::open_settings_caps())
         .collect();
     if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
         for (name, url) in [
@@ -4482,6 +4596,7 @@ pub fn events() -> Vec<NetEvent> {
         })),
     ];
     ev.extend(group::simulator_features());
+    ev.extend(region::open_settings_event(HANDLE));
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
@@ -6450,6 +6565,8 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         ev.push(NetEvent::LoadUrl {
             object_name: aurora_i18n::tr!("demo-shop").into(),
             object_id: Uuid::from_u128(0xF5),
+            owner_id: Uuid::nil(),
+            owner_is_group: false,
             message: aurora_i18n::tr!("demo-scripted-url").into(),
             url: "https://example.invalid/shop".into(),
         });
@@ -7709,6 +7826,11 @@ fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
 /// child prims) on bones all over the body, so every worn prim follows its
 /// animated bone each frame. With `rigged` (AURORA_DEMO_ANIMESH, whose mesh
 /// and skin are installed), each also wears the rigged demo mesh.
+/// The id of the `k`-th avatar of the crowd ("Foule<k> Resident").
+pub const fn crowd_avatar(k: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128)
+}
+
 pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
@@ -7731,7 +7853,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
             "",
         );
         a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128);
+        a.full_id = crowd_avatar(k);
         a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
         anims.push(NetEvent::AvatarAnimations {
             avatar: a.full_id,
@@ -9642,23 +9764,28 @@ fn demo_day(sky: Llsd) -> Llsd {
 }
 
 /// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
-/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
-/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
-/// included; a missing or unreadable value keeps the default.
+/// scale>[,<fog r>,<fog g>,<fog b>[,<fog density>]]: the water of the demo's
+/// EEP day (with AURORA_DEMO_SKY), as a region's asset carries it,
+/// out-of-range values included; a missing or unreadable value keeps the
+/// default.
 fn demo_water_eep(v: &str) -> Llsd {
     use aurora_llsd::llsd_map;
     let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
     let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
     let scale = at(3, 2.0);
-    llsd_map! {
+    let mut water = llsd_map! {
         "type" => "water",
         "fresnel_offset" => at(0, 0.5),
         "fresnel_scale" => at(1, 0.3999),
         "blur_multiplier" => at(2, 0.04),
         "normal_scale" => arr(&[scale, scale, scale]),
         "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
+    };
+    if let Some(density) = n.get(7).copied().flatten() {
+        water.insert("water_fog_density", density);
     }
+    water
 }
 
 #[cfg(test)]

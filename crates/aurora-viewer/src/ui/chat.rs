@@ -2,6 +2,7 @@
 
 mod action_marker;
 mod app_links;
+mod blocked;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
@@ -10,6 +11,7 @@ mod completion;
 mod compose;
 mod console;
 mod conv_menu;
+pub mod conversation_options;
 pub(crate) mod docking;
 mod find;
 mod flash;
@@ -34,7 +36,7 @@ pub mod previews;
 mod reorder;
 pub use reorder::Demo as ReorderDemo;
 pub(crate) mod select;
-mod sidebar;
+pub(crate) mod sidebar;
 pub(crate) use sidebar::group_insignia;
 pub mod snooze;
 mod stage;
@@ -120,6 +122,9 @@ pub struct ChatUi {
     /// Conversation whose entry the list scrolls to: one opened from
     /// elsewhere (a name's menu, a notification) may be out of its view.
     reveal: Option<uuid::Uuid>,
+    /// The folded runs of a blocked resident's nearby lines opened by their
+    /// Show, by the number of their first line (`blocked::fold_row`).
+    blocked_opened: std::collections::BTreeSet<u64>,
     /// The "Contacts" tab is shown instead (FSFloaterContacts docked as
     /// the first tab of FSFloaterIMContainer).
     pub contacts: bool,
@@ -567,7 +572,7 @@ impl ChatUi {
         {
             if self.popped.contains(to) {
                 // a conversation in its own window is only there
-                if self.popped.shown(to) {
+                if popout::in_sight(ctx, &self.popped).any(|shown| shown == to) {
                     self.popped.raise(to, true);
                     return;
                 }
@@ -1044,13 +1049,41 @@ fn hhmm_in(t: std::time::SystemTime, twelve: bool) -> String {
 
 /// Color of the name and text of a history line: Firestorm greys what comes
 /// from the transcript (ChatHistoryMessageFromLog) and gives the chat
-/// server's replay its own tone (ChatHistoryMessageFromServerLog).
+/// server's replay its own tone (ChatHistoryMessageFromServerLog), faded
+/// as Preferences › Chat asks (`conversation_options::faded`).
 pub(crate) fn history_tone(p: &Palette, origin: Origin) -> Option<Color32> {
-    match origin {
-        Origin::Live => None,
-        Origin::Log => Some(p.muted_dim),
-        Origin::ServerLog => Some(p.muted_dim.lerp_to_gamma(p.success, 0.3)),
+    let tone = match origin {
+        Origin::Live => return None,
+        Origin::Log => p.muted_dim,
+        Origin::ServerLog => p.muted_dim.lerp_to_gamma(p.success, 0.3),
+    };
+    Some(conversation_options::faded(&conversation_options::current(), tone))
+}
+
+/// `message_emphasis`, with a moderator's text style
+/// (`conversation_options::moderator`).
+fn line_emphasis(env: &LineEnv, line: &crate::world::ChatLine, italics: bool) -> super::fonts::TextEmphasis {
+    let mut emphasis = message_emphasis(line.kind, italics);
+    if let Some((_, text)) = moderator_look(env, line) {
+        emphasis.italics |= text.italics;
+        emphasis.strong |= text.strong;
     }
+    emphasis
+}
+
+/// The name and text styles of a moderator's line in this conversation.
+fn moderator_look(env: &LineEnv, line: &crate::world::ChatLine) -> Option<(super::fonts::TextEmphasis, super::fonts::TextEmphasis)> {
+    conversation_options::moderator(&conversation_options::current(), env.moderators, line, env.world.agent_id)
+}
+
+/// The name shown over a line: "(You)" for ours with the option.
+fn shown_name<'a>(line: &crate::world::ChatLine, name: &'a str) -> &'a str {
+    conversation_options::you(&conversation_options::current(), line).unwrap_or(name)
+}
+
+/// A system line's text as shown, in brackets with the option.
+fn system_text(text: &str) -> Cow<'_, str> {
+    conversation_options::system_text(&conversation_options::current(), text)
 }
 
 /// The day a group of lines was said, between two lines of different days
@@ -1267,6 +1300,24 @@ pub(crate) fn text_with_links(
 /// (`CtxAction::OpenUrl`).
 pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
     super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
+}
+
+/// The web addresses of a text and their byte ranges, in order, for the
+/// places that draw a one-line text with clickable links (the location
+/// field of the bars, `bars::place`): the Legacy Viewer linkifies the URLs
+/// an owner typed in a parcel name (LLUrlRegistry, LLURLLineEditor). Place
+/// and agent links stay text there.
+pub(crate) fn web_links(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    for (start, len, seg) in link_spans(text) {
+        let Seg::Url(url) = seg else { continue };
+        let range = start..start + len;
+        // A bracketed link may resolve to its URL. Only the literal address is clickable here.
+        if text.get(range.clone()) == Some(url) {
+            out.push((range, url));
+        }
+    }
+    out
 }
 
 /// Who wrote a bubble line, drawn before the name.
@@ -2384,15 +2435,22 @@ const USERNAME_MIN_W: f32 = 36.0;
 /// `reserve` pixels stay free at the right of the row for the time, as the
 /// user_name text of panel_chat_header.xml is (use_ellipses="true", the time
 /// box keeps its place); what was cut shows on hover. Returns the response
-/// of the name, clickable.
-fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&str>, col: Color32, reserve: f32) -> egui::Response {
+/// of the name, clickable. `emphasis`: a moderator's name style.
+fn header_names(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    name: &str,
+    username: Option<&str>,
+    col: Color32,
+    reserve: f32,
+    emphasis: super::fonts::TextEmphasis,
+) -> egui::Response {
     let room = ui.available_width() - reserve;
     let label = super::widgets::elided_label(
         ui,
-        RichText::new(name)
-            .size(super::fonts::chat_size(ui.ctx(), 13.0))
-            .strong()
-            .color(col),
+        emphasis
+            .rich_text(ui.ctx(), name, super::fonts::chat_size(ui.ctx(), 13.0), col)
+            .strong(),
         room,
     );
     let r = ui.add(label.sense(egui::Sense::click()));
@@ -2415,7 +2473,7 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
 /// looked up for nothing.
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
     if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_can_name(line.source) {
-        return crate::world::rlva::privacy::anonymous(line.source).display_name.clone();
+        return world.rlva_anonymous(line.source).display_name.clone();
     }
     let logged = line.origin != Origin::Live;
     let own = line.kind.is_own();
@@ -2507,7 +2565,7 @@ struct Copied<'a> {
 
 impl Copied<'_> {
     fn text(&self, sel: &select::Selection) -> String {
-        let seqs = self.view.lines().map(|i| self.first + i as u64);
+        let seqs = self.view.shown_lines().map(|i| self.first + i as u64);
         sel.copy_text(seqs, |seq| {
             let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
                 return (String::new(), String::new());
@@ -2750,9 +2808,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             Rows::Thread(_) => None,
         },
         previews: Some(&mut st.previews),
+        moderators: st.selected.and_then(|id| w.groups.sessions.get(&id)).map(|s| &s.moderators),
     };
     let wash = find::wash(p);
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
+    // the folded run of blocked lines whose Show was clicked, by its first line
+    let mut opened_fold = None;
     let area = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected));
     let out = area
         .stick_to_bottom(!paused)
@@ -2775,6 +2836,14 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     find: &needle,
                     layout,
                     first_unread,
+                    // (only the nearby chat has a blocked resident's lines)
+                    blocked: match st.selected {
+                        None => view::Blocked {
+                            mode: w.blocked_chat,
+                            opened: &st.blocked_opened,
+                        },
+                        Some(_) => view::Blocked::default(),
+                    },
                 },
                 width,
             );
@@ -2804,12 +2873,30 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 let Some(line) = lines.get(row.line) else {
                     return;
                 };
+                if row.folded > 0 {
+                    if blocked::fold_row(ui, p, row.look, row.folded) {
+                        opened_fold = Some(clock.first + row.line as u64);
+                    }
+                    return;
+                }
                 let mark = mark.filter(|_| row.hit);
                 find::forget_message(ui.ctx());
-                let mut draw = |ui: &mut egui::Ui| match &mut rows {
-                    Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
-                    Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                // a line from beyond the say range is drawn whole at the
+                // factor of Preferences › Chat (LLViewerChat::getChatColor's
+                // alpha, FSChatHistory::appendMessage), in every style
+                let dim = super::colors::beyond_range_alpha(line);
+                let mut draw = |ui: &mut egui::Ui| {
+                    let opacity = ui.opacity();
+                    ui.multiply_opacity(dim);
+                    match &mut rows {
+                        Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
+                        Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                    }
+                    ui.set_opacity(opacity);
                 };
+                // a blocked resident's line, kept in the history: greyed
+                let opacity = ui.opacity();
+                ui.multiply_opacity(blocked::alpha(line));
                 if line.kind.is_card() {
                     // a card: its own labels and buttons
                     draw(ui);
@@ -2819,6 +2906,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                         select::row(ui, seq, selection.of_row(seq), painted, draw);
                     });
                 }
+                ui.set_opacity(opacity);
                 if painted && current == Some(row.line) {
                     find::current_marker(ui, p);
                 }
@@ -2847,13 +2935,16 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 );
             }
         });
+    if let Some(seq) = opened_fold {
+        st.blocked_opened.insert(seq);
+    }
     let mut offset = out.state.unclamped_offset();
     let mut store = false;
     // what came in since the reader left the end: others' messages, not
     // ours nor the notices
     let arrived = lines.map_or(0, |lines| {
         view.arrived(clock.first, |i| {
-            lines.get(i).is_some_and(|l| !l.kind.is_own() && !l.kind.is_notice())
+            lines.get(i).is_some_and(|l| !l.kind.is_own() && !l.kind.is_notice() && !l.blocked)
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
@@ -2904,6 +2995,10 @@ pub(crate) struct LineEnv<'a> {
     /// The cards under live links in all conversation styles; None in the
     /// History window and the on-screen chat.
     pub previews: Option<&'a mut previews::Previews>,
+    /// The moderators of the conversation drawn (a group's, a
+    /// conference's), whose lines take their style
+    /// (`conversation_options::moderator`); None elsewhere.
+    pub moderators: Option<&'a HashSet<uuid::Uuid>>,
 }
 
 /// One line of a conversation: the day when it changes, the sender's header
@@ -2964,7 +3059,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     env.emoji,
                     world,
                     env.want_names,
-                    &line.text,
+                    &system_text(&line.text),
                     super::fonts::chat_size(ui.ctx(), 12.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     true,
@@ -3020,7 +3115,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         .unwrap_or_else(|| super::colors::sender_color(line));
                     let time = header_time(ui, p, hhmm(line.time));
                     let reserve = time.size().x + ui.spacing().item_spacing.x;
-                    let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
+                    let emphasis = moderator_look(env, line).map(|(n, _)| n).unwrap_or_default();
+                    let r = header_names(ui, p, shown_name(line, &name), username.as_deref(), col, reserve, emphasis);
                     // the inspector in the Legacy Viewer; Aurora opens the
                     // profile (a history line's when its sender is known)
                     let avatar = match (logged, own) {
@@ -3067,7 +3163,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     &visible,
                     super::fonts::chat_size(ui.ctx(), 13.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                    message_emphasis(line.kind, italics),
+                    line_emphasis(env, line, italics),
                     mark,
                 );
             }
@@ -3537,7 +3633,8 @@ pub fn show(
                         if moving {
                             ui.ctx().request_repaint();
                         }
-                        let name = world.session_title(&other);
+                        // FSIMTabNameFormat for a resident's tab
+                        let name = sidebar::tab_title(world, &other);
                         if !world.is_group_session(&other) {
                             st.wanted_pics.insert(other);
                         }
@@ -3790,13 +3887,10 @@ fn classic_pane(
     let strip_top = ui.min_rect().bottom();
     ui.add_space(4.0);
     // input + emoji
-    let hint = input::hint(
-        ui,
-        match st.selected {
-            None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-            Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
-        },
-    );
+    let hint = match st.selected {
+        None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+        Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+    };
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
@@ -3829,6 +3923,7 @@ fn classic_pane(
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
                 .floor()
                 .max(40.0);
+            let hint = input::hint(ui, hint, field_w);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3853,10 +3948,13 @@ fn classic_pane(
             }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
-            output
-                .response
-                .response
-                .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+            let field = output.response.response;
+            // the hint of the keys hides the last line while typing (#3211)
+            if !draft.is_empty() && field.has_focus() {
+                field
+            } else {
+                field.on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+            }
         })
         .inner;
     if !st.recent_emojis.above {
@@ -4278,6 +4376,9 @@ pub fn toasts(
             for line in recent {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
+                // the line's own, dimmed from beyond the say range: its
+                // text and picture, never its glass
+                let shown = alpha * super::colors::beyond_range_alpha(line);
                 let (console_tint, console_blur) =
                     crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
                 let tint =
@@ -4309,7 +4410,7 @@ pub fn toasts(
                             family.as_ref().map_or(JobLook::Line, JobLook::Pill),
                         );
                         for s in job.sections.iter_mut() {
-                            s.format.color = s.format.color.gamma_multiply(alpha);
+                            s.format.color = s.format.color.gamma_multiply(shown);
                         }
                         let base = bidi_base(&name, &line.from);
                         let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
@@ -4325,7 +4426,7 @@ pub fn toasts(
                             let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
                             let r =
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
-                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
+                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
                         }
                         // the islands' pills: the sender's name acts like the
                         // conversations' (Firestorm's toast links it)
@@ -4335,8 +4436,8 @@ pub fn toasts(
                         {
                             names.push((r, line));
                         }
-                        let col = color_for(line.kind, p).gamma_multiply(alpha);
-                        line_extras(ui, p, world, &visual, rect.min, size, alpha, badges, line_links, col, &mut links);
+                        let col = color_for(line.kind, p).gamma_multiply(shown);
+                        line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
@@ -4852,6 +4953,15 @@ mod tests {
         st.popped.pop_out(Some(group), false, false, false);
         st.start_chat(&ctx, true, exists);
         assert!(!st.focus_request && !st.conv_focus_request && st.selected.is_none());
+        let minimized = egui::Id::unique((popout::floater_id(Some(group)), "minimized"));
+        ctx.data_mut(|d| d.insert_persisted(minimized, true));
+        st.start_chat(&ctx, true, exists);
+        assert!(
+            st.focus_request && !st.conv_focus_request && st.selected.is_none(),
+            "a minimized IM stays put"
+        );
+        st.focus_request = false;
+        ctx.data_mut(|d| d.insert_persisted(minimized, false));
         st.popped.set_hidden(Some(group), true);
         st.start_chat(&ctx, true, exists);
         assert!(st.focus_request);
@@ -5046,6 +5156,21 @@ mod tests {
         st.start_chat(&ctx, open, exists);
         st.follow_bar_mode(&ctx, &mut open);
         on_nearby(&st, "last field used, window minimized");
+
+        // A detached, minimized IM also leaves Enter to Nearby chat.
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        let mut open = false;
+        st.enter_last_field = true;
+        st.selected = Some(group);
+        st.popped.pop_out(Some(group), false, false, false);
+        st.last_field = ChatField::Conversation(Some(group));
+        let minimized = egui::Id::unique((popout::floater_id(Some(group)), "minimized"));
+        ctx.data_mut(|d| d.insert_persisted(minimized, true));
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, detached IM minimized");
+        assert!(ctx.data_mut(|d| d.get_persisted::<bool>(minimized)).unwrap_or(false));
         // the other modes: the bar takes it
         for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
             let mut st = ChatUi {
@@ -5807,6 +5932,8 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -5854,6 +5981,8 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -5888,6 +6017,8 @@ mod tests {
                 kind,
                 source: uuid::Uuid::from_u128(source),
                 origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
             });
         }
         let ctx = egui::Context::default();
@@ -6434,6 +6565,8 @@ mod tests {
                 kind: ChatKind::Local(ChatType::Normal),
                 source: uuid::Uuid::from_u128(source),
                 origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
             });
             world.chat_clock.pushed_back();
         }
@@ -6865,7 +6998,7 @@ mod tests {
             .allocate_ui_with_layout(egui::vec2(width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let time = header_time(ui, &p, "23:59".into());
                 let reserve = time.size().x + ui.spacing().item_spacing.x;
-                rects.0 = header_names(ui, &p, name, username, p.ink, reserve).rect;
+                rects.0 = header_names(ui, &p, name, username, p.ink, reserve, Default::default()).rect;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     rects.1 = ui.label(time).rect;
                 });
@@ -6991,6 +7124,7 @@ mod tests {
                         menu: None,
                         bubbles: (renderer == 2).then_some(true),
                         previews: None,
+                        moderators: None,
                     };
                     let look = view::Look {
                         header: true,
