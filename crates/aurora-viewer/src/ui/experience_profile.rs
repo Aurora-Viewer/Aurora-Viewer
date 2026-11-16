@@ -117,6 +117,8 @@ pub struct ExperienceProfileUi {
     banner: Option<(Uuid, ImageView)>,
     /// How many physical pixels wide the banner was last drawn.
     banner_px: f32,
+    /// What the window adds above its body (the title bar), last measured.
+    chrome_h: f32,
 }
 
 impl ExperienceProfileUi {
@@ -166,9 +168,21 @@ impl ExperienceProfileUi {
             egui::pos2(screen.center().x - VIEW_SIZE.x * 0.5, screen.center().y - VIEW_SIZE.y * 0.5),
             VIEW_SIZE,
         );
-        // room for a band of banner, the first rows and the actions
         floater.min_size = MIN_SIZE;
-        floater.max_width(MAX_WIDTH).flush_body().show(ctx, p, &mut open, |ui| {
+        let mut max_width = MAX_WIDTH;
+        // with a banner, the window's height follows its width and the
+        // other way round, so the banner always has its full height
+        let banner = self.edit.is_none() && details.as_ref().is_some_and(|d| !d.logo.is_nil());
+        if banner && let Some(size) = egui::AreaState::load(ctx, egui::Id::unique(WINDOW)).and_then(|s| s.size) {
+            let (least_height, most_width) = banner_limits(size, self.chrome_h);
+            floater.min_size.y = floater.min_size.y.max(least_height);
+            max_width = most_width;
+        }
+        let measured = egui::AreaState::load(ctx, egui::Id::unique(WINDOW)).and_then(|s| s.size);
+        floater.max_width(max_width).flush_body().show(ctx, p, &mut open, |ui| {
+            if let Some(size) = measured {
+                self.chrome_h = (size.y - ui.available_height()).max(0.0);
+            }
             let Some(d) = details.as_ref() else {
                 body(ui, |ui| {
                     ui.label(
@@ -890,10 +904,10 @@ fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 /// on its way to the GPU shows the copy instead of a blink, and only once
 /// it is finer than the copy (the first levels of a download are coarser).
 ///
-/// When the window leaves it less than its full height (`most`), the banner
-/// shrinks whole, centred, rather than losing its top and bottom (where
-/// banners often carry their text); the strips beside it show the same
-/// banner cut to the strip, blurred and darkened. Returns where it was
+/// The window keeps the banner its full height (`banner_limits`); should
+/// it ever leave less (`most`: a screen smaller than the window's least
+/// size), the banner shrinks whole, centred, rather than losing its top and
+/// bottom, where banners often carry their text. Returns where it was
 /// drawn.
 fn banner(ui: &mut egui::Ui, p: &Palette, copy: Option<&egui::TextureHandle>, sharp: Option<&egui::TextureHandle>, most: f32) -> Rect {
     let width = ui.available_width();
@@ -901,14 +915,11 @@ fn banner(ui: &mut egui::Ui, p: &Palette, copy: Option<&egui::TextureHandle>, sh
     let height = full.min(most).round();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
     let sharp = sharp.filter(|t| finer(t.size(), copy.map(|c| c.size())));
-    let Some(best) = sharp.or(copy) else {
+    if sharp.or(copy).is_none() {
         ui.painter().rect_filled(rect, 0.0, p.bar);
         return rect;
     };
     let whole = fitted(rect);
-    if whole.width() < rect.width() - 0.5 {
-        backdrop(ui, p, rect, best);
-    }
     let all = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     if let Some(t) = copy {
         ui.painter().image(t.id(), whole, all, super::widgets::PICTURE_TINT);
@@ -926,42 +937,23 @@ fn fitted(rect: Rect) -> Rect {
     Rect::from_center_size(rect.center(), Vec2::new(width, width / BANNER_ASPECT))
 }
 
-/// Behind a banner narrower than the window: the band of it that fills the
-/// strip, blurred (shifted copies averaged, as the group profile blurs its
-/// insignia across its banner) and darkened toward the window's colour.
-fn backdrop(ui: &egui::Ui, p: &Palette, rect: Rect, texture: &egui::TextureHandle) {
-    const STEPS: i32 = 4;
-    /// How far the copies spread, in the banner's width.
-    const REACH: f32 = 0.03;
-    let band = banner_band(rect.height() / (rect.width() / BANNER_ASPECT));
-    let painter = ui.painter_at(rect);
-    let mut k = 0.0;
-    for y in 0..STEPS {
-        for x in 0..STEPS {
-            let d = Vec2::new(x as f32, y as f32) / (STEPS - 1) as f32 * 2.0 - Vec2::splat(1.0);
-            k += 1.0;
-            painter.image(
-                texture.id(),
-                rect,
-                band.translate(d * REACH),
-                super::widgets::PICTURE_TINT.gamma_multiply(1.0 / k),
-            );
-        }
-    }
-    painter.rect_filled(rect, 0.0, p.panel.gamma_multiply(0.55));
+/// The window's least height and greatest width for a profile with a
+/// banner, from its current `size` and the height its title bar takes
+/// (`chrome`): tall enough for the banner's full height at this width and
+/// the details' room under it, no wider than the banner may be at this
+/// height. Its height then follows its width and the other way round, and
+/// the banner never has to shrink.
+fn banner_limits(size: Vec2, chrome: f32) -> (f32, f32) {
+    let room = chrome + DETAILS_ROOM;
+    let least_height = size.x / BANNER_ASPECT + room;
+    let most_width = ((size.y - room) * BANNER_ASPECT).clamp(MIN_SIZE.x, MAX_WIDTH);
+    (least_height, most_width)
 }
 
 /// Whether a decode of `size` pixels is finer than the copy (wider, or any
 /// decode when there is no copy yet).
 fn finer(size: [usize; 2], copy: Option<[usize; 2]>) -> bool {
     copy.is_none_or(|c| size[0] > c[0])
-}
-
-/// The part of the banner shown when only `share` of its height fits: a
-/// band around its middle, as wide as the banner.
-fn banner_band(share: f32) -> Rect {
-    let h = share.clamp(0.0, 1.0);
-    Rect::from_min_max(egui::pos2(0.0, 0.5 - h / 2.0), egui::pos2(1.0, 0.5 + h / 2.0))
 }
 
 fn value(ui: &mut egui::Ui, p: &Palette, text: &str) {
@@ -1183,10 +1175,23 @@ mod tests {
         assert!((whole.height() - 150.0).abs() < 1e-3);
         assert!((whole.width() - 150.0 * BANNER_ASPECT).abs() < 1e-3);
         assert!((whole.center().x - 250.0).abs() < 1e-3);
-        // the strips behind show a band of the banner in their shape
-        assert_eq!(banner_band(1.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
-        let band = banner_band(0.5);
-        assert_eq!((band.left(), band.right(), band.top(), band.bottom()), (0.0, 1.0, 0.25, 0.75));
+    }
+
+    #[test]
+    fn the_window_keeps_the_banner_its_full_height() {
+        let chrome = 40.0;
+        for size in [Vec2::new(400.0, 600.0), Vec2::new(560.0, 480.0), Vec2::new(320.0, 900.0)] {
+            let (least_height, most_width) = banner_limits(size, chrome);
+            // at the least height, the body holds the whole banner and the
+            // details' room
+            assert!((least_height - chrome - DETAILS_ROOM - size.x / BANNER_ASPECT).abs() < 1e-3);
+            // at the greatest width, the banner still fits this height
+            assert!(most_width / BANNER_ASPECT + chrome + DETAILS_ROOM <= size.y + 1e-3 || most_width == MIN_SIZE.x);
+            assert!((MIN_SIZE.x..=MAX_WIDTH).contains(&most_width));
+        }
+        // a short window cannot be widened: its greatest width is its own
+        // banner's, a tall one stops at the window's widest
+        assert_eq!(banner_limits(Vec2::new(560.0, 2000.0), chrome).1, MAX_WIDTH);
     }
 
     #[test]
