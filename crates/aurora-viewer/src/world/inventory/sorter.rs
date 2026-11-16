@@ -1417,7 +1417,7 @@ const VERSION_WORDS: [&str; 28] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 48] = [
+const SHELF_WORDS: [&str; 37] = [
     "my",
     "old",
     "new",
@@ -1448,13 +1448,19 @@ const SHELF_WORDS: [&str; 48] = [
     "gifts",
     "freebie",
     "freebies",
-    "summer",
-    "winter",
-    "spring",
-    "autumn",
     "clothes",
     "clothing",
     "bodies",
+    "avatar",
+    "mesh",
+    "faces",
+    "body",
+];
+
+/// Occasions and seasons: a shelf's word beside a plural kind or alone
+/// (`Party Dresses`, `Christmas`), a product's beside a singular one
+/// (`Party Dress`, `Christmas Sweater`).
+const OCCASION_WORDS: [&str; 15] = [
     "party",
     "casual",
     "formal",
@@ -1466,6 +1472,10 @@ const SHELF_WORDS: [&str; 48] = [
     "holiday",
     "halloween",
     "christmas",
+    "summer",
+    "winter",
+    "spring",
+    "autumn",
 ];
 
 /// A name with a word of its own beyond kinds, bodies, shelf words and
@@ -1473,8 +1483,12 @@ const SHELF_WORDS: [&str; 48] = [
 /// `Dresses 2024` a shelf.
 fn names_a_product(name: &str) -> bool {
     let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
-    words(name).iter().any(|w| {
-        !is_kind(w)
+    let name_words = words(name);
+    // one thing named (`Dress`, `Sweater`), not a shelf of them (`Dresses`)
+    let singular_kind = name_words.iter().any(|w| is_kind(w) && !w.ends_with('s'));
+    name_words.iter().any(|w| {
+        (singular_kind || !OCCASION_WORDS.contains(&w.as_str()))
+            && !is_kind(w)
             && !SHELF_WORDS.contains(&w.as_str())
             && !w.chars().all(|c| c.is_ascii_digit())
             // a body's own name (`maitreya`), not a word some bodies share
@@ -2775,6 +2789,18 @@ fn plan_with(
             Dest::Folder(target) if *target == from || *target == id => continue,
             Dest::PreTrash if pre_trash_at == Some(from) || pre_trash_at == Some(id) => continue,
             Dest::PreTrash => pre_trash_label.clone(),
+            Dest::Path(_) if base.is_some_and(|base| prefs.excludes(inv, base)) => {
+                // the sort folder excluded: nothing is filed into it
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Excluded));
+                continue;
+            }
+            Dest::Folder(target) if prefs.excludes(inv, *target) => {
+                // a folder the user excluded receives nothing either
+                plan.kept += 1;
+                plan.kept_list.push((name, Kept::Excluded));
+                continue;
+            }
             Dest::Folder(target) if !target_allowed(inv, *target) || actions::under(inv, *target, id) => {
                 // the rule's folder is gone or cannot receive it
                 plan.unknown.push(name);

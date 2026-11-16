@@ -655,6 +655,20 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
         "deliveries never opened"
     );
     assert!(!moved.contains(&id(65)) && moved.contains(&id(211)), "Party Dresses is a shelf");
+    // an occasion beside one thing named is a product, beside a plural a shelf
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 66, 1, "Christmas Sweater");
+    add_item(&mut inv, 212, 66, "Christmas Sweater Maitreya", 0);
+    add_folder(&mut inv, 67, 1, "Avatar");
+    add_folder(&mut inv, 68, 67, "Lelutka");
+    add_item(&mut inv, 213, 68, "Lelutka Head", 0);
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(
+        moved.contains(&id(66)) && !moved.contains(&id(212)),
+        "Christmas Sweater moves whole"
+    );
+    assert!(!moved.contains(&id(67)), "Avatar is a shelf");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");

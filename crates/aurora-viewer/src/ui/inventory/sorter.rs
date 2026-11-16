@@ -1454,14 +1454,16 @@ pub(super) fn show(
             let out: Vec<usize> = (0..job.queue.len().min(sorter::BATCH * 2))
                 .filter(|&i| {
                     let m = &job.queue[i];
-                    !m.restore
-                        && (prefs.sorter.excludes(inv, m.id)
-                            || m.folder
-                                && prefs
-                                    .sorter
-                                    .excluded
-                                    .iter()
-                                    .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
+                    // (into an excluded folder neither)
+                    matches!(m.to, sorter::Dest::Folder(t) if !m.restore && prefs.sorter.excludes(inv, t))
+                        || !m.restore
+                            && (prefs.sorter.excludes(inv, m.id)
+                                || m.folder
+                                    && prefs
+                                        .sorter
+                                        .excluded
+                                        .iter()
+                                        .any(|e| crate::world::inventory::actions::under(inv, *e, m.id)))
                 })
                 .collect();
             for &i in out.iter().rev() {
@@ -4006,7 +4008,7 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
             .map(|f| f.info.id)
             .filter(|id| match pick {
                 Pick::Source => sorter::source_allowed(inv, *id),
-                Pick::Rule(_) => sorter::target_allowed(inv, *id),
+                Pick::Rule(_) => sorter::target_allowed(inv, *id) && !prefs.sorter.excludes(inv, *id),
                 Pick::Exclude => *id != inv.root && !sorter::untouchable(inv, *id),
             })
             .map(|id| (id, sorter::folder_path(inv, id)))
