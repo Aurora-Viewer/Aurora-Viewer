@@ -20,7 +20,83 @@ pub(super) fn object_sit_offset(world: &World, camera: &Camera, idx: usize, poin
     Some(camera.object_pick_offset(&geometry, point, ray))
 }
 
+/// What RLVa leaves of the one-click action on the prim `idx`, for the
+/// cursor and for the click alike: LLToolPie::handleHover, cursorFromObject
+/// and handleLeftClickPick (indra/newview/lltoolpie.cpp). `point` is the
+/// point under the cursor, `sit_offset` the offset a sit there would send.
+/// - no action at all on an object out of reach (RlvActions::canInteract)
+///   or that may not be touched (RlvActions::canTouch), whatever its click
+///   action: plain cursor, and the click does nothing;
+/// - Sit only where RlvActions::canSit allows it;
+/// - under @buy, Buy and Pay become the touch (or the grab) the object
+///   would take without its click action, or nothing.
+///
+/// A menu's entry is not a click action: its own facts grey it out.
+pub(super) fn rlva_click_target(
+    world: &World,
+    target: Target,
+    idx: usize,
+    point: Option<Vec3>,
+    sit_offset: Option<Vec3>,
+) -> Option<Target> {
+    if !world.rlva.enabled() || target.menu {
+        return Some(target);
+    }
+    if !world.rlva_can_interact_at(idx, point) || !world.rlva_can_touch_at(target.clicked.region, target.clicked.local_id, point) {
+        return None;
+    }
+    match target.action {
+        Action::Sit => world
+            .rlva_allows_command(
+                &NetCommand::RequestSit {
+                    handle: target.key.region,
+                    target: target.object,
+                    offset: sit_offset?,
+                },
+                uuid::Uuid::nil(),
+            )
+            .then_some(target),
+        Action::Buy | Action::Pay if world.rlva.has("buy") => {
+            let clicked = world.objects.get(idx)?;
+            let root = interaction::root(world, idx).and_then(|(r, _)| world.objects.get(r))?;
+            // as `interaction::target` without a click action: physics
+            // first, then a touch script on the prim or its root
+            let flags = clicked.update_flags | root.update_flags;
+            let action = if flags & 1 != 0 {
+                Action::Grab
+            } else if flags & crate::ui::context::flags::HANDLE_TOUCH != 0 {
+                Action::Touch
+            } else {
+                return None;
+            };
+            Some(Target {
+                action,
+                key: target.clicked,
+                object: target.clicked_id,
+                ..target
+            })
+        }
+        _ => Some(target),
+    }
+}
+
 impl App {
+    /// The one-click action the cursor shows on the prim `idx` hovered at
+    /// `point`: `interaction::cursor_action`, less what RLVa refuses, so
+    /// that the cursor never promises a click the viewer will not make.
+    pub(super) fn hover_cursor_action(&self, idx: usize, point: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> Option<Action> {
+        let action = interaction::cursor_action(&self.world, idx, &self.interactions.props)?;
+        if !self.world.rlva.enabled() {
+            return Some(action);
+        }
+        let target = interaction::target(&self.world, idx, &self.interactions.props)?;
+        let sit = (action == Action::Sit)
+            .then(|| point.and_then(|p| object_sit_offset(&self.world, &self.camera, idx, p, ray)))
+            .flatten();
+        let left = rlva_click_target(&self.world, Target { action, ..target }, idx, point, sit)?;
+        Some(left.action)
+    }
+
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
         self.activate_object_action_at(target, idx, point, ray, None);
     }
@@ -46,10 +122,18 @@ impl App {
         } else {
             target
         };
+        let sit_offset = (target.action == Action::Sit)
+            .then(|| object_sit_offset(&self.world, &self.camera, idx, point, ray))
+            .flatten();
+        // a click RLVa refuses is taken and does nothing, without a notice
+        // (LLToolPie::handleLeftClickPick): the cursor did not offer it
+        let Some(target) = rlva_click_target(&self.world, target, idx, Some(point), sit_offset) else {
+            return;
+        };
         match target.action {
             Action::Disabled => {}
             Action::Sit => {
-                if let Some(offset) = object_sit_offset(&self.world, &self.camera, idx, point, ray) {
+                if let Some(offset) = sit_offset {
                     self.send(NetCommand::RequestSit {
                         handle: target.key.region,
                         target: target.object,
@@ -58,6 +142,13 @@ impl App {
                 }
             }
             Action::Buy | Action::Pay => {
+                // enable_buy_object and enable_pay_object (indra/newview/
+                // llviewermenu.cpp, RlvActions::canBuyObject / canPayObject):
+                // the menu's entry is greyed out under @buy, and whatever
+                // still asks for it opens no window
+                if self.world.rlva.has("buy") {
+                    return;
+                }
                 for cmd in self.interactions.open(target) {
                     self.send(cmd);
                 }
@@ -127,6 +218,19 @@ impl App {
                 // (LLViewerRegion::getPosRegionFromGlobal), so the wearer's
                 // position is never part of a HUD's GrabPosition.
                 let start = pos;
+                let grab = NetCommand::ObjectGrab {
+                    handle: target.key.region,
+                    local_id: target.key.local_id,
+                    offset,
+                    surface,
+                };
+                // the send boundary's own answer, asked before the hold
+                // exists: a refused touch leaves no held object to follow
+                // nor to release, and prints nothing (LLToolPie::
+                // handleLeftClickPick does not start the grab)
+                if !self.world.rlva_allows_command(&grab, uuid::Uuid::nil()) {
+                    return;
+                }
                 self.interactions.held = Some(Held {
                     target,
                     offset,
@@ -143,12 +247,7 @@ impl App {
                     last: now,
                     physical,
                 });
-                self.send(NetCommand::ObjectGrab {
-                    handle: target.key.region,
-                    local_id: target.key.local_id,
-                    offset,
-                    surface,
-                });
+                self.send(grab);
             }
         }
         if self.demo {
@@ -534,5 +633,132 @@ mod tests {
         assert!(!hidden_behind(o, d, Vec3::new(3.3, 0.0, 0.0), center, radius));
         // in front, but the ray passes beside the object
         assert!(!hidden_behind(o, d, Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.5, 0.0), radius));
+    }
+
+    const HANDLE_TOUCH: u32 = crate::ui::context::flags::HANDLE_TOUCH;
+    const TAKES_MONEY: u32 = 1 << 9;
+    const USE_PHYSICS: u32 = 1;
+
+    /// A prim of the world 1 m from the agent, with RLVa on.
+    fn rlva_prim(click_action: u8, flags: u32) -> (World, usize) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let mut prim = crate::demo::action_avatar(false);
+        prim.local_id = 33000;
+        prim.full_id = crate::demo::action_id(33000);
+        prim.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        prim.parent_id = 0;
+        prim.position = Vec3::new(100.0, 120.0, 30.0);
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![prim],
+        });
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(33000)).expect("prim");
+        let o = world.objects.get_mut(idx).expect("prim");
+        o.click_action = click_action;
+        o.update_flags = flags;
+        world.agent.position = Vec3::new(100.0, 121.0, 30.0);
+        world.rlva.configure(true);
+        (world, idx)
+    }
+
+    fn restrict(world: &mut World, text: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Test object".to_owned(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: uuid::Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: text.to_owned(),
+        }));
+    }
+
+    /// The action left on the prim hovered or clicked at `point`.
+    fn left(world: &World, idx: usize, point: Vec3) -> Option<Action> {
+        let target = interaction::target(world, idx, &std::collections::HashMap::new()).expect("a click action");
+        rlva_click_target(world, target, idx, Some(point), Some(Vec3::ZERO)).map(|t| t.action)
+    }
+
+    #[test]
+    fn rlva_refused_touches_leave_no_click_action() {
+        let near = Vec3::new(100.0, 120.5, 30.0);
+        for restriction in ["@touchall=n", "@touchworld=n", "@interact=n", "@fartouch:0.2=n"] {
+            let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
+            assert_eq!(left(&world, idx, near), Some(Action::Touch));
+            restrict(&mut world, restriction);
+            assert_eq!(left(&world, idx, near), None, "{restriction}");
+            // a restriction on touching takes every click action with it
+            // (LLToolPie::handleHover): Sit, Open, Zoom…
+            for code in [interaction::code::SIT, interaction::code::OPEN, interaction::code::ZOOM] {
+                world.objects.get_mut(idx).expect("prim").click_action = code;
+                assert_eq!(left(&world, idx, near), None, "{restriction}, click action {code}");
+            }
+        }
+        // @touchthis names the object itself
+        let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
+        restrict(&mut world, &format!("@touchthis:{}=n", crate::demo::action_id(33000)));
+        assert_eq!(left(&world, idx, near), None);
+    }
+
+    #[test]
+    fn rlva_fartouch_follows_the_point_under_the_cursor() {
+        let (mut world, idx) = rlva_prim(interaction::code::TOUCH, HANDLE_TOUCH);
+        restrict(&mut world, "@fartouch:0.8=n");
+        // the prim's origin is 1 m away, this face of it 0.5 m
+        assert_eq!(left(&world, idx, Vec3::new(100.0, 120.5, 30.0)), Some(Action::Touch));
+        assert_eq!(left(&world, idx, Vec3::new(100.0, 119.5, 30.0)), None);
+    }
+
+    #[test]
+    fn rlva_sit_click_actions_follow_the_sit_rule() {
+        let (mut world, idx) = rlva_prim(interaction::code::SIT, 0);
+        let near = Vec3::new(100.0, 120.5, 30.0);
+        assert_eq!(left(&world, idx, near), Some(Action::Sit));
+        restrict(&mut world, "@sit=n");
+        assert_eq!(left(&world, idx, near), None);
+        // no offset to measure: nothing is offered
+        let (world, idx) = rlva_prim(interaction::code::SIT, 0);
+        let target = interaction::target(&world, idx, &std::collections::HashMap::new()).expect("sit");
+        assert!(rlva_click_target(&world, target, idx, Some(near), None).is_none());
+    }
+
+    #[test]
+    fn rlva_buy_turns_buy_and_pay_click_actions_into_the_objects_touch() {
+        let near = Vec3::new(100.0, 120.5, 30.0);
+        for (code, action, flags) in [
+            (interaction::code::BUY, Action::Buy, 0),
+            (interaction::code::PAY, Action::Pay, TAKES_MONEY),
+        ] {
+            // without a touch script: nothing
+            let (mut world, idx) = rlva_prim(code, flags);
+            assert_eq!(left(&world, idx, near), Some(action));
+            restrict(&mut world, "@buy=n");
+            assert_eq!(left(&world, idx, near), None, "{action:?}");
+            // with one: the touch, on the clicked prim
+            world.objects.get_mut(idx).expect("prim").update_flags = flags | HANDLE_TOUCH;
+            let target = interaction::target(&world, idx, &std::collections::HashMap::new()).expect("a click action");
+            let touch = rlva_click_target(&world, target, idx, Some(near), None).expect("the touch is left");
+            assert_eq!(touch.action, Action::Touch, "{action:?}");
+            assert_eq!((touch.key.local_id, touch.object), (33000, crate::demo::action_id(33000)));
+            // a physical object: the grab
+            world.objects.get_mut(idx).expect("prim").update_flags = flags | USE_PHYSICS;
+            assert_eq!(left(&world, idx, near), Some(Action::Grab), "{action:?}");
+            // a menu's Pay or Buy is not a click action: its facts grey it out
+            let menu = interaction::menu_target(&world, idx, action).expect("menu target");
+            assert_eq!(rlva_click_target(&world, menu, idx, None, None).map(|t| t.action), Some(action));
+        }
+    }
+
+    #[test]
+    fn rlva_off_leaves_every_click_action() {
+        let (mut world, idx) = rlva_prim(interaction::code::BUY, 0);
+        restrict(&mut world, "@buy=n,touchall=n,interact=n");
+        world.rlva.configure(false);
+        assert_eq!(left(&world, idx, Vec3::splat(4000.0)), Some(Action::Buy));
     }
 }

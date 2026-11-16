@@ -458,7 +458,7 @@ pub(super) fn show(
                     let e = Entry {
                         icon,
                         name_color: if kind == Kind::Private {
-                            world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
+                            world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color)
                         } else {
                             None
                         },
@@ -516,7 +516,7 @@ pub(super) fn show(
                         st.wanted_pics.insert(id);
                         let e = Entry {
                             icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
-                            name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
+                            name_color: world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),

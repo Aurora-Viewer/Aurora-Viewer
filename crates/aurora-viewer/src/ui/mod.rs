@@ -122,6 +122,7 @@ pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;

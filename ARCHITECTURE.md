@@ -1601,6 +1601,11 @@ mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
 Disabling cancels its work; already-sent inventory replies still update the
 ordinary inventory model without restarting the naming workflow.
+`rlva/interaction.rs` answers whether an object may be interacted with at a
+hovered point (@interact, @fartouch). The world's cursor, hover tips and
+one-click actions ask it, with the touch, sit and buy rules of the send
+boundary (`app/object_actions.rs`, `hover_tips.rs`), so that the interface
+does not offer what the boundary would refuse.
 `rlva/wear_locks.rs` snapshots what the locks leave of wearing (add, replace)
 and taking off, by item, point, layer and folder, for the inventory menus
 and buttons (`Facts::rlva`), which see the inventory but not the world; its
@@ -1660,6 +1665,45 @@ watchdog once the actual point is known. Experimental command discovery and
 acceptance share one catalogue; already-active restrictions remain removable.
 [RLVa validation status](docs/RLVA.md) lists the implemented families and the
 human grid checks required before publication.
+
+`world/rlva/boundary.rs` is the RLVa send boundary: `World::rlva_send_boundary`
+reduces an outgoing command to what the restrictions leave of it and says
+whether it leaves, is dropped or is refused, and `rlva_note_sent` records what
+RLVa remembers of a command that left. `App::send_from` calls both for every
+command, whoever asks.
+
+`world/rlva_selftest.rs` is the RLVa self-test, the Dev Toolbox tool T1 of
+development builds (`available`: any build profile but `release`). The human
+starts it, logged in, from the tool then its confirmation dialog
+(`Runner::request`, `Runner::confirm`); the only other start is
+`AURORA_DEMO_RLVA=selftest` in demo mode. The runner is owned by `App` beside
+the bridge and stepped each frame (`app/rlva_selftest.rs`). It sends nothing
+itself: it queues `Out`s that the application passes to the same `send` path
+as the interface, so that the real boundary is what is tested, and it reads
+the boundary's answer (`Runner::boundary`), RLVa's replies (`Runner::reply`)
+and the world. `rlva_selftest/factory.rs` prepares the test's inventory
+(`#RLV/~AuroraSelfTest`, copies of the Library object, one link) and its
+worn relays, found again by exact name, place and owner before anything is
+created, never renamed, moved or deleted; the Library search, the attach
+request and the script calls are shared with the bridge
+(`world/bridge/factory.rs`). The relay script `world/bridge/selftest_relay.lsl`
+repeats with `llOwnerSay` what its owner says on a private negative channel
+(`bridge::private_channel`); without a script engine (demo mode, unit tests)
+the same text is delivered as the owner-say of the worn test object.
+`rlva_selftest/guard.rs` is the one gate of what a case or the cleanup may
+send: commands that name the test's own items or, in phase 2, the prims the
+run rezzed itself and still owns; what changes an object passes only as a
+probe that the boundary refuses. `rlva_selftest/cases.rs` holds the phase 1 cases
+(rules checked at the boundary, replies, wear round trips),
+`rlva_selftest/cases_world.rs` the in-world ones of phase 2 (rez, edit,
+touch, sit, fly on its own prims), chosen apart in the dialog. Whatever ends
+a run (failure, timeout, Stop, RLVa switched off, a teleport, a logout), the
+cleanup releases the restrictions, stands up, lands, removes the run's prims
+and takes its objects off, from the world's state alone.
+`rlva_selftest/report.rs` is the report (one `PASS` / `FAIL` / `SKIPPED` /
+`KNOWN` line per case, no id in it), shown by `ui/rlva_selftest.rs` and logged
+with the prefix `rlva-selftest:`. `rlva_selftest/sim.rs` answers the test's
+commands offline with the demo's own building blocks.
 
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),
@@ -3080,6 +3124,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `logging.rs`, `cache.rs`, `cache_key.rs`, `credentials.rs` | Logs (written by the `aurora-log-write` thread from a bounded queue, so a stalled disk never holds a thread that logs, and flushed to the disk once per second, so a frozen and reset PC keeps them; the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache (`cache/store`; `cache_key.rs` keeps its key in the OS vault), remembered password (OS vault) |
 | `open_path.rs` | Files and folders handed to the system's file manager or viewer (`xdg-open`, `open`, `explorer`), the launcher waited for on a short thread so that none stays a zombie process |
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
+| `world/rlva_selftest.rs`, `world/rlva_selftest/`, `app/rlva_selftest.rs`, `ui/rlva_selftest.rs` | The RLVa self-test (Dev Toolbox T1, development builds only): the runner and its step types, the inventory and relay factory, the guard of what a case may send, the phase 1 and phase 2 cases, the cleanup, the report and the offline simulator (`world/`); the tool, the frame step and the hand-over to the send and receive paths (`app/rlva_selftest.rs`); the confirmation dialog and the report window (`ui/rlva_selftest.rs`). `AURORA_DEMO_RLVA=selftest` |
 | `legacy_profile.rs` | Where a Legacy Viewer keeps an account's files on this computer, for the imports that read them: its application folders on each system, the account's folder in them |
 | `ui/conversation_log.rs`, `app/conversation_log.rs`, `demo_conversation_log.rs` | The Conversation log window (toolbar `conversation_log`, Communicate › Conversation log…, People › Friends' view menu; LLFloaterConversationLog): the filter, the rows with their offline mark and picture, the actions of the selection and the view menu (`ui/conversation_log.rs`); what it asks of the app, a transcript in the History window or outside and an entry removed (`app/conversation_log.rs`); the demo (`AURORA_DEMO_CONVERSATION_LOG`). The log follows the conversations in `world/transcripts.rs` |
 | `app/chat_import.rs` | The import of a Legacy Viewer's chat history from Preferences › Chat: its folders looked for off the frame, the import window's list, and what follows a finished import (result line, History window read again) |
