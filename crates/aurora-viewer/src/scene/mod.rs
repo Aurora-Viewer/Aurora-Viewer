@@ -41,6 +41,7 @@ pub mod lights;
 mod list_index;
 pub(crate) mod live_morphs;
 pub mod loading;
+mod lod_fade;
 mod lod_watch;
 pub mod mat_changes;
 pub mod mesh_bytes;
@@ -390,6 +391,12 @@ impl FaceDraw {
     /// to PASS_INVISIBLE. They affect water only, never scene colour/depth.
     fn water_exclusion(&self) -> bool {
         self.tex_id == aurora_prim::te::WATER_EXCLUSION_TEXTURE && self.pbr_alpha.is_none() && self.te_alpha >= 0.999
+    }
+
+    /// Drawn from the GPU lists in the opaque or masked passes: its old
+    /// level can fade out over its new one (lod_fade.rs).
+    fn fades(&self) -> bool {
+        matches!(self.pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) && !self.water_exclusion()
     }
 
     /// Its zero alpha hides the whole face, as LL never draws it: a
@@ -1053,6 +1060,8 @@ pub struct Scene {
     loading: loading::Loading,
     /// The rez effect of objects and avatars appearing (rez.rs).
     pub rez: rez::Rez,
+    /// The crossfades between two detail levels under way (lod_fade.rs).
+    lod_fade: lod_fade::LodFade,
     /// The bakes drawn: the last good one while a new one loads.
     shown_bakes: shown_bakes::ShownBakes,
     /// Hide loading avatars (shown as clouds) until they are complete.
@@ -1535,6 +1544,12 @@ impl Scene {
         self.selection_wire = selected;
     }
 
+    /// Preferences › Graphics "Fade between levels of detail" (lod_fade.rs):
+    /// the fades under way end on their own when it is turned off.
+    pub fn set_lod_crossfade(&mut self, on: bool) {
+        self.lod_fade.length = lod_fade::length_for(on);
+    }
+
     /// Invisible selected faces get temporary records for their overlay only.
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
@@ -1710,6 +1725,7 @@ impl Scene {
             picture_check: (0, 0, None),
             loading: Default::default(),
             rez: Default::default(),
+            lod_fade: lod_fade::LodFade::new(lod_fade::length_for(true)),
             shown_bakes: Default::default(),
             hide_loading: true,
             loading_bars: true,
@@ -2232,12 +2248,139 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
-    /// Free the draw records of an object's faces.
+    /// Free the draw records of an object's faces, and those of the level
+    /// it still fades out of (lod_fade.rs): its faces are rebuilt or go.
     fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        if let Some(ghost) = self.lod_fade.take(idx) {
+            self.end_lod_fade(renderer, ghost, false);
+        }
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
         }
+    }
+
+    /// The end of a crossfade: the old level's records and geometry go;
+    /// with `clear_fresh`, the new level's records, which stay, lose their
+    /// fade (a fade code left on them would read the wrapping clock again
+    /// some weeks later).
+    fn end_lod_fade(&mut self, renderer: &mut Renderer, ghost: lod_fade::Ghost, clear_fresh: bool) {
+        for r in ghost.records {
+            renderer.records.free(r);
+        }
+        if clear_fresh {
+            for r in ghost.fresh {
+                if let Some(mut rec) = renderer.records.get(r).copied() {
+                    rec.identity[1] = 0;
+                    rec.identity[2] = 0;
+                    renderer.records.set(r, rec);
+                }
+            }
+        }
+        self.geom_unref(ghost.geom);
+    }
+
+    /// The crossfades over by now end.
+    fn end_lod_fades(&mut self, renderer: &mut Renderer, now: Instant) {
+        if !self.lod_fade.active() {
+            return;
+        }
+        let ms = renderer.anim_clock().ms(now);
+        for ghost in self.lod_fade.take_ended(ms) {
+            self.end_lod_fade(renderer, ghost, true);
+        }
+    }
+
+    /// Object `idx` swaps from geometry `old` to `new` at detail level
+    /// `lod`: whether the old level fades out (lod_fade.rs). Opaque and
+    /// masked faces of a placed world object only.
+    fn lod_fades(&self, idx: usize, old: Option<GeomKey>, new: GeomKey) -> bool {
+        let Some(old) = old else {
+            return false;
+        };
+        let g = &self.gpu[idx];
+        self.lod_fade.enabled()
+            && lod_fade::same_geometry(old, new)
+            && !g.hud
+            && !g.rigged
+            && !g.is_avatar
+            && g.anchor.is_none()
+            && !g.hidden
+            && g.faces.iter().any(|f| f.fades())
+            && self.geom_ready(&old).is_some()
+    }
+
+    /// Takes the faces of object `idx` out before its new level's faces are
+    /// built: the opaque and masked ones keep their records as the ghost
+    /// that fades out, the others are freed. The new level's faces get
+    /// their fade in `start_lod_fade`. Gives the kept records and the
+    /// glowing faces among them.
+    fn ghost_faces(&mut self, renderer: &mut Renderer, idx: usize, now: Instant) -> (Vec<u32>, Vec<(aurora_render::DrawCmd, bool)>) {
+        if let Some(ghost) = self.lod_fade.take(idx) {
+            self.end_lod_fade(renderer, ghost, false);
+        }
+        let ms = renderer.anim_clock().ms(now);
+        let code = aurora_render::lod_fade::code(aurora_render::lod_fade::OUT, self.lod_fade.length);
+        let faces = std::mem::take(&mut self.gpu[idx].faces);
+        let mut kept = Vec::with_capacity(faces.len());
+        let mut glow = Vec::new();
+        for f in faces {
+            if !f.fades() {
+                renderer.records.free(f.record);
+                continue;
+            }
+            if let Some(mut rec) = renderer.records.get(f.record).copied() {
+                rec.identity[1] = ms;
+                rec.identity[2] = code;
+                renderer.records.set(f.record, rec);
+            }
+            // (not the object's first face any more: that one counts it)
+            renderer.records.set_face(f.record, cull_face(&f, idx, false));
+            kept.push(f.record);
+            if f.glow {
+                glow.push((f.cmd, f.glow_pool));
+            }
+        }
+        (kept, glow)
+    }
+
+    /// The new level of object `idx` is built: its opaque and masked faces
+    /// fade in over the ghost's records, which fade out, both from `now`.
+    fn start_lod_fade(
+        &mut self,
+        renderer: &mut Renderer,
+        idx: usize,
+        (records, glow): (Vec<u32>, Vec<(aurora_render::DrawCmd, bool)>),
+        old: GeomKey,
+        now: Instant,
+    ) {
+        let ms = renderer.anim_clock().ms(now);
+        let length = self.lod_fade.length;
+        if records.is_empty() {
+            self.geom_unref(old);
+            return;
+        }
+        let code = aurora_render::lod_fade::code(aurora_render::lod_fade::IN, length);
+        let mut fresh = Vec::new();
+        for f in &self.gpu[idx].faces {
+            if !f.fades() {
+                continue;
+            }
+            if let Some(mut rec) = renderer.records.get(f.record).copied() {
+                rec.identity[1] = ms;
+                rec.identity[2] = code;
+                renderer.records.set(f.record, rec);
+                fresh.push(f.record);
+            }
+        }
+        self.lod_fade.start(lod_fade::Ghost {
+            idx,
+            records,
+            glow,
+            fresh,
+            geom: old,
+            until: ms.wrapping_add(length),
+        });
     }
 
     /// Takes an object's drawing away while it stays in the world (a
@@ -3837,9 +3980,17 @@ impl Scene {
         // waits for its sculpt texture only until this sculpt is bound (a
         // wait left set kept the object synced every frame)
         self.gpu[idx].sculpt_wait = sculpt_wait.filter(|_| self.gpu[idx].geom != wanted);
+        // the level it leaves, when it fades out (lod_fade.rs): its
+        // geometry stays referenced until the fade ends
+        let mut fade_from = None;
         if let Some(k) = bind_new {
+            let fades = self.lod_fades(idx, self.gpu[idx].geom, k);
             if let Some(old) = self.gpu[idx].geom.replace(k) {
-                self.geom_unref(old);
+                if fades {
+                    fade_from = Some(old);
+                } else {
+                    self.geom_unref(old);
+                }
             }
             self.geom_ref(k);
             self.gpu[idx].lod = lod;
@@ -3913,7 +4064,15 @@ impl Scene {
                     )
                 });
             }
-            self.rebuild_faces(renderer, world, idx, &geom, model, anchor);
+            match fade_from {
+                Some(old) => {
+                    // the old level's faces stay drawn, fading out
+                    let ghost = self.ghost_faces(renderer, idx, now);
+                    self.rebuild_faces(renderer, world, idx, &geom, model, anchor);
+                    self.start_lod_fade(renderer, idx, ghost, old, now);
+                }
+                None => self.rebuild_faces(renderer, world, idx, &geom, model, anchor),
+            }
         } else {
             // transform-only update; an unchanged record is not uploaded again
             let model = model.to_cols_array_2d();
@@ -3922,6 +4081,13 @@ impl Scene {
                     renderer.records.set_hud_model(f.record, model, world.hud_scale(idx));
                 } else {
                     renderer.records.set_placement(f.record, model, anchor.map(|a| a.matrix));
+                }
+            }
+            // the level it fades out of moves with it (never a HUD, nor
+            // anchored: `lod_fades`)
+            if self.lod_fade.active() {
+                for r in self.lod_fade.records_of(idx).collect::<Vec<_>>() {
+                    renderer.records.set_placement(r, model, None);
                 }
             }
         }
@@ -4805,7 +4971,10 @@ impl Scene {
     pub fn build_lists(&mut self, renderer: &mut Renderer, view: &CullView, shadows: bool) {
         let t0 = Instant::now();
         self.lists.clear();
-        self.lists.portal_clipping = !self.portals.planes.is_empty();
+        // (a LOD crossfade discards pixels as a portal cut does: the same
+        // prepass and shadow pipelines with a fragment shader, lod_fade.rs)
+        self.end_lod_fades(renderer, t0);
+        self.lists.portal_clipping = !self.portals.planes.is_empty() || self.lod_fade.active();
         self.last_cull = Some(*view);
         let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
@@ -5259,6 +5428,18 @@ impl Scene {
             let face_height = face_place
                 .filter(|_| under_water_plane.is_some())
                 .map(|(model, geom)| (blend_order::FaceHeight::new(model), geom));
+            // the glow of the level it fades out of, over the pixels that
+            // level still covers (lod_fade.rs)
+            if in_view && !(own_first_person == Some(true) && g.first_person_hidden) {
+                for (cmd, pool) in self.lod_fade.glow_of(idx) {
+                    let cmd = cmd.with_bounds(sc, sr);
+                    if pool {
+                        l.glow_alpha.push(cmd);
+                    } else {
+                        l.glow.push(cmd);
+                    }
+                }
+            }
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));

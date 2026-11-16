@@ -15155,6 +15155,8 @@ debug-settings-type-color = Colour
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Trees
 ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). At 0, trees and grass are not drawn.
+ui-options-lod-crossfade = Fade between levels of detail
+ui-options-lod-crossfade-hint = An object that changes level of detail fades from one to the other instead of popping (on by default). Smoothest with TAA or FSR.
 
 # Preferences › Build (the Legacy Viewer's Build preferences)
 ui-options-about-build = What a prim made with the Create tool starts as.

@@ -15164,6 +15164,8 @@ debug-settings-type-color = Couleur
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Arbres
 ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.
+ui-options-lod-crossfade = Fondu entre les niveaux de détail
+ui-options-lod-crossfade-hint = Un objet qui change de niveau de détail passe de l'un à l'autre en fondu au lieu de sauter (activé par défaut). Plus doux avec TAA ou FSR.
 
 # Preferences › Build (the Legacy Viewer's Build preferences)
 ui-options-about-build = Ce que devient un prim créé avec l'outil Créer.

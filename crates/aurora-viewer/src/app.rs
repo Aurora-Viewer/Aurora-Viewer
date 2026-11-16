@@ -1719,6 +1719,7 @@ impl App {
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
         scene.tree_lod_factor = settings.tree_lod_factor;
+        scene.set_lod_crossfade(settings.lod_crossfade);
         scene.surface_protection = settings.surface_protection();
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
@@ -11214,12 +11215,14 @@ impl App {
             };
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.tree_lod_factor = self.settings.tree_lod_factor;
+            self.scene.set_lod_crossfade(self.settings.lod_crossfade);
             self.scene.surface_protection = self.settings.surface_protection();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             self.scene.hidden_types = self.settings.debug.hidden_types;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
+                self.scene.lod_factor = crate::demo::lod_flip(self.scene.lod_factor);
             }
             // reflection lists: planar reflections and reflection probe captures
             self.scene.reflections = self.settings.water_reflections > 0 || self.settings.mirrors > 0 || in_world;
