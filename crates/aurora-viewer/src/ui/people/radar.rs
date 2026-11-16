@@ -523,25 +523,45 @@ fn text_right(ui: &egui::Ui, text: String, cell: Rect, size: f32, color: Color32
     };
     let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
     let left = egui::pos2(cell.right() - 6.0 - galley.size().x, cell.center().y);
+    let painter = ui.painter().with_clip_rect(cell);
     if bold && let Some(offset) = widgets::faux_bold_offset(ui) {
-        widgets::paint_ink_left(ui.painter(), galley.clone(), left + offset, color);
+        widgets::paint_ink_left(&painter, galley.clone(), left + offset, color);
     }
-    widgets::paint_ink_left(ui.painter(), galley, left, color);
+    widgets::paint_ink_left(&painter, galley, left, color);
 }
 
-/// The cells of the visible columns over `row`, the name taking the rest.
+/// Keep the resident identifiable before spending width on the fixed columns.
+const MIN_NAME_WIDTH: f32 = 60.0;
+
 fn cells(settings: &RadarSettings, row: Rect) -> Vec<(Column, Rect)> {
-    let visible: Vec<Column> = Column::ALL.into_iter().filter(|c| settings.shows(*c)).collect();
-    let fixed: f32 = visible.iter().map(|c| c.width()).sum();
-    let name = (row.width() - fixed).max(60.0);
+    if row.width() <= 0.0 {
+        return Vec::new();
+    }
+    // The Legacy Viewer table can be dragged narrower than its configured
+    // columns. Drop whole optional cells until they fit, keeping range first.
+    let mut spare = row.width() - MIN_NAME_WIDTH - Column::Range.width();
+    let show_range = spare >= 0.0;
+    let visible: Vec<_> = Column::ALL
+        .into_iter()
+        .filter(|column| match column {
+            Column::Name => true,
+            Column::Range => show_range,
+            _ if settings.shows(*column) => {
+                spare -= column.width();
+                spare >= 0.0
+            }
+            _ => false,
+        })
+        .collect();
+    let name = row.width() - visible.iter().map(|c| c.width()).sum::<f32>();
     let mut x = row.left();
     visible
         .into_iter()
-        .map(|c| {
-            let w = if c == Column::Name { name } else { c.width() };
-            let cell = Rect::from_min_max(egui::pos2(x, row.top()), egui::pos2(x + w, row.bottom()));
-            x += w;
-            (c, cell)
+        .map(|column| {
+            let width = if column == Column::Name { name } else { column.width() };
+            let cell = Rect::from_min_max(egui::pos2(x, row.top()), egui::pos2(x + width, row.bottom()));
+            x += width;
+            (column, cell)
         })
         .collect()
 }
@@ -552,7 +572,7 @@ fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     for (column, cell) in cells(settings, rect.with_max_x(rect.left() + columns)) {
-        let index = Column::ALL.iter().position(|c| *c == column).unwrap_or(0) as u8;
+        let index = column.sort_index();
         let resp = ui.interact(cell, ui.scope_id().with(("radar_header", index)), Sense::click());
         let sorted = settings.sort == index;
         let color = if sorted || resp.hovered() { p.ink } else { p.muted };
@@ -585,9 +605,12 @@ fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: 
             let at = match column {
                 Column::Name => egui::pos2(cell.right() - 10.0, cell.center().y),
                 Column::Age | Column::Seen | Column::Range => egui::pos2(cell.right() - 6.0 - title - 7.0, cell.center().y),
-                _ => egui::pos2(cell.center().x, cell.bottom() - 3.0),
+                _ => egui::pos2(cell.center().x, cell.bottom() - 4.0),
             };
-            icon(ui, arrow, Rect::from_center_size(at, Vec2::splat(8.0)), 8.0, p.violet_light);
+            let arrow_rect = Rect::from_center_size(at, Vec2::splat(8.0));
+            if cell.contains_rect(arrow_rect) {
+                icon(ui, arrow, arrow_rect, 8.0, p.violet_light);
+            }
         }
         if resp.clicked() {
             if sorted {
@@ -630,15 +653,22 @@ fn paint_row(
                     p.ink
                 };
                 let color = crate::ui::colors::resident_name(world, &row.id, color);
-                // the profile picture first (not in Firestorm's radar, asked
-                // by the human), then the name
-                let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
-                // (a profile picture would name an anonymous row; so would
-                // its mark, which `ring` leaves out)
-                let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
-                widgets::avatar_picture(ui, p, picture, face, &row.name, row.muted);
-                crate::ui::avatar_marks::ring(ui, world, &row.id, picture, false);
-                let cell = cell.with_min_x(picture.right());
+                let painter = ui.painter().with_clip_rect(cell);
+                // Give the name the space of the picture in a narrow column.
+                let cell = if cell.width() >= MIN_NAME_WIDTH + 4.0 + PICTURE {
+                    let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
+                    let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
+                    widgets::avatar_picture(ui, p, picture, face, &row.name, row.muted);
+                    crate::ui::avatar_marks::ring(ui, world, &row.id, picture, false);
+                    cell.with_min_x(picture.right())
+                } else {
+                    cell
+                };
+                let room = cell.width() - 12.0;
+                if room < 13.0 {
+                    say(row.name.clone());
+                    continue;
+                }
                 // friends in bold, blocked residents in italics
                 let mut format = egui::TextFormat {
                     font_id: egui::FontId::proportional(13.0),
@@ -650,7 +680,6 @@ fn paint_row(
                     widgets::embolden(ui, &mut format);
                 }
                 let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
-                let room = (cell.width() - 12.0).max(0.0);
                 // a member of the Aurora team's tag after the name, cut before it
                 let mark = crate::world::staff::mark(world, &row.id);
                 let staff = crate::ui::staff::width(ui, p, mark, 13.0);
@@ -667,14 +696,14 @@ fn paint_row(
                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
                 if staff > 0.0 {
                     let at = left + Vec2::new(galley.size().x + 6.0, 0.0);
-                    crate::ui::staff::paint_at(ui, ui.painter(), p, mark, at, 13.0);
+                    crate::ui::staff::paint_at(ui, &painter, p, mark, at, 13.0);
                 }
                 if row.friend
                     && let Some(offset) = widgets::faux_bold_offset(ui)
                 {
-                    widgets::paint_ink_left(ui.painter(), galley.clone(), left + offset, color);
+                    widgets::paint_ink_left(&painter, galley.clone(), left + offset, color);
                 }
-                widgets::paint_ink_left(ui.painter(), galley, left, color);
+                widgets::paint_ink_left(&painter, galley, left, color);
             }
             Column::Voice => {
                 if let Some(speaking) = row.voice {
@@ -947,7 +976,11 @@ pub fn tab(
         tool_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("radar-options"), true, |ui| {
             options_menu(ui, p, data.settings, blocked);
         });
-        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        // `search_box` keeps the field inside what the buttons leave; raw
+        // `search_field` / TextEdit could allocate wider and grow the floater
+        // every frame while an edge was held (#3033).
+        let w = ui.available_width();
+        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), w);
     });
     ui.add_space(4.0);
     if shows_minimap(world, data.settings) {
@@ -1323,6 +1356,148 @@ mod tests {
         for pair in cells.windows(2) {
             assert!((pair[0].1.right() - pair[1].1.left()).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn a_narrow_radar_row_does_not_measure_wider_than_the_list() {
+        let settings = RadarSettings::default();
+        let mut previous_columns = 0;
+        for width in 0..=450 {
+            let row = Rect::from_min_size(egui::pos2(17.0, 4.0), Vec2::new(width as f32, 22.0));
+            let cells = cells(&settings, row);
+            if width == 0 {
+                assert!(cells.is_empty());
+                continue;
+            }
+            let shown: u32 = cells.iter().map(|(c, _)| c.bit()).sum();
+            assert_eq!(shown & previous_columns, previous_columns, "widening retains visible columns");
+            previous_columns = shown;
+            let (name, first) = cells[0];
+            assert_eq!(name, Column::Name);
+            assert!(first.width() >= MIN_NAME_WIDTH.min(row.width()));
+            assert_eq!(first.left(), row.left());
+            assert_eq!(cells.last().unwrap().1.right(), row.right());
+            assert_eq!(
+                cells.last().unwrap().0 == Column::Range,
+                row.width() >= MIN_NAME_WIDTH + Column::Range.width()
+            );
+            for pair in cells.windows(2) {
+                assert_eq!(pair[0].1.right(), pair[1].1.left());
+                assert_eq!(pair[1].1.width(), pair[1].0.width());
+            }
+        }
+    }
+
+    #[test]
+    fn resizing_the_radar_header_restores_only_the_configured_sort_targets() {
+        let mut settings = RadarSettings {
+            columns: Column::Age.bit(),
+            ..Default::default()
+        };
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let palette = crate::theme::Theme::default().palette();
+        for width in [260.0, 130.0, 20.0, 130.0, 260.0] {
+            let mut draw = |ui: &mut egui::Ui| {
+                ui.set_width(width);
+                header(ui, &palette, &mut settings, None, egui::Id::unique("radar-test-list"));
+            };
+            let mut edge = egui::Pos2::ZERO;
+            frames.run(Vec::new(), |ui| {
+                draw(ui);
+                for column in Column::ALL {
+                    let id = ui.scope_id().with(("radar_header", column.sort_index()));
+                    let response = ui.ctx().viewport(|v| v.this_pass.widgets.get(id).copied());
+                    let visible = match column {
+                        Column::Name => true,
+                        Column::Range => width >= 130.0,
+                        Column::Age => width == 260.0,
+                        _ => false,
+                    };
+                    assert_eq!(response.is_some(), visible, "{column:?} at {width}");
+                    if let Some(response) = response {
+                        assert!(response.interact_rect.width() > 0.0);
+                        assert!(response.rect.right() <= ui.max_rect().right());
+                        edge = response.rect.right_center() - Vec2::X;
+                    }
+                }
+            });
+            for pressed in [true, false] {
+                let click = egui::Event::PointerButton {
+                    pos: edge,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                frames.run(vec![egui::Event::PointerMoved(edge), click], &mut draw);
+            }
+            let last = if width == 20.0 { Column::Name } else { Column::Range };
+            assert_eq!(settings.sort, last.sort_index());
+        }
+        assert_eq!(settings.columns, Column::Age.bit());
+    }
+
+    #[test]
+    fn the_narrow_radar_row_keeps_the_resident_name_before_the_picture() {
+        let (world, radar) = name_filter_world();
+        let mut row = all_rows(&world, &radar, "").remove(0);
+        row.name = "A resident with a long display name".to_owned();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let picture = frames
+            .ctx
+            .load_texture("resident", egui::ColorImage::filled([1, 1], Color32::WHITE), Default::default());
+        let picture_id = picture.id();
+        let mut settings = RadarSettings::default();
+        let data = RadarData {
+            radar: &radar,
+            settings: &mut settings,
+            voice: &HashMap::new(),
+            draw_distance: 96.0,
+            second_life: true,
+            now: 0.0,
+            pics: &HashMap::from([(row.id, picture)]),
+        };
+        let palette = crate::theme::Theme::default().palette();
+        for (width, picture_visible) in [(400.0, true), (130.0, false), (10.0, false), (400.0, true)] {
+            let rect = Rect::from_min_size(egui::pos2(20.0, 30.0), Vec2::new(width, 22.0));
+            let shapes = frames.shapes(Vec::new(), |ui| {
+                let tip = paint_row(ui, &palette, &world, &data, &row, rect, Some(rect.left_center() + Vec2::X));
+                assert_eq!(tip.as_deref(), Some(row.name.as_str()));
+            });
+            assert_eq!(
+                shapes
+                    .iter()
+                    .any(|shape| matches!(shape, egui::Shape::Mesh(mesh) if mesh.texture_id == picture_id)),
+                picture_visible
+            );
+            assert_eq!(
+                shapes
+                    .iter()
+                    .any(|shape| matches!(shape, egui::Shape::Text(t) if t.galley.text() == row.name)),
+                width >= 130.0
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_radar_figure_is_clipped_to_its_own_cell() {
+        let ctx = egui::Context::default();
+        let cell = Rect::from_min_size(egui::pos2(150.0, 25.0), Vec2::new(Column::Range.width(), 22.0));
+        let text = "123456789012345.67";
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            text_right(ui, text.to_owned(), cell, 12.0, Color32::WHITE, true);
+        });
+        output.textures_delta.clear();
+        let mut found = false;
+        for shape in output.shapes {
+            if let egui::Shape::Text(label) = shape.shape
+                && label.galley.text() == text
+            {
+                assert!(label.pos.x < cell.left());
+                assert_eq!(shape.clip_rect, cell);
+                found = true;
+            }
+        }
+        assert!(found);
     }
 
     /// The People window opens wide enough for every column, the name
