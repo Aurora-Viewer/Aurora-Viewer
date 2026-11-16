@@ -1041,6 +1041,31 @@ fn round_trips() -> Vec<Case> {
                 ],
             ]),
         ),
+        // RlvForceWear::forceDetach (rlvhelper.cpp) reads the locks when the
+        // force is processed: the release that follows it in the same
+        // message comes too late for it.
+        case(
+            "C6",
+            "a forced removal between a lock and its release in one message obeys the lock",
+            steps(vec![
+                vec![no_foreign_tail()],
+                wear(It::B, POINT_B).into(),
+                vec![
+                    Step::Say(
+                        Who::Controller,
+                        "@remattach:tail tip=n,remattach:tail tip=force,remattach:tail tip=y",
+                    ),
+                    Step::Expect(
+                        "the lock is released",
+                        holds(|w, c| w.rlva_can_remove(c.item(It::B), Uuid::nil()), "still locked"),
+                    ),
+                    Step::Pause(Duration::from_secs(2)),
+                    Step::Now("the object is still worn", holds(|w, c| c.worn(w, It::B), "it was taken off")),
+                    Step::Say(Who::Controller, "@remattach:tail tip=force"),
+                    Step::Expect("without the lock it comes off", holds(|w, c| !c.worn(w, It::B), "still worn")),
+                ],
+            ]),
+        ),
     ]
 }
 
