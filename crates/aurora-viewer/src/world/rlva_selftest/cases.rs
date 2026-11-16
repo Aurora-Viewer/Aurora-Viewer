@@ -524,7 +524,47 @@ fn rules() -> Vec<Case> {
             ),
         ],
     ));
+    // LLAgent::teleportViaLandmark (llagent.cpp), the rule a landmark
+    // dropped in the world follows too, and LLWorldEnableTeleportHome
+    // (llviewermenu.cpp): asked of the rules, nothing is sent.
+    let home_entry_only = |w: &World, _: &Ctx| !w.rlva_home_entry_enabled() && w.rlva_can_teleport_home();
+    cases.push(case(
+        "A32",
+        "@tplm and @tploc: landmarks and Teleport Home (#2729)",
+        vec![
+            skip_if(|w, c| {
+                (!teleports_free(w, c) && c.foreign_rules(w)).then(|| "already refused by a restriction of another object".to_owned())
+            }),
+            Step::Now("allowed before the rules", holds(teleports_free, "already refused")),
+            Step::Say(Who::Controller, "@tplm=n"),
+            Step::Expect(
+                "a teleport by landmark refused",
+                holds(|w, _| !w.rlva_can_teleport_landmark(), "still allowed"),
+            ),
+            Step::Now(
+                "the Teleport Home entry greyed, the Home buttons left",
+                holds(home_entry_only, "the entry is not greyed, or the buttons are"),
+            ),
+            Step::Say(Who::Controller, "@tplm=y,tploc=n"),
+            Step::Expect(
+                "@tploc alone leaves the landmarks",
+                holds(|w, _| w.rlva.has("tploc") && w.rlva_can_teleport_landmark(), "landmarks refused"),
+            ),
+            Step::Now(
+                "the Teleport Home entry greyed under @tploc too",
+                holds(home_entry_only, "the entry is not greyed, or the buttons are"),
+            ),
+            Step::Say(Who::Controller, "@tplm=n"),
+            Step::Expect("no way home under both", holds(|w, _| !w.rlva_can_teleport_home(), "still allowed")),
+            Step::Say(Who::Controller, "@tplm=y,tploc=y"),
+            Step::Expect("allowed again once released", holds(teleports_free, "still refused")),
+        ],
+    ));
     cases
+}
+
+fn teleports_free(w: &World, _: &Ctx) -> bool {
+    w.rlva_can_teleport_landmark() && w.rlva_home_entry_enabled() && w.rlva_can_teleport_home()
 }
 
 fn replies() -> Vec<Case> {
@@ -913,41 +953,38 @@ fn round_trips() -> Vec<Case> {
                 ],
             ]),
         ),
-        Case {
-            known: Some("#2677, PR #2691"),
-            ..case(
-                "C4",
-                "an object linked from a locked folder is locked",
-                steps(vec![
-                    wear(It::B, POINT_B).into(),
-                    vec![
-                        Step::Now(
-                            "the folder holds a link to the object",
-                            holds(
-                                |w, c| {
-                                    w.inventory.folders.get(&c.folders[LINKED]).is_some_and(|f| {
-                                        f.items
-                                            .iter()
-                                            .filter_map(|id| w.inventory.items.get(id))
-                                            .any(|i| i.asset_type == 24 && i.asset_id == c.item(It::B))
-                                    })
-                                },
-                                "no link",
-                            ),
+        case(
+            "C4",
+            "an object linked from a locked folder is locked",
+            steps(vec![
+                wear(It::B, POINT_B).into(),
+                vec![
+                    Step::Now(
+                        "the folder holds a link to the object",
+                        holds(
+                            |w, c| {
+                                w.inventory.folders.get(&c.folders[LINKED]).is_some_and(|f| {
+                                    f.items
+                                        .iter()
+                                        .filter_map(|id| w.inventory.items.get(id))
+                                        .any(|i| i.asset_type == 24 && i.asset_id == c.item(It::B))
+                                })
+                            },
+                            "no link",
                         ),
-                        Step::Say(Who::Controller, "@detachthis:{f}/linked=n"),
-                        Step::Soon(
-                            "the linked object cannot be taken off",
-                            holds(|w, c| !w.rlva_can_remove(c.item(It::B), Uuid::nil()), "it can be taken off"),
-                        ),
-                        Step::Refused(
-                            "taking it off is refused",
-                            make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
-                        ),
-                    ],
-                ]),
-            )
-        },
+                    ),
+                    Step::Say(Who::Controller, "@detachthis:{f}/linked=n"),
+                    Step::Soon(
+                        "the linked object cannot be taken off",
+                        holds(|w, c| !w.rlva_can_remove(c.item(It::B), Uuid::nil()), "it can be taken off"),
+                    ),
+                    Step::Refused(
+                        "taking it off is refused",
+                        make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
+                    ),
+                ],
+            ]),
+        ),
         case(
             "C5",
             "taking the controller off releases its rules",

@@ -2333,7 +2333,8 @@ keeps its plain click. `demo photo press` logs restored keyboard modifiers;
 `demo photo interaction` logs the AF point, dialog and released button.
 `avatar-keep-camera` starts from an off-centre side view and enables
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
-a plain body click must preserve position, target, lens and tracked object.
+a plain body click must preserve position and lens (no snap behind) and aim
+the focus at the clicked body point (`LLToolCamera::pickCallback`).
 `avatar-return` disables the option and must return to avatar follow.
 `avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
 and click beside its head / between its legs, inside the former body box.
@@ -2344,10 +2345,11 @@ the ground so that the press can actually pass between the legs.
 `avatar-drag` / `avatar-tag-drag` hold a real press on our body / own plate
 at frame 700, drag horizontally at 710–760 and release at 761. Add
 `-keep-camera` to retain the off-centre focus. Capture at 690, 780 and 840:
-the press keeps the view with the option enabled, then both the view and
-the avatar turn; the log records agent and drawn-body yaw before/after.
-The focus object, lens and distance must remain stable during the kept-focus
-drag. Compare `avatar-keep-camera` for a plain click without motion.
+with the option enabled the press keeps the view and a stationary drag
+orbits without turning the avatar (Legacy Viewer); agent yaw stays put
+while the follow camera's orbit changes. Walking or RMB while holding then
+takes mouse steer. Without `-keep-camera`, the drag mouse-steers as before.
+Compare `avatar-keep-camera` for a plain click without motion.
 `avatar-alt-keep-camera` must still retarget with Alt held; `avatar-other-keep-camera`
 must leave the view unchanged on another resident. The `-keep-camera` suffix
 also works with `worn-own` (scripted touch) and `worn-own-passive` (no script):
@@ -3501,6 +3503,11 @@ grid.
 - `touch-shift`: repeats the same interaction while Shift is held for the
   press, then releases Shift; the HUD must still receive the touch and turn
   green.
+- `slide`: the card linked to the top-left HUD is moved up and grown in one
+  report at frame 720, as a script's `llSetLinkPrimitiveParamsFast` does; it
+  must ease there with the Legacy Viewer's 0.06 s damping, not jump to its
+  new place and size at once (#3369). A linkset's root prim instead shows a
+  report at once. Capture at 719, 723 and 760.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
   local test page on the centre HUD.
 - `scale`: five wheel notches with the HUD key (frame 720), on a
@@ -5064,7 +5071,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -5077,6 +5084,8 @@ both open states and the selection count. Capture at frame 620.
   (2510): only the two sunsets are left, without the two fixed entries.
   `search-none`: a long text no name contains: the list says so, the
   line cut to the list's width.
+  `search-back`: "zzz" typed (2510) then erased (2520): the whole list is
+  back at its full height, without a scroll bar.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -5156,6 +5165,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
+| `AURORA_DEMO_MIRROR_METAL=1` | With `AURORA_DEMO_MIRROR`: the mirror's panel in polished PBR metal, 5 cm thin (its face 2.5 cm off the probe's plane); with SSR on, the mirror must still show our avatar's front, not SSR's copy of its back (#3375) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
@@ -6071,6 +6081,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_LAST=<n>` | Which demo account was logged in last, so the cards select it |
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
+| `AURORA_DEMO_REMEMBER_REFUSED=1` | The credential store refuses the password at login |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, a frozen viewer ended from outside, out of memory, stack overflow or a critical thread's death |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
@@ -6207,12 +6218,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` or `history-big` / `history:n=<count>` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time; `history-big` seeds thousands of history rows (#2955) |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
+| `AURORA_DEMO_EVENT_TIMES=1` | The demo events start from the next hour, to try their times in SLT and local time |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
@@ -6332,8 +6344,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   report; the same lines are in the log with the prefix `rlva-selftest:`.
   The run's waits are in seconds, not in frames (about fifteen seconds in
   all), so capture late: `AURORA_FPS_LIMIT=60` and
-  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 60 `PASS`,
-  C4 `KNOWN`, B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
+  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 61 `PASS`,
+  B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
   notices that pile up during the run are the cases' own refused attempts;
   the avatar ends beside where its seat was. No grid is contacted.
 
@@ -8296,6 +8308,7 @@ failure. Grid validation and any paid upload are performed by the human.
 
 - **`AURORA_DEMO_LOGIN_LAST=<n>`** (`ui/login/carousel.rs`), with `AURORA_DEMO_LOGIN=cards|cards2|cards8`: the demo account number `n` (from 1) is the one of the last login, the second one by default (the only one with `cards1`). The cards select it when the screen opens, whatever account was added last and however many accounts there are: with `cards` and `n=1` or `3` the first or the third card has the violet Log in button, with `cards8` and `n=6` "Example 6" is centred. Enter starts the login of that account (the unit tests check it, since the demo sends no key). Without the variable the second card is selected (`cards8` centres "Example 2").
 - **`AURORA_DEMO_LOGIN_FAVORITES=1|open|pick`** (`login_favorites.rs`), with `AURORA_DEMO_LOGIN=cards`: a memory-only store gives the selected (middle) demo account five favorite landmarks and the third one, while the first (never logged in here) keeps Last location, Home and Region only. `1` shows them under a "Favorites" caption at the end of each card's Start menu (hover a favorite: its region and position); `open` opens the selected card's Start menu once, for a capture (`AURORA_CAPTURE_FRAMES=60`); `pick` chooses the selected account's second favorite, so the menu shows its name and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` writes `demo login: start at the favourite … (uri:<region>&60&200&22)` to the log. Choosing Last, Home or Region again, or another card's favorite, replaces the choice; the choice is never saved. The session side runs in demo too, without `AURORA_DEMO_LOGIN`: `AURORA_DEMO_EXIT=logout AURORA_DEMO_LOGIN_FAVORITES=open` logs out at frame 800 and opens the login form's Start menu, which lists the demo inventory's two favorites (capture frame 1000; the log says `login favourites: 2 stored for this account`; nothing is written to disk in demo). An empty list there is the stale demo inventory cache: delete `cache\demo\inventory\<agent>.inv` first.
+- **`AURORA_DEMO_REMEMBER_REFUSED=1`**, with `remember_password` on in the demo profile: the login behaves as if the credential store had refused the password (Linux with no Secret Service, for example). The nearby chat shows the notice and the login form's "Remember password" is off after a logout (`AURORA_DEMO_EXIT=logout`). The store itself is not touched; the switch stays off in the demo profile until it is turned on again.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
@@ -9121,7 +9134,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   island, its left and right edges on the island's, down to the work
   area's bottom; the compact view where it stands); the clock (#453):
   `clocklocal` (local time instead of the saved time, so a click on the
-  clock does not change it in that run), `noseconds` (without its
+  clock does not change it in that run), `clockslt` (SLT the same way),
+  `noseconds` (without its
   seconds), `clock12` / `clock24` (12 / 24 hours instead of the saved
   format; Auto writes the `clock:` log line at startup with the system's
   12 or 24 hours). In demo the network's graphs show a synthetic minute of
@@ -9775,6 +9789,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   time for the run, instead of SLT (FSTPHistoryTZ; not saved, until a
   zone is chosen in the menu): the day sections start at that zone's
   midnight, and Aurora's "Today, 21:40" labels follow it.
+  `history-big` (or `history:big` / `history:n=5000`) seeds thousands
+  of history rows (up to 50,000, most older than a month) so Places › History FPS (#2955)
+  can be checked on a fast machine; open History and scroll with the FPS
+  meter (`AURORA_PROFILE=1`).
 - **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
@@ -9811,6 +9829,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   A text containing `page` (for example `people:page`) answers a full
   page: "> 100 found" and the Next button; a text containing
   `xyz` finds nothing ("'xyz' not found").
+- **`AURORA_DEMO_EVENT_TIMES=1`** (with `AURORA_DEMO_SEARCH=events`): the
+  demo events start at the next whole hour, then 2, 5, 8, 12 and 26 hours
+  later, instead of their fixed October dates, so the list reads "Today"
+  and "Tomorrow" and crosses midnight. A left click on the clock switches
+  every event time between SLT and local time (#1754): the Legacy look's
+  Date column and the details' Date field ("11/04 14:00" in SLT, the
+  directory's text; "11/04 23:00 CET" in local time), Aurora's event cards
+  ("Today · 14:00 SLT" / "Today · 23:00 CET", the day following local
+  midnight) and the date banner of the details: the hours from start to
+  end ("16:00–17:00", "23:00–01:00 (+1)" past midnight) over the zone.
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
   reload and the address). Set it to `teleport` for the bundled offline
