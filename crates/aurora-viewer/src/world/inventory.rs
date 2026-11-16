@@ -13,6 +13,7 @@ pub mod background;
 pub mod demo;
 pub mod items;
 mod lost;
+pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
 mod system;
@@ -49,6 +50,7 @@ pub struct Inventory {
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
     pub items: items::Items,
+    pub(crate) outgoing: outgoing::Outgoing,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
@@ -85,6 +87,10 @@ pub struct Inventory {
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+
+// v3 could store a no-copy original as removed even when the offer never
+// reached a simulator. The folder version alone cannot distinguish that cache.
+const CACHE_VERSION: i32 = 4;
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
     v.at(0)[key].as_uuid()
@@ -617,7 +623,12 @@ impl Inventory {
         use aurora_llsd::llsd_map;
         let mut folders = Vec::new();
         let mut items = Vec::new();
-        for f in self.folders.values().filter(|f| f.state == FetchState::Fetched) {
+        let excluded = self.outgoing.uncached_folders(&self.items);
+        for f in self
+            .folders
+            .values()
+            .filter(|f| f.state == FetchState::Fetched && !excluded.contains(&f.info.id))
+        {
             folders.push(llsd_map! {
                 "id" => f.info.id,
                 "parent" => f.info.parent,
@@ -654,11 +665,11 @@ impl Inventory {
                 }
             }
         }
-        if folders.is_empty() {
+        if folders.is_empty() && excluded.is_empty() {
             return;
         }
         let doc = llsd_map! {
-            "version" => 3,
+            "version" => CACHE_VERSION,
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
@@ -679,8 +690,12 @@ impl Inventory {
     /// to the fetch.
     pub fn apply_cache(&mut self, cache: CachedInventory) -> usize {
         let touched: HashSet<Uuid> = self.items.values().map(|it| it.parent).collect();
+        let excluded = self.outgoing.uncached_folders(&self.items);
         let mut valid = 0;
         for c in cache.folders {
+            if excluded.contains(&c.id) {
+                continue;
+            }
             let Some(cur) = self.folders.get_mut(&c.id) else {
                 continue;
             };
@@ -763,9 +778,7 @@ pub struct CachedInventory {
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
-    // Older files were populated by legacy reads that could discard other
-    // favorites. Reload those folders through AIS once, even at equal versions.
-    if doc["version"].as_i32() != 3 {
+    if doc["version"].as_i32() != CACHE_VERSION {
         return None;
     }
     let mut by_parent: HashMap<Uuid, Vec<InvItem>> = HashMap::new();
