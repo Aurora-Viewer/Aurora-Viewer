@@ -2208,12 +2208,11 @@ impl World {
         self.profiles.take_requests()
     }
 
-    /// Picks, classifieds and friend rights changed from a profile window:
+    /// Pick deletions, classifieds and friend rights changed from a profile window:
     /// the local copy follows before the command is sent.
     pub fn profile_command(&mut self, cmd: &aurora_net::NetCommand) {
         use aurora_net::NetCommand;
         match cmd {
-            NetCommand::PickUpdate(p) => self.profiles.pick_saved(self.agent_id, (**p).clone()),
             NetCommand::PickDelete(id) => self.profiles.pick_deleted(self.agent_id, *id),
             NetCommand::ClassifiedDelete(id) => self.profiles.classified_deleted(self.agent_id, *id),
             NetCommand::ClassifiedUpdate(c) => self.profiles.classified_saved(self.agent_id, (**c).clone()),
@@ -4332,7 +4331,7 @@ impl World {
                 None
             }
             NetEvent::PickInfo(p) => {
-                self.profiles.picks.insert(p.id, *p);
+                self.profiles.pick_received(self.agent_id, *p, std::time::Instant::now());
                 None
             }
             NetEvent::AvatarPicks { target, picks } => {

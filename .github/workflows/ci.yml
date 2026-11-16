@@ -52,13 +52,12 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
-      # the runner's toolchain carries two more targets (gnu, i686) that
-      # every update would download again for nothing
+      # the version of rust-toolchain.toml, the same as on every PC: not the
+      # runner's own stable, which changes the day a release comes out
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add rustfmt clippy
       # caches are written from main only, and read by every PR and queue
       # run: PR caches would otherwise evict main's from the 10 GB quota.
@@ -73,6 +72,11 @@ jobs:
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         shell: powershell
         run: ./scripts/check-scripts.ps1
+      # the hook Claude Code runs before each shell command of an agent
+      # (.claude/hooks), on its table of refused and allowed commands
+      - name: Shell hook of the agents
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
+        run: ./scripts/test-agent-hook.ps1
       - name: Formatting
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check
@@ -122,7 +126,7 @@ jobs:
       - name: Rust stable
         if: steps.changes.outputs.needed == 'true'
         run: |
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add clippy
       # the key is named, not the job's: the old one holds clippy's output
       # only, and main, finding it, would never build the tests into it
@@ -245,11 +249,20 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
+      # self-hosted: rustup's folder is the runner's own, next to its build
+      # folder, as on the Mac (.github/actions/mac-runner). Two runners of one
+      # machine that share the account's folder both install a new Rust
+      # version at the same moment, and each breaks the other's. PowerShell 7
+      # named, as below
+      - name: Rust folder (self-hosted)
+        if: runner.environment == 'self-hosted'
+        shell: pwsh
+        run: |
+          "RUSTUP_HOME=$(Join-Path (Split-Path $env:RUNNER_WORKSPACE) 'aurora-rustup')" >> $env:GITHUB_ENV
       - name: Rust stable
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
       # self-hosted: the build folder stays between runs, outside the
       # checkout (which `git clean` empties), and takes no cache; it is
       # emptied when the disk runs low
