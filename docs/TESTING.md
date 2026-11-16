@@ -11358,6 +11358,10 @@ What the inventory must show with these scenarios:
   and type there. The simulated server assigns the conference its permanent
   ID 20 s after the click. Once the call connects, typing still goes to
   Nearby chat, and the conference retains the first draft.
+  To exercise delivery, start another conference, send two different short
+  messages before the 20 s expires, then type a third without sending it.
+  After initialization the first two appear once each, in order, while the
+  third stays in the editor.
 - **`AURORA_DEMO_STAFF`**: the members of the Aurora team (`world/staff.rs`)
   are marked everywhere Aurora shows a resident: on the name plate, green
   to violet curtains of light rise from behind the top edge, the border's

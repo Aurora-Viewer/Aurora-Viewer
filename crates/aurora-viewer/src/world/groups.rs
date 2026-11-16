@@ -43,6 +43,9 @@ pub struct SessionInfo {
     /// Group chat (session id = group id); else an ad-hoc conference.
     pub group: bool,
     pub participants: BTreeSet<Uuid>,
+    /// A local conference request named these residents; a partial initial
+    /// roster cannot establish that it is safe to send without checking them.
+    pub(super) unconfirmed_invitees: BTreeSet<Uuid>,
     /// Those who were in it and left (a conference's offline members).
     pub left: BTreeSet<Uuid>,
     pub moderators: HashSet<Uuid>,
@@ -53,6 +56,11 @@ pub struct SessionInfo {
     /// The server closed it (ForceCloseChatterBoxSession).
     pub closed: bool,
     history_fetched: bool,
+    /// Our conference failed before it ever received a valid network address.
+    pub(super) failed_conference_start: bool,
+    /// FSFloaterIM::mQueuedMsgsForInit: messages entered before a local
+    /// conference received its permanent address. Kept only for this login.
+    pub(super) pending_messages: Vec<String>,
     /// We opened it ourselves (IM_SESSION_GROUP_START), no message did.
     pub(super) started_by_us: bool,
 }
@@ -462,7 +470,17 @@ impl World {
                 return;
             }
         }
+        if self.groups.sessions.get(&session).is_some_and(|s| s.failed_conference_start) {
+            self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
+            return;
+        }
         let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        if self.calls.conferences.contains_key(&session) {
+            if let Some(info) = self.groups.sessions.get_mut(&session) {
+                info.pending_messages.push(text);
+            }
+            return;
+        }
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
@@ -484,6 +502,7 @@ impl World {
     /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
     /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
+        self.calls.conferences.remove(&session);
         self.cancel_saved_im(session);
         self.groups.restoring.remove(&session);
         self.groups.deferred.retain(|id| *id != session);
@@ -697,7 +716,20 @@ impl World {
                 error,
                 agents,
             } => {
-                if !success {
+                if self.groups.sessions.get(&temp_session).is_some_and(|s| s.failed_conference_start) {
+                    return None;
+                }
+                // A new ad-hoc conversation must not replace an unrelated open
+                // conversation or route its pending messages into that conversation.
+                let starting_here = self.calls.conferences.contains_key(&temp_session);
+                let collides = starting_here
+                    && temp_session != session
+                    && (session.is_nil()
+                        || self.groups.is_member(&session)
+                        || self.groups.sessions.contains_key(&session)
+                        || self.social.has_session(&session));
+                if !success || collides {
+                    self.call_session_started(temp_session, if collides { temp_session } else { session }, false);
                     // LLIMMgr::showSessionStartError
                     let id = if self.groups.sessions.contains_key(&temp_session) {
                         temp_session
@@ -710,6 +742,8 @@ impl World {
                     );
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
+                        s.failed_conference_start = starting_here;
+                        s.pending_messages.clear();
                     }
                     self.groups.restoring.remove(&id);
                     return None;
@@ -739,6 +773,7 @@ impl World {
                         session,
                     });
                 }
+                self.call_session_started(temp_session, session, true);
             }
             NetEvent::SessionAgents { session, agents } => {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
@@ -778,12 +813,15 @@ impl World {
                 self.session_system(session, aurora_i18n::tr!("world-groups-error-while-moderating"));
             }
             NetEvent::SessionClosed { session, reason: r } => {
+                let was_starting = self.calls.conferences.remove(&session).is_some();
                 self.cancel_saved_im(session);
                 self.groups.restoring.remove(&session);
                 // LLIMMgr::showSessionForceClose
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     s.closed = true;
                     s.active = false;
+                    s.failed_conference_start |= was_starting;
+                    s.pending_messages.clear();
                     self.session_system(
                         session,
                         aurora_i18n::tr!("world-groups-the-session-was-closed", value0 = reason(&r).to_string()),
@@ -990,6 +1028,9 @@ impl World {
 
 fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
     for a in agents {
+        if a.present.is_some() {
+            s.unconfirmed_invitees.remove(&a.agent);
+        }
         match a.present {
             Some(true) => {
                 s.participants.insert(a.agent);

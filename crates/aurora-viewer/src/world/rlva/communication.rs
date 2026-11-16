@@ -80,6 +80,7 @@ impl World {
             session
                 .participants
                 .iter()
+                .chain(&session.unconfirmed_invitees)
                 .filter(|participant| **participant != self.agent_id)
                 .all(|participant| self.rlva_allows_im("sendim", *participant))
         })
@@ -261,6 +262,62 @@ mod tests {
             },
             Uuid::nil()
         ));
+    }
+
+    #[test]
+    fn rlva_rechecks_pending_conference_text_for_invitees_and_actual_participants() {
+        let other = Uuid::from_u128(77);
+        let unexpected = Uuid::from_u128(78);
+        for when in ["before typing", "at ack", "on new participant", "at dispatch"] {
+            let mut w = world();
+            w.start_text_conference(vec![PERSON, other]);
+            let temp = w.social.focus_im.unwrap();
+            if when == "before typing" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            }
+            w.send_session_im(temp, "private draft");
+            assert!(
+                !w.groups
+                    .out
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }))
+            );
+            if when == "before typing" {
+                restrict(&mut w, &format!("@sendimto:{other}=y"));
+            } else if when == "at ack" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            } else if when == "on new participant" {
+                restrict(&mut w, &format!("@sendimto:{unexpected}=n"));
+            }
+            w.apply(NetEvent::SessionStarted {
+                temp_session: temp,
+                session: SESSION,
+                success: true,
+                error: String::new(),
+                agents: vec![aurora_net::SessionAgent {
+                    agent: unexpected,
+                    present: Some(true),
+                    moderator: None,
+                    text_muted: None,
+                    entered: false,
+                }],
+            });
+            if when == "at dispatch" {
+                restrict(&mut w, &format!("@sendimto:{other}=n"));
+            }
+            let mut delivered = w
+                .groups
+                .take_commands()
+                .into_iter()
+                .filter(|cmd| matches!(cmd, NetCommand::SendImDialog { dialog: 17, .. }));
+            let mut command = delivered.next().unwrap();
+            w.rlva_prepare_outgoing_im(&mut command);
+            assert!(
+                matches!(command, NetCommand::SendImDialog { to, id, message, .. } if to == SESSION && id == SESSION && message == aurora_i18n::tr!("rlva-im-blocked-send")),
+                "{when}"
+            );
+            assert!(delivered.next().is_none());
+        }
     }
 
     #[test]
