@@ -125,6 +125,13 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // LLToolPie::handleRightClickPick shows no menu on what @interact or
+        // @fartouch keeps out of the selection
+        if !picked.map_or(self.world.rlva_can_designate_land(), |idx| {
+            self.world.rlva_can_designate(idx, Some(point))
+        }) {
+            return;
+        }
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())
@@ -1000,8 +1007,8 @@ impl App {
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
             CtxAction::NewContactSet(ids) => self.contacts_ui.ask_new_set_for(ids),
             CtxAction::MarkAvatars(ids, rgb) => self.world.avatar_marks.set(&ids, rgb),
-            CtxAction::MarkCustom(ids) => {
-                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last));
+            CtxAction::MarkCustom { ids, source } => {
+                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last, source));
             }
             CtxAction::ClearMarks(ids) => self.world.avatar_marks.clear(&ids),
             CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),

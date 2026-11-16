@@ -19,13 +19,23 @@
 # - whatever it does not understand goes through, and a missing tool (rg)
 #   turns its rule off instead of refusing;
 # - it reads commands where they start (after ; & | ( { and a new line), not
-#   inside the text of another command: `git commit -m "… grep -r …"` passes.
+#   inside the text of another command: `git commit -m "… grep -r …"` passes;
+# - a long script (a file written through a here-document) costs its length
+#   and no more. Bash reads a text to its end again at every match of
+#   ${text//a/b}, at every character ${text#*a} or ${text%%a*} steps over
+#   and at every `read` of a line: seconds on 20,000 lines. So the input is
+#   read in blocks, decoded in pieces, and cut by word splitting.
 # Bash 3.2 (macOS) to 5 (Git Bash): no ${var,,}, no associative array.
 
 LC_ALL=C
 shopt -s nocasematch
 
-IFS= read -r -d '' input
+# In blocks where bash can (`read -N`, bash 4.1 and later); an older one
+# refuses the option and reads the whole input one byte at a time.
+input=
+while IFS= read -r -N 65536 block 2> /dev/null; do input+=$block; done
+input+=$block
+[[ -n $input ]] || IFS= read -r -d '' input
 case $input in
     *grep* | *findstr* | *select-string* | *sls* | *cargo* | *rustc_wrapper* | *rustc-wrapper*) ;;
     *) exit 0 ;;
@@ -35,26 +45,61 @@ nl=$'\n'
 dq='"'
 sq="'"
 backslash='\'
-# stand-ins for an escaped backslash and an escaped quote of the JSON text
-esc_backslash=$'\001'
-esc_quote=$'\002'
+# Stand-ins while the JSON text is decoded: an escaped backslash, an escaped
+# quote, and a quote of the JSON itself (not \001, bash's own quoting mark).
+esc_backslash=$'\002'
+esc_quote=$'\003'
+quote=$'\004'
 
-# tool_input.command, as plain text. Once the escaped quotes are set aside,
-# the quotes left are the JSON's own: the value ends at the next one.
-text=${input//\\\\/$esc_backslash}
-text=${text//\\\"/$esc_quote}
-case $text in
-    *\"command\"*) ;;
-    *) exit 0 ;;
-esac
-text=${text#*\"command\"}
-text=${text#*\"}
-cmd=${text%%\"*}
-cmd=${cmd//\\n/$nl}
-cmd=${cmd//\\r/}
-cmd=${cmd//\\t/ }
-cmd=${cmd//$esc_quote/$dq}
-cmd=${cmd//$esc_backslash/$backslash}
+# The JSON text with its escapes decoded, piece by piece. Once the escaped
+# quotes are set aside, the quotes left are the JSON's own. A piece never
+# ends inside an escape: the backslash that opens one waits for the next
+# (the test puts the end of a piece on every character of its scripts).
+piece_size=4096
+text=
+held=
+length=${#input}
+for ((at = 0; at < length; at += piece_size)); do
+    piece=$held${input:at:piece_size}
+    held=
+    piece=${piece//\\\\/$esc_backslash}
+    case $piece in *\\) held=$backslash piece=${piece%?} ;; esac
+    piece=${piece//\\\"/$esc_quote}
+    piece=${piece//\"/$quote}
+    piece=${piece//\\n/$nl}
+    piece=${piece//\\r/}
+    piece=${piece//\\t/ }
+    piece=${piece//$esc_quote/$dq}
+    text+=${piece//$esc_backslash/$backslash}
+done
+text+=$held
+
+# tool_input.command: the text between the quotes that follow its key and its
+# colon. Word splitting on the JSON's quotes reaches it in one pass, whatever
+# comes before it (no file name is expanded: set -f).
+re_colon='^[[:space:]]*:[[:space:]]*$'
+set -f
+IFS=$quote
+expect=key
+cmd=
+found=
+for field in $text; do
+    case $expect in
+        value)
+            cmd=$field
+            found=yes
+            break
+            ;;
+        colon)
+            if [[ $field =~ $re_colon ]]; then
+                expect=value
+                continue
+            fi
+            ;;
+    esac
+    if [[ $field == command ]]; then expect=colon; else expect=key; fi
+done
+[[ -n $found ]] || exit 0
 
 refuse() {
     # Claude Code shows it after "hook error: [this command]:"
@@ -109,8 +154,9 @@ re_test='^(-[^[:space:]]+[[:space:]]+)*(test|t)([[:space:]]|$)'
 re_package='[[:space:]](-p|--package)([[:space:]=]|[a-z0-9_])'
 re_whole='[[:space:]]--(workspace|all|manifest-path)[[:space:]=]'
 
-separators='[;&|({`]'
-while IFS= read -r part; do
+# Word splitting again, on what a command can start after.
+IFS=$nl';&|({`'
+for part in $cmd; do
     case $part in
         *grep* | *findstr* | *cargo*) ;;
         *) continue ;;
@@ -146,5 +192,5 @@ while IFS= read -r part; do
             fi
             ;;
     esac
-done <<< "${cmd//$separators/$nl}"
+done
 exit 0
