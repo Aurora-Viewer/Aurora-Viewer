@@ -1462,8 +1462,10 @@ pub(super) fn show(
                         sorter::Dest::Path(p) => base.is_some_and(|b| sorter::path_excluded(inv, b, p, &prefs.sorter)),
                         sorter::Dest::PreTrash => false,
                     };
-                    !m.restore && into_excluded
-                        || !m.restore
+                    // (a snapshot's restore honours exclusions like a sort)
+                    let sorts = !m.restore || m.snapshot;
+                    sorts && into_excluded
+                        || sorts
                             && (prefs.sorter.excludes(inv, m.id)
                                 || m.folder
                                     && prefs

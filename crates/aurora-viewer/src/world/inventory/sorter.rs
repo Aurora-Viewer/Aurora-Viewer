@@ -1141,6 +1141,10 @@ pub struct Move {
     /// Trash now where it is).
     #[serde(default)]
     pub from_trash: bool,
+    /// A snapshot's layout restore: it honours the folders excluded since,
+    /// like a sort (an Undo puts back what its run moved).
+    #[serde(default)]
+    pub snapshot: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1362,14 +1366,24 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let named_again = sub_words.iter().any(|w| own.contains(w));
         // a body's or a head's version (`Lelutka`, `Catwa EvoX`), Squish,
         // Waifus, or the product's own name again
-        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) || read.squish || read.waifus;
+        // (one head named, never a shelf of them: `Heads`)
+        let one = !sub_words.iter().any(|w| plural_kind(w));
+        let version = named_again || read.body.is_some() || read.category == Some(Category::Heads) && one || read.squish || read.waifus;
         versions |= version;
-        // a fatpack's own folders
-        // a fatpack's own folders, or an outfit's or an avatar's parts
-        // (`Top`, `Pants`, `Head`, `Shape`)
-        version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w))
+        // a fatpack's own folders, or an outfit's or an avatar's parts, one
+        // thing each (`Top`, `Pants`, `Head`, `Shape`; never `Shoes`,
+        // `Skins`: a shelf sorted by kind)
+        version || one && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || is_kind(w))
     });
     all && (versions || named && !occasion)
+}
+
+/// A kind word written as many (`Dresses`, `Shoes`, `Heads`): the word
+/// less its `s` or `es` is a kind too.
+fn plural_kind(w: &str) -> bool {
+    let is_kind = |w: &str| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    let less = |n: usize| w.len() > n && w.is_char_boundary(w.len() - n) && is_kind(&w[..w.len() - n]);
+    is_kind(w) && (w.ends_with("es") && less(2) || w.ends_with('s') && less(1))
 }
 
 /// The words of a name that are its own: not a kind, a body's name, a
@@ -1939,7 +1953,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
         // protected, nor a tree loaded only to be skipped)
         if here
             && m.folder
-            && (m.restore || !prefs.excludes(inv, m.id))
+            && (m.restore && !m.snapshot || !prefs.excludes(inv, m.id) && !into_excluded(m))
             && actions::relocatable(inv, m.id, protected)
             && !holds_worn.contains(&m.id)
             && match m.to {
@@ -1961,7 +1975,8 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], prefs: &Preferences, protecte
         // (an Undo puts back what its run moved, whatever was excluded since;
         // a snapshot's restore leaves excluded folders out, see
         // `journal::restore_moves`)
-        if here && !m.restore && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded) || into_excluded(m)) {
+        let sorts = !m.restore || m.snapshot;
+        if here && sorts && (prefs.excludes(inv, m.id) || holds_closed(inv, m.id, &prefs.excluded) || into_excluded(m)) {
             plan.kept += 1;
             plan.kept_list.push((m.name.clone(), Kept::Excluded));
             continue;
@@ -2510,6 +2525,7 @@ impl CleanupPlan {
                 unpacker: false,
                 restore: false,
                 from_trash: false,
+                snapshot: false,
             })
             .collect()
     }
@@ -2874,6 +2890,7 @@ fn plan_with(
             unpacker,
             restore: false,
             from_trash: false,
+            snapshot: false,
         });
     }
     plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));

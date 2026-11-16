@@ -264,6 +264,7 @@ fn restore_move(id: Uuid, folder: bool, name: &str, from: Uuid, to: Uuid, label:
         unpacker: false,
         restore: true,
         from_trash: false,
+        snapshot: false,
     }
 }
 
@@ -419,6 +420,7 @@ pub fn restore_moves(
             return;
         }
         let mut m = restore_move(id, folder, name, now, was_in, targets.label(was_in));
+        m.snapshot = true;
         if !moved_by_runs.contains(&id) {
             summary.by_hand += 1;
             m.label = format!("{by_hand_label} · {}", m.label);

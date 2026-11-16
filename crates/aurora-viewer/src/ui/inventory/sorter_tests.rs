@@ -63,6 +63,7 @@ fn moves(range: std::ops::Range<u128>) -> Vec<Move> {
             unpacker: false,
             restore: false,
             from_trash: false,
+            snapshot: false,
         })
         .collect()
 }
@@ -277,6 +278,7 @@ fn a_batch_applied_late_counts_as_done_and_is_journaled() {
         unpacker: false,
         restore: false,
         from_trash: false,
+        snapshot: false,
     };
     let mut job = Job::new(VecDeque::new(), "Sorted".into());
     let now = Instant::now();

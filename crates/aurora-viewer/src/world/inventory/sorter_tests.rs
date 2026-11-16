@@ -683,6 +683,17 @@ fn a_whole_sort_opens_the_users_folders_and_moves_products_whole() {
     let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
     assert!(![51, 52, 54, 55].iter().any(|n| moved.contains(&id(*n))), "never opened");
     assert!(moved.contains(&id(50)) && moved.contains(&id(53)), "they move whole");
+    // a theme or season shelf sorted by kind is opened
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 40, 1, "Fantasy");
+    add_folder(&mut inv, 41, 40, "Heads");
+    add_folder(&mut inv, 42, 40, "Skins");
+    add_folder(&mut inv, 43, 1, "Winter");
+    add_folder(&mut inv, 44, 43, "Maitreya");
+    add_folder(&mut inv, 45, 43, "Boots");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+    assert!(!moved.contains(&id(40)) && !moved.contains(&id(43)), "shelves are opened");
     // a shelf of items named for a kind or a body is opened too
     let mut inv = fixture(&[]);
     add_folder(&mut inv, 93, 1, "My Shoes");
@@ -2012,6 +2023,7 @@ fn move_of(inv: &Inventory, at: u128, to: Dest) -> Move {
         unpacker: false,
         restore: false,
         from_trash: false,
+        snapshot: false,
     }
 }
 
@@ -2297,6 +2309,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             unpacker: false,
             restore: false,
             from_trash: false,
+            snapshot: false,
         },
         Move {
             id: id(70),
@@ -2308,6 +2321,7 @@ fn a_resumed_run_honours_folders_excluded_since() {
             unpacker: false,
             restore: false,
             from_trash: false,
+            snapshot: false,
         },
     ];
     let prefs = Preferences {
@@ -2387,6 +2401,7 @@ fn exclusions_stop_a_resume_but_never_an_undo() {
         unpacker: false,
         restore: true,
         from_trash: false,
+        snapshot: false,
     };
     let prefs = Preferences {
         excluded: vec![id(50)],
@@ -2440,6 +2455,7 @@ fn move_to(inv: &Inventory, at: u128, to: Dest) -> Move {
         unpacker: false,
         restore: false,
         from_trash: false,
+        snapshot: false,
     }
 }
 
