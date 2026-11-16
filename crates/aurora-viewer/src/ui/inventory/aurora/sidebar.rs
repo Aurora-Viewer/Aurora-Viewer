@@ -69,17 +69,18 @@ impl Sidebar {
         }
     }
 
-    /// The account's favorite folders, by name: the column's shortcuts to
+    /// The account's favorite folders, by name in the tree's dictionary
+    /// order ("Outfit 2" before "Outfit 10"): the column's shortcuts to
     /// them. A favorite thrown in the Trash is not one to go back to, and
     /// the Library's folders cannot be favorites (`rules::set_favorites`).
     fn favorites(&mut self, inv: &Inventory) -> &[Uuid] {
         if self.favorites_at != Some(inv.generation) {
             self.favorites_at = Some(inv.generation);
-            let mut named: Vec<(String, Uuid)> = inv
+            let mut named: Vec<(crate::natural_order::Key, Uuid)> = inv
                 .folders
                 .values()
                 .filter(|f| f.info.favorite && !f.library && !rules::in_type(inv, f.info.id, 14))
-                .map(|f| (folder_name(inv, f.info.id).to_lowercase(), f.info.id))
+                .map(|f| (crate::natural_order::key(&folder_name(inv, f.info.id)), f.info.id))
                 .collect();
             named.sort();
             self.favorites = named.into_iter().map(|(_, id)| id).collect();
@@ -767,6 +768,19 @@ mod tests {
         }
         inv.generation += 1;
         assert!(listed_favorites(&mut side, &inv, &prefs, false).is_empty());
+    }
+
+    #[test]
+    fn favorite_folders_follow_the_trees_dictionary_order() {
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        favorite(&mut inv, 10, 1, "Outfit 10");
+        favorite(&mut inv, 20, 1, "outfit 2");
+        favorite(&mut inv, 30, 1, "Outfit 1");
+        let listed: Vec<_> = Sidebar::default().favorites(&inv).iter().map(|id| id.as_u128()).collect();
+        assert_eq!(listed, [30, 20, 10], "digits by their value, case ignored");
     }
 
     #[test]
