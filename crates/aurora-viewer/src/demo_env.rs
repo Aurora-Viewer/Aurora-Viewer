@@ -313,6 +313,8 @@ fn day(keys: &[(f32, Llsd)], water_frame: Llsd) -> Llsd {
     frames.insert("water".into(), water_frame);
     llsd_map! {
         "type" => "daycycle",
+        // as a viewer saves them (LLSettingsBase::saveValuesToLLSD)
+        "flags" => 0,
         "frames" => Llsd::Map(frames),
         "tracks" => Llsd::Array(vec![
             Llsd::Array(vec![llsd_map! {"key_keyframe" => 0.0, "key_name" => "water"}]),
@@ -476,10 +478,12 @@ pub fn step(frame: u64) -> Option<Step> {
     let lighting = scenario() == "lighting";
     let s = match frame {
         30 => Step::Open { lighting },
-        2500 if matches!(scenario(), "list" | "search" | "search-none") => Step::OpenList(SettingsKind::Sky),
+        2500 if matches!(scenario(), "list" | "search" | "search-none" | "search-back") => Step::OpenList(SettingsKind::Sky),
         2510 if scenario() == "search" => Step::Search(SettingsKind::Sky, "sunset"),
         2510 if scenario() == "search-none" => Step::Search(SettingsKind::Sky, "zzz no sky has a name as long as this one"),
-        _ if matches!(scenario(), "list" | "search" | "search-none") => return None,
+        2510 if scenario() == "search-back" => Step::Search(SettingsKind::Sky, "zzz"),
+        2520 if scenario() == "search-back" => Step::Search(SettingsKind::Sky, ""),
+        _ if matches!(scenario(), "list" | "search" | "search-none" | "search-back") => return None,
         2600 => Step::Pick(SettingsKind::Sky, u(0x204)),
         2900 if lighting => Step::EditLighting,
         2900 => Step::Pick(SettingsKind::Water, u(0x302)),

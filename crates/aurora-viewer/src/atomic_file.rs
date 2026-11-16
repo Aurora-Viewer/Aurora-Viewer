@@ -27,7 +27,18 @@ pub fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     publish_with(path, bytes, false)
 }
 
+/// [`write`] without counting the bytes, as long as `still` says so just
+/// before the old file is replaced: false when it did not, and nothing was
+/// replaced. For a file computed from what it holds.
+pub fn write_if(path: &Path, bytes: &[u8], still: impl FnOnce() -> bool) -> std::io::Result<bool> {
+    publish_if(path, bytes, true, still)
+}
+
 fn publish_with(path: &Path, bytes: &[u8], durable: bool) -> std::io::Result<()> {
+    publish_if(path, bytes, durable, || true).map(|_| ())
+}
+
+fn publish_if(path: &Path, bytes: &[u8], durable: bool, still: impl FnOnce() -> bool) -> std::io::Result<bool> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let temporary = parent.join(format!(".aurora-{}-{}.tmp", std::process::id(), uuid::Uuid::new_v4()));
     let result = (|| {
@@ -37,13 +48,16 @@ fn publish_with(path: &Path, bytes: &[u8], durable: bool) -> std::io::Result<()>
             file.sync_data()?;
         }
         drop(file);
+        if !still() {
+            return Ok(false);
+        }
         rename_retrying(&temporary, path)?;
         if durable {
             sync_dir(parent);
         }
-        Ok(())
+        Ok(true)
     })();
-    if result.is_err() {
+    if !matches!(result, Ok(true)) {
         let _ = std::fs::remove_file(&temporary);
     }
     result
@@ -79,6 +93,20 @@ fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn write_if_replaces_nothing_when_told_not_to() {
+        let dir = std::env::temp_dir().join(format!("aurora-write-if-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file");
+        std::fs::write(&path, "old").unwrap();
+        assert!(!super::write_if(&path, b"new", || false).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(super::write_if(&path, b"new", || true).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     /// A reader is never shown a partial file. On Windows, opening the file
     /// in the instant another writer's rename replaces it is refused (access
     /// denied) rather than giving old or new bytes: the reader tries again,

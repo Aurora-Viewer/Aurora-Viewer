@@ -190,6 +190,7 @@ impl App {
     fn animation_rows(&mut self) -> Vec<Row> {
         let entries: Vec<_> = self.world.animation_log.entries().rev().copied().collect();
         let mut rows = Vec::with_capacity(entries.len());
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
         for entry in entries {
             let own = entry.source == self.world.agent_id;
             let object = self
@@ -204,7 +205,7 @@ impl App {
                 if self.world.rlva_can_name(entry.source) {
                     self.world.social.name_of(&entry.source)
                 } else {
-                    crate::world::rlva::privacy::anonymous(entry.source).display_name.clone()
+                    self.world.rlva_anonymous(entry.source).display_name.clone()
                 }
             } else if let Some(name) = self.known_object_name(&entry.source) {
                 name
@@ -228,6 +229,7 @@ impl App {
                 playing: self.world.animation_playing_from(&entry.source, &entry.animation),
                 started: entry.started,
                 priority: self.scene.anims.peek(&entry.animation).map(|b| b.anim.base_priority),
+                animation_shown: ids.shown(&entry.animation),
             });
         }
         rows

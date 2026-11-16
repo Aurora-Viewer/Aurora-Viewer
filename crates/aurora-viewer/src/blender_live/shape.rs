@@ -55,7 +55,10 @@ pub fn editable(world: &World) -> Result<InvItem, String> {
         .and_then(|id| world.inventory.items.get(&id))
         .filter(|item| !item.asset_id.is_nil())
         .ok_or_else(|| aurora_i18n::tr!("blender-shape-missing").to_owned())?;
-    if world.agent_id.is_nil() || item.owner != world.agent_id || item.group_owned || item.owner_mask & aurora_net::build::perm::MODIFY == 0
+    if world.agent_id.is_nil()
+        || item.owner != world.agent_id
+        || item.group_owned
+        || crate::world::inventory::actions::agent_mask(item, world.agent_id) & aurora_net::build::perm::MODIFY == 0
     {
         return Err(aurora_i18n::tr!("blender-shape-no-modify").into());
     }

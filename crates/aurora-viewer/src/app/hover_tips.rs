@@ -29,9 +29,10 @@ pub(crate) struct HoverTipsState {
 }
 
 impl App {
-    /// The tips are on: the saved setting, or the demo's scenario.
+    /// The tips are on: the saved settings (the main switch, or avatars
+    /// alone), or the demo's scenario.
     pub(super) fn hover_tips_on(&self) -> bool {
-        self.settings.hover_tips.enabled || (self.demo && crate::demo::hover_tips::scenario().is_some())
+        tips::any_enabled(&self.settings.hover_tips) || (self.demo && crate::demo::hover_tips::scenario().is_some())
     }
 
     /// The tips of this frame, from the hover of the last one; the action
@@ -39,24 +40,30 @@ impl App {
     /// a held photo (`shown` false).
     pub(super) fn draw_hover_tips(&mut self, ctx: &egui::Context, p: &Palette, shown: bool) -> Option<CtxAction> {
         // AURORA_DEMO_HOVER_TIPS: the scenario's tips, the saved ones kept
-        let (settings, legacy) = self
+        let (mut settings, legacy) = self
             .demo
             .then(crate::demo::hover_tips::scenario)
             .flatten()
             .unwrap_or_else(|| (self.settings.hover_tips.clone(), self.settings.classic_hover_tips));
-        if !settings.enabled || !shown {
+        if !tips::any_enabled(&settings) || !shown {
             self.hover_tips.timing.hide();
             self.hover_tips.rect = None;
             self.hover_tips.last = None;
             return None;
         }
+        // avatars alone: no parcel asked nor shown, not even the readout's
+        // second line
+        settings.land &= settings.enabled;
         let now = Instant::now();
         let hovered = match self.hover_tips.avatar {
             Some((idx, at)) => tips::subject_at(&self.world, Some(idx), at).map(|s| (s, at)),
             None => self
                 .look_hover
                 .and_then(|(idx, point)| tips::subject_at(&self.world, idx, point).map(|s| (s, point))),
-        };
+        }
+        .filter(|(subject, _)| tips::subject_enabled(*subject, &settings))
+        // what RLVa leaves no tip: nothing is asked about it either
+        .filter(|(subject, point)| tips::rlva_allows(&self.world, *subject, *point));
         let subject = hovered.map(|(s, _)| (s, s.key(&self.hover_tips.parcels)));
         // the parcel under a bare ground point, or under the subject for the
         // readout's second line (setHoverParcel)
@@ -106,8 +113,11 @@ impl App {
             Subject::Avatar { idx, id } => self.world.objects.get(idx).is_some_and(|o| o.full_id == id),
             Subject::Land { .. } => true,
         };
-        if !alive {
+        // a tip already up when a restriction arrives goes with it
+        if !alive || !tips::rlva_allows(&self.world, shown.subject, self.hover_tips.point) {
             self.hover_tips.timing.hide();
+            self.hover_tips.rect = None;
+            self.hover_tips.last = None;
             return None;
         }
         // ObjectPropertiesFamily of the hovered root (LLSelectMgr::setHoverObject)
@@ -188,6 +198,7 @@ impl App {
 
     /// ParcelProperties of the hovered parcel.
     pub(super) fn on_hover_parcel(&mut self, handle: aurora_net::RegionHandle, parcel: std::sync::Arc<aurora_net::ParcelInfo>) {
+        self.world.note_seen_parcel(handle, parcel.clone());
         self.hover_tips.parcels.on_parcel(handle, parcel);
     }
 }

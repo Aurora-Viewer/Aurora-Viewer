@@ -15,6 +15,15 @@ impl HeadlessContext for egui::Context {
 }
 
 #[test]
+fn manipulator_pointer_ownership_includes_a_hovered_world_gizmo() {
+    let mut editor = Editor::default();
+    assert!(!editor.manipulator_owns_pointer());
+
+    editor.manipulator_hovered = true;
+    assert!(editor.manipulator_owns_pointer(), "a hovered world gizmo blocks camera clicks");
+}
+
+#[test]
 fn each_limb_enables_and_releases_independently_even_with_symmetry() {
     let lib = AvatarLibrary::load();
     let rig = &lib.rig;

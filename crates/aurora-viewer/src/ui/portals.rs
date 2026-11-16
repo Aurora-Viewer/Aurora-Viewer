@@ -8,7 +8,7 @@ use crate::{
     theme::Palette,
     world::{World, portals},
 };
-use aurora_net::bridge::portal::Access;
+use aurora_net::bridge::portal::{Access, Destination, Portal};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -129,14 +129,7 @@ fn label_text(world: &World, entry: &portals::Entry, unix: u64) -> String {
     let details = entry.details.as_ref().filter(|_| authorized);
     let destination = match details {
         None => aurora_i18n::tr!("portal-private").to_string(),
-        Some(_) if world.rlva.has("showloc") => aurora_i18n::tr!("portal-destination-hidden").to_string(),
-        Some(details) => {
-            let destination = &details.destination;
-            format!(
-                "{} ({:.0}, {:.0}, {:.0})",
-                destination.region, destination.position[0], destination.position[1], destination.position[2]
-            )
-        }
+        Some(details) => destination_text(world, &details.destination),
     };
     let access = match details.map(|details| details.access) {
         Some(Access::Everyone) => aurora_i18n::tr!("portal-everyone"),
@@ -149,11 +142,90 @@ fn label_text(world: &World, entry: &portals::Entry, unix: u64) -> String {
     } else {
         aurora_i18n::tr!("portal-walk-through")
     };
+    let name = label_name(world, entry);
+    format!("{destination}\n{name} · {access}\n{timer}\n{status}")
+}
+
+fn destination_text(world: &World, destination: &Destination) -> String {
+    if world.rlva.has("showloc") {
+        return aurora_i18n::tr!("portal-destination-hidden").to_string();
+    }
+    format!(
+        "{} ({:.0}, {:.0}, {:.0})",
+        destination.region, destination.position[0], destination.position[1], destination.position[2]
+    )
+}
+
+/// The resident the label names: the relay, unless the creator was seen.
+fn label_name(world: &World, entry: &portals::Entry) -> String {
     let name = world
         .person_name(&entry.label_owner())
         .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
-    let name = world.rlva_hover_privacy.apply(&name);
-    format!("{destination}\n{name} · {access}\n{timer}\n{status}")
+    world.rlva_hover_privacy.apply(&name).to_string()
+}
+
+/// The first crossing of a portal from someone who is not our friend waits
+/// for this answer (`portals::State::ask_before_crossing`).
+pub struct CrossingAsk {
+    pub owner: Uuid,
+    pub portal: Portal,
+    name: String,
+    destination: String,
+}
+
+impl CrossingAsk {
+    pub fn new(world: &World, entry: &portals::Entry, portal: Portal) -> Self {
+        Self {
+            owner: entry.owner,
+            name: label_name(world, entry),
+            destination: destination_text(
+                world,
+                &Destination {
+                    region: portal.destination.clone(),
+                    position: portal.position,
+                },
+            ),
+            portal,
+        }
+    }
+
+    pub fn text(&self) -> String {
+        aurora_i18n::tr!(
+            "portal-cross-text",
+            name = self.name.clone(),
+            destination = self.destination.clone()
+        )
+    }
+}
+
+/// Some(true) goes, Some(false) cancels; Escape or a click away cancels too.
+pub fn crossing_confirm(ctx: &egui::Context, p: &Palette, ask: &CrossingAsk) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = widgets::Modal::new(egui::Id::unique(("portal_crossing_confirm", ask.owner, ask.portal.id))).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("portal-cross-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new(ask.text()).size(12.5).color(p.muted));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if widgets::default_button(widgets::flat_button(ui, p, aurora_i18n::tr!("portal-cross-go"))).clicked() {
+                answer = Some(true);
+            }
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
 }
 
 pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Projector) {

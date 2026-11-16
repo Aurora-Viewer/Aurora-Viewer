@@ -14,6 +14,7 @@ use crate::ui::avatar_picker::AvatarPicker;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind, Floater};
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_net::groups::{self, MAX_GROUP_INVITES};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
@@ -63,7 +64,7 @@ struct GroupChoice {
 /// (removeNoneOption): our groups where we may invite, by name.
 pub fn invite_groups(groups: &[aurora_net::GroupMembership]) -> Vec<&aurora_net::GroupMembership> {
     let mut v: Vec<_> = groups.iter().filter(|g| g.powers & groups::powers::MEMBER_INVITE != 0).collect();
-    v.sort_by_cached_key(|g| g.name.to_lowercase());
+    v.sort_by_cached_key(|g| crate::natural_order::key(&g.name));
     v
 }
 
@@ -106,6 +107,13 @@ impl InviteUi {
     /// request_update), once.
     pub fn take_reload(&mut self) -> Option<Uuid> {
         self.reload.take()
+    }
+
+    /// LLFloaterGroupInvite::showForGroup from outside the group's profile
+    /// (the Contacts window's Invite): the window alone, the group's data
+    /// asked again so that its roles are known.
+    pub fn show_for_group(&mut self, group: Uuid) {
+        self.invite_into(group, Vec::new());
     }
 
     /// callback_invite_to_group: the invitation of the chosen group, its
@@ -261,7 +269,7 @@ impl InviteUi {
             .map(|r| r.id)
             .collect();
         let mut out: Vec<&groups::GroupRole> = d.roles.values().filter(|r| allowed.contains(&r.id)).collect();
-        out.sort_by_cached_key(|r| (!r.id.is_nil(), role_name(&r.name).to_lowercase()));
+        out.sort_by_cached_key(|r| (!r.id.is_nil(), crate::natural_order::key(&role_name(&r.name))));
         out
     }
 
@@ -353,7 +361,7 @@ impl InviteUi {
                         }
                         let mut remove = None;
                         for id in &self.invitees {
-                            let name = c.world.social.display_name_of(id);
+                            let name = c.world.social.display_name_in(NameScope::Roster, id);
                             if name == "…" {
                                 c.want_names.insert(*id);
                             }
