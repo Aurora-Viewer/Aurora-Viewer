@@ -1727,10 +1727,21 @@ mod tests {
         let folder = Uuid::from_u128(9_021);
         inv.folders.insert(folder, lockable_folder(folder, inv.root));
         let item = Uuid::from_u128(8100);
+        let system_folder = Uuid::from_u128(8002);
+        let library_folder = Uuid::from_u128(9_022);
+        inv.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: library_folder,
+                parent: inv.lib_root,
+                type_default: -1,
+                ..Default::default()
+            }],
+            true,
+        );
         let mut prefs = InventoryPreferences::default();
         let mut state = InventoryUi {
             selected: Some(folder),
-            selection: HashSet::from([folder, item]),
+            selection: HashSet::from([folder, item, system_folder, library_folder]),
             ..Default::default()
         };
         let ctx = egui::Context::default();
@@ -1738,5 +1749,7 @@ mod tests {
         run_protect(&ctx, &inv, &mut state, &mut prefs);
         assert!(prefs.protected.contains(&folder));
         assert!(!prefs.protected.contains(&item));
+        assert!(!prefs.protected.contains(&system_folder));
+        assert!(!prefs.protected.contains(&library_folder));
     }
 }
