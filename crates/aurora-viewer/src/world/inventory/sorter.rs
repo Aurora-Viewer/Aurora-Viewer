@@ -1453,8 +1453,10 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     // an unpacked delivery whatever it sells: an unpacker's marks in its
     // name, a version tag, or its items carrying its brand (never a folder
     // the user marks as a shelf: `My Stuff`, `Unpacked`)
+    // (an unpacker's marks win over a shelf word in a long product name:
+    // `Face Slapper {Unpacker/backup} v1.0.3`)
     let shelf_marked = words(name).iter().any(|w| SHELF_MARKERS.contains(&w.as_str()));
-    let delivered = !shelf_marked && (delivery_marked(name) || shares_its_name(inv, f, name));
+    let delivered = delivery_marked(name) || !shelf_marked && shares_its_name(inv, f, name);
     if delivered {
         return true;
     }
@@ -1482,7 +1484,9 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 /// (`Kira HUD v1.2`, `Kira Body (1.0.4)`, `Kira [6.0]`). `Unpacked` alone
 /// names the user's shelf; a bare date (`10.12.2016`) is no version.
 fn delivery_marked(name: &str) -> bool {
-    const MARKS: [&str; 10] = [
+    const MARKS: [&str; 12] = [
+        "(box)",
+        "[box]",
         "(unpacked)",
         "[unpacked]",
         "{unpacked}",
@@ -1540,7 +1544,9 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
     }
     let items: Vec<&str> = f.items.iter().filter_map(|i| inv.items.get(i)).map(|it| it.name.as_str()).collect();
     let sharing = items.iter().filter(|n| words(n).iter().any(|w| own.contains(w))).count();
-    sharing >= 2 && sharing * 5 >= items.len() * 3
+    // (two in five: a delivery's notecards, landmarks and add-ons carry
+    // other names; a shelf's things come from many creators)
+    sharing >= 2 && sharing * 5 >= items.len() * 2
 }
 
 /// Kinds sold as one product though written as many (`Winter Boots`): an
