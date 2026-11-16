@@ -106,7 +106,10 @@ fn enabled(command: Command, e: &Editor, ctx: &egui::Context, id: Id) -> bool {
         Command::Reload => e.can_read && !e.dirty() && e.saving.is_none() && e.loading.is_none(),
         Command::Revert => editable && e.dirty(),
         Command::Open | Command::External => editable && e.tools.file_job.is_none(),
-        Command::Export => e.loaded && (e.can_read || !e.source.is_empty()) && e.tools.file_job.is_none(),
+        // a read-only editor saves no file (LLTextEditor::canLoadOrSaveToFile,
+        // indra/llui/lltexteditor.cpp: !mReadOnly, set from is_modifiable in
+        // LLPreviewLSL::loadAsset, indra/newview/llpreviewscript.cpp)
+        Command::Export => e.loaded && e.can_edit && e.tools.file_job.is_none(),
         Command::Cut => editable && selection,
         Command::Copy => e.loaded && selection,
         Command::Paste => editable,
@@ -1301,11 +1304,13 @@ mod tests {
         editing::select(&ctx, id, 0..2, false);
         assert!(enabled(Command::Copy, e, &ctx, id));
         assert!(!enabled(Command::Cut, e, &ctx, id));
+        assert!(!enabled(Command::Export, e, &ctx, id), "a read-only script saves no file");
         run(Command::Cut, e, &ctx, id, &settings, &mut prefs, &mut actions);
         run(Command::Paste, e, &ctx, id, &settings, &mut prefs, &mut actions);
         assert_eq!(e.source, "éあ original");
         assert!(actions.is_empty());
         e.can_edit = true;
+        assert!(enabled(Command::Export, e, &ctx, id), "an editable script saves to a file");
         e.tools.processed = true;
         e.tools.processed_source = "generated source with different length".into();
         run(Command::SelectAll, e, &ctx, id, &settings, &mut prefs, &mut actions);

@@ -70,7 +70,8 @@ pub fn clock_rate(time_dilation: f32, silent: f32) -> f32 {
     dilation * phase
 }
 
-/// What a report said of an object's motion.
+/// Base pose and reported velocities of an object's motion. The pose can
+/// include a client-side turn retained across earlier reports.
 #[derive(Debug, Clone, Copy)]
 pub struct Reported {
     pub position: Vec3,
@@ -135,6 +136,7 @@ pub struct Correction {
 impl Correction {
     /// From where the object was `drawn` to where the report puts it now.
     /// None when there is nothing to fade, or too much.
+    #[cfg(test)]
     pub fn between(drawn: (Vec3, Quat), reported: (Vec3, Quat), now: Instant) -> Option<Correction> {
         Self::toward(drawn, reported, reported, now)
     }

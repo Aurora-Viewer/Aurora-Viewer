@@ -20,7 +20,8 @@ For shared controls, limits and other platforms, see [VR setup](VR.md).
   is built in (the `xr-static-loader` feature, which needs CMake), and it finds
   the runtime the system has active. A local build without that feature loads
   the runtime's `openxr_loader.dll` instead; add `--features xr-static-loader`
-  (with CMake installed) to build it in.
+  (with CMake installed) to build it in. `scripts/build-release.ps1` adds it
+  when CMake is installed.
 - `PRIMARY_STEREO` with two views, `LOCAL`/`VIEW` reference spaces, opaque
   composition, compatible RGBA8/BGRA8 eye formats and swapchain images usable as
   color attachments, sampled textures and transfer sources.

@@ -4,7 +4,7 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
@@ -118,10 +118,14 @@ fn weather(cx: &mut Cx) {
             ],
         );
         // the puddles, and behind their cog how far the wet ground goes
+        // and whether they freeze
         cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
         let no_puddles = !cx.s.weather.puddles;
         cx.subs(no_puddles, |cx| {
-            cx.slider_whole(
+            // live with the puddles off: the wet ground is drawn in any rain
+            // (env.wgsl `rain_wet_surface`; the switch gates only the
+            // puddles), and it goes as far as this
+            cx.live(true).slider_whole(
                 tr!("ui-weather-distance"),
                 tr!("ui-weather-distance-tip"),
                 &field!(weather.puddle_distance),
@@ -156,6 +160,18 @@ fn weather(cx: &mut Cx) {
                 tr!("ui-weather-deep-snow-tip"),
                 &field!(weather.snow_deep),
             );
+            // right under it, greyed while it is off: a cog behind a cog
+            // is not how the other options read
+            let no_deep = !cx.s.weather.snow_deep;
+            cx.greyed(no_deep);
+            cx.slider_whole(
+                tr!("ui-weather-deep-snow-reach"),
+                tr!("ui-weather-deep-snow-reach-tip"),
+                &field!(weather.snow_deep_reach),
+                crate::weather::DEEP_SNOW_REACH,
+                " m",
+            );
+            cx.greyed(false);
         });
         cx.toggle(
             tr!("ui-weather-avatar-snow"),
@@ -460,7 +476,7 @@ fn quality(cx: &mut Cx) {
             tr!("common-draw-distance"),
             tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
             &field!(draw_distance),
-            32.0..=512.0,
+            crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
             " m",
         );
         // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
@@ -937,11 +953,14 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_range),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
-                        .custom_parser(aurora_i18n::parse_number)
-                        .step_by(16.0)
-                        .suffix(" m")
-                        .trailing_fill(true),
+                    egui::Slider::new(
+                        &mut s.probe_range,
+                        crate::settings::PROBE_RANGE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
+                    )
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(16.0)
+                    .suffix(" m")
+                    .trailing_fill(true),
                 )
                 .changed()
             },
@@ -1004,6 +1023,25 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        let p = cx.p;
+        // the search finds the row by its methods and the exact order's
+        // precisions
+        let mut words = vec![
+            tr!("ui-options-blend-order-standard"),
+            tr!("ui-options-blend-order-exact"),
+            tr!("ui-options-blend-order-stochastic"),
+        ];
+        words.extend(blend_precisions().map(|(_, label)| label));
+        cx.wide().keywords(&words.join(" ")).row(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            |ui, s| blend_order_choice(ui, &p, &mut s.blend_order),
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another

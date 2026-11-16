@@ -283,22 +283,46 @@ impl ContactSets {
     }
 
     pub fn move_priority(&mut self, name: &str, up: bool) {
-        let mut names = self.ordered_set_names();
+        let names = self.ordered_set_names();
         let Some(i) = names.iter().position(|n| n == name) else { return };
-        let other = if up {
+        let to = if up {
             i.checked_sub(1)
         } else {
             (i + 1 < names.len()).then_some(i + 1)
         };
-        let Some(other) = other else { return };
-        names.swap(i, other);
+        if let Some(to) = to {
+            self.move_priority_to(name, to);
+        }
+    }
+
+    /// Put `name` at `index` of the priority order (0 is the highest), the
+    /// others keeping theirs: a set dragged in People's list of sets.
+    pub fn move_priority_to(&mut self, name: &str, index: usize) {
+        let mut names = self.ordered_set_names();
+        let Some(from) = names.iter().position(|n| n == name) else { return };
+        let moved = names.remove(from);
+        let index = index.min(names.len());
+        names.insert(index, moved);
         let len = names.len();
+        let mut changed = from != index;
         for (i, name) in names.iter().enumerate() {
             if let Some(set) = self.sets.get_mut(name) {
-                set.priority = (len - i) as i32;
+                let priority = (len - i) as i32;
+                // the priorities of an older file may tie: written out once
+                changed |= set.priority != priority;
+                set.priority = priority;
             }
         }
-        self.changed();
+        if changed {
+            self.changed();
+        }
+    }
+
+    /// Where `name` stands in the priority order (0 is the highest), and
+    /// how many sets there are.
+    pub fn priority_rank(&self, name: &str) -> Option<(usize, usize)> {
+        let names = self.ordered_set_names();
+        names.iter().position(|n| n == name).map(|i| (i, names.len()))
     }
 
     pub fn set_visuals(&mut self, name: &str, mut visuals: Visuals) {

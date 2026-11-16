@@ -33,6 +33,9 @@ pub struct AreaSearchUi {
     expanded: Option<controls::Section>,
     /// Where the right-click menu opened.
     menu_at: Option<egui::Pos2>,
+    /// What RLVa hides of that menu, asked once as it opens: the selection
+    /// can hold thousands of rows. The actions are checked again when sent.
+    menu_locks: MenuLocks,
     /// The result list the selection was last checked against.
     checked: u64,
     /// AURORA_DEMO_AREA_SEARCH=menu: right click the second row once shown.
@@ -57,9 +60,52 @@ pub enum Action {
     FilterMine,
 }
 
+/// What RLVa refuses on at least one selected row, by the words of the
+/// menu's `on_visible` parameters (menu_fs_area_search.xml): an entry is
+/// hidden, not greyed, when one of its words is refused
+/// (FSPanelAreaSearchList::onContextMenuItemVisibleRLV, indra/newview/
+/// fsareasearch.cpp). Under @interact, or for a row whose object is gone,
+/// every word is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MenuLocks {
+    /// RlvActions::canTouch.
+    pub touch: bool,
+    /// RlvActions::canEdit.
+    pub edit: bool,
+    /// rlvCanDeleteOrReturn.
+    pub delete: bool,
+    /// RlvActions::canSit.
+    pub sit: bool,
+    /// RlvActions::canBuyObject.
+    pub buy: bool,
+    /// RlvActions::canTeleportToLocal, to where the object is.
+    pub teleport: bool,
+}
+
+impl MenuLocks {
+    /// Every RLVa-checked entry hidden.
+    pub const ALL: Self = Self {
+        touch: true,
+        edit: true,
+        delete: true,
+        sit: true,
+        buy: true,
+        teleport: true,
+    };
+}
+
 impl AreaSearchUi {
-    /// `draw_distance` enables Zoom (onContextMenuItemEnable "in_dd").
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, parcel_known: bool, draw_distance: f32) -> Option<Action> {
+    /// `draw_distance` enables Zoom (onContextMenuItemEnable "in_dd");
+    /// `locks` answers for the rows a right click opens the menu on.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        open: &mut bool,
+        parcel_known: bool,
+        draw_distance: f32,
+        locks: &dyn Fn(&[Uuid]) -> MenuLocks,
+    ) -> Option<Action> {
         let mut action = None;
         let mut window = Floater::new(
             WINDOW,
@@ -189,6 +235,7 @@ impl AreaSearchUi {
                                 if response.secondary_clicked() || demo {
                                     self.demo_menu = false;
                                     self.selection.context_click(row.id);
+                                    self.menu_locks = locks(&self.selection.ids);
                                     self.menu_at = Some(response.interact_pointer_pos().unwrap_or(rect.center()));
                                     egui::Popup::open_id(ui.ctx(), menu_id());
                                 }
@@ -281,8 +328,10 @@ impl AreaSearchUi {
     /// menu_fs_area_search.xml with its enable rules (onContextMenuItemEnable):
     /// "one" for Sit, Teleport to and Buy, "in_dd" for Zoom. Buy also needs
     /// the object to be for sale; the Legacy Viewer only says it is not
-    /// after the click.
+    /// after the click. The third field of an entry: RLVa hides it
+    /// (`MenuLocks`, the `on_visible` parameter of each).
     fn menu(&mut self, ui: &mut egui::Ui, p: &Palette, draw_distance: f32) -> Option<Action> {
+        let l = self.menu_locks;
         let ids = &self.selection.ids;
         let any = !ids.is_empty();
         let one = self.selection.single();
@@ -299,52 +348,83 @@ impl AreaSearchUi {
                 "code",
                 aurora_i18n::tr!("ui-context-script-information"),
                 any,
+                l.edit,
                 Make::Each(Action::ScriptInfo),
             ),
-            ("click-filled", aurora_i18n::tr!("ui-context-touch"), any, Make::Each(Action::Touch)),
+            (
+                "click-filled",
+                aurora_i18n::tr!("ui-context-touch"),
+                any,
+                l.touch,
+                Make::Each(Action::Touch),
+            ),
             (
                 "armchair",
                 aurora_i18n::tr!("area-search-sit"),
                 one.is_some(),
+                l.sit,
                 Make::One(Action::Sit),
             ),
             (
                 "location-filled",
                 aurora_i18n::tr!("common-teleport-to"),
                 one.is_some(),
+                l.teleport,
                 Make::One(Action::Teleport),
             ),
-            ("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), in_dd, Make::One(Action::Zoom)),
+            (
+                "zoom-in-filled",
+                aurora_i18n::tr!("common-zoom-2"),
+                in_dd,
+                false,
+                Make::One(Action::Zoom),
+            ),
             (
                 "zoom-scan-filled",
                 aurora_i18n::tr!("ui-context-inspect-2"),
                 any,
+                l.edit,
                 Make::Each(Action::Inspect),
             ),
-            ("pencil-filled", aurora_i18n::tr!("common-edit"), any, Make::Each(Action::Edit)),
+            (
+                "pencil-filled",
+                aurora_i18n::tr!("common-edit"),
+                any,
+                l.edit,
+                Make::Each(Action::Edit),
+            ),
             (
                 "arrow-back-up",
                 aurora_i18n::tr!("ui-context-return"),
                 any,
+                l.delete || l.touch,
                 Make::Each(Action::Return),
             ),
-            ("trash-filled", aurora_i18n::tr!("common-delete"), any, Make::Each(Action::Delete)),
+            (
+                "trash-filled",
+                aurora_i18n::tr!("common-delete"),
+                any,
+                l.delete || l.touch,
+                Make::Each(Action::Delete),
+            ),
             (
                 "eye-closed",
                 aurora_i18n::tr!("ui-context-derender-blacklist"),
                 any,
+                l.delete,
                 Make::Each(Action::Blacklist),
             ),
             (
                 "shopping-cart-filled",
                 aurora_i18n::tr!("common-buy-object"),
                 for_sale,
+                l.edit || l.buy || l.touch,
                 Make::One(Action::Buy),
             ),
         ];
         let mut action = None;
-        for (icon, label, enabled, make) in entries {
-            if menu::item_if(ui, p, icon, label, enabled) {
+        for (icon, label, enabled, hidden, make) in entries {
+            if !hidden && menu::item_if(ui, p, icon, label, enabled) {
                 action = Some(match make {
                     Make::Each(make) => make(ids.clone()),
                     Make::One(make) => make(one.unwrap_or_default()),

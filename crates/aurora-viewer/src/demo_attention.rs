@@ -60,6 +60,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             owner_id: DEMO_TESS,
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: Some(crate::demo::HANDLE),
             position: glam::Vec3::new(130.0, 130.0, 22.0),
             message: mention(agent, aurora_i18n::tr!("demo-attention-mention")),
         }),
