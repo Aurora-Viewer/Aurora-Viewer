@@ -1431,6 +1431,33 @@ fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
     1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
 }
 
+/// Layer rank of a face of an object that is neither rigged nor a HUD
+/// (`DrawRecord::set_layer_rank`).
+///
+/// The layers of mesh eyes, jewels and decals are often one set of triangles
+/// given to several faces: they lie exactly on one another. The Legacy Viewer
+/// sorts the blended faces of such an object by the distance of their bounds
+/// (LLFace::CompareDistanceGreater in LLVolumeGeometryManager::genDrawInfo,
+/// indra/newview/llvovolume.cpp), the same for all of these, and so draws
+/// them in the order of the faces, each over those before it; the sorted
+/// order does the same (`blend_order::sort`). The exact and the stochastic
+/// orders compose the fragments of a pixel by their depth, where such layers
+/// have none between them and came out mixed, each for a share: a pupil
+/// through which its iris showed. A blended face takes the rank of its
+/// number, so the later face lies over the earlier ones there too. The other
+/// passes keep rank 0: a blended face still passes the depth of an opaque or
+/// masked face it lies on. `AURORA_BLEND_FACE_RANK=0`: no rank, as before, to
+/// compare.
+fn stacked_layer_rank(pass: Pass, te_index: u8) -> u32 {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let off = *OFF.get_or_init(|| std::env::var("AURORA_BLEND_FACE_RANK").is_ok_and(|v| v.trim() == "0"));
+    if pass == Pass::Blend && !off {
+        u32::from(te_index).min(flags::LAYER_RANK_MAX)
+    } else {
+        0
+    }
+}
+
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
 /// face `fi`: see [`tex_anim_record`].
 fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
@@ -3391,8 +3418,15 @@ impl Scene {
                     let mode = f.record_flags();
                     let mode_changed = before != mode;
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
-                    if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
+                    // (`object_auto_mask`: neither rigged nor a HUD, the
+                    // objects whose blended faces take a rank of their own)
+                    if (mode_changed || object_auto_mask)
+                        && let Some(mut r) = renderer.records.get(record).copied()
+                    {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                        if object_auto_mask {
+                            r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
+                        }
                         renderer.records.set(record, r);
                     }
                     renderer.records.set_face(record, face);
@@ -3437,10 +3471,19 @@ impl Scene {
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
-            if mode != 0
+            // (`object_auto_mask`: neither rigged nor a HUD)
+            let rank = if object_auto_mask {
+                stacked_layer_rank(pass, f.te_index)
+            } else {
+                0
+            };
+            if (mode != 0 || rank != 0)
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                if object_auto_mask {
+                    r.set_layer_rank(rank);
+                }
                 renderer.records.set(f.record, r);
             }
             renderer.records.set_face(f.record, cull_face(f, idx, fi == 0));
@@ -6658,6 +6701,27 @@ mod layer_rank_tests {
             assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
             // the same object keeps its rank on every rebuild
             assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
+    }
+
+    #[test]
+    fn a_later_blended_face_lies_over_the_earlier_ones() {
+        // the four layers of a mesh eye: faces 1, 2, 3 and 6
+        let ranks = [1u8, 2, 3, 6].map(|face| stacked_layer_rank(Pass::Blend, face));
+        assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]), "{ranks:?}");
+        // a prim has up to nine faces: the last two share the highest rank
+        assert_eq!(stacked_layer_rank(Pass::Blend, 8), flags::LAYER_RANK_MAX);
+        assert_eq!(stacked_layer_rank(Pass::Blend, 0), 0);
+    }
+
+    #[test]
+    fn the_other_passes_keep_the_depth_they_have() {
+        // a blended face must still pass the depth of an opaque or masked
+        // face it lies on (#3059): those are never brought nearer
+        for pass in [Pass::Opaque, Pass::OpaqueTwoSided, Pass::Mask, Pass::MaskTwoSided, Pass::Hidden] {
+            for face in 0..9 {
+                assert_eq!(stacked_layer_rank(pass, face), 0, "{pass:?} face {face}");
+            }
         }
     }
 }

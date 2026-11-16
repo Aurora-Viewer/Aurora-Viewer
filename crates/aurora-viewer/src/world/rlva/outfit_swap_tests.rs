@@ -183,3 +183,56 @@ fn a_collar_strip_all_keeps_the_locked_core_folder_and_the_collar() {
         "only the self-locked collar stays"
     );
 }
+
+/// The collar releases its locks while its strip still waits for an outfit
+/// change to end: RlvForceWear::forceDetach and forceRemove (rlvhelper.cpp)
+/// read the locks when the command is processed, so the strip keeps the ones
+/// it was received under.
+#[test]
+fn a_collar_strip_that_waited_keeps_the_locks_it_was_received_under() {
+    let mut w = wardrobe();
+    let (body, dress, shirt) = (w.body, w.dress, w.shirt);
+    w.lock_core();
+    w.world.rlva.appearance_busy = true;
+    w.say("@detach=force");
+    w.say("@remoutfit=force");
+    w.world.rlva_pending();
+    assert!(w.world.rlva.appearance.is_empty(), "the strip waits for the outfit change");
+    w.say("@detach=y");
+    w.say("@detachallthis:.outfits/.core=y");
+    w.world.rlva.appearance_busy = false;
+    let (off, on) = w.forced();
+    assert_eq!(off, BTreeSet::from([dress, shirt]), "the core and the collar stay on");
+    assert!(on.is_empty());
+    assert!(
+        w.world.rlva_can_remove(body, Uuid::nil()),
+        "the locks are released for what comes after"
+    );
+}
+
+/// Lock, strip and release in one message: each command reads the rules of
+/// its place in the message, not those the message ends with.
+#[test]
+fn a_strip_between_a_lock_and_its_release_in_one_message_obeys_the_lock() {
+    let mut w = wardrobe();
+    let (dress, shirt) = (w.dress, w.shirt);
+    w.say("@detach=n,detachallthis:.outfits/.core=n,detach=force,remoutfit=force,detachallthis:.outfits/.core=y,detach=y");
+    let (off, _) = w.forced();
+    assert_eq!(off, BTreeSet::from([dress, shirt]));
+    assert!(w.world.rlva.restrictions().is_empty());
+}
+
+/// The other way round, release, strip and lock again: the strip names what
+/// was free when it was received. (The removal is then sent under the
+/// current rules, which may hold more: stricter than the Legacy Viewer,
+/// never looser.)
+#[test]
+fn a_strip_between_a_release_and_a_new_lock_in_one_message_names_what_was_free() {
+    let mut w = wardrobe();
+    let alpha = w.alpha;
+    w.lock_core();
+    w.say("@detachallthis:.outfits/.core=y,remoutfit=force,detachallthis:.outfits/.core=n");
+    let (off, _) = w.forced();
+    assert!(off.contains(&alpha), "{off:?}");
+    assert!(!w.world.rlva_can_remove(alpha, Uuid::nil()), "locked again for what comes after");
+}

@@ -182,10 +182,15 @@ pub fn teleport_confirm_scenario() -> Option<TeleportConfirm> {
 
 /// RemoteParcelRequest: the parcel of the region holding the slot.
 pub fn remote_parcel(handle: RegionHandle, position: Vec3) -> Vec<NetEvent> {
+    let result = parcel_id(handle);
+    vec![NetEvent::RemoteParcel { handle, position, result }]
+}
+
+pub(super) fn parcel_id(handle: RegionHandle) -> Result<Uuid, RemoteParcelError> {
     let (x, y) = aurora_net::handle_to_origin(handle);
     let grid = (x / 256, y / 256);
     let (hx, hy) = aurora_net::handle_to_origin(super::HANDLE);
-    let result = if grid == (hx / 256, hy / 256) {
+    if grid == (hx / 256, hy / 256) {
         Ok(super::land::PARCEL_UUID)
     } else if grid == FAILING {
         Err(RemoteParcelError::Status(404))
@@ -195,8 +200,7 @@ pub fn remote_parcel(handle: RegionHandle, position: Vec3) -> Vec<NetEvent> {
             .find(|p| p.grid == grid)
             .map(|p| p.id)
             .ok_or(RemoteParcelError::NoParcel)
-    };
-    vec![NetEvent::RemoteParcel { handle, position, result }]
+    }
 }
 
 /// RegionHandleRequest for one of the demo regions.
