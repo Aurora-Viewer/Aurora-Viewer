@@ -19210,7 +19210,7 @@ impl App {
                         // the inventory's Share dialog confirms, then gives
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -20217,7 +20217,7 @@ impl App {
                         }
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first
@@ -21461,6 +21461,21 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "profile" | "profil") {
                     self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 }
+            }
+            // AURORA_DEMO_SHARE=multi: dozens of Orion-like friends nearby for
+            // the inventory Share picker's multi-select (#3074)
+            if crate::demo::share::enabled() {
+                if let Some(n) = crate::demo::share::count() {
+                    log::info!("demo share: {n} Orion-like friends for multi-select");
+                }
+                for ev in crate::demo::share::events() {
+                    self.world.apply(ev);
+                }
+                crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.panels.inventory = true;
+                // a copyable landmark (8103): Give / Share, Friends or Nearby,
+                // Ctrl+A then Select
+                self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8103));
             }
             // AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy: Near you with the
             // residents of the People mock-up, alone on screen
