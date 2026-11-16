@@ -453,6 +453,19 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
     Err(std::io::Error::other("the transcript keeps changing"))
 }
 
+/// The entries of a folder's conversation log, without those too old to
+/// keep (the Legacy Viewer drops them at its next login).
+fn legacy_conversations(folder: &Path) -> Vec<super::conversations::Conversation> {
+    use super::conversations;
+    match std::fs::read(folder.join(conversations::FILE)) {
+        Ok(bytes) => {
+            crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+            conversations::parse_file(&bytes, conversations::now()).0
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Where to read from.
 pub enum Sources {
     /// Folders chosen in the import window.
@@ -500,6 +513,9 @@ pub struct Request {
     /// change: reading them all at every login would be wasted.
     pub state: PathBuf,
     pub skip_unchanged: bool,
+    /// Take the Legacy Viewer's conversation log too. The import at login
+    /// leaves it when the user keeps no conversation log.
+    pub conversations: bool,
 }
 
 /// What an import did.
@@ -515,6 +531,11 @@ pub struct Report {
     pub left_out: usize,
     /// Started by the login, not by the import window.
     pub at_login: bool,
+    /// The entries of the Legacy Viewer's conversation logs
+    /// (`conversation.log` of the folders read), with the instant messages.
+    pub conversations: Vec<super::conversations::Conversation>,
+    /// The import state file, for `mark_brought`.
+    pub state: PathBuf,
 }
 
 /// An import under way.
@@ -534,6 +555,65 @@ impl Running {
 }
 
 type Signature = (u64, u64);
+
+/// The import state's key of a conversation already brought at login: its
+/// session and last time.
+fn conversation_key(c: &super::conversations::Conversation) -> String {
+    format!("conversation\n{}\n{}", c.session.hyphenated(), c.time)
+}
+
+/// `mark_brought_in_background`, waited for (the tests).
+#[cfg(test)]
+pub fn mark_brought(state: &Path, entries: &[super::conversations::Conversation]) {
+    if entries.is_empty() {
+        return;
+    }
+    write_brought(state, entries.iter().map(conversation_key).collect());
+}
+
+/// The import at login brings each conversation entry once: the keys of
+/// `entries` are written to the state only now, by the side that took the
+/// entries in (or knowingly dropped them: removed by the user, the log
+/// cleared). An import whose entries were not taken because the log was
+/// switched off leaves them to come at the next login.
+/// The state file is written on a short-lived thread, not on the frame.
+pub fn mark_brought_in_background(state: &Path, entries: &[super::conversations::Conversation]) {
+    if entries.is_empty() {
+        return;
+    }
+    let (state, keys) = (state.to_owned(), entries.iter().map(conversation_key).collect());
+    if let Err(e) = std::thread::Builder::new()
+        .name("import-state".into())
+        .spawn(move || write_brought(&state, keys))
+    {
+        log::warn!("conversation transcripts: the import's state is not saved ({e})");
+    }
+}
+
+/// The state file is read and written whole: one writer at a time, the
+/// import's own pass included.
+static STATE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn write_brought(state: &Path, keys: Vec<String>) {
+    let _one = STATE_WRITER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut known = load_state(state);
+    for key in keys {
+        known.insert(key, (0, 0));
+    }
+    save_state(state, &known);
+}
+
+/// The file stem the transcript of a Legacy conversation log entry has in
+/// Aurora's folder (`target_of` renames the files, so the entry follows).
+fn renamed_history(dir: &Path, history_file: &str, spelled: &Spellings) -> String {
+    if history_file.trim().is_empty() {
+        return history_file.to_owned();
+    }
+    // the name is undated already: kept as it is
+    target_of(dir, Path::new(&format!("{history_file}.{}", names::EXTENSION)), true, spelled)
+        .and_then(|target| target.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+        .unwrap_or_else(|| history_file.to_owned())
+}
 
 /// Size and modification time.
 fn signature(path: &Path) -> Option<Signature> {
@@ -597,18 +677,37 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         .collect();
     let left_out = folders.iter().map(|folder| left_out(folder)).sum();
     let spelled = spellings(&request.dir, &sources);
+    let _one = STATE_WRITER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut state = load_state(&request.state);
+    // the conversation log goes with the instant messages; it is small and
+    // merged by session, so it is read again at each import. The import at
+    // login brings each entry once: one the user removed since does not come
+    // back (the window's import brings them all).
+    let mut conversations: Vec<super::conversations::Conversation> = if request.kinds.im && request.conversations {
+        folders.iter().flat_map(|folder| legacy_conversations(folder)).collect()
+    } else {
+        Vec::new()
+    };
+    if request.skip_unchanged {
+        // (marked brought later, by `mark_brought`, once taken in)
+        conversations.retain(|c| !state.contains_key(&conversation_key(c)));
+    }
+    for c in &mut conversations {
+        c.history_file = renamed_history(&request.dir, &c.history_file, &spelled);
+    }
     let plan: Vec<(PathBuf, PathBuf)> = sources
         .into_iter()
         .filter_map(|source| Some((target_of(&request.dir, &source, request.dated, &spelled)?, source)))
         .map(|(target, source)| (source, target))
         .collect();
     total.store(plan.len(), Ordering::Relaxed);
-    let mut state = load_state(&request.state);
     // files a source of this run creates: the others meant for them are due
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report {
         left_out,
+        conversations,
         at_login: request.skip_unchanged,
+        state: request.state.clone(),
         ..Report::default()
     };
     let mut first_error = None;
@@ -829,6 +928,7 @@ mod tests {
             dated,
             state: to.join("state.json"),
             skip_unchanged: true,
+            conversations: true,
         };
         let running = start(worker.merge_port(), request).unwrap();
         running.report.recv().unwrap()
@@ -849,6 +949,88 @@ mod tests {
         // the file deleted: the first source to create it does not end the run
         std::fs::remove_file(to.join("Bob.txt")).unwrap();
         assert_eq!(import_at_login(&from, &to, false).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn the_legacy_viewers_conversation_log_comes_with_the_instant_messages() {
+        use super::super::conversations;
+        let (from, to) = (temp(), temp());
+        let now = conversations::now();
+        let entry = |name: &str, ago: i64| conversations::Conversation {
+            time: now - ago,
+            kind: conversations::Kind::Private,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::new_v4(),
+            participant: Uuid::new_v4(),
+            offline: true,
+        };
+        let text = conversations::format_file(&[entry("Jane Doe", 60), entry("Too Old", 200 * 86_400)]);
+        std::fs::write(from.join(conversations::FILE), text).unwrap();
+        let report = import_at_login(&from, &to, false);
+        assert_eq!(report.conversations.len(), 1);
+        assert_eq!(report.conversations[0].name, "Jane Doe");
+        // the file is only read, never counted as a transcript
+        assert_eq!((report.added, report.left_out), (0, 0));
+        assert!(!to.join(conversations::FILE).exists());
+        // left out with the instant messages
+        let kinds = Kinds { im: false, nearby: true };
+        assert!(import_kinds_at_login(&from, &to, false, kinds).conversations.is_empty());
+        // not brought until the side that takes them in says so: an import
+        // whose entries were dropped (the log switched off) brings them again
+        let second = import_at_login(&from, &to, false);
+        assert_eq!(second.conversations.len(), 1);
+        // brought once: an entry the user removed does not come back at the
+        // next login
+        mark_brought(&second.state, &second.conversations);
+        assert!(import_at_login(&from, &to, false).conversations.is_empty());
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn the_window_brings_the_conversation_log_again_and_login_waits_for_the_setting() {
+        use super::super::conversations;
+        let (from, to) = (temp(), temp());
+        let entry = conversations::Conversation {
+            time: conversations::now() - 60,
+            kind: conversations::Kind::Private,
+            name: "Jane Doe".into(),
+            history_file: "jane_doe".into(),
+            session: Uuid::new_v4(),
+            participant: Uuid::new_v4(),
+            offline: false,
+        };
+        std::fs::write(from.join(conversations::FILE), conversations::format_file(&[entry])).unwrap();
+        let run = |skip_unchanged, conversations| {
+            let worker = store::Worker::start().unwrap();
+            let request = Request {
+                sources: Sources::Folders(vec![from.clone()]),
+                kinds: Kinds::ALL,
+                dir: to.clone(),
+                dated: false,
+                state: to.join("state.json"),
+                skip_unchanged,
+                conversations,
+            };
+            let report = start(worker.merge_port(), request).unwrap().report.recv().unwrap();
+            // (what the side taking the entries in does at login)
+            if skip_unchanged {
+                mark_brought(&report.state, &report.conversations);
+            }
+            report.conversations
+        };
+        // the user keeps no conversation log: nothing is read, nothing marked
+        assert!(run(true, false).is_empty());
+        let first = run(true, true);
+        assert_eq!(first.len(), 1);
+        // the transcript is renamed on its way in, the entry follows it
+        assert_eq!(first[0].history_file, "Jane Doe");
+        assert!(run(true, true).is_empty());
+        // the window's import brings everything again
+        assert_eq!(run(false, true).len(), 1);
         std::fs::remove_dir_all(from).unwrap();
         std::fs::remove_dir_all(to).unwrap();
     }

@@ -305,6 +305,13 @@ separate tester kit provides 221 cases, eight LSL probes, read-only query
 and catalogue sweeps, textures and blank results. Keep unavailable cases and
 documented differences explicit until functional parity is certified.
 
+Development builds also carry the RLVa self-test, the Dev Toolbox tool T1
+([docs/DEV_TOOLBOX.md](DEV_TOOLBOX.md#the-rlva-self-test)): logged in, the
+human starts it and gets a pass / fail report of the rules it can check with
+its own worn test objects and, when chosen, its own prims. It complements the
+tester kit and does not replace it: it covers neither chat, messages,
+teleports nor anything that involves another resident.
+
 Before live scripts, inspect the offline viewer in both languages:
 
 1. Open Preferences > RLVa. RLVa starts off; subordinate options are

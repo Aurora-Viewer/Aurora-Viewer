@@ -564,6 +564,8 @@ impl World {
             kind,
             source: from,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.conversation_card(from, line);
     }
@@ -582,6 +584,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
@@ -1063,6 +1067,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: format!("@{commands}"),
         }));

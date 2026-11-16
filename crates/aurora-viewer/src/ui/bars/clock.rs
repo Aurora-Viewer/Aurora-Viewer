@@ -258,6 +258,35 @@ pub(crate) fn chat_twelve_hours() -> bool {
     CHAT_12H.load(Ordering::Relaxed)
 }
 
+/// Whether the clock shows local time this frame, published once per UI
+/// frame by the app (`set_zone`): the event times of Search follow it
+/// (#1754). SLT until the first frame.
+static ZONE_LOCAL: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the clock's zone for the times shown elsewhere (once per UI
+/// frame).
+pub(crate) fn set_zone(zone: ClockZone) {
+    ZONE_LOCAL.store(zone == ClockZone::Local, Ordering::Relaxed);
+}
+
+/// The clock's zone, as last published.
+pub(crate) fn zone() -> ClockZone {
+    if ZONE_LOCAL.load(Ordering::Relaxed) {
+        ClockZone::Local
+    } else {
+        ClockZone::Slt
+    }
+}
+
+/// What names `zone` at `unix`: "SLT", or local time's abbreviation or
+/// offset ("CET", "UTC+4"), like the clock writes it.
+pub(crate) fn zone_name(zone: ClockZone, unix: i64) -> String {
+    match zone {
+        ClockZone::Slt => "SLT".to_owned(),
+        ClockZone::Local => local(unix).1,
+    }
+}
+
 /// "14:05", "14:05:09", "2:05 PM" or "2:05:09 PM", at `offset` seconds
 /// from UTC.
 fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
