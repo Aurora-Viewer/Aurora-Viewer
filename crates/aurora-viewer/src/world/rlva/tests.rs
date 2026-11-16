@@ -330,6 +330,14 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     world.profile_command(&move_pick); // the profile's optimistic cache runs before send_from
     assert_eq!(world.rlva_send_boundary(&mut move_pick, Uuid::nil()), super::Boundary::Refused);
     assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
+    let mut read_pick = NetCommand::PickInfoRequest {
+        creator: world.agent_id,
+        pick: TARGET,
+    };
+    world.profile_command(&read_pick);
+    assert_eq!(world.rlva_send_boundary(&mut read_pick, Uuid::nil()), super::Boundary::Send);
+    world.rlva_note_sent(&mut read_pick, Uuid::nil(), std::time::Instant::now());
+    assert_eq!(world.profiles.picks[&TARGET].pos_global, saved_position);
     let mut classified = ClassifiedInfo {
         id: TARGET,
         creator: world.agent_id,
