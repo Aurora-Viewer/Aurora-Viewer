@@ -4179,7 +4179,7 @@ impl App {
                     let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
                     if let Some(mut account) = self.login_form.accounts.iter().find(|account| account.key() == key).cloned() {
                         account.remember_password = false;
-                        self.login_form.accounts = crate::login_accounts::save(account);
+                        crate::login_accounts::save(&mut self.login_form.accounts, account);
                     }
                 }
                 if mfa_required {
@@ -4353,11 +4353,10 @@ impl App {
                     crate::credentials::forget(&uri, &user);
                 }
                 if !self.demo && self.settings.remember_username {
-                    self.login_form.accounts = crate::login_accounts::save(crate::login_accounts::Account::from_settings(
-                        &self.settings,
-                        self.login_form.remember_mfa,
-                        Some(l.agent_id),
-                    ));
+                    crate::login_accounts::save(
+                        &mut self.login_form.accounts,
+                        crate::login_accounts::Account::from_settings(&self.settings, self.login_form.remember_mfa, Some(l.agent_id)),
+                    );
                 }
                 if !self.demo {
                     // An explicit MFA opt-in is independent of remembering the login name/password.
@@ -7126,15 +7125,6 @@ impl App {
         // now, on the disk before the process ends
         self.keep_login_favorites(true);
         self.login_form.favorites.flush();
-        // an edit of the account list or a dictionary word whose write was
-        // refused, tried once more
-        crate::login_accounts::save_before_exit();
-        crate::spelling::dictionaries::save_before_exit();
-        crate::world::flying_at_exit::save_before_exit();
-        crate::world::derender::save_before_exit();
-        crate::world::region_tracker::save_before_exit();
-        crate::autoreplace::save_before_exit();
-        crate::tolerant::save_before_exit();
         self.world.save_inventory_cache();
         if let Some(path) = self.name_cache_path() {
             self.world.social.avatar_names.save(&path);
@@ -7149,9 +7139,21 @@ impl App {
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
-        // and the settings theirs (written by the save thread), before a
-        // restarted viewer reads them
-        Settings::wait_saved(Duration::from_secs(5));
+        // and the files handed to the save threads theirs (the settings, the
+        // layout, the inventory cache…), before a restarted viewer reads
+        // them; a disk that does not answer keeps the viewer 5 s at most
+        // (#3466: a minute in the inventory cache's write)
+        crate::saves::wait(Duration::from_secs(5));
+        // an edit of the account list or a dictionary word whose write was
+        // refused, tried once more: after the save threads, whose last
+        // writes may have been refused and kept owed (save_retry.rs)
+        crate::login_accounts::save_before_exit();
+        crate::spelling::dictionaries::save_before_exit();
+        crate::world::flying_at_exit::save_before_exit();
+        crate::world::derender::save_before_exit();
+        crate::world::region_tracker::save_before_exit();
+        crate::autoreplace::save_before_exit();
+        crate::tolerant::save_before_exit();
         event_loop.exit();
     }
 
@@ -17112,6 +17114,7 @@ impl App {
     /// when the grid or the name changes, forgotten as soon as the option is
     /// switched off.
     fn sync_remembered_password(&mut self) {
+        ui::login::manager::disk_answer(&self.egui_ctx, &mut self.settings, &mut self.login_form);
         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         if !self.login_form.accounts_loaded && !self.demo {
             self.login_form.accounts = crate::login_accounts::load();
@@ -17120,8 +17123,10 @@ impl App {
                 && !key.1.is_empty()
                 && !self.login_form.accounts.iter().any(|a| a.key() == key)
             {
-                self.login_form.accounts =
-                    crate::login_accounts::save(crate::login_accounts::Account::from_settings(&self.settings, false, None));
+                crate::login_accounts::save(
+                    &mut self.login_form.accounts,
+                    crate::login_accounts::Account::from_settings(&self.settings, false, None),
+                );
             }
             self.login_form.accounts_loaded = true;
             self.login_form
@@ -17216,7 +17221,7 @@ impl App {
                 crate::credentials::forget(&key.0, &key.1);
                 if let Some(mut account) = self.login_form.accounts.iter().find(|a| a.key() == key).cloned() {
                     account.remember_password = false;
-                    self.login_form.accounts = crate::login_accounts::save(account);
+                    crate::login_accounts::save(&mut self.login_form.accounts, account);
                 }
             }
             return;

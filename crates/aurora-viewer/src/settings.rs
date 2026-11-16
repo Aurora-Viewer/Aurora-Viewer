@@ -9,7 +9,6 @@ pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
-mod saver;
 pub mod stream_list;
 
 /// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
@@ -3634,12 +3633,13 @@ impl Settings {
         };
     }
 
-    /// The settings as they are now, written by the save thread
-    /// (settings/saver.rs): the frame thread does not wait for the disk.
+    /// The settings as they are now, written by a save thread (saves.rs):
+    /// the frame thread does not wait for the disk, and a save not started
+    /// yet is replaced by the newer one.
     pub fn save(&self) {
         let copy = self.to_saved();
         let path = Self::path();
-        saver::get().queue(Box::new(move || {
+        crate::saves::replace(path.clone(), move || {
             if let Some(dir) = path.parent()
                 && let Err(e) = std::fs::create_dir_all(dir)
             {
@@ -3647,15 +3647,7 @@ impl Settings {
                 return;
             }
             copy.write_saved(&path);
-        }));
-    }
-
-    /// Until the saves asked for are written, `timeout` at most: before
-    /// the viewer ends.
-    pub fn wait_saved(timeout: std::time::Duration) {
-        if !saver::get().wait(timeout) {
-            log::warn!("settings: the last save was not written within {timeout:?}");
-        }
+        });
     }
 
     /// What is written to the file: the user's own graphics values while

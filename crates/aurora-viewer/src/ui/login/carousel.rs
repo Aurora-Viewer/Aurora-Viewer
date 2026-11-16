@@ -645,7 +645,7 @@ pub fn show(
             account.apply(settings);
         }
         if std::env::var_os("AURORA_DEMO").is_none() {
-            form.accounts = crate::login_accounts::replace(&previous, account);
+            crate::login_accounts::replace(&mut form.accounts, &previous, account);
         }
     }
     if !grids_open

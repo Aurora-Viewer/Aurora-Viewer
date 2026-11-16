@@ -34,6 +34,7 @@ pub struct RegionTracker {
 impl RegionTracker {
     /// The saved list; empty when there is none yet or it cannot be read.
     pub fn load(path: &Path) -> Self {
+        crate::saves::wait_for(path, crate::saves::BEFORE_READ);
         // a list whose last write was refused is read from memory
         let Ok(bytes) = OWED.owed(path).map_or_else(|| std::fs::read(path), Ok) else {
             return Self::default();

@@ -208,6 +208,8 @@ pub fn demo_selection(world: &World, mode: &str) -> (Vec<Uuid>, Option<Uuid>) {
 #[derive(Default)]
 pub struct ContactsUi {
     import_job: Option<importing::Job>,
+    /// An import whose file a save thread is writing, with its account.
+    import_saving: Option<(Uuid, Box<crate::world::contact_sets::importing::Saving>)>,
     friend_filter: String,
     friends_sel: Vec<Uuid>,
     friends_anchor: Option<Uuid>,
