@@ -1249,12 +1249,13 @@ pub(super) fn execute(
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(ids) => {
-            // Deliberate difference from the Legacy Viewer: in Firestorm a
-            // right-click targets the clicked folder, but Aurora locks/unlocks
-            // every selected lockable folder (better multi-select UX). The
-            // Legacy Viewer routes protect_folder / unprotect_folder through
-            // LLInventoryAction::doToSelected (indra/newview/llinventoryfunctions.cpp)
-            // and LLFolderBridge (indra/newview/llinventorybridge.cpp, FIRE-29342).
+            // The Legacy Viewer shows Protect and Unprotect as two entries, each
+            // acting on every selected folder: LLInventoryAction::doToSelected
+            // (indra/newview/llinventoryfunctions.cpp) calls LLFolderBridge's
+            // protect_folder / unprotect_folder (indra/newview/llinventorybridge.cpp,
+            // FIRE-29342) for each of them. Aurora keeps one toggle entry and
+            // applies it to the whole selection: all locked -> unlock them all,
+            // otherwise lock them all.
             let all_locked = !ids.is_empty() && ids.iter().all(|id| prefs.protected.contains(id));
             if all_locked {
                 for id in ids {
@@ -1640,26 +1641,26 @@ mod tests {
         assert!(!reopened.inventory.context_menus.profiles.contains_key("type:photo"));
     }
 
-    fn lockable_folder(id: Uuid, parent: Uuid) -> aurora_net::inventory::Folder {
-        aurora_net::inventory::Folder {
+    fn lockable_folder(id: Uuid, parent: Uuid) -> crate::world::inventory::Folder {
+        crate::world::inventory::Folder {
             info: aurora_net::inventory::InvFolder {
                 id,
                 parent,
                 name: format!("Folder {id}"),
                 type_default: -1,
                 version: 1,
+                ..Default::default()
             },
-            total: 0,
             children: Vec::new(),
-            state: aurora_net::inventory::FetchState::Fetched,
-            loading: false,
+            items: Vec::new(),
+            state: crate::world::inventory::FetchState::Fetched,
             library: false,
         }
     }
 
     fn run_protect(ctx: &egui::Context, inv: &Inventory, state: &mut InventoryUi, prefs: &mut InventoryPreferences) {
         let mut actions = Vec::new();
-        ctx.run_ui(Default::default(), |ui| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
             let mut catalog = build(inv, state.selected.unwrap_or(Uuid::nil()), state, prefs, &facts());
             let entry = catalog.entries.iter().find(|e| e.id == "protect-folder").expect("protect-folder");
             assert!(entry.enabled);
@@ -1667,6 +1668,7 @@ mod tests {
             let command = catalog.commands[index].take().expect("command");
             execute(command, ui, inv, state, prefs, &facts(), &mut actions);
         });
+        output.textures_delta.clear();
     }
 
     #[test]
@@ -1684,8 +1686,8 @@ mod tests {
         };
         let ctx = egui::Context::default();
 
-        // Deliberate difference from the Legacy Viewer: lock every selected
-        // lockable folder, not only the right-clicked one.
+        // Every selected lockable folder is locked, like the Legacy Viewer's
+        // LLInventoryAction::doToSelected (indra/newview/llinventoryfunctions.cpp).
         run_protect(&ctx, &inv, &mut state, &mut prefs);
         assert!(prefs.protected.contains(&a) && prefs.protected.contains(&b));
         let catalog = build(&inv, a, &state, &prefs, &facts());
