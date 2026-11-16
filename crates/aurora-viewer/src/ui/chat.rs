@@ -100,13 +100,17 @@ pub struct ChatUi {
     pub enter_last_field: bool,
     /// The chat field a message was last sent from.
     last_field: ChatField,
-    /// The chat bar shows only while it is used (Preferences › Chat; the
-    /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
-    pub autohide: bool,
+    /// When the chat bar shows (Preferences › Chat, given every frame by
+    /// the app): always, only while it is used (the Legacy Viewer's
+    /// AutohideChatBar, #1009), or never (#2696): `bar_shown`,
+    /// `follow_bar_mode`.
+    pub bar_mode: crate::settings::ChatBar,
     /// The toolbar's Chat bar put the bar away for this session (the Legacy
     /// Viewer's MainChatbarVisible off, not saved): `toggle_bar`. Enter or
     /// a letter key brings it back with the keyboard.
     pub bar_hidden: bool,
+    /// A draft put away in WhenTyping stays in the editor for the next Enter.
+    typing_dismissed: bool,
     /// The bar was shown before the pointer went down (`note_frame`): a
     /// press on the toolbar takes the keyboard from an autohidden bar, which
     /// then hides before the click lands on the Chat bar button.
@@ -547,24 +551,42 @@ impl ChatUi {
         self.show_channel.then_some(self.chat_channel)
     }
 
-    /// The chat bar is drawn this frame: always, or with `autohide` while it
-    /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
+    /// The chat bar is drawn this frame: always, never with "Conversations
+    /// window only", or with "Shown when typing" while it is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
     /// key brings it with the keyboard, and Escape or a message sent with
-    /// "Keep the chat bar active" off puts it away; a click elsewhere on an
-    /// empty bar puts it away too, where the Legacy Viewer waited for
-    /// Escape. A draft keeps it.
+    /// "Keep the chat bar active" off puts it away. The editor keeps its draft.
     pub fn bar_shown(&self) -> bool {
-        if self.bar_hidden {
+        use crate::settings::ChatBar;
+        if self.bar_mode == ChatBar::ConversationsOnly {
+            return false;
+        }
+        if self.bar_hidden || (self.bar_mode == ChatBar::WhenTyping && self.typing_dismissed) {
             return self.focus_request;
         }
-        !self.autohide
+        self.bar_mode == ChatBar::Always
             || self.has_focus
             || self.focus_request
             || !self.input.trim().is_empty()
             || self.bar_emoji_open
             || self.bar_channel_open
             || self.bar_hovered
+    }
+
+    /// FSNearbyChatControl::autohide(false) leaves unsent text in the editor.
+    /// An open picker or modal gets to dismiss itself first.
+    pub(crate) fn dismiss_typing_bar(&mut self, ctx: &egui::Context) {
+        if self.bar_mode == crate::settings::ChatBar::WhenTyping
+            && !self.bar_emoji_open
+            && !self.bar_channel_open
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+        {
+            self.typing_dismissed = true;
+            self.has_focus = false;
+            self.focus_request = false;
+            self.shown_before_click = false;
+        }
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -596,7 +618,10 @@ impl ChatUi {
     /// the interface hidden: a draft put away with the Chat bar button does
     /// not count, a keyboard request does.
     pub fn in_use(&self) -> bool {
-        self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
+        if self.bar_mode == crate::settings::ChatBar::ConversationsOnly {
+            return false;
+        }
+        self.focus_request || (self.bar_shown() && (self.has_focus || !self.input.trim().is_empty()))
     }
 
     /// Enter from the world (start_chat, indra/newview/llviewerinput.cpp):
@@ -626,6 +651,45 @@ impl ChatUi {
             }
         }
         self.focus_request = true;
+    }
+
+    /// "Conversations window only" (#2696), once a frame before the bars
+    /// are drawn: what asked the chat bar for the keyboard (Enter, a letter
+    /// key, the gesture key, the toolbar's Chat bar) gets the nearby chat's
+    /// field instead, with what was typed for the bar. That field is the
+    /// nearby chat's own window when it is torn off (#910), else the Nearby
+    /// tab of the Conversations window: opened if closed (where it was
+    /// left), expanded if minimized, brought to the front.
+    pub fn follow_bar_mode(&mut self, ctx: &egui::Context, conversations_open: &mut bool) {
+        if self.bar_mode != crate::settings::ChatBar::ConversationsOnly {
+            return;
+        }
+        self.has_focus = false;
+        self.bar_emoji_open = false;
+        self.bar_channel_open = false;
+        if !std::mem::take(&mut self.focus_request) {
+            return;
+        }
+        self.gesture_keep_cursor = false;
+        let typed = std::mem::take(&mut self.input);
+        self.draft_mut(None).push_str(&typed);
+        if self.popped.raise(None, true) {
+            return;
+        }
+        self.selected = None;
+        self.contacts = false;
+        self.show_profile = false;
+        self.conv_focus_request = true;
+        super::notifications::open_conversations(ctx, conversations_open);
+        super::widgets::bring_floater_front(ctx, "conversations");
+    }
+
+    /// Enter on an empty conversation field gives the keyboard back
+    /// (`compose::returns_to_world`): "Enter toggles typing in
+    /// conversations", and the nearby chat's field with "Conversations
+    /// window only", which takes the chat bar's place and so its rule.
+    fn enter_toggles_in(&self, local: bool) -> bool {
+        self.enter_toggles || (local && self.bar_mode == crate::settings::ChatBar::ConversationsOnly)
     }
 
     /// A conversation's field (`None`: nearby chat) was used: clicked or
@@ -709,6 +773,12 @@ impl ChatUi {
             }
             NearbyChatShortcut::CloseDocked => *conversations_open = false,
         }
+    }
+
+    /// `AURORA_DEMO_BARS=window…`: the nearby chat back in the
+    /// Conversations window, whatever the profile saved.
+    pub fn demo_dock_nearby(&mut self) {
+        self.popped.remove(None);
     }
 
     /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
@@ -4063,7 +4133,7 @@ fn classic_pane(
         }
         draft.clear();
         let local = st.selected.is_none();
-        if compose::returns_to_world(local, st.enter_toggles, st.keep_focus, sent, send_clicked) {
+        if compose::returns_to_world(local, st.enter_toggles_in(local), st.keep_focus, sent, send_clicked) {
             resp.surrender_focus();
         } else {
             resp.request_focus();
@@ -4860,6 +4930,7 @@ pub(crate) fn bar_input(
     if focusing {
         // Enter or a letter key shows a bar put away (showDefaultChatBar(true))
         st.bar_hidden = false;
+        st.typing_dismissed = false;
         resp.request_focus();
         // FSNearbyChat::showDefaultChatBar only moves the caret after
         // inserting `/` into an empty field; a draft keeps its position.
@@ -4868,6 +4939,16 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
+    // Completion lists have already handled their own Escape and restored focus.
+    if resp.lost_focus()
+        && ui.input(|i| {
+            i.events.iter().any(
+                |event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if modifiers.is_none()),
+            )
+        })
+    {
+        st.dismiss_typing_bar(ui.ctx());
+    }
     if resp.gained_focus() {
         st.last_field = ChatField::Bar;
     }
@@ -5033,9 +5114,11 @@ mod tests {
 
     #[test]
     fn the_chat_bar_button_puts_the_bar_away_and_brings_it_back_with_the_keyboard() {
-        for autohide in [false, true] {
+        use crate::settings::ChatBar;
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
+            let autohide = bar_mode.hides();
             let mut st = ChatUi {
-                autohide,
+                bar_mode,
                 ..Default::default()
             };
             st.input = "draft".into();
@@ -5053,10 +5136,181 @@ mod tests {
         }
     }
 
+    /// "Conversations window only" (#2696): the bar never shows, whatever
+    /// asks for it, and the bars kept in mouselook do not count it in use.
+    #[test]
+    fn the_chat_bar_never_shows_in_conversations_window_only() {
+        let mut st = ChatUi {
+            bar_mode: crate::settings::ChatBar::ConversationsOnly,
+            ..Default::default()
+        };
+        st.input = "draft".into();
+        st.has_focus = true;
+        st.focus_request = true;
+        st.bar_hovered = true;
+        st.bar_emoji_open = true;
+        assert!(!st.bar_shown() && !st.in_use());
+        st.toggle_bar();
+        assert!(!st.bar_shown());
+    }
+
+    /// "Conversations window only": Enter, a letter key, the gesture key
+    /// and the toolbar's Chat bar ask for the bar, and the nearby chat's
+    /// field answers: the Conversations window opened (closed), expanded
+    /// (minimized) or brought forward on the Nearby tab, or the nearby
+    /// chat's own window when torn off. The other modes leave the request
+    /// to the bar.
+    #[test]
+    fn enter_opens_the_nearby_tab_of_the_conversations_window_in_conversations_window_only() {
+        use crate::settings::ChatBar;
+        let group = uuid::Uuid::from_u128(7);
+        let exists = |id: &uuid::Uuid| *id == group;
+        let window_only = || ChatUi {
+            bar_mode: ChatBar::ConversationsOnly,
+            ..ChatUi::default()
+        };
+        let on_nearby = |st: &ChatUi, what: &str| {
+            assert!(!st.focus_request, "{what}: not the bar");
+            assert!(
+                st.conv_focus_request && st.selected.is_none() && !st.contacts && !st.show_profile,
+                "{what}"
+            );
+        };
+        // closed, on another tab: opened on Nearby
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.selected = Some(group);
+        st.contacts = true;
+        st.show_profile = true;
+        let mut open = false;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert!(open, "closed: opened");
+        on_nearby(&st, "closed");
+        // minimized: expanded
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        let mut open = true;
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        let expand = egui::Id::unique("conversations").with(super::super::widgets::EXPAND);
+        assert!(
+            open && ctx.data(|d| d.get_temp::<bool>(expand)) == Some(true),
+            "minimized: expanded"
+        );
+        on_nearby(&st, "minimized");
+        // a letter key and the gesture key: what was typed goes along
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.draft_mut(None).push_str("Hi ");
+        st.input.push('t');
+        st.focus_request = true;
+        let mut open = true;
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.draft_mut(None).as_str(), "Hi t");
+        assert!(st.input.is_empty());
+        on_nearby(&st, "letter key");
+        let mut st = window_only();
+        let mods = crate::keybinds::Mods::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let code = winit::keyboard::KeyCode::Slash;
+        assert!(st.gesture_key(&ctx, &slash, code, true, mods));
+        assert!(st.gesture_key(&ctx, &slash, code, false, mods));
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.draft_mut(None).as_str(), "/");
+        on_nearby(&st, "gesture key");
+        // the toolbar's Chat bar
+        let mut st = window_only();
+        st.toggle_bar();
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "Chat bar button");
+        // the nearby chat torn off: its own window, the Conversations
+        // window left closed
+        let mut st = window_only();
+        st.popped.pop_out(None, false, false, false);
+        st.popped.set_hidden(None, true);
+        let mut open = false;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert!(!open && !st.focus_request && st.popped.shown(None), "torn off: its window");
+        // "Enter returns to the last chat field used" still goes to the group
+        let mut st = window_only();
+        st.enter_last_field = true;
+        st.last_field = ChatField::Conversation(Some(group));
+        let mut open = true;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.selected, Some(group), "the last field used");
+        // ... but not in a minimized Conversations window (#2436's rule):
+        // the window expands on Nearby chat
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.enter_last_field = true;
+        st.last_field = ChatField::Conversation(Some(group));
+        st.selected = Some(group);
+        let mut open = true;
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, window minimized");
+
+        // A detached, minimized IM also leaves Enter to Nearby chat.
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        let mut open = false;
+        st.enter_last_field = true;
+        st.selected = Some(group);
+        st.popped.pop_out(Some(group), false, false, false);
+        st.last_field = ChatField::Conversation(Some(group));
+        let minimized = egui::Id::unique((popout::floater_id(Some(group)), "minimized"));
+        ctx.data_mut(|d| d.insert_persisted(minimized, true));
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, detached IM minimized");
+        assert!(ctx.data_mut(|d| d.get_persisted::<bool>(minimized)).unwrap_or(false));
+        // the other modes: the bar takes it
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
+            let mut st = ChatUi {
+                bar_mode,
+                ..ChatUi::default()
+            };
+            let mut open = false;
+            st.start_chat(&ctx, open, exists);
+            st.input.push('t');
+            st.follow_bar_mode(&ctx, &mut open);
+            assert!(
+                st.focus_request && st.bar_shown() && !open && !st.conv_focus_request,
+                "{bar_mode:?}"
+            );
+            assert_eq!(st.input, "t");
+        }
+    }
+
+    /// An empty Enter gives the keyboard back in the nearby field with
+    /// "Conversations window only", which takes the chat bar's place;
+    /// elsewhere "Enter toggles typing in conversations" decides.
+    #[test]
+    fn the_nearby_field_toggles_like_the_chat_bar_in_conversations_window_only() {
+        use crate::settings::ChatBar;
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping, ChatBar::ConversationsOnly] {
+            for enter_toggles in [false, true] {
+                let st = ChatUi {
+                    bar_mode,
+                    enter_toggles,
+                    ..ChatUi::default()
+                };
+                let window_only = bar_mode == ChatBar::ConversationsOnly;
+                assert_eq!(st.enter_toggles_in(true), enter_toggles || window_only, "{bar_mode:?} nearby");
+                assert_eq!(st.enter_toggles_in(false), enter_toggles, "{bar_mode:?} IM");
+            }
+        }
+    }
+
     #[test]
     fn a_click_on_the_chat_bar_button_hides_an_autohidden_bar_that_lost_the_keyboard_to_it() {
         let mut st = ChatUi {
-            autohide: true,
+            bar_mode: crate::settings::ChatBar::WhenTyping,
             ..Default::default()
         };
         st.has_focus = true;
