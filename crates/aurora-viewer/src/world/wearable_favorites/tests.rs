@@ -41,6 +41,16 @@ fn targets(entries: &[Entry]) -> Vec<u128> {
     entries.iter().map(|e| e.target.as_u128()).collect()
 }
 
+/// `ids` in the order an inventory folder lists them: by name. The demo's
+/// items take their names from the catalogue and the tests run in the
+/// system language, so an order written by hand holds in one language only
+/// ("Leather jacket" before "Silver ring", "Veste en cuir" after "Bague
+/// argentée").
+fn in_folder_order(inv: &Inventory, mut ids: Vec<u128>) -> Vec<u128> {
+    ids.sort_by_cached_key(|n| crate::natural_order::key(&inv.items[&id(*n)].name));
+    ids
+}
+
 #[test]
 fn the_folder_is_created_once_in_the_viewer_folder() {
     let mut inv = bare();
@@ -74,14 +84,15 @@ fn the_whole_list_shows_each_original_once_and_a_folder_its_own() {
     let root = folder(&inv).expect("favorites");
     let all = entries(&inv, root, root);
     // the Evening folder first (subfolders before items), each original once
+    let own = in_folder_order(&inv, vec![715, 719]);
     let listed = targets(&all);
-    assert_eq!(listed[..2], [715, 719]);
+    assert_eq!(listed[..2], own);
     let mut sorted = listed.clone();
     sorted.sort();
     assert_eq!(sorted, [712, 714, 715, 717, 719, 720, 722, 723]);
     let (evening, name) = subfolders(&inv, root).into_iter().next().expect("Evening");
     assert_eq!(name, "Evening");
-    assert_eq!(targets(&entries(&inv, root, evening)), [715, 719]);
+    assert_eq!(targets(&entries(&inv, root, evening)), own);
     // a link the root view drops is still the folder's own row
     assert!(entries(&inv, root, evening).iter().all(|e| inv.items[&e.link].parent == evening));
     assert!(loaded(&inv, root));
