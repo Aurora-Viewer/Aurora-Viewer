@@ -4250,7 +4250,9 @@ ui-options-night-sky-milky-way = Luminosité de la Voie lactée
 ui-options-night-sky-milky-way-help = L'éclat de la Voie lactée derrière les vraies étoiles, de cachée (0) à deux fois sa lumière. 0,4 par défaut : une bande discrète, comme depuis un lieu sombre par une nuit sans lune.
 ui-options-commands-keep-position = Garder la position
 ui-inventory-controls-keep-by-default = Garder par défaut
-ui-login-stored-in-windows-credential-manager-as-the-hash-sent = Gardé dans le Gestionnaire d'identification de Windows, sous la forme chiffrée envoyée à la connexion (jamais en clair) ; toute personne ouvrant votre session Windows pourra se connecter
+ui-login-stored-in-windows-credential-manager-as-the-hash-sent = Gardé dans le Gestionnaire d'identification de Windows, sous forme d’empreinte, comme à la connexion (jamais en clair) ; toute personne ouvrant votre session Windows pourra se connecter
+ui-login-stored-in-the-macos-keychain-as-the-hash-sent = Gardé dans le trousseau macOS, sous forme d’empreinte, comme à la connexion (jamais en clair) ; toute personne ouvrant votre session macOS pourra se connecter
+ui-login-stored-in-the-secret-service-as-the-hash-sent = Gardé dans le portefeuille de votre bureau (le Secret Service : KWallet, GNOME Keyring, KeePassXC…), sous forme d’empreinte, comme à la connexion (jamais en clair) ; toute personne utilisant votre session déverrouillée pourra se connecter. Sans portefeuille, le mot de passe n'est pas mémorisé
 ui-options-left-right-strafe-instead-of-turning-shift-reverses-this = Gauche/droite déplacent latéralement au lieu de tourner (Maj inverse)
 ui-context-freeze = Geler
 world-inventory-demo-demo-gesture = Geste de démonstration
@@ -6361,6 +6363,7 @@ common-sandbox = Sablière
 build-ui-contents-enter-filter-text = Saisir le texte du filtre
 ui-avatar-picker-enter-a-person-s-uuid = Saisissez l'UUID d'une personne :
 app-enter-the-code-from-your-authenticator-app = Saisissez le code de votre application d'authentification.
+app-password-not-remembered = Le coffre d'identifiants du système n'a pas pris votre mot de passe : il n'est pas mémorisé et Retenir le mot de passe est désactivé.
 world-inventory-actions-enter-a-valid-name = Saisissez un nom valide.
 ui-display-name-enter-a-name = Saisissez un nom.
 build-ui-floaters-enter-a-url-or-url-pattern-to-add-to = Saisissez une URL ou un masque d'URL à ajouter à la liste
@@ -15193,6 +15196,10 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
 
+# macOS Window menu (mac_window_menu.rs)
+app-mac-window-menu = Fenêtre
+app-mac-minimize = Réduire
+app-mac-enter-full-screen = Passer en plein écran
 
 vr-preferences-title = VR
 vr-preferences-about = Déplacement, confort et rendu du casque.

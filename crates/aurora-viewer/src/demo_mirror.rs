@@ -161,6 +161,14 @@ pub fn objects(first: u32) -> Vec<ObjectUpdate> {
     // a dark face, as most mirrors are built: the room's lamp would light a
     // pale one over its reflection
     let mut objects = mirror(first, center, rot, [0.05, 0.05, 0.05, 1.0]).to_vec();
+    // AURORA_DEMO_MIRROR_METAL=1: the panel in polished PBR metal (metallic
+    // 1, roughness 0.05), where SSR's fresnel weight nears 1, and 5 cm thin:
+    // its face 2.5 cm off the probe's plane, where the mirror's weight is
+    // 0.74, as a mirror commonly built in SL (#3375)
+    if std::env::var_os("AURORA_DEMO_MIRROR_METAL").is_some() {
+        objects[1].extra.render_materials = (0..6).map(|f| (f, super::MAT_PBR_METAL[0])).collect();
+        objects[1].scale.z = 0.05;
+    }
     objects.extend([
         prim(
             first + 2,

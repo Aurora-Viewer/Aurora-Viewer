@@ -4221,6 +4221,8 @@ ui-options-night-sky-milky-way-help = 実際の星の背後に見える天の川
 ui-options-commands-keep-position = 位置を保持
 ui-inventory-controls-keep-by-default = デフォルトで保持
 ui-login-stored-in-windows-credential-manager-as-the-hash-sent = ログイン時に送信するハッシュとしてWindows資格情報マネージャーに保存されます（平文ではありません）。このWindowsセッションを使用する人は誰でもログインできます。
+ui-login-stored-in-the-macos-keychain-as-the-hash-sent = ログイン時に送信するハッシュとしてmacOSキーチェーンに保存されます（平文ではありません）。このmacOSセッションを使用する人は誰でもログインできます。
+ui-login-stored-in-the-secret-service-as-the-hash-sent = ログイン時に送信するハッシュとしてデスクトップのウォレット（Secret Service：KWallet、GNOME Keyring、KeePassXCなど）に保存されます（平文ではありません）。ロック解除中のセッションを使用する人は誰でもログインできます。ウォレットがない場合、パスワードは記憶されません。
 ui-options-left-right-strafe-instead-of-turning-shift-reverses-this = 左右キーで旋回ではなく横移動（Shiftで逆になります）
 ui-context-freeze = 固定
 world-inventory-demo-demo-gesture = デモジェスチャー
@@ -6310,6 +6312,7 @@ common-sandbox = サンドボックス
 build-ui-contents-enter-filter-text = フィルタテキストを入力
 ui-avatar-picker-enter-a-person-s-uuid = 人物のＵＵＩＤを入力：
 app-enter-the-code-from-your-authenticator-app = 認証アプリのコードを入力してください。
+app-password-not-remembered = システムの資格情報ストアにパスワードを保存できなかったため、記憶されていません。「パスワードを記憶」はオフになりました。
 world-inventory-actions-enter-a-valid-name = 有効な名前を入力してください。
 ui-display-name-enter-a-name = 名前を入力してください。
 build-ui-floaters-enter-a-url-or-url-pattern-to-add-to = リストに追加するＵＲＬまたはＵＲＬパターンを入力してください
@@ -15089,6 +15092,10 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
 
+# macOS Window menu (mac_window_menu.rs)
+app-mac-window-menu = ウインドウ
+app-mac-minimize = 最小化
+app-mac-enter-full-screen = フルスクリーンにする
 
 vr-preferences-title = VR
 vr-preferences-about = ヘッドセットの移動、快適性、描画。

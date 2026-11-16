@@ -1013,6 +1013,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         ],
     ];
     let width = 4.0 * PAD_BUTTON + 3.0 * 4.0 + 12.0;
+    let drag_id = ui.scope_id().with("movement-pad-press");
     for row in rows {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -1026,7 +1027,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
                     Some(b) => format!("{} ({})", tr_key(tip), b.label()),
                     None => tr_key(tip).to_owned(),
                 };
-                if pad_button(ui, p, icon, &tip, binding.as_ref()) {
+                if pad_button(ui, p, icon, &tip, binding.as_ref(), drag_id) {
                     out.held.push(action);
                 }
             }
@@ -1360,9 +1361,23 @@ fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool 
 
 /// One of the movement buttons: its icon, its key in the corner, lit while
 /// held.
-fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>) -> bool {
+fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>, drag_id: egui::Id) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
-    let held = resp.is_pointer_button_down_on();
+    // Continue only a primary press observed on this pad in consecutive frames.
+    // A hidden pad may miss a release; a fresh press must start on a visible button.
+    let frame = ui.ctx().cumulative_frame_nr();
+    let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
+    let pad_pressed = down
+        && ui.data_mut(|d| {
+            let last = d.get_temp::<u64>(drag_id);
+            let continuing = last == Some(frame) || (!pressed && last.is_some_and(|last| last + 1 == frame));
+            let active = continuing || (pressed && resp.is_pointer_button_down_on() && resp.contains_pointer());
+            if active && last != Some(frame) {
+                d.insert_temp(drag_id, frame);
+            }
+            active
+        });
+    let held = pad_pressed && resp.contains_pointer();
     let resp = resp.on_hover_text(tip);
     let fill = if held {
         p.violet
@@ -1658,6 +1673,98 @@ mod tests {
             }]);
             assert!(frame(vec![]).2.actions.is_empty());
         }
+    }
+
+    #[test]
+    fn held_movement_pad_switches_to_the_button_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut time = 0.0;
+        let mut draw = |events, visible: bool, cover: Option<Rect>| {
+            time += 1.0 / 60.0;
+            let mut rects = [Rect::NOTHING; 2];
+            let mut held = [false; 2];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    if !visible {
+                        return;
+                    }
+                    let drag_id = ui.scope_id().with("movement-pad-test");
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            rects[0] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[0] = pad_button(ui, &p, "arrow-up", "", None, drag_id);
+                        });
+                        ui.horizontal(|ui| {
+                            rects[1] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[1] = pad_button(ui, &p, "rotate-2", "", None, drag_id);
+                        });
+                    });
+                    if let Some(rect) = cover {
+                        egui::Area::new(egui::Id::unique("cover-pad-button"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(rect.min)
+                            .show(ui.ctx(), |ui| ui.allocate_exact_size(rect.size(), Sense::click()));
+                    }
+                },
+            );
+            output.textures_delta.clear();
+            (rects, held)
+        };
+        let mut frame = |events| draw(events, true, None);
+        let (rects, _) = frame(vec![]);
+        let start = rects[0].center();
+        let end = rects[1].center();
+        let moved = |pos| vec![egui::Event::PointerMoved(pos)];
+        let primary = |pos, pressed| {
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        frame(moved(start));
+        frame(primary(start, true));
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, true], "dragging between pad buttons switches the held direction");
+        let (_, held) = frame(moved(start));
+        assert_eq!(held, [true, false], "dragging back switches to the original direction");
+        frame(primary(start, false));
+        let (_, held) = frame(vec![]);
+        assert_eq!(held, [false, false], "releasing the mouse stops the movement buttons");
+
+        let outside = Pos2::new(350.0, 180.0);
+        frame(moved(outside));
+        frame(primary(outside, true));
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, false], "a drag that starts outside the pad does not activate it");
+        frame(primary(end, false));
+
+        let cover = Some(rects[1]);
+        draw(moved(start), true, cover);
+        draw(vec![], true, cover);
+        assert_eq!(draw(primary(start, true), true, cover).1, [true, false]);
+        assert_eq!(draw(moved(end), true, cover).1, [false, false], "a window covers the second button");
+
+        draw(vec![], false, None);
+        draw(primary(end, false), false, None);
+        draw(moved(outside), false, None);
+        draw(primary(outside, true), false, None);
+        draw(vec![], true, None);
+        assert_eq!(
+            draw(moved(end), true, None).1,
+            [false, false],
+            "a new press started while the pad was closed"
+        );
     }
 
     #[test]
