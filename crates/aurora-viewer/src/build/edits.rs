@@ -24,6 +24,18 @@ pub const FLAGS_TEMPORARY_ON_REZ: u32 = 1 << 29;
 pub const CLICK_ACTION_TOUCH: u8 = 0;
 pub const CLICK_ACTION_SIT: u8 = 1;
 pub const CLICK_ACTION_BUY: u8 = 2;
+/// PHYSICS_SHAPE_NONE (LLViewerObject::PHYSICS_SHAPE_*).
+pub const PHYSICS_SHAPE_NONE: u8 = 1;
+
+/// The physics shape a prim takes when `asked` is chosen. The simulator
+/// refuses None on the root of a linkset, and so on a lone prim: the root
+/// keeps its shape. The Legacy Viewer sends it anyway
+/// (LLSelectMgr::selectionSetPhysicsType, indra/newview/llselectmgr.cpp) and
+/// the shape snaps back when the simulator answers; Aurora keeps it from
+/// being sent, which shows the same final state at once.
+pub fn physics_shape_for(is_root: bool, current: u8, asked: u8) -> u8 {
+    if is_root && asked == PHYSICS_SHAPE_NONE { current } else { asked }
+}
 
 /// What a capability request was for (BuildTool::caps).
 #[derive(Debug, Clone)]
@@ -424,8 +436,11 @@ impl BuildTool {
                 continue;
             }
             let Some(o) = world.objects.get(idx) else { continue };
+            let is_root = super::root_of(world, idx) == idx;
             let p = self.physics.entry(o.key.local_id).or_default();
+            let shape = p.shape_type;
             change(p);
+            p.shape_type = physics_shape_for(is_root, shape, p.shape_type);
             let params = *p;
             let f = o.update_flags;
             self.send(BuildCmd::SetPhysicsParams {
@@ -705,6 +720,18 @@ mod tests {
     use crate::scene::avatar::AvatarLibrary;
     use aurora_assets::material::PbrOverride;
     use aurora_net::build::perm;
+
+    #[test]
+    fn a_root_prim_keeps_its_physics_shape_when_none_is_asked() {
+        // root (or lone prim): None refused, the other shapes taken
+        assert_eq!(physics_shape_for(true, 0, PHYSICS_SHAPE_NONE), 0);
+        assert_eq!(physics_shape_for(true, 2, PHYSICS_SHAPE_NONE), 2);
+        assert_eq!(physics_shape_for(true, 0, 2), 2);
+        assert_eq!(physics_shape_for(true, 2, 0), 0);
+        // child prim: every shape, None included
+        assert_eq!(physics_shape_for(false, 0, PHYSICS_SHAPE_NONE), PHYSICS_SHAPE_NONE);
+        assert_eq!(physics_shape_for(false, PHYSICS_SHAPE_NONE, 2), 2);
+    }
 
     fn color_world() -> (World, BuildTool, Vec<usize>) {
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
