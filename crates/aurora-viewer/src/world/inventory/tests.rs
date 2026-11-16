@@ -1571,6 +1571,69 @@ mod outgoing_offers {
     }
 
     #[test]
+    fn a_pending_logout_write_does_not_restore_the_previous_inventory_snapshot() {
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("aurora-offer-pending-{}", Uuid::new_v4()));
+        let path = crate::cache::path(&dir, "inventory", &id(2), "inv");
+        let other_path = crate::cache::path(&dir, "inventory", &id(3), "inv");
+        let mut inventory = fixture();
+        let item = id(8109);
+        let parent = inventory.items[&item].parent;
+        inventory.save_cache(&path);
+        let old = read_cache(&path).expect("snapshot from before the give");
+        assert!(old.folders.iter().any(|f| f.items.iter().any(|it| it.id == item)));
+        let (release, blocked) = crossbeam_channel::bounded(1);
+        let (started, writing) = crossbeam_channel::bounded(1);
+        let before = crate::cache::read(&path).expect("first cache");
+        let in_flight = path.clone();
+        crate::saves::change(path.clone(), move || {
+            started.send(()).expect("writer started");
+            if blocked.recv().is_ok() {
+                crate::cache::write(&in_flight, &before).expect("write late snapshot");
+            }
+        });
+        writing
+            .recv_timeout(Duration::from_secs(10))
+            .expect("writer holds this synthetic path");
+        inventory.remove(&[item]);
+        inventory.save_cache(&path);
+        let stale = read_cache_with_timeout(&path, Duration::ZERO);
+        let mut other = fixture();
+        other.owner = id(3);
+        let mut other_item = other.items[&item].clone();
+        other_item.id = id(9801);
+        other_item.owner = other.owner;
+        other.items.clear();
+        for folder in other.folders.values_mut() {
+            folder.items.clear();
+        }
+        other.add_items(vec![other_item.clone()]);
+        other.save_cache(&other_path);
+        let independent = read_cache(&other_path).expect("second account reads its own cache while the first account is blocked");
+        release.send(()).expect("release the writer");
+        assert!(
+            independent
+                .folders
+                .iter()
+                .flat_map(|f| &f.items)
+                .any(|it| it.id == other_item.id && it.owner == other.owner)
+        );
+        assert!(independent.folders.iter().all(|f| f.items.iter().all(|it| it.id != item)));
+        assert!(stale.is_none(), "the old snapshot cannot stand for the pending one");
+        let fresh = read_cache(&path).expect("new snapshot");
+        assert!(fresh.folders.iter().any(|f| f.id == parent));
+        assert!(
+            fresh
+                .folders
+                .iter()
+                .all(|f| f.items.iter().all(|it| it.id != item && it.id != other_item.id))
+        );
+        std::fs::remove_file(path).expect("remove first cache");
+        std::fs::remove_file(other_path).expect("remove second cache");
+        std::fs::remove_dir(dir.join("inventory")).expect("empty inventory directory");
+        std::fs::remove_dir(dir).expect("empty synthetic cache");
+    }
+    #[test]
     fn a_v3_cache_missing_a_no_copy_original_refetches_once_and_reuses_the_rebuilt_folder() {
         use aurora_llsd::llsd_map;
         let old = fixture();

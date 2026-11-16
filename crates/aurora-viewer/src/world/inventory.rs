@@ -783,8 +783,15 @@ pub struct CachedInventory {
 /// the file, its LLSD document, the items and their order in each folder,
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
-    // a relogin reads what the logout's save thread writes
-    crate::saves::wait_for(path, std::time::Duration::from_secs(10));
+    read_cache_with_timeout(path, std::time::Duration::from_secs(10))
+}
+
+fn read_cache_with_timeout(path: &std::path::Path, timeout: std::time::Duration) -> Option<CachedInventory> {
+    // A slow logout save may still be replacing a snapshot with different
+    // no-copy originals. The login can fetch these folders from the server.
+    if !crate::saves::wait_for(path, timeout) {
+        return None;
+    }
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
     if doc["version"].as_i32() != CACHE_VERSION {
