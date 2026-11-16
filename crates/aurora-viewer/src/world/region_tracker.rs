@@ -10,6 +10,15 @@ use std::path::Path;
 
 pub const FILE: &str = "tracked_regions.json";
 
+/// The lists whose write was refused: tried again (`save_retry`), once more
+/// at exit, and read from here by a login meanwhile.
+static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("aurora-tracked-regions", "tracked regions");
+
+/// The viewer closing: a list still owed is tried once more.
+pub fn save_before_exit() {
+    OWED.finish();
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackedRegion {
     pub name: String,
@@ -25,7 +34,10 @@ pub struct RegionTracker {
 impl RegionTracker {
     /// The saved list; empty when there is none yet or it cannot be read.
     pub fn load(path: &Path) -> Self {
-        let Ok(bytes) = std::fs::read(path) else { return Self::default() };
+        // a list whose last write was refused is read from memory
+        let Ok(bytes) = OWED.owed(path).map_or_else(|| std::fs::read(path), Ok) else {
+            return Self::default();
+        };
         let parsed: Result<std::collections::BTreeMap<String, LegacyEntry>, _> = serde_json::from_slice(&bytes);
         let entries = match parsed {
             Ok(entries) => entries,
@@ -42,6 +54,8 @@ impl RegionTracker {
         }
     }
 
+    /// Written now, or kept and tried again: the error says the write was
+    /// refused (ALFloaterRegionTracker::saveToJSON writes once).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let entries: std::collections::BTreeMap<_, _> = self
             .regions
@@ -49,7 +63,7 @@ impl RegionTracker {
             .map(|r| (r.name.clone(), LegacyEntry { label: r.label.clone() }))
             .collect();
         let bytes = serde_json::to_vec_pretty(&entries).map_err(std::io::Error::other)?;
-        crate::atomic_file::write(path, &bytes)
+        OWED.write(path, bytes)
     }
 
     pub fn regions(&self) -> &[TrackedRegion] {

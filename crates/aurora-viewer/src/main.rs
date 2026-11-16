@@ -90,6 +90,7 @@ mod physics_editor;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
+mod save_retry;
 mod scene;
 mod screen_rate;
 mod settings;
