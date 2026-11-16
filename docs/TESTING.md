@@ -6334,8 +6334,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   report; the same lines are in the log with the prefix `rlva-selftest:`.
   The run's waits are in seconds, not in frames (about fifteen seconds in
   all), so capture late: `AURORA_FPS_LIMIT=60` and
-  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 60 `PASS`,
-  C4 `KNOWN`, B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
+  `AURORA_CAPTURE_FRAMES=360,2400`, or read the log. Expected: 61 `PASS`,
+  B05 `SKIPPED` (the demo avatar wears no bridge). The refusal
   notices that pile up during the run are the cases' own refused attempts;
   the avatar ends beside where its seat was. No grid is contacted.
 
