@@ -520,9 +520,9 @@ pub fn show(
             &mut copy_uuid,
             feedback_count.map(|count| {
                 if count == 1 {
-                    aurora_i18n::tr!("build-ui-copied-object-uuid")
+                    aurora_i18n::tr!("build-ui-copied-object-uuid").to_owned()
                 } else {
-                    aurora_i18n::tr!("build-ui-copied-object-uuids")
+                    aurora_i18n::tr!("build-ui-copied-object-uuids").to_owned()
                 }
             }),
         ));
@@ -566,7 +566,7 @@ pub fn show(
         }
     }
     if copy_uuid && !tool.selection.is_empty() {
-        let (keys, count) = tool.copy_keys(world, s, mods.shift);
+        let (keys, count) = tool.copy_keys_with_count(world, s, mods.shift);
         if count > 0 {
             ctx.copy_text(keys);
             tool.ui.uuid_copied = Some((now, count));
@@ -791,7 +791,12 @@ impl BuildTool {
 
     /// "Copy UUID": the roots' ids, or every selected prim with
     /// Shift / "Linked edit" (LLFloaterTools::onClickBtnCopyKeys).
-    pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> (String, usize) {
+    pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> String {
+        self.copy_keys_with_count(world, s, all_prims).0
+    }
+
+    /// Also return the number of IDs copied for accurate singular/plural feedback.
+    pub fn copy_keys_with_count(&self, world: &World, s: &BuildSettings, all_prims: bool) -> (String, usize) {
         let idxs = if all_prims || s.edit_linked {
             self.sel_prims(world)
         } else {
