@@ -188,8 +188,6 @@ impl List {
         self.kind.unwrap_or(Kind::Objects)
     }
 
-    #[cfg(test)]
-    #[cfg(test)]
     pub fn rows(&self) -> &[Row] {
         &self.rows
     }

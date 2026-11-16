@@ -57,6 +57,29 @@ impl App {
         self.panels.chat = false;
         self.panels.people = false;
         self.panels.minimap = false;
+        if name.starts_with("view") {
+            // the console's View tab with every shape and the water plane;
+            // `view-xray`, `view-world-off`, `view-movables` add one option
+            let console = &mut self.pathfinding.console;
+            console.open = true;
+            console.tab = crate::ui::pathfinding::console::Tab::View;
+            let view = &mut console.view;
+            view.walkables = true;
+            view.material_volumes = true;
+            view.static_obstacles = true;
+            view.exclusion_volumes = true;
+            view.water_plane = true;
+            view.xray = name == "view-xray";
+            view.world = name != "view-world-off";
+            view.movables_only = name == "view-movables";
+            let region = self.world.main_region.unwrap_or_default();
+            self.pathfinding.rebake.region_changed(Some(region));
+            self.pathfinding
+                .rebake
+                .on_status(region, demo_status(State::Complete), Instant::now());
+            self.open_pathfinding_console();
+            return;
+        }
         if name.starts_with("path") {
             // the console's Test path tab with both ends chosen near the
             // avatar; `path-hole` starts in the demo navmesh's hole
@@ -175,6 +198,15 @@ impl App {
     }
 
     /// RegionObjects / CharacterProperties as the demo region would send them.
+    /// The View tab's RegionObjects, answered like the windows' one.
+    pub(super) fn demo_overlay_answer(&mut self, command: NetCommand) {
+        if let NetCommand::FetchPathfinding { request, region, .. } = command {
+            let data = self.demo_pathfinding_list(Kind::Objects);
+            let result = pathfinding::parse(&data, Kind::Objects);
+            self.pathfinding.overlay_list.on_list(request, region, result);
+        }
+    }
+
     fn demo_pathfinding_list(&self, kind: Kind) -> Llsd {
         let mut data = Llsd::new_map();
         let plaza: Vec<_> = self

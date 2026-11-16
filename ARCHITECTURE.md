@@ -819,7 +819,7 @@ modes, the menu's enabling, the rebake icon's blinking and stuck dimming)
 is driven by `app/pathfinding_rebake.rs`: the network's status and agent
 state, Build › Pathfinding › Rebake region, and the two pathfinding icons it
 adds after the parcel icons (`parcel_icons::pathfinding_icons`, whose
-`Click` sends them to their own notices instead of About Land);
+`Click` sends them to their own notices instead of About Land).
 The Pathfinding view / test console is `ui/pathfinding/console.rs` (the
 Legacy layout, the path test's state and status lines, the View tab's
 choices) with `app/pathfinding_path.rs`: Ctrl / Shift clicks become
@@ -828,9 +828,16 @@ visible surface; the path is asked of the region through the bridge
 (`Query::StaticPath`, llGetStaticPath in `world/bridge/query.lsl`, bridge
 1.42) by `world/bridge/path.rs` (one request in flight, two a second, the
 newest waiting, dropped on a region change), and drawn in the world scaled
-by the character width. `app/pathfinding_demo.rs` is
-`AURORA_DEMO_PATHFINDING`; the demo bridge answers paths on a made-up
-navmesh with a hole (`world/bridge/demo.rs`).
+by the character width. The View tab is `app/pathfinding_view.rs`: it asks
+the region's linksets for itself (RegionObjects), matches each linkset's use
+to its prims and gives the scene a `scene::pathfinding_view::PathfindingView`:
+World off and Movables only go through the objects' `hidden` flag (with the
+photo isolation and the hidden rendering types, `sync_photo_isolation`), and
+the shapes through four draw lists (`DrawLists::pathfinding`) that the
+renderer draws in the Legacy colours with `fs_debug_flat`, then once more
+behind the scene for X-ray; the water plane is a depth-tested grid of lines.
+`app/pathfinding_demo.rs` is `AURORA_DEMO_PATHFINDING`; the demo bridge
+answers paths on a made-up navmesh with a hole (`world/bridge/demo.rs`).
 `aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
 (`mod.rs`: the object, character and terrain rows), the linkset rules
 (`linkset.rs`: use ↔ phantom + navmesh category, the uses a selection allows,

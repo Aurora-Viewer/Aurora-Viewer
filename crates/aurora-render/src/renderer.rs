@@ -1092,6 +1092,10 @@ struct Pipelines {
     debug_blue: wgpu::RenderPipeline,
     debug_green: wgpu::RenderPipeline,
     debug_yellow: wgpu::RenderPipeline,
+    /// The pathfinding shapes (`DrawLists::pathfinding`), then their X-ray
+    /// (drawn only where the scene hides them).
+    pathfinding: [wgpu::RenderPipeline; 4],
+    pathfinding_xray: [wgpu::RenderPipeline; 4],
     /// Debug wireframe (None without POLYGON_MODE_LINE).
     debug_wire: Option<wgpu::RenderPipeline>,
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
@@ -3567,6 +3571,7 @@ struct Ranges {
     debug_blue: (u64, u32),
     debug_green: (u64, u32),
     debug_yellow: (u64, u32),
+    pathfinding: [(u64, u32); 4],
     select_root: (u64, u32),
     creation_preview: (u64, u32),
     physics_shapes: (u64, u32),
@@ -5388,6 +5393,44 @@ impl Backend {
                 true,
             )
         });
+        // The pathfinding console's shapes, in the Legacy colours
+        // (PathfindingWalkable, PathfindingMaterial, PathfindingObstacle,
+        // PathfindingExclusion of settings.xml): translucent over the scene,
+        // and with X-ray (PathfindingXRayTint 0.8, PathfindingXRayOpacity
+        // 0.25) once more where the scene hides them.
+        const PATHFINDING_SHAPES: [&[(&str, f64)]; 4] = [
+            &[("debug_r", 0.455), ("debug_g", 0.933), ("debug_b", 0.388), ("debug_a", 0.45)],
+            &[("debug_r", 0.5), ("debug_g", 0.0), ("debug_b", 1.0), ("debug_a", 0.45)],
+            &[("debug_r", 1.0), ("debug_g", 0.0), ("debug_b", 0.0), ("debug_a", 0.45)],
+            &[("debug_r", 1.0), ("debug_g", 1.0), ("debug_b", 0.0), ("debug_a", 0.45)],
+        ];
+        const PATHFINDING_XRAY: [&[(&str, f64)]; 4] = [
+            &[("debug_r", 0.364), ("debug_g", 0.746), ("debug_b", 0.310), ("debug_a", 0.25)],
+            &[("debug_r", 0.4), ("debug_g", 0.0), ("debug_b", 0.8), ("debug_a", 0.25)],
+            &[("debug_r", 0.8), ("debug_g", 0.0), ("debug_b", 0.0), ("debug_a", 0.25)],
+            &[("debug_r", 0.8), ("debug_g", 0.8), ("debug_b", 0.0), ("debug_a", 0.25)],
+        ];
+        const PATHFINDING_LABELS: [&str; 4] = [
+            "pathfinding walkables",
+            "pathfinding material volumes",
+            "pathfinding static obstacles",
+            "pathfinding exclusion volumes",
+        ];
+        let pathfinding = std::array::from_fn(|i| debug(PATHFINDING_LABELS[i], PATHFINDING_SHAPES[i], false));
+        let pathfinding_xray = std::array::from_fn(|i| {
+            pipe(PipeDesc {
+                cull: None,
+                blend: Some(alpha_blend),
+                write_mask: wgpu::ColorWrites::COLOR,
+                depth_write: false,
+                // reversed depth: only where the scene is nearer than the shape
+                depth_compare: wgpu::CompareFunction::Less,
+                constants: PATHFINDING_XRAY[i],
+                polygon_line: false,
+                unclipped_depth: false,
+                ..base(PATHFINDING_LABELS[i], "vs_main", "fs_debug_flat")
+            })
+        });
         let line_mode = device.features().contains(wgpu::Features::POLYGON_MODE_LINE);
         let physics_fill = pipe(PipeDesc {
             cull: Some(wgpu::Face::Back),
@@ -5854,6 +5897,8 @@ impl Backend {
             debug_blue,
             debug_green,
             debug_yellow,
+            pathfinding,
+            pathfinding_xray,
             debug_wire,
             select_root_wire,
             select_child_wire,
@@ -9233,6 +9278,7 @@ impl Backend {
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.debug_green = push(cpu, &lists.debug_green);
         rg.debug_yellow = push(cpu, &lists.debug_yellow);
+        rg.pathfinding = lists.pathfinding.each_ref().map(|list| push(cpu, list));
         rg.select_root = push(cpu, &lists.select_root);
         rg.creation_preview = push(cpu, &lists.creation_preview);
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
@@ -10800,6 +10846,7 @@ impl Backend {
             draw_sided(pass, pipe, (b0 + start as u64 * stride, to - start), start);
         };
         // the other blended faces, the overlays and the particles
+        let pathfinding_xray = lists.pathfinding_xray;
         let rest = |pass: &mut wgpu::RenderPass| {
             if !st_on {
                 // The local hologram leaves world depth and the SSR G-buffer
@@ -10817,6 +10864,20 @@ impl Backend {
             draw(pass, &self.pipelines.debug_blue, rg.debug_blue);
             draw(pass, &self.pipelines.debug_green, rg.debug_green);
             draw(pass, &self.pipelines.debug_yellow, rg.debug_yellow);
+            // the pathfinding shapes in the Legacy order (renderNavMeshShapesVBO's
+            // render_order): obstacles, walkables, exclusion, material; with
+            // X-ray, each one's hidden parts again, dimmed
+            for i in [
+                crate::PATHFINDING_STATIC,
+                crate::PATHFINDING_WALKABLE,
+                crate::PATHFINDING_EXCLUSION,
+                crate::PATHFINDING_MATERIAL,
+            ] {
+                draw(pass, &self.pipelines.pathfinding[i], rg.pathfinding[i]);
+                if pathfinding_xray {
+                    draw(pass, &self.pipelines.pathfinding_xray[i], rg.pathfinding[i]);
+                }
+            }
             draw(pass, &self.pipelines.physics_fill, rg.physics_shapes);
             if let Some(wire) = &self.pipelines.physics_wire {
                 draw(pass, wire, rg.physics_shapes);

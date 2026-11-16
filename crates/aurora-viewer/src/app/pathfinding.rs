@@ -86,8 +86,17 @@ impl App {
                 region,
                 kind,
                 result,
-            } => self.pathfinding.list_mut(kind).on_list(request, region, result),
-            NetEvent::LinksetsUpdated { request, region, result } => self.pathfinding.linksets.on_update(request, region, result),
+            } => {
+                // the View tab's own list answers to its own request
+                if kind == Kind::Objects {
+                    self.pathfinding.overlay_list.on_list(request, region, result.clone());
+                }
+                self.pathfinding.list_mut(kind).on_list(request, region, result);
+            }
+            NetEvent::LinksetsUpdated { request, region, result } => {
+                self.pathfinding.linksets.on_update(request, region, result);
+                self.overlay_list_stale();
+            }
             other => return Some(other),
         }
         None

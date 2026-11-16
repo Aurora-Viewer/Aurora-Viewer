@@ -97,6 +97,8 @@ pub struct PathfindingUi {
     pub dirty_question: bool,
     /// Pathfinding view / test.
     pub console: console::Console,
+    /// The region's linksets for the View tab's shapes (never shown as a list).
+    pub overlay_list: List,
 }
 
 impl Default for PathfindingUi {
@@ -116,6 +118,7 @@ impl Default for PathfindingUi {
             rebake: rebake::Rebake::default(),
             dirty_question: false,
             console: console::Console::default(),
+            overlay_list: List::new(Kind::Objects),
         }
     }
 }

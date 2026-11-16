@@ -127,6 +127,7 @@ mod pathfinding;
 mod pathfinding_demo;
 mod pathfinding_path;
 mod pathfinding_rebake;
+mod pathfinding_view;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
@@ -441,6 +442,8 @@ pub struct App {
     path_queue: crate::world::bridge::path::PathQueue,
     /// The bridge answers queries (the path test's status).
     path_bridge_ready: bool,
+    /// The pathfinding console's View tab: its list and matching.
+    pathfinding_view_feed: pathfinding_view::ViewFeed,
     bridge_demo: crate::world::bridge::demo::Demo,
     movelock_ui: ui::movelock::MoveLockUi,
     movement_ui: ui::movement::MovementUi,
@@ -1762,6 +1765,7 @@ impl App {
             bridge_services: Default::default(),
             path_queue: Default::default(),
             path_bridge_ready: false,
+            pathfinding_view_feed: Default::default(),
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
             movement_ui: Default::default(),
@@ -12384,7 +12388,8 @@ impl App {
                 fill: weather_fill,
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
-            hide_sky: self.settings.debug.hidden_types.sky,
+            // (the pathfinding console's World unticked hides it too)
+            hide_sky: self.settings.debug.hidden_types.sky || self.scene.pathfinding_view.world_hidden,
             look: None,
         };
         if let Some(view) = studio_view {
@@ -17874,6 +17879,7 @@ impl App {
                     ui::pathfinding::capsule::draw(&ctx, &p, projector, &capsule);
                 }
                 self.draw_path(&ctx, &p, projector);
+                self.draw_water_plane(&ctx, &p, projector);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 self.director_world(&ctx, &p, projector);
                 aurora_render::end_world_labels(&ctx);
@@ -19457,6 +19463,7 @@ impl App {
 
                 self.pathfinding_rebake_frame(&ctx, &p);
                 self.pathfinding_console(&ctx, &p);
+                self.pathfinding_view_frame(Instant::now());
                 self.pathfinding_windows(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
