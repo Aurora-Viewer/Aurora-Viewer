@@ -7344,10 +7344,10 @@ impl App {
         };
         // any report ends the wait; only the one that replaces a stand-in
         // (always the first) moves the defaults
-        let waiting = std::mem::take(&mut self.settings.defaults_follow_reported_layout);
-        if waiting && change.guessed {
-            log::info!("keyboard layout: the default shortcuts move to the reported layout");
-            self.settings.keybinds.follow_layout_change(&change);
+        if std::mem::take(&mut self.settings.defaults_follow_reported_layout) {
+            if change.guessed {
+                self.settings.keybinds.follow_layout_change(&change);
+            }
             self.settings.save();
         }
     }
