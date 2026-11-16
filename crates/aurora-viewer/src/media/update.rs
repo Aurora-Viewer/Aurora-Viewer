@@ -71,19 +71,6 @@ fn apply_entry_to_plugin(plugin: &mut impl MediaConfigTarget, old: (i32, i32, bo
     }
 }
 
-/// A custom-scheme link clicked in a page shown on a prim or a HUD: CEF
-/// reports it as `click_nofollow` with its navigation type
-/// (LLViewerMediaImpl::handleMediaEvent, MEDIA_EVENT_CLICK_LINK_NOFOLLOW,
-/// indra/newview/llviewermedia.cpp). As in the viewer's web windows
-/// (`ui/web_view.rs`, #2014), only a user click acts: a redirect or a script
-/// navigation must never trigger a SLURL action.
-fn clicked_media_link(event: &MediaEvent) -> Option<&str> {
-    match event {
-        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
-        _ => None,
-    }
-}
-
 impl MediaManager {
     /// Update running plugins immediately, including while the native window
     /// is minimized and media frames may no longer be drawn.
@@ -749,8 +736,7 @@ impl MediaManager {
             p.idle();
             let mut close = false;
             for ev in p.take_events() {
-                if let Some(url) = clicked_media_link(&ev) {
-                    log::info!("media: link clicked: {}", sanitize(url));
+                if let Some(url) = ev.clicked_url() {
                     links.push(url.to_owned());
                 }
                 let complete = matches!(ev, MediaEvent::NavigateComplete { .. });
@@ -1180,16 +1166,16 @@ mod tests {
             url: "secondlife:///app/chat/824619/hello".into(),
             nav_type: nav_type.into(),
         };
-        assert_eq!(clicked_media_link(&link("clicked")), Some("secondlife:///app/chat/824619/hello"));
-        assert_eq!(clicked_media_link(&link("navigated")), None);
+        assert_eq!(link("clicked").clicked_url(), Some("secondlife:///app/chat/824619/hello"));
+        assert_eq!(link("navigated").clicked_url(), None);
         assert_eq!(
-            clicked_media_link(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: String::new(),
                 nav_type: "clicked".into()
             }),
             None
         );
-        assert_eq!(clicked_media_link(&MediaEvent::CloseRequest), None);
+        assert_eq!(MediaEvent::CloseRequest.clicked_url(), None);
     }
 
     #[test]
