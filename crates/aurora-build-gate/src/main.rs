@@ -17,6 +17,10 @@
 //! compiler runs without waiting, and when sccache cannot be started,
 //! without it.
 //!
+//! sccache does not get a command line that Windows would refuse once
+//! sccache has put its own arguments in it (`NEXT_COMMAND_LIMIT`): the
+//! compiler then runs alone, and that compile is not cached.
+//!
 //! It prints nothing while it waits: Cargo keeps what a compiler writes and
 //! shows it again at every later build of the crate.
 //!
@@ -50,6 +54,16 @@ const MAX_SLOTS: usize = 64;
 /// Time between two looks at the slots while they are all taken.
 const POLL: Duration = Duration::from_millis(250);
 
+/// The longest command line handed over to the next wrapper, in characters,
+/// on the one system where it matters: Windows takes 32,767. sccache starts
+/// the compiler a first time for the dependency information, with the same
+/// arguments and a few of its own (`--emit dep-info -o <a file of the
+/// temporary folder>`): they must still fit, and nothing tells how long the
+/// user's temporary folder is. Cargo 1.100 names one `-L` folder per
+/// dependency: a release build of `aurora-voice` is at 30,221 characters in
+/// a work folder of 40, and past the limit in one of 56.
+const NEXT_COMMAND_LIMIT: Option<usize> = if cfg!(windows) { Some(30_000) } else { None };
+
 fn main() {
     // Cargo calls a wrapper as `<wrapper> <rustc> <arguments>`
     let mut arguments = env::args_os().skip(1);
@@ -67,7 +81,8 @@ fn main() {
         None
     };
 
-    match run(commands(&rustc, &arguments, env::var_os("AURORA_GATE_NEXT").as_deref())) {
+    let next = env::var_os("AURORA_GATE_NEXT");
+    match run(commands(&rustc, &arguments, next.as_deref(), NEXT_COMMAND_LIMIT)) {
         // no code: ended by a signal (Unix)
         Ok(status) => process::exit(status.code().unwrap_or(1)),
         Err(error) => {
@@ -78,10 +93,11 @@ fn main() {
 }
 
 /// The commands to try, in order: through the next wrapper when the scripts
-/// found one (sccache, `AURORA_GATE_NEXT`), then the compiler alone.
-fn commands(rustc: &OsStr, arguments: &[OsString], next: Option<&OsStr>) -> Vec<Command> {
+/// found one (sccache, `AURORA_GATE_NEXT`) and it can take the command line
+/// (`next_takes`), then the compiler alone.
+fn commands(rustc: &OsStr, arguments: &[OsString], next: Option<&OsStr>, limit: Option<usize>) -> Vec<Command> {
     let mut list = Vec::with_capacity(2);
-    if let Some(next) = next.filter(|next| !next.is_empty()) {
+    if let Some(next) = next.filter(|next| !next.is_empty() && next_takes(next, rustc, arguments, limit)) {
         let mut command = Command::new(next);
         command.arg(rustc).args(arguments);
         list.push(command);
@@ -92,18 +108,38 @@ fn commands(rustc: &OsStr, arguments: &[OsString], next: Option<&OsStr>) -> Vec<
     list
 }
 
+/// Whether the next wrapper can be given this command line. Not when the
+/// system would refuse it once the wrapper has added its own arguments
+/// (`limit`, in characters), and not when Cargo already found it too long
+/// and handed it over as an argument file (`@<file>`): sccache puts the
+/// arguments of the file back on one command line for its first pass, and
+/// the system refuses it (`sccache: error: failed to spawn … os error 206`,
+/// a release build of a library crate; a crate built incrementally and a
+/// program go through sccache untouched, as it does not cache them).
+fn next_takes(next: &OsStr, rustc: &OsStr, arguments: &[OsString], limit: Option<usize>) -> bool {
+    let Some(limit) = limit else {
+        return true;
+    };
+    if arguments.iter().any(|argument| argument.as_encoded_bytes().starts_with(b"@")) {
+        return false;
+    }
+    // each argument as the system gets it at most: its quotes, its space,
+    // and a backslash before each quote it contains (`feature="std"`)
+    let length = |text: &OsStr| {
+        let bytes = text.as_encoded_bytes();
+        bytes.len() + 3 + bytes.iter().filter(|byte| **byte == b'"').count()
+    };
+    length(next) + length(rustc) + arguments.iter().map(|argument| length(argument)).sum::<usize>() <= limit
+}
+
 /// Runs the first command that starts and waits for it. A next wrapper that
-/// cannot be started does not stop the build: the compiler runs without it,
-/// and that one compile is not cached. Two cases:
-///
-/// - sccache is gone (uninstalled or updated since the scripts last ran);
-/// - on Windows, the command line is just under the 32,767 characters the
-///   system takes. Cargo's own fits, so Cargo does not hand it over as an
-///   argument file; with the next wrapper's path in front, which is longer
-///   than this program's, it no longer fits (os error 206). Cargo 1.100
-///   names one `-L` folder per dependency, and whole crates now land there.
-///   The compiler alone always fits: its command is Cargo's, less this
-///   program's path.
+/// cannot be started does not stop the build, whatever the reason: the
+/// compiler runs without it, and that one compile is not cached. sccache
+/// may be gone (uninstalled or updated since the scripts last ran), or the
+/// system may refuse the command line with the wrapper's path in front of
+/// it (os error 206 on Windows; `NEXT_COMMAND_LIMIT` keeps well under it,
+/// this is the net below). The compiler alone always fits: its command is
+/// Cargo's, less this program's path.
 fn run(mut commands: Vec<Command>) -> io::Result<ExitStatus> {
     let mut result = Err(io::ErrorKind::NotFound.into());
     for command in &mut commands {
@@ -295,18 +331,71 @@ mod tests {
 
     #[test]
     fn the_next_wrapper_comes_first_then_the_compiler_alone() {
-        let list = commands(OsStr::new("rustc"), &arguments(&["-vV"]), Some(OsStr::new("sccache")));
-        assert_eq!(list.len(), 2);
-        assert_eq!(list[0].get_program(), "sccache");
-        assert_eq!(list[0].get_args().collect::<Vec<_>>(), ["rustc", "-vV"]);
-        assert_eq!(list[1].get_program(), "rustc");
-        assert_eq!(list[1].get_args().collect::<Vec<_>>(), ["-vV"]);
+        for limit in [None, Some(30_000)] {
+            let list = commands(OsStr::new("rustc"), &arguments(&["-vV"]), Some(OsStr::new("sccache")), limit);
+            assert_eq!(list.len(), 2);
+            assert_eq!(list[0].get_program(), "sccache");
+            assert_eq!(list[0].get_args().collect::<Vec<_>>(), ["rustc", "-vV"]);
+            assert_eq!(list[1].get_program(), "rustc");
+            assert_eq!(list[1].get_args().collect::<Vec<_>>(), ["-vV"]);
+        }
         // no next wrapper, or an empty setting: the compiler alone
         for next in [None, Some(OsStr::new(""))] {
-            let list = commands(OsStr::new("rustc"), &arguments(&["-vV"]), next);
+            let list = commands(OsStr::new("rustc"), &arguments(&["-vV"]), next, None);
             assert_eq!(list.len(), 1);
             assert_eq!(list[0].get_program(), "rustc");
         }
+    }
+
+    /// The programs of `commands` for a compile through sccache.
+    fn programs(arguments: &[OsString], limit: Option<usize>) -> Vec<String> {
+        commands(OsStr::new("rustc"), arguments, Some(OsStr::new("sccache")), limit)
+            .iter()
+            .map(|command| command.get_program().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_command_line_near_the_limit_goes_to_the_compiler_alone() {
+        // 300 folders of 100 characters, as Cargo 1.100 names them: 31,500
+        // characters with their quotes, spaces and `-L`
+        let folder = format!("dependency={}", "x".repeat(89));
+        let mut long = arguments(&["--crate-name", "aurora_voice"]);
+        for _ in 0..300 {
+            long.extend([OsString::from("-L"), OsString::from(&folder)]);
+        }
+        assert_eq!(programs(&long, Some(30_000)), ["rustc"]);
+        // the same with room to spare, and on a system without such a limit
+        assert_eq!(programs(&long, Some(40_000)), ["sccache", "rustc"]);
+        assert_eq!(programs(&long, None), ["sccache", "rustc"]);
+        // the length counts the wrapper's own path and the compiler's, each
+        // with its quotes and its space: 10 + 8 + 6 for `sccache rustc -vV`
+        let short = arguments(&["-vV"]);
+        assert_eq!(programs(&short, Some(24)), ["sccache", "rustc"]);
+        assert_eq!(programs(&short, Some(23)), ["rustc"]);
+        // a quote inside an argument takes a backslash on the command line:
+        // 10 + 8 + 8 + 18 for `sccache rustc --cfg "feature=\"std\""`
+        let quoted = arguments(&["--cfg", "feature=\"std\""]);
+        assert_eq!(programs(&quoted, Some(44)), ["sccache", "rustc"]);
+        assert_eq!(programs(&quoted, Some(43)), ["rustc"]);
+        // the compiler alone gets every argument
+        let alone = commands(OsStr::new("rustc"), &long, Some(OsStr::new("sccache")), Some(30_000));
+        assert_eq!(alone[0].get_args().count(), long.len());
+    }
+
+    #[test]
+    fn an_argument_file_goes_to_the_compiler_alone() {
+        // Cargo found the command line too long for the system: sccache
+        // would put it back on one line
+        let file = arguments(&["@C:\\Temp\\cargo-argfile.abc123"]);
+        assert_eq!(programs(&file, Some(30_000)), ["rustc"]);
+        // under clippy the real compiler comes first
+        let clippy = arguments(&["C:\\toolchain\\rustc.exe", "@C:\\Temp\\cargo-argfile.abc123"]);
+        assert_eq!(programs(&clippy, Some(30_000)), ["rustc"]);
+        // where no command line is too long, Cargo writes no such file
+        assert_eq!(programs(&file, None), ["sccache", "rustc"]);
+        // an `@` inside an argument is not a file
+        assert_eq!(programs(&arguments(&["--cfg", "a@b"]), Some(30_000)), ["sccache", "rustc"]);
     }
 
     #[test]
