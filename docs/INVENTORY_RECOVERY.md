@@ -47,6 +47,23 @@ walked for descendants without refetching; externally active targets wait;
 deleted or over-limit targets are not reset to Fetching. Partial recovery of a
 subset must leave healthy children intact.
 
+## Deferred outfit originals (local follow-up)
+
+The login restore's 15-second item-metadata grace period is not an existence
+test. It may move on to restore known objects, but must retain the intent for
+still-linked originals that are not known yet. This follows the observer
+behavior of `LLAppearanceMgr::updateAppearanceFromCOF` and `callAfterCOFFetch`
+(`indra/newview/llappearancemgr.cpp`), implemented with model-owned pending work.
+
+Pending intent causes no additional GETs. A later accepted item can resume the
+normal bounded attachment confirmation/retry window. An accepted COF unlink,
+explicit detach, confirmed missing result, already-worn target or non-attachable
+original cancels it. A refreshing COF or a region that is not ready cannot
+trigger a stale wear. Ready objects keep the existing region-settling policy;
+they do not wait for the entire inventory. Late object metadata for ordinary
+COF outfit changes follows the same existence rule. Human validation of this
+follow-up is still pending; earlier inventory-only validation does not cover it.
+
 ## Existence and diagnostics
 
 HTTP 404/410 and explicit valid legacy missing-item replies can establish that
