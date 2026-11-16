@@ -2054,6 +2054,7 @@ impl KeyBindings {
         // someone moves away from it too: two defaults that swap letters
         // (AZERTY's Z and W: the inventory's Undo and Close tab) move
         // together. Refused moves keep their key, which may refuse others.
+        // When two defaults want the same free key, the first keeps it.
         let rivals: Vec<Vec<Action>> = moves.iter().map(|(action, _, _, new)| self.rivals(*action, new)).collect();
         let mut allowed = vec![true; moves.len()];
         loop {
@@ -2061,7 +2062,7 @@ impl KeyBindings {
                 .iter()
                 .zip(&moves)
                 .enumerate()
-                .map(|(n, (rivals, (_, _, _, new)))| {
+                .map(|(n, (rivals, (mover, _, _, new)))| {
                     allowed[n]
                         && rivals.iter().all(|rival| {
                             moves
@@ -2069,6 +2070,10 @@ impl KeyBindings {
                                 .zip(&allowed)
                                 .any(|((action, _, old, _), ok)| *ok && action == rival && old == new)
                         })
+                        && !moves[..n]
+                            .iter()
+                            .zip(&allowed)
+                            .any(|((action, _, _, other), ok)| *ok && other == new && Self::meet(*mover, *action, new))
                 })
                 .collect();
             if next == allowed {
@@ -2126,19 +2131,19 @@ impl KeyBindings {
     /// accelerators go before the focused field), so the chat's would
     /// never be seen.
     pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
+        self.users(b).into_iter().filter(|x| Self::meet(a, *x, b)).collect()
+    }
+
+    /// Do actions `a` and `x` conflict on binding `b` (`rivals`)?
+    fn meet(a: Action, x: Action, b: &Binding) -> bool {
         let meet_while_typing = (b.ctrl || b.alt) && !kept_on_every_layout(b);
-        self.users(b)
-            .into_iter()
-            .filter(|x| {
-                *x != a
-                    && match (is_inventory(*x), is_inventory(a)) {
-                        (true, true) => true,
-                        (false, false) => is_chat(*x) == is_chat(a) || meet_while_typing,
-                        // the focused list keeps its keys: no meeting
-                        _ => false,
-                    }
-            })
-            .collect()
+        x != a
+            && match (is_inventory(x), is_inventory(a)) {
+                (true, true) => true,
+                (false, false) => is_chat(x) == is_chat(a) || meet_while_typing,
+                // the focused list keeps its keys: no meeting
+                _ => false,
+            }
     }
 
     /// Is a held action active? A binding needs its modifiers and accepts
@@ -3416,6 +3421,68 @@ mod tests {
         let mut kb = KeyBindings::us_places(fr.movement_keys());
         kb.follow_letters_of(&fr);
         assert_eq!(kb, KeyBindings::for_layout(&fr));
+    }
+
+    fn camera_defaults(keys: [KeyCode; 4]) -> KeyBindings {
+        let actions = [Action::CamPanLeft, Action::CamPanRight, Action::CamPanUp, Action::CamPanDown];
+        KeyBindings {
+            map: actions
+                .into_iter()
+                .zip(keys)
+                .map(|(action, code)| (action, [k(code), None]))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn layout_defaults_can_swap_or_cycle_in_either_direction() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        for keys in [[K::KeyT, K::KeyR, K::KeyU, K::KeyJ], [K::KeyT, K::KeyU, K::KeyR, K::KeyJ]] {
+            let after = camera_defaults(keys);
+            let mut saved = before.clone();
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&after, &before);
+            assert_eq!(saved, before);
+        }
+    }
+
+    #[test]
+    fn a_reserved_key_blocks_its_chain_and_preserves_custom_and_cleared_slots() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyT, K::KeyU, K::KeyV, K::KeyK]);
+        let mut saved = before.clone();
+        saved.set(Action::Inventory, 1, k(K::KeyV));
+        let mut expected = saved.clone();
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
+
+        for replacement in [None, k(K::F12)] {
+            let mut saved = before.clone();
+            saved.set(Action::CamPanRight, 0, replacement.clone());
+            let mut expected = after.clone();
+            expected.set(Action::CamPanRight, 0, replacement);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, expected);
+        }
+    }
+
+    #[test]
+    fn the_first_default_keeps_a_free_key_when_two_want_it() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyV, K::KeyV, K::KeyU, K::KeyK]);
+        let mut expected = before.clone();
+        expected.set(Action::CamPanLeft, 0, k(K::KeyV));
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        let mut saved = before.clone();
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
     }
 
     /// A key's label learned from a key press gives way to the new
