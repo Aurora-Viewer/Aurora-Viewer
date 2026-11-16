@@ -248,9 +248,10 @@ impl App {
                 .and_then(|idx| self.world.objects.get(idx))
                 .map(|o| o.key.local_id);
             log::info!(
-                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}",
+                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}, keep_orbit={}",
                 self.interactions.held.is_some(),
-                self.mouse_mode == MouseMode::Steer
+                self.mouse_mode == MouseMode::Steer,
+                self.mouse_mode == MouseMode::AvatarKeepOrbit,
             );
             if mode.starts_with("photo-") {
                 let hud_touched = self

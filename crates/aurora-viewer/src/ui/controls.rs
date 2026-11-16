@@ -1972,11 +1972,11 @@ mod tests {
 
     #[test]
     fn the_speed_reads_and_types_in_metres_a_second() {
-        // (in the viewer's language: "0.5" or "0,5")
-        assert!(speed_text(2.0).starts_with("2 "), "{}", speed_text(2.0));
+        // (in the viewer's language: "0.5 m/s", "0,5 m/s" or "0.5ｍ／ｓ")
+        let written = |speed: &str| aurora_i18n::tr!("controls-free-speed-value", speed = speed);
+        assert_eq!(speed_text(2.0), written("2"));
         assert!(speed_text(0.5).starts_with('0') && speed_text(0.5).contains('5'));
-        assert!(speed_text(12.4).starts_with("12 "), "whole metres from 10");
-        assert!(speed_text(2.0).ends_with("m/s"));
+        assert_eq!(speed_text(12.4), written("12"), "whole metres from 10");
         assert_eq!(parse_speed("3 m/s"), Some(3.0));
         assert_eq!(parse_speed(" 12"), Some(12.0));
         assert_eq!(parse_speed("vite"), None);
