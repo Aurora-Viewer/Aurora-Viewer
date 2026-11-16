@@ -4469,6 +4469,7 @@ media-plugins-consent = ウェブページ（プロフィール、検索、ウ�
 media-plugins-consent-later = 後で
 media-plugins-consent-later-hint = 後で初期設定 › サウンドとボイス › メディア、またはウェブページやメディアが表示される場所からダウンロードできます。
 common-inventory = 持ち物
+inventory-dual-panel = 2パネルの持ち物
 ui-inventory-inventory = { "持ち物：" }{ $value0 }
 task-inventory-unreadable-object-inventory = オブジェクトの持ち物を読み取れません。
 task-inventory-incomplete-object-inventory = オブジェクトの持ち物が不完全です。

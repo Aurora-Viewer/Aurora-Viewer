@@ -126,6 +126,8 @@ pub struct ToolbarSettings {
     pub locked: bool,
     /// One-time discovery of the new command; later manual removal is retained.
     pub vr_button_migrated: bool,
+    /// One-time addition to saved custom toolbars; later manual removal is retained.
+    pub dual_inventory_button_migrated: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub left: Vec<ToolButton>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -204,6 +206,37 @@ impl ToolbarSettings {
         for side in [&mut self.left, &mut self.right] {
             side.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
+    }
+    /// Add the dual-inventory action to a saved toolbar once. An explicitly
+    /// empty toolbar remains empty; skin defaults provide the action otherwise.
+    pub fn ensure_dual_inventory_button(&mut self) -> bool {
+        if self.dual_inventory_button_migrated {
+            return false;
+        }
+        self.dual_inventory_button_migrated = true;
+        let Some(buttons) = &mut self.buttons else {
+            return true;
+        };
+        for side in [&mut self.left, &mut self.right] {
+            side.retain(|button| button.command != "inventory_dual");
+        }
+        if buttons.is_empty() {
+            return true;
+        }
+        if buttons.iter().any(|button| button.command == "inventory_dual") {
+            return true;
+        }
+        let button = ToolButton {
+            icon: "device-floppy-filled".into(),
+            command: "inventory_dual".into(),
+            tooltip: String::new(),
+        };
+        let index = buttons
+            .iter()
+            .position(|button| button.command == "inventory")
+            .map_or(buttons.len(), |inventory| inventory + 1);
+        buttons.insert(index, button);
+        true
     }
 }
 

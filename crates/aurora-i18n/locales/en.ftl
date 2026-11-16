@@ -4493,6 +4493,7 @@ media-plugins-consent = Web pages (profiles, search, the web browser) and media 
 media-plugins-consent-later = Not now
 media-plugins-consent-later-hint = You can download it later in Preferences › Sound and voice › Media, or where a web page or media would show.
 common-inventory = Inventory
+inventory-dual-panel = Dual-panel inventory
 ui-inventory-inventory = { "Inventory: " }{ $value0 }
 task-inventory-unreadable-object-inventory = Unreadable object inventory.
 task-inventory-incomplete-object-inventory = Incomplete object inventory.

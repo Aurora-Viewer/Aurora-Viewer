@@ -123,6 +123,9 @@ impl App {
     }
 
     pub(super) fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+        if self.dual_inventory_ui.ui_id == editor {
+            return Some(&mut self.dual_inventory_ui);
+        }
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
         }
@@ -240,31 +243,41 @@ impl App {
     }
 
     pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
-        self.submit_inventory_edit(change, None);
+        let editor = self.inventory_ui.ui_id;
+        let _ = self.submit_inventory_change_with_request(change, Uuid::new_v4(), None, editor);
     }
 
     pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
         self.inventory_ui.consume_clipboard = false;
-        self.submit_inventory_edit(deletion.change, Some(deletion.selection));
+        let editor = deletion.selection.window();
+        let _ = self.submit_inventory_change_with_request(deletion.change, Uuid::new_v4(), Some(deletion.selection), editor);
     }
 
-    fn submit_inventory_edit(
+    fn submit_inventory_change_with_request(
         &mut self,
         mut change: aurora_net::inventory::operations::Mutation,
+        request: Uuid,
         selection: Option<ui::inventory::DeleteSelection>,
-    ) {
+        editor: Uuid,
+    ) -> bool {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
-            return;
+            return false;
         }
         if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| change.refresh.contains(&id))
             && self.appearance_ui.pending.is_some()
         {
-            self.inventory_ui.message = aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
-            return;
+            let message = aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
+            if editor == self.dual_inventory_ui.ui_id {
+                self.dual_inventory_ui.message = message;
+            } else {
+                self.inventory_ui.message = message;
+            }
+            return false;
         }
-        let request = Uuid::new_v4();
+        let editor = if editor.is_nil() { self.inventory_ui.ui_id } else { editor };
         change.defer_folder_contents = true;
+        self.inventory_mutation_editor = Some(editor);
         log::info!(
             "inventory mutation: {} operations, {} item copies",
             change.operations.len(),
@@ -272,27 +285,43 @@ impl App {
         );
         self.inventory_ui.begin_mutation(request, &change);
         if let Some(selection) = selection {
-            self.inventory_ui.begin_delete(request, selection);
+            if selection.window() == self.dual_inventory_ui.ui_id {
+                self.dual_inventory_ui.begin_delete(request, selection);
+            } else {
+                self.inventory_ui.begin_delete(request, selection);
+            }
         }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
-        self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
+        let created_selection = change.operations.iter().find_map(|op| {
             if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
                 Some(*id)
             } else {
                 None
             }
         });
-        self.inventory_ui.message.clear();
+        if editor == self.dual_inventory_ui.ui_id {
+            self.dual_inventory_ui.created_selection = created_selection;
+        } else {
+            self.inventory_ui.created_selection = created_selection;
+        }
+        if editor == self.dual_inventory_ui.ui_id {
+            self.dual_inventory_ui.message.clear();
+        } else {
+            self.inventory_ui.message.clear();
+        }
         self.send(NetCommand::EditInventory { request, change });
+        true
     }
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool) {
+    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+        // The UI merges the two panes' cut intent before returning actions;
+        // the clipboard itself is shared, even though browsing state is not.
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
             self.inventory_ui.consume_clipboard = cut;
-            self.submit_inventory_change(change);
+            let _ = self.submit_inventory_change_with_request(change, Uuid::new_v4(), None, editor);
         }
     }
 
@@ -325,6 +354,11 @@ impl App {
     }
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
+        self.apply_inventory_action_from(Uuid::nil(), action);
+    }
+
+    pub(super) fn apply_inventory_action_from(&mut self, editor: Uuid, action: InvAction) {
+        let editor = if editor.is_nil() { self.inventory_ui.ui_id } else { editor };
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
         {
@@ -333,26 +367,37 @@ impl App {
             return;
         }
         match action {
+            InvAction::Panel { editor, action } => self.apply_inventory_action_from(editor, *action),
             InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
-                if let Some(command) = ui::inventory::context_notecards::export(&mut self.inventory_ui, &self.world.inventory, name, text) {
+                let command = if editor == self.dual_inventory_ui.ui_id {
+                    ui::inventory::context_notecards::export(&mut self.dual_inventory_ui, &self.world.inventory, name, text)
+                } else {
+                    ui::inventory::context_notecards::export(&mut self.inventory_ui, &self.world.inventory, name, text)
+                };
+                if let Some(command) = command {
                     self.send(command);
                 }
             }
             InvAction::LoadMenuNotecard(item) => {
-                if let Some(command) = ui::inventory::context_notecards::load(&mut self.inventory_ui, &self.world.inventory, item) {
+                let command = if editor == self.dual_inventory_ui.ui_id {
+                    ui::inventory::context_notecards::load(&mut self.dual_inventory_ui, &self.world.inventory, item)
+                } else {
+                    ui::inventory::context_notecards::load(&mut self.inventory_ui, &self.world.inventory, item)
+                };
+                if let Some(command) = command {
                     self.send(command);
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
-            InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
                     self.submit_inventory_delete(deletion);
                 }
             }
-            InvAction::Drop(change) => self.edit_inventory(change, true),
+            InvAction::Drop(change) => self.edit_inventory(change, true, editor),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
@@ -369,7 +414,11 @@ impl App {
                                 data,
                                 permissions: None,
                             }),
-                            Err(reason) => self.inventory_ui.message = reason,
+                            Err(reason) => {
+                                if let Some(st) = self.document_state(editor) {
+                                    st.message = reason;
+                                }
+                            }
                         }
                     } else {
                         self.send(NetCommand::CreateInventoryItem {
@@ -444,14 +493,24 @@ impl App {
                         self.record_library_use(id);
                     }
                     if it.asset_type == 10 {
-                        self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
+                        let st = if editor == self.dual_inventory_ui.ui_id {
+                            &mut self.dual_inventory_ui
+                        } else {
+                            &mut self.inventory_ui
+                        };
+                        st.preview = st.preview.filter(|preview| *preview != id);
                         self.open_script(aurora_net::scripts::ScriptTarget {
                             object: Uuid::nil(),
                             item: id,
                         });
                         return;
                     }
-                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
+                    let opened = if editor == self.dual_inventory_ui.ui_id {
+                        self.dual_inventory_ui.open_document(&self.egui_ctx, id, it.asset_type)
+                    } else {
+                        self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type)
+                    };
+                    if !opened {
                         return;
                     }
                     // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
@@ -485,20 +544,13 @@ impl App {
                 let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
                 let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
                 let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
+                    || self.dual_inventory_ui.preview == Some(item) && self.dual_inventory_ui.save_pending
                     || self
                         .inventory_ui
                         .windows
                         .iter()
                         .any(|w| w.state.preview == Some(item) && w.state.save_pending);
-                let st = if self.inventory_ui.ui_id == editor {
-                    Some(&mut self.inventory_ui)
-                } else {
-                    self.inventory_ui
-                        .windows
-                        .iter_mut()
-                        .find(|w| w.id == editor)
-                        .map(|w| w.state.as_mut())
-                };
+                let st = self.document_state(editor);
                 let Some(st) = st.filter(|st| st.preview == Some(item)) else {
                     return;
                 };
@@ -545,11 +597,17 @@ impl App {
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
             InvAction::ShowMain(item) => {
-                self.inventory_ui.show_original(&self.world.inventory, item);
+                if editor == self.dual_inventory_ui.ui_id {
+                    self.dual_inventory_ui.show_original(&self.world.inventory, item);
+                } else {
+                    self.inventory_ui.show_original(&self.world.inventory, item);
+                }
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::FindLinks(item) => {
-                self.inventory_ui.find_links(item);
+                if let Some(st) = self.document_state(editor) {
+                    st.find_links(item);
+                }
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::MarketplacePaste { to, ids, copy } => self.paste_marketplace_inventory(to, ids, copy),
@@ -664,14 +722,24 @@ impl App {
         if self.inventory_ui.pending != Some(request) {
             return;
         }
+        let editor = self.inventory_mutation_editor.unwrap_or(self.inventory_ui.ui_id);
         let thumbnail_upload = self.inventory_images.contains_request(request);
         let result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents.clone());
                 self.world.inventory.created_folders(reply.folders.clone());
-                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
-                    self.inventory_ui.show_original(&self.world.inventory, *id);
+                let created_selection = if editor == self.dual_inventory_ui.ui_id {
+                    self.dual_inventory_ui.created_selection
+                } else {
+                    self.inventory_ui.created_selection
+                };
+                if let Some(id) = created_selection.and_then(|id| reply.created.get(&id)) {
+                    if editor == self.dual_inventory_ui.ui_id {
+                        self.dual_inventory_ui.show_original(&self.world.inventory, *id);
+                    } else {
+                        self.inventory_ui.show_original(&self.world.inventory, *id);
+                    }
                 }
                 self.inventory_ui.watch_copy(request, &reply);
                 self.send(NetCommand::FinishInventoryCopies { request, reply });
@@ -680,7 +748,11 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.dual_inventory_ui
+            .finish_bulk_permissions(result.as_ref().err().map(String::as_str));
         self.inventory_ui
+            .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
+        self.dual_inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
@@ -710,20 +782,38 @@ impl App {
                         .outfit
                         .wear_when_known(sync.unknown, self.world.agent_id, std::time::Instant::now());
                 }
-                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id))
-                    && !self.inventory_ui.select_created_listing(&self.world.inventory, *id)
-                {
-                    self.inventory_ui.show_original(&self.world.inventory, *id);
-                    self.inventory_ui.begin_rename(&self.world.inventory, *id);
+                let created_selection = if editor == self.dual_inventory_ui.ui_id {
+                    self.dual_inventory_ui.created_selection
+                } else {
+                    self.inventory_ui.created_selection
+                };
+                if let Some(id) = created_selection.and_then(|id| reply.created.get(&id)) {
+                    if editor == self.dual_inventory_ui.ui_id {
+                        if !self.dual_inventory_ui.select_created_listing(&self.world.inventory, *id) {
+                            self.dual_inventory_ui.show_original(&self.world.inventory, *id);
+                            self.dual_inventory_ui.begin_rename(&self.world.inventory, *id);
+                        }
+                    } else if !self.inventory_ui.select_created_listing(&self.world.inventory, *id) {
+                        self.inventory_ui.show_original(&self.world.inventory, *id);
+                        self.inventory_ui.begin_rename(&self.world.inventory, *id);
+                    }
                 }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.cancel_cut();
                 }
-                self.inventory_ui.message.clear();
+                if editor == self.dual_inventory_ui.ui_id {
+                    self.dual_inventory_ui.message.clear();
+                } else {
+                    self.inventory_ui.message.clear();
+                }
             }
             Err(reason) => {
                 if !thumbnail_upload {
-                    self.inventory_ui.message = reason;
+                    if editor == self.dual_inventory_ui.ui_id {
+                        self.dual_inventory_ui.message = reason;
+                    } else {
+                        self.inventory_ui.message = reason;
+                    }
                 }
                 // A multi-operation request can partially succeed. Re-read parents
                 // before another mutation instead of restoring speculative state.
@@ -738,6 +828,8 @@ impl App {
         self.inventory_ui.consume_clipboard = false;
         self.inventory_ui.pending_refresh.clear();
         self.inventory_ui.created_selection = None;
+        self.dual_inventory_ui.created_selection = None;
+        self.inventory_mutation_editor = None;
         for w in &mut self.inventory_ui.windows {
             w.state.message.clone_from(&self.inventory_ui.message);
         }
@@ -759,6 +851,9 @@ impl App {
         if self.inventory_ui.preview == Some(item) {
             self.inventory_ui.load_document(kind, editable, &result);
         }
+        if self.dual_inventory_ui.preview == Some(item) {
+            self.dual_inventory_ui.load_document(kind, editable, &result);
+        }
         for window in &mut self.inventory_ui.windows {
             if window.state.preview == Some(item) {
                 window.state.load_document(kind, editable, &result);
@@ -769,6 +864,7 @@ impl App {
     pub(super) fn inventory_content_saved(&mut self, request: Uuid, item: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
         let error = result.as_ref().err().map(String::as_str);
         self.inventory_ui.finish_content_save(request, error);
+        self.dual_inventory_ui.finish_content_save(request, error);
         for w in &mut self.inventory_ui.windows {
             w.state.finish_content_save(request, error);
         }
@@ -778,6 +874,9 @@ impl App {
             if it.id != item {
                 if self.inventory_ui.preview == Some(item) {
                     self.inventory_ui.preview = Some(it.id);
+                }
+                if self.dual_inventory_ui.preview == Some(item) {
+                    self.dual_inventory_ui.preview = Some(it.id);
                 }
                 for w in &mut self.inventory_ui.windows {
                     if w.state.preview == Some(item) {

@@ -27,6 +27,14 @@ the rebuilt displayed order before drawing rows, preserves a changed selection o
 subtrees and uses keyboard navigation's existing visibility/scrolling path.
 Both confirmation settings and all four inventory layouts share this path.
 
+The optional dual-panel floater in `ui/inventory.rs` keeps independent
+`InventoryUi` browsing, selection, preview and document state in the app. The
+panes share the inventory model, permissions, mutation lock and clipboard;
+secondary-pane actions carry its editor id through `InvAction::Panel`, so
+document, deletion and thumbnail replies update the pane that initiated them.
+Disabling the layout transfers secondary document windows back to the primary
+state instead of dropping them.
+
 Search and filter inputs use `ui/widgets/pills.rs::search_text_edit` or the
 shared `search_field`/`clearable_search_box` wrappers. The in-field clear
 action reserves text padding, preserves editor ids, marks the response

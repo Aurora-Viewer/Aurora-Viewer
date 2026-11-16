@@ -2620,6 +2620,13 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
             panels.people_tab = 1;
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
+        "inventory_dual" => {
+            panels.inventory = true;
+            panels.inventory_dual = !panels.inventory_dual;
+            if panels.inventory_dual {
+                super::widgets::size_floater(ctx, "inventory", Vec2::new(900.0, 600.0));
+            }
+        }
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
@@ -2743,6 +2750,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "regioninfo" => panels.region_estate,
         "myenvironments" => panels.environment,
         "inventory" => panels.inventory,
+        "inventory_dual" => panels.inventory_dual,
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
@@ -4397,6 +4405,21 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn dual_inventory_toolbar_button_opens_inventory_and_toggles_its_layout() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.inventory = false;
+        assert!(!command_active("inventory_dual", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "inventory_dual", &mut panels), BarAction::None));
+        assert!(panels.inventory);
+        assert!(panels.inventory_dual);
+        assert!(command_active("inventory_dual", &panels, false, false, false));
+        run_command(&ctx, "inventory_dual", &mut panels);
+        assert!(panels.inventory, "switching back to the single layout keeps the inventory open");
+        assert!(!panels.inventory_dual);
     }
 
     #[test]

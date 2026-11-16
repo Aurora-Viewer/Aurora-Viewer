@@ -233,6 +233,11 @@ pub enum InvAction {
         item: Uuid,
         input: thumbnail::Input,
     },
+    /// Preserve the originating dual pane for actions with pane-local UI state.
+    Panel {
+        editor: Uuid,
+        action: Box<InvAction>,
+    },
 }
 
 #[derive(Default)]
@@ -633,6 +638,8 @@ pub struct InventoryUi {
     /// The folder the explorer lists (Aurora's medium and wide widths),
     /// nil for the root.
     browse: Uuid,
+    /// Left/right width ratio for the Total Commander-style inventory view.
+    dual_split: Option<f32>,
     /// The explorer's rows of `browse`: its folders never open in place.
     flat: rows::PlainTree,
     side: aurora::Sidebar,
@@ -2176,6 +2183,7 @@ pub fn show(
     icons: &Icons,
     world: &mut World,
     st: &mut InventoryUi,
+    dual: Option<&mut InventoryUi>,
     prefs: &mut InventoryPreferences,
     open: &mut bool,
     appearance_busy: bool,
@@ -2186,6 +2194,8 @@ pub fn show(
     classic: bool,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
+    let mut dual_actions = Vec::new();
+    let mut dual = dual;
     clipboard::prepare(st);
     if !*open {
         st.pending_delete = None;
@@ -2194,6 +2204,7 @@ pub fn show(
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open
+        || dual.as_deref().is_some()
         || st.dialog.is_some()
         || st.move_to.is_some()
         || st.demo_menu.is_some()
@@ -2229,10 +2240,16 @@ pub fn show(
         }
     }
     property_names(st, world, &mut facts.names);
+    if let Some(dual) = dual.as_deref() {
+        property_names(dual, world, &mut facts.names);
+    }
     // the give confirmation names its resident and shows their picture,
     // asked of the app (issue #1197)
     let mut wanted = Vec::new();
-    for state in std::iter::once(&*st).chain(st.windows.iter().map(|w| &*w.state)) {
+    for state in std::iter::once(&*st)
+        .chain(st.windows.iter().map(|w| &*w.state))
+        .chain(dual.as_deref())
+    {
         if let Some(EditDialog::Share(_, resident)) = &state.dialog {
             world.social.want_name(*resident);
             facts.names.insert(*resident, world.social.name_of(resident));
@@ -2245,21 +2262,30 @@ pub fn show(
     st.wanted_pics.extend(wanted);
     // Aurora's details of the selection name its creator and owner.
     if !classic && *open {
-        let residents = st
-            .selected
-            .and_then(|id| rules::original(&world.inventory, id))
-            .and_then(|id| world.inventory.items.get(&id))
-            .map(|it| [it.owner, it.creator]);
-        for resident in residents.into_iter().flatten().filter(|id| !id.is_nil()) {
-            world.social.want_name(resident);
-            facts.names.insert(resident, world.social.name_of(&resident));
+        for state in std::iter::once(&*st).chain(dual.as_deref()) {
+            let residents = state
+                .selected
+                .and_then(|id| rules::original(&world.inventory, id))
+                .and_then(|id| world.inventory.items.get(&id))
+                .map(|it| [it.owner, it.creator]);
+            for resident in residents.into_iter().flatten().filter(|id| !id.is_nil()) {
+                world.social.want_name(resident);
+                facts.names.insert(resident, world.social.name_of(&resident));
+            }
         }
     }
     // Advanced rules on Creator need the names too, whatever quick search is set to.
     let smart_creator = |f: &view::Filters| f.smart.as_ref().is_some_and(|q| q.uses(smart::Field::Creator));
     let quick_creator = matches!(prefs.search_field, view::SearchField::Creator | view::SearchField::All)
-        && (!st.search.trim().is_empty() || st.windows.iter().any(|w| !w.state.search.trim().is_empty()));
-    if shown && (quick_creator || smart_creator(&st.filters) || st.windows.iter().any(|w| smart_creator(&w.state.filters))) {
+        && (!st.search.trim().is_empty()
+            || st.windows.iter().any(|w| !w.state.search.trim().is_empty())
+            || dual.as_deref().is_some_and(|state| !state.search.trim().is_empty()));
+    if shown
+        && (quick_creator
+            || smart_creator(&st.filters)
+            || st.windows.iter().any(|w| smart_creator(&w.state.filters))
+            || dual.as_deref().is_some_and(|state| smart_creator(&state.filters)))
+    {
         if st.creator_generation != Some(world.inventory.generation) {
             st.creators = world
                 .inventory
@@ -2276,6 +2302,32 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
+    if let Some(dual) = dual.as_deref_mut() {
+        if !*open {
+            dual.pending_delete = None;
+        }
+        dual.ui_id = Uuid::from_u128(0x4455_414c_494e_5645_4e54_4f52_5901);
+        dual.visible.clear();
+        // Only the primary pane takes the automatic first-open focus. If both
+        // search fields request it in the same frame, egui leaves keyboard
+        // input in the right pane and makes the left appear unresponsive.
+        dual.focus_search = *open && dual.focus_search;
+        dual.clipboard.clone_from(&st.clipboard);
+        dual.cut = st.cut;
+        dual.pending = st.pending;
+        dual.progress.clone_from(&st.progress);
+        dual.copy_jobs.clone_from(&st.copy_jobs);
+        dual.notice.clone_from(&st.notice);
+        dual.contents_notice.clone_from(&st.contents_notice);
+        dual.thumbnail_notice.clone_from(&st.thumbnail_notice);
+        dual.merchant = st.merchant;
+        dual.marketplace_commands.clone_from(&st.marketplace_commands);
+        dual.playing = st.playing;
+        clipboard::prepare(dual);
+        context_catalog::process_deferred(inv, dual, prefs, &facts, &mut dual_actions);
+        bulk_permissions::show(ctx, p, inv, dual, world.agent_id, &mut dual_actions);
+        fetch_whole_inventory(inv, dual);
+    }
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
@@ -2296,21 +2348,21 @@ pub fn show(
         st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
     }
     let screen = ctx.content_rect();
-    let mut floater = super::widgets::Floater::new(
-        "inventory",
-        aurora_i18n::tr!("common-inventory"),
-        egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0),
-        DEFAULT_SIZE,
-    )
-    .compact_header()
-    .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"));
-    let mut widen = false;
-    if classic {
-        st.aurora = None;
-        floater.show(ctx, p, open, |ui| {
-            inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions)
-        });
+    let default_size = if dual.as_deref().is_some() {
+        Vec2::new(900.0, 600.0)
     } else {
+        DEFAULT_SIZE
+    };
+    let default_position = if dual.as_deref().is_some() {
+        egui::pos2(screen.center().x - default_size.x * 0.5, 56.0)
+    } else {
+        egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0)
+    };
+    let mut floater = super::widgets::Floater::new("inventory", aurora_i18n::tr!("common-inventory"), default_position, default_size)
+        .compact_header()
+        .help(aurora_i18n::tr!("ui-inventory-right-click-item-actions-ctrl-shift-multi-select"));
+    let mut widen = false;
+    if !classic {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
         floater = floater
@@ -2323,12 +2375,64 @@ pub fn show(
         if layout == aurora::Layout::Compact {
             floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
         }
-        floater.show(ctx, p, open, |ui| {
-            aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions)
-        });
-        if widen {
-            aurora::widen(ctx, "inventory");
+    }
+    floater.show(ctx, p, open, |ui| {
+        if let Some(dual) = dual.as_deref_mut() {
+            let available = ui.available_size();
+            let separator_width = 8.0;
+            let usable_width = (available.x - separator_width).max(1.0);
+            let minimum_ratio = (220.0 / usable_width).min(0.45);
+            let ratio = st.dual_split.unwrap_or(0.5).clamp(minimum_ratio, 1.0 - minimum_ratio);
+            let left_width = usable_width * ratio;
+            let mut next_ratio = ratio;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.allocate_ui_with_layout(Vec2::new(left_width, available.y), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.push_id(("inventory_pane", st.ui_id), |ui| {
+                        if classic {
+                            st.aurora = None;
+                            inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
+                        } else {
+                            aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
+                        }
+                    });
+                });
+                let (handle, response) = ui.allocate_exact_size(Vec2::new(separator_width, available.y), egui::Sense::drag());
+                let response = response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                if response.dragged() {
+                    next_ratio =
+                        (ratio + ui.input(|input| input.pointer.delta().x) / usable_width).clamp(minimum_ratio, 1.0 - minimum_ratio);
+                }
+                if ui.is_rect_visible(handle) {
+                    ui.painter()
+                        .vline(handle.center().x, handle.y_range(), super::widgets::divider_stroke(p));
+                }
+                let right_width = (usable_width - left_width).max(1.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(right_width, available.y),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.push_id(("inventory_pane", dual.ui_id), |ui| {
+                            if classic {
+                                dual.aurora = None;
+                                inventory_contents(ui, p, icons, inv, dual, prefs, &facts, &mut dual_actions);
+                            } else {
+                                aurora::contents(ui, p, icons, inv, dual, prefs, &facts, images, &mut dual_actions);
+                            }
+                        });
+                    },
+                );
+            });
+            st.dual_split = Some(next_ratio);
+        } else if classic {
+            st.aurora = None;
+            inventory_contents(ui, p, icons, inv, st, prefs, &facts, &mut actions);
+        } else {
+            aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
         }
+    });
+    if widen {
+        aurora::widen(ctx, "inventory");
     }
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
@@ -2366,6 +2470,60 @@ pub fn show(
         && let Some(resident) = residents.first()
     {
         st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), *resident));
+    }
+    if let Some(dual) = dual {
+        dual.hover
+            .show(p, &world.inventory, prefs, hover_images, &mut dual.wanted_hover_images);
+        dual.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
+        controls::dialogs(ctx, p, dual, prefs);
+        folder_colors::show(ctx, p, &world.inventory, dual, prefs);
+        finish_hidden_rename(&world.inventory, dual, &mut dual_actions);
+        context_catalog::process_deferred(&mut world.inventory, dual, prefs, &facts, &mut dual_actions);
+        dialogs::show(ctx, p, icons, &world.inventory, dual, prefs, &facts, images, &mut dual_actions);
+        move_to::show(ctx, p, icons, &mut world.inventory, dual, prefs, &facts, &mut dual_actions);
+        dialogs::preview(
+            ctx,
+            p,
+            icons,
+            &world.inventory,
+            &world.inventory,
+            dual,
+            images,
+            prefs,
+            script_settings,
+            facts.god_level,
+            &mut dual_actions,
+        );
+        dual.thumbnail.show(
+            ctx,
+            p,
+            icons,
+            world,
+            prefs,
+            dual.ui_id,
+            images,
+            &mut dual.wanted_images,
+            st.pending.is_some(),
+            &mut dual_actions,
+        );
+        if let Some(residents) = dual.share_picker.show(ctx, p, world)
+            && let Some(resident) = residents.first()
+        {
+            dual.dialog = Some(EditDialog::Share(std::mem::take(&mut dual.share_items), *resident));
+        }
+        st.wanted_images.extend(dual.wanted_images.drain());
+        st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
+        st.preferences_dirty |= dual.preferences_dirty;
+        dual.preferences_dirty = false;
+        st.consume_clipboard |= dual.consume_clipboard;
+        dual.consume_clipboard = false;
+        st.windows.append(&mut dual.windows);
+        dual.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+        context_notecards::show(ctx, p, &mut world.inventory, dual, prefs, &mut dual_actions);
+        actions.extend(dual_actions.into_iter().map(|action| InvAction::Panel {
+            editor: dual.ui_id,
+            action: Box::new(action),
+        }));
     }
     let mut windows = std::mem::take(&mut st.windows);
     let mut spawned = Vec::new();
@@ -3130,6 +3288,7 @@ mod tests {
                         &icons,
                         &mut world,
                         st,
+                        None,
                         &mut prefs,
                         &mut open,
                         false,
@@ -3171,6 +3330,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn dual_inventory_tabs_respond_in_their_own_pane() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+
+        let mut frames = Frames::new();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let p = theme.palette();
+        let icons = Icons::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = tests::view_inventory(false);
+        let mut primary = InventoryUi::default();
+        let mut dual = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut open = true;
+        let images = std::collections::HashMap::new();
+        let scripts = Default::default();
+        let mut frame = |events| {
+            let texts = frames.run(events, |ui| {
+                let _ = show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut world,
+                    &mut primary,
+                    Some(&mut dual),
+                    &mut prefs,
+                    &mut open,
+                    false,
+                    &images,
+                    &Default::default(),
+                    &Default::default(),
+                    &scripts,
+                    true,
+                );
+            });
+            (texts, primary.tab, dual.tab)
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+
+        let recent = aurora_i18n::tr!("common-recent").to_string();
+        let labels: Vec<_> = frame(Vec::new()).0.into_iter().filter(|text| text.source == recent).collect();
+        assert_eq!(labels.len(), 2, "each pane draws its own Recent tab");
+        let left = labels
+            .iter()
+            .min_by(|a, b| a.rect.center().x.total_cmp(&b.rect.center().x))
+            .unwrap()
+            .rect
+            .center();
+        let right = labels
+            .iter()
+            .max_by(|a, b| a.rect.center().x.total_cmp(&b.rect.center().x))
+            .unwrap()
+            .rect
+            .center();
+
+        let click = |frame: &mut dyn FnMut(Vec<egui::Event>) -> (Vec<crate::ui::widgets::elide_tests::Text>, usize, usize), pos| {
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+        };
+        click(&mut frame, left);
+        let (_, primary_tab, dual_tab) = frame(Vec::new());
+        assert_eq!(primary_tab, 2, "the left pane responds to its tab click");
+        assert_eq!(dual_tab, 0, "clicking the left pane leaves the right tab unchanged");
+        click(&mut frame, right);
+        let (texts, primary_tab, dual_tab) = frame(Vec::new());
+        assert_eq!(dual_tab, 2, "the right pane responds to its tab click");
+        assert_eq!(primary_tab, 2, "clicking the right pane leaves the left tab unchanged");
+        let _ = painted(&texts, &recent);
+    }
+
     /// #1090: the main window's button opens the additional window on the
     /// whole inventory and stays lit while it shows; that window has neither
     /// the button nor the Received tab; a second click closes it and forgets
@@ -3200,6 +3441,7 @@ mod tests {
                         &icons,
                         &mut world,
                         st,
+                        None,
                         &mut prefs,
                         &mut open,
                         false,

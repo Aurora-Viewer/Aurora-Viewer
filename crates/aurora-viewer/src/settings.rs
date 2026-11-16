@@ -3591,6 +3591,9 @@ impl Settings {
             self.legacy_toolbars.clear();
             changed = true;
         }
+        if let Some(toolbar) = &mut self.toolbar {
+            changed |= toolbar.ensure_dual_inventory_button();
+        }
         changed
     }
 

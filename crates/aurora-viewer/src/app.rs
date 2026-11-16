@@ -1177,6 +1177,10 @@ pub struct App {
     env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    /// Independent browsing and selection state for the dual-panel inventory.
+    dual_inventory_ui: ui::inventory::InventoryUi,
+    /// Pane whose inventory mutation currently owns local completion feedback.
+    inventory_mutation_editor: Option<uuid::Uuid>,
     texture_library: ui::texture_library::LibraryUi,
     library_drag: texture_library::DragState,
     library_demo_seeded: bool,
@@ -2184,6 +2188,8 @@ impl App {
             env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
+            dual_inventory_ui: Default::default(),
+            inventory_mutation_editor: None,
             texture_library: Default::default(),
             library_demo_seeded: false,
             library_drag: Default::default(),
@@ -3405,6 +3411,9 @@ impl App {
         self.places_ui.forget_question();
         self.url_confirm = None;
         self.inventory_ui = Default::default();
+        self.dual_inventory_ui = Default::default();
+        self.inventory_mutation_editor = None;
+        self.panels.inventory_dual = false;
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account
         // must not save them into its sets
@@ -19307,6 +19316,9 @@ impl App {
                 let inventory_preferences = self.settings.inventory.clone();
                 let import_preferences = self.settings.imports.clone();
                 let mut open = self.panels.inventory;
+                if !self.panels.inventory_dual {
+                    self.inventory_ui.windows.append(&mut self.dual_inventory_ui.windows);
+                }
                 if !self.inventory_ui.merchant_requested {
                     self.inventory_ui.merchant_requested = true;
                     self.send(NetCommand::RequestInventoryMerchant);
@@ -19318,6 +19330,7 @@ impl App {
                     &self.skin.icons,
                     &mut self.world,
                     &mut self.inventory_ui,
+                    self.panels.inventory_dual.then_some(&mut self.dual_inventory_ui),
                     &mut self.settings.inventory,
                     &mut open,
                     self.appearance_ui.pending.is_some(),
@@ -19335,6 +19348,10 @@ impl App {
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::inventory::InvAction::Panel { editor, action } => match *action {
+                            ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                            other => self.apply_inventory_action_from(editor, other),
+                        },
                         other => self.apply_inventory_action(other),
                     }
                 }
@@ -19350,6 +19367,8 @@ impl App {
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
                 self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
+                self.inventory_ui.preferences_dirty |= self.dual_inventory_ui.preferences_dirty;
+                self.dual_inventory_ui.preferences_dirty = false;
                 self.inventory_ui.preferences_dirty |= self.settings.imports != import_preferences;
                 if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
                     self.inventory_ui.preferences_dirty = false;
