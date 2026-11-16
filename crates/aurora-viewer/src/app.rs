@@ -3337,6 +3337,8 @@ impl App {
         self.portal_journey = None;
         self.portal_ask = None;
         self.portal_demo_peer = None;
+        // its teleport belongs to the session that held it
+        self.suitcase_ask = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
         // the contact sets' windows, Quick sort's queue and the choices hold
