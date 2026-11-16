@@ -161,6 +161,8 @@ impl OsWatch {
             }
             log::info!("keyboard layout: following the keyboard input source");
         });
+        // Re-read after registration to include a change during startup, before observation.
+        CHANGED.store(true, Ordering::Relaxed);
         Some(Self)
     }
 

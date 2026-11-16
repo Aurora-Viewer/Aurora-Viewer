@@ -31,11 +31,14 @@ pub(super) fn detect() -> Option<Layouts> {
     let context = Context::new(lib)?;
     // WAYLAND_SOCKET is a socket handed to one client: connecting through it
     // here would take winit's connection away.
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("WAYLAND_SOCKET").is_none();
+    let handed_socket = std::env::var_os("WAYLAND_SOCKET").is_some();
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some() && !handed_socket;
     let (keymap, active, guessed, source) = wayland
         .then(|| wayland::keymap(&context).map(|keymap| (keymap, 0, true, "Wayland compositor")))
         .flatten()
         .or_else(|| x11::keymap(&context).map(|(keymap, layout, xwayland)| (keymap, layout, xwayland, "X server")))?;
+    // A separate X server cannot confirm the layout of the Wayland socket handed to winit.
+    let guessed = guessed || handed_socket;
     let all = layouts_of(&keymap, source);
     let count = all.len();
     if all.iter().all(Option::is_none) {
@@ -185,8 +188,8 @@ impl Drop for Keymap {
 
 mod wayland {
     use std::fs::File;
-    use std::mem::ManuallyDrop;
     use std::os::unix::fs::FileExt;
+    use std::sync::mpsc;
 
     use wayland_client::globals::{GlobalListContents, registry_queue_init};
     use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
@@ -229,8 +232,30 @@ mod wayland {
         Keymap::new(context, ptr)
     }
 
-    /// The keymap text of a `wl_keyboard.keymap` event, if it is XKB's.
-    fn keymap_text(event: wl_keyboard::Event) -> Option<Vec<u8>> {
+    // Compositor keymaps are normally well below a megabyte. Bound each allocation,
+    // including the one used for the initial layout read.
+    const MAX_KEYMAP_BYTES: usize = 16 * 1024 * 1024;
+
+    struct KeymapFile {
+        file: File,
+        size: usize,
+    }
+
+    impl KeymapFile {
+        fn new(file: File, size: u32) -> Option<Self> {
+            let size = usize::try_from(size).ok()?;
+            (1..=MAX_KEYMAP_BYTES).contains(&size).then_some(Self { file, size })
+        }
+
+        fn read(self) -> Option<Vec<u8>> {
+            // Read at offset 0: the compositor may share the file between clients.
+            let mut buf = vec![0; self.size];
+            self.file.read_exact_at(&mut buf, 0).ok()?;
+            Some(buf)
+        }
+    }
+
+    fn keymap_file(event: wl_keyboard::Event) -> Option<KeymapFile> {
         let wl_keyboard::Event::Keymap {
             format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
             fd,
@@ -239,10 +264,7 @@ mod wayland {
         else {
             return None;
         };
-        // read at offset 0: the compositor may share one file between clients
-        let mut buf = vec![0; usize::try_from(size).ok()?];
-        File::from(fd).read_exact_at(&mut buf, 0).ok()?;
-        Some(buf)
+        KeymapFile::new(File::from(fd), size)
     }
 
     /// The active layout, heard by a keyboard of our own on winit's
@@ -251,12 +273,10 @@ mod wayland {
     /// client, ours with winit's. Its queue is ours alone; winit's event loop
     /// reads the socket and libwayland files our events there.
     ///
-    /// Dropped, it releases its keyboard and seat where their versions can,
-    /// and leaves its queue alive: the registry has no destructor, and a
-    /// queue destroyed under a live proxy is a use-after-free in libwayland
-    /// before 1.22 (a warning and lost events after).
+    /// The guest backend releases its local proxies before its native event queue.
+    /// It must itself be dropped while winit still owns the display.
     pub(in super::super) struct Watch {
-        queue: ManuallyDrop<EventQueue<Heard>>,
+        queue: EventQueue<Heard>,
         heard: Heard,
         seat: wl_seat::WlSeat,
         keyboard: wl_keyboard::WlKeyboard,
@@ -266,7 +286,10 @@ mod wayland {
     struct Heard {
         /// The seat has a keyboard (`wl_seat.capabilities`).
         keyboard: bool,
-        /// The layouts of the keymap last sent.
+        /// At most one parse in flight and the newest file received while it runs.
+        pending: Option<KeymapFile>,
+        parsing: Option<mpsc::Receiver<Option<Vec<KeyboardLayout>>>>,
+        /// The layouts of the keymap last read.
         layouts: Vec<KeyboardLayout>,
         /// The group last reported.
         group: Option<u32>,
@@ -295,10 +318,11 @@ mod wayland {
                 return None;
             }
             let keyboard = seat.get_keyboard(&queue.handle(), ());
+            globals.destroy();
             connection.flush().ok()?;
             log::info!("keyboard layout: following the active layout on the Wayland connection");
             Some(Self {
-                queue: ManuallyDrop::new(queue),
+                queue,
                 heard,
                 seat,
                 keyboard,
@@ -310,11 +334,48 @@ mod wayland {
         /// winit's loop already read are dispatched.
         pub(in super::super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
             self.queue.dispatch_pending(&mut self.heard).map_err(|e| e.to_string())?;
+            self.heard.poll_keymap()?;
+            if self.heard.parsing.is_some() {
+                return Ok(None);
+            }
             let Some(group) = self.heard.group.filter(|_| self.heard.changed) else {
                 return Ok(None);
             };
             self.heard.changed = false;
             Ok(super::layout_of_group(&self.heard.layouts, group))
+        }
+    }
+
+    impl Heard {
+        /// Reading the file and compiling XKB can both wait. Only immutable layout
+        /// data comes back to the frame thread; the worker never borrows winit's display.
+        fn poll_keymap(&mut self) -> Result<(), String> {
+            if let Some(receiver) = &self.parsing {
+                match receiver.try_recv() {
+                    Ok(Some(layouts)) if self.pending.is_none() => {
+                        self.layouts = layouts;
+                        self.changed = true;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                    _ => {}
+                }
+                self.parsing = None;
+            }
+            if let Some(file) = self.pending.take() {
+                let (send, receive) = mpsc::channel();
+                std::thread::Builder::new()
+                    .name("keyboard-layout-wayland".into())
+                    .spawn(move || {
+                        let layouts = xkb::xkbcommon_option()
+                            .and_then(Context::new)
+                            .and_then(|context| compile(&context, file.read()?))
+                            .map(|keymap| super::watched_layouts(&keymap, "Wayland compositor"));
+                        let _ = send.send(layouts);
+                    })
+                    .map_err(|e| e.to_string())?;
+                self.parsing = Some(receive);
+            }
+            Ok(())
         }
     }
 
@@ -338,7 +399,6 @@ mod wayland {
             if self.seat.version() >= 5 {
                 self.seat.release();
             }
-            // the queue is left alive on purpose (see `Watch`)
         }
     }
 
@@ -363,18 +423,46 @@ mod wayland {
                 }
                 event @ wl_keyboard::Event::Keymap { .. } => {
                     // sent when the keyboard is made, then on a new keymap
-                    let context = xkb::xkbcommon_option().and_then(Context::new);
-                    let keymap = context
-                        .as_ref()
-                        .zip(keymap_text(event))
-                        .and_then(|(context, text)| compile(context, text));
-                    if let Some(keymap) = keymap {
-                        heard.layouts = super::watched_layouts(&keymap, "Wayland compositor");
-                        heard.changed = true;
+                    if let Some(file) = keymap_file(event) {
+                        heard.pending = Some(file);
                     }
                 }
                 _ => {}
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn file(size: u32) -> Option<KeymapFile> {
+            KeymapFile::new(File::open("/dev/null").expect("readable empty file"), size)
+        }
+
+        #[test]
+        fn keymap_files_reject_oversize_and_truncated_input() {
+            assert!(file(0).is_none());
+            assert!(file(MAX_KEYMAP_BYTES as u32).is_some());
+            assert!(file(MAX_KEYMAP_BYTES as u32 + 1).is_none());
+            assert!(file(128).expect("valid size").read().is_none());
+        }
+
+        #[test]
+        fn an_old_parse_cannot_replace_a_newer_pending_keymap() {
+            let (send, receive) = mpsc::channel();
+            let mut heard = Heard {
+                parsing: Some(receive),
+                ..Default::default()
+            };
+            heard.poll_keymap().expect("an unfinished parse does not block");
+            assert!(heard.parsing.is_some());
+            heard.pending = file(32);
+            send.send(Some(vec![KeyboardLayout::wasd()])).expect("worker reply");
+            heard.poll_keymap().expect("start the newest parse");
+            assert!(heard.layouts.is_empty(), "the stale keymap was discarded");
+            assert!(heard.pending.is_none());
+            assert!(heard.parsing.take().expect("new parse").recv().expect("worker reply").is_none());
         }
     }
 
@@ -397,7 +485,7 @@ mod wayland {
     impl Dispatch<wl_keyboard::WlKeyboard, ()> for Text {
         fn event(text: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
             // the keymap's own fd closes with the event
-            if let Some(buf) = keymap_text(event) {
+            if let Some(buf) = keymap_file(event).and_then(KeymapFile::read) {
                 text.0 = Some(buf);
             }
         }
