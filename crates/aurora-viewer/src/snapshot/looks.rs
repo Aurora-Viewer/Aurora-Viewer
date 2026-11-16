@@ -472,8 +472,11 @@ mod tests {
         assert!(fold("Éclaircir") < fold("Fuite"));
         assert!(fold("Négatif") > fold("Matrix"));
         let found = search("SEPIA", &["Sépia doux.cube".to_owned()]);
-        assert!(found.iter().any(|e| e.id == "Sepia"), "{found:?}");
         assert!(found.iter().any(|e| e.id == "lut:Sépia doux.cube"), "{found:?}");
+        // a Legacy filter is found by its name in the interface's language
+        // (Sepia, Sépia, セピア)
+        let found = search(&aurora_i18n::tr!("photo-look-sepia").to_uppercase(), &[]);
+        assert!(found.iter().any(|e| e.id == "Sepia"), "{found:?}");
         // the creators' tables are found too
         let found = search("winter", &[]);
         assert!(found.iter().any(|e| e.id == "pack:czar-fenris/Winter Fog"), "{found:?}");

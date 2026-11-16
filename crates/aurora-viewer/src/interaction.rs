@@ -231,11 +231,13 @@ pub fn menu_target(world: &World, idx: usize, action: Action) -> Option<Target> 
     })
 }
 
-/// LLViewerObject::allowOpen: task inventory must be nonempty and editable.
+/// LLViewerObject::allowOpen: task inventory must be nonempty and editable,
+/// and with RLVa the object one that may be edited (RlvActions::canEdit).
 pub fn allow_open(world: &World, idx: usize) -> bool {
     root(world, idx)
         .and_then(|(i, _)| world.objects.get(i))
         .is_some_and(|o| o.update_flags & (1 << 11) == 0 && o.update_flags & ((1 << 5) | (1 << 2)) != 0)
+        && world.rlva_can_edit(idx)
 }
 
 pub fn cursor_action(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> Option<Action> {

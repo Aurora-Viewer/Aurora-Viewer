@@ -64,6 +64,10 @@ pub(super) struct InventoryDrop {
     selected: bool,
 }
 
+/// A drop an RLVa restriction refuses: the cursor says so, nothing else
+/// does (ACCEPT_NO_LOCKED, lltooldraganddrop.cpp).
+const RLVA_LOCKED: &str = "rlva-locked";
+
 fn reason_text(reason: &str) -> &'static str {
     match reason {
         "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
@@ -726,6 +730,13 @@ impl App {
             if let Some(idx) = surface.1 {
                 target_allowed(&self.world, idx, item, false)?;
             }
+            // LLToolDragAndDrop::dad3dRezObjectOnLand and
+            // dad3dRezObjectOnObject: ACCEPT_NO_LOCKED, the drop is refused
+            // without a sound or a message.
+            // A landmark dropped on the world rezzes its portal: the same test.
+            if (landmark || item.asset_type == 6) && !self.world.rlva_can_rez(surface.1.filter(|_| contents)) {
+                return Err(RLVA_LOCKED);
+            }
             if landmark {
                 if item.asset_id.is_nil() {
                     return Err("portal-landmark-unavailable");
@@ -795,6 +806,7 @@ impl App {
                 self.inventory_ui.release_world_drag_focus(ctx);
                 Some(drop)
             }
+            Err(RLVA_LOCKED) => None,
             Err(reason) => {
                 self.inventory_ui.message = reason_text(reason).into();
                 self.world
@@ -847,7 +859,7 @@ impl App {
         if released {
             egui::DragAndDrop::clear_payload(ctx);
             if allowed {
-                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, to));
+                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, vec![to]));
                 self.inventory_ui.release_world_drag_focus(ctx);
             } else {
                 self.world
@@ -858,6 +870,11 @@ impl App {
     }
 
     pub(super) fn apply_inventory_drop(&mut self, drop: InventoryDrop) {
+        // LLToolDragAndDrop::dropObject: its own test, before the rez sound,
+        // for the drops whose cursor did not refuse them.
+        if matches!(drop.command, BuildCmd::RezInventory(_)) && !self.world.rlva_can_rez(None) {
+            return;
+        }
         if drop.selected {
             self.build.edit_inventory_rez(&self.world);
         }

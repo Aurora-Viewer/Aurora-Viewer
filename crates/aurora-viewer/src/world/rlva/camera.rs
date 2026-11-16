@@ -89,7 +89,11 @@ impl Rlva {
     pub fn camera_texture(&self) -> Option<Uuid> {
         self.camera_value("setcam_textures").and_then(|value| {
             if value.is_empty() {
-                Some(aurora_prim::te::DEFAULT_TEXTURE)
+                // RlvBehaviourModifier's default is IMG_DEFAULT (addModifier
+                // RLV_BHVR_SETCAM_TEXTURES, rlvhelper.cpp), the flat grey the
+                // Legacy Viewer paints locally. The plywood texture is a
+                // different id.
+                Some(aurora_prim::te::IMG_DEFAULT)
             } else {
                 Uuid::parse_str(value).ok()
             }
@@ -170,9 +174,26 @@ impl Rlva {
 
     /// RlvReplyCamMinMaxModifierHandler returns an empty reply for an
     /// inactive modifier, even when normal camera limits have defaults.
+    /// An option these queries do not take fails them, and a failed query
+    /// still answers, with nothing, so that the script does not wait
+    /// (RlvCommandHandlerBaseImpl<RLV_TYPE_REPLY>::processCommand,
+    /// rlvhandler.cpp).
     pub fn camera_reply(&self, command: &Command, distance: f32, fov: f32) -> Option<String> {
-        if !command.option.is_empty() || !matches!(command.param, Param::Reply(_)) {
+        if !matches!(command.param, Param::Reply(_)) {
             return None;
+        }
+        if !command.option.is_empty() {
+            return matches!(
+                command.behaviour.as_str(),
+                "getcam_avdist"
+                    | "getcam_avdistmin"
+                    | "getcam_avdistmax"
+                    | "getcam_fov"
+                    | "getcam_fovmin"
+                    | "getcam_fovmax"
+                    | "getcam_textures"
+            )
+            .then(String::new);
         }
         if command.behaviour == "getcam_textures" {
             return Some(self.camera_texture().map(|id| id.to_string()).unwrap_or_default());

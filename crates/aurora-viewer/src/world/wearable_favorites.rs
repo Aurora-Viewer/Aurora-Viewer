@@ -1,105 +1,94 @@
-//! The Favorite Wearables folder: where it lives, what it lists and the
-//! inventory changes of the window (`ui/appearance/favorites.rs`). Port of
-//! FSFloaterWearableFavorites (indra/newview/fsfloaterwearablefavorites.cpp,
-//! originally LGPL 2.1): favorites are links to the originals, in the root
-//! folder or in one of its subfolders.
+//! Favorite Wearables: a folder of links to wearables and attachments,
+//! with subfolders, listed by its own window (`ui/appearance/wearable_favorites.rs`).
+//! Port of FSFloaterWearableFavorites::{getWearableFavoritesFolderID,
+//! initCategory, updateList, refreshFolderCombo, onItemDAD, handleRemove,
+//! onNewFolderCallback, onRenameFolderCallback, onDeleteFolderCallback}
+//! (indra/newview/fsfloaterwearablefavorites.cpp), assign_to_favorite_folder
+//! (indra/newview/llwearableitemslist.cpp), LLFindOutfitItems and the
+//! comparators of LLWearableItemsList (same file), originally LGPL 2.1.
 //!
-//! Deliberate difference (human decision, 2026-11-11): the folder is
-//! `#Aurora/Wearable Favorites`, beside the AO's `#Aurora/Aurora AO`,
-//! instead of the Legacy Viewer's `#Firestorm/#Wearable Favorites`.
+//! The Legacy Viewer keeps the folder in its own root folder
+//! (ROOT_FIRESTORM_FOLDER); Aurora's is `#Aurora`, like the bridge, the AO
+//! and the particle scripts. Every change is an ordinary inventory
+//! mutation: folders by AIS CreateInventory / UpdateCategory /
+//! RemoveCategory, links by link_inventory_object, removals by
+//! remove_inventory_item, as the Legacy Viewer sends them.
 
-use super::inventory::{FetchState, Inventory, actions};
+use super::inventory::Inventory;
+use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{Mutation, Operation};
-use std::collections::{HashMap, HashSet};
+use aurora_net::outfits::OutfitLink;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Aurora's own folder at the inventory root, shared with the AO.
-pub const BRAND: &str = "#Aurora";
-pub const FOLDER: &str = "Wearable Favorites";
+/// The viewer's folder at the root (ROOT_FIRESTORM_FOLDER).
+pub const ROOT: &str = super::bridge::FOLDER;
+/// FS_WEARABLE_FAVORITES_FOLDER.
+pub const FOLDER: &str = "#Wearable Favorites";
+/// ROOT_FIRESTORM_FOLDER (indra/newview/llinventoryfunctions.h): the Legacy
+/// Viewer's own root folder, where it keeps its favorites.
+pub const LEGACY_ROOT: &str = "#Firestorm";
 
-/// The list's order, stored with the Legacy Viewer's values of
-/// `FSWearableFavoritesSortOrder` (LLWearableItemsList::ESortOrder).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(from = "u8", into = "u8")]
-pub enum Sort {
+/// FSWearableFavoritesSortOrder, LLWearableItemsList::ESortOrder without
+/// E_SORT_BY_TYPE_LAYER, which the window's menu does not offer. The
+/// default is the setting's: 3, by type then name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SortOrder {
     Name,
-    /// The most recently added first (the link's creation date,
-    /// LLWearableItemCreationDateComparator).
-    Recent,
-    /// The Legacy default.
+    MostRecent,
     #[default]
-    Type,
-    /// The order the user dragged the rows into (`Orders`). Aurora only:
-    /// the Legacy window has no manual order (human request, 2026-11-15).
-    Custom,
+    TypeName,
 }
 
-/// The custom orders of one account: for each view (the root for All, else
-/// a tab's folder), its wearables in the order they were dragged into.
-/// Kept in the settings, per account (human decision, 2026-11-15): one
-/// order for All and one for each tab, on this computer only.
-pub type Orders = HashMap<Uuid, Vec<Uuid>>;
-
-impl From<u8> for Sort {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Self::Name,
-            1 => Self::Recent,
-            CUSTOM => Self::Custom,
-            _ => Self::Type,
-        }
-    }
-}
-
-impl From<Sort> for u8 {
-    fn from(sort: Sort) -> Self {
-        match sort {
-            Sort::Name => 0,
-            Sort::Recent => 1,
-            Sort::Type => 3,
-            Sort::Custom => CUSTOM,
-        }
-    }
-}
-
-/// The stored value of `Sort::Custom`, far from the Legacy values (0 to 3)
-/// so that a later Legacy order cannot take it.
-const CUSTOM: u8 = 100;
-
-/// One favorite: the link and the wearable it points to.
+/// One row: the link (or an item put in the folder by hand) and its original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Entry {
     pub link: Uuid,
-    pub item: Uuid,
+    pub target: Uuid,
 }
 
-/// getWearableFavoritesFolderID: `#Aurora/Wearable Favorites`, if it exists.
-pub fn root(inv: &Inventory) -> Option<Uuid> {
-    let brand = crate::ao::inventory::child(inv, inv.root, BRAND)?;
-    crate::ao::inventory::child(inv, brand, FOLDER)
+fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
+    let folder = inv.folders.get(&parent)?;
+    folder
+        .children
+        .iter()
+        .copied()
+        .filter(|id| {
+            inv.folders
+                .get(id)
+                .is_some_and(|f| !f.library && f.info.parent == parent && f.info.name == name)
+        })
+        .min()
 }
 
-/// initCategory: the change that creates the folder, and `#Aurora` with it
-/// when it is missing and `make_brand` (false while the bridge is about to
-/// make `#Aurora`: two requests in the same seconds would leave two). None
-/// while the folder exists, while `#Aurora` is left to the bridge, or while
-/// the inventory root is not loaded (a folder created then could duplicate
-/// one the skeleton has not listed yet).
-pub fn create(inv: &Inventory, make_brand: bool) -> Option<Mutation> {
-    if root(inv).is_some() || inv.root.is_nil() || !inv.folders.contains_key(&inv.root) {
-        return None;
-    }
-    let brand = crate::ao::inventory::child(inv, inv.root, BRAND);
-    if brand.is_none() && !make_brand {
+/// getWearableFavoritesFolderID: `#Wearable Favorites` in `#Aurora`.
+pub fn folder(inv: &Inventory) -> Option<Uuid> {
+    child(inv, child(inv, inv.root, ROOT)?, FOLDER)
+}
+
+/// getWearableFavoritesFolderID as the Legacy Viewer reads it: the same
+/// folder name in its own root folder.
+pub fn legacy_folder(inv: &Inventory) -> Option<Uuid> {
+    child(inv, child(inv, inv.root, LEGACY_ROOT)?, FOLDER)
+}
+
+/// initCategory: the folders to create when it does not exist yet, the
+/// viewer's root folder too when that one is missing. `None` when there is
+/// nothing to create or no inventory yet.
+pub fn create_plan(inv: &Inventory) -> Option<Mutation> {
+    if inv.root.is_nil() || !inv.folders.contains_key(&inv.root) || folder(inv).is_some() {
         return None;
     }
     let mut change = Mutation::default();
-    let brand = brand.unwrap_or_else(|| folder(&mut change, inv.root, BRAND));
-    folder(&mut change, brand, FOLDER);
+    let root = child(inv, inv.root, ROOT).unwrap_or_else(|| new_folder(&mut change, inv.root, ROOT));
+    new_folder(&mut change, root, FOLDER);
+    change.refresh.sort();
+    change.refresh.dedup();
     Some(change)
 }
 
-fn folder(change: &mut Mutation, parent: Uuid, name: &str) -> Uuid {
+fn new_folder(change: &mut Mutation, parent: Uuid, name: &str) -> Uuid {
     let id = Uuid::new_v4();
     change.operations.push(Operation::Folder {
         id,
@@ -111,9 +100,9 @@ fn folder(change: &mut Mutation, parent: Uuid, name: &str) -> Uuid {
     id
 }
 
-/// refreshFolderCombo: the root's subfolders, by name.
-pub fn folders(inv: &Inventory, root: Uuid) -> Vec<(Uuid, String)> {
-    let mut list: Vec<(Uuid, String)> = inv
+/// The subfolders of the favorites, by name (refreshFolderCombo, compareDict).
+pub fn subfolders(inv: &Inventory, root: Uuid) -> Vec<(Uuid, String)> {
+    let mut folders: Vec<(Uuid, String)> = inv
         .folders
         .get(&root)
         .into_iter()
@@ -121,256 +110,561 @@ pub fn folders(inv: &Inventory, root: Uuid) -> Vec<(Uuid, String)> {
         .filter_map(|id| inv.folders.get(id).filter(|f| f.info.parent == root))
         .map(|f| (f.info.id, f.info.name.clone()))
         .collect();
-    list.sort_by_cached_key(|(id, name)| (crate::natural_order::key(name), *id));
-    list
+    folders.sort_by_cached_key(|(id, name)| (name.to_lowercase(), *id));
+    folders
 }
 
-/// Whether every folder of the view is loaded (the empty message waits for
-/// it, as isCategoryComplete does).
-pub fn loaded(inv: &Inventory, folder: Uuid) -> bool {
-    let mut stack = vec![folder];
-    while let Some(id) = stack.pop() {
-        let Some(f) = inv.folders.get(&id) else {
-            return false;
-        };
-        if f.state != FetchState::Fetched {
+/// The original a row stands for, when it is one LLFindOutfitItems keeps:
+/// clothing, a body part, an object or a gesture (a broken link is none).
+fn original(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    let it = inv.items.get(&id)?;
+    let target = if it.asset_type == 24 { it.asset_id } else { it.id };
+    inv.items
+        .get(&target)
+        .filter(|t| matches!(t.asset_type, 5 | 6 | 13 | 21))
+        .map(|t| t.id)
+}
+
+/// updateList: what `shown` lists, its subfolders included
+/// (collectDescendentsIf, subfolders before the folder's own items). The
+/// whole favorites (`shown == root`) list each original once, by its first
+/// link, as a wearable may be linked in several folders.
+pub fn entries(inv: &Inventory, root: Uuid, shown: Uuid) -> Vec<Entry> {
+    let mut out = Vec::new();
+    let mut seen_folders = HashSet::new();
+    collect(inv, shown, &mut out, &mut seen_folders);
+    if shown == root {
+        let mut seen = HashSet::new();
+        out.retain(|e: &Entry| seen.insert(e.target));
+    }
+    out
+}
+
+fn collect(inv: &Inventory, id: Uuid, out: &mut Vec<Entry>, seen: &mut HashSet<Uuid>) {
+    if !seen.insert(id) {
+        return;
+    }
+    let Some(f) = inv.folders.get(&id) else { return };
+    for child in &f.children {
+        if inv.folders.get(child).is_some_and(|c| c.info.parent == id) {
+            collect(inv, *child, out, seen);
+        }
+    }
+    for item in &f.items {
+        if inv.items.get(item).is_some_and(|it| it.parent == id)
+            && let Some(target) = original(inv, *item)
+        {
+            out.push(Entry { link: *item, target });
+        }
+    }
+}
+
+/// Whether every folder of `shown` has been fetched (isCategoryComplete).
+pub fn loaded(inv: &Inventory, shown: Uuid) -> bool {
+    let mut todo = vec![shown];
+    let mut seen = HashSet::new();
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if f.state != super::inventory::FetchState::Fetched {
             return false;
         }
-        stack.extend(&f.children);
+        todo.extend(f.children.iter().copied());
     }
     true
 }
 
-/// updateList: the wearables under `shown` (LLFindOutfitItems: clothing,
-/// body parts and objects, a broken link left out), each original once.
-/// The Legacy Viewer de-duplicates the root view only; a subfolder cannot
-/// hold the same item twice here (`add` skips it), so the rule is the same.
-pub fn entries(inv: &Inventory, shown: Uuid) -> Vec<Entry> {
-    let mut seen = HashSet::new();
+/// LLWearableItemNameComparator, LLWearableItemCreationDateComparator and
+/// LLWearableItemTypeNameComparator with the window's order: clothing by
+/// wearable type then name, objects by name, body parts by wearable type
+/// then name, gestures by name.
+pub fn sort(inv: &Inventory, entries: &mut [Entry], order: SortOrder) {
+    entries.sort_by_cached_key(|e| {
+        let it = inv.items.get(&e.target);
+        let name = it.map(|it| it.name.to_uppercase()).unwrap_or_default();
+        let (rank, kind) = match it.map(|it| it.asset_type) {
+            Some(5) => (1, it.map_or(0, |it| it.flags & 0xff)),
+            Some(6) => (2, 0),
+            Some(13) => (3, it.map_or(0, |it| it.flags & 0xff)),
+            Some(21) => (4, 0),
+            _ => (5, 0),
+        };
+        let (rank, kind, recent) = match order {
+            SortOrder::Name => (0, 0, 0),
+            SortOrder::MostRecent => (0, 0, -it.map_or(0, |it| it.created_at)),
+            SortOrder::TypeName => (rank, kind, 0),
+        };
+        (rank, kind, recent, name, e.target)
+    });
+}
+
+/// The filter of the list: a case-insensitive part of the row's title, the
+/// worn tag included (LLPanelInventoryListItemBase::notify "match_filter").
+pub fn matches(filter: &str, name: &str, worn: Option<&str>) -> bool {
+    let filter = filter.trim().to_lowercase();
+    if filter.is_empty() {
+        return true;
+    }
+    let title = match worn {
+        Some(tag) => format!("{name} {tag}"),
+        None => name.to_owned(),
+    };
+    title.to_lowercase().contains(&filter)
+}
+
+/// The originals a drop links in `to` (FSWearableFavoritesItemsList::
+/// handleDragAndDrop, onItemDAD): clothing, body parts and objects of our
+/// own inventory, a link standing for its original. Those `to` already
+/// links are left out, as assign_to_favorite_folder does. Stricter than
+/// onItemDAD, which links again what the folder already holds (a second
+/// row for the same wearable) and does not refuse a Library item.
+pub fn droppable(inv: &Inventory, ids: &[Uuid], to: Uuid) -> Vec<Uuid> {
+    let present: HashSet<Uuid> = entries_in(inv, to).into_iter().map(|e| e.target).collect();
     let mut out = Vec::new();
-    let mut stack = vec![shown];
-    let mut visited = HashSet::new();
-    while let Some(id) = stack.pop() {
-        if !visited.insert(id) {
-            continue;
-        }
-        let Some(f) = inv.folders.get(&id) else {
+    for id in ids {
+        let Some(target) = super::inventory::actions::original(inv, *id) else {
             continue;
         };
-        for link in &f.items {
-            let Some(it) = inv.items.get(link).filter(|it| it.parent == id) else {
-                continue;
-            };
-            let Some(item) = actions::original(inv, it.id).filter(|o| wearable(inv, *o)) else {
-                continue;
-            };
-            if seen.insert(item) {
-                out.push(Entry { link: it.id, item });
-            }
+        let Some(it) = inv.items.get(&target) else { continue };
+        if !matches!(it.asset_type, 5 | 6 | 13)
+            || super::inventory::actions::library(inv, target)
+            || present.contains(&target)
+            || out.contains(&target)
+        {
+            continue;
         }
-        stack.extend(f.children.iter().rev());
+        out.push(target);
     }
     out
 }
 
-fn wearable(inv: &Inventory, id: Uuid) -> bool {
-    inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
-}
-
-/// The list in the chosen order. Name: the wearable's name; most recent:
-/// the link's creation date, newest first, then the name; type: the
-/// wearable lists' type order (`appearance::type_rank`), then the name;
-/// custom: the order of `saved` (the view's entry of `Orders`), the
-/// wearables it does not hold yet after it in type order.
-pub fn sort(inv: &Inventory, entries: &mut [Entry], sort: Sort, saved: &[Uuid]) {
-    let name = |id: &Uuid| crate::natural_order::key(inv.items.get(id).map_or("", |it| it.name.as_str()));
-    match sort {
-        Sort::Name => entries.sort_by_cached_key(|e| (name(&e.item), e.item)),
-        Sort::Recent => entries.sort_by_cached_key(|e| {
-            let date = inv.items.get(&e.link).map_or(0, |it| it.created_at);
-            (std::cmp::Reverse(date), name(&e.item), e.item)
-        }),
-        Sort::Type => entries.sort_by_cached_key(|e| (super::appearance::type_rank(inv.items.get(&e.item)), name(&e.item), e.item)),
-        Sort::Custom => {
-            self::sort(inv, entries, Sort::Type, &[]);
-            let place: HashMap<Uuid, usize> = saved.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-            // stable: the unsaved keep their type order, after the saved
-            entries.sort_by_key(|e| place.get(&e.item).copied().unwrap_or(usize::MAX));
-        }
-    }
-}
-
-/// `order` with the wearable at `from` moved to `to`: what a row dragged
-/// in the list leaves as the new custom order.
-pub fn moved(order: &[Uuid], from: usize, to: usize) -> Vec<Uuid> {
-    let mut out = order.to_vec();
-    if from < out.len() {
-        let item = out.remove(from);
-        out.insert(to.min(out.len()), item);
-    }
-    out
-}
-
-/// `order` with `items` put at `at` (those it already holds stay where they
-/// are): wearables dropped from the inventory between two rows.
-pub fn inserted(order: &[Uuid], at: usize, items: &[Uuid]) -> Vec<Uuid> {
-    let mut out = order.to_vec();
-    let mut seen: HashSet<Uuid> = order.iter().copied().collect();
-    let new: Vec<Uuid> = items.iter().copied().filter(|id| seen.insert(*id)).collect();
-    let at = at.min(out.len());
-    out.splice(at..at, new);
-    out
-}
-
-/// The search: every word in the wearable's name or in `detail`, the
-/// row's "type · point" line, case ignored. Wider than the Legacy
-/// LLInventoryItemsList::setFilterSubString, which matches the name only
-/// (human request, 2026-11-15: find what is worn on a point).
-pub fn matches(inv: &Inventory, entry: &Entry, filter: &str, detail: &str) -> bool {
-    let Some(it) = inv.items.get(&entry.item) else {
-        return false;
-    };
-    let text = format!("{} {}", it.name, detail).to_lowercase();
-    filter.split_whitespace().all(|word| text.contains(&word.to_lowercase()))
-}
-
-/// The wearables of `ids` a drop may add to `folder`: what
-/// FSWearableFavoritesItemsList::handleDragAndDrop accepts (body parts,
-/// clothing and objects), as their originals. A Library item has no place
-/// in the agent's own links, and a wearable already in the folder is left
-/// out instead of being linked twice (stricter than the Legacy Viewer's
-/// onItemDAD, which links it again; assign_to_favorite_folder skips it).
-pub fn addable(inv: &Inventory, folder: Uuid, ids: &[Uuid]) -> Vec<Uuid> {
-    let mut held: HashSet<Uuid> = inv
-        .folders
+/// The rows directly in `folder` (favorite_folder_contains_linked_item).
+fn entries_in(inv: &Inventory, folder: Uuid) -> Vec<Entry> {
+    inv.folders
         .get(&folder)
         .into_iter()
         .flat_map(|f| &f.items)
-        .filter_map(|id| actions::original(inv, *id))
-        .collect();
-    ids.iter()
-        .filter_map(|id| actions::original(inv, *id))
-        .filter(|id| wearable(inv, *id) && !actions::library(inv, *id))
-        .filter(|id| held.insert(*id))
+        .filter(|id| inv.items.get(id).is_some_and(|it| it.parent == folder))
+        .filter_map(|id| original(inv, *id).map(|target| Entry { link: *id, target }))
         .collect()
 }
 
-/// onItemDAD / assign_to_favorite_folder: links to `items` in `folder`.
-pub fn add(inv: &Inventory, folder: Uuid, items: &[Uuid]) -> Option<Mutation> {
-    let links: Vec<_> = items
-        .iter()
-        .filter_map(|id| inv.items.get(id))
-        .map(super::appearance::item_link)
-        .collect();
-    if links.is_empty() || !inv.folders.contains_key(&folder) {
+fn outfit_link(it: &aurora_net::inventory::InvItem) -> OutfitLink {
+    OutfitLink {
+        target: it.id,
+        name: it.name.clone(),
+        desc: it.desc.clone(),
+        folder: false,
+        inv_type: it.inv_type,
+    }
+}
+
+/// link_inventory_object for each original, into `to`.
+pub fn link(inv: &Inventory, targets: &[Uuid], to: Uuid) -> Option<Mutation> {
+    let links: Vec<OutfitLink> = targets.iter().filter_map(|id| inv.items.get(id)).map(outfit_link).collect();
+    if links.is_empty() {
         return None;
     }
     Some(Mutation {
-        operations: vec![Operation::Links { parent: folder, links }],
-        refresh: vec![folder],
+        operations: vec![Operation::Links { parent: to, links }],
+        refresh: vec![to],
         ..Default::default()
     })
 }
 
-/// handleRemove: the links to `items` under `shown` go, the wearables stay
-/// (remove_inventory_item on each link). In a tab, that tab's link; in the
-/// root view, every link to the wearable, in the root and in the tabs: the
-/// Legacy Viewer removes only the link it happened to list there, and the
-/// wearable stayed on the list while another tab held it (deliberate
-/// difference).
-pub fn remove(inv: &Inventory, shown: Uuid, items: &[Uuid]) -> Option<Mutation> {
-    let items: HashSet<Uuid> = items.iter().copied().collect();
-    let mut change = Mutation::default();
-    let mut stack = vec![shown];
-    let mut visited = HashSet::new();
-    while let Some(id) = stack.pop() {
-        if !visited.insert(id) {
-            continue;
-        }
-        let Some(f) = inv.folders.get(&id) else {
+/// What importing the Legacy Viewer's favorites does.
+#[derive(Debug)]
+pub struct Import {
+    pub change: Mutation,
+    /// The links it creates.
+    pub links: usize,
+    /// The subfolders it creates.
+    pub folders: usize,
+}
+
+/// The import of the Legacy Viewer's favorites (`#Firestorm/#Wearable
+/// Favorites`) into `favorites`: each original it links is linked at the
+/// same place of ours, its subfolders recreated by name (a subfolder of that
+/// name is reused). Nothing is copied or moved and the Legacy folder is not
+/// touched; what we already link at that place, a broken link and a Library
+/// item (as `droppable` refuses) are left out, so a second run has nothing
+/// to do. `None` when there is nothing to import, or while either tree is
+/// not fully fetched (a partial view would link twice).
+pub fn import_plan(inv: &Inventory, favorites: Uuid) -> Option<Import> {
+    let legacy = legacy_folder(inv)?;
+    if !loaded(inv, legacy) || !loaded(inv, favorites) {
+        return None;
+    }
+    let mut plan = Import {
+        change: Mutation::default(),
+        links: 0,
+        folders: 0,
+    };
+    let mut seen = HashSet::new();
+    import_folder(inv, legacy, favorites, true, &mut plan, &mut seen);
+    plan.change.refresh.sort();
+    plan.change.refresh.dedup();
+    (plan.links > 0).then_some(plan)
+}
+
+/// One Legacy folder into `to`; `existing` when `to` is ours already (a new
+/// folder has nothing in it yet).
+fn import_folder(inv: &Inventory, from: Uuid, to: Uuid, existing: bool, plan: &mut Import, seen: &mut HashSet<Uuid>) {
+    if !seen.insert(from) {
+        return;
+    }
+    let Some(f) = inv.folders.get(&from) else { return };
+    let mut have: HashSet<Uuid> = if existing {
+        entries_in(inv, to).into_iter().map(|e| e.target).collect()
+    } else {
+        HashSet::new()
+    };
+    let mut links = Vec::new();
+    for item in &f.items {
+        let Some(it) = inv.items.get(item).filter(|it| it.parent == from) else {
             continue;
         };
-        for link in &f.items {
-            let Some(it) = inv.items.get(link).filter(|it| it.parent == id && matches!(it.asset_type, 24 | 25)) else {
-                continue;
-            };
-            if actions::original(inv, it.id).is_some_and(|o| items.contains(&o)) {
-                change.operations.push(Operation::Delete { id: it.id, folder: false });
-                change.refresh.push(id);
-            }
+        let Some(target) = original(inv, it.id) else { continue };
+        if super::inventory::actions::library(inv, target) || !have.insert(target) {
+            continue;
         }
-        stack.extend(&f.children);
+        if let Some(original) = inv.items.get(&target) {
+            links.push(outfit_link(original));
+        }
     }
-    change.refresh.sort_unstable();
+    if !links.is_empty() {
+        plan.links += links.len();
+        plan.change.refresh.push(to);
+        plan.change.operations.push(Operation::Links { parent: to, links });
+    }
+    let mut subfolders: Vec<_> = f
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).filter(|c| c.info.parent == from && !c.library))
+        .map(|c| (c.info.name.clone(), c.info.id))
+        .collect();
+    subfolders.sort();
+    for (name, id) in subfolders {
+        let (dest, existing) = match existing.then(|| child(inv, to, &name)).flatten() {
+            Some(dest) => (dest, true),
+            None => {
+                // Built once into its own plan, appended only when something
+                // is linked in it (a probe plus a second pass would double
+                // the work at every level of a deep chain).
+                let dest = Uuid::new_v4();
+                let mut sub = Import {
+                    change: Mutation::default(),
+                    links: 0,
+                    folders: 0,
+                };
+                import_folder(inv, id, dest, false, &mut sub, seen);
+                if sub.links > 0 {
+                    plan.folders += 1 + sub.folders;
+                    plan.links += sub.links;
+                    plan.change.operations.push(Operation::Folder {
+                        id: dest,
+                        parent: to,
+                        name: name.clone(),
+                        type_default: -1,
+                    });
+                    plan.change.refresh.extend([to, dest]);
+                    plan.change.operations.append(&mut sub.change.operations);
+                    plan.change.refresh.append(&mut sub.change.refresh);
+                }
+                continue;
+            }
+        };
+        import_folder(inv, id, dest, existing, plan, seen);
+    }
+}
+
+/// Whether `id` is a link (an item put in the folder by hand is not).
+pub fn is_link(inv: &Inventory, id: Uuid) -> bool {
+    inv.items.get(&id).is_some_and(|it| it.asset_type == 24)
+}
+
+/// handleRemove: remove_inventory_item of each selected row. Stricter than
+/// the Legacy Viewer, which would also delete an original dropped in the
+/// folder by hand: only links are removed, an original is never deleted.
+pub fn remove(inv: &Inventory, rows: &[Uuid]) -> Option<Mutation> {
+    let mut change = Mutation::default();
+    for id in rows {
+        let Some(it) = inv.items.get(id).filter(|_| is_link(inv, *id)) else {
+            continue;
+        };
+        change.operations.push(Operation::Delete { id: *id, folder: false });
+        change.removed.push(*id);
+        change.refresh.push(it.parent);
+    }
+    change.refresh.sort();
     change.refresh.dedup();
     (!change.operations.is_empty()).then_some(change)
 }
 
-/// Custom order chosen (from the sort menu, or by a first drag): each of
-/// `views` that has no order of its own (`has` false) keeps the one it
-/// showed under `from`, instead of falling back to the type order; one
-/// that has an order gets it back.
-pub fn seeded_orders(inv: &Inventory, views: &[Uuid], from: Sort, has: impl Fn(Uuid) -> bool) -> Vec<(Uuid, Vec<Uuid>)> {
-    views
-        .iter()
-        .filter(|view| !has(**view))
-        .map(|view| {
-            let mut list = entries(inv, *view);
-            sort(inv, &mut list, from, &[]);
-            (*view, list.iter().map(|e| e.item).collect())
-        })
-        .collect()
+/// Why a folder name is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameError {
+    /// Empty once trimmed: the Legacy Viewer does nothing.
+    Empty,
+    /// "/" or "\" (FSWearableFavoritesFolderInvalidName).
+    Slash(String),
 }
 
-/// onNewFolderCallback / onRenameFolderCallback: the name trimmed, refused
-/// when empty or holding a slash (FSWearableFavoritesFolderInvalidName).
-pub fn folder_name(name: &str) -> Result<String, String> {
+/// onNewFolderCallback / onRenameFolderCallback: the trimmed name, without
+/// "/" nor "\".
+pub fn folder_name(name: &str) -> Result<String, NameError> {
     let name = name.trim();
+    if name.is_empty() {
+        return Err(NameError::Empty);
+    }
     if name.contains(['/', '\\']) {
-        return Err(aurora_i18n::tr!("ui-wearable-favorites-invalid-name", name = name.to_string()));
+        return Err(NameError::Slash(name.to_owned()));
     }
-    actions::clean_name(name)
+    Ok(aurora_net::inventory::operations::folder_name(name))
 }
 
-/// onNewFolderCallback: a subfolder of the root.
-pub fn new_folder(root: Uuid, name: &str) -> Result<(Uuid, Mutation), String> {
-    let change = actions::create_folder(root, &folder_name(name)?)?;
-    let id = match change.operations.first() {
-        Some(Operation::Folder { id, .. }) => *id,
-        _ => return Err(aurora_i18n::tr!("common-item-not-found").into()),
-    };
-    Ok((id, change))
+/// createNewCategory of a favorites folder; returns the mutation and the
+/// id asked for the new folder (AIS may give another).
+pub fn create_folder(root: Uuid, name: &str) -> (Mutation, Uuid) {
+    let mut change = Mutation::default();
+    let id = new_folder(&mut change, root, name);
+    (change, id)
 }
 
-/// onRenameFolderCallback: only a subfolder, never the root.
-pub fn rename_folder(inv: &Inventory, root: Uuid, folder: Uuid, name: &str) -> Result<Mutation, String> {
-    if folder == root || inv.folders.get(&folder).is_none_or(|f| f.info.parent != root) {
-        return Err(aurora_i18n::tr!("common-item-not-found").into());
-    }
-    actions::patch(inv, folder, aurora_llsd::llsd_map! { "name" => folder_name(name)? })
-}
-
-/// onDeleteFolderCallback: a subfolder and its links (remove_inventory_category);
-/// never the root, and nothing but links inside, so no wearable is lost
-/// with it. Its contents must be known: a folder not read yet looks empty,
-/// and the delete cannot be undone.
-pub fn delete_folder(inv: &Inventory, root: Uuid, folder: Uuid) -> Option<Mutation> {
-    let f = inv.folders.get(&folder).filter(|f| f.info.parent == root && folder != root)?;
-    let only_links = f.state == FetchState::Fetched
-        && f.children.is_empty()
-        && f.items
-            .iter()
-            .all(|id| inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 24 | 25)));
-    if !only_links {
-        return None;
-    }
+/// update_inventory_category with the new name.
+pub fn rename_folder(inv: &Inventory, id: Uuid, name: &str) -> Option<Mutation> {
+    let parent = inv.folders.get(&id)?.info.parent;
     Some(Mutation {
-        operations: vec![Operation::Delete { id: folder, folder: true }],
-        refresh: vec![root],
+        operations: vec![Operation::Patch {
+            id,
+            folder: true,
+            body: llsd_map! { "name" => name.to_owned() },
+        }],
+        refresh: vec![parent, id],
         ..Default::default()
     })
 }
 
+/// Whether the folder or a subfolder holds an item that is not a link (an
+/// original put there by hand or moved in): deleting the folder would delete
+/// it too.
+pub fn holds_originals(inv: &Inventory, id: Uuid) -> bool {
+    let mut todo = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(f) = todo.pop() {
+        if !seen.insert(f) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&f) else { continue };
+        if f.items.iter().any(|item| inv.items.contains_key(item) && !is_link(inv, *item)) {
+            return true;
+        }
+        todo.extend(f.children.iter().copied());
+    }
+    false
+}
+
+/// remove_inventory_category: the folder and its links. Stricter than the
+/// Legacy Viewer: `None` while the folder holds an original anywhere in its
+/// subtree (`holds_originals`) or while a subfolder is not fetched yet
+/// (`loaded`), so that no original is ever deleted.
+pub fn delete_folder(inv: &Inventory, id: Uuid) -> Option<Mutation> {
+    // An unfetched subfolder may hold an original that is not known yet.
+    if !loaded(inv, id) || holds_originals(inv, id) {
+        return None;
+    }
+    let parent = inv.folders.get(&id)?.info.parent;
+    let mut removed = vec![id];
+    let mut todo = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(f) = todo.pop().filter(|f| seen.insert(*f)).and_then(|f| inv.folders.get(&f)) {
+        removed.extend(f.items.iter().copied());
+        removed.extend(f.children.iter().copied());
+        todo.extend(f.children.iter().copied());
+    }
+    Some(Mutation {
+        operations: vec![Operation::Delete { id, folder: true }],
+        refresh: vec![parent],
+        removed,
+        ..Default::default()
+    })
+}
+
+/// `AURORA_DEMO_WEARABLE_FAVORITES`: the favorites of the Appearance demo
+/// (`appearance::seed_demo`): worn and spare clothing, attachments and body
+/// parts, and an "Evening" folder holding two of them.
+pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::{FetchState, Folder};
+    let folder = |inv: &mut Inventory, id: Uuid, parent: Uuid, name: &str| {
+        inv.folders.insert(
+            id,
+            Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(p) = inv.folders.get_mut(&parent)
+            && !p.children.contains(&id)
+        {
+            p.children.push(id);
+        }
+    };
+    let root = inv.root;
+    let brand = child(inv, root, ROOT).unwrap_or(Uuid::from_u128(780));
+    if !inv.folders.contains_key(&brand) {
+        folder(inv, brand, root, ROOT);
+    }
+    let favorites = Uuid::from_u128(781);
+    let evening = Uuid::from_u128(782);
+    folder(inv, favorites, brand, FOLDER);
+    folder(inv, evening, favorites, "Evening");
+    // the originals' creation dates, for "Sort by most recent"
+    for (n, id) in (710..724).enumerate() {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(id)) {
+            it.created_at = 1_700_000_000 + (n as i64 * 86_400);
+        }
+    }
+    let links = |ids: &[u128]| -> Vec<OutfitLink> {
+        ids.iter()
+            .filter_map(|id| inv.items.get(&Uuid::from_u128(*id)))
+            .map(|it| OutfitLink {
+                target: it.id,
+                name: it.name.clone(),
+                desc: it.desc.clone(),
+                folder: false,
+                inv_type: it.inv_type,
+            })
+            .collect()
+    };
+    // hair (body part), tattoo and jacket (worn), spare shirt, mesh hair
+    // and boots (worn), the spare attachment
+    let top = links(&[712, 714, 715, 722, 717, 720, 723]);
+    let night = links(&[715, 719]);
+    super::appearance::demo_replace(inv, agent, evening, &night);
+    // the folder's contents with its subfolder: a read lists both
+    let evening_info = inv.folders[&evening].info.clone();
+    let items = top
+        .iter()
+        .map(|l| aurora_net::inventory::InvItem {
+            id: Uuid::new_v4(),
+            parent: favorites,
+            name: l.name.clone(),
+            desc: l.desc.clone(),
+            asset_type: 24,
+            inv_type: l.inv_type,
+            asset_id: l.target,
+            creator: agent,
+            owner: agent,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        })
+        .collect();
+    inv.apply(vec![aurora_net::inventory::FolderContents {
+        folder_id: favorites,
+        owner_id: agent,
+        version: 2,
+        folders: vec![evening_info],
+        items,
+    }]);
+}
+
+/// `AURORA_DEMO_WEARABLE_FAVORITES=import`: the Legacy Viewer's folder next
+/// to ours (`#Firestorm/#Wearable Favorites`): one link ours has already,
+/// one it lacks, a broken link, an "Evening" subfolder (ours exists) and a
+/// "Party" one (ours does not).
+pub fn seed_demo_legacy(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::{FetchState, Folder};
+    let root = inv.root;
+    let folder = |inv: &mut Inventory, id: u128, parent: Uuid, name: &str| {
+        let id = Uuid::from_u128(id);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+        id
+    };
+    let brand = folder(inv, 790, root, LEGACY_ROOT);
+    let favorites = folder(inv, 791, brand, FOLDER);
+    let evening = folder(inv, 792, favorites, "Evening");
+    let party = folder(inv, 793, favorites, "Party");
+    let links = |inv: &Inventory, ids: &[u128]| -> Vec<OutfitLink> {
+        ids.iter()
+            .filter_map(|id| inv.items.get(&Uuid::from_u128(*id)))
+            .map(outfit_link)
+            .collect()
+    };
+    let mut top = links(inv, &[712, 713]);
+    top.push(OutfitLink {
+        target: Uuid::from_u128(799),
+        name: "Sold long ago".into(),
+        desc: String::new(),
+        folder: false,
+        inv_type: 18,
+    });
+    let night = links(inv, &[715, 716]);
+    let fun = links(inv, &[718, 721]);
+    // the contents of each folder with its subfolders: a read lists both
+    for (id, links) in [(evening, night), (party, fun), (favorites, top)] {
+        let folders = inv.folders[&id]
+            .children
+            .iter()
+            .filter_map(|c| inv.folders.get(c).map(|f| f.info.clone()))
+            .collect();
+        let items = links
+            .iter()
+            .map(|l| aurora_net::inventory::InvItem {
+                id: Uuid::new_v4(),
+                parent: id,
+                name: l.name.clone(),
+                desc: l.desc.clone(),
+                asset_type: 24,
+                inv_type: l.inv_type,
+                asset_id: l.target,
+                creator: agent,
+                owner: agent,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
+            })
+            .collect();
+        inv.apply(vec![aurora_net::inventory::FolderContents {
+            folder_id: id,
+            owner_id: agent,
+            version: 2,
+            folders,
+            items,
+        }]);
+    }
+}
+
 #[cfg(test)]
-#[path = "wearable_favorites_tests.rs"]
 mod tests;

@@ -16,9 +16,11 @@
 //!
 //! When a report puts an object elsewhere than where it was drawn, the gap
 //! is not shown at once: it fades with the Legacy Viewer's half-life of
-//! 0.06 s ([`Correction`]), for avatars and for objects at rest. An object
-//! the report sets moving jumps there, as in LLViewerObject::updateDrawable
-//! (a looping keyframed motion restarts at its first frame, #2328).
+//! 0.06 s ([`Correction`]), for avatars and for objects at rest, the prims
+//! below a HUD linkset's root included (#3369); the root itself shows the
+//! report at once. An object the report sets moving jumps there, as in
+//! LLViewerObject::updateDrawable (a looping keyframed motion restarts at
+//! its first frame, #2328).
 //!
 //! The root an avatar sits on goes further ([`damp`]): its drawn pose
 //! follows its reported motion with that half-life every frame, moving or

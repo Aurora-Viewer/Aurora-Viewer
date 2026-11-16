@@ -113,6 +113,8 @@ pub enum Action {
         items: Vec<Uuid>,
     },
     ShowOriginal(Uuid),
+    /// Activate (true) or deactivate the gestures among favorite rows.
+    Gesture(Vec<Uuid>, bool),
     Favorite(Uuid),
     Category(Uuid, aurora_net::outfits::categories::Update),
     Folders(aurora_net::inventory::operations::Mutation),
@@ -272,22 +274,7 @@ pub fn folder_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
     links
 }
 
-/// The wearable-type group of an item in the type-name order of the
-/// wearable lists (LLWearableItemTypeNameComparator, llwearableitemslist.cpp):
-/// body parts, clothing, then objects (system wearables above attachments,
-/// as requested in #1356), each by wearable type; anything else after, a
-/// missing item last.
-pub fn type_rank(it: Option<&InvItem>) -> (u8, u32) {
-    match it {
-        Some(it) if it.asset_type == 13 => (0, it.flags & 0xff),
-        Some(it) if it.asset_type == 5 => (1, it.flags & 0xff),
-        Some(it) if it.asset_type == 6 => (2, 0),
-        Some(_) => (3, 0),
-        None => (4, 0),
-    }
-}
-
-pub(crate) fn item_link(it: &InvItem) -> OutfitLink {
+pub(super) fn item_link(it: &InvItem) -> OutfitLink {
     OutfitLink {
         target: it.id,
         name: it.name.clone(),
@@ -996,6 +983,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = current;
         }
         Action::ShowOriginal(_)
+        | Action::Gesture(..)
         | Action::Favorite(_)
         | Action::OutfitImage(_)
         | Action::OutfitSnapshot(_)
