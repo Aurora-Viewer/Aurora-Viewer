@@ -928,7 +928,21 @@ pub fn folder_path(inv: &Inventory, id: Uuid) -> String {
 /// A folder a rule may send entries to: the user's own, not a system
 /// folder that refuses moves (`actions::destination`).
 pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
-    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id)
+    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id) && !in_default_folder(inv, id)
+}
+
+/// `id` is a default folder other than Objects (Clothing, Lost and Found…)
+/// or inside one. Unlocking such a folder lets Auto-sort take entries out
+/// of it, never file entries into it: a rule never sends anything there.
+fn in_default_folder(inv: &Inventory, id: Uuid) -> bool {
+    std::iter::once(id)
+        .chain(actions::ancestors(inv, id))
+        .filter(|a| *a != inv.root)
+        .any(|a| {
+            inv.folders
+                .get(&a)
+                .is_some_and(|f| !matches!(f.info.type_default, -1 | OPEN_DEFAULT))
+        })
 }
 
 /// `id` is the Pre-Trash folder or inside it: what is there is on its way
@@ -941,7 +955,9 @@ fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
 /// and the Pre-Trash folder itself (undoing "Move to Trash" puts its
 /// entries back there, where the user left them).
 pub fn restore_target_allowed(inv: &Inventory, id: Uuid) -> bool {
-    target_allowed(inv, id)
+    // (inside an unlocked default folder too: an entry goes back where it
+    // was taken from)
+    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id)
         || pre_trash(inv) == Some(id) && folder_open(inv, id) && actions::destination(inv, id)
         // the ordinary default folder an entry came from (Animations,
         // Clothing…), locked again since the run: putting it back is a drag
@@ -1999,13 +2015,34 @@ pub struct CleanupRow {
 
 #[derive(Debug, Default, Clone)]
 pub struct CleanupPlan {
+    /// In [`CleanupRow::group`] order.
     pub rows: Vec<CleanupRow>,
+    /// The items all rows hold.
+    pub items: usize,
     pub cutoff: i64,
     /// Folders not loaded yet: the window asks for them, the list fills in.
     pub unfetched: Vec<Uuid>,
 }
 
+impl CleanupRow {
+    /// The list's group: folders with items (they go whole), empty
+    /// folders, then each kind in the filter's order.
+    pub fn group(&self) -> usize {
+        match (self.folder, self.kind) {
+            (true, _) if self.items > 0 => 0,
+            (true, _) => 1,
+            (false, Some(kind)) => 2 + Kind::ALL.iter().position(|k| *k == kind).unwrap_or(Kind::ALL.len()),
+            (false, None) => 2 + Kind::ALL.len(),
+        }
+    }
+}
+
 impl CleanupPlan {
+    /// The rows by group, each one slice of `rows`.
+    pub fn groups(&self) -> impl Iterator<Item = &[CleanupRow]> {
+        self.rows.chunk_by(|a, b| a.group() == b.group())
+    }
+
     /// The moves to Pre-Trash of the rows not in `skipped`.
     pub fn moves(&self, skipped: &HashSet<Uuid>) -> Vec<Move> {
         self.rows
@@ -2153,8 +2190,15 @@ pub fn plan_cleanup(
     }
     plan.unfetched.sort_unstable();
     plan.unfetched.dedup();
-    plan.rows
-        .sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.name.cmp(&b.name)));
+    // by group (the list's order, so each group is one slice, never
+    // filtered again per frame), then oldest first
+    plan.rows.sort_by(|a, b| {
+        a.group()
+            .cmp(&b.group())
+            .then_with(|| a.created.cmp(&b.created))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    plan.items = plan.rows.iter().map(|r| r.items).sum();
     plan
 }
 

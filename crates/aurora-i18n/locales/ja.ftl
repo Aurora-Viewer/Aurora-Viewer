@@ -14317,6 +14317,7 @@ inventory-sorter-undo-stays = { $count }件はそのままです（手動で移�
 inventory-sorter-undo-nothing = 最近の整理には元に戻せるものがありません（手動で移動済み、削除済み、または自動整理が触れない場所）。
 inventory-sorter-undo-loading = 最近の整理で移動先になったフォルダを読み込んでいます。読み込みが終わると取り消しのプレビューが開きます。
 inventory-sorter-busy-elsewhere = 自動整理はすでに別のインベントリウィンドウで実行中です。そちらの完了をお待ちください。
+inventory-sorter-history-loading = 自動整理の履歴を読み込み中です。少し待ってからもう一度お試しください。
 inventory-sorter-trash-gone = （インベントリにありません）
 inventory-sorter-trash-more = …ほか{ $count }件
 inventory-sorter-vocab-title = 語彙チェック

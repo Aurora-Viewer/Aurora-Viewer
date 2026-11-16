@@ -195,7 +195,28 @@ impl<T: Send + 'static> Planning<T> {
         cleanup: Option<(sorter::Cleanup, Uuid, i64)>,
         make: impl FnOnce(&Inventory) -> T + Send + 'static,
     ) -> Self {
-        let copy = sorter::snapshot(inv);
+        // one copy per inventory change, shared by every plan made of it (the
+        // preview's and Clean up's, every window's): a 400,000-item
+        // inventory is copied once, not once per planner. Held only while a
+        // planner reads it.
+        type Shared = Option<(usize, u64, std::sync::Weak<Inventory>)>;
+        static LAST: std::sync::Mutex<Shared> = std::sync::Mutex::new(None);
+        let key = (std::ptr::from_ref(inv) as usize, inv.generation);
+        let copy = {
+            let mut last = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match last
+                .as_ref()
+                .filter(|(at, generation, _)| (*at, *generation) == key)
+                .and_then(|(_, _, copy)| copy.upgrade())
+            {
+                Some(copy) => copy,
+                None => {
+                    let copy = std::sync::Arc::new(sorter::snapshot(inv));
+                    *last = Some((key.0, key.1, std::sync::Arc::downgrade(&copy)));
+                    copy
+                }
+            }
+        };
         let (send, result) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             // the window may be gone by now: nobody to tell
@@ -236,20 +257,42 @@ struct SharedJournal(
     /// The window whose run or Trash run is going, and when it last said so:
     /// one at a time per account, so two windows never mix their runs.
     std::sync::Arc<std::sync::Mutex<Option<(Uuid, Instant)>>>,
+    /// Changed since its file was last written: a save queued while an
+    /// earlier one waits is done by that one (it reads the journal when it
+    /// runs), never twice.
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
 );
 
 impl SharedJournal {
-    /// The account's journal, read from its file the first time.
-    fn of(account: Uuid, read: impl FnOnce() -> sorter::journal::Journal) -> Self {
+    /// The account's journal, read from its file the first time, on a
+    /// thread of its own: until it is read the journal is `loading`.
+    fn of(account: Uuid, read: impl FnOnce() -> sorter::journal::Journal + Send + 'static) -> Self {
         static JOURNALS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Uuid, SharedJournal>>> = std::sync::OnceLock::new();
         let journals = JOURNALS.get_or_init(Default::default);
         let mut journals = journals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         journals
             .entry(account)
             .or_insert_with(|| {
-                let mut journal = read();
-                journal.number_runs();
-                Self(std::sync::Arc::new(std::sync::Mutex::new(journal)), Default::default())
+                let shared = Self(
+                    std::sync::Arc::new(std::sync::Mutex::new(sorter::journal::Journal {
+                        loading: true,
+                        read_only: true,
+                        ..Default::default()
+                    })),
+                    Default::default(),
+                    Default::default(),
+                );
+                let slot = shared.clone();
+                let load = move || {
+                    let mut journal = read();
+                    journal.number_runs();
+                    slot.with(|j| *j = journal);
+                };
+                if let Err(error) = std::thread::Builder::new().name("auto-sort history".into()).spawn(load) {
+                    log::warn!("auto-sort: the history could not be read ({error}): Undo starts empty");
+                    shared.with(|j| j.loading = false);
+                }
+                shared
             })
             .clone()
     }
@@ -282,6 +325,17 @@ impl SharedJournal {
     #[cfg(test)]
     fn holds(&self, window: Uuid) -> bool {
         self.runner().is_some_and(|(other, _)| other == window)
+    }
+
+    /// What the writer saves: a copy taken on the writer's thread, never
+    /// on the frame (a large run's journal is hundreds of thousands of
+    /// entries), and only when it changed since the last save. A journal
+    /// whose file could not be read is never written over it.
+    fn for_save(&self) -> Option<sorter::journal::Journal> {
+        if !self.2.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            return None;
+        }
+        self.with(|j| (!j.read_only).then(|| j.clone()))
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut sorter::journal::Journal) -> R) -> R {
@@ -514,6 +568,8 @@ struct Job {
     /// Entries of a refused batch to show back in the folder they were in
     /// (id, folder, that folder): the server did not say where they are.
     put_back: Vec<(Uuid, bool, Uuid)>,
+    /// The inventory generation `unsure` was last read at.
+    settled_at: Option<u64>,
     /// The move that wait is for, and whether for its own subfolders: a
     /// new move or another kind of wait starts the clock again.
     waiting_for: Option<(Uuid, bool)>,
@@ -540,7 +596,7 @@ struct Job {
     base_id: Option<Uuid>,
     /// How many moves the run-to-resume file held when last written (None:
     /// not written yet). It is written again only once the run shrank by a
-    /// fifth: a large run's whole queue is not copied every few seconds,
+    /// half: a large run's whole queue is not copied every few seconds,
     /// and a resume drops the moves already done.
     unfinished_len: Option<usize>,
 }
@@ -586,6 +642,7 @@ impl Job {
             base_id: None,
             waiting_for: None,
             put_back: Vec::new(),
+            settled_at: None,
             unfinished_len: None,
         }
     }
@@ -673,9 +730,11 @@ impl Job {
     /// applied them late, or in part): done and journaled, out of the queue
     /// or of the failed count. The rest stay unsure until the job ends.
     fn settle(&mut self, inv: &Inventory) {
-        if self.unsure.is_empty() {
+        // read again only when the inventory changed (an arrival is one)
+        if self.unsure.is_empty() || self.settled_at == Some(inv.generation) {
             return;
         }
+        self.settled_at = Some(inv.generation);
         let base = self.base.clone();
         let flying: HashSet<Uuid> = self.in_flight.iter().flat_map(|b| b.moves.iter().map(|m| m.id)).collect();
         let mut arrived = Vec::new();
@@ -695,11 +754,19 @@ impl Job {
             }
             !here
         });
+        // a requeued move waits at the front of the queue: only the front is
+        // looked at, never the whole queue once per arrival
+        let requeued: HashSet<Uuid> = arrived.iter().filter(|(_, failed)| !failed).map(|(m, _)| m.id).collect();
+        if !requeued.is_empty() {
+            let front = self.queue.len().min(sorter::BATCH * 4);
+            let at: Vec<usize> = (0..front).filter(|&i| requeued.contains(&self.queue[i].id)).collect();
+            for i in at.into_iter().rev() {
+                self.queue.remove(i);
+            }
+        }
         for (m, failed) in arrived {
             if failed {
                 self.failed = self.failed.saturating_sub(1);
-            } else if let Some(at) = self.queue.iter().position(|q| q.id == m.id) {
-                self.queue.remove(at);
             }
             self.done += 1;
             self.confirmed.push(sorter::journal::Entry {
@@ -715,6 +782,7 @@ impl Job {
     /// A failed batch's moves, unsure until found or forgotten: once each
     /// (a later failure of the same move replaces the earlier one).
     fn mark_unsure(&mut self, moves: &[Move], failed: bool, now: Instant) {
+        self.settled_at = None;
         self.unsure.retain(|(m, _, _)| !moves.iter().any(|b| b.id == m.id));
         self.unsure.extend(moves.iter().cloned().map(|m| (m, failed, now)));
     }
@@ -749,7 +817,8 @@ impl State {
         self.account = Some(agent);
         let dir = crate::settings::account_dir(&agent);
         use sorter::journal as j;
-        self.journal = SharedJournal::of(agent, || match j::load(&j::journal_path(&dir)) {
+        let path = j::journal_path(&dir);
+        self.journal = SharedJournal::of(agent, move || match j::load(&path) {
             Ok(journal) => journal,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(error)
@@ -769,8 +838,8 @@ impl State {
             Err(error) => {
                 // kept aside, never written over: the history stays for a
                 // newer viewer or a look by hand
-                let aside = j::journal_path(&dir).with_extension(format!("bad-{}.json.gz", unix_now()));
-                let kept = std::fs::rename(j::journal_path(&dir), &aside).is_ok();
+                let aside = path.with_extension(format!("bad-{}.json.gz", unix_now()));
+                let kept = std::fs::rename(&path, &aside).is_ok();
                 log::warn!("auto-sort: the journal could not be read ({error}); kept aside: {kept}");
                 Default::default()
             }
@@ -786,7 +855,8 @@ impl State {
         self.unsaved = 0;
         let Some(dir) = self.account_dir() else { return };
         // a journal whose file could not be read is never written over it
-        let journal = self.journal.with(|j| (!j.read_only).then(|| j.clone()));
+        let journal = self.journal.clone();
+        journal.2.store(true, std::sync::atomic::Ordering::Release);
         // only the window whose run is going (or just ended) writes or
         // removes the run to resume: another one's save leaves it alone
         let owns_run = self.job.is_some() || std::mem::take(&mut self.job_just_ended);
@@ -796,11 +866,12 @@ impl State {
             self.unfinished = None;
         }
         // the run to resume is written at its start and again each time it
-        // shrank by a fifth, never its whole queue every few seconds
+        // shrank by half, never its whole queue every few seconds (a dozen
+        // copies over a 400,000-move run; a resume drops what was done)
         let mut keep_file = false;
         if let Some(job) = self.job.as_mut() {
             let remaining = job.queue.len() + job.in_flight.as_ref().map_or(0, |batch| batch.moves.len());
-            if remaining > 0 && job.run.is_some() && job.unfinished_len.is_some_and(|last| remaining * 5 > last * 4) {
+            if remaining > 0 && job.run.is_some() && job.unfinished_len.is_some_and(|last| remaining * 2 > last) {
                 keep_file = true;
             } else {
                 job.unfinished_len = Some(remaining);
@@ -808,7 +879,7 @@ impl State {
         }
         if keep_file {
             in_order(move || {
-                if let Some(journal) = journal
+                if let Some(journal) = journal.for_save()
                     && let Err(error) = sorter::journal::save(&sorter::journal::journal_path(&dir), &journal)
                 {
                     log::warn!("auto-sort: the journal could not be saved: {error}");
@@ -831,7 +902,7 @@ impl State {
         });
         in_order(move || {
             use sorter::journal as j;
-            if let Some(journal) = journal
+            if let Some(journal) = journal.for_save()
                 && let Err(error) = j::save(&j::journal_path(&dir), &journal)
             {
                 log::warn!("auto-sort: the journal could not be saved: {error}");
@@ -2288,6 +2359,8 @@ fn send_trash_batch(
         st.sorter.trash = None;
         st.sorter.cleanup = None;
         st.sorter.skipped.clear();
+        // written now, like a sort's end: its window may close this frame
+        st.sorter.save_progress();
         st.sorter.journal.release(st.sorter.window);
         return;
     }
@@ -2635,6 +2708,12 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
 /// Another inventory window is running Auto-sort on this account: nothing
 /// starts here meanwhile (its status says so).
 fn busy_elsewhere(state: &mut State) -> bool {
+    // the history still being read: nothing starts before it is (a run
+    // would be journaled into a copy about to be replaced)
+    if state.journal.with(|j| j.loading) {
+        state.status = aurora_i18n::tr!("inventory-sorter-history-loading").into();
+        return true;
+    }
     let busy = state.journal.busy_elsewhere(state.window);
     if busy {
         state.status = aurora_i18n::tr!("inventory-sorter-busy-elsewhere").into();
@@ -2658,7 +2737,11 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
         state.status = aurora_i18n::tr!("inventory-sorter-nothing").into();
         return;
     }
-    let mut job = Job::new(plan.moves.iter().cloned().collect(), sorter::base_name_in(inv, &prefs.sorter));
+    // the preview's moves become the run's queue, not a copy of them (a
+    // whole inventory's are hundreds of megabytes); the preview is made
+    // again once the run ends
+    let moves = state.preview.take().map(|(_, _, plan)| plan.moves).unwrap_or_default();
+    let mut job = Job::new(moves.into(), sorter::base_name_in(inv, &prefs.sorter));
     job.base_id = sorter::base_folder(inv, &prefs.sorter);
     if let Some(Source::Saved(_, restoring)) = &state.source {
         job.restoring = Some(*restoring);
@@ -3021,14 +3104,21 @@ fn cleanup_tab(
         ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-nothing", date = date.as_str())).color(p.muted));
         return;
     }
-    let going: Vec<_> = plan.rows.iter().filter(|r| !skipped.contains(&r.id)).collect();
-    let items: usize = going.iter().map(|r| r.items).sum();
+    // what goes: all rows but the few unticked (never a pass over every row
+    // per frame)
+    let kept: Vec<&sorter::CleanupRow> = if skipped.is_empty() {
+        Vec::new()
+    } else {
+        plan.rows.iter().filter(|r| skipped.contains(&r.id)).collect()
+    };
+    let going_count = plan.rows.len() - kept.len();
+    let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
     ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())).strong());
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let size = Vec2::new(0.0, 26.0);
-        let enabled = !going.is_empty() && !busy && free;
-        let label = aurora_i18n::tr!("inventory-cleanup-to-pre-trash", count = going.len());
+        let enabled = going_count > 0 && !busy && free;
+        let label = aurora_i18n::tr!("inventory-cleanup-to-pre-trash", count = going_count);
         if ui
             .add_enabled_ui(enabled, |ui| {
                 action_button(ui, p, "trash-filled", &label, ActionKind::Primary, size)
@@ -3038,7 +3128,7 @@ fn cleanup_tab(
         {
             *cleanup_action = Some(CleanupAction::PreTrash);
         }
-        let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going.len());
+        let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going_count);
         if ui
             .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
             .inner
@@ -3048,23 +3138,15 @@ fn cleanup_tab(
         }
     });
     ui.add_space(6.0);
-    // folders first (they go whole), then each kind in the filter's order
-    let mut groups: Vec<(String, Vec<&sorter::CleanupRow>)> = Vec::new();
-    let folders: Vec<_> = plan.rows.iter().filter(|r| r.folder && r.items > 0).collect();
-    if !folders.is_empty() {
-        groups.push((aurora_i18n::tr!("inventory-cleanup-folders").to_owned(), folders));
-    }
-    let empty: Vec<_> = plan.rows.iter().filter(|r| r.folder && r.items == 0).collect();
-    if !empty.is_empty() {
-        groups.push((aurora_i18n::tr!("inventory-cleanup-empty-group").to_owned(), empty));
-    }
-    for kind in Kind::ALL {
-        let rows: Vec<_> = plan.rows.iter().filter(|r| r.kind == Some(kind)).collect();
-        if !rows.is_empty() {
-            groups.push((kind.label().to_owned(), rows));
-        }
-    }
-    for (label, rows) in groups {
+    // folders first (they go whole), then each kind in the filter's order:
+    // the plan's rows are in that order, each group one slice
+    for rows in plan.groups() {
+        let label = match (rows[0].folder, rows[0].kind) {
+            (true, _) if rows[0].items > 0 => aurora_i18n::tr!("inventory-cleanup-folders").to_owned(),
+            (true, _) => aurora_i18n::tr!("inventory-cleanup-empty-group").to_owned(),
+            (false, Some(kind)) => kind.label().to_owned(),
+            (false, None) => continue,
+        };
         let title = format!("{label}  ({})", rows.len());
         collapsing(ui, p, ("inventory_cleanup_group", &label), title, false, |ui| {
             for row in rows.iter().take(CLEANUP_ROWS) {

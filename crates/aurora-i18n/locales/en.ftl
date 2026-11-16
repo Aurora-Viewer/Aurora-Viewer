@@ -14427,6 +14427,7 @@ inventory-sorter-undo-stays = { $count ->
 inventory-sorter-undo-nothing = Nothing of the last runs can be put back: their entries were moved on by hand, are gone, or are in places Auto-sort may not touch.
 inventory-sorter-undo-loading = Loading the folders the last runs moved things into; the Undo preview opens once they are loaded.
 inventory-sorter-busy-elsewhere = Auto-sort is already running in another inventory window: wait for it to finish there.
+inventory-sorter-history-loading = Auto-sort's history is still being read; try again in a moment.
 inventory-sorter-trash-gone = (no longer in the inventory)
 inventory-sorter-trash-more = …and { $count } more
 inventory-sorter-vocab-title = Vocabulary check

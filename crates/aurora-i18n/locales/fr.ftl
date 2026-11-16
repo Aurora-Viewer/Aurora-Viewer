@@ -14432,6 +14432,7 @@ inventory-sorter-undo-stays = { $count ->
 inventory-sorter-undo-nothing = Rien des derniers tris ne peut être remis en place : leurs éléments ont été déplacés à la main, ont disparu, ou sont dans des endroits que le tri automatique ne touche pas.
 inventory-sorter-undo-loading = Chargement des dossiers où les derniers tris ont rangé les éléments ; l'aperçu de l'annulation s'ouvre une fois qu'ils sont chargés.
 inventory-sorter-busy-elsewhere = Le tri automatique tourne déjà dans une autre fenêtre d’inventaire : attendez qu’il y termine.
+inventory-sorter-history-loading = L'historique du tri automatique est encore en lecture ; réessayez dans un instant.
 inventory-sorter-trash-gone = (n’est plus dans l’inventaire)
 inventory-sorter-trash-more = …et { $count } de plus
 inventory-sorter-vocab-title = Vérification du vocabulaire

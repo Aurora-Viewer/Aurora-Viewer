@@ -71,6 +71,10 @@ pub struct Journal {
     /// session's runs are kept in memory only, the file never written over.
     #[serde(skip)]
     pub read_only: bool,
+    /// Its file is being read off the frame (a large history is hundreds of
+    /// megabytes of text): no run starts and nothing is written meanwhile.
+    #[serde(skip)]
+    pub loading: bool,
 }
 
 impl Journal {
@@ -202,6 +206,7 @@ impl Journal {
 pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> (Vec<Move>, usize) {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let trash = actions::system(inv, 14);
+    let mut targets = Targets::new(inv);
     let mut moves = Vec::new();
     let mut skipped = 0;
     // the newest move of an entry wins: undo puts it where it was first
@@ -227,7 +232,7 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
             skipped += 1;
             continue;
         }
-        if !where_run_left || !restore_target_allowed(inv, entry.from) || !restorable(inv, entry.id, protected, &holds_worn) {
+        if !where_run_left || !targets.allowed(entry.from) || !restorable(inv, entry.id, protected, &holds_worn) {
             skipped += 1;
             continue;
         }
@@ -239,22 +244,61 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
             (true, None, Some(it)) => it.name.as_str(),
             _ => entry.name.as_str(),
         };
-        moves.push(restore_move(inv, entry.id, folder.is_some(), name, now, entry.from));
+        moves.push(restore_move(
+            entry.id,
+            folder.is_some(),
+            name,
+            now,
+            entry.from,
+            targets.label(entry.from),
+        ));
     }
     moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
     (moves, skipped)
 }
 
-fn restore_move(inv: &Inventory, id: Uuid, folder: bool, name: &str, from: Uuid, to: Uuid) -> Move {
+fn restore_move(id: Uuid, folder: bool, name: &str, from: Uuid, to: Uuid, label: String) -> Move {
     Move {
         id,
         folder,
         name: name.to_owned(),
         from,
         to: Dest::Folder(to),
-        label: folder_path(inv, to),
+        label,
         unpacker: false,
         restore: true,
+    }
+}
+
+/// What a restore asks of each folder an entry goes back to, worked out
+/// once per folder: a layout or an Undo of a large run puts hundreds of
+/// thousands of entries back into a few thousand folders.
+struct Targets<'a> {
+    inv: &'a Inventory,
+    pre_trash: HashSet<Uuid>,
+    allowed: HashMap<Uuid, bool>,
+    labels: HashMap<Uuid, String>,
+}
+
+impl<'a> Targets<'a> {
+    fn new(inv: &'a Inventory) -> Self {
+        Self {
+            inv,
+            pre_trash: super::pre_trash_folders(inv),
+            allowed: HashMap::new(),
+            labels: HashMap::new(),
+        }
+    }
+
+    /// `restore_target_allowed`, remembered.
+    fn allowed(&mut self, to: Uuid) -> bool {
+        let inv = self.inv;
+        *self.allowed.entry(to).or_insert_with(|| restore_target_allowed(inv, to))
+    }
+
+    fn label(&mut self, to: Uuid) -> String {
+        let inv = self.inv;
+        self.labels.entry(to).or_insert_with(|| folder_path(inv, to)).clone()
     }
 }
 
@@ -349,6 +393,7 @@ pub fn restore_moves(
         .map(|(id, _, _)| *id)
         .chain(snapshot.folders.iter().map(|(id, ..)| *id))
         .collect();
+    let mut targets = Targets::new(inv);
     let mut consider = |id: Uuid, folder: bool, name: &str, was_in: Uuid| {
         let Some(now) = actions::parent(inv, id) else {
             summary.gone += 1;
@@ -363,8 +408,8 @@ pub fn restore_moves(
         }
         // a layout puts nothing back into Pre-Trash: what the user took
         // out of it stays out (only Undo of a Trash run goes back there)
-        let into_pre_trash = super::pre_trash_folders(inv).contains(&was_in);
-        if !inv.folders.contains_key(&was_in) || into_pre_trash || !restore_target_allowed(inv, was_in) {
+        let into_pre_trash = targets.pre_trash.contains(&was_in);
+        if !inv.folders.contains_key(&was_in) || into_pre_trash || !targets.allowed(was_in) {
             summary.folder_gone += 1;
             return;
         }
@@ -372,7 +417,7 @@ pub fn restore_moves(
             summary.kept += 1;
             return;
         }
-        let mut m = restore_move(inv, id, folder, name, now, was_in);
+        let mut m = restore_move(id, folder, name, now, was_in, targets.label(was_in));
         if !moved_by_runs.contains(&id) {
             summary.by_hand += 1;
             m.label = format!("{by_hand_label} · {}", m.label);
