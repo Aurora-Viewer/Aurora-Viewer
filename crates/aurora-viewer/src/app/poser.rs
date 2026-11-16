@@ -26,6 +26,21 @@ impl App {
             consent.demo_accept(&self.world, peer, std::time::Duration::from_millis(1500));
             self.world.poser_consent = consent;
         }
+        // the scripted modes, for screenshots (with
+        // AURORA_DEMO_AVATAR_STUDIO=animation-editor, which opens the
+        // editor at frame 800): Nova is asked and becomes Person B
+        let scripted = matches!(mode, "clip" | "hover");
+        if scripted && self.frame_count >= 860 && self.frame_count % 30 == 0 && self.world.couple_partner.is_none() {
+            let world = &self.world;
+            if self.ik_editor.demo_couple_step(world, peer) {
+                log::info!("demo couple: Nova is Person B (frame {})", self.frame_count);
+                if mode == "hover" {
+                    self.avatar_studio.hover_height = 0.1;
+                    self.avatar_studio.partner_hover_height = Some(0.3);
+                    self.avatar_studio.hover_partner = true;
+                }
+            }
+        }
         if mode == "leave" && self.world.couple_partner == Some(peer) {
             let since = *self.couple_demo_since.get_or_insert(Instant::now());
             if since.elapsed() >= std::time::Duration::from_secs(10)

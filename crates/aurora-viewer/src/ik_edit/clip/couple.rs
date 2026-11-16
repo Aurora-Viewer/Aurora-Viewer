@@ -269,6 +269,31 @@ impl Editor {
         self.clip.changed();
         true
     }
+    /// AURORA_DEMO_COUPLE's scripted modes (`clip`, `hover`), for screenshots with no clicks: ask `peer`, then take them
+    /// as Person B once they accept, standing face to face, with the Clip
+    /// page open. True once couple mode runs.
+    pub fn demo_couple_step(&mut self, world: &World, peer: Uuid) -> bool {
+        if !self.clip.active {
+            return false;
+        }
+        if self.clip.couple.is_some() {
+            return true;
+        }
+        use crate::world::poser_consent::Status;
+        match world.poser_consent.status(peer) {
+            Status::Ask => {
+                self.push_poser_request(poser::Request::Ask(peer));
+                false
+            }
+            Status::Accepted if self.start_couple(world, Partner::Avatar(peer)) => {
+                self.couple_face_to_face(world);
+                self.clip.tab = ClipTab::Clip;
+                self.clip.timeline_open = true;
+                true
+            }
+            _ => false,
+        }
+    }
     /// Leave couple mode: A is edited alone again, B's animation stays
     /// among the drafts.
     pub(in crate::ik_edit) fn end_couple(&mut self) {

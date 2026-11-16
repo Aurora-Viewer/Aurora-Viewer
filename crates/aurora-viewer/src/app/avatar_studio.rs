@@ -451,12 +451,17 @@ impl App {
                             demo_menu.as_deref() == Some("pose-menu") && self.frame_count == 800,
                         );
                         let couple = self.world.couple_partner.is_some();
+                        // AURORA_DEMO_COUPLE=hover opens the menu once Nova is B
+                        let couple_hover_demo = self.demo
+                            && couple
+                            && self.frame_count == 1300
+                            && std::env::var("AURORA_DEMO_COUPLE").is_ok_and(|mode| mode == "hover");
                         studio_hover_menu(
                             ui,
                             &self.palette,
                             &mut self.avatar_studio,
                             couple,
-                            demo_menu.as_deref() == Some("hover-menu") && self.frame_count == 800,
+                            (demo_menu.as_deref() == Some("hover-menu") && self.frame_count == 800) || couple_hover_demo,
                         );
                         studio_lighting_menu(
                             ui,
