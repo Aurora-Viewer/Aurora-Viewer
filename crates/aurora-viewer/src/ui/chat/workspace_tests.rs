@@ -2805,6 +2805,52 @@ fn conference_ack_keeps_the_active_search_or_filter_editor() {
     }
 }
 
+#[test]
+fn enter_returns_to_the_last_editor_after_a_conference_ack_with_the_keyboard_in_world() {
+    let field = |id| egui::Id::unique(("conv_input", Some(id)));
+    for switch_first in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.enter_last_field = true;
+        h.world.start_text_conference(vec![JANE, BOB]);
+        let temp = h.world.social.focus_im.expect("outgoing conference");
+        h.settle();
+        h.frame(vec![egui::Event::Text("a draft".into())]);
+        let last = if switch_first {
+            h.world.focus_conversation(JANE, true);
+            h.settle();
+            h.frame(vec![egui::Event::Text("private".into())]);
+            JANE
+        } else {
+            temp
+        };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(last))));
+        h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
+        h.st.let_keyboard_go();
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        h.settle();
+        assert!(
+            h.frames.ctx.memory(|m| m.focused()).is_none(),
+            "the reply leaves the keyboard in the world"
+        );
+        let world = &h.world;
+        h.st.start_chat(&h.frames.ctx, h.open, |id| {
+            world.social.has_session(id) || world.groups.sessions.contains_key(id)
+        });
+        h.settle();
+        let expected = if switch_first { JANE } else { real };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(expected))));
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(h.st.draft_mut(Some(expected)), if switch_first { "private!" } else { "a draft!" });
+    }
+}
+
 /// Send IM and the column's "new conversation" ask for a conversation and
 /// its field takes the keyboard (LLAvatarActions::startIM → FSFloaterIM::show
 /// → setFocus).

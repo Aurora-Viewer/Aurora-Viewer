@@ -476,6 +476,9 @@ impl ChatUi {
     /// the conference its permanent ID (processSessionInitializedReply).
     fn rekey_conference(&mut self, ctx: &egui::Context, from: uuid::Uuid, to: uuid::Uuid) {
         let (old, new) = (Some(from), Some(to));
+        if self.last_field == ChatField::Conversation(old) {
+            self.last_field = ChatField::Conversation(new);
+        }
         if self.selected == old {
             self.selected = new;
         }
