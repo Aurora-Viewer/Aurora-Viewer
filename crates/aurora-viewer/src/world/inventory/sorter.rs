@@ -1320,7 +1320,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // tag, a store and what it is (`Velmora - Hex Dress`), or what it
         // is with its versions inside (`Hex Dress` holding `Maitreya`,
         // `Reborn`, `Hex Dress Legacy`, `Squish`)
-        tagged || store_named && named || versions_only(inv, f, name)
+        tagged || store_named && named || versions_only(inv, f, name, named)
     } else {
         // a folder of items alone is a product when its name says what or
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
@@ -1334,35 +1334,77 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 /// a Squish or Waifus variant, or the product's name again.
 /// Only for a name that names one product (`Hex Dress`), never a kind or a
 /// shelf of the user's (`Dresses`, `Shoes`, `My Dresses`, `Dresses 2024`).
-fn versions_only(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+/// `named`: the name says what it is (`Hex Dress`): its HUD and textures
+/// folders alone keep it whole; a name saying no kind (`Velmora -
+/// Aphrodite`) needs a body or named version inside.
+fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) -> bool {
     if !names_a_product(name) {
         return false;
     }
-    let product = words(name);
-    // at least one version of a body or of the product itself (a folder of
-    // HUDs and textures alone says nothing)
+    // the product's own words (`aphrodite`, `hex`): a subfolder sharing one
+    // is a version of it (`Aphrodite HUD`, `Hex HUD`), the store's name
+    // aside
+    let own = product_words(name);
     let mut versions = false;
     let all = f.children.iter().filter_map(|c| inv.folders.get(c)).all(|sub| {
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
-        // the product's name again, word for word (`Hex Dress Legacy`)
-        let named = sub_words.starts_with(&product) || sub_words.ends_with(&product);
-        let version = named || read.body.is_some() || read.squish || read.waifus;
+        let named_again = sub_words.iter().any(|w| own.contains(w));
+        let version = named_again || read.body.is_some() || read.squish || read.waifus;
         versions |= version;
         // a fatpack's own folders
         version || sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()))
     });
-    all && versions
+    all && (versions || named)
+}
+
+/// The words of a name that are its own: not a kind, a body's name, a
+/// shelf word, a number or the store's name.
+fn product_words(name: &str) -> Vec<String> {
+    let store_words = store(name).map(|s| joined_words(&s)).unwrap_or_default();
+    let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
+    words(name)
+        .into_iter()
+        .filter(|w| {
+            !is_kind(w)
+                && !store_words.contains(w)
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !VERSION_WORDS.contains(&w.as_str())
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !VOCABULARY.bodies.iter().any(|b| b.strong.iter().any(|s| s == w))
+        })
+        .collect()
 }
 
 /// The folders a product's delivery holds beside its body versions.
-const VERSION_WORDS: [&str; 10] = [
-    "hud", "huds", "textures", "texture", "colors", "colours", "color", "colour", "extras", "addons",
+const VERSION_WORDS: [&str; 22] = [
+    "hud",
+    "huds",
+    "textures",
+    "texture",
+    "colors",
+    "colours",
+    "color",
+    "colour",
+    "extras",
+    "extra",
+    "addons",
+    "add",
+    "ons",
+    "fatpack",
+    "materials",
+    "pbr",
+    "petite",
+    "perky",
+    "pinup",
+    "sizes",
+    "alpha",
+    "alphas",
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 34] = [
+const SHELF_WORDS: [&str; 37] = [
     "my",
     "old",
     "new",
@@ -1397,6 +1439,9 @@ const SHELF_WORDS: [&str; 34] = [
     "winter",
     "spring",
     "autumn",
+    "clothes",
+    "clothing",
+    "bodies",
 ];
 
 /// A name with a word of its own beyond kinds, bodies, shelf words and

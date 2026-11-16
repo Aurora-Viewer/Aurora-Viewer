@@ -1546,9 +1546,19 @@ pub(super) fn show(
                 // (a move still unsure at the end comes from a batch counted
                 // as failed already). An Undo records only what went back:
                 // its run forgets what it records from the run it undid
+                // an Undo's unsure move that is back where it belongs went
+                // back after all: journaled, so the run it undid forgets it
+                let back: Vec<Uuid> = job
+                    .unsure
+                    .iter()
+                    .filter(|(m, _, _)| matches!(m.to, sorter::Dest::Folder(t) if crate::world::inventory::actions::parent(inv, m.id) == Some(t)))
+                    .map(|(m, _, _)| m.id)
+                    .collect();
                 let unsure = job.unsure_entries();
                 if job.undoes.is_none() {
                     last.extend(unsure);
+                } else {
+                    last.extend(unsure.into_iter().filter(|e| back.contains(&e.id)));
                 }
                 state.journal.record_in(run, last);
                 state.job = None;
