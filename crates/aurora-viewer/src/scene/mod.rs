@@ -1116,6 +1116,9 @@ pub struct Scene {
     pub creation_preview: creation_preview::CreationPreview,
     pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
+    /// The pathfinding console's shapes drawn from their physics, one set per
+    /// use (`aurora_render::PATHFINDING_*`; app/pathfinding_view.rs).
+    pub pathfinding_shapes: [physics_shapes::PhysicsShapes; 4],
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
     pub still: Option<still_check::StillCheck>,
@@ -1744,6 +1747,7 @@ impl Scene {
             creation_preview: creation_preview::CreationPreview::default(),
             build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
+            pathfinding_shapes: Default::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
@@ -2380,6 +2384,9 @@ impl Scene {
         self.creation_preview.clear(renderer);
         self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
+        for shapes in &mut self.pathfinding_shapes {
+            shapes.clear(renderer);
+        }
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
         // (our avatar is a first appearance again at the next login)
@@ -5288,13 +5295,17 @@ impl Scene {
                         l.glow.push(cmd);
                     }
                 }
+                // the pathfinding console's shapes: the face again, in its use's colour,
+                // until its physics shape is known (`pathfinding_shapes`)
+                if in_view
+                    && let Some(&shape) = self.pathfinding_view.overlay.get(&idx)
+                    && !self.pathfinding_view.physics.contains_key(&idx)
+                {
+                    l.pathfinding[shape].push(cmd);
+                }
                 // debug "Show transparency" (renderDebugAlpha): blended,
                 // masked and invisible faces in red, material masks in blue;
                 // rigged faces only when asked (Firestorm sShowDebugAlphaRigged)
-                // the pathfinding console's shapes: the face again, in its use's colour
-                if in_view && let Some(&shape) = self.pathfinding_view.overlay.get(&idx) {
-                    l.pathfinding[shape].push(cmd);
-                }
                 if in_view && self.beacon_highlights.contains(&idx) {
                     l.debug_red.push(cmd);
                 } else if let Some(rigged_too) = debug_alpha.filter(|_| in_view)

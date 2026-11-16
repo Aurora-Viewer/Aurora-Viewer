@@ -21,19 +21,43 @@ use uuid::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-async fn get(http: &reqwest::Client, url: &str) -> Result<Llsd, Error> {
-    match tokio::time::timeout(TIMEOUT, caps::get_llsd(http, url)).await {
-        Ok(Ok(data)) => Ok(data),
-        _ => Err(Error::Failed),
+/// A GET, tried a second time when it never reached the region (a pooled
+/// connection the region had closed fails at once with "error sending
+/// request"): a GET changes nothing, so the second try is safe. The Legacy
+/// Viewer shows the error at once; retrying spares the user a Refresh.
+async fn get(http: &reqwest::Client, url: &str, what: &str) -> Result<Llsd, Error> {
+    for attempt in 1..=2 {
+        match tokio::time::timeout(TIMEOUT, caps::get_llsd(http, url)).await {
+            Ok(Ok(data)) => return Ok(data),
+            Ok(Err(caps::CapsError::Http(e))) if attempt == 1 => {
+                log::info!("pathfinding: {what} not sent ({e}), trying again");
+            }
+            Ok(Err(e)) => {
+                log::warn!("pathfinding: {what} failed: {e}");
+                return Err(Error::Failed);
+            }
+            Err(_) => {
+                log::warn!("pathfinding: {what}: no reply in {} s", TIMEOUT.as_secs());
+                return Err(Error::Failed);
+            }
+        }
     }
+    Err(Error::Failed)
 }
 
 /// The PUT of linksetObjectsCoro / linksetTerrainCoro, or the POST of
-/// navMeshRebakeCoro.
-async fn send(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, Error> {
+/// navMeshRebakeCoro (never sent twice).
+async fn send(http: &reqwest::Client, url: &str, body: &Llsd, put: bool, what: &str) -> Result<Llsd, Error> {
     match tokio::time::timeout(TIMEOUT, caps::request_llsd(http, url, body, put)).await {
         Ok(Ok(data)) => Ok(data),
-        _ => Err(Error::Failed),
+        Ok(Err(e)) => {
+            log::warn!("pathfinding: {what} failed: {e}");
+            Err(Error::Failed)
+        }
+        Err(_) => {
+            log::warn!("pathfinding: {what}: no reply in {} s", TIMEOUT.as_secs());
+            Err(Error::Failed)
+        }
     }
 }
 
@@ -70,12 +94,22 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         tokio::spawn(async move {
             let result = match (url, terrain_url) {
-                (Some(url), _) if !terrain_needed => get(&http, &url).await.and_then(|data| pathfinding::parse(&data, kind)),
+                (Some(url), _) if !terrain_needed => get(&http, &url, kind.capability())
+                    .await
+                    .and_then(|data| pathfinding::parse(&data, kind)),
                 (Some(url), Some(terrain_url)) => {
-                    let objects = async { get(&http, &url).await.and_then(|data| pathfinding::parse(&data, kind)) };
+                    let objects = async {
+                        get(&http, &url, kind.capability())
+                            .await
+                            .and_then(|data| pathfinding::parse(&data, kind))
+                    };
                     let ground = async {
                         if terrain {
-                            Some(get(&http, &terrain_url).await.and_then(|data| pathfinding::parse_terrain(&data)))
+                            Some(
+                                get(&http, &terrain_url, "TerrainNavMeshProperties")
+                                    .await
+                                    .and_then(|data| pathfinding::parse_terrain(&data)),
+                            )
                         } else {
                             None
                         }
@@ -119,7 +153,7 @@ impl Session<'_> {
             let objects = async {
                 match &objects_body {
                     Some(body) => Some(
-                        send(&http, &objects_url, body, true)
+                        send(&http, &objects_url, body, true, "ObjectNavMeshProperties")
                             .await
                             .and_then(|data| pathfinding::parse(&data, Kind::Objects)),
                     ),
@@ -129,7 +163,7 @@ impl Session<'_> {
             let ground = async {
                 match &terrain_body {
                     Some(body) => Some(
-                        send(&http, &terrain_url, body, true)
+                        send(&http, &terrain_url, body, true, "TerrainNavMeshProperties")
                             .await
                             .and_then(|data| pathfinding::parse_terrain(&data)),
                     ),
@@ -151,7 +185,10 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         let http = self.sh.caps_http.clone();
         tokio::spawn(async move {
-            let status = get(&http, &url).await.ok().and_then(|data| navmesh::Status::parse(&data));
+            let status = get(&http, &url, "NavMeshGenerationStatus")
+                .await
+                .ok()
+                .and_then(|data| navmesh::Status::parse(&data));
             let _ = events.send(NetEvent::NavMeshStatus { region, status });
         });
     }
@@ -166,7 +203,9 @@ impl Session<'_> {
         };
         let http = self.sh.caps_http.clone();
         tokio::spawn(async move {
-            let ok = send(&http, &url, &navmesh::rebake_body(), false).await.is_ok();
+            let ok = send(&http, &url, &navmesh::rebake_body(), false, "NavMeshGenerationStatus rebake")
+                .await
+                .is_ok();
             if !ok {
                 log::warn!("pathfinding: navmesh rebake refused or failed");
             }
@@ -193,7 +232,7 @@ impl Session<'_> {
         };
         let http = self.sh.caps_http.clone();
         tokio::spawn(async move {
-            let can_rebake = get(&http, &url).await.is_ok_and(|data| navmesh::can_rebake(&data));
+            let can_rebake = get(&http, &url, "AgentState").await.is_ok_and(|data| navmesh::can_rebake(&data));
             let _ = events.send(NetEvent::PathfindingAgentState { region, can_rebake });
         });
     }

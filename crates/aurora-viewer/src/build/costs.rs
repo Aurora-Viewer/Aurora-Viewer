@@ -197,7 +197,7 @@ impl BuildTool {
                     self.costs.objects.clear();
                 }
             }
-            CapPurpose::AreaSearchCost => {}
+            CapPurpose::AreaSearchCost | CapPurpose::PathfindingPhysics => {}
             CapPurpose::SelectionCost => {
                 self.costs.weights = Some(result.map(|v| {
                     let s = &v["selected"];

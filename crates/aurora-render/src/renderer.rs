@@ -5416,21 +5416,39 @@ impl Backend {
             "pathfinding static obstacles",
             "pathfinding exclusion volumes",
         ];
-        let pathfinding = std::array::from_fn(|i| debug(PATHFINDING_LABELS[i], PATHFINDING_SHAPES[i], false));
-        let pathfinding_xray = std::array::from_fn(|i| {
+        // Most shapes are collision shapes lying on the faces they come from
+        // (scene/pathfinding_view.rs): the bias of the selected physics
+        // shape keeps them in front of those faces instead of flickering.
+        // The volumes are not culled, so that the camera inside one still
+        // sees it: the Legacy Viewer's LLGLDisable cull(i >= 2 ? GL_CULL_FACE : 0)
+        // for its exclusion and material phantoms.
+        const PATHFINDING_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: 1.0,
+            clamp: 0.0,
+        };
+        let pathfinding_pipe = |i: usize, xray: bool| {
+            let volume = i == crate::PATHFINDING_MATERIAL || i == crate::PATHFINDING_EXCLUSION;
             pipe(PipeDesc {
-                cull: None,
+                cull: if volume { None } else { Some(wgpu::Face::Back) },
                 blend: Some(alpha_blend),
                 write_mask: wgpu::ColorWrites::COLOR,
                 depth_write: false,
-                // reversed depth: only where the scene is nearer than the shape
-                depth_compare: wgpu::CompareFunction::Less,
-                constants: PATHFINDING_XRAY[i],
+                // reversed depth: X-ray only where the scene is nearer
+                depth_compare: if xray {
+                    wgpu::CompareFunction::Less
+                } else {
+                    wgpu::CompareFunction::GreaterEqual
+                },
+                depth_bias: PATHFINDING_BIAS,
+                constants: if xray { PATHFINDING_XRAY[i] } else { PATHFINDING_SHAPES[i] },
                 polygon_line: false,
                 unclipped_depth: false,
                 ..base(PATHFINDING_LABELS[i], "vs_main", "fs_debug_flat")
             })
-        });
+        };
+        let pathfinding = std::array::from_fn(|i| pathfinding_pipe(i, false));
+        let pathfinding_xray = std::array::from_fn(|i| pathfinding_pipe(i, true));
         let line_mode = device.features().contains(wgpu::Features::POLYGON_MODE_LINE);
         let physics_fill = pipe(PipeDesc {
             cull: Some(wgpu::Face::Back),

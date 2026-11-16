@@ -94,6 +94,18 @@ fn filters_apply_on_demand_and_match_without_case() {
 }
 
 #[test]
+fn the_name_filter_finds_the_terrain_by_its_shown_name() {
+    // the terrain has no name of its own: the filter matches "[Terrain]",
+    // as the Legacy Viewer's (linkset_terrain_name)
+    let shown = aurora_i18n::text("pathfinding-terrain-name").to_owned();
+    let mut list = loaded(vec![terrain(), linkset(1, "Floor", Use::Walkable, [100; 4], true, true)]);
+    list.filter.name = shown.trim_matches(['[', ']']).to_uppercase();
+    list.apply_filters();
+    prepare(&mut list);
+    assert_eq!(names(&list), [shown]);
+}
+
+#[test]
 fn numbers_sort_by_value_and_names_without_case() {
     let mut list = loaded(vec![
         linkset(10, "b", Use::Walkable, [9, 100, 100, 100], true, true),

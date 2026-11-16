@@ -378,7 +378,7 @@ impl List {
         self.visible = (0..rows.len())
             .into_par_iter()
             .filter(|&i| {
-                (name.is_empty() || rows[i].name.to_lowercase().contains(&name))
+                (name.is_empty() || cells[i].name.to_lowercase().contains(&name))
                     && (description.is_empty() || rows[i].description.to_lowercase().contains(&description))
                     && use_.is_none_or(|u| rows[i].linkset().is_some_and(|l| l.use_ == u))
             })

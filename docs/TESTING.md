@@ -5863,7 +5863,9 @@ View / test opens on its Test path tab with both ends chosen near the
 avatar ("Waiting for the Aurora bridge" until the demo bridge has been
 saved and reattached, around frame 1050); then the demo region answers like
 llGetStaticPath: the orange path bends between a green start capsule and a
-red end capsule, all as wide as the Character width. Ctrl-click and
+red end capsule, all as wide as the Character width (the ribbon is faint
+where something hides it). Holding Ctrl or Shift over the world shows a
+faint capsule under the cursor, the end a click would set. Ctrl-click and
 Shift-click move the ends, the width and type ask again (two requests a
 second at most), Clear path empties it. The demo navmesh has a hole (a disc
 of 4 m around 118, 128): an end in it answers "not on the navmesh"
@@ -5871,7 +5873,9 @@ of 4 m around 118, 128): an end in it answers "not on the navmesh"
 `view`: the View tab with Walkables, Material volumes, Static obstacles,
 Exclusion volumes and Water plane ticked: the demo linksets are tinted in the
 Legacy colours (walkable green, material purple, static obstacle red,
-exclusion yellow; the plaza floor is a walkable linkset). The water plane is a
+exclusion yellow; the plaza floor is a walkable linkset), each prim drawn
+as its collision shape once GetObjectPhysicsData (answered by the demo
+region) gave its type. The water plane is a
 grid at the water height (20 m in the demo, under the plaza floor, so hidden
 there). `view-xray` adds X-ray: the shapes show dimmed through what hides
 them. `view-world-off` unticks World: only the shapes and the terrain are

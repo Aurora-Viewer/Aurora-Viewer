@@ -10,9 +10,6 @@ use crate::ui::pathfinding::rebake::Mode;
 use crate::world::bridge::path::Outcome;
 use uuid::Uuid;
 
-/// The widest the path's ribbon is drawn, in pixels, however close.
-const MAX_RIBBON: f32 = 24.0;
-
 impl App {
     /// Build › Pathfinding › View / test.
     pub(super) fn open_pathfinding_console(&mut self) {
@@ -141,9 +138,22 @@ impl App {
         self.ask_path();
     }
 
-    /// The path in the world: a ribbon as wide as half the character, and
-    /// a capsule of the character's width at each end. Drawn while the
-    /// console is open (the Legacy Viewer draws it while its tool is on).
+    /// While Ctrl or Shift is held over the world in the Test path tab, the
+    /// point a click would set (LLPathfindingPathTool::handleHover shows the
+    /// end under the cursor before the click).
+    pub(super) fn path_hover_point(&self, renderer: &mut aurora_render::Renderer, over_ui: bool) -> Option<(bool, Vec3)> {
+        if over_ui || !matches!(self.screen, Screen::World) || self.mouse_mode != MouseMode::None {
+            return None;
+        }
+        let end = self.path_click_end()?;
+        renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1).map(|point| (end, point))
+    }
+
+    /// The path in the world: a flat ribbon as wide as the character
+    /// (renderPath), faint where the scene hides it (the navmesh lies under
+    /// the floors one sees), and a capsule of the character's width at each
+    /// end (renderPathBookend). Drawn while the console is open (the Legacy
+    /// Viewer draws it while its tool is on).
     pub(super) fn draw_path(&self, ctx: &egui::Context, p: &crate::theme::Palette, proj: &ui::hud::Projector) {
         let console = &self.pathfinding.console;
         if !console.open {
@@ -152,44 +162,143 @@ impl App {
         let test = &console.test;
         let width = test.width;
         let painter = ui::hud::world_painter(ctx);
-        // the screen size of `width` metres standing at a point
-        let pixels = |at: Vec3| {
-            let a = proj.project(at)?.0;
-            let b = proj.project(at + Vec3::Z * width)?.0;
-            Some((a - b).length())
+        let found = match &test.result {
+            Some(PathResult::Found(points)) if points.len() >= 2 => Some(points.as_slice()),
+            _ => None,
         };
-        if let Some(PathResult::Found(points)) = &test.result {
-            for pair in points.windows(2) {
-                let (a, b) = (pair[0] + Vec3::Z * 0.1, pair[1] + Vec3::Z * 0.1);
-                // pieces of about a metre, so the ribbon narrows with distance
-                let pieces = (a.distance(b).ceil() as usize).clamp(1, 64);
-                for i in 0..pieces {
-                    let (from, to) = (a.lerp(b, i as f32 / pieces as f32), a.lerp(b, (i + 1) as f32 / pieces as f32));
-                    let Some(segment) =
-                        ui::minimap::beacon_segment(proj.view_proj * from.extend(1.0), proj.view_proj * to.extend(1.0), proj)
-                    else {
-                        continue;
-                    };
-                    let thickness = pixels((from + to) * 0.5).map_or(2.0, |px| (px * 0.5).clamp(1.5, MAX_RIBBON));
-                    // hidden by what stands in front of it, as the Legacy path is
-                    aurora_render::world_line_at(ctx, from, to);
-                    // theme-guard: content — the path's colour, the Legacy "shown in orange"
-                    painter.line_segment(segment, egui::Stroke::new(thickness, p.amber));
+        if let Some(points) = found {
+            let pieces = ribbon_pieces(points, width);
+            // theme-guard: content — the path's colour, the Legacy "shown in orange"
+            let (faint, solid) = (p.amber.gamma_multiply(PATH_XRAY), p.amber);
+            // first where the scene hides it, then over it where it shows
+            aurora_render::world_label_at(ctx, None);
+            for piece in &pieces {
+                if let Some(mesh) = ribbon_mesh(piece, proj, faint) {
+                    painter.add(mesh);
+                }
+            }
+            for piece in &pieces {
+                if let Some(mesh) = ribbon_mesh(piece, proj, solid) {
+                    aurora_render::world_line_at(ctx, piece.from, piece.to);
+                    painter.add(mesh);
                 }
             }
             aurora_render::world_label_at(ctx, None);
         }
-        // the bookends: a capsule of the character's width, twice as tall
-        for (point, color) in [(test.start, p.success), (test.end, p.danger)] {
-            let Some(point) = point else { continue };
-            let capsule = Capsule {
-                center: point + Vec3::Z * width,
-                rotation: glam::Quat::IDENTITY,
-                length: width * 2.0,
-                radius: width / 2.0,
-                horizontal: false,
-            };
-            ui::pathfinding::capsule::draw_outline(ctx, &painter, proj, &capsule, color);
+        // the bookends stand where the region put the path's ends (on the
+        // navmesh, under a clicked box or floor), else at the clicked points
+        let ends = match found {
+            Some(points) => [points.first().copied(), points.last().copied()],
+            None => [test.start, test.end],
+        };
+        let capsule = |point: Vec3| Capsule {
+            center: point + Vec3::Z * width,
+            rotation: glam::Quat::IDENTITY,
+            length: width * 2.0,
+            radius: width / 2.0,
+            horizontal: false,
+        };
+        for (point, color) in ends.into_iter().zip([p.success, p.danger]) {
+            if let Some(point) = point {
+                ui::pathfinding::capsule::draw_outline(ctx, &painter, proj, &capsule(point), color);
+            }
         }
+        // the end a click would set, under the cursor
+        if let Some((end, point)) = self.path_hover {
+            let color = if end { p.danger } else { p.success };
+            ui::pathfinding::capsule::draw_outline(ctx, &painter, proj, &capsule(point), color.gamma_multiply(PATH_HOVER));
+        }
+    }
+}
+
+/// The path's opacity where the scene hides it.
+const PATH_XRAY: f32 = 0.35;
+/// The opacity of the capsule under the cursor before the click.
+const PATH_HOVER: f32 = 0.5;
+/// Height of the ribbon over the path's points (on the navmesh): enough for
+/// a level ribbon to clear ground that slopes across it, as the Legacy band
+/// floats over the floor.
+const PATH_LIFT: f32 = 0.3;
+
+/// One piece of the ribbon: a metre or so of the path, flat, as wide as the
+/// character.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Piece {
+    from: Vec3,
+    to: Vec3,
+    /// Half the width, across the path, level.
+    side: Vec3,
+}
+
+/// The ribbon in pieces of about a metre: each piece's depth is tested
+/// along its own middle line, which stays close to the ribbon's.
+fn ribbon_pieces(points: &[Vec3], width: f32) -> Vec<Piece> {
+    let mut out = Vec::new();
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0] + Vec3::Z * PATH_LIFT, pair[1] + Vec3::Z * PATH_LIFT);
+        let level = Vec3::new(b.x - a.x, b.y - a.y, 0.0);
+        let across = if level.length_squared() > 1e-6 {
+            Vec3::new(-level.y, level.x, 0.0).normalize()
+        } else {
+            Vec3::X
+        };
+        let side = across * (width * 0.5);
+        let count = (a.distance(b).ceil() as usize).clamp(1, 64);
+        for i in 0..count {
+            out.push(Piece {
+                from: a.lerp(b, i as f32 / count as f32),
+                to: a.lerp(b, (i + 1) as f32 / count as f32),
+                side,
+            });
+        }
+    }
+    out
+}
+
+/// A piece on the screen, None when a corner is behind the camera.
+fn ribbon_mesh(piece: &Piece, proj: &ui::hud::Projector, color: egui::Color32) -> Option<egui::Shape> {
+    let corners = [
+        piece.from - piece.side,
+        piece.from + piece.side,
+        piece.to + piece.side,
+        piece.to - piece.side,
+    ];
+    let mut mesh = egui::Mesh::default();
+    for corner in corners {
+        let c = proj.view_proj * corner.extend(1.0);
+        if c.w <= 0.05 {
+            return None;
+        }
+        let ndc = c.truncate() / c.w;
+        let at = egui::pos2(
+            (ndc.x * 0.5 + 0.5) * proj.width / proj.ppp,
+            (0.5 - ndc.y * 0.5) * proj.height / proj.ppp,
+        );
+        mesh.colored_vertex(at, color);
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    Some(egui::Shape::mesh(mesh))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_ribbon_is_as_wide_as_the_character_in_metre_pieces() {
+        let points = [
+            Vec3::new(10.0, 10.0, 20.0),
+            Vec3::new(13.0, 10.0, 20.0),
+            Vec3::new(13.0, 10.0, 20.0),
+        ];
+        let pieces = ribbon_pieces(&points, 1.0);
+        // 3 m in three pieces, and the repeated point gives one level piece
+        assert_eq!(pieces.len(), 4);
+        assert_eq!(pieces[0].from, Vec3::new(10.0, 10.0, 20.0 + PATH_LIFT));
+        assert_eq!(pieces[2].to, Vec3::new(13.0, 10.0, 20.0 + PATH_LIFT));
+        assert!((pieces[0].side.length() - 0.5).abs() < 1e-6);
+        assert_eq!(pieces[0].side.z, 0.0, "flat: level across the path");
+        assert!(pieces[0].side.dot(Vec3::X).abs() < 1e-6, "across the path");
     }
 }

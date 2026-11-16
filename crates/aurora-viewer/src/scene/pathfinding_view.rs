@@ -5,8 +5,12 @@
 //! getRenderShapeFlags, isRenderXRay; the pipeline.cpp pathfinding pass;
 //! gPipeline.hidePermanentObjects), indra/newview, originally LGPL 2.1.
 //!
-//! Without Havok, the shapes are the linksets' own geometry tinted by their
-//! current use (RegionObjects), not the baked navmesh's physics shapes.
+//! Without Havok, the shapes are not the baked navmesh's: they are each
+//! prim's collision shape (GetObjectPhysicsData's PhysicsShapeType, built
+//! by `physics_shapes`), which is what the navmesh is made from, tinted by
+//! the linkset's current use (RegionObjects). A prim whose shape type is
+//! not known yet, or that has no shape of its own (a sculpt, a flexible
+//! prim), is drawn with its visible faces meanwhile.
 use crate::world::World;
 use std::collections::HashMap;
 
@@ -19,6 +23,9 @@ pub struct PathfindingView {
     pub movables_only: bool,
     /// Prim index → its shape list (`aurora_render::PATHFINDING_*`).
     pub overlay: HashMap<usize, usize>,
+    /// Prim index → its known physics shape type (0 prim, 1 none, 2
+    /// convex hull): drawn as that shape, not with its visible faces.
+    pub physics: HashMap<usize, u8>,
     pub xray: bool,
     /// Changed whenever the above changes: the hidden flags are applied
     /// again (`Scene::sync_photo_isolation`).
@@ -34,7 +41,8 @@ impl PathfindingView {
     /// HUD: the caller keeps those).
     pub fn hides(&self, world: &World, idx: usize) -> bool {
         if self.world_hidden {
-            return !self.overlay.contains_key(&idx);
+            // a shape drawn from its physics leaves its object hidden too
+            return !self.overlay.contains_key(&idx) || self.physics.contains_key(&idx);
         }
         self.movables_only && permanent(world, idx)
     }
@@ -94,6 +102,8 @@ mod tests {
         assert!(view.active());
         assert!(!view.hides(&w, shape), "a shape stays");
         assert!(view.hides(&w, other) && view.hides(&w, avatar), "the rest of the world goes");
+        view.physics.insert(shape, 0);
+        assert!(view.hides(&w, shape), "drawn as its physics shape: its own faces go");
 
         let mut view = PathfindingView {
             movables_only: true,

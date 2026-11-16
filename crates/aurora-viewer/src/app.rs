@@ -442,6 +442,9 @@ pub struct App {
     path_queue: crate::world::bridge::path::PathQueue,
     /// The bridge answers queries (the path test's status).
     path_bridge_ready: bool,
+    /// The path end a Ctrl (start) or Shift (end) click would set, under
+    /// the cursor (app/pathfinding_path.rs).
+    path_hover: Option<(bool, Vec3)>,
     /// The pathfinding console's View tab: its list and matching.
     pathfinding_view_feed: pathfinding_view::ViewFeed,
     bridge_demo: crate::world::bridge::demo::Demo,
@@ -1765,6 +1768,7 @@ impl App {
             bridge_services: Default::default(),
             path_queue: Default::default(),
             path_bridge_ready: false,
+            path_hover: None,
             pathfinding_view_feed: Default::default(),
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
@@ -4085,6 +4089,7 @@ impl App {
             }
             NetEvent::CapReply { tag, result } => {
                 self.area_search_feed.on_cost_reply(tag, &result);
+                self.on_pathfinding_physics(tag, &result);
                 self.build.on_cap_reply(&mut self.world, tag, result);
             }
             NetEvent::ScriptRunning {
@@ -11738,6 +11743,7 @@ impl App {
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
+            self.pathfinding_shapes_frame(&mut gfx.renderer, Instant::now());
             let huds_shown = self.huds_shown();
             self.scene
                 .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {
@@ -12932,6 +12938,7 @@ impl App {
             self.hover_drawn.cancel(&mut gfx.renderer);
         }
         self.track_toolbox_hover(&gfx.renderer);
+        self.path_hover = self.path_hover_point(&mut gfx.renderer, ctx.is_pointer_over_egui());
         if self.plate_cursor() {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
