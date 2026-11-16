@@ -48,7 +48,7 @@ impl App {
             match action {
                 TrackerAction::Profile(id) => a.ctx_action = Some(ui::context::CtxAction::Profile(id)),
                 TrackerAction::GroupProfile(id) => self.group_profile_ui.open(&mut self.world, id),
-                TrackerAction::Pay { id, group } => self.pay_ui.open(id, group),
+                TrackerAction::Pay { id, group } => self.open_pay(id, group),
                 TrackerAction::AlwaysTrack(on) => {
                     self.settings.always_track_payments = on;
                     self.settings.save();

@@ -229,7 +229,8 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
 
 fn object_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, env: &mut Env) {
     let width = widgets::scrolled_width(ui).max(1.0);
-    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0), egui::Sense::hover());
+    let scale = common::font_scale(ui);
+    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0 * scale), egui::Sense::hover());
     let mut left = slot(ui, canvas, [10.0, 5.0, 106.0, 1000.0], "legacy-object-vectors");
     object::show_flags(&mut left, p, tool, world);
     left.add_space(8.0);

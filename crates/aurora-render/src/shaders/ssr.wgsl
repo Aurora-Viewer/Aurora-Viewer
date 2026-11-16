@@ -49,7 +49,15 @@ fn fs_ssr(in: SsrOut) -> @location(0) vec4<f32> {
     let f0 = mix(0.04, 1.0, metallic);
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
     let smooth_k = clamp(1.0 - roughness * 2.0, 0.0, 1.0);
-    let k = clamp(fresnel * smooth_k * smooth_k * hit.a, 0.0, 1.0);
+    // the planar mirror wins over SSR. The Legacy Viewer applies tapHeroProbe
+    // after the SSR mix (reflectionProbeF.glsl doProbeSample), leaving
+    // (1 - w) of SSR; w falls off near the probe's plane (0.74 on the face of
+    // a 5 cm panel centred on it), so SSR's copy of the scene behind the
+    // camera still showed through. Aurora drops SSR once the mirror takes a
+    // quarter of the surface, fading over the box's and the image's edges.
+    let mirror_w = mirror_tap(p, r, 1.0 - roughness).a;
+    let ssr_w = 1.0 - smoothstep(0.0, 0.25, mirror_w);
+    let k = clamp(fresnel * smooth_k * smooth_k * hit.a * ssr_w, 0.0, 1.0);
     // premultiplied: mix the reflection over the lit color
     return vec4<f32>(hit.rgb * k, k);
 }

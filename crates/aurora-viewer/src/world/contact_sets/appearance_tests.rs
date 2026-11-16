@@ -193,3 +193,52 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
     }
     assert!(!sets.has_markers(), "every marker off again");
 }
+
+#[test]
+fn a_set_dragged_to_a_place_keeps_the_others_in_order() {
+    let mut sets = ContactSets::default();
+    for name in ["A", "B", "C", "D"] {
+        sets.add_set(name);
+    }
+    // new sets tie: the order falls back to the names
+    assert_eq!(sets.ordered_set_names(), ["A", "B", "C", "D"]);
+    sets.move_priority_to("D", 0);
+    assert_eq!(sets.ordered_set_names(), ["D", "A", "B", "C"]);
+    sets.move_priority_to("D", 2);
+    assert_eq!(sets.ordered_set_names(), ["A", "B", "D", "C"]);
+    // past the end: last
+    sets.move_priority_to("A", 99);
+    assert_eq!(sets.ordered_set_names(), ["B", "D", "C", "A"]);
+    assert_eq!(sets.priority_rank("C"), Some((2, 4)));
+    assert_eq!(sets.priority_rank("nope"), None);
+    // a set that is not there changes nothing
+    let generation = sets.generation;
+    sets.move_priority_to("nope", 0);
+    assert_eq!(sets.generation, generation);
+    // the same place changes nothing either, once the priorities are written
+    sets.move_priority_to("B", 0);
+    assert_eq!(sets.generation, generation);
+}
+
+#[test]
+fn moving_a_set_one_step_matches_dragging_it_there() {
+    let mut stepped = ContactSets::default();
+    let mut dragged = ContactSets::default();
+    for name in ["A", "B", "C"] {
+        stepped.add_set(name);
+        dragged.add_set(name);
+    }
+    stepped.move_priority("C", true);
+    dragged.move_priority_to("C", 1);
+    assert_eq!(stepped.ordered_set_names(), dragged.ordered_set_names());
+    stepped.move_priority("A", false);
+    dragged.move_priority_to("A", 1);
+    assert_eq!(stepped.ordered_set_names(), dragged.ordered_set_names());
+    // the top one cannot go higher, the last one lower
+    let top = stepped.ordered_set_names()[0].clone();
+    let generation = stepped.generation;
+    stepped.move_priority(&top, true);
+    let last = stepped.ordered_set_names()[2].clone();
+    stepped.move_priority(&last, false);
+    assert_eq!(stepped.generation, generation);
+}

@@ -381,6 +381,11 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     if !world.rlva_can_edit(idx) || linking::permanent(world, idx) || linking::permanent(world, root_of(world, idx)) {
         return false;
     }
+    // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
+    // held on under @unsit or @sittp neither moves nor changes.
+    if world.rlva_restrained_seat(idx) {
+        return false;
+    }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
     let Some(root) = world.objects.get(root_of(world, idx)) else {
         return false;
@@ -1074,10 +1079,18 @@ pub fn select_type(world: &World, mut idx: usize) -> SelectType {
     SelectType::World
 }
 
+/// What RLVa lets stay selected: @edit's rules (RlvActions::canEdit), and
+/// under @interact only a HUD (LLSelectMgr::deselectAllIfTooFar, whose
+/// fall-back drops any other selection; LLViewerWindow::cursorIntersect
+/// refuses the pick).
+pub fn rlva_selectable(world: &World, idx: usize) -> bool {
+    world.rlva_can_edit(idx) && (!world.rlva.has("interact") || world.hud_root(idx).is_some())
+}
+
 /// World objects and what our avatar wears, HUDs included; the attachments
 /// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
-    if !world.rlva_can_edit(idx) {
+    if !rlva_selectable(world, idx) || !world.rlva_within_fartouch(idx) {
         return false;
     }
     let mut i = idx;
@@ -1503,6 +1516,13 @@ impl BuildTool {
         self.selection.retain(|k| !keys.contains(k));
     }
 
+    /// A restriction takes these out of the selection: a drag of them stops
+    /// with it, or it would go on moving what is no longer selected.
+    pub fn drop_selected(&mut self, world: &World, keys: &[ObjKey]) {
+        self.deselect(world, keys);
+        self.manip.cancel();
+    }
+
     pub fn deselect_all(&mut self, world: &World) {
         let keys = std::mem::take(&mut self.selection);
         for (handle, ids) in self.wire_ids(world, &keys, self.selection_linked) {
@@ -1604,9 +1624,11 @@ impl BuildTool {
     }
 
     /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
-    /// outside attachments.
+    /// outside attachments, and under @unsit no linkset the agent sits on.
     pub fn can_unlink(&self, world: &World) -> bool {
-        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+        !self.attachment_selected(world)
+            && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+            && self.roots(world).iter().all(|&r| world.rlva_can_unlink(r))
     }
 
     fn advance_link(&mut self, world: &mut World, now: Instant) {
@@ -1676,7 +1698,8 @@ impl BuildTool {
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
             && !self.manip.dragging()
-            && let Some(max) = s.select_limit()
+            // deselectAllIfTooFar: in the tools, @fartouch stands for the limit
+            && let Some(max) = self.open.then(|| world.rlva_select_limit()).flatten().or(s.select_limit())
             && let Some(b) = self.bounds(world, now)
             && b.center.distance(world.agent.position) > max
         {
@@ -1932,7 +1955,7 @@ impl BuildTool {
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
-        if self.attachment_selected(world) {
+        if self.attachment_selected(world) || !self.roots(world).iter().all(|&r| world.rlva_can_unlink(r)) {
             return;
         }
         let prims: Vec<usize> = self
@@ -2327,6 +2350,11 @@ impl BuildTool {
                     self.click_select(world, s, pick, true);
                     return true;
                 }
+                // LLToolPlacer::placeObject: under @rez or @interact the
+                // click does nothing, and plays no sound.
+                if !world.rlva_can_rez(None) {
+                    return true;
+                }
                 if s.copy_selection {
                     self.place_copy(world, s, hit, target, cursor);
                 } else {
@@ -2501,7 +2529,7 @@ impl BuildTool {
         let Some(point) = hit else {
             return;
         };
-        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) || !world.rlva_can_place_at(point) {
             self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }
@@ -2589,7 +2617,7 @@ impl BuildTool {
             return;
         }
         // raycastForNewObjPos refuses the duplicate's surface too
-        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) || !world.rlva_can_place_at(point) {
             self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }
@@ -2754,6 +2782,15 @@ impl BuildTool {
                 (idx, mask)
             })
             .collect()
+    }
+
+    pub fn draw_world_guides(&self, ctx: &egui::Context, pal: &crate::theme::Palette, world: &World, s: &BuildSettings, mods: Mods) {
+        if !self.open || self.tool != Tool::Edit || self.cam.hud.is_some() || self.replacement_active() || self.ui.color_picker.pipette {
+            return;
+        }
+        let p = draw::Painter3d::new(crate::ui::hud::world_painter(ctx), &self.cam, *pal);
+        self.manip
+            .draw_world_guides(&p, world, s, &self.selection, self.selection_linked, self.effective_mode(mods));
     }
 
     /// Selection outlines, manipulators, land brush and selection rectangle

@@ -10,7 +10,9 @@
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{DVec3, Vec3};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 const MAX_ITEMS: usize = 100;
 
@@ -36,6 +38,27 @@ impl TpEntry {
     pub fn title(&self) -> String {
         location_title(&self.parcel, &self.region)
     }
+
+    /// The place of an arrival under @showloc: a name that tells nothing and
+    /// no destination, as `LLTeleportHistoryItem(RlvStrings::getString(
+    /// RlvStringKeys::Hidden::Parcel), LLVector3d::zero)` of
+    /// LLTeleportHistory::updateCurrentLocation.
+    pub fn hidden(label: &str, at: i64) -> TpEntry {
+        TpEntry {
+            region: label.to_owned(),
+            handle: 0,
+            position: Vec3::ZERO,
+            parcel: String::new(),
+            at,
+            grid: None,
+        }
+    }
+
+    /// `mGlobalPos.isExactlyZero()`: the place leads nowhere. No region has
+    /// the handle 0 (the grid's origin is empty).
+    pub fn is_hidden(&self) -> bool {
+        self.handle == 0 && self.position == Vec3::ZERO
+    }
 }
 
 /// The places of the session, oldest first, and the one we are in: what
@@ -56,21 +79,37 @@ pub struct TeleportHistory {
 }
 
 impl TeleportHistory {
-    /// Arrival at a new location (login or teleport).
+    /// Arrival at a new location (login or teleport); under @showloc the
+    /// caller gives `TpEntry::hidden`. The RLVa rules of
+    /// LLTeleportHistory::updateCurrentLocation:
+    /// - back / forward under @showloc moves in the list and leaves the place
+    ///   reached as it was;
+    /// - "only append a new item if the list is currently empty or if not
+    ///   @showloc=n restricted and the last entry wasn't zero'ed out": a
+    ///   hidden arrival takes the place of the one we left, and the next
+    ///   arrival takes the place of a hidden one. The session never holds
+    ///   two hidden places in a row, nor a count of the teleports made.
     pub fn arrived(&mut self, entry: TpEntry) {
         if let Some(i) = self.pending.take()
             && i < self.items.len()
         {
             self.current = i;
-            self.items[i] = entry;
+            if !entry.is_hidden() {
+                self.items[i] = entry;
+            }
             return;
         }
         if !self.items.is_empty() {
             self.items.truncate(self.current + 1);
         }
-        self.items.push(entry);
-        if self.items.len() > MAX_ITEMS {
-            self.items.remove(0);
+        match self.items.last_mut() {
+            Some(last) if entry.is_hidden() || last.is_hidden() => *last = entry,
+            _ => {
+                self.items.push(entry);
+                if self.items.len() > MAX_ITEMS {
+                    self.items.remove(0);
+                }
+            }
         }
         self.current = self.items.len() - 1;
     }
@@ -132,18 +171,42 @@ impl TeleportHistory {
         self.current.checked_sub(1).and_then(|i| self.items.get(i))
     }
 
-    /// RlvUIEnabler::onToggleShowLoc keeps the navigation destination while
-    /// removing the current location's visible name.
+    /// @showloc set or released (RlvUIEnabler::onToggleShowLoc →
+    /// LLTeleportHistory::updateCurrentLocation): the places ahead go, and
+    /// the current one is named `region` with no destination left, as the
+    /// zeroed item of the Legacy Viewer. It stays so while the restriction
+    /// holds; once released, `locate_current` says where we are. Returns
+    /// the place as it was.
     pub fn replace_current_region(&mut self, region: &str) -> Option<TpEntry> {
         let current = self.items.get_mut(self.current)?;
-        let previous = current.clone();
-        current.region = region.to_owned();
-        current.parcel.clear();
+        let hidden = TpEntry::hidden(region, current.at);
+        let previous = std::mem::replace(current, hidden);
+        self.items.truncate(self.current + 1);
         Some(previous)
+    }
+
+    /// The current place, when it has no destination (a place @showloc hid,
+    /// now released), is where the agent stands.
+    pub fn locate_current(&mut self, place: TpEntry) {
+        if let Some(e) = self.items.get_mut(self.current)
+            && e.is_hidden()
+        {
+            *e = place;
+        }
     }
 
     pub fn next(&self) -> Option<&TpEntry> {
         self.items.get(self.current + 1)
+    }
+
+    /// Where the Back arrow leads, when it leads somewhere: a place @showloc
+    /// hid is no destination (`go_to`).
+    pub fn back_name(&self) -> Option<String> {
+        self.previous().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
+    }
+
+    pub fn forward_name(&self) -> Option<String> {
+        self.next().filter(|e| !e.is_hidden()).map(|e| e.region.clone())
     }
 
     /// Start travelling back; returns the destination.
@@ -156,12 +219,14 @@ impl TeleportHistory {
     }
 
     /// LLTeleportHistory::goToItem: start travelling to the place `i` of
-    /// the list; none for the place we are in or past the end.
+    /// the list; none for the place we are in or past the end, nor for a
+    /// place @showloc hid (the Legacy Viewer asks for a teleport to the
+    /// global position zero, which the grid refuses).
     pub fn go_to(&mut self, i: usize) -> Option<TpEntry> {
         if i == self.current {
             return None;
         }
-        let e = self.items.get(i).cloned()?;
+        let e = self.items.get(i).filter(|e| !e.is_hidden()).cloned()?;
         self.pending = Some(i);
         Some(e)
     }
@@ -223,10 +288,6 @@ impl HistoryItem {
     }
 }
 
-/// How long dropping a storage waits for its last save (logout, quit): a
-/// stuck disk cannot hold up the viewer longer than that.
-const LAST_SAVE_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
-
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
 ///
 /// The file is never lost to a save (#2626): it is replaced atomically, on
@@ -242,26 +303,6 @@ pub struct HistoryStorage {
     kept: Vec<Vec<u8>>,
     /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
-    /// The thread that writes the file (atomic_file flushes the disk: never
-    /// on the frame thread), started at the first save.
-    writer: Option<Writer>,
-}
-
-#[derive(Debug)]
-struct Writer {
-    files: std::sync::mpsc::Sender<Vec<u8>>,
-    /// Told when the thread has written everything and stopped.
-    /// (in a Mutex: the World is shared with the frame's worker threads)
-    done: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-}
-
-impl Drop for HistoryStorage {
-    fn drop(&mut self) {
-        if let Some(Writer { files, done }) = self.writer.take() {
-            drop(files);
-            let _ = done.into_inner().map(|d| d.recv_timeout(LAST_SAVE_WAIT));
-        }
-    }
 }
 
 impl HistoryStorage {
@@ -270,13 +311,18 @@ impl HistoryStorage {
     /// reading there); a file that exists but cannot be read is left alone
     /// for the session (not saved over).
     pub fn load(path: PathBuf) -> HistoryStorage {
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => {
-                log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
-                return HistoryStorage::default();
-            }
+        // A previous session may still be publishing this account's latest
+        // history. Reading its snapshot also avoids waiting for a slow disk.
+        let bytes = match writers().snapshot(&path) {
+            Some(bytes) => bytes,
+            None => match std::fs::read(&path) {
+                Ok(bytes) => Arc::new(bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Arc::default(),
+                Err(e) => {
+                    log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
+                    return HistoryStorage::default();
+                }
+            },
         };
         let (mut items, kept) = parse(&bytes);
         if !kept.is_empty() {
@@ -290,15 +336,15 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
-            writer: None,
         }
     }
 
     /// A history kept in memory only (the demo's).
     pub fn in_memory(items: Vec<HistoryItem>) -> HistoryStorage {
-        let mut storage = HistoryStorage::default();
-        storage.items = items;
-        storage
+        HistoryStorage {
+            items,
+            ..Default::default()
+        }
     }
 
     /// LLTeleportHistoryStorage::addItem: the same title within 5 m replaces
@@ -373,31 +419,17 @@ impl HistoryStorage {
         out
     }
 
-    /// Hands the file to the writer thread; the newest one waiting wins.
-    fn save(&mut self) {
-        let Some(path) = self.path.clone() else {
-            return;
-        };
-        let file = self.file();
-        if self.writer.is_none() {
-            self.writer = spawn_writer(path.clone());
-        }
-        let sent = self.writer.as_ref().is_some_and(|w| w.files.send(file.clone()).is_ok());
-        if !sent {
-            // no thread: written here, as before
-            self.writer = None;
-            if let Err(e) = write_file(&path, &file) {
-                log::warn!("can't save the teleport history: {e}");
-            }
+    /// Hand the latest complete file to this account's writer.
+    fn save(&self) {
+        if let Some(path) = &self.path {
+            writers().queue(path.clone(), self.file(), write_file);
         }
     }
 
-    /// Waits for the saves handed to the writer (tests).
     #[cfg(test)]
-    fn flush(&mut self) {
-        if let Some(Writer { files, done }) = self.writer.take() {
-            drop(files);
-            let _ = done.into_inner().map(|d| d.recv());
+    fn flush(&self) {
+        if let Some(path) = &self.path {
+            writers().wait(Some(path));
         }
     }
 }
@@ -426,28 +458,125 @@ fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
     crate::atomic_file::write(path, file)
 }
 
-fn spawn_writer(path: PathBuf) -> Option<Writer> {
-    let (files, queue) = std::sync::mpsc::channel::<Vec<u8>>();
-    let (finished, done) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("aurora-tp-history".into())
-        .spawn(move || {
-            while let Ok(mut file) = queue.recv() {
-                while let Ok(newer) = queue.try_recv() {
-                    file = newer;
+/// One publisher per account file, shared across session and World resets.
+/// A refused write keeps its snapshot pending (a new session of the account
+/// reads it from here) and is tried again, waiting longer each time
+/// (`save_retry`), or at once with the newer snapshot when the wait ends;
+/// the exit's [`finish_writes`] makes the last try. The Legacy Viewer's
+/// LLTeleportHistoryStorage::save writes once and warns.
+#[derive(Default)]
+struct Writers {
+    pending: Mutex<HashMap<PathBuf, Arc<Vec<u8>>>>,
+    finished: Condvar,
+    /// Wakes a publisher waiting to try a refused write again.
+    wake: Condvar,
+    /// The exit waits for the writes: a refused one is tried once more,
+    /// then given up.
+    closing: std::sync::atomic::AtomicBool,
+}
+
+impl Writers {
+    fn snapshot(&self, path: &Path) -> Option<Arc<Vec<u8>>> {
+        self.pending.lock().unwrap_or_else(|p| p.into_inner()).get(path).cloned()
+    }
+
+    fn queue(self: &Arc<Self>, path: PathBuf, bytes: Vec<u8>, publish: impl FnMut(&Path, &[u8]) -> std::io::Result<()> + Send + 'static) {
+        let bytes = Arc::new(bytes);
+        // Inserting into a vacant slot reserves the only worker for this
+        // path. Later requests replace its snapshot while the write runs.
+        if self
+            .pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(path.clone(), bytes.clone())
+            .is_some()
+        {
+            return;
+        }
+        let writers = self.clone();
+        let target = path.clone();
+        let first = bytes.clone();
+        if let Err(e) = std::thread::Builder::new().name("aurora-tp-history".into()).spawn(move || {
+            writers.publish(&target, first, publish);
+        }) {
+            log::warn!("teleport history: no writer thread ({e}); saved on the caller's thread");
+            self.publish(&path, bytes, write_file);
+        }
+    }
+
+    fn publish(&self, path: &Path, mut bytes: Arc<Vec<u8>>, mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>) {
+        use std::sync::atomic::Ordering;
+        let mut backoff = crate::save_retry::Backoff::default();
+        loop {
+            let written = write(path, &bytes);
+            let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+            let newer = |pending: &HashMap<PathBuf, Arc<Vec<u8>>>| pending.get(path).is_some_and(|latest| !Arc::ptr_eq(latest, &bytes));
+            if let Err(e) = written {
+                if self.closing.load(Ordering::Acquire) && !newer(&pending) {
+                    log::warn!("can't save the teleport history at exit: {e}");
+                    pending.remove(path);
+                    self.finished.notify_all();
+                    return;
                 }
-                if let Err(e) = write_file(&path, &file) {
-                    log::warn!("can't save the teleport history: {e}");
+                let wait = backoff.failed(std::time::Instant::now());
+                log::warn!("can't save the teleport history ({e}); tried again in {} s", wait.as_secs());
+                // the exit ends the wait early; a newer snapshot waits for it
+                pending = self
+                    .wake
+                    .wait_timeout_while(pending, wait, |_| !self.closing.load(Ordering::Acquire))
+                    .unwrap_or_else(|p| p.into_inner())
+                    .0;
+            } else {
+                backoff.succeeded();
+                if !newer(&pending) {
+                    pending.remove(path);
+                    self.finished.notify_all();
+                    return;
                 }
             }
-            let _ = finished.send(());
-        })
-        .map_err(|e| log::warn!("teleport history: no writer thread ({e}); saved on the caller's thread"))
-        .ok()?;
-    Some(Writer {
-        files,
-        done: std::sync::Mutex::new(done),
-    })
+            bytes = pending
+                .get(path)
+                .expect("the publishing thread owns this path until its last write")
+                .clone();
+        }
+    }
+
+    /// The exit: every write still pending ends, a refused one after one
+    /// more try.
+    fn close(&self) {
+        use std::sync::atomic::Ordering;
+        self.closing.store(true, Ordering::Release);
+        {
+            // under the lock, so that a publisher about to wait sees it
+            let _pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+            self.wake.notify_all();
+        }
+        self.wait(None);
+        self.closing.store(false, Ordering::Release);
+    }
+
+    fn wait(&self, path: Option<&Path>) {
+        let pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        drop(
+            self.finished
+                .wait_while(pending, |files| match path {
+                    Some(path) => files.contains_key(path),
+                    None => !files.is_empty(),
+                })
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+    }
+}
+
+fn writers() -> &'static Arc<Writers> {
+    static WRITERS: OnceLock<Arc<Writers>> = OnceLock::new();
+    WRITERS.get_or_init(Default::default)
+}
+
+/// Called after the viewer window has closed. An orderly exit, including a
+/// restart into VR, waits for the final atomic publication for every account.
+pub fn finish_writes() {
+    writers().close();
 }
 
 /// Accordion sections of the history (panel_teleport_history.xml).
@@ -470,9 +599,9 @@ pub fn history_sections() -> [&'static str; 9] {
 /// seconds to add to UTC there, 0 for UTC), "6 days ago or earlier" goes
 /// back to the same day of the previous month and "1 month ago or earlier"
 /// to six months ago, both from midnight UTC as the source counts them. A
-/// date in the future counts as today. Returns the index in
-/// HISTORY_SECTIONS.
-pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
+/// date in the future counts as today. The returned lookup gives the index
+/// in the translated section titles for each date in the same frame.
+pub fn history_section_lookup(now: f64, offset: f64) -> impl Fn(f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};
     const DAY: f64 = 86_400.0;
     let (y, m, d) = civil_from_days((now / DAY).floor() as i64);
@@ -484,17 +613,14 @@ pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
         let total = y * 12 + (m as i64 - 1) - n;
         days_from_civil(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32, d) as f64 * DAY
     };
-    for i in 0..history_sections().len() - 1 {
-        let lower = match i {
-            0..=5 => (today - i as f64) * DAY - offset,
-            6 => months_back(1),
-            _ => months_back(6),
-        };
-        if date >= lower {
-            return i;
-        }
-    }
-    history_sections().len() - 1
+    // All visits in a frame share their day and month boundaries. Reading
+    // the translated section titles for every date is especially costly.
+    let lower: [f64; 8] = std::array::from_fn(|i| match i {
+        0..=5 => (today - i as f64) * DAY - offset,
+        6 => months_back(1),
+        _ => months_back(6),
+    });
+    move |date| lower.iter().position(|&start| date >= start).unwrap_or(lower.len())
 }
 
 /// LLAgentUI::buildLocationString(LOCATION_FORMAT_NORMAL): "Parcel, Region",
@@ -517,11 +643,15 @@ pub fn history_matches(title: &str, filter: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn history_section(date: f64, now: f64, offset: f64) -> usize {
+        history_section_lookup(now, offset)(date)
+    }
+
     fn e(n: &str) -> TpEntry {
         TpEntry {
             region: n.into(),
-            handle: 0,
-            position: Vec3::ZERO,
+            handle: aurora_net::origin_to_handle(256_000, 256_000),
+            position: Vec3::new(128.0, 128.0, 25.0),
             parcel: String::new(),
             at: 0,
             grid: None,
@@ -630,6 +760,63 @@ mod tests {
         d.arrived(e("Z"));
         assert_eq!(d.session().current, 2);
         assert_eq!(d.previous().map(|x| x.region.clone()), Some("Y".into()));
+    }
+
+    /// LLTeleportHistory::updateCurrentLocation under @showloc: however many
+    /// teleports, the session holds one hidden place, which leads nowhere.
+    #[test]
+    fn rlva_hidden_arrivals_share_one_place_with_no_way_back() {
+        let mut h = TeleportHistory::default();
+        h.arrived(e("A"));
+        h.arrived(e("B"));
+        h.arrived(e("C"));
+        assert!(h.go_back().is_some());
+        h.arrived(e("B"));
+        // the restriction comes at B: B loses its name and its destination,
+        // and the places ahead go
+        let was = h.replace_current_region("(Hidden)").expect("a current place");
+        assert_eq!((was.region.as_str(), was.is_hidden()), ("B", false));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert!(s.items[1].is_hidden());
+        // three teleports under it: still one hidden place, the last one's
+        for at in 1..=3 {
+            h.arrived(TpEntry::hidden("(Hidden)", at));
+        }
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (2, 1));
+        assert_eq!((s.items[1].title().as_str(), s.items[1].at), ("(Hidden)", 3));
+        assert_eq!(s.items[1].handle, 0);
+        assert_eq!(s.items[1].position, Vec3::ZERO);
+        // Back to A is a teleport like another; A is left as it was
+        assert_eq!(h.back_name().as_deref(), Some("A"));
+        assert_eq!(h.go_back().map(|x| x.region), Some("A".into()));
+        h.arrived(TpEntry::hidden("(Hidden)", 4));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current, s.items[0].region.as_str()), (2, 0, "A"));
+        assert!(!s.items[0].is_hidden());
+        // the hidden place ahead is shown, and is no destination
+        assert!(h.next().is_some_and(TpEntry::is_hidden));
+        assert!(h.forward_name().is_none());
+        assert!(h.go_forward().is_none() && h.go_to(1).is_none());
+        h.arrived(TpEntry::hidden("(Hidden)", 5));
+        // that arrival was no trip in the list: it takes the place of A
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (1, 0));
+        assert!(s.items[0].is_hidden());
+        // released: the place is the one we stand in, and the list grows again
+        h.replace_current_region("D");
+        assert!(h.session().items[0].is_hidden(), "no destination until the agent is located");
+        h.locate_current(e("D"));
+        h.locate_current(e("not hidden any more"));
+        assert_eq!(h.session().items[0].region, "D");
+        h.arrived(e("E"));
+        assert_eq!(h.back_name().as_deref(), Some("D"));
+        // a hidden place never located is replaced by the next arrival
+        h.replace_current_region("(Hidden)");
+        h.arrived(e("F"));
+        let regions: Vec<_> = h.session().items.iter().map(|t| t.region.as_str()).collect();
+        assert_eq!(regions, ["D", "F"]);
     }
 
     const DAY: f64 = 86_400.0;
@@ -801,7 +988,7 @@ mod tests {
         assert!(s.path.is_none());
         s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
         assert_eq!(s.items.len(), 1);
-        assert!(s.writer.is_none());
+        assert!(writers().snapshot(&path).is_none());
         drop(s);
         assert!(path.join("inside").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
@@ -816,13 +1003,98 @@ mod tests {
         let mut s = HistoryStorage::load(path.clone());
         assert!(s.items.is_empty() && s.path.is_some());
         s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
-        // dropping waits for the last save (logout, quit)
         drop(s);
         assert_eq!(HistoryStorage::load(path.clone()).items.len(), 1);
+        // A normal shutdown drains the writer before another process opens the file.
+        writers().wait(Some(&path));
+        assert_eq!(parse(&std::fs::read(&path).unwrap()).0.len(), 1);
         // the atomic write leaves no temporary file behind
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
         assert_eq!(names, vec![std::ffi::OsString::from(TELEPORT_HISTORY_FILE)]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Keep the first publication pending past the former 500 ms logout wait.
+    /// A new session sees that visit; its own write must publish last.
+    #[test]
+    fn a_slow_save_survives_logout_relogin_and_orderly_shutdown() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-relogin-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let pos = DVec3::new(10.0, 20.0, 30.0);
+        let (started, writing) = mpsc::channel();
+        let (release, gate) = mpsc::channel();
+        let mut first_write = true;
+        writers().queue(path.clone(), Vec::new(), move |path, bytes| {
+            if std::mem::take(&mut first_write) {
+                started.send(()).unwrap();
+                gate.recv().unwrap();
+            }
+            write_file(path, bytes)
+        });
+        writing.recv().unwrap();
+        let mut first = HistoryStorage::load(path.clone());
+        first.add("First", pos, 1.0, String::new());
+
+        let mut next = HistoryStorage::load(path.clone());
+        assert_eq!(next.items[0].title, "First");
+        next.add("Second", pos, 2.0, String::new());
+        drop(next);
+        drop(first); // an older session going away cannot replay its first visit
+
+        let other_path = dir.join("other").join(TELEPORT_HISTORY_FILE);
+        let mut other = HistoryStorage::load(other_path.clone());
+        assert!(other.items.is_empty());
+        other.add("Other account", pos, 3.0, String::new());
+        other.flush();
+        assert_eq!(parse(&std::fs::read(other_path).unwrap()).0[0].title, "Other account");
+
+        let (done, drained) = mpsc::channel();
+        let close = std::thread::spawn(move || {
+            finish_writes();
+            done.send(()).unwrap();
+        });
+        assert_eq!(
+            drained.recv_timeout(Duration::from_millis(600)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        assert!(!path.exists());
+        release.send(()).unwrap();
+        drained.recv_timeout(Duration::from_secs(10)).unwrap();
+        close.join().unwrap();
+        assert!(writers().snapshot(&path).is_none());
+        let items = HistoryStorage::load(path.clone()).items;
+        assert_eq!(items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A refused write keeps its snapshot (a new session reads it) and the
+    /// exit's wait tries it once more, which goes through.
+    #[test]
+    fn a_refused_save_stays_pending_and_is_tried_again_at_exit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-refused-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let writers = Arc::new(Writers::default());
+        let tries = Arc::new(AtomicUsize::new(0));
+        let counted = tries.clone();
+        writers.queue(path.clone(), b"visits".to_vec(), move |path, bytes| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+            }
+            write_file(path, bytes)
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while tries.load(Ordering::SeqCst) < 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(writers.snapshot(&path).as_deref().map(Vec::as_slice), Some(&b"visits"[..]), "kept");
+        writers.close();
+        assert_eq!(tries.load(Ordering::SeqCst), 2);
+        assert!(writers.snapshot(&path).is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"visits");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

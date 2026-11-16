@@ -111,34 +111,36 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.9 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.10 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Aurora Weather</h3>
-      Rain, snow, wind, thunder and northern lights, with puddles, lying
-      snow and footprints. Choose yours in the Environment window, or let
-      regions set it (off by default).
+      <h3>The Director</h3>
+      Film in the world: keep camera views as keyframes on a timeline,
+      play them back as one smooth shot with the world alone, and record
+      it to a video file with your own ffmpeg.
     </td>
     <td width="50%" valign="top">
-      <h3>Avatar Studio</h3>
-      A calm space to dress, pose and photograph your avatar, with its own
-      animation editor: keyframes, a timeline, ANIM and BVH import.
+      <h3>Transparency in its true order</h3>
+      Glass, curtains and the layers of mesh hair show in the right order
+      at every pixel, even when they cross. Choose it in Preferences ›
+      Graphics, "Order of transparent surfaces"; the Stochastic choice
+      is thanks to Anne Skydancer.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Lua scripts</h3>
-      SLua scripts get a real editor: Lua colours, completion, hover help,
-      and the compile target of your choice. New script can create a Lua
-      script on a region with SLua.
+      <h3>Weather and water</h3>
+      Aurora Weather reaches farther, with puddles and lying snow up to
+      256 m away and much steadier snow. Water and ambient occlusion cost
+      less for the same image.
     </td>
     <td valign="top">
-      <h3>Gamepad and VR</h3>
-      Switch between First Person, Avatar Mode and Flycam with a gamepad,
-      on the desktop or in VR. The camera can also follow an animated
-      body part.
+      <h3>More like the Legacy Viewer</h3>
+      The Conversation log, draw distance up to 1024 m, the Animation
+      Speed menu, beacons, radar marks, Doppler on moving sounds, and
+      objects saved as Collada or OBJ.
     </td>
   </tr>
 </table>
@@ -1075,8 +1077,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
@@ -1297,6 +1300,11 @@ openly.
 
 Questions and answers, and the details:
 [AI use policy](https://aurora-viewer.org/ai-policy/).
+
+## Security
+
+Found a vulnerability? Please report it privately, not in a public issue:
+[SECURITY.md](SECURITY.md) explains how, and what happens next.
 
 ## Privacy
 

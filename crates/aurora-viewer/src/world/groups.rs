@@ -43,6 +43,9 @@ pub struct SessionInfo {
     /// Group chat (session id = group id); else an ad-hoc conference.
     pub group: bool,
     pub participants: BTreeSet<Uuid>,
+    /// A local conference request named these residents; a partial initial
+    /// roster cannot establish that it is safe to send without checking them.
+    pub(super) unconfirmed_invitees: BTreeSet<Uuid>,
     /// Those who were in it and left (a conference's offline members).
     pub left: BTreeSet<Uuid>,
     pub moderators: HashSet<Uuid>,
@@ -53,6 +56,11 @@ pub struct SessionInfo {
     /// The server closed it (ForceCloseChatterBoxSession).
     pub closed: bool,
     history_fetched: bool,
+    /// Our conference failed before it ever received a valid network address.
+    pub(super) failed_conference_start: bool,
+    /// FSFloaterIM::mQueuedMsgsForInit: messages entered before a local
+    /// conference received its permanent address. Kept only for this login.
+    pub(super) pending_messages: Vec<String>,
     /// We opened it ourselves (IM_SESSION_GROUP_START), no message did.
     pub(super) started_by_us: bool,
 }
@@ -423,7 +431,9 @@ impl World {
     }
 
     /// Open (or focus) the chat of one of our groups (LLGroupActions::startIM).
-    pub fn start_group_chat(&mut self, group: Uuid) {
+    /// `to_type`: the user opened it, so its field takes the keyboard
+    /// (FSFloaterIM::show → setFocus); a call starts the session without it.
+    pub fn start_group_chat(&mut self, group: Uuid, to_type: bool) {
         let Some(g) = self.groups.group(&group).cloned() else {
             return;
         };
@@ -437,7 +447,7 @@ impl World {
             self.set_group_chat_blocked(group, false);
         }
         self.groups.unsnooze(&group);
-        self.social.focus_im = Some(group);
+        self.focus_conversation(group, to_type);
         let known = self.groups.sessions.get(&group).is_some_and(|s| s.active && !s.closed);
         self.info_mut(group, &g.name);
         self.session_lines(group);
@@ -455,12 +465,22 @@ impl World {
         // Sending is an explicit request to open the displayed conversation,
         // just like its call button; do not send into an unjoined preview.
         if self.groups.restoring.contains(&session) {
-            self.start_group_chat(session);
+            self.start_group_chat(session, false);
             if self.groups.restoring.contains(&session) {
                 return;
             }
         }
+        if self.groups.sessions.get(&session).is_some_and(|s| s.failed_conference_start) {
+            self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
+            return;
+        }
         let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        if self.calls.conferences.contains_key(&session) {
+            if let Some(info) = self.groups.sessions.get_mut(&session) {
+                info.pending_messages.push(text);
+            }
+            return;
+        }
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
@@ -482,6 +502,7 @@ impl World {
     /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
     /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
+        self.calls.conferences.remove(&session);
         self.cancel_saved_im(session);
         self.groups.restoring.remove(&session);
         self.groups.deferred.retain(|id| *id != session);
@@ -695,7 +716,20 @@ impl World {
                 error,
                 agents,
             } => {
-                if !success {
+                if self.groups.sessions.get(&temp_session).is_some_and(|s| s.failed_conference_start) {
+                    return None;
+                }
+                // A new ad-hoc conversation must not replace an unrelated open
+                // conversation or route its pending messages into that conversation.
+                let starting_here = self.calls.conferences.contains_key(&temp_session);
+                let collides = starting_here
+                    && temp_session != session
+                    && (session.is_nil()
+                        || self.groups.is_member(&session)
+                        || self.groups.sessions.contains_key(&session)
+                        || self.social.has_session(&session));
+                if !success || collides {
+                    self.call_session_started(temp_session, if collides { temp_session } else { session }, false);
                     // LLIMMgr::showSessionStartError
                     let id = if self.groups.sessions.contains_key(&temp_session) {
                         temp_session
@@ -708,6 +742,8 @@ impl World {
                     );
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
+                        s.failed_conference_start = starting_here;
+                        s.pending_messages.clear();
                     }
                     self.groups.restoring.remove(&id);
                     return None;
@@ -720,6 +756,9 @@ impl World {
                     if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == temp_session) {
                         s.other = session;
                     }
+                    // the conversation log's entry (and the poll's memory of the
+                    // open conversation) follows, or the conference is logged twice
+                    self.chat_log.conversations.rekey(temp_session, session);
                 }
                 self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");
@@ -734,6 +773,7 @@ impl World {
                         session,
                     });
                 }
+                self.call_session_started(temp_session, session, true);
             }
             NetEvent::SessionAgents { session, agents } => {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
@@ -773,12 +813,15 @@ impl World {
                 self.session_system(session, aurora_i18n::tr!("world-groups-error-while-moderating"));
             }
             NetEvent::SessionClosed { session, reason: r } => {
+                let was_starting = self.calls.conferences.remove(&session).is_some();
                 self.cancel_saved_im(session);
                 self.groups.restoring.remove(&session);
                 // LLIMMgr::showSessionForceClose
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     s.closed = true;
                     s.active = false;
+                    s.failed_conference_start |= was_starting;
+                    s.pending_messages.clear();
                     self.session_system(
                         session,
                         aurora_i18n::tr!("world-groups-the-session-was-closed", value0 = reason(&r).to_string()),
@@ -830,6 +873,10 @@ impl World {
     fn on_session_invite(&mut self, mut inv: aurora_net::SessionInvite) {
         let session = inv.session;
         if inv.from == self.agent_id || session.is_nil() {
+            return;
+        }
+        // LLIMMgr::addMessage, IM_SESSION_INVITE
+        if !self.omnifilter_session_invite(&mut inv) {
             return;
         }
         let in_group = self.groups.is_member(&session);
@@ -894,6 +941,10 @@ impl World {
             self.social.offline_ims |= inv.offline;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
+            // sessionAdded with has_offline_msg
+            if inv.offline && new {
+                self.log_conversation(session, true);
+            }
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {
@@ -977,6 +1028,9 @@ impl World {
 
 fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
     for a in agents {
+        if a.present.is_some() {
+            s.unconfirmed_invitees.remove(&a.agent);
+        }
         match a.present {
             Some(true) => {
                 s.participants.insert(a.agent);
@@ -1043,6 +1097,32 @@ mod tests {
                 list_in_profile: false,
             }] if group == Uuid::from_u128(2)
         ));
+    }
+
+    /// A group chat the user opens takes the keyboard (LLGroupActions::startIM
+    /// → FSFloaterIM::show → setFocus); a call only starts its session.
+    #[test]
+    fn a_group_chat_the_user_opens_takes_the_keyboard_a_call_does_not() {
+        let group = Uuid::from_u128(2);
+        let membership = || aurora_net::GroupMembership {
+            id: group,
+            name: "Group".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, true);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(w.social.focus_im_to_type, "the user opened it, ready to type");
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, false);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(!w.social.focus_im_to_type, "a call leaves the keyboard where it was");
     }
 
     /// Online status › Ad hoc conferences (LLIMMgr::addMessage, FSIgnoreAdHocSessions):
