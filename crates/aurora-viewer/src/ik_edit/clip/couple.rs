@@ -179,8 +179,6 @@ impl State {
 }
 
 impl Editor {
-    /// The avatar the editor poses: Person B in couple mode when B is
-    /// edited, our own otherwise.
     /// Person B's avatar while couple mode runs: the world keeps it drawn
     /// if they leave (`World::set_couple_partner`).
     pub fn couple_partner(&self) -> Option<Uuid> {
@@ -375,7 +373,7 @@ impl Editor {
         proj: &Projector,
         blocked: bool,
     ) {
-        let Some(couple) = self.clip.couple.as_ref().filter(|_| self.clip.active) else {
+        let Some(couple) = self.clip.couple.as_ref().filter(|_| self.clip.active && !self.poser.active) else {
             return;
         };
         let b = !couple.editing_b;
@@ -420,6 +418,20 @@ impl Editor {
         }
         if let Some(joint) = picked {
             self.switch_to_joint(joint);
+            self.select_after_switch(world);
+        }
+    }
+    /// The joint clicked on the other person, selected once the switch to
+    /// them is done, as any pick: its binding, its followers, the tool.
+    fn select_after_switch(&mut self, world: &World) {
+        let Some(couple) = self.clip.couple.as_mut().filter(|couple| !couple.pending_switch) else {
+            return;
+        };
+        let Some(bone) = couple.select_after.take() else { return };
+        match Frame::subject(world, couple.edited(world.agent_id)) {
+            Some(frame) => self.select(bone, &world.avatar_lib.rig, &frame),
+            // no body to read yet: the joint is picked all the same
+            None => self.selected = Some(bone),
         }
     }
     /// Edit the other person: now, or once the edited person's preview
@@ -443,16 +455,25 @@ impl Editor {
             return;
         }
         let Partner::Avatar(id) = couple.partner;
+        let pending_switch = couple.pending_switch;
         if !world.poser_consent.can_pose(world, id) {
             self.end_couple();
             self.clip.error = Some(aurora_i18n::text("anim-couple-partner-left").to_owned());
             return;
         }
-        if couple.pending_switch && self.clip.can_switch_person() {
+        // a name still loading when B was chosen shows once it arrives
+        let name = crate::world::poser_consent::name(world, id);
+        if let Some(couple) = self.clip.couple.as_mut()
+            && couple.partner_name != name
+        {
+            couple.partner_name = name;
+        }
+        if pending_switch && self.clip.can_switch_person() {
             if let Some(couple) = self.clip.couple.as_mut() {
                 couple.pending_switch = false;
             }
             self.swap_person();
+            self.select_after_switch(world);
         }
     }
     /// Swap the edited person's whole state with the one set aside.
@@ -477,9 +498,6 @@ impl Editor {
             lanes: None,
         };
         couple.editing_b = !couple.editing_b;
-        if let Some(bone) = couple.select_after.take() {
-            self.selected = Some(bone);
-        }
         self.clip.couple = Some(couple);
         // the incoming preview is current for its document: it keeps
         // showing under the revision that now names that document
@@ -655,6 +673,41 @@ mod tests {
             editor.clip_seek(0);
             editor.switch_person();
         }
+    }
+
+    #[test]
+    fn a_click_on_the_other_person_s_joint_edits_them_with_that_joint() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = Uuid::from_u128(1);
+        let world = world;
+        let elbow = lib.rig.names["mElbowLeft"];
+        let mut editor = couple_editor(&lib);
+        editor.switch_to_joint(elbow);
+        editor.select_after_switch(&world);
+        assert!(editor.clip.couple.as_ref().expect("couple").editing_b);
+        assert_eq!(editor.selected, Some(elbow));
+
+        // a click while A's keys are still building: B gets it after
+        let mut editor = couple_editor(&lib);
+        editor.clip.changed();
+        editor.switch_to_joint(elbow);
+        editor.select_after_switch(&world);
+        assert!(!editor.clip.couple.as_ref().expect("couple").editing_b);
+        assert_eq!(editor.selected, None);
+        let preview = editor.clip.preview.take().map(|preview| Preview {
+            revision: editor.clip.revision,
+            ..preview
+        });
+        editor.clip.preview = preview;
+        editor.clip.preview_revision = Some(editor.clip.revision);
+        // what `tick_couple` does once the preview is current
+        assert!(editor.clip.can_switch_person());
+        editor.clip.couple.as_mut().expect("couple").pending_switch = false;
+        editor.swap_person();
+        editor.select_after_switch(&world);
+        assert!(editor.clip.couple.as_ref().expect("couple").editing_b);
+        assert_eq!(editor.selected, Some(elbow));
     }
 
     #[test]
