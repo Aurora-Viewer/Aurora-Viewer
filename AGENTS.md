@@ -341,9 +341,11 @@ Before each significant commit, and always before the PR:
   in the CI. A new stable release comes in through its own pull request,
   which changes that line (Dependabot opens it; it is handled like its
   other PRs, section 13): never change it in a task's PR, and never build
-  with another toolchain (`cargo +…`, `RUSTUP_TOOLCHAIN`). After a pull that
-  changes it, the next build downloads the new version and recompiles
-  everything once.
+  with another toolchain (`cargo +…`, `RUSTUP_TOOLCHAIN`). The only
+  exception is the fuzzing targets, which need nightly
+  (`cargo +nightly fuzz`, [docs/TESTING.md](docs/TESTING.md#fuzzing)). After
+  a pull that changes it, the next build downloads the new version and
+  recompiles everything once.
 - **Every change to `Cargo.lock`** (a dependency added, removed or updated,
   Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
   commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in
