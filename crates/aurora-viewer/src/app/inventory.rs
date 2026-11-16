@@ -410,7 +410,7 @@ impl App {
             }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
-            InvAction::Preview(id) => {
+            InvAction::Preview(id, owner) => {
                 if self
                     .world
                     .inventory
@@ -445,13 +445,16 @@ impl App {
                     }
                     if it.asset_type == 10 {
                         self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
-                        self.open_script(aurora_net::scripts::ScriptTarget {
-                            object: Uuid::nil(),
-                            item: id,
-                        });
+                        self.open_script_from(
+                            aurora_net::scripts::ScriptTarget {
+                                object: Uuid::nil(),
+                                item: id,
+                            },
+                            owner,
+                        );
                         return;
                     }
-                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
+                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type, owner) {
                         return;
                     }
                     // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())

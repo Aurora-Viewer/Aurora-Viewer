@@ -1270,7 +1270,7 @@ pub(super) fn execute(
         Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
-            actions.push(InvAction::Preview(id));
+            actions.push(InvAction::Preview(id, Some(clipboard::focus_id(st))));
         }
         Command::Window(id) => st.open_folder_window(id),
         Command::Asset(id) => ui.ctx().copy_text(id.to_string()),
