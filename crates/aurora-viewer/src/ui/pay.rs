@@ -1322,6 +1322,7 @@ mod tests {
             chat_type: aurora_net::ChatType::OwnerSay,
             position: glam::Vec3::ZERO,
             message: "@pay=n".into(),
+            region: None,
         };
         assert!(world.rlva.receive(&restriction));
         assert!(!world.rlva_can_pay());
@@ -1356,6 +1357,7 @@ mod tests {
             chat_type: aurora_net::ChatType::OwnerSay,
             position: glam::Vec3::ZERO,
             message: "@pay=n".into(),
+            region: None,
         };
         assert!(world.rlva.receive(&restriction));
         for group in [false, true] {

@@ -242,8 +242,6 @@ pub struct Facts {
     pub friend: bool,
     /// RLVa `@startim` forbids an IM with this resident (RlvActions::canStartIM).
     pub im_blocked: bool,
-    /// RLV `@pay` prevents resident and group payments (`RlvActions::canPayAvatar`).
-    pub pay_blocked: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
