@@ -88,6 +88,27 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
+/// only while it is used (the Legacy Viewer's `AutohideChatBar`, #1009), or
+/// never, the Nearby tab of the Conversations window taking its place
+/// (Aurora's: there Enter always shows the bar, `start_chat` in
+/// indra/newview/llviewerinput.cpp).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatBar {
+    #[default]
+    Always,
+    WhenTyping,
+    ConversationsOnly,
+}
+
+impl ChatBar {
+    /// The bar is not always on screen: the default dock keeps the
+    /// Conversations button.
+    pub fn hides(self) -> bool {
+        self != ChatBar::Always
+    }
+}
+
 /// Where web pages open, like `PreferredBrowserBehavior` and
 /// `LLWeb::useExternalBrowser` in the Legacy Viewer.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -999,11 +1020,15 @@ pub struct Settings {
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
-    /// The local chat bar (the chat island) shows only while it is used:
-    /// Enter or a letter key brings it (#1009). The Legacy Viewer's
-    /// `AutohideChatBar`, off by default; with the islands the default dock
-    /// then keeps the Conversations button.
-    pub autohide_chat_bar: bool,
+    /// When the local chat bar (the chat island) shows: always, only while
+    /// it is used (#1009), or never, the Conversations window's Nearby tab
+    /// taking Enter (#2696). With the islands, the default dock keeps the
+    /// Conversations button while the bar hides.
+    pub chat_bar: ChatBar,
+    /// The former switch "Hide the chat bar when not in use", read once:
+    /// on is `ChatBar::WhenTyping`.
+    #[serde(rename = "autohide_chat_bar", skip_serializing)]
+    pub(crate) former_autohide_chat_bar: Option<bool>,
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
@@ -1247,6 +1272,9 @@ pub struct Settings {
     pub rlva: crate::world::rlva::preferences::Preferences,
     pub pose_requests: crate::world::poser_consent::Preferences,
     pub poser: crate::ik_edit::poser::Config,
+    /// The pose stand's lock and last pose (FSPoseStandLock,
+    /// FSPoseStandLastSelectedPose).
+    pub pose_stand: crate::pose_stand::Settings,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1902,7 +1930,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 40;
+const SETTINGS_VERSION: u32 = 41;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2432,7 +2460,8 @@ impl Default for Settings {
             colon_emote: false,
             auto_close_ooc: false,
             chat_mention_autocomplete: true,
-            autohide_chat_bar: false,
+            chat_bar: ChatBar::Always,
+            former_autohide_chat_bar: None,
             show_contacts_tab: true,
             conversations_own_windows: false,
             send_typing_state: true,
@@ -2517,6 +2546,7 @@ impl Default for Settings {
             rlva: Default::default(),
             pose_requests: Default::default(),
             poser: Default::default(),
+            pose_stand: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),
@@ -3393,6 +3423,14 @@ impl Settings {
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
             }
+        }
+        // Main's version 40 still saved the old switch. Builds that already
+        // offered the three modes saved only chat_bar at the same version.
+        // A missing choice takes ChatBar's default during deserialization.
+        if let Some(autohide) = self.former_autohide_chat_bar.take()
+            && self.settings_version < 41
+        {
+            self.chat_bar = if autohide { ChatBar::WhenTyping } else { ChatBar::Always };
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4984,6 +5022,50 @@ mod tests {
         assert!(!loaded.inventory.recent_sort.system_first);
         assert_eq!(loaded.inventory.sort, Settings::default().inventory.sort);
         assert_eq!(loaded.inventory.received_sort, Settings::default().inventory.received_sort);
+    }
+
+    /// "Hide the chat bar when not in use" became the "Chat bar" choice
+    /// (#2696): on is "Shown when typing", anything else "Always shown",
+    /// once for earlier files; a choice made since stays.
+    #[test]
+    fn chat_bar_is_always_shown_by_default_and_once_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().chat_bar, ChatBar::Always);
+        let read = |file: serde_json::Value| serde_json::from_value::<Settings>(file).expect("read settings").sanitized();
+        for version in [0, 16, 33, 34, 35, 36, 37, 38, 39, 40] {
+            let on = read(serde_json::json!({ "settings_version": version, "autohide_chat_bar": true }));
+            assert_eq!(on.chat_bar, ChatBar::WhenTyping, "version {version}");
+            assert_eq!(on.settings_version, SETTINGS_VERSION);
+            let off = read(serde_json::json!({ "settings_version": version, "autohide_chat_bar": false }));
+            assert_eq!(off.chat_bar, ChatBar::Always, "version {version}");
+            let absent = read(serde_json::json!({ "settings_version": version }));
+            assert_eq!(absent.chat_bar, ChatBar::Always, "version {version}");
+        }
+        // Version 40 from the three-mode viewer already stored each choice.
+        for mode in [ChatBar::Always, ChatBar::WhenTyping, ChatBar::ConversationsOnly] {
+            let file = serde_json::json!({ "settings_version": 40, "chat_bar": mode });
+            let migrated = read(file);
+            assert_eq!(migrated.chat_bar, mode);
+            assert_eq!(migrated.settings_version, SETTINGS_VERSION);
+            assert_eq!(read(serde_json::to_value(migrated).expect("save settings")).chat_bar, mode);
+        }
+        // saved: the choice, without the former switch
+        let saved =
+            serde_json::to_value(read(serde_json::json!({ "settings_version": 33, "autohide_chat_bar": true }))).expect("serialize");
+        assert_eq!(saved["chat_bar"], serde_json::json!("WhenTyping"));
+        assert!(saved.get("autohide_chat_bar").is_none());
+        // chosen since: kept, even with the switch an older build wrote back
+        for autohide in [None, Some(false), Some(true)] {
+            let mut file = serde_json::json!({ "settings_version": SETTINGS_VERSION, "chat_bar": "ConversationsOnly" });
+            if let Some(on) = autohide {
+                file["autohide_chat_bar"] = serde_json::json!(on);
+            }
+            assert_eq!(read(file).chat_bar, ChatBar::ConversationsOnly, "{autohide:?}");
+        }
+        let again = Settings {
+            chat_bar: ChatBar::Always,
+            ..Settings::default()
+        };
+        assert_eq!(again.sanitized().chat_bar, ChatBar::Always);
     }
 
     /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the

@@ -1577,6 +1577,15 @@ impl Default for TouchSurface {
         }
     }
 }
+/// Progress of an outgoing inventory offer on its original reliable circuit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryOfferStatus {
+    /// The datagram was handed to the socket, possibly on a retry.
+    Transmitted,
+    /// The simulator acknowledged that datagram. Acceptance by the resident is separate.
+    Acknowledged,
+}
+
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
@@ -1825,6 +1834,22 @@ pub enum NetCommand {
         position: [f64; 3],
         color: [u8; 4],
         duration: f32,
+    },
+    /// An inventory offer (IM_INVENTORY_OFFERED) scoped to this login. The
+    /// unbounded receipt channel closes on circuit loss or exhausted retries.
+    OfferInventory {
+        session: Uuid,
+        to: Uuid,
+        id: Uuid,
+        message: String,
+        bucket: Vec<u8>,
+        receipt: crossbeam_channel::Sender<InventoryOfferStatus>,
+    },
+    /// Check reserved originals in this login's inventory after an uncertain offer.
+    CheckInventoryOffer {
+        session: Uuid,
+        items: Vec<Uuid>,
+        reply: crossbeam_channel::Sender<crate::inventory::ais::ItemReads>,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
