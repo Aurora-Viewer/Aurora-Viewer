@@ -2,7 +2,7 @@
 //! window (a list of `available_height() - <guessed footer>` above a footer
 //! that measured more) made egui grow the window a little every frame.
 
-use super::elide_tests::Frames;
+use super::elide_tests::{Frames, Text};
 use crate::theme::Palette;
 
 /// Run `show` on fresh state from `new` for 30 frames, at the interface
@@ -20,21 +20,35 @@ pub(crate) fn assert_window_steady<S>(
     assert_window_steady_at_scales(
         id,
         sizes,
-        bottom,
         &[(1.0, 1.0), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)],
         new,
         show,
+        |_, _, case, window, texts| {
+            let found: Vec<_> = texts.iter().filter(|t| t.source == bottom).collect();
+            assert!(
+                !found.is_empty(),
+                "{case}: {bottom:?} is drawn, among {:?}",
+                texts.iter().map(|t| t.source.as_str()).collect::<Vec<_>>()
+            );
+            for t in found {
+                assert!(
+                    t.rect.bottom() <= window.bottom(),
+                    "{case}: {bottom:?} at {:?} in {window:?}",
+                    t.rect
+                );
+            }
+        },
     );
 }
 
-/// Exercise a steady floater at the supplied `(zoom, text scale)` pairs.
+/// Check the settled geometry first, then exercise the control at each size and scale.
 pub(crate) fn assert_window_steady_at_scales<S>(
     id: &str,
     sizes: &[egui::Vec2],
-    bottom: &str,
     scales: &[(f32, f32)],
     mut new: impl FnMut() -> S,
     mut show: impl FnMut(&mut S, &egui::Context, &Palette),
+    mut check: impl FnMut(&mut Frames, &mut S, &str, egui::Rect, &[Text]),
 ) {
     let p = crate::theme::Theme::default().palette();
     for &(zoom, text) in scales {
@@ -72,16 +86,7 @@ pub(crate) fn assert_window_steady_at_scales<S>(
                 "{case}: the window moved or grew: {:?}",
                 changes(&rects)
             );
-            let first = last;
-            let found: Vec<_> = texts.iter().filter(|t| t.source == bottom).collect();
-            assert!(
-                !found.is_empty(),
-                "{case}: {bottom:?} is drawn, among {:?}",
-                texts.iter().map(|t| t.source.as_str()).collect::<Vec<_>>()
-            );
-            for t in found {
-                assert!(t.rect.bottom() <= first.bottom(), "{case}: {bottom:?} at {:?} in {first:?}", t.rect);
-            }
+            check(&mut frames, &mut state, &case, last, &texts);
         }
     }
 }
