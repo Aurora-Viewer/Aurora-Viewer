@@ -3884,6 +3884,8 @@ demo-spammer = スパマー
 demo-shadow = 影
 demo-noisy-seller = 騒がしい販売者
 build-ui-object-phantom = ファントム
+build-ui-object-dry-interior-too-long = 説明が長すぎるため、ドライインテリアのタグを追加できません（最大127バイト）。
+build-ui-object-dry-interior = ドライインテリア
 common-favorites = お気に入り
 ui-sound-window-closed = ウィンドウを閉じた
 ui-sound-window-opened = ウィンドウを開いた
@@ -9797,6 +9799,7 @@ build-options-group-owned = グループ所有のオブジェクトを含める
 build-options-hidden-selection = 隠れた選択部分を表示
 build-options-light-radius = 選択したライトの半径を表示
 build-options-probe-volumes = 反射プローブの範囲を表示
+build-options-dry-volumes = ドライインテリアを表示
 build-compact-undo = 元に戻す（Ctrl＋Z）
 build-compact-redo = やり直し（Ctrl＋Y）
 build-compact-duplicate = 複製
@@ -12925,6 +12928,8 @@ water-effects-interactions = オブジェクトとアバターの波紋／航跡
 water-effects-caustics = 水中のコースティクス
 water-effects-splashes = 水しぶき
 water-effects-bubbles = 水中の泡
+water-effects-dry-occluders = ドライインテリア
+water-effects-dry-occluders-help = 水面より下で、ドライインテリア（ビルド › オブジェクト）に指定したオブジェクトの中にいるとき、内側は水中のフォグなしで表示され、壁越しに見える水はフォグのままです。あなたの画面だけの表示です。
 
 water-effects-medium = 中
 

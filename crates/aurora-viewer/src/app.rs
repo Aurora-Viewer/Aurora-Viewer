@@ -786,6 +786,11 @@ pub struct App {
     /// Rain prototype: the rain's sound (scene/rain_sound.rs).
     rain_sound: crate::scene::rain_sound::RainSound,
     rain_sound_dt: Instant,
+    /// The Dry interior objects the camera may stand in (scene/dry_volumes.rs).
+    dry_volumes: crate::scene::dry_volumes::DryVolumes,
+    /// The camera stood in one at the last frame: below the water line, the
+    /// ear is not under water either.
+    camera_dry: bool,
     /// Rain prototype: when it last rained (the ground dries for a while).
     rain_last: Option<Instant>,
     /// The weather settings as last saved (saved again when changed).
@@ -1958,6 +1963,8 @@ impl App {
             wind_sound: Default::default(),
             rain_sound: Default::default(),
             rain_sound_dt: Instant::now(),
+            dry_volumes: Default::default(),
+            camera_dry: false,
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
@@ -4091,6 +4098,7 @@ impl App {
                 self.world.on_hud_properties(&props);
                 self.scene.particles.on_properties(&props);
                 self.interactions.on_properties(&props);
+                self.dry_volumes.on_properties(&props);
                 self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(&self.world, props);
@@ -6380,7 +6388,9 @@ impl App {
         let listener = crate::scene::sounds::Listener::looking(
             self.camera.position,
             self.camera.target - self.camera.position,
-            self.camera.position.z < self.world.main_water_height(),
+            // in a dry room under the water the ear is in air (the rain and
+            // the thunder above still come through the water)
+            self.camera.position.z < self.world.main_water_height() && !self.camera_dry,
             binaural,
         );
         let now = Instant::now();
@@ -12337,6 +12347,29 @@ impl App {
                 }
             }
         }
+        // a dry room under the water: the view inside it is not under water
+        let mut dry_asks = Vec::new();
+        // a Dry interior just ticked or unticked counts at once, before the
+        // object's properties come back
+        for (id, description) in self.build.described.drain(..) {
+            self.dry_volumes.set_tagged(id, crate::scene::dry_volumes::has_tag(&description));
+        }
+        if self.demo && crate::demo::water::mode().is_some_and(|m| m.contains("dry-room") && !m.contains("dry-room-control")) {
+            // the offline demo's room box is marked Dry interior
+            self.dry_volumes.set_tagged(crate::demo::water::DRY_ROOM_BOX, true);
+        }
+        let dry_volumes = self.dry_volumes.update(
+            &self.world,
+            self.camera.position,
+            self.world.main_water_height(),
+            self.settings.dry_water_occluders && self.in_world(),
+            Instant::now(),
+            &mut dry_asks,
+        );
+        for cmd in dry_asks {
+            self.send(cmd);
+        }
+        self.camera_dry = !dry_volumes.is_empty();
         let mut fp = FrameParams {
             // (a window behind past the driver's budget, or on a card another
             // program keeps busy, pauses its 3D drawing: its 3D targets
@@ -12459,6 +12492,7 @@ impl App {
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
+            dry_volumes,
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,
             lights,
@@ -18695,6 +18729,8 @@ impl App {
                         .draw_overlay(&ctx, &self.palette, &self.world, &self.scene, &self.settings.build, mods);
                     self.build
                         .draw_probe_volumes(&ctx, &self.palette, &self.world, &self.settings.build);
+                    self.build
+                        .draw_dry_volumes(&ctx, &self.palette, &self.world, &self.settings.build, &self.dry_volumes);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
@@ -21428,6 +21464,7 @@ impl ApplicationHandler for App {
                         "hidden" => b.show_hidden_selection = true,
                         "light" => b.show_light_radius = true,
                         "probes" => b.show_probe_volumes = true,
+                        "dry" => b.show_dry_volumes = true,
                         "locked" => b.select_locked_only = true,
                         "copyable" => b.select_copyable_only = true,
                         "no-group" => b.select_group_owned = false,

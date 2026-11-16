@@ -998,6 +998,12 @@ fn reflections_and_water(cx: &mut Cx) {
             cx.toggle(tr!("water-effects-splashes"), "", &field!(water_effects.splashes));
             cx.toggle(tr!("water-effects-bubbles"), "", &field!(water_effects.bubbles));
         });
+        // with or without the enhanced water (scene/dry_volumes.rs)
+        cx.toggle(
+            tr!("water-effects-dry-occluders"),
+            tr!("water-effects-dry-occluders-help"),
+            &field!(dry_water_occluders),
+        );
     });
 }
 

@@ -1865,6 +1865,13 @@ fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, op
         aurora_i18n::tr!("build-options-probe-volumes"),
         &mut o.probe_volumes,
     );
+    menu::toggle(
+        ui,
+        p,
+        "droplet-cancel",
+        aurora_i18n::tr!("build-options-dry-volumes"),
+        &mut o.dry_volumes,
+    );
     if o != options {
         *action = BarAction::BuildOptions(o);
     }

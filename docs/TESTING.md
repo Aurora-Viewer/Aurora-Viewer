@@ -1875,7 +1875,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
-| `AURORA_DEMO_BUILD_OPTIONS=hidden,light,probes,locked,copyable,no-group` | Build › Options switched from the start |
+| `AURORA_DEMO_BUILD_OPTIONS=hidden,light,probes,dry,locked,copyable,no-group` | Build › Options switched from the start |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
@@ -1925,7 +1925,7 @@ falls back, and `inject` also presses Inject at frame 760 (the window shows
 scale follow the interpolation flags, angles the pattern) and, with `1`, the
 prim's own particles hidden while the editor is open.
 
-`AURORA_DEMO_BUILD_OPTIONS` turns on Build › Options entries from the start: `hidden` (Show hidden selection: the far edges of the selection outline, fainter), `light` (Show light radius for selection: three circles of the selected light's radius, in its colour), `probes` (Show reflection probe volumes: the box or sphere of every probe of the plaza, in teal), `locked` and `copyable` (the selection filters), `no-group` (Include group-owned objects off). With `AURORA_DEMO_BUILD=move,object:108` the teal lamp on a pillar of the plaza is selected and the camera looks at it from frame 700: look for its radius circles and the far edges of its outline; add `AURORA_DEMO_PROBES=1` for probes to outline. `AURORA_DEMO_MENU_SEARCH=` a word of an entry (`only`, `show`) lists the entries in the wolf menu's search.
+`AURORA_DEMO_BUILD_OPTIONS` turns on Build › Options entries from the start: `hidden` (Show hidden selection: the far edges of the selection outline, fainter), `light` (Show light radius for selection: three circles of the selected light's radius, in its colour), `probes` (Show reflection probe volumes: the box or sphere of every probe of the plaza, in teal), `dry` (Show dry interiors: the box, cylinder or ellipsoid of every object marked Dry interior, in amber; with `AURORA_DEMO_WATER=medium:dry-room` the room's invisible box), `locked` and `copyable` (the selection filters), `no-group` (Include group-owned objects off). With `AURORA_DEMO_BUILD=move,object:108` the teal lamp on a pillar of the plaza is selected and the camera looks at it from frame 700: look for its radius circles and the far edges of its outline; add `AURORA_DEMO_PROBES=1` for probes to outline. `AURORA_DEMO_MENU_SEARCH=` a word of an entry (`only`, `show`) lists the entries in the wolf menu's search.
 
 `AURORA_DEMO_BUILD=physics,object:99621` selects an encoded ring mesh with a
 separate triangular collision surface. `physics-analysed` uses two convex
@@ -14078,6 +14078,7 @@ rendered Gerstner spectrum at all qualities and several depths.
 |---|---|
 | `AURORA_DEMO_WATER=medium` | Offline coast, moving hull, pillars, wading and submerged avatars |
 | `AURORA_DEMO_WATER=off:exclusion` | Invisible water exclusion above/below the surface; use `medium` for enhanced water |
+| `AURORA_DEMO_WATER=off:dry-room` | Inside an underwater room filled with an invisible box marked Dry interior, looking out of its window (dry inside, fog on the pillars outside); `dry-room-control`: the box not marked; `dry-room-half`: the box fills half the room; `medium:` for enhanced water |
 | `AURORA_DEMO_WATER_ACTIONS=dive` | Local native water animation and jump/entry preview |
 | `AURORA_DEMO_WATER_ANIMS=<folder>` | Read-only folder containing the twelve native water clips |
 | `AURORA_DEMO_WATER_SHADERS=1` | Load water shader sources for offline material iteration |

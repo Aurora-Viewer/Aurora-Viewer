@@ -294,9 +294,12 @@ fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
         ("name", aurora_i18n::tr!("common-name-2"), 63, false),
         ("desc", aurora_i18n::tr!("common-description"), 127, true),
     ] {
+        // the "Dry interior" tag (scene/dry_volumes.rs) is not shown, and
+        // stays at the end of the description when it is edited
+        let dry = description && props.len() == 1 && crate::scene::dry_volumes::has_tag(&props[0].description);
         let current = if props.len() == 1 {
             if description {
-                props[0].description.clone()
+                crate::scene::dry_volumes::strip_tag(&props[0].description)
             } else {
                 props[0].name.clone()
             }
@@ -330,6 +333,11 @@ fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                 tool.ui.edits.remove(field);
             }
             if end == super::common::FieldEnd::Commit && modify && v != current && (description || !v.trim().is_empty()) {
+                let v = if dry {
+                    crate::scene::dry_volumes::with_tag(&v, true)
+                } else {
+                    v.clone()
+                };
                 tool.set_name(world, &v, description);
             }
         });

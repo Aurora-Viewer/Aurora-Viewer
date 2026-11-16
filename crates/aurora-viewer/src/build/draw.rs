@@ -290,6 +290,37 @@ pub fn probe_volume_edges(pos: Vec3, rot: glam::Quat, scale: Vec3, boxed: bool) 
     }
 }
 
+/// A dry volume (scene/dry_volumes.rs) as the shaders test it: the prim's
+/// box, its upright cylinder or its ellipsoid.
+pub fn dry_volume_edges(pos: Vec3, rot: glam::Quat, scale: Vec3, shape: aurora_render::dry_volume::DryShape) -> Vec<[Vec3; 2]> {
+    use aurora_render::dry_volume::DryShape;
+    let half = scale * 0.5;
+    let place = |l: Vec3| pos + rot * (half * l);
+    // a unit circle in the plane of u and v, around `at`
+    let ring = |at: Vec3, u: Vec3, v: Vec3| {
+        let step = std::f32::consts::TAU / CIRCLE_SEGMENTS as f32;
+        let p = move |i: usize| {
+            let (s, c) = (i as f32 * step).sin_cos();
+            at + u * c + v * s
+        };
+        (0..CIRCLE_SEGMENTS).map(move |i| [place(p(i)), place(p(i + 1))])
+    };
+    match shape {
+        DryShape::Box => probe_volume_edges(pos, rot, scale, true),
+        DryShape::Cylinder => {
+            let mut out: Vec<_> = ring(Vec3::Z, Vec3::X, Vec3::Y).chain(ring(-Vec3::Z, Vec3::X, Vec3::Y)).collect();
+            for side in [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y] {
+                out.push([place(side - Vec3::Z), place(side + Vec3::Z)]);
+            }
+            out
+        }
+        DryShape::Sphere => ring(Vec3::ZERO, Vec3::Y, Vec3::Z)
+            .chain(ring(Vec3::ZERO, Vec3::Z, Vec3::X))
+            .chain(ring(Vec3::ZERO, Vec3::X, Vec3::Y))
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod volume_tests {
     use super::*;

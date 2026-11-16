@@ -3907,6 +3907,8 @@ demo-spammer = Spammeur
 demo-shadow = Ombre
 demo-noisy-seller = Vendeur bruyant
 build-ui-object-phantom = Fantôme
+build-ui-object-dry-interior-too-long = La description est trop longue pour y ajouter la marque Intérieur au sec (127 octets au plus).
+build-ui-object-dry-interior = Intérieur au sec
 common-favorites = Favoris
 ui-sound-window-closed = Fenêtre fermée
 ui-sound-window-opened = Fenêtre ouverte
@@ -9849,6 +9851,7 @@ build-options-group-owned = Inclure les objets cédés à un groupe
 build-options-hidden-selection = Afficher la sélection cachée
 build-options-light-radius = Afficher la portée des lumières sélectionnées
 build-options-probe-volumes = Afficher les volumes des sondes de réflexion
+build-options-dry-volumes = Afficher les intérieurs au sec
 build-compact-undo = Annuler (Ctrl+Z)
 build-compact-redo = Rétablir (Ctrl+Y)
 build-compact-duplicate = Dupliquer
@@ -13001,6 +13004,8 @@ water-effects-interactions = Remous et sillages des objets et avatars
 water-effects-caustics = Caustiques sous-marines
 water-effects-splashes = Éclaboussures et projections
 water-effects-bubbles = Bulles sous-marines
+water-effects-dry-occluders = Intérieurs au sec
+water-effects-dry-occluders-help = Sous la surface, dans un objet marqué Intérieur au sec (Construire › Objet), la vue est au sec : pas de brouillard sous-marin à l’intérieur, et l’eau vue à travers ses parois garde son brouillard. Seulement sur votre écran.
 
 water-effects-medium = Moyenne
 
