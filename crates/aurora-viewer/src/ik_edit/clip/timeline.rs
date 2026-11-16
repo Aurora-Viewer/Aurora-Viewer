@@ -259,8 +259,12 @@ impl FrameScale {
     }
 }
 
-/// The visible key of `keys` (sorted) nearest to `x`, within `KEY_GRAB`.
+/// The visible key of `keys` (sorted) nearest to `x`, within `KEY_GRAB`, or
+/// only on its diamond (or its own frame) when the frames are packed tighter:
+/// with keys a few frames apart the full reach covered the whole lane, and a
+/// click between two keys could only send the playhead to one of them.
 pub(super) fn key_under(keys: &[u32], scale: &FrameScale, x: f32) -> Option<u32> {
+    let grab = KEY_GRAB.min(KEY_HALF.max(scale.points_per_frame() * 0.5));
     let visible = &keys[keys.partition_point(|key| *key < scale.start)..keys.partition_point(|key| *key <= scale.end)];
     let pivot = visible.partition_point(|key| scale.x(f64::from(*key)) < x);
     [pivot.checked_sub(1), Some(pivot)]
@@ -268,7 +272,7 @@ pub(super) fn key_under(keys: &[u32], scale: &FrameScale, x: f32) -> Option<u32>
         .flatten()
         .filter_map(|index| visible.get(index).copied())
         .map(|key| (key, (scale.x(f64::from(key)) - x).abs()))
-        .filter(|(_, distance)| *distance <= KEY_GRAB)
+        .filter(|(_, distance)| *distance <= grab)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(key, _)| key)
 }

@@ -184,6 +184,7 @@ impl Editor {
         self.commit();
         let start = pose.clone();
         let bones = [Some(bone), mirror];
+        let mut applied = Vec::new();
         for bone in bones.into_iter().flatten() {
             if Some(bone) == pinned_mirror {
                 continue;
@@ -200,10 +201,35 @@ impl Editor {
             let before = pose.clone();
             if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, &goal) {
                 self.authoring.record(bone, &before, &pose);
+                applied.push(goal);
             }
         }
         if self.clip.active {
+            let followers = self.clip_followers();
             self.follow_clip_lead(rig, bone, mirror, &start, &mut pose, &scale, rotate);
+            // A turned follower above the selected joint (an elbow picked
+            // with its wrist) carries it: the joint is solved again under its
+            // turned parent so that it holds the handle's rotation. Left
+            // carried, the next drag frame read the joint off the handle and
+            // turned it back, and the follower with it, so the hand shook.
+            let above = |joint: usize| {
+                let mut at = rig.parent[joint];
+                while let Some(parent) = at {
+                    if followers.contains(&parent) {
+                        return true;
+                    }
+                    at = rig.parent[parent];
+                }
+                false
+            };
+            if rotate {
+                for goal in applied.iter().filter(|goal| above(goal.bone)) {
+                    let before = pose.clone();
+                    if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, goal) {
+                        self.authoring.record(goal.bone, &before, &pose);
+                    }
+                }
+            }
         }
         self.refresh_clip_marks();
     }

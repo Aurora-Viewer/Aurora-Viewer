@@ -674,12 +674,27 @@ fn ruler_and_lanes_share_one_frame_scale() {
 
     let keys = [0, 10, 20, 30];
     assert_eq!(timeline::key_under(&keys, &scale, 108.0), Some(0));
-    assert_eq!(timeline::key_under(&keys, &scale, 215.0), Some(10));
-    assert_eq!(timeline::key_under(&keys, &scale, 216.0), None, "beyond the grab distance");
+    assert_eq!(timeline::key_under(&keys, &scale, 212.0), Some(10));
+    assert_eq!(
+        timeline::key_under(&keys, &scale, 213.0),
+        None,
+        "beyond half a frame past the diamond"
+    );
     assert_eq!(timeline::key_under(&keys, &scale, 157.0), None);
     let zoomed = timeline::FrameScale::new(lane, 10, 20);
     assert_eq!(timeline::key_under(&keys, &zoomed, 100.0), Some(10), "only the visible keys");
     assert_eq!(timeline::key_under(&[0, 30], &zoomed, 107.0), None);
+    assert_eq!(
+        timeline::key_under(&keys, &zoomed, 115.0),
+        Some(10),
+        "the full reach when zoomed in"
+    );
+    // keys a few frames apart, zoomed out: a click between two keys is the
+    // frame under it, not the nearest key
+    let packed = timeline::FrameScale::new(lane, 0, 120);
+    assert_eq!(packed.points_per_frame(), 2.5);
+    assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 112.0), None, "frame 2");
+    assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 111.0), Some(0), "on the diamond");
 }
 
 #[test]
@@ -3973,6 +3988,46 @@ fn joints_selected_together_turn_with_the_selected_one_and_are_keyed_with_it() {
     );
     assert!(turned_left > 0.6, "the selected joint turned: {turned_left}");
     assert!((turned_left - turned_right).abs() < 0.01, "{turned_left} vs {turned_right}");
+}
+
+#[test]
+fn turning_a_joint_with_its_parent_picked_holds_steady_over_a_drag() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (elbow, wrist) = (rig.names["mElbowLeft"], rig.names["mWristLeft"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(wrist, &rig, &original, false);
+    editor.clip_click_bone(elbow, &rig, &original, true);
+    editor.mode = Mode::Direct;
+    editor.orient = true;
+    // the shown pose follows the edits a frame later, as in the viewer
+    let mut shown = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let mut turns = Vec::new();
+    for _ in 0..8 {
+        editor.degrees.x += 5.0;
+        editor.commit_manipulation(&rig, &shown, true);
+        let mut rotations = rig.local_rot.clone();
+        for edit in editor.authoring.request(&editor.goals, &[]) {
+            if let Some(rotation) = edit.rotation {
+                rotations[edit.bone] = rotation;
+            }
+        }
+        shown = frame(&lib, &rotations, &rig.local_pos, &rig.scale);
+        turns.push(rotations[elbow].angle_between(rig.local_rot[elbow]));
+    }
+    // the parent turns with the handle on every frame of the drag, instead
+    // of every other one (the joint shook between a turned and a held pose)
+    assert!(turns.windows(2).all(|pair| pair[1] - pair[0] > 0.05), "{turns:?}");
+    // and the selected joint holds the handle's rotation under it
+    let goal = editor.goals.iter().find(|goal| goal.bone == wrist).expect("the wrist's goal");
+    let held = (shown.model.inverse() * shown.joints[wrist]).to_scale_rotation_translation().1;
+    let wanted = goal.rotation.expect("a rotation goal");
+    assert!(held.angle_between(wanted) < 0.01, "{held} vs {wanted}");
 }
 
 #[test]
