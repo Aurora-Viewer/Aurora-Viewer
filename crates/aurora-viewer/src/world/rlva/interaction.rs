@@ -29,6 +29,27 @@ impl World {
                 .or_else(|| crate::scene::Scene::object_transform_unshifted(self, index, std::time::Instant::now()).map(|(p, _, _)| p))
                 .is_some_and(|p| p.distance(self.agent.position) <= max)
     }
+
+    /// Whether a right click on object `index` may open its menu
+    /// (LLToolPie::handleRightClickPick). @interact keeps only our own avatar
+    /// and the HUDs, as `rlva_can_interact_at` does; @fartouch keeps what
+    /// LLToolSelect::handleObjectSelection selects: an object within its
+    /// distance, what we wear, or one whose clicked `surface` is within
+    /// 1.5 m, whatever the @fartouch distance is.
+    pub fn rlva_can_designate(&self, index: usize, surface: Option<Vec3>) -> bool {
+        let r = &self.rlva;
+        if !r.enabled() || self.hud_root(index).is_some() || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
+            return true;
+        }
+        !r.has("interact")
+            && (self.rlva_within_fartouch(index) || surface.is_some_and(|p| p.is_finite() && p.distance(self.agent.position) <= 1.5))
+    }
+
+    /// Whether a right click on the land may open its menu: @interact drops
+    /// the pick (LLViewerWindow::cursorIntersect).
+    pub fn rlva_can_designate_land(&self) -> bool {
+        !self.rlva.enabled() || !self.rlva.has("interact")
+    }
 }
 
 #[cfg(test)]
@@ -118,5 +139,65 @@ mod tests {
         assert!(!w.rlva_can_interact_at(prim, Some(w.agent.position + Vec3::X * 1.6)));
         restrict(&mut w, "fartouch=y");
         assert!(w.rlva_can_interact_at(prim, None));
+    }
+
+    /// #2749, #2750: what a right click, the selection and the Create tool
+    /// keep under @interact and @fartouch.
+    #[test]
+    fn rlva_interact_and_fartouch_gate_menus_selection_and_placing() {
+        let (mut w, prim, hud) = world();
+        let me = w.objects.index_of_uuid(&w.agent_id).expect("own avatar");
+        let at = w.agent.position;
+        let far = at + Vec3::X * 10.0;
+        let near = at + Vec3::X;
+        let free = |w: &World| {
+            assert!(w.rlva_can_designate(prim, Some(far)) && w.rlva_can_designate_land());
+            assert!(crate::build::rlva_selectable(w, prim));
+            assert!(w.rlva_can_place_at(far));
+        };
+        free(&w);
+
+        // the prim's origin is 3 m away
+        restrict(&mut w, "fartouch=n");
+        assert!(!w.rlva_can_designate(prim, Some(far)), "out of reach, surface included");
+        assert!(!w.rlva_can_designate(prim, None));
+        assert!(w.rlva_can_designate(prim, Some(near)), "a surface within 1.5 m keeps the menu");
+        restrict(&mut w, "fartouch=y");
+        restrict(&mut w, "fartouch:2=n");
+        assert!(
+            !w.rlva_can_designate(prim, Some(at + Vec3::X * 1.9)),
+            "the surface exception stays 1.5 m whatever the distance"
+        );
+        restrict(&mut w, "fartouch:2=y");
+        restrict(&mut w, "fartouch:5=n");
+        assert!(w.rlva_can_designate(prim, None), "within a longer @fartouch");
+        restrict(&mut w, "fartouch:5=y");
+        restrict(&mut w, "fartouch=n");
+        assert!(w.rlva_can_designate(me, None) && w.rlva_can_designate(hud, None));
+        assert!(w.rlva_can_designate_land(), "@fartouch leaves the land menu");
+        assert!(crate::build::rlva_selectable(&w, prim), "@fartouch is measured by `selectable`");
+        assert!(!w.rlva_can_place_at(far), "the Create tool places within reach");
+        assert!(w.rlva_can_place_at(near));
+        restrict(&mut w, "fartouch=y");
+        free(&w);
+
+        restrict(&mut w, "interact=n");
+        assert!(!w.rlva_can_designate(prim, Some(near)), "at any distance");
+        assert!(!w.rlva_can_designate_land());
+        assert!(w.rlva_can_designate(me, None), "our own avatar keeps its menu");
+        assert!(w.rlva_can_designate(hud, None), "a HUD keeps its menu");
+        assert!(!crate::build::rlva_selectable(&w, prim), "a world object leaves the selection");
+        assert!(crate::build::rlva_selectable(&w, hud), "a HUD stays selected");
+        assert!(
+            w.rlva_can_place_at(far),
+            "@interact refuses the Create tool elsewhere (rlva_can_rez)"
+        );
+        restrict(&mut w, "interact=y");
+        free(&w);
+
+        // the preference off: no rule at all
+        restrict(&mut w, "interact=n");
+        w.rlva.configure(false);
+        free(&w);
     }
 }
