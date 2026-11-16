@@ -788,6 +788,9 @@ pub struct App {
     /// The weather in effect this frame: the settings, or what the region's
     /// environment sets over them when regions may (`update_weather_now`).
     weather_now: crate::weather::WeatherSettings,
+    /// The weather feature was on at the last frame (features.rs): the
+    /// frame it is switched off clears what had fallen.
+    weather_feature: bool,
     /// The region weather read from the environment in effect, keyed by its
     /// day cycle (held, compared by identity: a pointer alone could come
     /// back as another region's day), sky track, length and offset (parsed
@@ -1941,6 +1944,7 @@ impl App {
             weather_saved: Default::default(),
             weather_wind: Default::default(),
             weather_now: Default::default(),
+            weather_feature: true,
             region_weather: None,
             snow_lying: (0.0, None),
             thunder: Default::default(),
@@ -6488,6 +6492,26 @@ impl App {
     /// with the same environment and clock shows the same weather.
     fn update_weather_now(&mut self) {
         use crate::weather::region::{RegionDay, SkyWeather};
+        // the feature switched off (features.rs): no weather of mine, of a
+        // region or of an editor's preview. What had fallen goes with the
+        // frame of the switch (the clean-up button's way) instead of
+        // melting for minutes, and the terrain heights kept for the
+        // puddles are let go
+        let feature = self.settings.features.on(crate::features::Feature::Weather);
+        if !feature {
+            if self.weather_feature {
+                self.env_ui.weather_clean = true;
+                self.env_ui.weather_open = false;
+                self.rain_last = None;
+                self.region_weather = None;
+            }
+            self.weather_feature = false;
+            self.snow_lying = (0.0, None);
+            self.env_ui.weather_source = crate::weather::WeatherSource::Mine;
+            self.weather_now = crate::weather::WeatherSettings::off();
+            return;
+        }
+        self.weather_feature = true;
         let own = &self.settings.weather;
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -10744,7 +10768,7 @@ impl App {
         self.update_native_movelock();
         self.update_movement();
         self.update_weather_now();
-        if self.demo {
+        if self.demo && self.weather_feature {
             crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
         }
         self.update_audio();
@@ -16008,7 +16032,9 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
-            BarAction::AuroraWeather => self.env_ui.weather_open = true,
+            BarAction::AuroraWeather => {
+                self.env_ui.weather_open = self.settings.features.on(crate::features::Feature::Weather);
+            }
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
                 kind => self.open_env_editor_snapshot(kind),
@@ -17961,6 +17987,7 @@ impl App {
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
+                    aurora_weather: self.settings.features.on(crate::features::Feature::Weather),
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
                     hidden_types: self.settings.debug.hidden_types,
@@ -20398,6 +20425,7 @@ impl App {
                 let mut open = self.panels.environment;
                 let mut lighting = self.panels.personal_lighting;
                 self.env_ui.rlva_locked = self.world.rlva.has("setenv") || self.world.rlva.has("setsphere");
+                self.env_ui.weather_off = !self.settings.features.on(crate::features::Feature::Weather);
                 let env_actions = self.env_ui.show_selector(
                     &ctx,
                     &p,

@@ -13,7 +13,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
         1 => light(cx),
         2 => {
             environment(cx);
-            weather(cx);
+            // none of it on the page while the feature is switched off
+            // (Aurora › Features); the search and a reset still reach it
+            let on = cx.s.features.on(crate::features::Feature::Weather);
+            cx.conditional(on, weather);
         }
         3 => reflections_and_water(cx),
         4 => image(cx),

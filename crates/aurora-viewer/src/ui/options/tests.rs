@@ -1930,6 +1930,46 @@ fn the_weather_lives_in_graphics_only() {
 }
 
 #[test]
+fn the_features_have_their_switches_in_aurora_features() {
+    assert_eq!(Page::Aurora.tabs().last().copied(), Some(aurora_i18n::tr!("ui-features")));
+    let paths = collected();
+    assert!(
+        paths.contains(&(Page::Aurora, "features.weather".to_owned())),
+        "the weather's switch on the Aurora page"
+    );
+}
+
+#[test]
+fn the_weather_rows_leave_graphics_with_the_feature_off() {
+    // switched off in Aurora › Features, the weather's group is gone from
+    // Sky and environment; a search still finds its rows (greyed), so that
+    // nothing is lost from the search and the reset
+    let p = crate::theme::Theme::default().palette();
+    let label = aurora_i18n::tr!("ui-weather-quality");
+    let shown = |on: bool, mode: Mode, query: &str| {
+        let mut s = Settings::default();
+        s.features.weather = on;
+        let d = Settings::default();
+        let (mut st, mut r) = (OptionsUi::default(), OptionsResult::default());
+        let mut frames = Frames::new();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frames.shapes(Vec::new(), |ui| {
+                ui.set_width(700.0);
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, mode, query);
+                run_page(&mut cx, Page::Graphics, Some(2));
+            });
+        }
+        shapes
+            .iter()
+            .any(|shape| matches!(shape, egui::Shape::Text(t) if t.galley.text().ends_with(label)))
+    };
+    assert!(shown(true, Mode::Show, ""), "the weather's quality with the feature on");
+    assert!(!shown(false, Mode::Show, ""), "no weather row with the feature off");
+    assert!(shown(false, Mode::Search, label), "still found by the search");
+}
+
+#[test]
 fn the_wet_ground_distance_stays_live_with_the_puddles_off() {
     // behind the puddles' cog, the wet ground's distance still acts with
     // them off (the wet ground is drawn in any rain), their ice does not:

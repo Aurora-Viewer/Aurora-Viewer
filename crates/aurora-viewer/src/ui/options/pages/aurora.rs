@@ -6,6 +6,7 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
+use crate::features::Feature;
 use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::beams::Style as BeamStyle;
@@ -178,6 +179,26 @@ fn look(cx: &mut Cx, name: &str, help: &str, aurora: &str, legacy: &str, f: &F<b
 /// An experimental choice: its warning joins its help.
 fn warned(help: &str, warning: &str) -> String {
     format!("{help}\n{warning}")
+}
+
+/// The switch of one of Aurora's own features (features.rs).
+fn feature_field(feature: Feature) -> F<bool> {
+    match feature {
+        Feature::Weather => field!(features.weather),
+    }
+}
+
+/// Aurora › Features: what Aurora adds that the Legacy Viewer has none of,
+/// each with its switch. One switched off is gone from the menus and the
+/// windows and costs nothing in the frame; its own settings wait.
+fn features(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-features"), |cx| {
+        cx.note(tr!("ui-features-note"));
+        for feature in Feature::ALL {
+            cx.toggle(feature.name(), feature.about(), &feature_field(feature));
+        }
+    });
 }
 
 pub fn page(cx: &mut Cx, tab: usize) {
@@ -434,6 +455,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
             });
         }
+        3 => features(cx),
         _ => {
             cx.group(tr!("ui-options-aurora-building"), |cx| {
                 cx.wide().choice(

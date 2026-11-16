@@ -288,6 +288,9 @@ pub struct StatusInfo<'a> {
     pub status: crate::world::status::StatusModes,
     /// ShowBanLines mode (World › Ban lines).
     pub ban_lines: u8,
+    /// The weather feature is on (features.rs): World › Environment ›
+    /// Aurora Weather is listed.
+    pub aurora_weather: bool,
     /// Abilities of the current parcel (right end of the location field).
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
     /// A local environment is shown (selector, preset, personal lighting).
@@ -1379,7 +1382,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 panels.personal_lighting = true;
             }
             // Aurora's own: the weather beside the lighting it rides on
-            if menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather")) {
+            // (none while the feature is switched off, features.rs)
+            if st.aurora_weather && menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather")) {
                 *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)

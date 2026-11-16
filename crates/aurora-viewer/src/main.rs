@@ -41,6 +41,7 @@ mod disk_io;
 mod dof;
 mod external_url;
 mod fast_hash;
+mod features;
 mod frame_par;
 mod frame_profile;
 mod gestures;

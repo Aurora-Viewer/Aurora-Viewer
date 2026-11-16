@@ -1175,6 +1175,7 @@ mod tests {
             slurl: String::new(),
             status: Default::default(),
             ban_lines: 0,
+            aurora_weather: true,
             parcel_icons: Vec::new(),
             local_env: false,
             env_keys: Default::default(),

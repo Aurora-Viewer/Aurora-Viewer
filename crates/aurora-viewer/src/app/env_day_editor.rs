@@ -144,6 +144,8 @@ impl App {
         self.day_editor.extended = self.extended_environment();
         let access = self.env_editor_access();
         self.day_editor.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
+        self.day_editor
+            .set_weather_off(!self.settings.features.on(crate::features::Feature::Weather));
         let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
         if self.day_editor.open {
             self.set_env_beacons(self.day_editor.beacons);
