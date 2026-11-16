@@ -359,8 +359,10 @@ mod tests {
             notice_date(at(2026, 10, 13), now),
             aurora_i18n::tr!("ui-chat-yesterday").to_lowercase()
         );
-        let oct = crate::ui::land::months()[9];
-        assert_eq!(notice_date(at(2026, 10, 3), now), format!("3 {oct}"));
-        assert_eq!(notice_date(at(2025, 10, 3), now), format!("3 {oct} 2025"));
+        // the day and month in the language's order, the year only when
+        // it is not this one
+        let date = crate::ui::land::day_month;
+        assert_eq!(notice_date(at(2026, 10, 3), now), date(None, 10, 3));
+        assert_eq!(notice_date(at(2025, 10, 3), now), date(Some(2025), 10, 3));
     }
 }

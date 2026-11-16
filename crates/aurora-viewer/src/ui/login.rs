@@ -286,6 +286,17 @@ fn field(
         .inner
 }
 
+/// Where "Remember password" keeps the login hash on this system.
+fn remember_password_hint() -> &'static str {
+    if cfg!(windows) {
+        aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent")
+    } else if cfg!(target_os = "macos") {
+        aurora_i18n::tr!("ui-login-stored-in-the-macos-keychain-as-the-hash-sent")
+    } else {
+        aurora_i18n::tr!("ui-login-stored-in-the-secret-service-as-the-hash-sent")
+    }
+}
+
 fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(11.5).color(p.muted));
     ui.add_space(-2.0);
@@ -854,7 +865,7 @@ pub fn show(
                                 .size(12.5)
                                 .color(p.muted),
                         )
-                        .on_hover_text(aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent"));
+                        .on_hover_text(remember_password_hint());
                     });
                     ui.add_space(10.0);
                     let can = form.block_reason.is_none()
@@ -1044,7 +1055,7 @@ mod tests {
         fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
             match shape {
                 egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
-                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                egui::Shape::Vec(shapes) => shapes.iter().rev().find_map(|s| position(s, label)),
                 _ => None,
             }
         }
@@ -1087,6 +1098,7 @@ mod tests {
         let pos = output
             .shapes
             .iter()
+            .rev() // the button, painted after the heading (Japanese writes both ログイン)
             .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
             .expect("button");
         for pressed in [true, false] {
@@ -1150,6 +1162,7 @@ mod tests {
         let pos = output
             .shapes
             .iter()
+            .rev() // the button, painted after the heading (Japanese writes both ログイン)
             .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-log-in")))
             .expect("enabled button");
         draw(

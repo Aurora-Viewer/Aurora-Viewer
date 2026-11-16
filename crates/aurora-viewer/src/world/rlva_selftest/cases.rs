@@ -913,41 +913,38 @@ fn round_trips() -> Vec<Case> {
                 ],
             ]),
         ),
-        Case {
-            known: Some("#2677, PR #2691"),
-            ..case(
-                "C4",
-                "an object linked from a locked folder is locked",
-                steps(vec![
-                    wear(It::B, POINT_B).into(),
-                    vec![
-                        Step::Now(
-                            "the folder holds a link to the object",
-                            holds(
-                                |w, c| {
-                                    w.inventory.folders.get(&c.folders[LINKED]).is_some_and(|f| {
-                                        f.items
-                                            .iter()
-                                            .filter_map(|id| w.inventory.items.get(id))
-                                            .any(|i| i.asset_type == 24 && i.asset_id == c.item(It::B))
-                                    })
-                                },
-                                "no link",
-                            ),
+        case(
+            "C4",
+            "an object linked from a locked folder is locked",
+            steps(vec![
+                wear(It::B, POINT_B).into(),
+                vec![
+                    Step::Now(
+                        "the folder holds a link to the object",
+                        holds(
+                            |w, c| {
+                                w.inventory.folders.get(&c.folders[LINKED]).is_some_and(|f| {
+                                    f.items
+                                        .iter()
+                                        .filter_map(|id| w.inventory.items.get(id))
+                                        .any(|i| i.asset_type == 24 && i.asset_id == c.item(It::B))
+                                })
+                            },
+                            "no link",
                         ),
-                        Step::Say(Who::Controller, "@detachthis:{f}/linked=n"),
-                        Step::Soon(
-                            "the linked object cannot be taken off",
-                            holds(|w, c| !w.rlva_can_remove(c.item(It::B), Uuid::nil()), "it can be taken off"),
-                        ),
-                        Step::Refused(
-                            "taking it off is refused",
-                            make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
-                        ),
-                    ],
-                ]),
-            )
-        },
+                    ),
+                    Step::Say(Who::Controller, "@detachthis:{f}/linked=n"),
+                    Step::Soon(
+                        "the linked object cannot be taken off",
+                        holds(|w, c| !w.rlva_can_remove(c.item(It::B), Uuid::nil()), "it can be taken off"),
+                    ),
+                    Step::Refused(
+                        "taking it off is refused",
+                        make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
+                    ),
+                ],
+            ]),
+        ),
         case(
             "C5",
             "taking the controller off releases its rules",
