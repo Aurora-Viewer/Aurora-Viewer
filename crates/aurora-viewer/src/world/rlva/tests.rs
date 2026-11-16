@@ -2650,6 +2650,71 @@ fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     assert!(!environment::supports("getenv_reset", false));
 }
 
+#[test]
+fn rlva_environment_forces_respect_other_objects_at_receipt_and_at_dispatch() {
+    use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+    let say = |world: &mut World, source_id, line| world.on_chat(ChatMessage { source_id, ..chat(line) });
+
+    say(&mut world, A, "@setenv=n");
+    say(&mut world, B, "@setenv_ambient:0.2/0.4/0.6=force");
+    say(&mut world, A, "@setenv=y");
+    world.rlva_pending();
+    assert!(
+        world.rlva.environment.is_none(),
+        "releasing a lock cannot revive another object's lighting request"
+    );
+
+    say(&mut world, A, "@setenv=n");
+    for cmd in [
+        "@setenv_reset=force",
+        "@setenv_daytime:-1=force",
+        "@setenv_ambient:0.2/0.4/0.6=force",
+    ] {
+        say(&mut world, B, cmd);
+        assert!(world.rlva.pending.is_empty(), "{cmd}: the other object's lock already applies");
+    }
+    say(&mut world, A, "@setenv=y");
+    world.rlva_pending();
+    assert!(world.eep.has_local() && world.rlva.environment.is_none());
+
+    say(&mut world, B, "@setenv_reset=force");
+    say(&mut world, A, "@setenv=n");
+    world.rlva_pending();
+    assert!(world.eep.has_local());
+    assert_eq!(
+        world.rlva.environment.map(|(actor, _)| actor),
+        Some(A),
+        "the new lock also protects its sky"
+    );
+    say(&mut world, A, "@setenv_reset=force");
+    world.rlva_pending();
+    assert!(
+        world.eep.has_local() && world.rlva.environment.is_none(),
+        "the holder may clear its own sky"
+    );
+    assert!(world.eep.rlva_locked);
+
+    say(&mut world, A, "@setenv=y");
+    say(&mut world, B, "@setenv_preset:midday=force");
+    world.rlva_pending();
+    assert!(world.rlva.environment_request.is_some());
+    say(&mut world, B, "@setenv_reset=force");
+    assert!(!world.rlva.pending.is_empty());
+    world.reset();
+    world.rlva.configure(true);
+    world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+    world.rlva_pending();
+    assert!(
+        world.eep.has_local(),
+        "the previous session's reset cannot clear a new local choice"
+    );
+    assert!(!world.eep.rlva_locked && world.rlva.environment.is_none());
+    assert!(world.rlva.environment_request.is_none());
+}
+
 /// An attachment on the demo avatar, with its inventory item.
 fn worn_attachment(world: &mut crate::world::World, id: u128, point: u8) -> Uuid {
     let item = Uuid::from_u128(id);

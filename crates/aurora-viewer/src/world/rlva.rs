@@ -863,8 +863,18 @@ impl Rlva {
                     && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
                     && self.pending.len() < 256 =>
             {
-                let environment_locked = self.has("setenv");
-                self.pending.push((source, Command { environment_locked, ..c }));
+                // A foreign environment lock refuses the force when received.
+                // Releasing it before the queue drains must not revive that command.
+                if was_environment_locked && c.behaviour.starts_with("setenv_") && self.has_except("setenv", source) {
+                    return Outcome::Rejected;
+                }
+                self.pending.push((
+                    source,
+                    Command {
+                        environment_locked: was_environment_locked,
+                        ..c
+                    },
+                ));
                 outcome = Outcome::Queued;
             }
             Param::Reply(channel)
