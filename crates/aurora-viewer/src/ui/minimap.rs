@@ -456,7 +456,10 @@ mod name_format_tests {
         world.social.avatar_names.set_rlva_privacy(true, Default::default());
         for id in [first, second] {
             assert!(!can_mark(&world, &id));
-            assert_eq!(avatar_name(&world, &id, format), world.social.avatar_names.anonymous(&id).display_name);
+            assert_eq!(
+                avatar_name(&world, &id, format),
+                world.social.avatar_names.anonymous(&id).display_name
+            );
         }
     }
 

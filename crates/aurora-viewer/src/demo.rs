@@ -2566,7 +2566,11 @@ fn minimap_name((local, first, display): (u32, &str, &str)) -> aurora_net::Avata
 
 /// Refreshes from either name service use the identity that populated the demo.
 fn minimap_name_for(id: &Uuid) -> Option<aurora_net::AvatarNameData> {
-    MINIMAP_RESIDENTS.iter().copied().find(|(local, _, _)| u((*local).into()) == *id).map(minimap_name)
+    MINIMAP_RESIDENTS
+        .iter()
+        .copied()
+        .find(|(local, _, _)| u((*local).into()) == *id)
+        .map(minimap_name)
 }
 
 /// Two residents with cached display names. Only the western one has an avatar
@@ -2578,7 +2582,10 @@ pub fn minimap_name_events(center: Vec3) -> [NetEvent; 3] {
     avatar.local_id = MINIMAP_RESIDENTS[0].0;
     avatar.full_id = visible.id;
     avatar.position = center - Vec3::X * 32.0;
-    avatar.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", visible.legacy_first, visible.legacy_last);
+    avatar.name_values = format!(
+        "FirstName STRING RW SV {}\nLastName STRING RW SV {}",
+        visible.legacy_first, visible.legacy_last
+    );
     [
         NetEvent::ObjectUpdates {
             handle: HANDLE,
@@ -2604,7 +2611,10 @@ mod minimap_name_tests {
     #[test]
     fn mini_map_name_replies_preserve_both_seeded_residents_in_either_request_order() {
         let (west, east) = (u(0x327701), u(0x327702));
-        let expected = [(west, "Luna", "Luna ✦", "luna.example"), (east, "Orion", "Orion ✦", "orion.example")];
+        let expected = [
+            (west, "Luna", "Luna ✦", "luna.example"),
+            (east, "Orion", "Orion ✦", "orion.example"),
+        ];
         let check_names = |world: &crate::world::World| {
             for (id, first, display, username) in expected {
                 let name = world.social.avatar_names.get(&id).expect("seeded resident");
@@ -2618,7 +2628,10 @@ mod minimap_name_tests {
                 world.apply(event);
             }
             check_names(&world);
-            let mut commands = [NetCommand::RequestNames(vec![east, west]), NetCommand::RequestDisplayNames(vec![west, east])];
+            let mut commands = [
+                NetCommand::RequestNames(vec![east, west]),
+                NetCommand::RequestDisplayNames(vec![west, east]),
+            ];
             if display_first {
                 commands.reverse();
             }
