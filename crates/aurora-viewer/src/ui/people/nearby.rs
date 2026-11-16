@@ -1425,7 +1425,8 @@ mod tests {
         let cell = Rect::from_min_size(Pos2::new(140.0, 30.0), Vec2::new(AGE_W, RICH_H));
         for size in [11.0, 12.0] {
             for text in ["9", "12345", "該当なし", "123456789012345"] {
-                let output = ctx.run_ui(Default::default(), |ui| paint_age(ui, &palette, cell, text.into(), false, size));
+                let mut output = ctx.run_ui(Default::default(), |ui| paint_age(ui, &palette, cell, text.into(), false, size));
+                output.textures_delta.clear();
                 let label = output
                     .shapes
                     .iter()
