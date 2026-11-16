@@ -62,6 +62,17 @@ impl ScriptControls {
     pub fn any(&self) -> bool {
         self.taken.iter().chain(self.passed_on.iter()).any(|&n| n > 0)
     }
+
+    /// Whether a script took yaw outright (LLAgent::rotateGrabbed,
+    /// indra/newview/llagent.cpp). A passed-on hold does not count: the
+    /// avatar still turns, and the script still receives the keys.
+    pub fn rotate_grabbed(&self) -> bool {
+        let taken = |flag: u32| {
+            let bit = flag.trailing_zeros() as usize;
+            bit < BITS && self.taken[bit] > 0
+        };
+        taken(control::YAW_POS) || taken(control::YAW_NEG)
+    }
 }
 
 /// The left-button bits as `send_agent_update` sends them: while Alt or
@@ -112,6 +123,22 @@ mod tests {
         assert_eq!(control::LBUTTON_UP, 0x2000_0000);
         assert_eq!(control::ML_LBUTTON_DOWN, 0x4000_0000);
         assert_eq!(control::ML_LBUTTON_UP, 0x8000_0000);
+    }
+
+    /// LLAgent::rotateGrabbed counts YAW_POS / YAW_NEG in the taken
+    /// counts only. A pass-on hold still lets the avatar turn.
+    #[test]
+    fn rotate_grabbed_counts_yaw_taken_outright() {
+        let mut c = ScriptControls::default();
+        assert!(!c.rotate_grabbed());
+        c.apply(true, control::YAW_POS, true);
+        assert!(!c.rotate_grabbed(), "passed on: the avatar still turns");
+        c.apply(true, control::YAW_NEG, false);
+        assert!(c.rotate_grabbed(), "taken outright");
+        c.apply(false, control::YAW_NEG, false);
+        assert!(!c.rotate_grabbed());
+        c.apply(true, control::YAW_POS, false);
+        assert!(c.rotate_grabbed());
     }
 
     #[test]

@@ -1597,7 +1597,7 @@ mod tests {
         m.apply_avatar(&mut i);
         let mut agent = crate::agent::AgentState::default();
         let before = agent.position;
-        agent.update(&i, false, 0.1, 3.0);
+        agent.update(&i, false, 0.1, 3.0, false);
         assert!((agent.yaw + 0.06).abs() < 1e-5);
         assert!((agent.pitch - 0.03).abs() < 1e-5);
         assert_eq!(agent.position, before, "online movement stays simulator-driven");
