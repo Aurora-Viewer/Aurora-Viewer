@@ -368,7 +368,9 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
 /// whatever cannot be read is left out (the caller reads again).
 pub async fn read_folders(http: &reqwest::Client, cap: &str, ids: &[Uuid]) -> Vec<InvFolder> {
     let mut out = Vec::new();
-    for chunk in ids.chunks(16) {
+    // four at a time, the Legacy Viewer's inventory connections
+    // (llappcorehttp.cpp, AP_INVENTORY)
+    for chunk in ids.chunks(4) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();

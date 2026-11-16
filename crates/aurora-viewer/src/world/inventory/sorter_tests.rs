@@ -911,6 +911,28 @@ fn cat(c: Category) -> &'static str {
     c.folder()
 }
 
+/// A longer phrase built on the word a category matched wins (`hair bow`
+/// is no hair), and a store is read from any of the ways it is written.
+#[test]
+fn phrases_beat_the_word_they_extend_and_stores_are_read_every_way() {
+    use Category::*;
+    let category = |name: &str| classify(name, 6, 0).category;
+    assert_eq!(category("Velvet Hair Bow"), Some(Accessories));
+    assert_eq!(category("Silk Dress Shirt"), Some(Tops));
+    assert_eq!(category("Cat Eye Sunglasses"), Some(Accessories));
+    assert_eq!(category("Wooden Shoe Rack"), Some(Furniture));
+    assert_eq!(category("Teddy Bear"), Some(Decor));
+    assert_eq!(category("Rustic Bedroom Set"), Some(Furniture));
+    // another category's own words never override the first
+    assert_eq!(category("Dragon Tattoo for Evo X"), Some(Tattoos));
+    assert_eq!(category("Lace Dress"), Some(Dresses));
+    assert_eq!(store("**Kitoomi** Hex Dress").as_deref(), Some("Kitoomi"));
+    assert_eq!(store("..::North Oak::.. Table").as_deref(), Some("North Oak"));
+    assert_eq!(store("(Mesh) Kitoomi - Hex Dress").as_deref(), Some("Kitoomi"));
+    assert_eq!(store("[Moon Hair] Ada").as_deref(), Some("Moon Hair"));
+    assert_eq!(store("[Hair] Ada"), None);
+}
+
 /// Names from a real inventory, as creators write them (shared by the
 /// human), and where they go with a folder per store.
 #[test]
@@ -1523,6 +1545,8 @@ fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
     };
     inv.sorter_unlocked = prefs.unlocked_set(&inv);
     assert!(inv.sorter_unlocked.contains(&clothing) && inv.sorter_unlocked.contains(&lost));
+    // unlocked as a source only: a rule never files anything into them
+    assert!(!target_allowed(&inv, clothing) && !target_allowed(&inv, lost));
     for g in &guarded {
         let kind = inv.folders[g].info.type_default;
         let allowed = unlockable(kind) || kind == 16;

@@ -152,11 +152,10 @@
         "tatoo",
         "tatoos",
         "tattoo layer",
-        "bandage",
-        "bandages",
         "scar",
         "scars",
-        "bruises"
+        "bruises",
+        "bandages"
       ]
     },
     {
@@ -174,7 +173,6 @@
         "lipstick",
         "lipsticks",
         "lip gloss",
-        "gloss",
         "eyeshadow",
         "eyeshadows",
         "eye shadow",
@@ -238,7 +236,9 @@
         "slippers",
         "flats",
         "wedges",
-        "mules"
+        "mules",
+        "sandal",
+        "sneaker"
       ]
     },
     {
@@ -271,11 +271,12 @@
         "garters",
         "bustier",
         "babydoll",
-        "teddy",
         "underwear",
         "briefs",
         "boxers",
-        "negligee"
+        "negligee",
+        "teddy lingerie",
+        "lingerie teddy"
       ]
     },
     {
@@ -328,7 +329,8 @@
         "leggings",
         "joggers",
         "slacks",
-        "cargos"
+        "cargos",
+        "dress pants"
       ]
     },
     {
@@ -350,7 +352,9 @@
         "parka",
         "cardigan",
         "bomber",
-        "trench"
+        "trench",
+        "teddy coat",
+        "teddy jacket"
       ]
     },
     {
@@ -371,7 +375,12 @@
         "vest",
         "cami",
         "turtleneck",
-        "jumper"
+        "jumper",
+        "dress shirt",
+        "tees",
+        "hoodies",
+        "sweaters",
+        "blouses"
       ]
     },
     {
@@ -414,7 +423,8 @@
         "jewelry",
         "jewellery",
         "pendant",
-        "septum"
+        "septum",
+        "evil eye"
       ]
     },
     {
@@ -445,7 +455,23 @@
         "wings",
         "tail",
         "ears",
-        "horns"
+        "horns",
+        "hair bow",
+        "hair bows",
+        "hair clip",
+        "hair clips",
+        "hair pin",
+        "hair pins",
+        "hair flower",
+        "hair flowers",
+        "cat eye",
+        "eye patch",
+        "hats",
+        "bags",
+        "belts",
+        "masks",
+        "caps",
+        "scarves"
       ]
     },
     {
@@ -499,7 +525,15 @@
         "dresser",
         "wardrobe",
         "bathtub",
-        "sink"
+        "sink",
+        "sofas",
+        "shoe rack",
+        "bedroom set",
+        "dining set",
+        "living room set",
+        "kitchen set",
+        "bedroom furniture",
+        "dining table"
       ]
     },
     {
@@ -518,7 +552,10 @@
         "curtains",
         "pillow",
         "pillows",
-        "mirror"
+        "mirror",
+        "lamps",
+        "teddy bear",
+        "dress form"
       ]
     },
     {

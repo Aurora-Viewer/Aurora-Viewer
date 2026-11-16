@@ -2536,6 +2536,10 @@ impl Session<'_> {
                 } else {
                     self.main_cap("FetchInventoryDescendents2")
                 };
+                let mut change = change;
+                if change.confirm_each {
+                    change.confirm_with = self.main_cap("FetchInventory2");
+                }
                 let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(fetch) else {
                     emit(
                         self.sh,

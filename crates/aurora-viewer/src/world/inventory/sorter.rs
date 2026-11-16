@@ -577,11 +577,27 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         .flatten();
     let category = typed
         .or_else(|| {
-            VOCABULARY
-                .categories
+            // the first category in the vocabulary's order, unless another
+            // has a longer phrase built on the word it matched: `hair bow`
+            // is an accessory, not hair; `dress shirt` a top; `cat eye`
+            // sunglasses, not eyes. Another category's own words never
+            // override it (`tattoo … evo x` stays a tattoo).
+            let categories = &VOCABULARY.categories;
+            let (first, keys) = categories.iter().find(|(_, keys)| keys.iter().any(|k| has(&words, k)))?;
+            let matched: Vec<&String> = keys.iter().filter(|k| has(&words, k)).collect();
+            let longer = categories
                 .iter()
-                .find(|(_, keys)| keys.iter().any(|k| has(&words, k)))
-                .map(|(c, _)| *c)
+                .filter(|(c, _)| c != first)
+                .flat_map(|(c, keys)| keys.iter().map(move |k| (*c, k)))
+                // (a phrase found in the name first: nothing is allocated
+                // for the others)
+                .filter(|(_, k)| k.contains(' ') && has(&words, k))
+                .filter(|(_, k)| {
+                    let phrase: Vec<String> = k.split(' ').map(str::to_owned).collect();
+                    matched.iter().any(|m| m.split(' ').count() < phrase.len() && has(&phrase, m))
+                })
+                .max_by_key(|(_, k)| k.split(' ').count());
+            Some(longer.map_or(*first, |(c, _)| c))
         })
         .or_else(|| Category::of_asset(asset_type, flags));
     let body = body(&words);
@@ -855,26 +871,40 @@ const WAIFUS: &str = "Waifus";
 /// `rvn // Boots`. A tag that is a body, a category or an unpacker word
 /// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
 /// phrase before a dash, which is a product name.
-pub fn store(name: &str) -> Option<String> {
+pub fn store<'a>(name: &'a str) -> Option<String> {
     let text = name.trim();
     let first = text.chars().next()?;
     // `uh-oh: Thigh Socks`, `VELOUR: The Body`: a store and a colon
     let tags = &VOCABULARY.store_tags;
-    let tag = tags
-        .enclosed
-        .iter()
-        .find(|(open, _)| *open == first)
-        .and_then(|(open, close)| {
-            let rest = &text[open.len_utf8()..];
-            rest.find(*close).map(|end| &rest[..end])
-        })
-        .or_else(|| {
-            tags.separators
-                .iter()
-                .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
-                .min_by_key(|tag| tag.len())
-        })
-        .or_else(|| underscore_store(text))?;
+    // `**Store** Dress`, `..::Store::.. Top`: the opening run of marks is
+    // skipped before the closing one is looked for
+    let enclosed = tags.enclosed.iter().find(|(open, _)| *open == first).and_then(|(open, close)| {
+        let rest = text[open.len_utf8()..].trim_start_matches(|c: char| c == *open || (!c.is_alphanumeric() && c != '&'));
+        // the tag, and the name after it
+        rest.find(*close)
+            .map(|end| (&rest[..end], rest[end + close.len_utf8()..].trim_start()))
+    });
+    let separated = |text: &'a str| {
+        tags.separators
+            .iter()
+            .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
+            .min_by_key(|tag| tag.len())
+    };
+    // each way of writing a store in turn: `(Mesh) Kitoomi - Dress` is no
+    // store in its brackets, then one before its dash after them
+    [
+        enclosed.map(|(t, _)| (t, true)),
+        enclosed.and_then(|(_, after)| separated(after)).map(|t| (t, false)),
+        separated(text).map(|t| (t, false)),
+        underscore_store(text).map(|t| (t, false)),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|(tag, enclosed)| store_tag(tag, enclosed))
+}
+
+/// `tag` read as a store's name, when it is one.
+fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
     let tag_words = joined_words(tag);
     let found = classify(tag, -1, 0);
@@ -884,7 +914,9 @@ pub fn store(name: &str) -> Option<String> {
         && (1..=4).contains(&tag_words.len())
         && tag.chars().any(char::is_alphabetic)
         && found.body.is_none()
-        && (found.category.is_none() || maker)
+        // `[Moon Hair]`, `[Mila Poses]`: a bracketed name of a few words
+        // is the store's, even with a category word in it
+        && (found.category.is_none() || maker || enclosed && tag_words.len() >= 2 && !VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| *k == tag_words.join(" "))))
         && !found.unpacker
         && !found.squish
         && !found.waifus

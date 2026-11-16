@@ -288,6 +288,10 @@ impl SharedJournal {
                     journal.number_runs();
                     slot.with(|j| *j = journal);
                 };
+                // read at once in the tests, which use the journal right away
+                #[cfg(test)]
+                load();
+                #[cfg(not(test))]
                 if let Err(error) = std::thread::Builder::new().name("auto-sort history".into()).spawn(load) {
                     log::warn!("auto-sort: the history could not be read ({error}): Undo starts empty");
                     shared.with(|j| j.loading = false);
@@ -1638,7 +1642,8 @@ pub(super) fn show(
             }
         }
     }
-    if state.autostart && state.preview.is_some() {
+    // (kept until the history is read: a run never starts before it)
+    if state.autostart && state.preview.is_some() && !state.journal.with(|j| j.loading) {
         state.autostart = false;
         start(state, inv, prefs);
     }

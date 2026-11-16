@@ -94,6 +94,29 @@ pub enum UdpEdit {
 /// (`Scene.AddInventoryItem`, OpenSim's Scene.Inventory.cs). The Legacy Viewer
 /// fills a new folder from the creation's callback; UDP has no answer, so the
 /// fetch service stands in for it.
+/// Items read back fifty to a `FetchInventory2` request, one request at a
+/// time (LLInventoryModel::fetchItemHttp): a batch of two hundred moves is
+/// four requests, never two hundred.
+async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, ids: &[Uuid]) -> super::ais::ItemReads {
+    let mut reads = super::ais::ItemReads::default();
+    for chunk in ids.chunks(50) {
+        let body = super::fetch_items_body(chunk, owner);
+        match crate::caps::post_llsd(http, fetch, &body).await {
+            Ok(answer) => {
+                let read = super::item_reads(&answer, chunk);
+                reads.items.extend(read.items);
+                reads.missing.extend(read.missing);
+                reads.failed.extend(read.failed);
+            }
+            Err(error) => {
+                log::warn!("auto-sort read-back: {error}");
+                reads.failed.extend_from_slice(chunk);
+            }
+        }
+    }
+    reads
+}
+
 pub(crate) async fn folder_landed(http: &reqwest::Client, fetch_cap: &str, owner: Uuid, parent: Uuid, folder: Uuid) -> bool {
     const RETRIES: u32 = 6;
     for attempt in 0..=RETRIES {
@@ -284,6 +307,10 @@ pub struct Mutation {
     /// destination's whole contents, which grow to thousands of entries over
     /// a large run and would be sent again with every batch.
     pub confirm_each: bool,
+    /// The `FetchInventory2` capability, set by the session for a
+    /// `confirm_each` batch: its items are read back fifty to a request
+    /// (LLInventoryModel::fetchItemHttp), not one request each.
+    pub confirm_with: Option<String>,
 }
 
 impl Mutation {
@@ -692,7 +719,10 @@ where
         let mut item_records: HashMap<Uuid, super::InvItem> = HashMap::new();
         let mut folder_records: HashMap<Uuid, super::InvFolder> = HashMap::new();
         for attempt in 0..=5u32 {
-            let read_items = super::ais::read_items(http, cap, owner, &items).await;
+            let read_items = match change.confirm_with.as_deref() {
+                Some(fetch) => read_items_in_bulk(http, fetch, owner, &items).await,
+                None => super::ais::read_items(http, cap, owner, &items).await,
+            };
             let read_folders = super::ais::read_folders(http, cap, &moved).await;
             // a read the server did not answer (busy, throttled): the next
             // attempt waits longer, never hammering it
