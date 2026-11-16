@@ -59,9 +59,10 @@ impl App {
         }
     }
 
-    /// `AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create|import|import-done`: the window
+    /// `AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|custom|create|import|import-done`: the window
     /// open on the favorites of the Appearance demo (`evening`: its Evening
-    /// folder; `recent`: sorted by most recent; `create`: no favorites yet,
+    /// folder; `recent`: sorted by most recent; `custom`: a Custom order,
+    /// the type order upside down; `create`: no favorites yet,
     /// the window creates the folder; `import`: the Legacy
     /// Viewer's favorites beside, the window offers to import them; `import-done`: after the import).
     pub(super) fn demo_wearable_favorites(&mut self) {
@@ -94,6 +95,21 @@ impl App {
         }
         if mode == "recent" {
             self.settings.wearable_favorites_sort = crate::world::wearable_favorites::SortOrder::MostRecent;
+        }
+        if mode == "custom"
+            && let Some(root) = crate::world::wearable_favorites::folder(&self.world.inventory)
+        {
+            use crate::world::wearable_favorites as model;
+            let inv = &self.world.inventory;
+            let mut list = model::entries(inv, root, root);
+            model::sort(inv, &mut list, model::SortOrder::TypeName, &[]);
+            let order: Vec<_> = list.iter().rev().map(|e| e.target).collect();
+            self.settings.wearable_favorites_sort = model::SortOrder::Custom;
+            self.settings
+                .wearable_favorites_order
+                .entry(self.world.agent_id)
+                .or_default()
+                .insert(root, order);
         }
         self.panels.wearable_favorites = true;
         self.panels.perf = false;
