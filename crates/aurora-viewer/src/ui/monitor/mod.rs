@@ -222,9 +222,21 @@ const STATUS_H: f32 = 24.0;
 pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, out: &mut Vec<Action>) {
     let full = ui.available_rect_before_wrap();
     let radius = ui.visuals().window_corner_radius;
-    let rail = Rect::from_min_max(full.min, pos2(full.left() + RAIL_W, full.bottom() - STATUS_H));
-    let content = Rect::from_min_max(pos2(rail.right(), full.top()), pos2(full.right(), full.bottom() - STATUS_H));
-    let status = Rect::from_min_max(pos2(full.left(), full.bottom() - STATUS_H), full.max);
+    // the bar is as tall as its text, at least STATUS_H: a Japanese row at
+    // a larger text is taller than the bar
+    let row = ui
+        .painter()
+        .layout_no_wrap(
+            aurora_i18n::tr!("monitor-status-live").to_owned(),
+            egui::FontId::proportional(draw::SMALL),
+            p.muted_dim,
+        )
+        .size()
+        .y;
+    let status_h = STATUS_H.max(row.ceil() + 2.0);
+    let rail = Rect::from_min_max(full.min, pos2(full.left() + RAIL_W, full.bottom() - status_h));
+    let content = Rect::from_min_max(pos2(rail.right(), full.top()), pos2(full.right(), full.bottom() - status_h));
+    let status = Rect::from_min_max(pos2(full.left(), full.bottom() - status_h), full.max);
     let line = Stroke::new(1.0, p.raised);
     ui.painter().rect_filled(rail, 0.0, p.bar);
     ui.painter().vline(rail.right() - 0.5, rail.y_range(), line);
@@ -269,9 +281,13 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
             },
         }
     }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(status.shrink2(vec2(12.0, 0.0))), |ui| {
+    // a child too: a row taller than the bar (the Japanese font's, at a
+    // larger text) is cut at its edges instead of growing the window
+    {
+        let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(status.shrink2(vec2(12.0, 0.0))));
+        ui.set_clip_rect(status.intersect(ui.clip_rect()));
         status_ui(ui, p, m, device);
-    });
+    }
     ui.advance_cursor_after_rect(full);
 }
 
@@ -331,11 +347,16 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
             m.tab = tab;
         }
     }
-    // the frame rate at the foot, as the compact view shows it
-    let foot_h = 104.0;
+    // the frame rate at the foot, as the compact view shows it. Its height
+    // is the one it measured last (a larger text, the taller rows of a
+    // Japanese font): a guessed one made the window grow at every frame
+    // once the foot measured more (`widgets::above_footer` does the same).
+    let foot_id = ui.scope_id().with("rail_foot");
+    let foot_h = ui.ctx().data(|d| d.get_temp::<f32>(foot_id)).unwrap_or(104.0);
     let room = ui.available_height();
     if room > foot_h + 8.0 {
         ui.add_space(room - foot_h);
+        let foot_top = ui.cursor().top();
         ui.painter()
             .hline(ui.max_rect().x_range(), ui.cursor().top() - 1.0, Stroke::new(1.0, p.raised));
         ui.add_space(8.0);
@@ -372,6 +393,11 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
                 }
             });
         });
+        let measured = ui.min_rect().bottom() - foot_top;
+        if (measured - foot_h).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(foot_id, measured));
+            ui.ctx().request_discard("monitor rail foot height");
+        }
     }
 }
 

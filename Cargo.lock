@@ -522,14 +522,12 @@ dependencies = [
  "aurora-llsd",
  "base64 0.23.1",
  "cc",
- "crossbeam-channel",
  "flate2",
  "glam 0.34.1",
  "image",
  "log",
  "meshopt",
  "openjpeg-sys",
- "parking_lot 0.13.0",
  "parry3d",
  "rayon",
  "ring",
@@ -571,7 +569,6 @@ dependencies = [
  "fluent-syntax",
  "log",
  "sys-locale",
- "unic-langid",
 ]
 
 [[package]]
@@ -618,7 +615,6 @@ dependencies = [
  "aurora-prim",
  "aurora-version",
  "base64 0.23.1",
- "bitflags 2.13.2",
  "crossbeam-channel",
  "glam 0.34.1",
  "log",
@@ -642,7 +638,6 @@ name = "aurora-prim"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -668,10 +663,8 @@ dependencies = [
  "openxr",
  "parking_lot 0.13.0",
  "pollster 1.0.1",
- "rayon",
  "spirv",
  "thiserror 2.0.21",
- "uuid",
  "wgpu",
  "windows-sys 0.61.2",
 ]
@@ -726,7 +719,6 @@ dependencies = [
  "crossbeam-channel",
  "directories",
  "egui",
- "egui-wgpu",
  "egui-winit",
  "emojis",
  "encoding_rs",
@@ -775,7 +767,6 @@ dependencies = [
  "unicode-bidi-mirroring",
  "uuid",
  "wayland-client",
- "wgpu",
  "windows",
  "windows-sys 0.61.2",
  "winit",

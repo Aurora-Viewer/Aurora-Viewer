@@ -1858,7 +1858,7 @@ displayed.
 ```
 aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Viewer)
 ├─ Cargo.toml                   workspace: version, edition, licence, common lints
-├─ rust-toolchain.toml          stable Rust (always the latest version)
+├─ rust-toolchain.toml          the Rust version, the same on every PC and in the CI (rustup installs it; Dependabot proposes the next stable release)
 ├─ rustfmt.toml                 formatting (140-character lines)
 ├─ README.md                    overview, differences from Firestorm, build
 ├─ AGENTS.md                    rules for AI agents (Claude, Codex…)
