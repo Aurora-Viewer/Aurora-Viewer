@@ -165,7 +165,15 @@ fn children(inv: &Inventory, id: Uuid, sort: Sort) -> (Vec<(String, Uuid)>, Vec<
         }
     }
     let descending = sort.by == SortBy::NameDescending;
-    outfits.sort_by(|(a_rank, a), (b_rank, b)| a_rank.cmp(b_rank).then_with(|| if descending { b.cmp(a) } else { a.cmp(b) }));
+    // names, and the ties of a date order, in dictionary order, as the Legacy
+    // Viewer's LLOutfitTabNameComparator and LLOutfitTabDateComparator
+    // (indra/newview/lloutfitslist.cpp, LLStringUtil::compareDict)
+    let by_name = |a: &(String, Uuid), b: &(String, Uuid)| crate::natural_order::cmp_folded(&a.0, &b.0).then(a.1.cmp(&b.1));
+    outfits.sort_by(|(a_rank, a), (b_rank, b)| {
+        a_rank
+            .cmp(b_rank)
+            .then_with(|| if descending { by_name(b, a) } else { by_name(a, b) })
+    });
     groups.sort();
     if descending {
         groups.reverse();
@@ -927,6 +935,19 @@ mod tests {
         let names = sorted(&inv, Sort::default());
         assert_eq!(sorted(&inv, by(SortBy::Newest)), names);
         assert_eq!(sorted(&inv, by(SortBy::Oldest)), names);
+    }
+
+    #[test]
+    fn outfit_names_compare_their_numbers_by_value_in_every_order() {
+        let mut inv = dated(&[(702, 100), (703, 100)]);
+        for (outfit, name) in [(702, "Look 10"), (703, "Look 2")] {
+            inv.folders.get_mut(&id(outfit)).expect("a demo outfit").info.name = name.into();
+        }
+        let ours = |inv: &Inventory, sort| -> Vec<u128> { sorted(inv, sort).into_iter().filter(|n| [702, 703].contains(n)).collect() };
+        assert_eq!(ours(&inv, Sort::default()), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::Newest)), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::Oldest)), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::NameDescending)), [702, 703]);
     }
 
     #[test]
