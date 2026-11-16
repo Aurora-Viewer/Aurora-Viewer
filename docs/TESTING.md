@@ -6163,6 +6163,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
@@ -8931,6 +8932,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_PEOPLE=sets[:width]`** and its scenes: People › Contact sets with three demo sets, each with a badge and a look (Family tinted and bordered, Clubbing tinted, Shop bordered), so that their tiles show the cases; Nova sits in two sets (her chips). From 470 points wide the sets have a column (try `sets:560`), narrower (`sets:380`) or beside a sheet they are a picker above the members. `sets-select` chooses two members (the selection bar); `sets-editor` opens Family's editor on Look, `sets-editor-badges` with the badge grid unfolded, `sets-editor-marker` scrolled to the marker's choices, `sets-editor-thin` in a window 560 wide (narrower than 700 the preview is a strip on top), `sets-editor-behaviour`, `sets-editor-replies` and `sets-editor-members` on those tabs; `sets-sort` opens Quick sort on the friends in no set; `sets-options` the options shared by every set. What to look for: the tiles follow each set's Nameplate background (tint) and Nameplate border switches; dragging a set in the column carries its card under the pointer while the others slide out of the way, and releasing it reorders the priority; the preview follows every switch at once, and the marker's preview shows while the marker is on.
 - **`AURORA_DEMO_RADAR_MARKS=1|legacy`**: radar marks, with
   `AURORA_DEMO_CROWD=<n>` (20 is enough). The first six residents of the
   crowd ("Foule0" to "Foule5 Resident") are marked: red, green, blue,
@@ -9125,10 +9127,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
-  `config` opens the set's settings window on its switches
-  ("Show notifications"); `config-responses` scrolls it down to the three
-  custom responses, below the appearance options; `config-bottom` to "All
-  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  `config` opens the set's editor on its Behaviour tab
+  ("Show notifications"); `config-responses` on its Auto-replies tab (the
+  three custom responses); `config-bottom` opens the options of all contact
+  sets beside it (the two choices of the sets' notices). `chat` opens Conversations on
   nearby chat: at frames 300 and 360 Nova and another demo friend go
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set
@@ -9566,6 +9568,27 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
+- **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create|import|import-done`**: the
+  Favorite Wearables window (the toolbar's Favorite wearables command, Me ›
+  Favorite wearables) opens at frame 300 on the outfit of the Appearance demo (seeded
+  unless `AURORA_DEMO_APPEARANCE` is set) and `#Aurora/#Wearable Favorites`
+  with seven links (worn clothing and attachments in bold with their worn
+  tag, a spare shirt, a spare attachment, the hair body part) and an
+  "Evening" folder of two. `1`: All Favorites, sorted by type then name;
+  `evening`: the Evening folder picked; `recent`: sorted by most recent;
+  `create`: no favorites yet, the window creates both folders (the demo
+  inventory answers) and shows "Drag wearable items here…"; `import`: the
+  Legacy Viewer's folder (`#Firestorm/#Wearable Favorites`) sits beside
+  ours (a link ours has, one it lacks, a broken link, an "Evening" folder
+  ours has and a "Party" one it lacks), so the window shows "Import
+  favourites from the Legacy Viewer": the click links 4 originals (3 in
+  place, 2 of them in the new Party folder), creates only Party, touches
+  nothing of the Legacy folder, and the button disappears (`import-done`
+  opens the window as it is after that click). Drag a
+  wearable from the inventory onto the list to link it in the folder
+  shown; a double click wears or takes off; the row's menu has Assign to
+  Folder; New, Rename and Delete folder, Remove, the filter and the sort
+  menu act on the demo inventory.
 - **`AURORA_DEMO_ACTIVE_GROUP=none`**: starts the demo session with no active group
   (`world.groups.active` nil and no group title worn). Used e.g. with `AURORA_DEMO_CONTACTS=groups`
   to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.

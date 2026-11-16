@@ -162,6 +162,7 @@ mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
+mod wearable_favorites;
 mod world_click_demo;
 mod worn_demo;
 
@@ -3353,6 +3354,10 @@ impl App {
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
+        // the contact sets' windows, Quick sort's queue and the choices hold
+        // the last account's residents and sets: a relog as another account
+        // must not save them into its sets
+        self.contacts_ui = Default::default();
         self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -10008,6 +10013,11 @@ impl App {
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
         }
+        // AURORA_DEMO_WEARABLE_FAVORITES: seeded once the demo inventory
+        // has arrived (its root listing would drop the folders added before)
+        if self.demo && self.frame_count == 300 {
+            self.demo_wearable_favorites();
+        }
         self.outfit_portrait_demo();
         self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
@@ -13625,7 +13635,8 @@ impl App {
                 self.panels.appearance = false;
                 if mode.starts_with("config") {
                     self.panels.chat = false;
-                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                    self.contacts_ui
+                        .configure_set_at(aurora_i18n::tr!("demo-family"), ui::contacts::EditorTab::Behaviour);
                 } else {
                     self.panels.chat = true;
                 }
@@ -18965,7 +18976,13 @@ impl App {
                     log::warn!("cannot open the transcripts folder: {e}");
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                contact_actions.extend(ui::contacts::dialog_windows(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.contacts_ui,
+                    &self.avatar_pics,
+                ));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -19174,6 +19191,7 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                self.wearable_favorites_window(&ctx, &p);
                 self.outfit_portrait_window(&ctx, &p);
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
@@ -21154,8 +21172,44 @@ impl ApplicationHandler for App {
                         self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
                         self.settings.classic_name_tags = std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-legacy");
                     }
+                    use crate::demo::people::SetsScene;
+                    match crate::demo::people::sets_scene() {
+                        Some(SetsScene::Editor { tab, badges, marker }) => {
+                            self.contacts_ui.configure_set_at(aurora_i18n::tr!("demo-family"), tab);
+                            self.contacts_ui.demo_editor(badges, marker);
+                        }
+                        Some(SetsScene::ThinEditor) => {
+                            self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                            let work = ui::layout::work_area(&self.egui_ctx);
+                            ui::widgets::place_floater(
+                                &self.egui_ctx,
+                                "contact_set_config",
+                                work.center() - egui::vec2(280.0, 360.0),
+                                egui::vec2(560.0, 720.0),
+                            );
+                        }
+                        Some(SetsScene::QuickSort) => {
+                            self.contacts_ui.set_choice = Some(crate::world::contact_sets::NO_SETS.to_owned());
+                            self.people_ui.select(Vec::new());
+                            self.contacts_ui.open_quick_sort(&self.world);
+                        }
+                        Some(SetsScene::Options) => self.contacts_ui.open_set_options(),
+                        Some(SetsScene::Select) => self
+                            .people_ui
+                            .select(vec![crate::demo::people::NOVA, crate::demo::people::ORION_EXAMPLE]),
+                        None => {}
+                    }
                 }
-                self.panels.people = true;
+                // the windows of a set scene stand alone, People closed
+                self.panels.people = !matches!(
+                    crate::demo::people::sets_scene(),
+                    Some(
+                        crate::demo::people::SetsScene::Editor { .. }
+                            | crate::demo::people::SetsScene::ThinEditor
+                            | crate::demo::people::SetsScene::QuickSort
+                            | crate::demo::people::SetsScene::Options
+                    )
+                );
                 self.panels.people_tab = crate::demo::people::tab();
                 self.panels.inventory = false;
                 self.panels.chat = false;

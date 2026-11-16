@@ -439,29 +439,17 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
 }
 
 /// The marker of a set in its editor: on screen, then pinned to an edge.
-pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
-    let radius = full_radius(marker.shape);
-    let pinned_width = radius * 2.0 + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
-    let size = vec2(radius * 3.0 + pinned_width, radius * 2.0 + 4.0);
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    let y = rect.center().y;
-    let placed = |x: f32, edge| Placed {
-        at: pos2(x, y),
-        radius,
+/// One marker at full size at `at`, as it stands over a resident seen from
+/// afar (the set editor's preview).
+pub fn paint_preview_at(painter: &egui::Painter, p: &Palette, at: Pos2, marker: &Marker) {
+    let placed = Placed {
+        at,
+        radius: full_radius(marker.shape),
         merge: 0.0,
         fade: 1.0,
-        edge,
+        edge: None,
     };
-    paint(&painter, p, &placed(rect.left() + radius, None), marker, 1.0, false);
-    paint(
-        &painter,
-        p,
-        &placed(rect.left() + radius * 4.0, Some(Vec2::RIGHT)),
-        marker,
-        1.0,
-        false,
-    );
+    paint(painter, p, &placed, marker, 1.0, false);
 }
 
 #[cfg(test)]
