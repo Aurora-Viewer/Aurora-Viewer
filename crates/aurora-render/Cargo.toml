@@ -66,6 +66,8 @@ xr-static-loader = ["openxr/static"]
 # the sample mask route, oit_stochastic.rs)
 naga = { version = "30.0.1", features = ["wgsl-in", "spv-out", "msl-out", "hlsl-out"] }
 aurora-assets = { path = "../aurora-assets" }
+# (the cloud noise's tests and its generate_cloud_noise example)
+rayon = "1.12.0"
 
 [lints]
 workspace = true
