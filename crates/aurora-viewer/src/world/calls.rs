@@ -78,6 +78,8 @@ pub struct CallMember {
 /// not the proximal one).
 #[derive(Debug, Clone)]
 pub struct Call {
+    /// Stable across the simulator assigning a conference its permanent session.
+    pub initial_session: Uuid,
     /// The IM session (P2P: agent XOR other, group: the group id).
     pub session: Uuid,
     pub kind: CallKind,
@@ -411,6 +413,7 @@ impl World {
         }
         self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
         self.calls.active = Some(Call {
+            initial_session: session,
             session,
             kind,
             name,
@@ -443,6 +446,7 @@ impl World {
         let session = self.open_conference(agents, true);
         let name = aurora_i18n::tr!("world-groups-conference").to_owned();
         self.calls.active = Some(Call {
+            initial_session: session,
             session,
             kind: CallKind::AdHoc,
             name,
@@ -1024,6 +1028,7 @@ impl World {
         }
         let session = inv.session;
         let call = self.calls.active.get_or_insert_with(|| Call {
+            initial_session: session,
             session,
             kind,
             name,
@@ -1548,7 +1553,7 @@ mod tests {
             error: String::new(),
             agents: Vec::new(),
         });
-        assert_eq!(w.calls.active.as_ref().map(|c| c.session), Some(real));
+        assert_eq!(w.calls.active.as_ref().map(|c| (c.initial_session, c.session)), Some((temp, real)));
         assert_eq!(w.social.focus_im, Some(real));
         assert!(w.social.focus_im_to_type, "the server's id keeps the keyboard");
         assert_eq!(calls_sent(&mut w), vec![(CallMethod::Call, real)]);

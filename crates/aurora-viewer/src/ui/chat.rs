@@ -481,16 +481,21 @@ impl ChatUi {
         if let Some(view) = self.views.remove(&old) {
             self.views.insert(new, view);
         }
-        let before = egui::Id::unique(("conv_input", old));
-        let after = egui::Id::unique(("conv_input", new));
-        if let Some(state) = egui::TextEdit::load_state(ctx, before) {
-            state.store(ctx, after);
-        }
-        ctx.memory_mut(|m| {
-            if m.has_focus(before) {
-                m.request_focus(after);
+        let input = |conversation: Option<uuid::Uuid>| egui::Id::unique(("conv_input", conversation));
+        for (before, after) in [
+            (input(old), input(new)),
+            (find::field_id(old), find::field_id(new)),
+            (find::filter_id(old), find::filter_id(new)),
+        ] {
+            if let Some(state) = egui::TextEdit::load_state(ctx, before) {
+                state.store(ctx, after);
             }
-        });
+            ctx.memory_mut(|m| {
+                if m.has_focus(before) {
+                    m.request_focus(after);
+                }
+            });
+        }
     }
 
     /// "Detach": `conversation` in its own window, its field taking the

@@ -2771,6 +2771,20 @@ fn a_voice_conference_takes_focus_once_and_keeps_its_draft_after_switching_chats
     }
 }
 
+#[test]
+fn conference_ack_keeps_the_active_search_or_filter_editor() {
+    use super::super::find;
+
+    let (temp, real) = (Some(JANE), Some(BOB));
+    for field in [find::field_id, find::filter_id] {
+        let ctx = egui::Context::default();
+        let mut st = ChatUi::default();
+        ctx.memory_mut(|m| m.request_focus(field(temp)));
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert!(ctx.memory(|m| m.has_focus(field(real))));
+    }
+}
+
 /// Send IM and the column's "new conversation" ask for a conversation and
 /// its field takes the keyboard (LLAvatarActions::startIM → FSFloaterIM::show
 /// → setFocus).

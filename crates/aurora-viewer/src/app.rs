@@ -3070,11 +3070,21 @@ impl App {
             {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
-            let events = match self.demo_fetch.as_ref() {
+            let mut events = match self.demo_fetch.as_ref() {
                 Some(source) => crate::world::inventory::demo::fetch_reply(&cmd, &self.world.inventory, source, &mut self.demo_faults)
                     .unwrap_or_else(|| crate::demo::demo_reply(&cmd)),
                 None => crate::demo::demo_reply(&cmd),
             };
+            if matches!(
+                cmd,
+                NetCommand::Call {
+                    method: aurora_net::CallMethod::StartConference { .. },
+                    ..
+                }
+            ) && crate::demo::calls::mode() == Some(crate::demo::calls::Mode::ConferenceFocus)
+            {
+                self.call_demo.delay_conference_start(&mut events, Instant::now());
+            }
             for mut ev in events {
                 crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
@@ -7645,7 +7655,7 @@ impl App {
             self.world.call_voice_update(status, members);
         }
         // a new call shows its conversation (started, accepted, answered by text)
-        let call = self.world.calls.active.as_ref().map(|c| c.session);
+        let call = self.world.calls.active.as_ref().map(|c| c.initial_session);
         if call.is_some() && call != self.call_shown {
             ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
         }
