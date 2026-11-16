@@ -2812,7 +2812,8 @@ fn a_listed_folder_inside_a_delivery_opens_only_itself() {
     for n in [700, 701, 702, 801, 802] {
         assert!(!moved.contains(&id(n)), "the delivery keeps {n}");
     }
-    // excluded and listed: excluded wins, the delivery moves whole as before
+    // excluded and listed: excluded wins, the delivery stays in place,
+    // unopened
     let excluded = Preferences {
         excluded: vec![id(702)],
         ..prefs.clone()
@@ -2823,6 +2824,31 @@ fn a_listed_folder_inside_a_delivery_opens_only_itself() {
     let plan = plan_entries(&inv, &[id(700), id(702)], &prefs, &none, &none);
     assert!(plan.moves.is_empty(), "never moved whole");
     assert_eq!(plan.kept_list.iter().filter(|(_, k)| *k == Kept::Own).count(), 2);
+    // a Pre-Trash word rule and Clean up read only the listed folder inside
+    // the delivery
+    let old = date_start("2015-01").expect("date");
+    add_item(&mut inv, 804, 700, "Old Velvet Gown Belt", old);
+    add_item(&mut inv, 805, 702, "Old Lace Slip", old);
+    let rule = Preferences {
+        rules: vec![Rule {
+            words: "old".into(),
+            mode: Match::Any,
+            pre_trash: true,
+            ..Default::default()
+        }],
+        ..prefs.clone()
+    };
+    let moved: HashSet<Uuid> = plan_whole(&inv, &rule, &none, &none).moves.iter().map(|m| m.id).collect();
+    assert!(
+        moved.contains(&id(805)) && !moved.contains(&id(804)),
+        "only the listed folder is read"
+    );
+    let cleanup = plan_cleanup(&inv, &prefs, &before_2020(), inv.root, today(), &none, &none);
+    assert!(cleanup.rows.iter().any(|r| r.id == id(805)), "Clean up reads the listed folder");
+    assert!(
+        !cleanup.rows.iter().any(|r| [700, 701, 804].iter().any(|n| r.id == id(*n))),
+        "the delivery stays whole"
+    );
 }
 
 /// Shelves audit 33 found moved whole (a plural name beside a HUD or a body
@@ -2869,4 +2895,48 @@ fn plural_shelves_open_and_a_kitchen_with_its_decor_only_stays_whole() {
         ![901, 902, 903, 950, 951, 952].iter().any(|n| moved.contains(&id(*n))),
         "the kitchen is never opened"
     );
+}
+
+/// Audit 34: a set named for one thing, a delivery holding its own store's
+/// tagged folder stay whole; shelves of sets or packs open; ring and shape
+/// names keep their category beside the new makeup and ear words.
+#[test]
+fn sets_and_own_store_tags_stay_whole_and_shelves_of_packs_open() {
+    let none = HashSet::new();
+    let whole: [(&str, &[&str]); 3] = [
+        ("Kitsune Ears Set", &["HUD", "Ears"]),
+        ("Kitsune Ears Set", &["HUD", "Ears", "Tails"]),
+        ("Mila - Photo Studio", &["Props", "[Mila] Poses"]),
+    ];
+    for (name, subs) in whole {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        let mut inside = Vec::new();
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, &format!("Kitsune {sub}"), 0);
+            inside.extend([901 + n as u128, 950 + n as u128]);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!inside.iter().any(|n| moved.contains(&id(*n))), "{name} is never opened");
+    }
+    let shelves: [(&str, &[&str]); 3] = [
+        ("Makeup Sets", &["Lelutka", "Catwa"]),
+        ("Dress Packs", &["Maitreya", "HUD"]),
+        ("Head Packs", &["HUDs", "Skins", "Shapes"]),
+    ];
+    for (name, subs) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(!plan.moves.iter().any(|m| m.id == id(900)), "{name} never moves whole");
+    }
+    assert_eq!(path("Brow Ring"), path("Silver Ring"));
+    assert_eq!(path("Lash Ring"), path("Silver Ring"));
+    assert_eq!(path("Eyebrow Piercing"), path("Brow Piercing"));
+    assert_eq!(path("Elf Ear Shape"), path("Elf Shape"));
 }

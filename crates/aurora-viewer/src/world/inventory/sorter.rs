@@ -1310,7 +1310,9 @@ impl OwnFolders {
     /// The listed folders below `holder` with no other listed folder
     /// between (the deeper ones are reached through those).
     fn listed_below(&self, inv: &Inventory, holder: Uuid) -> Vec<Uuid> {
-        self.listed
+        // (sorted: the same order on every run)
+        let mut below: Vec<Uuid> = self
+            .listed
             .iter()
             .copied()
             .filter(|id| {
@@ -1320,10 +1322,13 @@ impl OwnFolders {
                         .find(|a| *a == holder || self.listed.contains(a))
                         .is_some_and(|a| a == holder)
             })
-            .collect()
+            .collect();
+        below.sort_unstable();
+        below
     }
 }
 
+/// The user's listed folders ([`OwnFolders`]), worked out once per plan.
 pub fn own_folders(inv: &Inventory, prefs: &Preferences) -> OwnFolders {
     let mut own = OwnFolders::default();
     if prefs.own.is_empty() {
@@ -1466,7 +1471,7 @@ fn loose_plural(w: &str) -> bool {
 
 /// Folders a user marks a shelf of their own with: a folder of folders so
 /// named is never kept whole as one product.
-const SHELF_MARKERS: [&str; 17] = [
+const SHELF_MARKERS: [&str; 21] = [
     "stuff",
     "misc",
     "my",
@@ -1484,6 +1489,10 @@ const SHELF_MARKERS: [&str; 17] = [
     "others",
     "other",
     "i",
+    "sets",
+    "packs",
+    "bundles",
+    "collections",
 ];
 
 /// A folder of folders named for one product is a delivery unless it shows
@@ -1530,9 +1539,14 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
                 .all(|w| DELIVERY_PARTS.contains(&w.as_str()) || VERSION_WORDS.contains(&w.as_str()))
     });
     // (another store's tagged delivery always shows a shelf)
+    // (the folder's own store tag on a subfolder says nothing: `Mila - Photo
+    // Studio` holding `[Mila] Poses`)
+    let name_store = store(name);
     let holds_deliveries = subs.iter().any(|s| {
         let sub = s.info.name.trim();
-        if store(sub).is_some() {
+        if let Some(tag) = store(sub)
+            && !name_store.as_deref().is_some_and(|own| same_store(own, &tag))
+        {
             return true;
         }
         if parts_seen {
@@ -1641,7 +1655,11 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // (only for a name of one product: `Work Outfits` holding `HUD` and
     // `Tops`, `Fantasy Heads` holding `Skins` stay shelves)
     let body_named = words(name).last().is_some_and(|w| w == "body");
-    let many_named = words(name).iter().any(|w| loose_plural(w));
+    // (`Kitsune Ears Set`: a name ending on one thing names one product)
+    let ends_one = words(name)
+        .last()
+        .is_some_and(|w| is_kind(w) && !loose_plural(w) && !plural_kind(w));
+    let many_named = !ends_one && words(name).iter().any(|w| loose_plural(w));
     let delivery_extras = names_a_product(name) && !many_named && (versions || (named || body_named) && fatpack_seen);
     let shelf_by_kind = plural > 0 && singular == 0 && !(named && named_seen) && !delivery_extras;
     // (a HUD or textures folder is a delivery's: no one keeps one on a shelf)
@@ -1725,7 +1743,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 39] = [
+const SHELF_WORDS: [&str; 43] = [
     "my",
     "old",
     "new",
@@ -1765,6 +1783,10 @@ const SHELF_WORDS: [&str; 39] = [
     "body",
     "avatars",
     "face",
+    "sets",
+    "packs",
+    "bundles",
+    "collections",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone

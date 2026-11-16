@@ -411,6 +411,11 @@
     {
       "category": "jewelry",
       "words": [
+        "brow ring",
+        "brow piercing",
+        "eyebrow ring",
+        "eyebrow piercing",
+        "lash ring",
         "necklace",
         "necklaces",
         "earrings",
@@ -458,6 +463,7 @@
         "leash",
         "wings",
         "tail",
+        "tails",
         "ear",
         "ears",
         "horns",
@@ -504,7 +510,9 @@
       "category": "shapes",
       "words": [
         "shape",
-        "shapes"
+        "shapes",
+        "ear shape",
+        "ears shape"
       ]
     },
     {
