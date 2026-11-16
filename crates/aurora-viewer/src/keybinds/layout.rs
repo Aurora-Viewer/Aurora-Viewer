@@ -391,9 +391,9 @@ impl Layouts {
         Arc::clone(&seen.all[seen.active])
     }
 
-    /// `layout` is reported active: the change, if the layout in use
-    /// changes.
-    fn activate(&self, layout: KeyboardLayout) -> Option<LayoutChange> {
+    /// The first report settles pending settings even if the layout already matches.
+    /// Subsequent reports matter only when the layout changes.
+    fn activate(&self, layout: KeyboardLayout, first: bool) -> Option<LayoutChange> {
         let guessed = self.guessed.swap(false, Ordering::Relaxed);
         let mut seen = self.seen.write().unwrap_or_else(PoisonError::into_inner);
         let index = match seen.all.iter().position(|known| **known == layout) {
@@ -406,7 +406,7 @@ impl Layouts {
         let before = std::mem::replace(&mut seen.active, index);
         // two layouts of a keymap can read the same (`ru,ua`: both US
         // QWERTY), and the first equal one is found: nothing changes
-        (before != index && seen.all[before] != seen.all[index]).then(|| LayoutChange {
+        (first || (before != index && seen.all[before] != seen.all[index])).then(|| LayoutChange {
             before: Arc::clone(&seen.all[before]),
             after: Arc::clone(&seen.all[index]),
             guessed,
@@ -452,6 +452,7 @@ pub(super) fn current() -> Arc<KeyboardLayout> {
 pub struct Watch {
     /// Dropped after its first failure, which would only repeat.
     inner: Option<OsWatch>,
+    first_report: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -491,7 +492,10 @@ impl Watch {
             // a demo layout is not the system's: nothing to follow
             return None;
         }
-        OsWatch::new(window).map(|inner| Self { inner: Some(inner) })
+        OsWatch::new(window).map(|inner| Self {
+            inner: Some(inner),
+            first_report: true,
+        })
     }
 
     /// The window got the focus: where the system tells no change at focus
@@ -514,7 +518,10 @@ impl Watch {
                 return None;
             }
         };
-        let change = layouts().activate(layout)?;
+        let change = layouts().activate(layout, std::mem::take(&mut self.first_report))?;
+        if change.before == change.after {
+            return Some(change); // A matching first report still finishes pending settings migration.
+        }
         super::forget_learned();
         log::info!(
             "keyboard layout: the active layout changed (movement {})",
@@ -595,19 +602,26 @@ mod tests {
     fn a_stand_in_layout_gives_way_to_the_reported_one_once() {
         let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
         assert_eq!(layouts.current().letters(), ['W', 'S', 'A', 'D']);
-        let change = layouts.activate(KeyboardLayout::zqsd()).expect("the second layout is reported");
+        let change = layouts
+            .activate(KeyboardLayout::zqsd(), false)
+            .expect("the second layout is reported");
         assert!(change.guessed);
         assert_eq!(change.before.letters(), ['W', 'S', 'A', 'D']);
         assert_eq!(change.after.letters(), ['Z', 'S', 'Q', 'D']);
         assert_eq!(layouts.current().letters(), ['Z', 'S', 'Q', 'D']);
-        assert!(layouts.activate(KeyboardLayout::zqsd()).is_none(), "the same layout again");
-        let change = layouts.activate(KeyboardLayout::wasd()).expect("the user switches back");
+        assert!(layouts.activate(KeyboardLayout::zqsd(), false).is_none(), "the same layout again");
+        let change = layouts.activate(KeyboardLayout::wasd(), false).expect("the user switches back");
         assert!(!change.guessed, "only the first report replaces a stand-in");
 
         // the stand-in confirmed: nothing moves, and a later switch is the user's
         let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
-        assert!(layouts.activate(KeyboardLayout::wasd()).is_none());
-        assert!(!layouts.activate(KeyboardLayout::zqsd()).expect("a switch").guessed);
+        let confirmed = layouts
+            .activate(KeyboardLayout::wasd(), true)
+            .expect("first report confirms the stand-in");
+        assert_eq!(confirmed.before, confirmed.after);
+        assert!(confirmed.guessed);
+        assert!(layouts.activate(KeyboardLayout::wasd(), false).is_none());
+        assert!(!layouts.activate(KeyboardLayout::zqsd(), false).expect("a switch").guessed);
     }
 
     /// Windows, X11 and macOS read the active layout at start: a switch
@@ -616,24 +630,32 @@ mod tests {
     #[test]
     fn a_layout_switched_to_while_running_joins_the_list_once() {
         let layouts = Layouts::one(KeyboardLayout::wasd());
-        let change = layouts.activate(KeyboardLayout::qwertz()).expect("a switch to German");
+        let change = layouts.activate(KeyboardLayout::qwertz(), false).expect("a switch to German");
         assert!(!change.guessed, "the start layout was reported, not guessed");
         assert_eq!(*change.before, KeyboardLayout::wasd());
         assert_eq!(*change.after, KeyboardLayout::qwertz());
         assert_eq!(layouts.current().key_for('Z'), Some(KeyCode::KeyY));
-        assert!(layouts.activate(KeyboardLayout::qwertz()).is_none(), "read again, the same layout");
-        assert!(layouts.activate(KeyboardLayout::wasd()).is_some());
-        assert!(layouts.activate(KeyboardLayout::qwertz()).is_some());
+        assert!(
+            layouts.activate(KeyboardLayout::qwertz(), false).is_none(),
+            "read again, the same layout"
+        );
+        assert!(layouts.activate(KeyboardLayout::wasd(), false).is_some());
+        assert!(layouts.activate(KeyboardLayout::qwertz(), false).is_some());
         assert_eq!(layouts.seen.read().expect("unpoisoned").all.len(), 2);
         // two equal layouts in one keymap (`ru,ua` both read as US QWERTY):
         // the one reported is found under the other's index, nothing changes
         let layouts = Layouts::new(vec![KeyboardLayout::default(), KeyboardLayout::default()], 1, true);
-        assert!(layouts.activate(KeyboardLayout::default()).is_none());
+        assert!(layouts.activate(KeyboardLayout::default(), false).is_none());
         // A handed-off Wayland socket cannot be opened before winit creates the window.
         let layouts = Layouts::undetected();
         assert_eq!(*layouts.current(), KeyboardLayout::default());
-        assert!(layouts.activate(KeyboardLayout::zqsd()).expect("the window reports French").guessed);
-        assert!(!layouts.activate(KeyboardLayout::wasd()).expect("later switch").guessed);
+        assert!(
+            layouts
+                .activate(KeyboardLayout::zqsd(), false)
+                .expect("the window reports French")
+                .guessed
+        );
+        assert!(!layouts.activate(KeyboardLayout::wasd(), false).expect("later switch").guessed);
     }
 
     /// What Windows' KBDFR gives for each key read (`MapVirtualKeyExW`):

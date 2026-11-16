@@ -1931,8 +1931,8 @@ pub struct Settings {
     pub new_profile: bool,
     /// The keyboard's defaults were placed for a layout that may only stand
     /// in for the active one (a new profile, or a file older than version
-    /// 45): the first report of `keybinds::LayoutWatch` moves them.
-    #[serde(skip)]
+    /// 45). Keep this pending across a save and restart until the window hears its layout.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub defaults_follow_reported_layout: bool,
     /// Version 33 turned the camera's limits back on in this file: the login
     /// screen says so once (`ui/login/camera_limits_notice.rs`).
@@ -3125,7 +3125,7 @@ impl Settings {
         let forced = std::env::var_os("AURORA_CAPTURE").is_some();
         s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
         s.new_profile = new_profile;
-        s.defaults_follow_reported_layout = new_profile;
+        s.defaults_follow_reported_layout |= new_profile;
         s.finished(newer)
     }
 
@@ -5717,10 +5717,23 @@ mod tests {
             let loaded = file.sanitized();
             assert_eq!(loaded.defaults_follow_reported_layout, follows, "version {version}");
             assert_eq!(loaded.settings_version, SETTINGS_VERSION);
-            // saved, the file is the current version: the next launch waits for no report
-            let saved: Settings = serde_json::from_slice(&serde_json::to_vec(&loaded).expect("write settings")).expect("read settings");
-            assert!(!saved.sanitized().defaults_follow_reported_layout, "only once");
         }
+        let path = scratch_settings_file();
+        let fresh = Settings::load_from(&path);
+        assert!(fresh.defaults_follow_reported_layout);
+        fresh.save_to(&path);
+        let mut reopened = Settings::load_from(&path);
+        assert!(
+            reopened.defaults_follow_reported_layout,
+            "a save before focus preserves pending defaults"
+        );
+        reopened.defaults_follow_reported_layout = false;
+        reopened.save_to(&path);
+        assert!(!Settings::load_from(&path).defaults_follow_reported_layout);
+        assert!(
+            read_back(&path).get("defaults_follow_reported_layout").is_none(),
+            "only pending work is stored"
+        );
     }
 
     /// The move of the letter shortcuts to the layout's letters runs once
