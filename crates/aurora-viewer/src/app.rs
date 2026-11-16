@@ -498,6 +498,8 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
+    super_held: bool,
+    ime_preedit: bool,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1274,6 +1276,34 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
     matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
+/// Read the logical key, so an IME or a remapped Return is not a quit.
+/// The regular and keypad Enter both report NamedKey::Enter.
+fn exit_prompt_key(key: &winit::keyboard::Key, composing: bool) -> Option<egui::Key> {
+    use winit::keyboard::{Key, NamedKey};
+    if composing {
+        return None;
+    }
+    match key {
+        Key::Named(NamedKey::Enter) => Some(egui::Key::Enter),
+        Key::Named(NamedKey::Escape) => Some(egui::Key::Escape),
+        Key::Named(NamedKey::Tab) => Some(egui::Key::Tab),
+        Key::Named(NamedKey::Space) => Some(egui::Key::Space),
+        Key::Character(s) if s == " " => Some(egui::Key::Space),
+        _ => None,
+    }
+}
+
+/// The shortcut mask as egui reads it, for the prompt's own keys.
+fn exit_prompt_modifiers(mods: Mods, super_held: bool) -> egui::Modifiers {
+    egui::Modifiers {
+        alt: mods.alt,
+        ctrl: mods.ctrl,
+        shift: mods.shift,
+        command: super_held,
+        ..egui::Modifiers::NONE
+    }
+}
+
 /// A press winit made up from the keyboard state when the window gained the
 /// focus. Its synthetic releases stay: they only ever clear a held key.
 fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
@@ -1759,6 +1789,8 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
+            super_held: false,
+            ime_preedit: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -8726,6 +8758,7 @@ impl App {
                     self.alt_codes.alt_pressed();
                 }
             } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && !self.exit_prompt.open
                 && self.egui_ctx.egui_wants_keyboard_input()
             {
                 self.alt_text.push(text);
@@ -23600,6 +23633,32 @@ impl ApplicationHandler for App {
             return;
         }
 
+        if let WindowEvent::Ime(ime) = &event {
+            use winit::event::Ime;
+            match ime {
+                Ime::Preedit(text, _) => self.ime_preedit = !text.is_empty(),
+                Ime::Commit(_) | Ime::Disabled => self.ime_preedit = false,
+                Ime::Enabled => {}
+            }
+            if self.exit_prompt.open {
+                return;
+            }
+        }
+        // The prompt has no text field. Releases still clear held movement.
+        if self.exit_prompt.open
+            && let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && ke.state == ElementState::Pressed
+        {
+            self.track_alt_graph(ke);
+            if !ke.repeat
+                && let Some(key) = exit_prompt_key(&ke.logical_key, self.ime_preedit)
+            {
+                self.exit_prompt.key(key, exit_prompt_modifiers(self.key_mods(ke), self.super_held));
+                self.egui_ctx.request_repaint();
+            }
+            return;
+        }
+
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
         if self.alt_code_key(&event) {
@@ -23739,6 +23798,7 @@ impl ApplicationHandler for App {
                 self.frame(event_loop);
             }
             WindowEvent::ModifiersChanged(m) => {
+                self.super_held = m.state().super_key();
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
                 self.alt = m.state().alt_key();
@@ -23766,6 +23826,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.super_held = false;
+                self.ime_preedit = false;
                 self.options_ui.cancel_joystick_capture();
                 self.alt_codes.reset();
                 self.chat_ui.cancel_gesture_key();
@@ -24371,9 +24433,30 @@ fn restart_with_vr(mode: crate::camera::VrView) {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
+    use super::{
+        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
+    };
+    use crate::keybinds::Mods;
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_quit_prompt_answers_enter_and_escape_including_the_keypad() {
+        use winit::keyboard::{Key, NamedKey};
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), false), Some(egui::Key::Enter));
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Escape), false), Some(egui::Key::Escape));
+        assert_eq!(exit_prompt_key(&Key::Character("a".into()), false), None);
+        assert_eq!(exit_prompt_key(&Key::Dead(Some('^')), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Process), false), None);
+        assert_eq!(exit_prompt_key(&Key::Named(NamedKey::Enter), true), None);
+        assert!(exit_prompt_modifiers(Mods::default(), false).is_none());
+        assert!(!exit_prompt_modifiers(Mods::default(), true).is_none());
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert!(!exit_prompt_modifiers(ctrl, false).is_none());
+    }
 
     #[test]
     fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {
