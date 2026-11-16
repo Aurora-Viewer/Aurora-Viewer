@@ -54,12 +54,10 @@ pub(crate) fn set_grid_time(seconds_since_epoch: &str) {
 }
 
 /// The grid's time minus `now`, when `seconds_since_epoch` gives one that
-/// fits in an `i32`, like the Legacy Viewer's `S32 gUTCOffset`: a server
-/// time near `i64::MAX` would otherwise overflow `unix + correction` in
-/// `slt_offset`.
+/// fits in an `i32`, like the Legacy Viewer's `S32 gUTCOffset`.
 fn grid_correction(seconds_since_epoch: &str, now: i64) -> Option<i64> {
     let server = seconds_since_epoch.trim().parse::<i64>().ok().filter(|&t| t > 0)?;
-    i32::try_from(server - now).ok().map(i64::from)
+    i32::try_from(server.checked_sub(now)?).ok().map(i64::from)
 }
 
 /// The computer's tz database zone (Windows' own zones mapped to IANA
@@ -153,19 +151,26 @@ fn zone_label(abbreviation: Option<&str>, offset: i64) -> String {
     }
 }
 
-/// Seconds to add to the computer's UTC for `zone` at `unix`: SLT counts
-/// the grid's correction too.
+/// Offset of the time zone at an absolute UTC instant. Directory event
+/// timestamps already come from the grid and only need this conversion.
 pub(crate) fn offset(zone: ClockZone, unix: i64) -> i64 {
     match zone {
-        ClockZone::Slt => slt_offset(unix, GRID_CORRECTION.load(Ordering::Relaxed)),
+        ClockZone::Slt => crate::world::chat_log::format::pacific_offset_hours(unix) * 3600,
         ClockZone::Local => local(unix).0,
     }
 }
 
-/// US Pacific time at the grid's instant: the computer's `unix` plus
-/// `correction`.
-fn slt_offset(unix: i64, correction: i64) -> i64 {
-    correction + crate::world::chat_log::format::pacific_offset_hours(unix + correction) * 3600
+/// Apply the login correction only to readings of the computer's clock
+/// displayed in SLT, like time_corrected() in the Legacy Viewer.
+pub(crate) fn clock_timestamp(zone: ClockZone, computer: i64) -> i64 {
+    timestamp_with_correction(zone, computer, GRID_CORRECTION.load(Ordering::Relaxed))
+}
+
+fn timestamp_with_correction(zone: ClockZone, computer: i64, correction: i64) -> i64 {
+    match zone {
+        ClockZone::Slt => computer.saturating_add(correction),
+        ClockZone::Local => computer,
+    }
 }
 
 /// The time a left click on the clock switches to.
@@ -377,12 +382,13 @@ pub(crate) fn hour_text(h: i64, m: i64, secs: &str, twelve: bool) -> String {
 /// The time of `unix` as the clock writes it (its zone, 12 or 24 hours),
 /// without seconds nor zone: when the session's places were reached.
 pub(crate) fn time_of(s: SystemIsland, unix: i64) -> String {
+    let unix = clock_timestamp(s.clock_zone, unix);
     hours(unix, offset(s.clock_zone, unix), false, twelve_hours(s.clock_format))
 }
 
 /// The clock's text, now: the time and SLT, or local time and its zone.
 pub(crate) fn text(s: SystemIsland) -> String {
-    let unix = now_unix();
+    let unix = clock_timestamp(s.clock_zone, now_unix());
     let (offset, label) = match s.clock_zone {
         ClockZone::Slt => (offset(ClockZone::Slt, unix), "SLT".to_owned()),
         ClockZone::Local => local(unix),
@@ -413,15 +419,16 @@ fn from_slt(diff: i64) -> String {
 /// The tooltip's rows: SLT, then local time with how far it is from SLT.
 pub(crate) fn tip_values(s: SystemIsland) -> [String; 2] {
     let unix = now_unix();
-    let slt = offset(ClockZone::Slt, unix);
+    let grid = clock_timestamp(ClockZone::Slt, unix);
+    let slt = offset(ClockZone::Slt, grid);
     let (local, label) = local(unix);
     let twelve = twelve_hours(s.clock_format);
     [
-        format!("{} SLT", hours(unix, slt, s.clock_seconds, twelve)),
+        format!("{} SLT", hours(grid, slt, s.clock_seconds, twelve)),
         format!(
             "{} {label} ({})",
             hours(unix, local, s.clock_seconds, twelve),
-            from_slt(round_to_minute(local - slt))
+            from_slt(round_to_minute(local - slt + (unix - grid)))
         ),
     ]
 }
@@ -553,9 +560,14 @@ mod tests {
         let correction = grid_correction(&grid.to_string(), computer).expect("a server time");
         assert_eq!(correction, -3600);
         // 14:33 SLT, as the Legacy Viewer shows, not the computer's 15:33
-        assert_eq!(hours(computer, slt_offset(computer, correction), false, false), "14:33");
+        let corrected = timestamp_with_correction(ClockZone::Slt, computer, correction);
+        assert_eq!(corrected, grid);
+        assert_eq!(timestamp_with_correction(ClockZone::Local, computer, correction), computer);
+        assert_eq!(hours(corrected, offset(ClockZone::Slt, corrected), false, false), "14:33");
+        // The directory gives UTC directly. Its start and end use the zone at each instant.
+        assert_eq!(crate::ui::search::event_hours(grid, 60, ClockZone::Slt), "14:33–15:33");
         // no correction before a login, or with no usable server time
-        assert_eq!(slt_offset(grid, 0), -8 * 3600);
+        assert_eq!(offset(ClockZone::Slt, grid), -8 * 3600);
         assert_eq!(grid_correction("", computer), None);
         assert_eq!(grid_correction("0", computer), None);
         assert_eq!(grid_correction("soon", computer), None);
@@ -576,8 +588,7 @@ mod tests {
         let largest = computer + i64::from(i32::MAX);
         assert_eq!(grid_correction(&largest.to_string(), computer), Some(i64::from(i32::MAX)));
         assert_eq!(grid_correction(&(largest + 1).to_string(), computer), None);
-        // the largest correction kept still gives an SLT offset
-        let _ = slt_offset(computer, i64::from(i32::MAX));
+        assert_eq!(grid_correction(&i64::MAX.to_string(), -1), None);
     }
 
     /// Windows short time patterns of a few regional formats.
