@@ -149,6 +149,11 @@ pub struct TexturePicker {
     /// (LLUICtrl::setTentative on LLTextureCtrl and its floater,
     /// indra/newview/lltexturectrl.cpp).
     tentative: bool,
+    /// The value comes from Default, Blank, Transparent or None: no
+    /// inventory item stands behind it, even one that holds the same asset
+    /// (LLFloaterTexturePicker::onBtnSetToDefault, onBtnBlank, onBtnNone:
+    /// `setCanApply(true, true)` and the list's selection cleared).
+    preset: bool,
     pub(crate) generation: u64,
 }
 
@@ -296,6 +301,7 @@ impl TexturePicker {
         self.live_value = current;
         self.cancelled = false;
         self.tentative = false;
+        self.preset = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -448,6 +454,7 @@ impl TexturePicker {
         self.preview = preview.then_some(asset);
         self.material_model = None;
         self.tentative = false;
+        self.preset = false;
     }
 
     fn refresh_uuid_text(&mut self, world: &World) {
@@ -502,9 +509,10 @@ impl TexturePicker {
         let lookup = (world.inventory.generation, self.selected);
         if self.selected_lookup != Some(lookup) {
             self.selected_lookup = Some(lookup);
-            if !self
-                .selected_item
-                .is_some_and(|id| inventory_asset(&world.inventory, id, self.materials) == self.selected)
+            if !self.preset
+                && !self
+                    .selected_item
+                    .is_some_and(|id| inventory_asset(&world.inventory, id, self.materials) == self.selected)
             {
                 self.selected_item = self.selected.and_then(|asset| {
                     world
@@ -1014,6 +1022,7 @@ impl TexturePicker {
                                 && let Some(asset) = asset
                             {
                                 self.select(asset, None, true);
+                                self.preset = true;
                             }
                         }
                     });
@@ -1219,6 +1228,54 @@ pub(crate) mod tests {
         assert!(picker.confirm_blocked(&inv, agent));
         picker.selected_item = Some(both_item);
         assert!(!picker.confirm_blocked(&inv, agent));
+    }
+
+    #[test]
+    fn a_preset_button_stands_for_no_inventory_item() {
+        // LLFloaterTexturePicker::onBtnBlank: setCanApply(true, true), and no
+        // item of the list stays selected, even one that holds this asset.
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let item = Uuid::from_u128(0xb1a0);
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                asset_id: BLANK_TEXTURE,
+                asset_type: 0,
+                inv_type: 0,
+                owner_mask: actions::COPY,
+                ..Default::default()
+            },
+        );
+        let mut ui = PickerUi::new();
+        let mut picker = TexturePicker::default();
+        let mut chosen = Vec::new();
+        for current in [Uuid::from_u128(77), BLANK_TEXTURE] {
+            picker.open_with_defaults("Texture", current, None, true);
+            picker.owned_target = false;
+            ui.settle(|ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            if current == BLANK_TEXTURE {
+                // the value the picker opened on is this item's
+                assert_eq!(picker.selected_item, Some(item));
+                assert!(picker.confirm_blocked(&world.inventory, world.agent_id));
+            }
+            // the live choice, which OK then keeps
+            ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+                chosen.extend(picker.show_live(ctx, p, &mut world, &HashMap::new()));
+            });
+            ui.settle(|ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            assert_eq!(picker.selected_item, None);
+            assert!(picker.can_confirm(&world.inventory, world.agent_id));
+            ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| {
+                picker.show_live(ctx, p, &mut world, &HashMap::new());
+            });
+            assert!(!picker.open && !picker.cancelled(), "OK confirms Blank");
+        }
+        assert!(!chosen.is_empty() && chosen.iter().all(|asset| *asset == BLANK_TEXTURE));
     }
 
     #[test]
