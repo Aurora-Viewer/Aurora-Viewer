@@ -26,10 +26,7 @@
 // the upsampling (the SDK's defaults).
 
 struct FsrParams {
-    // this frame's jittered view projection, inverted, and last frame's
-    // unjittered one: the camera's motion where the prepass drew none
-    inv_view_proj: mat4x4<f32>,
-    prev_view_proj: mat4x4<f32>,
+    motion_reproj: mat4x4<f32>,
     render_size: vec2<i32>,
     prev_render_size: vec2<i32>,
     upscale_size: vec2<i32>,
