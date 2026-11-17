@@ -26,9 +26,10 @@ pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color32 {
 }
 
 /// Color of a grid axis, shared by the manipulators and the X / Y / Z fields
-/// of the build window: the red, green and blue of the palette.
+/// of the build window: the red, green and blue of the palette. Z has its
+/// own colour, which the interface accent leaves alone (#3657).
 pub fn axis_color(p: &Palette, axis: usize) -> Color32 {
-    [p.danger, p.success, p.indigo_light][axis.min(2)]
+    [p.danger, p.success, p.axis_z][axis.min(2)]
 }
 
 /// Same color, alpha multiplied.
