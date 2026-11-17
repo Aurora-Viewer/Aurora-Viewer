@@ -878,6 +878,18 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.look_at_camera);
             },
         );
+        ui.add_enabled_ui(s.look_at_camera, |ui| {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-look-intensity"),
+                Some(aurora_i18n::tr!("photo-look-intensity-hint")),
+                |ui| {
+                    ui.spacing_mut().slider_width = 130.0;
+                    ui.add(egui::Slider::new(&mut s.look_intensity, 0..=100).suffix(" %"));
+                },
+            );
+        });
         if widgets::action_button(
             ui,
             p,

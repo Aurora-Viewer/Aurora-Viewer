@@ -600,6 +600,11 @@ pub struct Controller {
     /// at camera", so that an AO stand that keys the head does not hold it.
     /// Aurora's own; the torso keeps the animations' pose.
     pub look_over_animations: bool,
+    /// Under `look_over_animations`, how much of the turn is left to the
+    /// eyes: 0 the head faces the target (as far as it reaches), 1 the head
+    /// keeps the animation's and only the eyes look, a side glance; ½ a
+    /// three-quarter turn. The photo window's "Look intensity" (1 − it).
+    pub look_glance: f32,
     /// `look_over_animations` as last logged, with the head's strongest
     /// animation priority.
     look_over_logged: bool,
@@ -1149,7 +1154,8 @@ impl Controller {
                 if chest_rot.is_some() {
                     // the lag must not carry it past the reach while the
                     // body turns; out of reach, back to the animation's head
-                    h = nlerp(reach, Quat::IDENTITY, constrain(h, HEAD_ROTATION_CONSTRAINT));
+                    let turn = reach * (1.0 - self.look_glance.clamp(0.0, 1.0));
+                    h = nlerp(turn, Quat::IDENTITY, constrain(h, HEAD_ROTATION_CONSTRAINT));
                 }
                 let half = nlerp(NECK_LAG, Quat::IDENTITY, h);
                 out.push((neck, look_priority, head_w * reach, half, false));
@@ -3334,6 +3340,46 @@ mod tests {
         }
         assert_eq!(natural_reach(Quat::IDENTITY), 1.0);
         assert_eq!(natural_reach(Quat::from_rotation_z(std::f32::consts::PI)), 0.0);
+    }
+
+    /// "Look intensity": the share of the turn the head takes, the eyes
+    /// doing the rest; a glance leaves the head straight on the neck while
+    /// the eyes still turn to the target.
+    #[test]
+    fn the_look_glance_leaves_the_turn_to_the_eyes() {
+        let rig = rig();
+        let rot = |pose: &[[[f32; 4]; 4]], name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let yaw = |q: Quat| {
+            let f = q * Vec3::X;
+            f.y.atan2(f.x)
+        };
+        let run = |glance: f32| {
+            let t0 = Instant::now();
+            let mut controller = synchronized_controller();
+            controller.look_over_animations = true;
+            controller.look_glance = glance;
+            // 50° to the left
+            controller.look = Some(Vec3::new(50f32.to_radians().cos(), 50f32.to_radians().sin(), 0.0) * 2.0);
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            for i in 0..=60 {
+                controller.evaluate(&rig, t0 + Duration::from_secs_f32(i as f32 * 0.05), None, &mut pose);
+            }
+            let chest = rot(&pose, "mChest");
+            (
+                yaw(chest.inverse() * rot(&pose, "mHead")),
+                yaw(rot(&pose, "mHead").inverse() * rot(&pose, "mEyeLeft")),
+            )
+        };
+        let (full, _) = run(0.0);
+        let (three_quarter, _) = run(0.5);
+        let (glance, eyes) = run(1.0);
+        assert!(full > 0.4, "full: the head turns {full}");
+        assert!(
+            three_quarter > 0.3 * full && three_quarter < 0.7 * full,
+            "half: about half the turn {three_quarter} of {full}"
+        );
+        assert!(glance.abs() < 0.02, "glance: the head stays {glance}");
+        assert!(eyes > 0.3, "glance: the eyes turn to the target {eyes}");
     }
 
     #[test]

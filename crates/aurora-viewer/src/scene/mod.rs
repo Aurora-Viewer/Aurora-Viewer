@@ -5940,6 +5940,7 @@ impl Scene {
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = owner == world.agent_id && world.look_at.own_over_animations;
+            motions.look_glance = if owner == world.agent_id { world.look_at.own_glance } else { 0.0 };
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {

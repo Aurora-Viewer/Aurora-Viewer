@@ -44,6 +44,12 @@ pub(super) fn gaze(want: bool, was: bool) -> Gaze {
     }
 }
 
+/// The share of the turn left to the eyes for a "Look intensity" of
+/// `percent` (100: the head faces the camera, 0: the eyes alone).
+pub(super) fn glance(percent: u8) -> f32 {
+    1.0 - f32::from(percent.min(100)) / 100.0
+}
+
 /// The yaw (radians, from +X toward +Y) that faces `camera` from `position`
 /// on the ground plane; None with the camera right above or below.
 pub(super) fn yaw_to(position: Vec3, camera: Vec3) -> Option<f32> {
@@ -66,6 +72,7 @@ impl App {
         use crate::world::lookat;
         let wanted = self.photo_gaze_wanted();
         self.world.look_at.own_over_animations = wanted;
+        self.world.look_at.own_glance = glance(self.settings.snapshot.look_intensity);
         let camera = self
             .world
             .main_origin()
@@ -111,7 +118,7 @@ impl App {
 }
 
 impl App {
-    /// AURORA_DEMO_PHOTO_GAZE=look|turn|orbit, with the photo window open
+    /// AURORA_DEMO_PHOTO_GAZE=look[:<percent>]|turn|orbit, with the photo window open
     /// (`AURORA_DEMO_SNAPSHOT=open` or `viewfinder`, frame 600): at frame
     /// 610 the camera stands 3 m from our avatar, 70° to its left, at the
     /// height of its head. `look` turns "Look at camera" on (the head and
@@ -131,12 +138,15 @@ impl App {
         let Some(head) = self.scene.head_world(&self.world, &me, Instant::now()) else {
             return;
         };
-        let mode = mode.trim();
+        // look:<percent>: "Look intensity"
+        let (mode, percent) = mode.trim().split_once(':').unwrap_or((mode.trim(), ""));
+        let percent: Option<u8> = percent.parse().ok();
         let side = |yaw: f32| head + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 3.0;
         let start = self.world.agent.yaw + 70f32.to_radians();
         if frame == 610 {
             if mode != "turn" {
                 self.settings.snapshot.look_at_camera = true;
+                self.settings.snapshot.look_intensity = percent.unwrap_or(100).min(100);
             }
             self.camera
                 .set_view(side(start), head, &mut self.world.agent, &self.settings.camera);
@@ -163,6 +173,19 @@ mod tests {
         assert_eq!(gaze(true, true), Gaze::Camera);
         assert_eq!(gaze(false, true), Gaze::Release);
         assert_eq!(gaze(false, false), Gaze::Idle);
+    }
+
+    #[test]
+    fn the_intensity_leaves_the_rest_of_the_turn_to_the_eyes() {
+        assert_eq!(glance(100), 0.0);
+        assert_eq!(glance(50), 0.5);
+        assert_eq!(glance(0), 1.0);
+        assert_eq!(glance(250), 0.0);
+        use crate::snapshot::next_look_intensity as next;
+        assert_eq!(next(100), 75);
+        assert_eq!(next(25), 0);
+        assert_eq!(next(0), 100);
+        assert_eq!(next(60), 50);
     }
 
     #[test]

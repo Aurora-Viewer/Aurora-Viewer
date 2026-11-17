@@ -397,6 +397,10 @@ pub struct LookAts {
     /// frame. Only our viewer draws it so; the others blend our animations
     /// as usual.
     pub own_over_animations: bool,
+    /// Under `own_over_animations`, how much of the turn is left to the
+    /// eyes (0 the head faces the target, 1 a side glance): 1 − the photo
+    /// window's "Look intensity".
+    pub own_glance: f32,
     /// Where our own head looks on our viewer, whatever the privacy
     /// settings say (a global point): the photo window's "Look at camera",
     /// a choice made for the photo. What is sent still follows the privacy
@@ -413,6 +417,7 @@ impl Default for LookAts {
             last_chatter: None,
             own_ahead: false,
             own_over_animations: false,
+            own_glance: 0.0,
             own_local: None,
         }
     }

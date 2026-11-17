@@ -227,6 +227,10 @@ pub struct Settings {
     /// "Look at camera": while the photo window is open, our avatar's head
     /// and eyes follow the camera (`app::photo_gaze`). Aurora's own, off.
     pub look_at_camera: bool,
+    /// "Look intensity" (%): how far the head turns to the camera under
+    /// "Look at camera"; the eyes do the rest. 100 faces it, about 50 a
+    /// three-quarter turn, 0 a side glance of the eyes alone.
+    pub look_intensity: u8,
     /// The preview follows the camera.
     pub auto_refresh: bool,
     /// Date and time in the file name.
@@ -274,6 +278,20 @@ pub struct Settings {
     pub capture_360: capture_360::Settings,
 }
 
+/// The "Look intensity" steps of the viewfinder's quick menu, from full to
+/// a glance (%); a click takes the next one.
+pub const LOOK_INTENSITY_STEPS: [u8; 5] = [100, 75, 50, 25, 0];
+
+/// The step after `percent`: a value between steps goes to the next lower
+/// one, and after 0 back to 100.
+pub fn next_look_intensity(percent: u8) -> u8 {
+    LOOK_INTENSITY_STEPS
+        .iter()
+        .copied()
+        .find(|&s| s < percent)
+        .unwrap_or(LOOK_INTENSITY_STEPS[0])
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -287,6 +305,7 @@ impl Default for Settings {
             interface: false,
             huds: false,
             look_at_camera: false,
+            look_intensity: 100,
             auto_refresh: false,
             timestamp_names: true,
             folder: None,
@@ -315,6 +334,7 @@ impl Settings {
     pub fn sanitize(&mut self) {
         self.custom = [clamp_side(self.custom[0]), clamp_side(self.custom[1])];
         self.jpeg_quality = self.jpeg_quality.min(100);
+        self.look_intensity = self.look_intensity.min(100);
         if self.base_name.trim().is_empty() {
             self.base_name = "Snapshot".into();
         }

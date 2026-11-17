@@ -492,7 +492,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview\|medium\|high\|maximum][:hide][:inventory][:panel\|:classic]` | The photo window opened in 360° at frame 600 and its shutter pressed, the panorama written to the folder |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
-| `AURORA_DEMO_PHOTO_GAZE=look\|turn\|orbit` | With the photo window open: "Look at camera" on, "Turn to camera" pressed, or the camera going round the avatar while it looks at it |
+| `AURORA_DEMO_PHOTO_GAZE=look[:<percent>]\|turn\|orbit` | With the photo window open: "Look at camera" on (at a "Look intensity"), "Turn to camera" pressed, or the camera going round the avatar while it looks at it |
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the chosen one's strength and settings, the before / after line, the filter panel |
@@ -966,7 +966,9 @@ frame without a background.
 `viewfinder`, which opens the photo window at frame 600): at frame 610 the
 camera stands 3 m from our avatar, 70° to its left, at the height of its
 head. `look` turns "Look at camera" on: the head and eyes turn to the lens
-(capture at frame 700). `turn` presses "Turn to camera" at frame 660: the
+(capture at frame 700); `look:50` sets "Look intensity" to 50 % (the head
+turns halfway, the eyes do the rest: a three-quarter turn), `look:0` to a
+side glance (the head stays, the eyes look at the lens). `turn` presses "Turn to camera" at frame 660: the
 body turns to face the camera, which stays where it was; the log gives
 `photo: turn to the camera, to <n>°` (capture at frames 650 and 760).
 `orbit` turns "Look at camera" on and the camera goes round the avatar, a
