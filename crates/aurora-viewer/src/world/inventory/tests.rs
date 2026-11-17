@@ -1718,20 +1718,25 @@ fn an_item_on_its_way_is_never_read_twice() {
     let (a, b) = (Uuid::from_u128(77), Uuid::from_u128(78));
     let now = std::time::Instant::now();
     let mut first = vec![a, b, a];
-    inv.claim_item_reads(&mut first, now);
+    inv.claim_item_reads(&mut first, false, now);
     assert_eq!(first, vec![a, b], "once each");
     let mut again = vec![a, b];
-    inv.claim_item_reads(&mut again, now);
+    inv.claim_item_reads(&mut again, false, now);
     assert!(again.is_empty(), "both still on their way");
+    // (a worn attachment's read is filed differently: it still goes)
+    let mut worn = vec![a];
+    inv.claim_item_reads(&mut worn, true, now);
+    assert_eq!(worn, vec![a]);
+    assert!(inv.item_reading(a, true, now));
     // a failure counts once, then the item may be asked again
     inv.items_failed(&[a]);
     assert_eq!(inv.item_failures[&a], 1);
     let mut retry = vec![a, b];
-    inv.claim_item_reads(&mut retry, now);
+    inv.claim_item_reads(&mut retry, false, now);
     assert_eq!(retry, vec![a]);
     // a read never answered frees its item after the deadline
     let mut late = vec![b];
-    inv.claim_item_reads(&mut late, now + ITEM_READ_DEADLINE);
+    inv.claim_item_reads(&mut late, false, now + ITEM_READ_DEADLINE);
     assert_eq!(late, vec![b]);
     // a late copy of a broken link's read counts nothing more
     for _ in 0..ITEM_FETCH_ATTEMPTS {
@@ -1741,6 +1746,6 @@ fn an_item_on_its_way_is_never_read_twice() {
     inv.items_failed(&[a]);
     assert_eq!(inv.item_failures[&a], attempts);
     let mut dead = vec![a];
-    inv.claim_item_reads(&mut dead, now + ITEM_READ_DEADLINE);
+    inv.claim_item_reads(&mut dead, false, now + ITEM_READ_DEADLINE);
     assert!(dead.is_empty(), "a broken link is never read again");
 }

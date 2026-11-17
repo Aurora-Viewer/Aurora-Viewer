@@ -75,8 +75,10 @@ pub struct Inventory {
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
     /// Items with a read on its way, and since when (`claim_item_reads`):
-    /// one read an item at a time, so a failure counts once.
-    pub items_reading: HashMap<Uuid, std::time::Instant>,
+    /// one read an item at a time, so a failure counts once. Keyed with
+    /// whether it is a worn attachment's read, whose answer is filed
+    /// differently (`AttachmentInventoryItems`).
+    pub items_reading: HashMap<(Uuid, bool), std::time::Instant>,
     /// The listing folders the Marketplace data holds in place, set by the
     /// listings every frame (`marketplace::Holds`).
     pub listing_holds: super::marketplace::Holds,
@@ -548,19 +550,26 @@ impl Inventory {
     /// link was read twenty times at once, each failure counted as an
     /// attempt), and marks the rest as on their way. A read never answered
     /// frees its item after [`ITEM_READ_DEADLINE`].
-    pub fn claim_item_reads(&mut self, items: &mut Vec<Uuid>, now: std::time::Instant) {
+    pub fn claim_item_reads(&mut self, items: &mut Vec<Uuid>, attachment: bool, now: std::time::Instant) {
         self.drop_broken(items);
         let mut seen = HashSet::new();
-        items.retain(|id| {
-            seen.insert(*id)
-                && self
-                    .items_reading
-                    .get(id)
-                    .is_none_or(|since| now.saturating_duration_since(*since) >= ITEM_READ_DEADLINE)
-        });
+        items.retain(|id| seen.insert(*id) && !self.item_reading(*id, attachment, now));
         for id in items.iter() {
-            self.items_reading.insert(*id, now);
+            self.items_reading.insert((*id, attachment), now);
         }
+    }
+
+    /// A read of this item is on its way (and not past its deadline).
+    pub fn item_reading(&self, id: Uuid, attachment: bool, now: std::time::Instant) -> bool {
+        self.items_reading
+            .get(&(id, attachment))
+            .is_some_and(|since| now.saturating_duration_since(*since) < ITEM_READ_DEADLINE)
+    }
+
+    /// An item's reads answered (or failed): it may be asked again.
+    pub fn item_answered(&mut self, id: &Uuid) {
+        self.items_reading.remove(&(*id, false));
+        self.items_reading.remove(&(*id, true));
     }
 
     /// A broken link's original: confirmed gone, and not received since.
@@ -572,7 +581,7 @@ impl Inventory {
     pub fn items_missing(&mut self, ids: Vec<Uuid>) {
         self.generation += 1;
         for id in ids {
-            self.items_reading.remove(&id);
+            self.item_answered(&id);
             self.item_failures.remove(&id);
             self.item_retries.remove(&id);
             self.missing_items.insert(id);
@@ -587,7 +596,7 @@ impl Inventory {
         let mut broken = 0;
         let mut first = None;
         for id in ids {
-            self.items_reading.remove(id);
+            self.item_answered(id);
             // (already a broken link: a late copy of its read counts nothing)
             if self.missing_items.contains(id) {
                 continue;

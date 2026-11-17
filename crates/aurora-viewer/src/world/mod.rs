@@ -4573,14 +4573,14 @@ impl World {
             }
             NetEvent::InventoryItems(items) => {
                 for item in &items {
-                    self.inventory.items_reading.remove(&item.id);
+                    self.inventory.items_reading.remove(&(item.id, false));
                 }
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
                 for item in &items {
-                    self.inventory.items_reading.remove(&item.id);
+                    self.inventory.items_reading.remove(&(item.id, true));
                 }
                 self.inventory.add_attachment_items(items);
                 None
