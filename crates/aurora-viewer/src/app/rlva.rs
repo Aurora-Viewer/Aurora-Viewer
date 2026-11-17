@@ -323,16 +323,16 @@ impl App {
                     "both" => "@setcam_avdistmax:7=n,setcam_origindistmin:7.2=n".to_owned(),
                     _ => "@setcam_origindistmin:6=n".to_owned(),
                 }
-            } else if scenario == "offset-zoom" || scenario == "no-mouselook" {
+            } else if matches!(scenario, "offset-zoom" | "no-mouselook" | "avatar-zoom") {
                 // the avatar's own view, with nothing over it
                 self.panels.settings = false;
                 self.panels.chat = false;
                 self.panels.inventory = false;
-                if scenario == "offset-zoom" {
+                match scenario {
                     // 1.5 times a 6.08 m offset: 9.12 m behind the avatar
-                    "@setcam_eyeoffset:-6/0/1=n,setcam_eyeoffsetscale:1.5=n".to_owned()
-                } else {
-                    "@camdistmin:1=n".to_owned()
+                    "offset-zoom" => "@setcam_eyeoffset:-6/0/1=n,setcam_eyeoffsetscale:1.5=n".to_owned(),
+                    "no-mouselook" => "@camdistmin:1=n".to_owned(),
+                    _ => "@camdistmax:5=n".to_owned(),
                 }
             } else if let Some(run) = scenario.strip_prefix("run-") {
                 self.panels.settings = false;
@@ -575,7 +575,16 @@ impl App {
                 _ => {}
             }
         }
-        if matches!(mode.as_str(), "offset-zoom" | "no-mouselook") && matches!(self.frame_count, 730 | 741 | 790 | 880) {
+        if mode == "avatar-zoom" {
+            // four wheel clicks out, two of them past the limit, then one
+            // back in (#3356)
+            match self.frame_count {
+                n @ 740..=776 if n % 12 == 8 => self.camera_wheel(1.0),
+                800 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if matches!(mode.as_str(), "offset-zoom" | "no-mouselook" | "avatar-zoom") && matches!(self.frame_count, 730 | 741 | 790 | 880) {
             log::info!(
                 "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to avatar {:.3} m, mouselook={}, cursor held={}",
                 self.frame_count,
