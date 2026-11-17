@@ -169,6 +169,8 @@
     {
       "category": "makeup",
       "words": [
+        "lipgloss",
+        "lip stain",
         "makeup",
         "make up",
         "lipstick",
@@ -196,6 +198,8 @@
     {
       "category": "hair",
       "words": [
+        "flexi",
+        "flexi hair",
         "hair",
         "hairstyle",
         "hairbase",
@@ -227,6 +231,8 @@
     {
       "category": "shoes",
       "words": [
+        "platform",
+        "platforms",
         "shoes",
         "shoe",
         "heels",
@@ -318,6 +324,7 @@
     {
       "category": "skirts",
       "words": [
+        "flexi skirt",
         "skirt",
         "skirts",
         "miniskirt",
@@ -518,6 +525,12 @@
     {
       "category": "furniture",
       "words": [
+        "platform bed",
+        "display platform",
+        "pose platform",
+        "photo platform",
+        "dance platform",
+        "rez platform",
         "salon chair",
         "tattoo chair",
         "nail table",

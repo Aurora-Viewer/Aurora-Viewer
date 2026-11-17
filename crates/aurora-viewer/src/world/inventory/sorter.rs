@@ -633,6 +633,34 @@ fn has(words: &[String], phrase: &str) -> bool {
     words.windows(len).any(|w| w.iter().zip(phrase.split(' ')).all(|(a, b)| a == b))
 }
 
+/// A name's words less its permission tags: `NO MOD`, `Copy/Mod`,
+/// `mod/trans` say what the owner may do, not that it is a body mod.
+fn without_permissions(words: Vec<String>) -> Vec<String> {
+    const PERMS: [&str; 7] = ["no", "copy", "trans", "transfer", "mod", "mods", "modify"];
+    let perm = |i: usize| words.get(i).is_some_and(|w| PERMS.contains(&w.as_str()));
+    let modify = |w: &str| matches!(w, "mod" | "mods" | "modify");
+    let keep: Vec<bool> = (0..words.len())
+        .map(|i| {
+            let w = words[i].as_str();
+            // (`mod` beside another permission word, or `no`/`copy`/`trans`
+            // beside a `mod`)
+            let tagged = |j: Option<usize>| j.is_some_and(|j| perm(j) && (modify(w) || modify(&words[j])));
+            !(PERMS.contains(&w) && (tagged(i.checked_sub(1)) || tagged(Some(i + 1))))
+        })
+        .collect();
+    words.into_iter().zip(keep).filter_map(|(w, k)| k.then_some(w)).collect()
+}
+
+/// [`body`] from the bodies' own names only, never their weak words.
+fn body_named(words: &[String]) -> Option<Body> {
+    VOCABULARY
+        .bodies
+        .iter()
+        .any(|b| b.strong.iter().any(|w| has(words, w)))
+        .then(|| body(words))
+        .flatten()
+}
+
 fn body(words: &[String]) -> Option<Body> {
     let bodies = &VOCABULARY.bodies;
     let strong: Vec<&'static BodyWords> = bodies.iter().filter(|b| b.strong.iter().any(|w| has(words, w))).collect();
@@ -651,7 +679,7 @@ fn body(words: &[String]) -> Option<Body> {
 }
 
 pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
-    let words = words(name);
+    let words = without_permissions(words(name));
     // A texture, a sound, a notecard… is that, whatever its name says
     // ("Bar texture (without chair shadows)" is no chair). Objects,
     // wearables and folders are read from their names first.
@@ -689,18 +717,41 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
             Some(longer.map_or(*first, |(c, _)| c))
         })
         .or_else(|| Category::of_asset(asset_type, flags));
-    // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`)
+    // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`,
+    // `Kitchen Decor . Glasses 8`: a name that says decor is decor, never
+    // worn glasses; hair decor is the hair's)
     let category = match category {
         Some(c)
             if typed.is_none()
-                && words.last().is_some_and(|w| w == "decor")
+                && words.iter().any(|w| w == "decor")
+                && !has(&words, "hair decor")
                 && !matches!(c, Category::Furniture | Category::Decor | Category::Vehicles | Category::Pets) =>
         {
             Some(Category::Decor)
         }
         other => other,
     };
-    let body = body(&words);
+    // Makeup and a head's own content (EvoX, the head's standard) are the
+    // head's, never a body's: `Isis Eyeshadow EvoX BOM` names a product,
+    // not Belleza's Isis body.
+    // (a head's name, `Genus Addon`, makes an add-on the head's too)
+    let head_named = ["lelutka", "catwa", "genus", "evox", "evo x", "akeruka"]
+        .iter()
+        .any(|h| has(&words, h));
+    let category = match category {
+        Some(Category::BodyAddons) if head_named => Some(Category::Heads),
+        other => other,
+    };
+    // (makeup and a head's own content are never a body's; beside a head's
+    // name only a body's own name counts, `Tattoo EVO-X [REBORN]`, never a
+    // weak word that is also a product's, `Venus Freckles EvoX`)
+    let body = if matches!(category, Some(Category::Makeup | Category::Heads)) {
+        None
+    } else if head_named {
+        body_named(&words)
+    } else {
+        body(&words)
+    };
     // A body skin says which body and how it looks, not what it is:
     // `The "Harbor Body" for eBody Reborn (Porcelain)`.
     let category = category.or_else(|| {
@@ -1013,6 +1064,14 @@ fn names_more_than_kind(tag_words: &[String]) -> bool {
 /// `tag` read as a store's name, when it is one.
 fn store_tag(tag: &str, enclosed: bool) -> Option<String> {
     let tag = tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').trim();
+    // (a name in spaced letters, `. z o r i n a .`, is the store `zorina`)
+    let spaced: String;
+    let tag = if tag.split_whitespace().count() >= 3 && tag.split_whitespace().all(|w| w.chars().count() == 1) {
+        spaced = tag.split_whitespace().collect();
+        spaced.as_str()
+    } else {
+        tag
+    };
     let tag_words = joined_words(tag);
     let found = classify(tag, -1, 0);
     // a body mod maker's tag (`VELA.mods`) names its trade, not a product

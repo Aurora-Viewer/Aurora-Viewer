@@ -3652,3 +3652,81 @@ fn a_set_of_untagged_parts_moves_whole() {
     let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
     assert!(!plan.moves.iter().any(|m| m.id == id(900)), "a shelf never moves whole");
 }
+
+/// Real use: flexi is hair; makeup and a head's EvoX content are the
+/// head's, never filed under a body named by one of its words.
+#[test]
+fn flexi_is_hair_and_makeup_is_never_a_bodys() {
+    assert_eq!(classify("Velmora Flexi Bun", 6, 0).category, Some(Category::Hair));
+    assert_eq!(classify("Velmora Flexi Skirt", 6, 0).category, Some(Category::Skirts));
+    let shadow = classify("ZORIN, Isis Eyeshadow EvoX Bom", 6, 0);
+    assert_eq!(shadow.category, Some(Category::Makeup));
+    assert!(shadow.body.is_none(), "no body for makeup");
+    let gloss = classify("Kira Lipgloss EvoX", 6, 0);
+    assert_eq!(gloss.category, Some(Category::Makeup));
+    assert!(gloss.body.is_none());
+    let applier = classify("Kira Venus Freckles EvoX BOM", 6, 0);
+    assert!(applier.body.is_none(), "an EvoX applier is the head's");
+    // a body's clothes keep their body
+    assert!(classify("Kira Dress Isis", 6, 0).body.is_some());
+}
+
+/// Real use: a permission tag is no body mod.
+#[test]
+fn a_permission_tag_is_no_body_mod() {
+    assert_ne!(
+        classify("Brindle - Autumn Dinner - Place Setting - White - NO MOD", 6, 0).category,
+        Some(Category::BodyAddons)
+    );
+    assert_ne!(classify("Brindle Floor Lamp (Copy/Mod)", 6, 0).category, Some(Category::BodyAddons));
+    assert_eq!(classify("Kira Belly Mod", 6, 0).category, Some(Category::BodyAddons));
+}
+
+/// Real use: a head's add-on is the head's; a decor set's glasses are decor.
+#[test]
+fn head_addons_and_decor_glasses() {
+    let addon = classify("Kira Fangs Genus Addon", 6, 0);
+    assert_eq!(addon.category, Some(Category::Heads));
+    assert!(addon.body.is_none());
+    assert_eq!(classify("Kira Belly Addon Reborn", 6, 0).category, Some(Category::BodyAddons));
+    assert_eq!(
+        classify("Brindle . Rosemary Kitchen Decor . Glasses 8", 6, 0).category,
+        Some(Category::Decor)
+    );
+    assert_eq!(classify("Kira Round Glasses", 6, 0).category, Some(Category::Accessories));
+}
+
+/// Real use: platforms are shoes, a pose platform is furniture.
+#[test]
+fn platforms_are_shoes() {
+    assert_eq!(classify("[Velmora] Daisie Platforms - noir", 6, 0).category, Some(Category::Shoes));
+    assert_eq!(classify("Kira Platform Oxford Black Reborn", 6, 0).category, Some(Category::Shoes));
+    assert_eq!(classify("Brindle Pose Platform", 6, 0).category, Some(Category::Furniture));
+}
+
+/// Real use: a store written in spaced letters is one store with its plain
+/// spelling; its makeup reads as makeup.
+#[test]
+fn a_spaced_letter_store_is_one_store() {
+    let spaced = store(". z o r i n a . // shoelace - Reborn (R)").expect("spaced tag");
+    let plain = store("zorina - leg bandaids HUD").expect("plain tag");
+    assert!(same_store(&spaced, &plain), "{spaced} / {plain}");
+    assert_eq!(
+        classify(". z o r i n a . // baby body blush - V4 (tint me!)", 6, 0).category,
+        Some(Category::Makeup)
+    );
+}
+
+/// A store hint for a spaced-letter store matches however it is typed.
+#[test]
+fn a_spaced_store_hint_matches_however_it_is_typed() {
+    for typed in [". z o r i n a .", "z o r i n a", "zorina", "Zorina"] {
+        let hints = [StoreHint {
+            store: typed.into(),
+            category: Category::Makeup,
+            ..Default::default()
+        }];
+        let sorted = sorted_as(". z o r i n a . // shoelace - Reborn (R)", 6, &hints);
+        assert!(sorted.contains(Category::Makeup.folder()), "{typed}: {sorted}");
+    }
+}
