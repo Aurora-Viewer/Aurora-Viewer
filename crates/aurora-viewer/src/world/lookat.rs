@@ -536,8 +536,10 @@ mod tests {
     fn the_local_photo_target_wins_on_our_viewer_only() {
         let t0 = Instant::now();
         let me = Uuid::from_u128(1);
-        let mut l = LookAts::default();
-        l.own_ahead = true;
+        let mut l = LookAts {
+            own_ahead: true,
+            ..Default::default()
+        };
         assert!(l.own.set(NONE, Some(me), DVec3::ZERO, t0));
         assert_eq!(gaze(Some(l.own_gaze().0), l.own_gaze().1), Gaze::Ahead);
         let camera = DVec3::new(130.0, 120.0, 25.0);
