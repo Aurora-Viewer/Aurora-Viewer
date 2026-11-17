@@ -89,6 +89,7 @@ mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
 mod parcel_music;
+mod photo_gaze;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod avatar_align;
 mod debug_settings;
@@ -647,6 +648,9 @@ pub struct App {
     /// The yaw the avatar turns to, facing what it selected
     /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
     selection_turn: Option<f32>,
+    /// The photo window's "Look at camera" held our look-at last frame
+    /// (`photo_gaze`).
+    photo_gaze: bool,
     /// The stock stand variants of a standing avatar without an AO
     /// (LLAgent::fidget, app/stand_fidget.rs).
     stand_fidget: stand_fidget::Fidget,
@@ -1935,6 +1939,7 @@ impl App {
             double_press: false,
             autopilot: None,
             selection_turn: None,
+            photo_gaze: false,
             stand_fidget: Default::default(),
             autopilot_flags: 0,
             autopilot_stop_pending: false,
@@ -5959,6 +5964,7 @@ impl App {
             lookat::cursor_look(prefs.aim, self.look_hover_target(now), me, dir)
         };
         self.set_look_at(kind, object, offset);
+        self.update_photo_gaze();
         let own = &mut self.world.look_at.own;
         own.update(now);
         if own.needs_send {
@@ -14975,6 +14981,9 @@ impl App {
             self.demo_pay();
             self.demo_money_tracker();
             self.demo_payment();
+        }
+        if self.demo {
+            self.demo_photo_gaze();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;

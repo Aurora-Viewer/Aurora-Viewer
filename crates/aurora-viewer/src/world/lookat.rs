@@ -392,6 +392,20 @@ pub struct LookAts {
     /// Our avatar looks straight ahead, head and eyes: no target at all
     /// (PrivateLocalLookAtTarget), set by the app each frame (`gaze`).
     pub own_ahead: bool,
+    /// Our head and eyes take the look-at over the animations (an AO
+    /// stand): the photo window's "Look at camera", set by the app each
+    /// frame. Only our viewer draws it so; the others blend our animations
+    /// as usual.
+    pub own_over_animations: bool,
+    /// Under `own_over_animations`, how much of the turn is left to the
+    /// eyes (0 the head faces the target, 1 a side glance): 1 − the photo
+    /// window's "Look intensity".
+    pub own_glance: f32,
+    /// Where our own head looks on our viewer, whatever the privacy
+    /// settings say (a global point): the photo window's "Look at camera",
+    /// a choice made for the photo. What is sent still follows the privacy
+    /// settings (`own`, `outgoing`). Set by the app each frame.
+    pub own_local: Option<DVec3>,
 }
 
 impl Default for LookAts {
@@ -402,6 +416,9 @@ impl Default for LookAts {
             requests: Vec::new(),
             last_chatter: None,
             own_ahead: false,
+            own_over_animations: false,
+            own_glance: 0.0,
+            own_local: None,
         }
     }
 }
@@ -437,6 +454,23 @@ pub fn gaze(target: Option<Target>, ahead: bool) -> Gaze {
 }
 
 impl LookAts {
+    /// Our own avatar's target on our viewer and whether it looks ahead
+    /// (`gaze`): the photo window's local target first (`own_local`), even
+    /// over "no look-at target, even for me"; otherwise the one we send.
+    pub fn own_gaze(&self) -> (Target, bool) {
+        match self.own_local {
+            Some(at) => (
+                Target {
+                    kind: FOCUS,
+                    object: None,
+                    offset: at,
+                },
+                false,
+            ),
+            None => (self.own.target, self.own_ahead),
+        }
+    }
+
     /// A look-at received from the simulator (LLHUDEffectLookAt::unpackData).
     pub fn receive(&mut self, effect: Uuid, source: Uuid, target: Uuid, offset: [f64; 3], kind: u8) {
         if effect == self.own.effect {
@@ -499,6 +533,31 @@ mod tests {
         assert_eq!(eyes.request(false), Some(false));
         eyes.on_arrival();
         assert_eq!(eyes.request(false), None);
+    }
+
+    /// The photo window's local target turns our head even with "no
+    /// look-at target, even for me", while what is sent stays "none".
+    #[test]
+    fn the_local_photo_target_wins_on_our_viewer_only() {
+        let t0 = Instant::now();
+        let me = Uuid::from_u128(1);
+        let mut l = LookAts {
+            own_ahead: true,
+            ..Default::default()
+        };
+        assert!(l.own.set(NONE, Some(me), DVec3::ZERO, t0));
+        assert_eq!(gaze(Some(l.own_gaze().0), l.own_gaze().1), Gaze::Ahead);
+        let camera = DVec3::new(130.0, 120.0, 25.0);
+        l.own_local = Some(camera);
+        let (target, ahead) = l.own_gaze();
+        assert!(!ahead);
+        assert_eq!((target.kind, target.object, target.offset), (FOCUS, None, camera));
+        // the others still get nothing of it
+        assert_eq!(outgoing(l.own.target, me, true, true), None);
+        assert_eq!(outgoing(l.own.target, me, false, true).map(|t| t.kind), Some(NONE));
+        l.own_local = None;
+        let (target, ahead) = l.own_gaze();
+        assert_eq!((target.kind, ahead), (NONE, true));
     }
 
     #[test]

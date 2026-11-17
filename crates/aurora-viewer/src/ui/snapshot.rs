@@ -230,6 +230,8 @@ pub enum Action {
     OpenPhoto(PathBuf),
     /// Freeze frame switched (on: take it now).
     Freeze(bool),
+    /// "Turn to camera": the body turns once to face the camera.
+    TurnToCamera,
     /// A setting that changes the photo changed: the preview follows.
     Changed,
     /// The settings changed (saved, the preview unchanged).
@@ -866,6 +868,40 @@ impl SnapshotUi {
         .clicked()
         {
             out.push(Action::Controls);
+        }
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-look-at-camera"),
+            Some(aurora_i18n::tr!("photo-look-at-camera-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.look_at_camera);
+            },
+        );
+        ui.add_enabled_ui(s.look_at_camera, |ui| {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-look-intensity"),
+                Some(aurora_i18n::tr!("photo-look-intensity-hint")),
+                |ui| {
+                    ui.spacing_mut().slider_width = 130.0;
+                    ui.add(egui::Slider::new(&mut s.look_intensity, 0..=100).suffix(" %"));
+                },
+            );
+        });
+        if widgets::action_button(
+            ui,
+            p,
+            "camera-selfie",
+            aurora_i18n::tr!("photo-turn-to-camera"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+        )
+        .on_hover_text(aurora_i18n::tr!("photo-turn-to-camera-tip"))
+        .clicked()
+        {
+            out.push(Action::TurnToCamera);
         }
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
