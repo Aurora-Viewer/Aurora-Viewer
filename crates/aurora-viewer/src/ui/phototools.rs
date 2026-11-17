@@ -113,7 +113,7 @@ impl PhototoolsUi {
         self.rows.share_from(preferences);
         let screen = ctx.content_rect();
         let pos = egui::pos2(screen.right() - WIDTH - 300.0, screen.top() + 90.0);
-        let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("toolbar-command-phototools"), pos, Vec2::new(WIDTH, 600.0));
+        let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("toolbar-command-phototools"), pos, Vec2::new(WIDTH, 680.0));
         floater.min_size = Vec2::new(400.0, 260.0);
         floater.show(ctx, p, open, |ui| {
             self.body(ui, p, settings, &mut env, &mut out);
