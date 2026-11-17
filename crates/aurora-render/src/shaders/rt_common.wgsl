@@ -241,3 +241,16 @@ fn masked_out(record: u32, uv: vec2<f32>) -> bool {
 fn emissive_color(record: u32) -> vec3<f32> {
     return record_vecf(record, RECORD_EMISSIVE).rgb;
 }
+
+// Whether a candidate hit stops the ray: an opaque face always (the
+// traversal commits those itself), an alpha-masked one where its texture is
+// over its cutoff. (Naga takes no ray query as a function's argument, so
+// each trace runs its own loop around this.)
+fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return false;
+    }
+    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
+    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
+    return !masked_out(record, s.uv);
+}

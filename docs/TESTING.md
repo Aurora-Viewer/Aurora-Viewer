@@ -192,6 +192,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_LOCAL_LIGHTS=0..64` | Overrides "Maximum nearby lights" (Graphics › Light) |
 | `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
+| `AURORA_SSR=0\|1` | Overrides the screen-space reflections |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings

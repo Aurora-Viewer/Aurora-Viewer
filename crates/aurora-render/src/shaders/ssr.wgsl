@@ -2,6 +2,9 @@
 // common.wgsl; drawn as a full-screen pass blended over the lit scene.
 
 @group(3) @binding(0) var gbuf_tex: texture_2d<f32>;
+// The ray-traced reflections (rt_reflect.wgsl, rgb and 1 on a hit), read by
+// `fs_ssr_rt`; a black texture without them.
+@group(3) @binding(1) var rt_reflect_tex: texture_2d<f32>;
 
 struct SsrOut {
     @builtin(position) clip: vec4<f32>,
@@ -26,6 +29,25 @@ fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// The share of a reflection over the lit colour: SSR's Fresnel, gloss and
+// hit weights, under the planar mirror's.
+fn reflection_weight(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, r: vec3<f32>, roughness: f32, metallic: f32,
+                     hit: f32) -> f32 {
+    let nv = max(dot(n, v), 1e-3);
+    let f0 = mix(0.04, 1.0, metallic);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
+    let smooth_k = clamp(1.0 - roughness * 2.0, 0.0, 1.0);
+    // the planar mirror wins over SSR. The Legacy Viewer applies tapHeroProbe
+    // after the SSR mix (reflectionProbeF.glsl doProbeSample), leaving
+    // (1 - w) of SSR; w falls off near the probe's plane (0.74 on the face of
+    // a 5 cm panel centred on it), so SSR's copy of the scene behind the
+    // camera still showed through. Aurora drops SSR once the mirror takes a
+    // quarter of the surface, fading over the box's and the image's edges.
+    let mirror_w = mirror_tap(p, r, 1.0 - roughness).a;
+    let ssr_w = 1.0 - smoothstep(0.0, 0.25, mirror_w);
+    return clamp(fresnel * smooth_k * smooth_k * hit * ssr_w, 0.0, 1.0);
+}
+
 @fragment
 fn fs_ssr(in: SsrOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.clip.xy);
@@ -44,20 +66,27 @@ fn fs_ssr(in: SsrOut) -> @location(0) vec4<f32> {
     if (hit.a <= 0.0) {
         discard;
     }
-    let metallic = g.w;
-    let nv = max(dot(n, v), 1e-3);
-    let f0 = mix(0.04, 1.0, metallic);
-    let fresnel = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
-    let smooth_k = clamp(1.0 - roughness * 2.0, 0.0, 1.0);
-    // the planar mirror wins over SSR. The Legacy Viewer applies tapHeroProbe
-    // after the SSR mix (reflectionProbeF.glsl doProbeSample), leaving
-    // (1 - w) of SSR; w falls off near the probe's plane (0.74 on the face of
-    // a 5 cm panel centred on it), so SSR's copy of the scene behind the
-    // camera still showed through. Aurora drops SSR once the mirror takes a
-    // quarter of the surface, fading over the box's and the image's edges.
-    let mirror_w = mirror_tap(p, r, 1.0 - roughness).a;
-    let ssr_w = 1.0 - smoothstep(0.0, 0.25, mirror_w);
-    let k = clamp(fresnel * smooth_k * smooth_k * hit.a * ssr_w, 0.0, 1.0);
+    let k = reflection_weight(p, n, v, r, roughness, g.w, hit.a);
     // premultiplied: mix the reflection over the lit color
+    return vec4<f32>(hit.rgb * k, k);
+}
+
+// The ray-traced reflections in SSR's place, with its weights.
+@fragment
+fn fs_ssr_rt(in: SsrOut) -> @location(0) vec4<f32> {
+    let px = vec2<i32>(in.clip.xy);
+    let g = textureLoad(gbuf_tex, px, 0);
+    let roughness = g.z;
+    let uv = screen_uv(in.clip.xy);
+    let d = scene_depth_at(uv);
+    let hit = textureLoad(rt_reflect_tex, px, 0);
+    if (roughness > 0.5 || d <= 0.0 || hit.a <= 0.0) {
+        discard;
+    }
+    let n = oct_decode(g.xy);
+    let p = world_from_depth(uv, d);
+    let v = normalize(frame.camera_pos.xyz - p);
+    let r = reflect(-v, n);
+    let k = reflection_weight(p, n, v, r, roughness, g.w, hit.a);
     return vec4<f32>(hit.rgb * k, k);
 }

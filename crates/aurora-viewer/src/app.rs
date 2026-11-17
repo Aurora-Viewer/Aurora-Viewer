@@ -1622,6 +1622,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_SSR") {
+        settings.ssr = v != "0";
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }

@@ -68,6 +68,13 @@ fn parse(value: Option<&str>) -> Option<Cull> {
     }
 }
 
+/// Whether the traced reflections are on too (`AURORA_RT_REFLECTIONS`, with
+/// `AURORA_RT_SHADOWS`): they take SSR's place where SSR is on.
+pub fn reflections() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_REFLECTIONS").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
+}
+
 /// Whether to ask a device for [`FEATURES`]: the experiment is on and the
 /// adapter has them.
 pub fn wanted(adapter: wgpu::Features) -> bool {
@@ -480,10 +487,50 @@ struct Bottom {
     used: u64,
 }
 
-/// The mask the shading reads in place of the contact shadows'.
+/// The mask the shading reads in place of the contact shadows', and the
+/// traced reflections SSR's composite reads.
 pub(crate) struct Targets {
     size: (u32, u32),
     pub result: wgpu::TextureView,
+    pub reflect: Option<wgpu::TextureView>,
+}
+
+const REFLECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The reflection pass's constants (must match `Params` in rt_reflect.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ReflectU {
+    clip_from_world: [[f32; 4]; 4],
+    world_from_clip: [[f32; 4]; 4],
+    camera: [f32; 4],
+    light: [f32; 4],
+    sun_color: [f32; 4],
+    sky_zenith: [f32; 4],
+    sky_horizon: [f32; 4],
+    ground_color: [f32; 4],
+    screen: [f32; 4],
+    mode: [f32; 4],
+}
+
+/// The frame's light as the reflections shade what the view does not see.
+pub(crate) struct ReflectLight {
+    pub clip_from_world: glam::Mat4,
+    pub camera: glam::Vec3,
+    pub sun_dir: glam::Vec3,
+    pub sun_up: bool,
+    pub sun_color: [f32; 4],
+    pub sky_zenith: [f32; 4],
+    pub sky_horizon: [f32; 4],
+    pub ground_color: [f32; 4],
+}
+
+/// The traced reflections' pass (shaders/rt_reflect.wgsl).
+struct Reflect {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+    buffer: wgpu::Buffer,
+    timer: Option<Timer>,
 }
 
 /// What the last frame traced (AURORA_PROFILE).
@@ -522,27 +569,31 @@ pub(crate) struct RtShadows {
     pub stats: RtStats,
     timer: Option<Timer>,
     poser: Poser,
+    reflect: Option<Reflect>,
+    /// The posed top level holds a skeleton this frame.
+    posed_live: bool,
 }
 
 /// Readbacks in flight for the pass's timestamps.
 const RING: usize = 4;
 
-/// The GPU time of the pose, the builds and the trace: four timestamps
-/// (before the pose, after it, before the trace, after it), resolved and read back a few frames
-/// later; their averages are logged every [`Timer::REPORT`] frames.
+/// The GPU time of a pass's steps: a timestamp at each step's start and one
+/// at the last one's end, resolved and read back a few frames later; their
+/// averages come out every [`Timer::REPORT`] frames. The shadows have four
+/// (before the pose, after it, before the trace, after it), the reflections
+/// two.
 struct Timer {
     queries: wgpu::QuerySet,
+    /// Timestamps a frame writes.
+    count: u32,
     resolve: wgpu::Buffer,
     ring: Vec<(wgpu::Buffer, std::sync::Arc<std::sync::atomic::AtomicU8>)>,
     next: usize,
     period_ns: f32,
-    sums: [f64; 3],
-    count: u32,
+    sums: Vec<f64>,
+    samples: u32,
     frames: u32,
 }
-
-/// Timestamps a frame writes.
-const QUERIES: u32 = 4;
 
 /// `Timer::ring` states.
 const FREE: u8 = 0;
@@ -553,26 +604,26 @@ const MAPPED: u8 = 3;
 impl Timer {
     const REPORT: u32 = 240;
 
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, count: u32) -> Option<Self> {
         if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return None;
         }
         let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("rt shadows"),
+            label: Some("rt timer"),
             ty: wgpu::QueryType::Timestamp,
-            count: QUERIES,
+            count,
         });
         let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rt shadows timestamps"),
-            size: QUERIES as u64 * 8,
+            label: Some("rt timestamps"),
+            size: count as u64 * 8,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let ring = (0..RING)
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("rt shadows timestamps readback"),
-                    size: QUERIES as u64 * 8,
+                    label: Some("rt timestamps readback"),
+                    size: count as u64 * 8,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -581,20 +632,23 @@ impl Timer {
             .collect();
         Some(Self {
             queries,
+            count,
             resolve,
             ring,
             next: 0,
             period_ns: queue.get_timestamp_period(),
-            sums: [0.0; 3],
-            count: 0,
+            sums: vec![0.0; count as usize - 1],
+            samples: 0,
             frames: 0,
         })
     }
 
     /// Before this frame's work: the readbacks the last frames wrote are
-    /// mapped, those mapped are read.
-    fn harvest(&mut self, stats: &RtStats) {
+    /// mapped, those mapped are read. Every [`Timer::REPORT`] frames, the
+    /// mean time of each step (ms) and the frames they cover.
+    fn harvest(&mut self) -> Option<(Vec<f64>, u32)> {
         use std::sync::atomic::Ordering;
+        let n = self.count as usize;
         for (buffer, state) in &self.ring {
             match state.load(Ordering::Acquire) {
                 WRITTEN => {
@@ -606,14 +660,14 @@ impl Timer {
                 }
                 MAPPED => {
                     if let Ok(data) = buffer.slice(..).get_mapped_range() {
-                        let mut t = [0u64; QUERIES as usize];
-                        bytemuck::cast_slice_mut::<u64, u8>(&mut t).copy_from_slice(&data[..QUERIES as usize * 8]);
+                        let mut t = vec![0u64; n];
+                        bytemuck::cast_slice_mut::<u64, u8>(&mut t).copy_from_slice(&data[..n * 8]);
                         if t.windows(2).all(|w| w[1] >= w[0]) {
                             let ms = |a: u64, b: u64| (b - a) as f64 * self.period_ns as f64 / 1e6;
                             for (k, sum) in self.sums.iter_mut().enumerate() {
                                 *sum += ms(t[k], t[k + 1]);
                             }
-                            self.count += 1;
+                            self.samples += 1;
                         }
                     }
                     buffer.unmap();
@@ -623,37 +677,25 @@ impl Timer {
             }
         }
         self.frames += 1;
-        if self.frames >= Self::REPORT && self.count > 0 {
-            let n = self.count as f64;
-            log::info!(
-                "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {} frames); {} placed faces, {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices)",
-                self.sums[0] / n,
-                self.sums[1] / n,
-                self.sums[2] / n,
-                self.count,
-                stats.instances,
-                stats.bottoms,
-                stats.built,
-                stats.built_triangles,
-                stats.waiting,
-                stats.skeletons,
-                stats.skeletons_built,
-                stats.posed_faces,
-                stats.posed_vertices,
-            );
-            self.sums = [0.0; 3];
-            self.count = 0;
-            self.frames = 0;
+        if self.frames < Self::REPORT || self.samples == 0 {
+            return None;
         }
+        let k = self.samples as f64;
+        let means = self.sums.iter().map(|s| s / k).collect();
+        let samples = self.samples;
+        self.sums.iter_mut().for_each(|s| *s = 0.0);
+        self.samples = 0;
+        self.frames = 0;
+        Some((means, samples))
     }
 
     /// After this frame's work: its timestamps to a free readback.
     fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
         use std::sync::atomic::Ordering;
-        encoder.resolve_query_set(&self.queries, 0..QUERIES, &self.resolve, 0);
+        encoder.resolve_query_set(&self.queries, 0..self.count, &self.resolve, 0);
         let (buffer, state) = &self.ring[self.next];
         if state.load(Ordering::Acquire) == FREE {
-            encoder.copy_buffer_to_buffer(&self.resolve, 0, buffer, 0, QUERIES as u64 * 8);
+            encoder.copy_buffer_to_buffer(&self.resolve, 0, buffer, 0, self.count as u64 * 8);
             state.store(WRITTEN, Ordering::Release);
             self.next = (self.next + 1) % RING;
         }
@@ -765,8 +807,10 @@ impl RtShadows {
             built_for: Vec::new(),
             frame: 0,
             stats: RtStats::default(),
-            timer: Timer::new(device, queue),
+            timer: Timer::new(device, queue, 4),
             poser: Poser::new(device, &scene_layout),
+            reflect: reflections().then(|| Reflect::new(device, queue, &scene_layout, textures)),
+            posed_live: false,
             scene_layout,
             warned: false,
         })
@@ -1131,7 +1175,25 @@ impl Targets {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
-        Some(Targets { size, result })
+        let reflect = reflections().then(|| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("rt reflections"),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: REFLECT_FORMAT,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        });
+        Some(Targets { size, result, reflect })
     }
 }
 
@@ -1183,7 +1245,24 @@ impl RtShadows {
         self.frame += 1;
         let frame = self.frame;
         if let Some(timer) = &mut self.timer {
-            timer.harvest(&self.stats);
+            if let Some((ms, frames)) = timer.harvest() {
+                let st = &self.stats;
+                log::info!(
+                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces, {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices)",
+                    ms[0],
+                    ms[1],
+                    ms[2],
+                    st.instances,
+                    st.bottoms,
+                    st.built,
+                    st.built_triangles,
+                    st.waiting,
+                    st.skeletons,
+                    st.skeletons_built,
+                    st.posed_faces,
+                    st.posed_vertices,
+                );
+            }
             // the pose's start: an empty pass's timestamp, as the pose may
             // not run and wgpu times no build of its own
             drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1208,6 +1287,7 @@ impl RtShadows {
             }));
         }
         let (skeletons_built, skeletons) = self.poser.build(device, queue, encoder, faces);
+        self.posed_live = skeletons > 0;
         // the trace reads the posed top level only when it holds a skeleton
         queue.write_buffer(
             &self.buffer,
@@ -1440,6 +1520,200 @@ impl RtShadows {
     }
 }
 
+fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn tlas_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
+        count: None,
+    }
+}
+
+impl Reflect {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rt reflections"),
+            source: wgpu::ShaderSource::Wgsl(source(include_str!("shaders/rt_reflect.wgsl")).into()),
+        });
+        let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt reflections"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ReflectU>() as u64),
+                    },
+                    count: None,
+                },
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(2, unfiltered),
+                texture_entry(3, unfiltered),
+                tlas_entry(4),
+                tlas_entry(5),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: REFLECT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rt reflections"),
+            bind_group_layouts: &[Some(&layout), Some(scene_layout), Some(textures)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("rt reflections"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("cs_reflect"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rt reflections"),
+            size: std::mem::size_of::<ReflectU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        log::info!("AURORA_RT_REFLECTIONS: ray-traced reflections on, in SSR's place");
+        Reflect {
+            layout,
+            pipeline,
+            buffer,
+            timer: Timer::new(device, queue, 2),
+        }
+    }
+}
+
+impl RtShadows {
+    /// Whether the traced reflections can take SSR's place this frame:
+    /// they are on and the frame traced.
+    pub(crate) fn reflects(&self) -> bool {
+        self.reflect.is_some() && self.tlas.is_some()
+    }
+
+    /// Traces the reflections of the glossy pixels of `gbuf` into the
+    /// targets' reflection texture, after the shadows' pass built this
+    /// frame's levels; the view's hits read `scene_copy`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_reflections(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &Targets,
+        light: &ReflectLight,
+        depth: &wgpu::TextureView,
+        gbuf: &wgpu::TextureView,
+        scene_copy: &wgpu::TextureView,
+        scene: &crate::packet::SceneGpu,
+    ) {
+        let scene_group = self.scene_group(device, scene);
+        let (Some(r), Some(tlas), Some(out)) = (self.reflect.as_mut(), self.tlas.as_ref(), t.reflect.as_ref()) else {
+            return;
+        };
+        if let Some(timer) = &mut r.timer
+            && let Some((ms, frames)) = timer.harvest()
+        {
+            log::info!("AURORA_RT_REFLECTIONS: trace {:.3} ms (GPU, mean of {frames} frames)", ms[0]);
+        }
+        let (w, h) = (t.size.0 as f32, t.size.1 as f32);
+        let u = ReflectU {
+            clip_from_world: light.clip_from_world.to_cols_array_2d(),
+            world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
+            camera: light.camera.extend(1.0).to_array(),
+            light: light
+                .sun_dir
+                .normalize_or(glam::Vec3::Z)
+                .extend(if light.sun_up { 1.0 } else { 0.0 })
+                .to_array(),
+            sun_color: light.sun_color,
+            sky_zenith: light.sky_zenith,
+            sky_horizon: light.sky_horizon,
+            ground_color: light.ground_color,
+            screen: [w, h, 1.0 / w, 1.0 / h],
+            mode: [REACH, if self.posed_live { 1.0 } else { 0.0 }, 0.0, 0.0],
+        };
+        queue.write_buffer(&r.buffer, 0, bytemuck::bytes_of(&u));
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt reflections"),
+            layout: &r.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: r.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(gbuf),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(scene_copy),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::AccelerationStructure(tlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    // without posed faces the scene's stands in, unread
+                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(out),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt reflections"),
+                timestamp_writes: r.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            pass.set_pipeline(&r.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(1, &scene_group, &[]);
+            pass.set_bind_group(2, &scene.textures, &[]);
+            pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        }
+        if let Some(timer) = &mut r.timer {
+            timer.resolve(encoder);
+        }
+    }
+}
+
 impl RtShadows {
     /// The scene's tables for the ray-traced passes (rt_common.wgsl group
     /// 1), each bound up to the device's limit.
@@ -1487,6 +1761,25 @@ fn row_major(m: &[[f32; 4]; 4]) -> [f32; 12] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rt_shadows_shaders_are_valid() {
+        for (name, own) in [
+            ("rt_shadows", include_str!("shaders/rt_shadows.wgsl")),
+            ("rt_pose", include_str!("shaders/rt_pose.wgsl")),
+            ("rt_reflect", include_str!("shaders/rt_reflect.wgsl")),
+        ] {
+            let src = source(own);
+            let module = match naga::front::wgsl::parse_str(&src) {
+                Ok(m) => m,
+                Err(e) => panic!("{name}: {}", e.emit_to_string(&src)),
+            };
+            let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
+            if let Err(e) = v.validate(&module) {
+                panic!("{name}: {}", e.emit_to_string(&src));
+            }
+        }
+    }
 
     fn candidate(key: u32, record: u32, x: f32) -> Candidate {
         let mut model = glam::Mat4::IDENTITY.to_cols_array_2d();
