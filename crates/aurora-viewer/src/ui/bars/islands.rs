@@ -33,6 +33,10 @@ const SLOT_PAD: f32 = 6.0;
 /// Icons of the slots (15 in the system island, like the mockup).
 pub const ICON: f32 = 16.0;
 const SYSTEM_ICON: f32 = 15.0;
+/// The room the place island keeps before the row turns compact: below it,
+/// one system readout and the picture alone keep the islands apart in a
+/// narrow window (#2737).
+const COMPACT_PLACE_MIN: f32 = 160.0;
 
 /// What the islands leave to the windows: below the islands (8 px under
 /// them) and 8 px from the left and right edges, so that a window snapped
@@ -259,14 +263,21 @@ pub fn top(
     let ctx = ui.ctx().clone();
     let screen = ui.max_rect();
 
+    // Whether the whole row leaves the place its least room; below that,
+    // one system item and the account's picture alone keep it readable,
+    // and the balance and the bug report give way (#2737).
+    let left_w = PAD * 2.0 + SLOT + if st.show_bug_report { MARGIN + PAD * 2.0 + SLOT } else { 0.0 };
+    let right_w = (PAD * 2.0 + SLOT) + MARGIN + system_width(ui, st) + MARGIN + account_width(ui, st) + MARGIN;
+    let compact = screen.width() < left_w + right_w + COMPACT_PLACE_MIN + MARGIN * 2.0;
+
     // the rectangles first, from the right end: the bell, the system, the
     // account; the menu at the left; the place in what is left between
     let mut right = screen.right() - MARGIN;
     let bell_rect = row(screen, right - PAD * 2.0 - SLOT, right);
     right = bell_rect.left() - MARGIN;
-    let sys_rect = row(screen, right - system_width(ui, st), right);
+    let sys_rect = row(screen, right - system_width_for(ui, st, compact), right);
     right = sys_rect.left() - MARGIN;
-    let acc_rect = row(screen, right - account_width(ui, st), right);
+    let acc_rect = row(screen, right - account_width_for(ui, st, compact), right);
     right = acc_rect.left() - MARGIN;
     // the conversations' thumbnails in an island of their own, left of the
     // account, where the Legacy Viewer's chiclets stand (#1134); the place
@@ -282,11 +293,10 @@ pub fn top(
     // the bug report in an island of its own after the wolf's (the human's
     // request: in one island the two read as one button); hidden, the place
     // follows the wolf 8 px away
-    let bug_rect = st
-        .show_bug_report
-        .then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
+    let bug_rect =
+        (st.show_bug_report && !compact).then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
     let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
-    let (place_rect, detail) = super::place::layout(ui, st, span);
+    let (place_rect, detail, place_compact) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
     // interface (`Context::is_pointer_over_egui`), between them over the world
@@ -311,7 +321,7 @@ pub fn top(
         }
     });
     let (audio_action, readouts_hovered) = area(&ctx, p, "system", sys_rect, |ui| {
-        system(ui, p, icons, panels, st, audio, audio_ui, media, sys_rect, &mut action)
+        system(ui, p, icons, panels, st, audio, audio_ui, media, sys_rect, compact, &mut action)
     });
     system_tip(
         &ctx,
@@ -323,7 +333,9 @@ pub fn top(
         readouts_hovered && !audio_ui.panel_open,
         &mut action,
     );
-    area(&ctx, p, "account", acc_rect, |ui| account(ui, p, st, acc_rect, &mut action));
+    area(&ctx, p, "account", acc_rect, |ui| {
+        account(ui, p, st, acc_rect, compact, &mut action)
+    });
     area(&ctx, p, "menu", menu_rect, |ui| {
         // a right click on the island or its buttons: show the bug button
         let back = ui.interact(menu_rect, Id::unique("bars_island_menu_back"), Sense::click());
@@ -364,7 +376,7 @@ pub fn top(
         });
     }
     area(&ctx, p, "place", place_rect, |ui| {
-        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
+        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail, place_compact) {
             action = a;
         }
     });
@@ -420,9 +432,10 @@ fn balance_font(ui: &egui::Ui) -> FontId {
     FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()))
 }
 
-/// The balance as it reads, and how wide it stands.
-fn balance_text(ui: &egui::Ui, st: &StatusInfo) -> Option<(String, f32)> {
-    st.balance.filter(|_| st.show_balance).map(|b| {
+/// The balance as it reads, and how wide it stands. A compact row leaves it
+/// out so that the picture alone keeps the row readable (#2737).
+fn balance_text(ui: &egui::Ui, st: &StatusInfo, compact: bool) -> Option<(String, f32)> {
+    st.balance.filter(|_| st.show_balance && !compact).map(|b| {
         let text = format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency());
         let width = crate::ui::balance_gains::number_width(ui.painter(), &text, &balance_font(ui));
         (text, width)
@@ -434,15 +447,19 @@ fn account_slot_width(balance: Option<f32>) -> f32 {
     4.0 + DISC + balance.map_or(0.0, |width| 6.0 + width.ceil()) + 8.0
 }
 
+fn account_width_for(ui: &egui::Ui, st: &StatusInfo, compact: bool) -> f32 {
+    PAD * 2.0 + account_slot_width(balance_text(ui, st, compact).map(|(_, width)| width))
+}
+
 fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
-    PAD * 2.0 + account_slot_width(balance_text(ui, st).map(|(_, width)| width))
+    account_width_for(ui, st, false)
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
-fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    let balance = balance_text(ui, st);
+fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, compact: bool, action: &mut BarAction) {
+    let balance = balance_text(ui, st, compact);
     let w = account_slot_width(balance.as_ref().map(|(_, width)| *width));
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
@@ -566,6 +583,16 @@ fn items(st: &StatusInfo) -> Vec<Item> {
     shown
 }
 
+/// A compact row keeps the first item only, so the rest of the row stays
+/// readable in a narrow window (#2737); the menu still holds every choice.
+fn shown_items(st: &StatusInfo, compact: bool) -> Vec<Item> {
+    let mut shown = items(st);
+    if compact {
+        shown.truncate(1);
+    }
+    shown
+}
+
 fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
     match item {
         Item::Clock => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.clock, READOUT)),
@@ -577,11 +604,15 @@ fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
 }
 
 /// The island's width: its items 2 px apart, no hole where one is hidden.
-fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+fn system_width_for(ui: &egui::Ui, st: &StatusInfo, compact: bool) -> f32 {
     let texts = readouts(st);
-    let items = items(st);
+    let items = shown_items(st, compact);
     let slots: f32 = items.iter().map(|item| item_width(ui, &texts, *item)).sum();
     PAD + slots + GAP * items.len().saturating_sub(1) as f32 + PAD
+}
+
+fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+    system_width_for(ui, st, false)
 }
 
 /// The frame rate's colour: teal from 50 images a second, amber from 25.
@@ -626,6 +657,7 @@ fn system(
     audio_ui: &mut crate::ui::audio::AudioUi,
     media: crate::ui::audio::MediaState,
     island: Rect,
+    compact: bool,
     action: &mut BarAction,
 ) -> (crate::ui::audio::AudioAction, bool) {
     const SIZE: f32 = READOUT;
@@ -637,7 +669,7 @@ fn system(
     let mut readouts_zone = Rect::NOTHING;
     let mut fps_hovered = false;
     let mut x = island.left() + PAD;
-    for item in items(st) {
+    for item in shown_items(st, compact) {
         let w = item_width(ui, &texts, item);
         let rect = Rect::from_min_size(Pos2::new(x, top), Vec2::new(w, SLOT));
         x = rect.right() + GAP;
@@ -1328,6 +1360,31 @@ mod tests {
             work_area(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0)), 834.0).top(),
             52.0
         );
+    }
+
+    /// A narrow row keeps the islands apart without the bug report, the
+    /// balance or all but the first system readout (#2737).
+    #[test]
+    fn a_narrow_row_hides_the_bug_the_balance_and_the_other_readouts() {
+        let (ctx, rect, _) = frames(480.0, true, true, Pos2::new(700.0, 400.0));
+        assert!(
+            ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "bug")))).is_none(),
+            "the bug report is hidden"
+        );
+        let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
+        let picture_only = PAD * 2.0 + account_slot_width(None);
+        assert_eq!(account.width(), picture_only, "the balance is hidden");
+        assert_eq!(place.left() - menu.right(), MARGIN, "the place follows the menu");
+        assert_eq!(account.left() - place.right(), MARGIN);
+        assert_eq!(system.left() - account.right(), MARGIN);
+        assert_eq!(bell.left() - system.right(), MARGIN);
+        assert_eq!(bell.right(), 480.0 - MARGIN);
+        assert!(place.width() >= COMPACT_PLACE_MIN, "{place:?}");
+        // the same row at the old least width still shows them all
+        let (ctx, rect, _) = frames(800.0, true, true, Pos2::new(700.0, 400.0));
+        assert!(ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "bug")))).is_some());
+        assert!(rect("account").width() > picture_only);
+        assert!(system.width() < rect("system").width(), "one readout instead of the four");
     }
 
     /// The pointer over an island is over the interface; between the
