@@ -16,6 +16,7 @@ mod controls;
 mod data;
 mod document;
 mod kinematics;
+mod legacy_pose;
 mod overlay;
 mod scale_gizmo;
 mod silhouette;
