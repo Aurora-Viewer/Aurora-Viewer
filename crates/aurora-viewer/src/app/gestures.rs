@@ -389,8 +389,25 @@ impl App {
                 self.panels.inventory = true;
             }
             Action::Delete(ids) => {
-                self.inventory_ui.dialog = Some(crate::ui::inventory::EditDialog::Delete(ids, false));
-                self.panels.inventory = true;
+                // LLFloaterGesture::onDeleteSelected moves the gestures to the
+                // Trash without a question (indra/newview/llfloatergesture.cpp).
+                // Aurora asks as for any inventory Delete, until "Do not
+                // show again" is ticked (#3507).
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let mut actions = Vec::new();
+                if crate::ui::inventory::delete_from_window(
+                    &self.world.inventory,
+                    &mut self.inventory_ui,
+                    &self.settings.inventory,
+                    worn,
+                    &mut actions,
+                    ids,
+                ) {
+                    self.panels.inventory = true;
+                }
+                for action in actions {
+                    self.apply_inventory_action(action);
+                }
             }
             Action::ShowInventory(id) => {
                 self.inventory_ui.show_original(&self.world.inventory, id);

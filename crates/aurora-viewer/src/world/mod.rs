@@ -1689,7 +1689,7 @@ impl World {
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
         // not applied yet: the file holds more than the inventory in memory
-        if self.inventory_cache.is_some() {
+        if self.inventory_cache.is_some() && !self.inventory.outgoing.has_originals() {
             return;
         }
         if let Some(path) = self.inventory_cache_path() {
@@ -5600,6 +5600,13 @@ impl World {
             caution: Some(prompt),
             ..
         }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
         {
             let place = self.caution_place(task);
             let granted = matches!(r, notifications::Response::Accept);
@@ -8335,6 +8342,25 @@ mod motion_tests {
             world.experiences.permissions.get(&xp),
             Some(&aurora_net::experience::ExperiencePermission::Allowed)
         );
+    }
+
+    #[test]
+    fn closing_an_experience_question_keeps_its_permission_unchanged() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE2E2);
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        world.apply(experience_question(xp, 1 << 12));
+        let id = world.notifications.list.last().expect("experience question").id;
+        world.experiences.take_commands();
+        let lines = world.chat.len();
+        let (cmds, url) = world.respond_notification(id, notifications::Response::Dismiss);
+        assert!(cmds.is_empty() && url.is_none());
+        assert_eq!(world.chat.len(), lines);
+        assert!(!world.notifications.list.iter().any(|n| n.id == id));
+        assert!(!world.experiences.permissions.contains_key(&xp));
+        assert!(world.experiences.take_commands().is_empty() && world.experiences.profile.is_none());
     }
 
     #[test]

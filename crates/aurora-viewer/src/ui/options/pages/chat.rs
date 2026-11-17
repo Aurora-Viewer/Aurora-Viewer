@@ -151,11 +151,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-mention-autocomplete-hint"),
                     &field!(chat_mention_autocomplete),
                 );
-                // AutohideChatBar (Chat › Typing), off (#1009)
-                cx.toggle(
-                    tr!("ui-options-autohide-chat-bar"),
-                    tr!("ui-options-autohide-chat-bar-hint"),
-                    &field!(autohide_chat_bar),
+                // AutohideChatBar (Chat › Typing), off (#1009), and
+                // Aurora's Conversations window only (#2696)
+                use crate::settings::ChatBar;
+                cx.combo(
+                    tr!("ui-options-chat-bar"),
+                    tr!("ui-options-chat-bar-hint"),
+                    &field!(chat_bar),
+                    &[
+                        (ChatBar::Always, tr!("ui-options-chat-bar-always")),
+                        (ChatBar::WhenTyping, tr!("ui-options-chat-bar-typing")),
+                        (ChatBar::ConversationsOnly, tr!("ui-options-chat-bar-window")),
+                    ],
                 );
                 cx.slider(
                     tr!("ui-options-chat-bubble-duration"),
@@ -245,6 +252,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-flash-unread"),
                     tr!("ui-options-flash-unread-hint"),
                     &field!(flash_unread_conversations),
+                );
+                // Aurora's button back to the latest messages (#558); the
+                // Legacy Viewer has none
+                cx.toggle(
+                    tr!("ui-options-chat-latest-button"),
+                    tr!("ui-options-chat-latest-button-hint"),
+                    &field!(chat_latest_button),
                 );
                 // "Flash chat toolbar button if a new IM arrives" (FSNotifyIMFlash)
                 cx.toggle(

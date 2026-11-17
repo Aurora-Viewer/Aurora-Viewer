@@ -579,7 +579,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
         | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format"
         | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "task-preview" => 8103,
-        "nocopy" => 8109,
+        "nocopy" | "offer-unsent" | "offer-sent" | "offer-uncertain" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
         "link-icons" | "aurora-link-icons" => 83_000,

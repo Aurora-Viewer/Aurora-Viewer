@@ -389,14 +389,12 @@ impl BuildTool {
     }
 }
 
-/// A face without a legacy material derives its alpha mode from the diffuse.
+/// A face without a legacy material derives its alpha mode from the format of
+/// the diffuse (LLPanelFace::createDefaultMaterial). Blending a texture whose
+/// texels are all opaque keeps its face in the opaque pass (`classify`).
 pub(super) fn default_legacy(env: &Env, te: &TextureFace) -> LegacyMaterial {
     LegacyMaterial {
-        diffuse_alpha_mode: if env.scene.textures.has_alpha(&te.texture).unwrap_or(false) {
-            alpha_mode::BLEND
-        } else {
-            alpha_mode::NONE
-        },
+        diffuse_alpha_mode: env.scene.textures.default_alpha_mode(&te.texture),
         ..Default::default()
     }
 }
@@ -809,6 +807,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     let editable = has_all && tool.material_edit_allowed(world, &faces);
     let shown = |id: Option<Uuid>| id.filter(|_| editable);
+    let maps_mixed = pbr_maps_mixed(sel.iter().map(|x| pbr_maps_shown(world, env, x.idx, x.face)));
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
         tool.ui.material_previews.material_model(
@@ -821,7 +820,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         )
     });
     if super::legacy::active(ui) {
-        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, model, editable);
+        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, maps_mixed, model, editable);
     } else {
         let size = preview_size(ui, 3);
         egui::Grid::new("pbr_map_grid")
@@ -845,7 +844,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         world,
                         env,
                         shown(id),
-                        false,
+                        editable && maps_mixed[channel],
                         caption,
                         PickTarget::PbrMap(channel),
                         editable,
@@ -954,6 +953,64 @@ fn face_server_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> Option<[
     }
     mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
     Some(mat.transforms)
+}
+
+/// The textures a face shows on its four PBR maps: its override's, else its
+/// base material's, nil for none; `None` while that material is not loaded
+/// (the `texture_map_id` of LLSelectedTEGetmatId::apply,
+/// indra/newview/fspanelface.cpp). A local file comes first, as in `pbr`.
+pub(super) fn pbr_maps_shown(world: &World, env: &Env, idx: usize, face: u8) -> Option<[Uuid; 4]> {
+    use crate::world::objects::LocalTextureSlot;
+    let object = world.objects.get(idx)?;
+    let asset = object
+        .local_texture(face as usize, LocalTextureSlot::Material)
+        .or_else(|| BuildTool::gltf_asset(world, idx, face))?;
+    let base = env.scene.materials.peek(&asset)?;
+    let mut shown = [
+        base.base_color_texture,
+        base.normal_texture,
+        base.metallic_roughness_texture,
+        base.emissive_texture,
+    ]
+    .map(Option::unwrap_or_default);
+    if !world.local_assets.contains_key(&asset) {
+        for (shown, over) in shown.iter_mut().zip(BuildTool::gltf_override(world, idx, face).textures) {
+            // applyOverrideUUID
+            if over == aurora_assets::material::OVERRIDE_NULL_UUID {
+                *shown = Uuid::nil();
+            } else if !over.is_nil() {
+                *shown = over;
+            }
+        }
+    }
+    for (channel, shown) in shown.iter_mut().enumerate() {
+        if let Some(local) = object.local_texture(face as usize, LocalTextureSlot::Pbr(channel)) {
+            *shown = local;
+        }
+    }
+    Some(shown)
+}
+
+/// Per PBR map, whether the faces show different textures: the map's swatch
+/// and picker are then tentative (LLSelectedTEGetmatId's `mIdenticalMap` and
+/// FSPanelFace::updateUIGLTF's `setTentative(!func.mIdenticalMap[...])`,
+/// indra/newview/fspanelface.cpp). A face whose material is still loading
+/// counts as different.
+pub(super) fn pbr_maps_mixed(shown: impl IntoIterator<Item = Option<[Uuid; 4]>>) -> [bool; 4] {
+    let mut mixed = [false; 4];
+    let mut first: Option<[Uuid; 4]> = None;
+    for (n, shown) in shown.into_iter().enumerate() {
+        match (first, shown) {
+            (None, shown) if n == 0 => first = shown,
+            (Some(first), Some(shown)) => {
+                for (mixed, (first, shown)) in mixed.iter_mut().zip(first.iter().zip(&shown)) {
+                    *mixed |= first != shown;
+                }
+            }
+            _ => mixed = [true; 4],
+        }
+    }
+    mixed
 }
 
 /// The texture transforms a face renders with: its material's under its
@@ -1180,7 +1237,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             ui.label("%");
         });
         // alpha mode, mask cutoff
-        let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha(&t)).unwrap_or(false);
+        let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha_channel(&t)).unwrap_or(false);
         let transp_zero = sel.iter().all(|x| x.te.color[3] >= 1.0);
         let default_mode = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
         let (mode, mode_mixed) = same(

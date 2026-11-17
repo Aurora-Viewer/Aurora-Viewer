@@ -329,7 +329,7 @@ fn dropped_packets_are_confirmed_losses_not_provisional_gaps() {
 
 #[tokio::test]
 async fn a_post_that_fails_is_only_logged() {
-    let http = reqwest::Client::new();
+    let http = crate::test_http_client();
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     // nothing listens on the discard port of localhost
     assert!(!post(&http, "http://127.0.0.1:9/cap", &report).await);
@@ -368,7 +368,7 @@ async fn any_2xx_answer_is_a_post_even_with_an_empty_body() {
             crate::test_http::finish(stream);
         }
     });
-    let http = reqwest::Client::new();
+    let http = crate::test_http_client();
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     assert!(post(&http, &url, &report).await);
 }
@@ -398,7 +398,7 @@ fn post_counted(rt: &tokio::runtime::Runtime, posts: &std::sync::Arc<PostsInFlig
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     posts.begin();
     rt.spawn(async move {
-        post(&reqwest::Client::new(), &url, &report).await;
+        post(&crate::test_http_client(), &url, &report).await;
         posts.end();
     });
 }

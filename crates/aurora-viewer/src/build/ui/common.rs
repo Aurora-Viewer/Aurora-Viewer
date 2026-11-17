@@ -473,13 +473,7 @@ pub fn swatch(
             }
         }
         if multiple {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                aurora_i18n::tr!("build-ui-common-multiple"),
-                egui::FontId::proportional(11.0),
-                p.ink,
-            );
+            crate::ui::widgets::picture_label(ui, p, rect, aurora_i18n::tr!("build-ui-common-multiple"), 11.0);
         }
         let stroke = if resp.hovered() && enabled { p.violet_light } else { p.raised };
         painter.rect_stroke(

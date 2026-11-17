@@ -232,6 +232,18 @@ fn a_question_to_take_money_warns_and_its_answer_is_told_in_the_chat() {
 }
 
 #[test]
+fn closing_a_caution_permission_sends_nothing_and_adds_no_chat_line() {
+    let mut world = world();
+    world.apply(question(0x7201, 0x2));
+    let id = world.notifications.list.last().expect("permission question").id;
+    let lines = world.chat.len();
+    let (cmds, url) = world.respond_notification(id, Response::Dismiss);
+    assert!(cmds.is_empty() && url.is_none());
+    assert_eq!(world.chat.len(), lines);
+    assert!(!world.notifications.list.iter().any(|n| n.id == id));
+}
+
+#[test]
 fn an_ordinary_question_keeps_its_wording_and_tells_nothing() {
     let mut world = world();
     world.apply(question(0x7300, 0x10));

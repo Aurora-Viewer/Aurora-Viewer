@@ -39,7 +39,15 @@ pub enum SortOrder {
     MostRecent,
     #[default]
     TypeName,
+    /// The order the user dragged the rows into (`Orders`). Aurora's own:
+    /// the Legacy window has no manual order (from iGao's PR #3784).
+    Custom,
 }
+
+/// The custom orders of one account: for each view (the favorites folder
+/// for All Favorites, else a subfolder), its originals in the order they
+/// were dragged into. Kept in the settings, per account.
+pub type Orders = std::collections::HashMap<Uuid, Vec<Uuid>>;
 
 /// One row: the link (or an item put in the folder by hand) and its original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,14 +82,21 @@ pub fn legacy_folder(inv: &Inventory) -> Option<Uuid> {
 }
 
 /// initCategory: the folders to create when it does not exist yet, the
-/// viewer's root folder too when that one is missing. `None` when there is
-/// nothing to create or no inventory yet.
-pub fn create_plan(inv: &Inventory) -> Option<Mutation> {
+/// viewer's root folder too when that one is missing and `make_root` (false
+/// while the bridge is about to make `#Aurora`: two requests in the same
+/// seconds would leave two, `Bridge::makes_brand_folder`). `None` when
+/// there is nothing to create, `#Aurora` is left to the bridge, or there is
+/// no inventory yet.
+pub fn create_plan(inv: &Inventory, make_root: bool) -> Option<Mutation> {
     if inv.root.is_nil() || !inv.folders.contains_key(&inv.root) || folder(inv).is_some() {
         return None;
     }
+    let root = child(inv, inv.root, ROOT);
+    if root.is_none() && !make_root {
+        return None;
+    }
     let mut change = Mutation::default();
-    let root = child(inv, inv.root, ROOT).unwrap_or_else(|| new_folder(&mut change, inv.root, ROOT));
+    let root = root.unwrap_or_else(|| new_folder(&mut change, inv.root, ROOT));
     new_folder(&mut change, root, FOLDER);
     change.refresh.sort();
     change.refresh.dedup();
@@ -180,7 +195,16 @@ pub fn loaded(inv: &Inventory, shown: Uuid) -> bool {
 /// LLWearableItemTypeNameComparator with the window's order: clothing by
 /// wearable type then name, objects by name, body parts by wearable type
 /// then name, gestures by name.
-pub fn sort(inv: &Inventory, entries: &mut [Entry], order: SortOrder) {
+/// `SortOrder::Custom` follows `saved` (the view's entry of `Orders`); the
+/// originals it does not hold yet come after it, by type then name.
+pub fn sort(inv: &Inventory, entries: &mut [Entry], order: SortOrder, saved: &[Uuid]) {
+    if order == SortOrder::Custom {
+        sort(inv, entries, SortOrder::TypeName, &[]);
+        let place: std::collections::HashMap<Uuid, usize> = saved.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        // stable: the unsaved keep their type order, after the saved
+        entries.sort_by_key(|e| place.get(&e.target).copied().unwrap_or(usize::MAX));
+        return;
+    }
     entries.sort_by_cached_key(|e| {
         let it = inv.items.get(&e.target);
         let name = it.map(|it| it.name.to_uppercase()).unwrap_or_default();
@@ -194,15 +218,17 @@ pub fn sort(inv: &Inventory, entries: &mut [Entry], order: SortOrder) {
         let (rank, kind, recent) = match order {
             SortOrder::Name => (0, 0, 0),
             SortOrder::MostRecent => (0, 0, -it.map_or(0, |it| it.created_at)),
-            SortOrder::TypeName => (rank, kind, 0),
+            SortOrder::TypeName | SortOrder::Custom => (rank, kind, 0),
         };
         (rank, kind, recent, name, e.target)
     });
 }
 
 /// The filter of the list: a case-insensitive part of the row's title, the
-/// worn tag included (LLPanelInventoryListItemBase::notify "match_filter").
-pub fn matches(filter: &str, name: &str, worn: Option<&str>) -> bool {
+/// worn tag included (LLPanelInventoryListItemBase::notify "match_filter"),
+/// or of its type ("Shirt", "Object"). The type is Aurora's addition (from
+/// iGao's PR #3784): the Legacy filter reads the title only.
+pub fn matches(filter: &str, name: &str, worn: Option<&str>, kind: &str) -> bool {
     let filter = filter.trim().to_lowercase();
     if filter.is_empty() {
         return true;
@@ -211,7 +237,44 @@ pub fn matches(filter: &str, name: &str, worn: Option<&str>) -> bool {
         Some(tag) => format!("{name} {tag}"),
         None => name.to_owned(),
     };
-    title.to_lowercase().contains(&filter)
+    title.to_lowercase().contains(&filter) || kind.to_lowercase().contains(&filter)
+}
+
+/// Custom order chosen (from the sort menu, or by a first drag): each of
+/// `views` without an order of its own (`has` false) keeps the one it showed
+/// under `from`, instead of falling back to the type order.
+pub fn seeded_orders(inv: &Inventory, root: Uuid, views: &[Uuid], from: SortOrder, has: impl Fn(Uuid) -> bool) -> Vec<(Uuid, Vec<Uuid>)> {
+    views
+        .iter()
+        .filter(|view| !has(**view))
+        .map(|view| {
+            let mut list = entries(inv, root, *view);
+            sort(inv, &mut list, from, &[]);
+            (*view, list.iter().map(|e| e.target).collect())
+        })
+        .collect()
+}
+
+/// `order` with the original at `from` moved to `to`: what a row dragged
+/// in the list leaves as the view's custom order.
+pub fn moved(order: &[Uuid], from: usize, to: usize) -> Vec<Uuid> {
+    let mut out = order.to_vec();
+    if from < out.len() {
+        let item = out.remove(from);
+        out.insert(to.min(out.len()), item);
+    }
+    out
+}
+
+/// `order` with `items` put at `at` (those it already holds stay where they
+/// are): originals dropped from the inventory between two rows.
+pub fn inserted(order: &[Uuid], at: usize, items: &[Uuid]) -> Vec<Uuid> {
+    let mut out = order.to_vec();
+    let mut seen: HashSet<Uuid> = order.iter().copied().collect();
+    let new: Vec<Uuid> = items.iter().copied().filter(|id| seen.insert(*id)).collect();
+    let at = at.min(out.len());
+    out.splice(at..at, new);
+    out
 }
 
 /// The originals a drop links in `to` (FSWearableFavoritesItemsList::

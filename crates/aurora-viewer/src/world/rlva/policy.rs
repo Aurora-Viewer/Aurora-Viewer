@@ -65,7 +65,11 @@ impl World {
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
         // @interact is enforced when the object is picked
         // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
-        // RlvActions::canTouch and its @touchme override are asked.
+        // RlvActions::canTouch and its @touchme override are asked. A HUD's
+        // pick is dropped there too, by `rlva_drops_picks` where the click
+        // is read: this rule also answers the Touch entry of a worn object,
+        // which needs no pick and keeps a HUD's touch (handle_attachment_touch,
+        // llviewermenu.cpp).
         if !hud && r.has("interact") {
             return false;
         }
@@ -225,7 +229,7 @@ impl World {
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
-            NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
+            NetCommand::SendImDialog { to, dialog: 4, .. } | NetCommand::OfferInventory { to, .. } => r.allows("share", &to.to_string()),
             // A dialog shown before @sendchat (process_script_dialog_response,
             // llviewermessage.cpp): its public-chat answer is not sent.
             NetCommand::ScriptDialogReply { channel: 0, .. } => !r.has("sendchat"),

@@ -22,6 +22,8 @@ pub mod beams;
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
+#[path = "demo_pose_stand.rs"]
+pub mod pose_stand;
 #[path = "demo_poser.rs"]
 pub mod poser;
 
@@ -78,6 +80,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// AURORA_DEMO_CLOUDS: volumetric clouds under a fixed sky.
+#[path = "demo_clouds.rs"]
+pub mod clouds;
 /// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
 #[path = "demo_collisions.rs"]
 pub mod collisions;
@@ -456,6 +461,20 @@ fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
     let alpha = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.3).clamp(0.02, 1.0);
     let spacing = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.25).clamp(0.0, 2.0);
     Some((n, alpha, spacing))
+}
+
+/// `AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]`: the part of the view one
+/// translucent pane covers (10 % by default, from 1 to 100) and its opacity
+/// (0.5 by default, from 0.02 to 1), or `None` without the variable: the
+/// transparency a stochastic resolve has to run over only in part.
+fn glass_patch_spec(value: Option<&str>) -> Option<(f32, f32)> {
+    let value = value?;
+    let mut parts = value.split(',').map(str::trim);
+    // (`nan` and `inf` parse as numbers: only finite values count)
+    let number = |s: &str| s.parse::<f32>().ok().filter(|v| v.is_finite());
+    let percent = parts.next().and_then(number).unwrap_or(10.0).clamp(1.0, 100.0);
+    let alpha = parts.next().and_then(number).unwrap_or(0.5).clamp(0.02, 1.0);
+    Some((percent, alpha))
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -2415,8 +2434,33 @@ pub fn applinks_action(text: &str) -> Option<crate::ui::context::CtxAction> {
             verb: AgentVerb::ReportAbuse,
         }),
         "inventory-show" => CtxAction::AppLink(AppLink::InventoryShow),
+        // blocked first (`applinks_blocked`): the link asks before unblocking
+        "unmute" => CtxAction::AppLink(AppLink::Agent {
+            id: DEMO_LOUP,
+            verb: AgentVerb::Unmute,
+        }),
+        "unblock" => CtxAction::AppLink(AppLink::Agent {
+            id: APPLINKS_SIGN,
+            verb: AgentVerb::Unblock(aurora_i18n::tr!("demo-places-sign").into()),
+        }),
         _ => CtxAction::AppLink(applinks_click(text)?),
     })
+}
+
+/// The sign object that says the links of `AURORA_DEMO_APPLINKS` in the
+/// chat console.
+pub const APPLINKS_SIGN: Uuid = Uuid::from_u128(0x5106);
+
+/// `AURORA_DEMO_APPLINKS=unmute|unblock`: the resident or the object the
+/// scene blocks before the link is clicked, with its kind.
+pub fn applinks_blocked() -> Option<(Uuid, String, crate::world::mutes::MuteType)> {
+    use crate::world::mutes::MuteType;
+    let mode = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    match mode.split(':').next()? {
+        "unmute" => Some((DEMO_LOUP, aurora_i18n::tr!("demo-violet-wolf").into(), MuteType::Agent)),
+        "unblock" => Some((APPLINKS_SIGN, aurora_i18n::tr!("demo-places-sign").into(), MuteType::Object)),
+        _ => None,
+    }
 }
 
 /// What the map would have taught before `slurls_scene`: the lagoon and
@@ -3185,6 +3229,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         return events;
     }
     if let Some(events) = social_menu::reply(cmd) {
+        return events;
+    }
+    if let Some(events) = pose_stand::reply(cmd) {
         return events;
     }
     match cmd {
@@ -4493,6 +4540,49 @@ pub fn complex_face_selection_events() -> Vec<NetEvent> {
                 } else {
                     Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
                 };
+            }
+        }
+    }
+    events
+}
+
+/// `AURORA_DEMO_BUILD=faces-mapping`: the three surfaces of
+/// `face_selection_events`, each textured with its own mapping, for the
+/// face-select pattern (#2505): A with the tiles repeated 3 x 2, offset
+/// (0.25, 0.1) and turned 30 degrees; A2 stretched, in planar mapping,
+/// repeated 2 x 2 and turned 15 degrees; B a PBR material whose base color
+/// is repeated 2 x 3, offset (0.2, 0.1) and turned 0.6 radian.
+pub fn face_mapping_events() -> Vec<NetEvent> {
+    let mut events = face_selection_events(false);
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects {
+                let Some(te) = object.texture_entry.as_mut() else {
+                    continue;
+                };
+                for f in Arc::make_mut(te).faces.iter_mut() {
+                    f.color = [1.0, 1.0, 1.0, 1.0];
+                    f.texture = TEX_TILES;
+                    match object.local_id {
+                        99620 => {
+                            (f.scale_s, f.scale_t) = (3.0, 2.0);
+                            (f.offset_s, f.offset_t) = (0.25, 0.1);
+                            f.rotation = 30f32.to_radians();
+                        }
+                        99621 => {
+                            // TEM_TEX_GEN_PLANAR (LLTextureEntry)
+                            f.media_flags = 0x02;
+                            (f.scale_s, f.scale_t) = (2.0, 2.0);
+                            f.rotation = 15f32.to_radians();
+                        }
+                        _ => f.texture = BLANK_TEXTURE,
+                    }
+                }
+                match object.local_id {
+                    99621 => object.scale = Vec3::new(2.0, 3.0, 1.5),
+                    99622 => object.extra.render_materials = (0..6).map(|f| (f, MAT_PBR_FACE_MAPPED)).collect(),
+                    _ => {}
+                }
             }
         }
     }
@@ -6061,6 +6151,38 @@ pub fn events() -> Vec<NetEvent> {
             ));
             id += 1;
         }
+    }
+    // AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]: one translucent pane 3 m
+    // ahead of the start position, facing the camera, covering that part of
+    // the view (the area of the pane that fills it, scaled): the rest of
+    // the view holds no blended face, so what the order-independent
+    // transparency spends on the empty part shows (aurora-render
+    // oit_stochastic.rs).
+    if let Some((percent, alpha)) = glass_patch_spec(std::env::var("AURORA_DEMO_GLASS_PATCH").ok().as_deref()) {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        let (dx, dy) = (0.894_427_2, 0.447_213_6);
+        // (a pane of 8.8 x 4.4 m fills the view at 3 m, as the first of
+        // AURORA_DEMO_ALPHA_PLANES)
+        let k = (percent / 100.0).sqrt();
+        let d = 3.0;
+        let (px, py) = (sx + dx * d, sy + dy * d);
+        add(prim(
+            id,
+            Vec3::new(px, py, g(px, py) + 1.5 + 0.3 * d),
+            Quat::from_rotation_z(dy.atan2(dx)),
+            Vec3::new(0.05, 8.8 * k, 4.4 * k),
+            boxp,
+            te([0.6, 0.8, 1.0, alpha], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
     }
     // AURORA_DEMO_BLEND_AO: a face ahead of the start position, its left
     // and right halves alike but one blended (alpha 0.99, opaque to the
@@ -8741,6 +8863,18 @@ mod sun_tests {
         assert_eq!(alpha_planes_spec(Some("on")), Some((8, 0.3, 0.25)));
         assert_eq!(alpha_planes_spec(Some("500,0,9")), Some((64, 0.02, 2.0)));
     }
+
+    #[test]
+    fn the_glass_patch_reads_its_share_and_opacity() {
+        assert_eq!(glass_patch_spec(None), None);
+        assert_eq!(glass_patch_spec(Some("25")), Some((25.0, 0.5)));
+        assert_eq!(glass_patch_spec(Some("5, 0.3")), Some((5.0, 0.3)));
+        // not a number: the defaults; kept within 1 to 100 %, never fully
+        // transparent
+        assert_eq!(glass_patch_spec(Some("on")), Some((10.0, 0.5)));
+        assert_eq!(glass_patch_spec(Some("500,0")), Some((100.0, 0.02)));
+        assert_eq!(glass_patch_spec(Some("nan,inf")), Some((10.0, 0.5)));
+    }
 }
 
 #[cfg(test)]
@@ -9309,6 +9443,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
     }
+    if let Some(texture) = clouds::texture(id) {
+        return Some(texture);
+    }
     if let Some(texture) = alpha_mask_ab::texture(id) {
         return Some(texture);
     }
@@ -9487,6 +9624,10 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
 /// bumps as normal map.
 const MAT_PBR_TILES: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0010);
 
+/// The PBR surface of `face_mapping_events`: the tiles with a base color
+/// transform.
+const MAT_PBR_FACE_MAPPED: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0050);
+
 /// White metals of AURORA_DEMO_PBR_METAL, polished to rough.
 const MAT_PBR_METAL: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0011),
@@ -9523,6 +9664,25 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    list.push((
+        MAT_PBR_FACE_MAPPED,
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_TILES),
+            metallic_factor: 0.0,
+            roughness_factor: 0.7,
+            transforms: [
+                aurora_assets::TextureTransform {
+                    offset: [0.2, 0.1],
+                    scale: [2.0, 3.0],
+                    rotation: 0.6,
+                },
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        },
+    ));
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }
