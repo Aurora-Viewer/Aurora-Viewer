@@ -6420,6 +6420,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   840: the camera stays held at 7.2 m from the focus, the click out changes
   the zoom fraction (the zoom is not refused both ways) and the click back
   in is refused, since the focus limit still holds.
+  `offset-zoom` sets `setcam_eyeoffset:-6/0/1` and
+  `setcam_eyeoffsetscale:1.5` on the avatar's own view (9.12 m behind it),
+  then scrolls four clicks out from frame 740 and four back in from frame
+  800. The log gives the camera's distance to its focus at frames 730, 790
+  and 880: about 10 m, about 19 m (each click is a fourth root of two), and
+  about 10 m again; a zoom that measures the user's own 3 m offset instead
+  does not come back. `no-mouselook` sets `camdistmin:1`, presses the
+  mouselook key at frame 740 and scrolls nineteen clicks in from frame 752.
+  The log at frames 741, 790 and 880 must say `mouselook=false` and
+  `cursor held=false`, the camera about 1.4 m from the avatar at 880 (the
+  closest zoom): mouselook is refused up front instead of entered and left
+  a frame later.
   `sitting` sends a forced object sit at frame 700, then sitground at 740.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
