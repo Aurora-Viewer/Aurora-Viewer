@@ -32,7 +32,11 @@ impl ReceiveGain {
     /// A resident's volume (0..=1, 0.5 heard as sent, the scale of
     /// LLSpeakerVolumeStorage) as a gain: 0 silent, 1 as sent, 2 at the top.
     pub(crate) fn set_volume(&self, volume: f32) {
-        let gain = if volume.is_finite() { (volume * 2.0).clamp(0.0, MAX_RECEIVE_GAIN) } else { 1.0 };
+        let gain = if volume.is_finite() {
+            (volume * 2.0).clamp(0.0, MAX_RECEIVE_GAIN)
+        } else {
+            1.0
+        };
         self.0.store(gain.to_bits(), Ordering::Relaxed);
     }
 
