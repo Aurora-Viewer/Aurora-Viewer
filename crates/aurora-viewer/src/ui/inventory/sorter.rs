@@ -1306,6 +1306,28 @@ impl State {
         self.journal.release(self.window);
     }
 
+    /// The window closes: a paused run is stopped, as Stop does it (what
+    /// went is journaled for Undo, the rest skipped), never left holding
+    /// the account for every other window with nothing showing it.
+    fn stop_paused(&mut self) {
+        if let Some(job) = self.job.as_mut()
+            && job.paused
+        {
+            job.paused = false;
+            job.stopping = true;
+            let unsure: HashSet<Uuid> = job.unsure.iter().map(|(m, _, _)| m.id).collect();
+            job.skipped += job.queue.iter().filter(|m| !unsure.contains(&m.id)).count();
+            job.queue.clear();
+        }
+        if let Some(purge) = self.purge.as_mut()
+            && purge.paused
+        {
+            purge.paused = false;
+            purge.stopping = true;
+            purge.pieces.clear();
+        }
+    }
+
     pub(super) fn active(&self) -> bool {
         self.open || self.job.is_some() || self.submitted || self.requested.is_some() || self.trash.is_some() || self.purge.is_some()
     }
@@ -1384,6 +1406,7 @@ impl InventoryUi {
     pub(crate) fn request_sorter(&mut self, shown: Uuid) {
         if self.sorter.open {
             self.sorter.open = false;
+            self.sorter.stop_paused();
         } else {
             self.sorter.requested = Some(shown);
         }
@@ -2365,19 +2388,7 @@ pub(super) fn show(
     }
     state.open = open;
     if !open {
-        // (a paused run never outlives its window: a sort or an Undo goes
-        // on to its end, journaled for Undo, and a purge stops; neither
-        // holds the account for every other window)
-        if let Some(job) = state.job.as_mut() {
-            job.paused = false;
-        }
-        if let Some(purge) = state.purge.as_mut()
-            && purge.paused
-        {
-            purge.paused = false;
-            purge.stopping = true;
-            purge.pieces.clear();
-        }
+        state.stop_paused();
         state.picker = None;
         state.confirm = None;
         state.share = None;
