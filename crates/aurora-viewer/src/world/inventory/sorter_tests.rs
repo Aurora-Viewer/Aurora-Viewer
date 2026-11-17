@@ -4056,7 +4056,19 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         path("[REBORN] Kitty Dress").starts_with("Reborn"),
         "{}",
         path("[REBORN] Kitty Dress")
-    ); // a tag that names the kind, a head's tag, a wearable's layer,
+    );
+    // audit 80: a series number before the tag, a head's word in a store's tag
+    assert!(
+        path("01. [Moon Hair] Ada Dress").contains(Category::Dresses.folder()),
+        "{}",
+        path("01. [Moon Hair] Ada Dress")
+    );
+    assert!(
+        path("[Red Head] Ada HUD").contains(Category::Huds.folder()),
+        "{}",
+        path("[Red Head] Ada HUD")
+    );
+    // a tag that names the kind, a head's tag, a wearable's layer,
     // decorated marks
     assert!(
         path("[Hair] Mia Bow").contains(Category::Hair.folder()),

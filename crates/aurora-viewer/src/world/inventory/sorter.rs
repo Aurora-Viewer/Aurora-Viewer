@@ -1163,7 +1163,8 @@ fn without_number(name: &str) -> &str {
 /// A name that opens with an enclosed tag (`[Store] rest`, `**Store**
 /// rest`): the tag and the rest of the name.
 fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
-    let text = name.trim_start();
+    // (a series number first, as `store` reads it: `01. [Store] rest`)
+    let text = without_number(name.trim()).trim_start();
     let first = text.chars().next()?;
     let (open, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
     // (the opening run of marks skipped, as `store` does: `..::Store::..`)
@@ -1176,11 +1177,9 @@ fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
 /// The category, a store's own bracketed name set aside (`[Moon Hair] Ada
 /// Dress` is a dress): read from the rest's words when the tag reads as a
 /// store, the whole name's otherwise, or when the rest says nothing, or
-/// when the whole name finds a head (`[LeLutka] Bento Addon`).
+/// when the whole name finds a head outside the tag (`[LeLutka] Bento
+/// Addon`).
 fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> Option<Category> {
-    if whole == Some(Category::Heads) {
-        return whole;
-    }
     // (a texture, a sound… is what its type says, whatever its name)
     if !matches!(asset_type, -1 | 5 | 6 | 13) {
         return whole;
@@ -1190,6 +1189,11 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
     };
     // (a tag that names the kind, `[Hair] Mia Bow`, is no store's name)
     if store_tag(tag, true).is_none() {
+        return whole;
+    }
+    // (a head found outside the tag decides; one only in a store's tag,
+    // `[Red Head] Ada HUD`, does not)
+    if whole == Some(Category::Heads) && classify(tag, -1, 0).category != Some(Category::Heads) {
         return whole;
     }
     // (the rest by its words only: a wearable's layer would always answer)
