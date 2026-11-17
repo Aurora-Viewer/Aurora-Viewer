@@ -106,8 +106,9 @@ fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
     let hs = rayQueryGetCommittedIntersection(&rq);
     if (hs.kind != RAY_QUERY_INTERSECTION_NONE) {
         t = hs.t;
-        record = hit_record(false, hs.instance_custom_data, hs.geometry_index);
-        primitive = hs.primitive_index;
+        let h = hit_of(false, hs.instance_custom_data, hs.geometry_index, hs.primitive_index);
+        record = h.record;
+        primitive = h.primitive;
         bary = hs.barycentrics;
     }
     if (params.mode.y > 0.5) {
@@ -122,8 +123,9 @@ fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
         let hp = rayQueryGetCommittedIntersection(&rp);
         if (hp.kind != RAY_QUERY_INTERSECTION_NONE) {
             t = hp.t;
-            record = hit_record(true, hp.instance_custom_data, hp.geometry_index);
-            primitive = hp.primitive_index;
+            let h = hit_of(true, hp.instance_custom_data, hp.geometry_index, hp.primitive_index);
+            record = h.record;
+            primitive = h.primitive;
             bary = hp.barycentrics;
         }
     }
