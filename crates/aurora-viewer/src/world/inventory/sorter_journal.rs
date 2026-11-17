@@ -353,13 +353,18 @@ impl Snapshot {
     /// and landmarks elsewhere are left out too.
     pub fn take_to_share(inv: &Inventory, at: i64) -> Self {
         const LEFT_OUT: [i32; 4] = [14, 16, 2, 3];
-        let hidden = |id: Uuid| {
-            actions::ancestors(inv, id).any(|a| {
-                inv.folders
-                    .get(&a)
-                    .is_some_and(|f| f.library || LEFT_OUT.contains(&f.info.type_default))
-            })
-        };
+        // (the folders shown, found once from My Inventory down: one walk,
+        // never one walk up per entry at 400,000 items)
+        let mut shown: HashSet<Uuid> = HashSet::new();
+        let mut stack = vec![inv.root];
+        while let Some(id) = stack.pop() {
+            let Some(f) = inv.folders.get(&id) else { continue };
+            if f.library || LEFT_OUT.contains(&f.info.type_default) || !shown.insert(id) {
+                continue;
+            }
+            stack.extend(f.children.iter().copied());
+        }
+        let hidden = |id: Uuid| !shown.contains(&id);
         let mut numbers: HashMap<Uuid, Uuid> = HashMap::new();
         let mut number = |id: Uuid| {
             let next = numbers.len() as u128 + 1;

@@ -633,6 +633,8 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
             },
         );
     }
+    // (the folders hang under My Inventory, as the inventory keeps them)
+    inv.folders.get_mut(&id(1)).expect("root").children = vec![id(14), id(2), id(30)];
     inv.add_items(
         [(900, 14, "Deleted Thing", 6), (901, 2, "A Resident", 2), (902, 30, "Kira Boots", 6)]
             .into_iter()

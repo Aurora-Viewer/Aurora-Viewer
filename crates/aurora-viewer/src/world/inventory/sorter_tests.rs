@@ -3535,3 +3535,20 @@ fn products_repeating_their_name_or_shelf_word_stay_whole() {
         );
     }
 }
+
+/// Audit 48: a "<occasion> <kind>" shelf of other stores' tagged
+/// deliveries is opened.
+#[test]
+fn an_occasion_kind_shelf_of_tagged_deliveries_opens() {
+    for (name, subs) in [
+        ("Christmas Sweater", ["[Kira] Christmas Sweater", "Velmora. Christmas Sweater"]),
+        ("Halloween Ears", ["[Kira] Halloween Ears", "[Velmora] Halloween Ears"]),
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+}

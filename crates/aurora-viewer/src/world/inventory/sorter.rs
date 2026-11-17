@@ -2134,15 +2134,10 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // subfolder starting with one counts: `Group Gifts` holding `Kira
     // GROUP GIFT Boots`, `Christmas` holding `Kira Christmas Dress` are
     // shelves of other stores' deliveries)
-    // (an occasion stays one beside a kind: `Christmas Sweater` holding
-    // `Christmas Sweater Black` is one product)
     let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
-    let kind_named = words(name)
-        .iter()
-        .any(|w| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w)));
     let own: Vec<String> = product_words(name)
         .into_iter()
-        .filter(|w| !(OCCASION_WORDS.contains(&w.as_str()) && (shelf_named || !kind_named)))
+        .filter(|w| !OCCASION_WORDS.contains(&w.as_str()))
         .collect();
     // (a subfolder repeating the whole name, `Christmas Sweater HUD`, is a
     // version even when an occasion is the name's only word of its own)
