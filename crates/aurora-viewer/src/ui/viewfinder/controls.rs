@@ -509,23 +509,34 @@ impl Viewfinder {
                                     },
                                 );
                             });
-                            // the tilt
+                            // the tilt: the slider, its value to type, and the
+                            // button that levels it (feedback 585)
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.spacing_mut().item_spacing.x = 6.0;
                                 label(ui, p, aurora_i18n::tr!("photo-vf-pad-tilt"));
-                                let value_w = 34.0;
-                                let w = ui.available_width() - value_w - 8.0;
-                                if let Some(roll) = tilt(ui, p, w, f.roll) {
+                                let (value_w, reset_w) = (52.0, 20.0);
+                                let w = ui.available_width() - value_w - reset_w - 12.0;
+                                if let Some(roll) = tilt(ui, p, w, f.roll, aurora_i18n::tr!("photo-vf-pad-tilt-tip")) {
                                     out.push(Out::Roll(roll));
                                 }
-                                let text = roll_text(f.roll);
-                                let color = if f.roll == 0.0 { p.success } else { p.ink };
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(value_w, 18.0), Sense::hover());
-                                ui.painter()
-                                    .text(r.right_center(), Align2::RIGHT_CENTER, text, regular(11.5), color);
-                            })
-                            .response
-                            .on_hover_text(aurora_i18n::tr!("photo-vf-pad-tilt-tip"));
+                                let mut typed = f64::from(f.roll);
+                                let field = egui::DragValue::new(&mut typed)
+                                    .speed(0.1)
+                                    .range(-f64::from(vf::ROLL_MAX)..=f64::from(vf::ROLL_MAX))
+                                    .custom_formatter(|v, _| roll_text(v as f32))
+                                    .custom_parser(vf::parse_tilt);
+                                if ui
+                                    .add_sized(Vec2::new(value_w, 18.0), field)
+                                    .on_hover_text(aurora_i18n::tr!("photo-vf-pad-tilt-value-tip"))
+                                    .changed()
+                                {
+                                    out.push(Out::Roll(((typed * 10.0).round() / 10.0) as f32));
+                                }
+                                let level = aurora_i18n::tr!("controls-roll-level");
+                                if widgets::icon_button(ui, p, "tilt-shift-filled", level, f.roll != 0.0) {
+                                    out.push(Out::Roll(0.0));
+                                }
+                            });
                         });
                         // the zoom rocker, as tall as the rest
                         ui.allocate_ui_with_layout(Vec2::new(32.0, 200.0), egui::Layout::top_down(egui::Align::Center), |ui| {
@@ -880,7 +891,7 @@ fn rocker(ui: &mut egui::Ui, p: &Palette, tip: &str) -> f32 {
 /// The tilt, ±`ROLL_MAX` (finer near the middle, detents at 0 and a
 /// quarter turn; a double click puts it back, the wheel over it a degree a
 /// notch); the new value when it changed.
-fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32) -> Option<f32> {
+fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32, tip: &str) -> Option<f32> {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width.max(60.0), 24.0), Sense::click_and_drag());
     let mut new = None;
     if resp.double_clicked() {
@@ -932,7 +943,7 @@ fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32) -> Option<f32> {
     if resp.drag_stopped() || resp.double_clicked() {
         resp.surrender_focus();
     }
-    let _ = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    let _ = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal).on_hover_text(tip);
     new
 }
 
