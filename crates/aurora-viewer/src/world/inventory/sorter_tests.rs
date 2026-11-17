@@ -3404,3 +3404,18 @@ fn shelf_dashes_holidays_genders_and_dates_are_shelves() {
     let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
     assert!(!plan.moves.iter().any(|m| m.id == id(950)), "the box's folder stays whole");
 }
+
+/// Audit 45: a `v` version holding a year is no date.
+#[test]
+fn a_versioned_name_with_a_year_is_no_date() {
+    let none = HashSet::new();
+    for name in ["Kira Gizmo v1.0.2024", "Kira Gizmo (v1.0.2024)", "Kira Gizmo v2024.1"] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        add_item(&mut inv, 950, 900, "Kira Gizmo", 0);
+        add_item(&mut inv, 951, 900, "Kira Gizmo HUD", 0);
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(!moved.contains(&id(950)) && !moved.contains(&id(951)), "{name} is never opened");
+    }
+}

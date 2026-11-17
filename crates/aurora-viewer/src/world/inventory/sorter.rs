@@ -1651,12 +1651,14 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
         })
         .collect();
     // (a dated name is the user's: `Mia & Me 10.12.2016`)
-    let dated = name.split(|c: char| !c.is_ascii_digit() && c != '.').any(|token| {
-        let parts: Vec<&str> = token.split('.').filter(|p| !p.is_empty()).collect();
-        parts.len() >= 2
-            && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
-            && (parts.iter().any(|p| p.len() == 4) || parts.iter().all(|p| p.len() == 2))
-    });
+    // (whole tokens of digits and dots only: `v1.0.2024` is a version)
+    let dated = name
+        .split(|c: char| c.is_whitespace() || "()[]{}".contains(c))
+        .filter(|token| !token.is_empty() && token.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .any(|token| {
+            let parts: Vec<&str> = token.split('.').filter(|p| !p.is_empty()).collect();
+            parts.len() >= 2 && (parts.iter().any(|p| p.len() == 4) || parts.iter().all(|p| p.len() == 2))
+        });
     if own.is_empty() || f.items.is_empty() || dated {
         return false;
     }
