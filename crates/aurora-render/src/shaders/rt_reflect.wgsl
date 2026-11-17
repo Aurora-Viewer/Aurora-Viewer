@@ -7,7 +7,8 @@
 // result with SSR's weights; a miss (alpha 0) leaves the probes' reflection.
 // Not yet: the local lights and the materials' maps past the base colour.
 
-// After rt_common.wgsl and wgpu_ray_query's enable (rt_shadows.rs `source`).
+// After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl and wgpu_ray_query's
+// enable (rt_shadows.rs `source`).
 
 struct Params {
     // This frame's projection, with the jitter the depth prepass was drawn
@@ -16,14 +17,7 @@ struct Params {
     world_from_clip: mat4x4<f32>,
     // xyz the eye.
     camera: vec4<f32>,
-    // xyz towards the sun or moon (unit), w 1 when it is up.
-    light: vec4<f32>,
-    // The frame's lights (common.wgsl `FrameU`): the sun's radiance and the
-    // hemisphere's ambient.
-    sun_color: vec4<f32>,
-    sky_zenith: vec4<f32>,
-    sky_horizon: vec4<f32>,
-    ground_color: vec4<f32>,
+    lit: HitLight,
     // width, height, 1 / width, 1 / height
     screen: vec4<f32>,
     // x: the rays' reach (m), y: 1 when the avatars' top level is traced.
@@ -40,14 +34,6 @@ struct Params {
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
 @group(0) @binding(6) var out_tex: texture_storage_2d<rgba16float, write>;
 
-const PI: f32 = 3.14159265;
-
-fn unproject(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
-    let ndc = pixel * params.screen.zw * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-    let world = params.world_from_clip * vec4<f32>(ndc, depth, 1.0);
-    return world.xyz / world.w;
-}
-
 fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
     let e = e_in * 2.0 - vec2<f32>(1.0);
     var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
@@ -56,13 +42,6 @@ fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
         n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
     }
     return normalize(n);
-}
-
-// The sky's ambient along `n` (common.wgsl `shade_pbr`'s hemisphere).
-fn hemisphere(n: vec3<f32>) -> vec3<f32> {
-    let up = n.z * 0.5 + 0.5;
-    return mix(mix(params.ground_color.rgb, params.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
-               params.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
 }
 
 // The scene copy's colour where the view sees `p`, or alpha 0 where it
@@ -82,7 +61,7 @@ fn seen(p: vec3<f32>) -> vec4<f32> {
     if (d <= 0.0) {
         return vec4<f32>(0.0);
     }
-    let there = unproject(vec2<f32>(px) + vec2<f32>(0.5), d);
+    let there = unproject(px, d);
     let dist = distance(p, params.camera.xyz);
     if (distance(there, p) > 0.05 + 0.01 * dist) {
         return vec4<f32>(0.0);
@@ -103,7 +82,7 @@ fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
         textureStore(out_tex, pixel, vec4<f32>(0.0));
         return;
     }
-    let world = unproject(vec2<f32>(pixel) + vec2<f32>(0.5), depth);
+    let world = unproject(pixel, depth);
     let n = oct_decode(g.xy);
     let v = normalize(params.camera.xyz - world);
     let r = reflect(-v, n);
@@ -161,37 +140,7 @@ fn cs_reflect(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let s = surface_at(record, primitive, bary, r);
     // a coarser mip further along the ray, where a texel covers more
-    let base = base_color(record, s.uv, log2(1.0 + t)).rgb;
-    var light = hemisphere(s.normal);
-    let l = params.light.xyz;
-    let nl = dot(s.normal, l);
-    if (params.light.w > 0.5 && nl > 0.0) {
-        let start = hit + s.normal * (0.01 + 0.002 * (dist + t));
-        let shadow_ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, params.mode.x, start, l);
-        var sq: ray_query;
-        rayQueryInitialize(&sq, scene_tlas, shadow_ray);
-        while (rayQueryProceed(&sq)) {
-            if (stops(rayQueryGetCandidateIntersection(&sq), false, l)) {
-                rayQueryConfirmIntersection(&sq);
-            }
-        }
-        var lit = rayQueryGetCommittedIntersection(&sq).kind == RAY_QUERY_INTERSECTION_NONE;
-        if (lit && params.mode.y > 0.5) {
-            var sp: ray_query;
-            rayQueryInitialize(&sp, posed_tlas, shadow_ray);
-            while (rayQueryProceed(&sp)) {
-                if (stops(rayQueryGetCandidateIntersection(&sp), true, l)) {
-                    rayQueryConfirmIntersection(&sp);
-                }
-            }
-            lit = rayQueryGetCommittedIntersection(&sp).kind == RAY_QUERY_INTERSECTION_NONE;
-        }
-        if (lit) {
-            // shade_pbr's diffuse: over pi for a PBR face, a third of the
-            // sunlight for a legacy one
-            let pbr = (record_vec(record, RECORD_FLAGS).x & FLAG_PBR) != 0u;
-            light += params.sun_color.rgb * nl / select(3.0, PI, pbr);
-        }
-    }
-    textureStore(out_tex, pixel, vec4<f32>(base * light + emissive_color(record), 1.0));
+    let offset = 0.01 + 0.002 * (dist + t);
+    let c = hit_radiance(params.lit, s, hit, log2(1.0 + t), offset, params.mode.x, params.mode.y > 0.5);
+    textureStore(out_tex, pixel, vec4<f32>(c, 1.0));
 }

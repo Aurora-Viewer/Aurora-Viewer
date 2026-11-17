@@ -7,7 +7,8 @@
 // The ray's origin and its offset: pushed off the surface along the normal
 // bent towards the eye, by more far away, where depth is coarser.
 
-// After rt_common.wgsl and wgpu_ray_query's enable (rt_shadows.rs `source`).
+// After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
+// (rt_shadows.rs `source`).
 
 struct Params {
     // This frame's clip-from-world inverted, with the jitter the depth
@@ -31,45 +32,6 @@ struct Params {
 @group(0) @binding(4) var out_tex: texture_storage_2d<rgba8unorm, write>;
 // The avatars and what they wear, posed (rt_pose.wgsl).
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
-
-fn unproject(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
-    let ndc = (vec2<f32>(pixel) + vec2<f32>(0.5)) * params.screen.zw * vec2<f32>(2.0, -2.0)
-        + vec2<f32>(-1.0, 1.0);
-    let world = params.world_from_clip * vec4<f32>(ndc, depth, 1.0);
-    return world.xyz / world.w;
-}
-
-fn depth_at(pixel: vec2<i32>) -> f32 {
-    let size = vec2<i32>(params.screen.xy);
-    return textureLoad(depth_tex, clamp(pixel, vec2<i32>(0), size - vec2<i32>(1)), 0);
-}
-
-// The surface's normal from depth: of the two neighbours on each axis, the
-// one nearer in depth, so an edge does not bend the normal of the surface
-// in front of it.
-fn normal_at(pixel: vec2<i32>, world: vec3<f32>, depth: f32) -> vec3<f32> {
-    let dl = depth_at(pixel - vec2<i32>(1, 0));
-    let dr = depth_at(pixel + vec2<i32>(1, 0));
-    let du = depth_at(pixel - vec2<i32>(0, 1));
-    let dd = depth_at(pixel + vec2<i32>(0, 1));
-    var dx: vec3<f32>;
-    if (abs(dr - depth) < abs(dl - depth)) {
-        dx = unproject(pixel + vec2<i32>(1, 0), dr) - world;
-    } else {
-        dx = world - unproject(pixel - vec2<i32>(1, 0), dl);
-    }
-    var dy: vec3<f32>;
-    if (abs(dd - depth) < abs(du - depth)) {
-        dy = unproject(pixel + vec2<i32>(0, 1), dd) - world;
-    } else {
-        dy = world - unproject(pixel - vec2<i32>(0, 1), du);
-    }
-    var n = normalize(cross(dy, dx));
-    if (dot(n, params.camera.xyz - world) < 0.0) {
-        n = -n;
-    }
-    return n;
-}
 
 @compute @workgroup_size(8, 8)
 fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {

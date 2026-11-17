@@ -6493,12 +6493,13 @@ impl Backend {
                 .map(|r| &r.result)
                 .or(t.contact.as_ref().map(|c| &c.result))
                 .unwrap_or(&dummies.black);
-        let il = t
-            .gtao
-            .as_ref()
-            .and_then(|g| g.indirect.as_ref())
-            .map(|i| &i.result)
-            .unwrap_or(&dummies.black);
+        // the traced indirect light in GTAO's place (rt_gi.wgsl)
+        let il =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.result)
+                .or(t.gtao.as_ref().and_then(|g| g.indirect.as_ref()).map(|i| &i.result))
+                .unwrap_or(&dummies.black);
         FrameGroups {
             mask: mk(
                 "frame mask",
@@ -8948,6 +8949,10 @@ impl Backend {
         let indirect_now = self.targets.gtao_shown
             && self.targets.gtao.as_ref().is_some_and(|g| g.indirect.is_some())
             && gtao_indirect_now(self.settings.screen_indirect);
+        // the traced indirect light, bound in its place when it is on
+        let rt_gi_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.lights_indirectly())
+            && self.targets.rt.as_ref().is_some_and(|t| t.gi.is_some());
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
@@ -9080,7 +9085,7 @@ impl Backend {
             _ => 0,
         };
         // (common.wgsl SCREEN_INDIRECT)
-        if indirect_now {
+        if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
         }
         // (common.wgsl SPECULAR_AA)
@@ -10448,6 +10453,29 @@ impl Backend {
                 &scene,
                 faces,
             );
+            if rt_gi_now {
+                let light = crate::rt_shadows::TraceLight {
+                    clip_from_world: rt_clip_from_world,
+                    camera: fu_camera,
+                    sun_dir: f.sun_dir,
+                    sun_up: f.sun_visible > 0.0,
+                    sun_color: fu_sun_color,
+                    sky_zenith: fu_sky[0],
+                    sky_horizon: fu_sky[1],
+                    ground_color: fu_sky[2],
+                };
+                rt.encode_gi(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    t,
+                    &light,
+                    crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
+                    &self.targets.depth_ss,
+                    &self.targets.scene_copy,
+                    &scene,
+                );
+            }
         }
         mark(&mut encoder, MARK_CONTACT_END);
         // ---- FSR: the blended faces drawn over what lies behind them, even
@@ -11201,7 +11229,7 @@ impl Backend {
         let rt_reflect = rt_reflect
             && match (&mut self.rt, &self.targets.rt, &self.targets.gbuf) {
                 (Some(rt), Some(t), Some(gbuf)) if rt.reflects() => {
-                    let light = crate::rt_shadows::ReflectLight {
+                    let light = crate::rt_shadows::TraceLight {
                         clip_from_world: rt_clip_from_world,
                         camera: fu_camera,
                         sun_dir: f.sun_dir,
