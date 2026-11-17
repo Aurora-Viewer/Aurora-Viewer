@@ -3,10 +3,12 @@
 // the camera alone; one that moved on its own (an avatar, a moving object)
 // through the depth prepass's motion, as taa.wgsl reprojects them.
 //
-// Expects `params.prev_clip_from_world`, `params.camera`,
+// Expects `params.prev_clip_from_world`, `params.camera` (w: 1 when
+// `motion_tex` is the prepass's and not a black stand-in),
 // `params.prev_camera`, `params.screen` and `motion_tex` (the prepass's
-// normals and motion target: zw the pixel's screen motion since last frame,
-// in uv; 0 where nothing moved or no motion was drawn).
+// normals and motion target: xy the mesh's smooth normal, object.wgsl
+// `depth_normal`; zw the pixel's screen motion since last frame, in uv, 0
+// where nothing moved or no motion was drawn).
 
 struct Back {
     // last frame's pixel (full resolution), negative off its screen
@@ -53,6 +55,30 @@ fn back_of(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> Back {
         }
     }
     return b;
+}
+
+// The mesh's smooth normal at `pixel`, the shading's without its normal
+// map, where the prepass drew one; else `flat`, the triangle's from depth
+// (rt_view.wgsl `normal_at`). A low-poly mesh is lit by the first: what the
+// lights are weighed by, and what tells a surface from the next, follow it,
+// or each triangle shows (gtao.wgsl `oct_decode`, #993). One far from the
+// triangle's is not this surface's (nothing drew it there).
+fn smooth_normal(pixel: vec2<i32>, flat: vec3<f32>) -> vec3<f32> {
+    if (params.camera.w < 0.5) {
+        return flat;
+    }
+    let packed = textureLoad(motion_tex, pixel, 0).xy;
+    let e = vec2<f32>(packed.x - select(0.0, 2.0, packed.x > 1.5), packed.y) * 2.0 - vec2<f32>(1.0);
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
+    }
+    n = normalize(n);
+    if (dot(n, flat) > 0.7) {
+        return n;
+    }
+    return flat;
 }
 
 // The denoiser's guide of a pixel (rt_denoise.wgsl): its normal in two

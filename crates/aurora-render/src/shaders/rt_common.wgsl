@@ -52,6 +52,11 @@ struct CullFace {
 // The records of the posed top level's faces: an instance's custom index
 // is where its skeleton's start, its geometries are its faces in order.
 @group(1) @binding(7) var<storage, read> posed_records: array<u32>;
+// The records of the scene's merged cells' faces (rt_shadows.rs `Cell`):
+// the small still faces of a cell share one level, in world space.
+@group(1) @binding(8) var<storage, read> merged_records: array<u32>;
+// The bit of the scene's custom index that says a merged cell.
+const MERGED: u32 = 0x800000u;
 
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
@@ -140,6 +145,8 @@ struct Surface {
     // world normal, facing the ray's origin
     normal: vec3<f32>,
     uv: vec2<f32>,
+    // the ray met it from behind: its normal was turned to face the origin
+    back: bool,
 };
 
 // The surface of triangle `primitive` of `record` at `bary` (the hit's
@@ -155,10 +162,11 @@ fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> S
     let m = placed_matrix(record, v0);
     let local_n = vertex_normal(v0) * w.x + vertex_normal(v1) * w.y + vertex_normal(v2) * w.z;
     var n = normalize((m * vec4<f32>(local_n, 0.0)).xyz + vec3<f32>(0.0, 0.0, 1e-6));
-    if (dot(n, dir) > 0.0) {
+    var s: Surface;
+    s.back = dot(n, dir) > 0.0;
+    if (s.back) {
         n = -n;
     }
-    var s: Surface;
     s.record = record;
     s.normal = n;
     s.uv = vertex_uv(v0) * w.x + vertex_uv(v1) * w.y + vertex_uv(v2) * w.z;
@@ -166,10 +174,14 @@ fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> S
 }
 
 // The record of a hit: a placed face's instance carries its record, a
-// posed skeleton's instance where its faces' records start.
+// posed skeleton's or a merged cell's instance where its faces' records
+// start (its geometries are its faces in order).
 fn hit_record(posed: bool, custom: u32, geometry: u32) -> u32 {
     if (posed) {
         return posed_records[custom + geometry];
+    }
+    if ((custom & MERGED) != 0u) {
+        return merged_records[(custom & (MERGED - 1u)) + geometry];
     }
     return custom;
 }
@@ -252,6 +264,33 @@ fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
     }
     let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
     let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
+    return !masked_out(record, s.uv);
+}
+
+// How far from a pixel of the view its own curved surface may still be met
+// from behind (m): `shadows`.
+const OWN_REACH: f32 = 4.0;
+
+// Whether a candidate hit stops a shadow ray from a pixel of the view:
+// `stops`, but for the pixel's own curved surface. `curved` says the
+// pixel's flat triangle is turned from the light while its smooth normal
+// still catches it, the band along a low-poly mesh's terminator: the ray
+// then goes through the mesh as its triangles are, and each triangle of
+// the band would be dark whole beside lit ones (the shadow terminator
+// problem). What such a ray meets from behind by the smooth normals,
+// within `OWN_REACH`, is that rounded surface itself, which the shading's
+// own N·L already darkens: only what it meets from the front shadows it.
+// (Such a ray is traced with RAY_FLAG_FORCE_NO_OPAQUE, so the opaque faces
+// come here too.)
+fn shadows(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return false;
+    }
+    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
+    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
+    if (curved && s.back && c.t < OWN_REACH) {
+        return false;
+    }
     return !masked_out(record, s.uv);
 }
 

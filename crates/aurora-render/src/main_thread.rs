@@ -1606,6 +1606,8 @@ impl Renderer {
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
         let rt_camera = params.camera_pos;
+        let rt_far = params.shadow_distance;
+        let rt_shifted = self.world_shift != [0.0; 2];
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1640,6 +1642,8 @@ impl Renderer {
                     &self.cull,
                     &self.rt_palettes,
                     rt_camera,
+                    rt_far,
+                    rt_shifted,
                     &mut self.rt_poses,
                     &mut faces,
                 );

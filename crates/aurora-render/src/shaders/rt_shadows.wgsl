@@ -1,10 +1,19 @@
 // Ray-traced sun shadows of the main view (rt_shadows.rs): one ray per
 // pixel of the single-sample depth prepass, towards the sun or the moon,
-// through the scene's acceleration structures. The result takes the place of
-// the contact shadows' mask (binding 13 of the frame group): `.r` is 0 lit,
-// 1 in shadow, the darker of the traced shadow and the contact shadow, so
-// `sun_shadow` (common.wgsl) needs nothing more than that mask.
-// The ray starts where rt_view.wgsl `ray_origin` puts it.
+// through the scene's acceleration structures. The ray starts where
+// rt_view.wgsl `ray_origin` puts it.
+//
+// Soft (`soft.x`, the tangent of the disc's radius): the ray goes to a
+// point of the sun's disc, another each frame, so a shadow has a penumbra
+// that widens with the distance to what casts it. This frame's ray is then
+// written as it is, `.g` (1 in shadow) beside the contact shadows' `.r`,
+// for rt_lights.wgsl to average over the frames and rt_denoise.wgsl to
+// filter, which write the mask.
+// Sharp (`soft.x` 0): the ray goes to the disc's centre and the result is
+// the mask the frame binds in the contact shadows' place (binding 13 of
+// the frame group): `.r` is 0 lit, 1 in shadow, the darker of the traced
+// shadow and the contact shadow, so `sun_shadow` (common.wgsl) needs
+// nothing more than that mask.
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -22,6 +31,8 @@ struct Params {
     // x: the ray flags, y: 1 when the contact mask is read, z: the rays'
     // reach (m), w: 1 when the avatars' top level is traced.
     mode: vec4<f32>,
+    // x: the tangent of the disc's radius (0: sharp), y: the frame's number.
+    soft: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -52,29 +63,41 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = normal_at(pixel, world, depth);
     let dist = distance(world, params.camera.xyz);
     let origin = ray_origin(world, n, dist);
-    let dir = params.light.xyz;
-    let ray = RayDesc(u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, params.mode.z, origin, dir);
+    var dir = params.light.xyz;
+    let soft = params.soft.x > 0.0;
+    if (soft) {
+        let u = disc_point(id.xy, u32(params.soft.y));
+        let side = normalize(cross(dir, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dir.z) > 0.9)));
+        let up = cross(dir, side);
+        let r = params.soft.x * sqrt(u.x);
+        let phi = 6.2831853 * u.y;
+        dir = normalize(dir + (side * cos(phi) + up * sin(phi)) * r);
+    }
+    // a triangle turned from the sun on a rounded mesh: rt_common.wgsl `shadows`
+    let curved = dot(n, dir) <= 0.0;
+    let flags = u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
+    let ray = RayDesc(flags, 0xFFu, 0.0, params.mode.z, origin, dir);
     var shadow = 0.0;
+    // (one query for both levels: a pass pays for each query it holds)
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
+        if (shadows(rayQueryGetCandidateIntersection(&rq), false, dir, curved)) {
             rayQueryConfirmIntersection(&rq);
         }
     }
     if (rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE) {
         shadow = 1.0;
     } else if (params.mode.w > 0.5) {
-        var rp: ray_query;
-        rayQueryInitialize(&rp, posed_tlas, ray);
-        while (rayQueryProceed(&rp)) {
-            if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
-                rayQueryConfirmIntersection(&rp);
+        rayQueryInitialize(&rq, posed_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (shadows(rayQueryGetCandidateIntersection(&rq), true, dir, curved)) {
+                rayQueryConfirmIntersection(&rq);
             }
         }
-        if (rayQueryGetCommittedIntersection(&rp).kind != RAY_QUERY_INTERSECTION_NONE) {
+        if (rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE) {
             shadow = 1.0;
         }
     }
-    textureStore(out_tex, pixel, vec4<f32>(max(shadow, contact), shadow, 0.0, 0.0));
+    textureStore(out_tex, pixel, vec4<f32>(select(max(shadow, contact), contact, soft), shadow, 0.0, 0.0));
 }

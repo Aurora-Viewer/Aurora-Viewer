@@ -52,3 +52,20 @@ fn ray_origin(world: vec3<f32>, n: vec3<f32>, dist: f32) -> vec3<f32> {
     let off = normalize(n + normalize(params.camera.xyz - world));
     return world + off * (0.01 + 0.002 * dist);
 }
+
+// Two numbers in [0, 1) for a pixel's point on a light's disc this frame
+// (rt_shadows.wgsl's sun, rt_lights.wgsl's lamps): a sequence that fills
+// the disc evenly from frame to frame (two of R3's three, Roberts 2018:
+// rt_lights.wgsl `turn` is the third), from a start that differs evenly
+// from a pixel to its neighbours (interleaved gradient noise, Jimenez
+// 2014).
+fn ign(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+fn disc_point(id: vec2<u32>, frame: u32) -> vec2<f32> {
+    let p = vec2<f32>(id);
+    let start = vec2<f32>(ign(p), ign(p.yx + vec2<f32>(31.0, 17.0)));
+    let step = vec2<f32>(vec2<u32>(frame * 2882110345u, frame * 2360945575u) >> vec2<u32>(8u)) / 16777216.0;
+    return fract(start + step);
+}
