@@ -3599,6 +3599,7 @@ dev-toolbox-o6 = Complexity in name tags
 dev-toolbox-o7 = Inspect objects
 dev-toolbox-o8 = Avatar health
 dev-toolbox-o9 = Follow sculpts
+dev-toolbox-o10 = Avatar hitboxes
 dev-toolbox-n1 = Network graph
 dev-toolbox-n2 = Region summary
 dev-toolbox-p1 = Performance

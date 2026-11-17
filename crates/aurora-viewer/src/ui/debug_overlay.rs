@@ -27,6 +27,40 @@ const RED: Color32 = Color32::from_rgb(240, 70, 70);
 const ORANGE: Color32 = Color32::from_rgb(245, 160, 50);
 const GREY: Color32 = Color32::from_gray(140);
 
+/// The hitbox frame the Legacy Viewer draws for Developer › Render Metadata ›
+/// Avatar Hitboxes: the avatar's own position and rotation, half its scale
+/// in either direction. Port of `LLDrawPoolAvatar::renderAvatars`
+/// (indra/newview/lldrawpoolavatar.cpp, originally LGPL 2.1), gated by
+/// `DebugRenderHitboxes` (indra/newview/app_settings/settings.xml).
+fn avatar_hitbox_frame(pos: Vec3, rot: Quat, scale: Vec3) -> (Vec3, Quat, Vec3) {
+    (pos, rot, scale * 0.5)
+}
+
+/// One stable colour per avatar for the hitbox overlay, in the spirit of
+/// the Legacy Viewer's per-avatar `LLNetMap::getAvatarColor`
+/// (indra/newview/llnetmap.cpp): a bright hue hashed from the id, so
+/// neighbouring boxes tell apart.
+fn avatar_hitbox_color(id: &uuid::Uuid) -> Color32 {
+    let mut h: u64 = 0;
+    for &b in id.as_bytes() {
+        h = h.wrapping_mul(31).wrapping_add(u64::from(b));
+    }
+    let hue = (h % 360) as f32;
+    let (s, v) = (0.7, 1.0);
+    let c = v * s;
+    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match hue as u32 / 60 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    Color32::from_rgb(((r + m) * 255.0) as u8, ((g + m) * 255.0) as u8, ((b + m) * 255.0) as u8)
+}
+
 struct Lines<'a> {
     painter: egui::Painter,
     proj: &'a Projector,
@@ -57,15 +91,21 @@ impl Lines<'_> {
 
     /// Sphere as its three great circles.
     fn sphere(&self, c: Vec3, r: f32, color: Color32) {
+        self.ellipsoid(c, Quat::IDENTITY, Vec3::splat(r), color);
+    }
+
+    /// Ellipsoid as its three great circles, oriented by `rot`.
+    fn ellipsoid(&self, c: Vec3, rot: Quat, radii: Vec3, color: Color32) {
         const N: usize = 32;
         let pt = |axis: usize, i: usize| {
             let a = i as f32 / N as f32 * std::f32::consts::TAU;
             let (s, co) = a.sin_cos();
-            c + r * match axis {
-                0 => Vec3::new(co, s, 0.0),
-                1 => Vec3::new(co, 0.0, s),
-                _ => Vec3::new(0.0, co, s),
-            }
+            c + rot
+                * match axis {
+                    0 => Vec3::new(0.0, radii.y * co, radii.z * s),
+                    1 => Vec3::new(radii.x * co, 0.0, radii.z * s),
+                    _ => Vec3::new(radii.x * co, radii.y * s, 0.0),
+                }
         };
         for axis in 0..3 {
             for i in 0..N {
@@ -395,6 +435,24 @@ pub fn draw(
             }
         }
     }
+
+    // O10 shows the Legacy Viewer hitbox: the avatar's own oriented box,
+    // half its scale in either direction. Visual parity only: picking still
+    // tests the fixed click box (scene::picking).
+    if dv.avatar_pick_box {
+        for (idx, o) in world.objects.avatars() {
+            let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
+                continue;
+            };
+            if pp.distance(eye) > SKELETON_RANGE {
+                continue;
+            }
+            if dv.avatar_pick_box && scene.gpu.get(idx).is_some() {
+                let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
+                lines.obb(pos, rot, half, avatar_hitbox_color(&o.full_id));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -472,5 +530,32 @@ mod tests {
         let small = info(400.0, 3, 3, 5.0, false);
         let first = lod_labels(&[small, large], egui::pos2(380.0, 100.0), 150.0, 1, on_plane);
         assert_eq!(first[0].1.shown, 1);
+    }
+
+    #[test]
+    fn the_hitbox_follows_the_avatars_own_frame_like_the_legacy_viewer() {
+        // half the avatar's scale in either direction, kept oriented
+        let (pos, rot, half) = avatar_hitbox_frame(
+            Vec3::new(10.0, 4.0, 1.0),
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Vec3::new(0.6, 0.6, 1.9),
+        );
+        assert!(pos.abs_diff_eq(Vec3::new(10.0, 4.0, 1.0), 1e-6));
+        assert!(rot.abs_diff_eq(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-6));
+        assert!(half.abs_diff_eq(Vec3::new(0.3, 0.3, 0.95), 1e-6));
+        // the corners reach the rotated half extents, not an axis-aligned box
+        let corner = pos + rot * (half * Vec3::new(1.0, 1.0, 1.0));
+        assert!(corner.abs_diff_eq(Vec3::new(9.7, 4.3, 1.95), 1e-5), "{corner}");
+    }
+
+    #[test]
+    fn each_avatar_gets_its_own_bright_hitbox_colour() {
+        let a = avatar_hitbox_color(&uuid::Uuid::from_u128(1));
+        let b = avatar_hitbox_color(&uuid::Uuid::from_u128(2));
+        assert_eq!(a, avatar_hitbox_color(&uuid::Uuid::from_u128(1)), "stable");
+        assert_ne!((a.r(), a.g(), a.b()), (b.r(), b.g(), b.b()), "distinct");
+        for c in [a, b] {
+            assert!(c.r().max(c.g()).max(c.b()) > 150, "bright enough over the scene: {c:?}");
+        }
     }
 }
