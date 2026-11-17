@@ -378,6 +378,12 @@ impl ChatUi {
         }
     }
 
+    /// The search typed in the column's field, whatever the rail shows: the
+    /// Dev Toolbox's Contacts report (J10) names it when it hides the entry.
+    pub fn column_filter(&self) -> &str {
+        self.side_filter.trim()
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.

@@ -3890,6 +3890,7 @@ dev-toolbox-j6 = Ouvrir le dossier des journaux
 dev-toolbox-j7 = Erreurs de scripts
 dev-toolbox-j8 = État IK
 dev-toolbox-j9 = Squelette des animesh portées
+dev-toolbox-j10 = État de l'onglet Contacts
 dev-toolbox-l1 = Sous le curseur
 dev-toolbox-l2 = Objets portés de la cible
 dev-toolbox-l3 = Problèmes en direct
