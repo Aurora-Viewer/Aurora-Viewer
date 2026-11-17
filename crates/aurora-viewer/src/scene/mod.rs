@@ -794,6 +794,15 @@ pub struct SceneStats {
     pub skeletons_rebuilt: usize,
     /// How the avatars of the last lists are drawn.
     pub avatars: AvatarCounts,
+    /// Avatars, ours included, within the draw distance (Autotune).
+    pub avatars_in_range: usize,
+    /// Avatars, ours included, nearer than `Scene::avatar_count_radius`, and
+    /// than it less `autotune::DISTANCE_MARGIN`, within the draw distance
+    /// (Autotune's distance mode); 0 when it is 0. `avatars_within_radius`
+    /// is the radius they were counted with.
+    pub avatars_within: usize,
+    pub avatars_well_within: usize,
+    pub avatars_within_radius: f32,
 }
 
 /// How the avatars of a frame's lists are drawn (`avatar summary`).
@@ -1103,6 +1112,17 @@ pub struct Scene {
     complexity_slice: usize,
     /// Avatars drawn (the nearest ones; own avatar always).
     pub max_avatars: usize,
+    /// While Autotune lowers `max_avatars`: the avatars (slots) the user
+    /// keeps in full, set to always render fully or friends when friends
+    /// are always shown fully, drawn in full anyway among the nearest
+    /// `avatar_keep_full_within` (the user's own limit). The Legacy Viewer's
+    /// Autotune spares them too (LLVOAvatar::updateTooSlow). Empty, and 0,
+    /// otherwise.
+    pub avatar_keep_full: std::collections::HashSet<usize>,
+    pub avatar_keep_full_within: usize,
+    /// The distance within which `stats.avatars_within` counts the avatars
+    /// (m, 0 for none).
+    pub avatar_count_radius: f32,
     /// Build reflection draw lists (planar reflections enabled).
     pub reflections: bool,
     /// Camera vertical field of view (LOD scaling).
@@ -1783,6 +1803,9 @@ impl Scene {
             complexity_round: Vec::new(),
             complexity_slice: 0,
             max_avatars: 16,
+            avatar_keep_full: Default::default(),
+            avatar_keep_full_within: 0,
+            avatar_count_radius: 0.0,
             reflections: true,
             fov_y: 1.0,
             env_tex: [(Uuid::nil(), 0); 6],
@@ -4967,10 +4990,13 @@ impl Scene {
                 .collect()
         };
         avatars.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        let mut avatar_ok = vec![false; self.gpu.len()];
-        for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
-            avatar_ok[*i] = true;
-        }
+        let mut avatar_ok = impostors::in_full(
+            &avatars,
+            self.gpu.len(),
+            self.max_avatars,
+            &self.avatar_keep_full,
+            self.avatar_keep_full_within,
+        );
         for &index in self.portals.planes.keys() {
             avatar_ok[index] = true;
         }
@@ -4978,7 +5004,7 @@ impl Scene {
         // complete, and one over the complexity limit is its silhouette)
         let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
-            .skip(self.max_avatars.max(1))
+            .filter(|(_, index)| !avatar_ok.get(*index).copied().unwrap_or(false))
             .filter(|(_, index)| !self.portals.planes.contains_key(index))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
@@ -5015,6 +5041,25 @@ impl Scene {
             }
         }
         self.stats.avatars_hidden = imp_avatars.len();
+        // (sorted by distance, ours first at -1)
+        let within = |radius: f32| {
+            let radius = radius.min(dd);
+            if radius > 0.0 {
+                avatars.partition_point(|(d, _)| *d < radius)
+            } else {
+                0
+            }
+        };
+        self.stats.avatars_in_range = within(dd);
+        let radius = self.avatar_count_radius;
+        let (outer, inner) = if radius > 0.0 {
+            (within(radius), within(radius - crate::settings::autotune::DISTANCE_MARGIN))
+        } else {
+            (0, 0)
+        };
+        self.stats.avatars_within = outer;
+        self.stats.avatars_well_within = inner;
+        self.stats.avatars_within_radius = radius;
         // every frame, not only with the probes: the crash report's last state
         // and the grid's viewer statistics read these too
         self.stats.avatars = AvatarCounts {
@@ -5866,13 +5911,9 @@ impl Scene {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
-            let target = if owner == world.agent_id {
-                Some(world.look_at.own.target)
-            } else {
-                world.look_at.remote.get(&owner).copied()
-            };
+            let (target, ahead) = world.look_at.gaze_of(owner, world.agent_id);
+            let photo_look = world.look_at.photo.at(owner, world.agent_id).is_some();
             use crate::world::lookat::Gaze;
-            let ahead = owner == world.agent_id && world.look_at.own_ahead;
             let look = match crate::world::lookat::gaze(target, ahead) {
                 Gaze::Unknown | Gaze::Ahead => Some((false, None)),
                 Gaze::Cleared => Some((true, None)),
@@ -5939,6 +5980,8 @@ impl Scene {
             motions.ground = self.grounding_frame(world, idx, now);
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
             motions.aurora_feet = self.ground_avatar_feet;
+            motions.look_over_animations = photo_look;
+            motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {

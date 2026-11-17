@@ -53,6 +53,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &Icons::default(),
                     &mut world,
                     state,
+                    None,
                     &mut prefs,
                     &mut true,
                     false,

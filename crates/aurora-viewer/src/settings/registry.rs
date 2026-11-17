@@ -234,6 +234,9 @@ impl Settings {
         self.hover_height_account = current.hover_height_account;
         self.photo_held = current.photo_held.clone();
         self.draw_stepping = current.draw_stepping;
+        // (Autotune's hold: without it, the tuned values would become the
+        // user's and be saved)
+        self.autotune_hold = current.autotune_hold;
         self.newer_file = current.newer_file.clone();
         self.new_profile = current.new_profile;
         self.camera_limits_restored = current.camera_limits_restored;
@@ -432,6 +435,30 @@ mod tests {
         assert_eq!(s.hover_height_account, Some(uuid::Uuid::from_u128(7)));
         assert_eq!(s.mfa_hash, "kept");
         assert_eq!(s.username, "someone");
+    }
+
+    #[test]
+    fn autotunes_hold_survives_a_change_and_the_users_values_stay_theirs() {
+        use crate::settings::autotune::{Hold, Tuned};
+        let mut s = Settings {
+            draw_distance: 256.0,
+            max_avatars: 16,
+            ..Settings::default()
+        };
+        let mut hold = Hold::new(&s);
+        hold.write(
+            &mut s,
+            Tuned {
+                draw_distance: 64.0,
+                max_avatars: 6,
+            },
+        );
+        s.autotune_hold = Some(hold);
+        set(&mut s, "show_huds", json!(false)).expect("set");
+        assert!(s.autotune_hold.is_some());
+        assert_eq!((s.draw_distance, s.max_avatars), (64.0, 6), "still tuned");
+        let saved = s.to_saved();
+        assert_eq!((saved.draw_distance, saved.max_avatars), (256.0, 16), "the file keeps the user's");
     }
 
     #[test]

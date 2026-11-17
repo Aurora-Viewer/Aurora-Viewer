@@ -1,6 +1,7 @@
 //! Reliable UDP circuit bookkeeping (port of the essentials of
 //! `llmessage/llcircuit.cpp`): sequence numbers, resends, acks, dedupe.
 
+use crate::circuit_socket::DatagramOut;
 use crate::packet_loss::PacketLoss;
 use crate::stats::NetStats;
 use aurora_msg::packet::{PacketFlags, build_raw};
@@ -9,7 +10,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 
 const MAX_RESENDS: u8 = 4;
 const DEDUPE_WINDOW: usize = 2048;
@@ -116,7 +116,7 @@ impl Circuit {
         }
     }
 
-    fn raw_send(&self, sock: &UdpSocket, stats: &NetStats) -> bool {
+    fn raw_send(&self, sock: &impl DatagramOut, stats: &NetStats) -> bool {
         match sock.try_send_to(&self.buf, self.addr) {
             Ok(n) => {
                 stats.packets_out.fetch_add(1, Ordering::Relaxed);
@@ -132,18 +132,18 @@ impl Circuit {
     }
 
     /// Encode and send a message, piggybacking pending acks. Returns the sequence number.
-    pub fn send<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
+    pub fn send<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, reliable: bool) -> u32 {
         self.send_with(sock, stats, msg, reliable.then_some(Resend::DEFAULT), None)
     }
 
     /// Send a reliable message with its own resend policy.
-    pub fn send_reliable_with<M: Msg>(&mut self, sock: &UdpSocket, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
+    pub fn send_reliable_with<M: Msg>(&mut self, sock: &impl DatagramOut, stats: &NetStats, msg: &M, policy: Resend) -> u32 {
         self.send_with(sock, stats, msg, Some(policy), None)
     }
 
     pub(crate) fn send_offer<M: Msg>(
         &mut self,
-        sock: &UdpSocket,
+        sock: &impl DatagramOut,
         stats: &NetStats,
         msg: &M,
         receipt: crossbeam_channel::Sender<crate::InventoryOfferStatus>,
@@ -157,7 +157,7 @@ impl Circuit {
 
     fn send_with<M: Msg>(
         &mut self,
-        sock: &UdpSocket,
+        sock: &impl DatagramOut,
         stats: &NetStats,
         msg: &M,
         reliable: Option<Resend>,
@@ -260,7 +260,7 @@ impl Circuit {
     }
 
     /// Resend timed-out reliable packets and flush standalone acks.
-    pub fn tick(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn tick(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         let now = Instant::now();
         let loss_rtt = self
             .ping_wait_started
@@ -310,7 +310,7 @@ impl Circuit {
         }
     }
 
-    pub fn flush_acks(&mut self, sock: &UdpSocket, stats: &NetStats) {
+    pub fn flush_acks(&mut self, sock: &impl DatagramOut, stats: &NetStats) {
         self.last_ack_flush = Instant::now();
         while !self.pending_acks.is_empty() {
             let n = self.pending_acks.len().min(250);
@@ -359,6 +359,7 @@ impl Circuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UdpSocket;
 
     const RELIABLE: u8 = PacketFlags::RELIABLE;
     const RESENT: u8 = PacketFlags::RELIABLE | PacketFlags::RESENT;

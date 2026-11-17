@@ -382,6 +382,10 @@ pub struct InventoryPreferences {
     /// Aurora's window shows the selection's details: the card at the
     /// bottom of the narrow and medium widths, the pane of the wide one.
     pub show_details: bool,
+    /// Aurora's dual-panel layout: two panes side by side in the Inventory
+    /// window, each with its own folder, search and selection. Off by
+    /// default (the Legacy Viewer has one pane).
+    pub dual_panel: bool,
     /// Folder icon colors (`folder_colors.rs`): this viewer only, on by default.
     pub folder_colors_enabled: bool,
     pub folder_colors: std::collections::BTreeMap<Uuid, [u8; 3]>,
@@ -434,6 +438,7 @@ impl Default for InventoryPreferences {
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,
+            dual_panel: false,
             folder_colors_enabled: true,
             folder_colors: Default::default(),
         }
@@ -2303,6 +2308,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            dual_panel: true,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");

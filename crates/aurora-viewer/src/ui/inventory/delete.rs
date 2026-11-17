@@ -79,6 +79,37 @@ pub(super) fn confirm_or_run(
     }
 }
 
+/// Delete asked from another window (the trash of the Gestures window,
+/// #3507): the inventory's own rule, so "Do not show again" holds there too.
+/// Returns whether a confirmation waits: the inventory window draws it, and
+/// the caller opens that window.
+pub(crate) fn request_from_window(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    worn: HashSet<Uuid>,
+    actions: &mut Vec<InvAction>,
+    ids: Vec<Uuid>,
+) -> bool {
+    if !prefs.confirm_delete {
+        let (before, facts) = (
+            actions.len(),
+            Facts {
+                worn,
+                ..Default::default()
+            },
+        );
+        confirm_or_run(inv, st, prefs, &facts, actions, ids.clone());
+        if actions.len() > before || st.dialog.is_some() || !st.message.is_empty() {
+            return st.dialog.is_some();
+        }
+    }
+    // asked for, or nothing could run without it (a protected folder, another
+    // change under way): the confirmation, which states the reason
+    st.dialog = Some(EditDialog::Delete(ids, false));
+    true
+}
+
 pub(super) fn request(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts, actions: &mut Vec<InvAction>) {
     let ids: Vec<_> = st.selection.iter().copied().collect();
     confirm_or_run(inv, st, prefs, facts, actions, ids);
@@ -338,6 +369,12 @@ pub(crate) struct DeleteSelection {
     deleted: HashSet<Uuid>,
     candidates: Vec<Uuid>,
     next: Option<Uuid>,
+}
+
+impl DeleteSelection {
+    pub(crate) fn window(&self) -> Uuid {
+        self.window
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

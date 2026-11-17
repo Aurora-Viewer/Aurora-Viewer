@@ -18,13 +18,14 @@ use super::hud::Projector;
 use super::viewfinder::{Isolate, IsolateRow};
 use super::widgets::{self, ActionKind, Floater};
 use crate::camera::track::{self, Curve, Keyframe, Pose};
-use crate::director::{self, Director, Format, Joint, Mode, Target};
+use crate::director::{self, Aim, Director, Format, Joint, KeyAim, Mode, Target};
 use crate::recorder;
 use crate::snapshot::isolate::{Isolation, Mode as Shown};
 use crate::theme::Palette;
 use crate::world::eep_env::LocalView;
 use egui::{Align2, Color32, FontId, Id, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use glam::Vec3;
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 /// The window's id.
@@ -133,9 +134,11 @@ pub struct Live {
     pub restricted: bool,
     /// The camera is focused on an avatar or an object: the lock can take it.
     pub focus: bool,
-    /// Where the lock's target is now (smoothed); `None` when it is not in
-    /// sight, or nothing needs it.
+    /// Where what the view looks at now is (smoothed); `None` when it is
+    /// not in sight, or the view looks at nothing.
     pub target: Option<Vec3>,
+    /// A target the lock or a keyframe looks at is not in sight.
+    pub lost: bool,
     /// The track has a change to undo, an undone one to redo.
     pub can_undo: bool,
     pub can_redo: bool,
@@ -248,62 +251,117 @@ pub fn window(
     Floater::new(WINDOW, aurora_i18n::tr!("director-title"), pos, Vec2::new(WIDTH, 560.0))
         .auto_height()
         .show(ctx, p, open, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(room)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                    widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
-                        camera_section(ui, p, live, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
-                        lock_section(ui, p, d, live, actions);
-                    });
-                    let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
-                        Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
-                        None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
-                    };
-                    widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
-                        keyframe_section(ui, p, d, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
-                        path_section(ui, p, d);
-                    });
-                    widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
-                        playback_section(ui, p, d);
-                    });
-                    widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
-                        picture_section(ui, p, d, live.target.is_some());
-                    });
-                    widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
-                        record_section(ui, p, record, live, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
-                        tracks_section(ui, p, tracks, d.track.is_empty(), actions);
-                    });
-                    widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
-                        isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
-                    });
-                    let Env {
-                        ui: lists,
-                        view,
-                        loading,
-                        time_of_day,
-                        lighting,
-                        out,
-                    } = env;
-                    widgets::collapsing(
-                        ui,
-                        p,
-                        "director_environment",
-                        aurora_i18n::tr!("director-environment"),
-                        false,
-                        |ui| {
-                            lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
-                        },
-                    );
+            widgets::auto_height_body(room).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
+                    camera_section(ui, p, live, actions);
                 });
+                widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
+                    lock_section(ui, p, d, live, actions);
+                });
+                let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
+                    Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
+                    None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
+                };
+                widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
+                    keyframe_section(ui, p, d, actions);
+                });
+                widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
+                    path_section(ui, p, d);
+                });
+                widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
+                    playback_section(ui, p, d);
+                });
+                widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
+                    picture_section(ui, p, d, live.target.is_some());
+                });
+                widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
+                    record_section(ui, p, record, live, actions);
+                });
+                widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
+                    tracks_section(ui, p, tracks, d.track.is_empty(), actions);
+                });
+                widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
+                    isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
+                });
+                let Env {
+                    ui: lists,
+                    view,
+                    loading,
+                    time_of_day,
+                    lighting,
+                    out,
+                } = env;
+                widgets::collapsing(
+                    ui,
+                    p,
+                    "director_environment",
+                    aurora_i18n::tr!("director-environment"),
+                    false,
+                    |ui| {
+                        lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
+                    },
+                );
+            });
         });
+    clear_prompt(ctx, p, d);
+}
+
+fn clear_asked_id() -> Id {
+    Id::unique("director_clear_asked")
+}
+
+/// "Clear the track" asks first (the playback section's button and the
+/// timeline's): every keyframe goes, which the undo brings back.
+fn ask_clear(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(clear_asked_id(), true));
+}
+
+/// The question "Clear the track?", while it is asked: Clear empties it,
+/// Cancel, Escape or a click beside the question leaves it as it is.
+fn clear_prompt(ctx: &egui::Context, p: &Palette, d: &mut Director) {
+    if !ctx.data(|data| data.get_temp::<bool>(clear_asked_id())).unwrap_or(false) {
+        return;
+    }
+    if d.track.is_empty() || d.playing() {
+        ctx.data_mut(|data| data.remove_temp::<bool>(clear_asked_id()));
+        return;
+    }
+    let mut answer = None;
+    let modal = widgets::Modal::new(Id::unique("director_clear")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.label(RichText::new(aurora_i18n::tr!("director-clear-confirm")).size(17.0).color(p.ink));
+        ui.add_space(8.0);
+        ui.label(aurora_i18n::tr!("director-clear-confirm-text", count = d.track.len()));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let size = Vec2::new(0.0, 26.0);
+            if widgets::action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("director-clear-action"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                answer = Some(true);
+            }
+            if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    if let Some(clear) = answer {
+        ctx.data_mut(|data| data.remove_temp::<bool>(clear_asked_id()));
+        if clear {
+            d.clear();
+        }
+    }
 }
 
 fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec<Action>) {
@@ -343,6 +401,29 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
                 actions.push(Action::FreeSpeed(speed));
             }
         });
+    }
+}
+
+/// A target as the window names it: whose, and which part of an avatar.
+fn aim_label(aim: Aim) -> String {
+    let target = match aim.target {
+        Target::Own => aurora_i18n::tr!("director-lock-own"),
+        Target::Avatar(_) => aurora_i18n::tr!("director-lock-avatar"),
+        Target::Object(_) => return aurora_i18n::tr!("director-lock-object").to_owned(),
+    };
+    aurora_i18n::tr!("director-aim-joint", target = target, joint = joint_label(aim.joint))
+}
+
+/// What a keyframe looks at when it plays, as the window says it.
+fn key_aim_label(d: &Director, aim: KeyAim) -> String {
+    match aim {
+        KeyAim::Lock if d.lock.on => {
+            let target = aim_label(d.lock.aim());
+            aurora_i18n::tr!("director-key-aim-lock-on", target = target.as_str())
+        }
+        KeyAim::Lock => aurora_i18n::tr!("director-key-aim-lock-off").to_owned(),
+        KeyAim::Free => aurora_i18n::tr!("director-key-aim-free").to_owned(),
+        KeyAim::On(aim) => aim_label(aim),
     }
 }
 
@@ -431,11 +512,10 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
             .trailing_fill(true);
         ui.add(slider).on_hover_text(aurora_i18n::tr!("director-lock-smoothing-tip"));
     });
-    // a lock that is asked for and finds nothing says so: the view is free
-    let wanted = d.lock.on || d.track.keys().iter().any(|key| key.locked);
+    // a target that is asked for and not found says so: the view is free
     if live.restricted {
         ui.label(RichText::new(aurora_i18n::tr!("director-restricted")).size(12.0).color(p.warn));
-    } else if wanted && live.target.is_none() {
+    } else if live.lost {
         ui.label(RichText::new(aurora_i18n::tr!("director-lock-lost")).size(12.0).color(p.warn));
     }
 }
@@ -852,13 +932,45 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     {
         d.track.set_rest(index, rest);
     }
-    let mut locked = key.locked;
-    if widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("director-key-locked"))
-        .on_hover_text(aurora_i18n::tr!("director-key-locked-tip"))
-        .changed()
-    {
-        d.track.set_locked(index, locked);
-    }
+    // what it looks at when it plays: the lock's target while the lock is
+    // on, a target of its own, or where its camera was laid
+    row(ui, p, aurora_i18n::tr!("director-key-aim"), |ui| {
+        ui.label(RichText::new(key_aim_label(d, key.aim)).size(12.5).color(p.ink))
+            .on_hover_text(aurora_i18n::tr!("director-key-aim-tip"));
+    });
+    ui.horizontal_wrapped(|ui| {
+        let size = Vec2::new(0.0, 26.0);
+        let own = KeyAim::On(d.lock.aim());
+        let choices = [
+            (
+                own,
+                "crosshair",
+                aurora_i18n::tr!("director-key-aim-take"),
+                aurora_i18n::tr!("director-key-aim-take-tip"),
+            ),
+            (
+                KeyAim::Free,
+                "circle-x-filled",
+                aurora_i18n::tr!("director-key-aim-clear"),
+                aurora_i18n::tr!("director-key-aim-clear-tip"),
+            ),
+            (
+                KeyAim::Lock,
+                "link-filled",
+                aurora_i18n::tr!("director-key-aim-follow"),
+                aurora_i18n::tr!("director-key-aim-follow-tip"),
+            ),
+        ];
+        for (aim, icon, label, tip) in choices {
+            if widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, size, key.aim != aim)
+                .on_hover_text(tip)
+                .on_disabled_hover_text(tip)
+                .clicked()
+            {
+                d.track.set_aim(index, aim);
+            }
+        }
+    });
     ui.horizontal(|ui| {
         let size = Vec2::new(0.0, 26.0);
         if widgets::action_button(
@@ -1040,7 +1152,7 @@ fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
     )
     .clicked()
     {
-        d.clear();
+        ask_clear(ui.ctx());
     }
 }
 
@@ -1076,7 +1188,11 @@ fn paint_key(painter: &egui::Painter, center: Pos2, half: f32, color: Color32) {
 pub fn timeline(ctx: &egui::Context, p: &Palette, d: &mut Director, bottom_top: f32, live: &Live, actions: &mut Vec<Action>) -> f32 {
     let room = super::layout::work_area(ctx);
     let width = (room.width() - 2.0 * STRIP_GAP).clamp(320.0, STRIP_MAX_W);
-    let area = egui::Area::new(Id::unique("director_timeline"))
+    let id = Id::unique("director_timeline");
+    // under the windows, but a click on it, between its buttons included, is
+    // its own: never the world's (a walk, or the avatar stood up)
+    widgets::solid_background(ctx, id);
+    let area = egui::Area::new(id)
         .order(egui::Order::Background)
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(room.center().x.round(), (bottom_top - STRIP_GAP).round()))
@@ -1191,6 +1307,23 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
         && let Some(index) = d.selected
     {
         d.remove(index);
+    }
+    // every keyframe at once, once asked (`clear_prompt`)
+    let tip = aurora_i18n::tr!("director-clear-tip");
+    if widgets::action_button_if(
+        ui,
+        p,
+        "trash-x-filled",
+        "",
+        ActionKind::FlatDanger,
+        STRIP_BUTTON,
+        !d.track.is_empty(),
+    )
+    .on_hover_text(tip)
+    .on_disabled_hover_text(tip)
+    .clicked()
+    {
+        ask_clear(ui.ctx());
     }
     for (icon, tip, enabled, action) in [
         ("arrow-back-up", aurora_i18n::tr!("director-undo"), live.can_undo, Action::Undo),
@@ -1442,15 +1575,15 @@ pub fn guides(ctx: &egui::Context, p: &Palette, proj: &Projector, d: &Director, 
 /// The track in the world, while it is edited: the path, a dot each second,
 /// a camera at each keyframe (click: select; double click: the camera goes
 /// there), the handles of the selected one and where the playhead is. A
-/// locked keyframe's camera points at the lock's `target`, as it will when
-/// the track plays.
+/// keyframe's camera points at what it looks at (its target, where `aims`
+/// has found it), as it will when the track plays.
 pub fn world(
     ctx: &egui::Context,
     p: &Palette,
     proj: &Projector,
     d: &mut Director,
     aspect: f32,
-    target: Option<Vec3>,
+    aims: &HashMap<Aim, Vec3>,
     actions: &mut Vec<Action>,
 ) {
     if !d.show_path || d.track.is_empty() || d.mode != Mode::Editing {
@@ -1493,9 +1626,9 @@ pub fn world(
         let selected = d.selected == Some(index);
         let color = if selected { p.violet_light } else { p.ink };
         let stroke = Stroke::new(if selected { 2.0 } else { 1.5 }, color);
-        let shown = match target {
-            Some(point) if key.locked => key.pose.aimed(point, 1.0),
-            _ => key.pose,
+        let shown = match d.key_aim(index).and_then(|aim| aims.get(&aim)) {
+            Some(point) => key.pose.aimed(*point, 1.0),
+            None => key.pose,
         };
         for (a, b) in camera_edges(&shown, aspect) {
             line(&painter, proj, a, b, Stroke::new(stroke.width, color.gamma_multiply(0.3)));
@@ -1511,7 +1644,10 @@ pub fn world(
         let above = at - egui::vec2(0.0, 9.0);
         painter.text(above + egui::vec2(1.0, 1.0), Align2::CENTER_BOTTOM, &label, font.clone(), p.bar);
         painter.text(above, Align2::CENTER_BOTTOM, &label, font, color);
-        let response = egui::Area::new(Id::unique(("director_world_key", index)))
+        let id = Id::unique(("director_world_key", index));
+        // (a click on it is the keyframe's: never a walk to where it is)
+        widgets::solid_background(ctx, id);
+        let response = egui::Area::new(id)
             .order(egui::Order::Background)
             .pivot(Align2::CENTER_CENTER)
             .fixed_pos(at)
@@ -1610,6 +1746,7 @@ mod tests {
             restricted: false,
             focus: false,
             target: None,
+            lost: false,
             can_undo: false,
             can_redo: false,
             can_record: false,
@@ -1671,6 +1808,37 @@ mod tests {
     }
 
     #[test]
+    fn clearing_the_track_is_asked_first_and_escape_keeps_it() {
+        let mut bench = Bench::new();
+        let mut d = three();
+        let asked = |ctx: &egui::Context| ctx.data(|data| data.get_temp::<bool>(clear_asked_id())).unwrap_or(false);
+        // nothing asked: no question, the track as it is
+        bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx));
+        ask_clear(&bench.ctx);
+        for _ in 0..3 {
+            bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        }
+        assert!(asked(&bench.ctx), "the question waits for an answer");
+        assert_eq!(d.track.len(), 3);
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        bench.frame(vec![escape], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx), "Escape answers it");
+        assert_eq!(d.track.len(), 3, "and keeps the track");
+        // a track emptied meanwhile has nothing left to ask about
+        ask_clear(&bench.ctx);
+        d.clear();
+        bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx));
+    }
+
+    #[test]
     fn the_strip_sits_above_the_bar_and_asks_for_a_keyframe() {
         let mut bench = Bench::new();
         let mut d = Director::default();
@@ -1728,7 +1896,7 @@ mod tests {
         });
         assert_eq!(d.mode, Mode::Scrubbing);
         assert!(d.time > d.track.duration(), "the playhead went where the pointer is: {}", d.time);
-        assert!(d.view(None).is_some());
+        assert!(d.view(|_| None).is_some());
         bench.frame(vec![Bench::button(at, false)], |ctx, p| {
             timeline(ctx, p, &mut d, BOTTOM_TOP, &live(), &mut actions);
         });
@@ -1767,7 +1935,9 @@ mod tests {
         };
         let mut actions = Vec::new();
         for _ in 0..3 {
-            bench.frame(vec![], |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(vec![], |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         let (at, _) = projector.project(d.track.keys()[1].pose.position).expect("in view");
         for events in [
@@ -1775,7 +1945,9 @@ mod tests {
             vec![Bench::button(at, true)],
             vec![Bench::button(at, false)],
         ] {
-            bench.frame(events, |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(events, |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         assert_eq!(d.selected, Some(1));
         assert_eq!(d.time, 3.0, "the playhead follows the selection");
@@ -1784,7 +1956,9 @@ mod tests {
         d.selected = None;
         d.scrub(1.0);
         for events in [vec![Bench::button(at, true)], vec![Bench::button(at, false)]] {
-            bench.frame(events, |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(events, |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         assert_eq!(d.selected, None);
     }

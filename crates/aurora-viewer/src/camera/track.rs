@@ -15,6 +15,7 @@
 //! also a cubic Bézier curve (`Track::handles`), which is what the world
 //! overlay draws.
 
+use crate::director::{Aim, Joint, KeyAim, Target};
 use crate::joystick::flycam::Flycam;
 use glam::{Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -28,8 +29,10 @@ pub const MIN_GAP: f32 = 0.1;
 pub const MAX_KEYS: usize = 200;
 /// The last keyframe is never later than this (seconds).
 pub const MAX_TIME: f32 = 3600.0;
-/// The version of the tracks' files (`TrackFile`).
-pub const FILE_VERSION: u32 = 1;
+/// The version of the tracks' files (`TrackFile`): 2 gives each keyframe
+/// what it looks at (`KeyFile::aim`); a file of 1 says only whether it is
+/// locked.
+pub const FILE_VERSION: u32 = 2;
 /// A hand-held camera at its most: how far it turns (radians) and drifts
 /// (metres) around the view it is given.
 const HAND_TURN: f32 = 0.02;
@@ -155,8 +158,61 @@ pub struct KeyFile {
     pub fov: f32,
     #[serde(default)]
     pub rest: bool,
+    /// Written for the files of 1: the keyframe looks at a target.
     #[serde(default)]
     pub locked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aim: Option<AimFile>,
+}
+
+/// What a keyframe looks at, as a track's file keeps it: the joint by its
+/// bone's name, the avatar or the object by its id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AimFile {
+    Lock,
+    Free,
+    Own { joint: String },
+    Avatar { id: String, joint: String },
+    Object { id: String },
+}
+
+impl AimFile {
+    fn of(aim: KeyAim) -> AimFile {
+        let joint = |aim: Aim| aim.joint.bone().to_owned();
+        match aim {
+            KeyAim::Lock => AimFile::Lock,
+            KeyAim::Free => AimFile::Free,
+            KeyAim::On(aim) => match aim.target {
+                Target::Own => AimFile::Own { joint: joint(aim) },
+                Target::Avatar(id) => AimFile::Avatar {
+                    id: id.to_string(),
+                    joint: joint(aim),
+                },
+                Target::Object(id) => AimFile::Object { id: id.to_string() },
+            },
+        }
+    }
+
+    /// A file is data from outside: an id that is none, and the keyframe
+    /// follows the lock; a joint unknown, and it looks at the neck.
+    fn read(&self) -> KeyAim {
+        let joint = |name: &str| Joint::ALL.into_iter().find(|j| j.bone() == name).unwrap_or_default();
+        let on = |target, joint| KeyAim::On(Aim { target, joint });
+        match self {
+            AimFile::Lock => KeyAim::Lock,
+            AimFile::Free => KeyAim::Free,
+            AimFile::Own { joint: name } => on(Target::Own, joint(name)),
+            AimFile::Avatar { id, joint: name } => match uuid::Uuid::parse_str(id) {
+                Ok(id) => on(Target::Avatar(id), joint(name)),
+                Err(_) => KeyAim::Lock,
+            },
+            AimFile::Object { id } => match uuid::Uuid::parse_str(id) {
+                Ok(id) => on(Target::Object(id), Joint::default()),
+                Err(_) => KeyAim::Lock,
+            },
+        }
+    }
 }
 
 /// A track as its file keeps it (JSON, in the account's `director` folder).
@@ -201,9 +257,9 @@ pub struct Keyframe {
     /// The camera comes to rest on this keyframe and leaves it from rest,
     /// instead of passing through at speed (the smooth curve only).
     pub rest: bool,
-    /// The view is locked on the Director's target here: between a locked
-    /// keyframe and one that is not, the lock comes or goes smoothly.
-    pub locked: bool,
+    /// What the view looks at here (`Director::key_aim`): between two
+    /// keyframes it turns smoothly from what one looks at to the next's.
+    pub aim: KeyAim,
 }
 
 /// How the camera goes from a keyframe to the next.
@@ -308,7 +364,8 @@ impl Track {
                     rotation: key.pose.rotation.to_array(),
                     fov: key.pose.fov,
                     rest: key.rest,
-                    locked: key.locked,
+                    locked: matches!(key.aim, KeyAim::On(_)),
+                    aim: Some(AimFile::of(key.aim)),
                 })
                 .collect(),
         }
@@ -317,8 +374,10 @@ impl Track {
     /// The track a file holds, for a main region at `origin`. A file is
     /// data from outside: `None` when it holds no keyframe, too many, or a
     /// value that is no number; times out of order or too close are put
-    /// right, a view angle out of range brought in.
-    pub fn from_file(file: &TrackFile, origin: (u32, u32)) -> Option<Track> {
+    /// right, a view angle out of range brought in. A locked keyframe of a
+    /// file of 1, which named no target, looks at `older` (the lock's now,
+    /// as it did then).
+    pub fn from_file(file: &TrackFile, origin: (u32, u32), older: Aim) -> Option<Track> {
         if file.keys.is_empty() || file.keys.len() > MAX_KEYS {
             return None;
         }
@@ -341,7 +400,11 @@ impl Track {
                     fov: clamp_fov(key.fov),
                 },
                 rest: key.rest,
-                locked: key.locked,
+                aim: match &key.aim {
+                    Some(aim) => aim.read(),
+                    None if key.locked => KeyAim::On(older),
+                    None => KeyAim::Lock,
+                },
             });
         }
         let mut track = Track {
@@ -375,7 +438,7 @@ impl Track {
             time,
             pose,
             rest: false,
-            locked: false,
+            aim: KeyAim::Lock,
         });
         self.tidy();
         if first {
@@ -395,7 +458,7 @@ impl Track {
             time,
             pose,
             rest: false,
-            locked: false,
+            aim: KeyAim::Lock,
         });
         self.tidy();
         Some(self.keys.len() - 1)
@@ -425,24 +488,24 @@ impl Track {
         }
     }
 
-    /// The view is locked on the Director's target at keyframe `index`.
-    pub fn set_locked(&mut self, index: usize, locked: bool) {
+    /// What the view looks at, at keyframe `index`.
+    pub fn set_aim(&mut self, index: usize, aim: KeyAim) {
         if let Some(key) = self.keys.get_mut(index) {
-            key.locked = locked;
+            key.aim = aim;
         }
     }
 
-    /// How much the view is locked on the Director's target at `time`, from
-    /// 0 to 1: each keyframe says whether it is, and between a keyframe
-    /// that is and one that is not the lock comes or goes smoothly.
-    pub fn lock_weight(&self, time: f32) -> f32 {
-        let on = |i: usize| f32::from(u8::from(self.keys[i].locked));
+    /// The keyframes around `time` and how far the view has turned from what
+    /// the first looks at to what the second does, from 0 to 1: smoothly,
+    /// little near either keyframe. A track of one keyframe is that one;
+    /// `None` for an empty track.
+    pub fn around(&self, time: f32) -> Option<(usize, usize, f32)> {
         match self.keys.len() {
-            0 => 0.0,
-            1 => on(0),
+            0 => None,
+            1 => Some((0, 0, 0.0)),
             _ => {
                 let (i, s) = self.span(if time.is_finite() { time } else { 0.0 });
-                on(i) + (on(i + 1) - on(i)) * (s * s * (3.0 - 2.0 * s))
+                Some((i, i + 1, s * s * (3.0 - 2.0 * s)))
             }
         }
     }
@@ -937,24 +1000,22 @@ mod tests {
     }
 
     #[test]
-    fn the_lock_comes_and_goes_between_keyframes() {
-        let mut track = three();
-        assert_eq!(track.lock_weight(1.0), 0.0);
-        track.set_locked(1, true);
-        assert_eq!(track.lock_weight(0.0), 0.0);
-        assert_eq!(track.lock_weight(3.0), 1.0);
-        assert_eq!(track.lock_weight(6.0), 0.0);
-        assert!((track.lock_weight(1.5) - 0.5).abs() < 1e-4);
+    fn the_view_turns_smoothly_between_two_keyframes() {
+        let track = three();
+        assert_eq!(track.around(0.0), Some((0, 1, 0.0)));
+        assert_eq!(track.around(3.0), Some((1, 2, 0.0)));
+        assert_eq!(track.around(6.0), Some((1, 2, 1.0)));
+        assert_eq!(track.around(99.0), Some((1, 2, 1.0)));
+        let (_, _, half) = track.around(1.5).expect("span");
+        assert!((half - 0.5).abs() < 1e-4);
         // smoothly: little change near a keyframe
-        assert!(track.lock_weight(0.3) < 0.05 && track.lock_weight(2.7) > 0.95);
-        track.set_locked(2, true);
-        assert_eq!(track.lock_weight(4.5), 1.0);
-        assert_eq!(track.lock_weight(99.0), 1.0);
+        let ((_, _, near), (_, _, far)) = (track.around(0.3).expect("span"), track.around(2.7).expect("span"));
+        assert!(near < 0.05 && far > 0.95);
+        assert_eq!(track.around(f32::NAN), Some((0, 1, 0.0)));
         let mut one = Track::default();
-        assert_eq!(one.lock_weight(0.0), 0.0);
+        assert_eq!(one.around(0.0), None);
         one.append(looking(Vec3::ZERO, 0.0));
-        one.set_locked(0, true);
-        assert_eq!(one.lock_weight(5.0), 1.0);
+        assert_eq!(one.around(5.0), Some((0, 0, 0.0)));
     }
 
     #[test]
@@ -986,52 +1047,74 @@ mod tests {
         let mut track = three();
         track.curve = Curve::Linear;
         track.set_rest(1, true);
-        track.set_locked(2, true);
+        let avatar = uuid::Uuid::from_u128(7);
+        let on = |target, joint| KeyAim::On(Aim { target, joint });
+        track.set_aim(1, on(Target::Avatar(avatar), Joint::Head));
+        track.set_aim(2, KeyAim::Free);
         let origin = (256_000, 512_000);
+        let neck = Aim {
+            target: Target::Own,
+            joint: Joint::Neck,
+        };
         let file = track.to_file(origin);
         assert_eq!(file.version, FILE_VERSION);
         assert!((file.keys[1].position[0] - 256_010.0).abs() < 1e-6);
         let text = serde_json::to_string(&file).expect("json");
         let read: TrackFile = serde_json::from_str(&text).expect("json");
-        let back = Track::from_file(&read, origin).expect("track");
+        let back = Track::from_file(&read, origin, neck).expect("track");
         assert_eq!(
             (back.curve, back.ease_ends, back.len()),
             (track.curve, track.ease_ends, track.len())
         );
         for (a, b) in back.keys().iter().zip(track.keys()) {
-            assert_eq!((a.time, a.rest, a.locked, a.pose.fov), (b.time, b.rest, b.locked, b.pose.fov));
+            assert_eq!((a.time, a.rest, a.aim, a.pose.fov), (b.time, b.rest, b.aim, b.pose.fov));
             assert!(close(a.pose.position, b.pose.position));
             assert!(a.pose.rotation.angle_between(b.pose.rotation) < 1e-4);
         }
         // loaded from the next region east: 256 m to the west of that corner
-        let east = Track::from_file(&read, (origin.0 + 256, origin.1)).expect("track");
+        let east = Track::from_file(&read, (origin.0 + 256, origin.1), neck).expect("track");
         assert!(close(east.keys()[0].pose.position, Vec3::new(-256.0, 0.0, 20.0)));
         // a file is data from outside
         let mut bad = file.clone();
         bad.keys[0].position[1] = f64::NAN;
-        assert_eq!(Track::from_file(&bad, origin), None);
+        assert_eq!(Track::from_file(&bad, origin, neck), None);
         let mut bad = file.clone();
         bad.keys[2].rotation = [0.0; 4];
-        assert_eq!(Track::from_file(&bad, origin), None);
+        assert_eq!(Track::from_file(&bad, origin, neck), None);
         let empty = TrackFile {
             keys: Vec::new(),
             ..file.clone()
         };
-        assert_eq!(Track::from_file(&empty, origin), None);
+        assert_eq!(Track::from_file(&empty, origin, neck), None);
         // times out of order or equal are put right, a lens brought in range
         let mut odd = file.clone();
         odd.keys[0].time = 6.0;
         odd.keys[1].time = 6.0;
         odd.keys[2].time = 2.0;
         odd.keys[2].fov = 99.0;
-        let fixed = Track::from_file(&odd, origin).expect("track");
+        let fixed = Track::from_file(&odd, origin, neck).expect("track");
         let times: Vec<f32> = fixed.keys().iter().map(|k| k.time).collect();
         assert_eq!(times[0], 0.0);
         assert!(times[1] >= 4.0 && times[2] >= times[1] + MIN_GAP - 1e-6);
         assert_eq!(fixed.keys()[0].pose.fov, *crate::camera::FOV_RANGE.end());
-        // an older file without the newer fields still loads
-        let old = r#"{"version":1,"keys":[{"time":0.0,"position":[1.0,2.0,3.0],"rotation":[0.0,0.0,0.0,1.0],"fov":1.0}]}"#;
-        assert!(Track::from_file(&serde_json::from_str(old).expect("json"), (0, 0)).is_some());
+        // a target that reads as none: the keyframe follows the lock; a
+        // joint unknown: the neck
+        let mut odd = file.clone();
+        odd.keys[1].aim = Some(AimFile::Avatar {
+            id: "not an id".into(),
+            joint: "mTail".into(),
+        });
+        odd.keys[2].aim = Some(AimFile::Own { joint: "mTail".into() });
+        let read = Track::from_file(&odd, origin, neck).expect("track");
+        assert_eq!(read.keys()[1].aim, KeyAim::Lock);
+        assert_eq!(read.keys()[2].aim, KeyAim::On(neck));
+        // a viewer that reads files of 1 still sees the locked keyframes
+        assert_eq!(file.keys.iter().map(|k| k.locked).collect::<Vec<_>>(), [false, true, false]);
+        // an older file without the newer fields still loads; its locked
+        // keyframe looks at the lock's target
+        let old = r#"{"version":1,"keys":[{"time":0.0,"position":[1.0,2.0,3.0],"rotation":[0.0,0.0,0.0,1.0],"fov":1.0},{"time":3.0,"position":[1.0,2.0,3.0],"rotation":[0.0,0.0,0.0,1.0],"fov":1.0,"locked":true}]}"#;
+        let old = Track::from_file(&serde_json::from_str(old).expect("json"), (0, 0), neck).expect("track");
+        assert_eq!((old.keys()[0].aim, old.keys()[1].aim), (KeyAim::Lock, KeyAim::On(neck)));
     }
 
     #[test]

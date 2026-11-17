@@ -6,7 +6,7 @@
 //! chunked transfer encoding; every blocking read honours a stop flag.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -245,27 +245,15 @@ fn connect(url: &Url) -> Result<Conn, HttpError> {
         other => return Err(HttpError::Scheme(other.to_string())),
     };
     let port = url.port_or_known_default().unwrap_or(if https { 443 } else { 80 });
-    let addrs: Vec<SocketAddr> = match url.host() {
-        Some(Host::Domain(d)) => (d, port)
-            .to_socket_addrs()
-            .map_err(|e| HttpError::Connect(e.to_string()))?
-            .collect(),
-        Some(Host::Ipv4(ip)) => vec![SocketAddr::from((ip, port))],
-        Some(Host::Ipv6(ip)) => vec![SocketAddr::from((ip, port))],
+    let host = match url.host() {
+        Some(Host::Domain(d)) => d.to_owned(),
+        Some(Host::Ipv4(ip)) => ip.to_string(),
+        Some(Host::Ipv6(ip)) => ip.to_string(),
         None => return Err(HttpError::Url("missing host".into())),
     };
-    let mut last_err = String::from("no address");
-    let mut tcp = None;
-    for addr in addrs {
-        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
-            Ok(s) => {
-                tcp = Some(s);
-                break;
-            }
-            Err(e) => last_err = e.to_string(),
-        }
-    }
-    let tcp = tcp.ok_or(HttpError::Connect(last_err))?;
+    // Direct, or through the proxy of Preferences › Network, which resolves
+    // the name (aurora_proxy::connect). TLS below stays end to end.
+    let tcp = aurora_proxy::connect::tcp_connect(&host, port, CONNECT_TIMEOUT).map_err(|e| HttpError::Connect(e.to_string()))?;
     tcp.set_read_timeout(Some(READ_POLL))?;
     tcp.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     let _ = tcp.set_nodelay(true);

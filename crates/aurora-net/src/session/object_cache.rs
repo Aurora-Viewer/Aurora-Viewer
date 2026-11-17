@@ -288,9 +288,9 @@ mod tests {
         let addrs = simulators.each_ref().map(|s| s.local_addr().expect("address"));
         let (events, _received) = crossbeam_channel::unbounded();
         let sh = Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -330,7 +330,7 @@ mod tests {
         let (object_cache, mut files) = ObjectCaches::new(Some(dir.clone()));
         let mut session = Session {
             sh: &sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: addrs.map(|addr| (addr, Sim::new(addr, 10))).into(),
             main: Some(addrs[0]),
