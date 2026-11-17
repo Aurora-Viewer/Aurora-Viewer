@@ -40,7 +40,8 @@ pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
 }
 
 /// Two lines under one head: the same resident or object, said in a row
-/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323);
+/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323)
+/// and from the same side of the say range (a card is dimmed whole);
 /// notices stand alone.
 fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
     !a.kind.is_notice()
@@ -50,6 +51,7 @@ fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
         && is_object(a.kind) == is_object(b.kind)
         && a.kind.is_own() == b.kind.is_own()
         && a.kind.volume() == b.kind.volume()
+        && a.beyond_range == b.beyond_range
 }
 
 fn is_object(kind: ChatKind) -> bool {
@@ -80,7 +82,9 @@ pub(super) fn recent(
         .chat
         .iter()
         .rev()
-        .filter(|l| residents || !super::said_by_resident(l))
+        // a blocked resident's line stays in the history (LLNearbyChatHandler
+        // never sees a muted line)
+        .filter(|l| !l.blocked && (residents || !super::said_by_resident(l)))
         // Bound the look-back even when every recent message has expired.
         .take(max_lines as usize)
         .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
@@ -175,7 +179,14 @@ pub(super) fn cards(
             ui.spacing_mut().item_spacing.y = 0.0;
             for group in groups(&recent) {
                 let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
-                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * card_alpha) as u8);
+                let (console_tint, console_blur) =
+                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+                let tint = Color32::from_rgba_unmultiplied(
+                    p.bar.r(),
+                    p.bar.g(),
+                    p.bar.b(),
+                    (190.0 * console_tint * card_alpha).min(255.0) as u8,
+                );
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
@@ -190,7 +201,9 @@ pub(super) fn cards(
                     })
                     .show(ui, |ui| {
                         slot = Some(ui.painter().add(egui::Shape::Noop));
-                        ui.multiply_opacity(card_alpha);
+                        // a card from beyond the say range has its content
+                        // dimmed, never its glass (one range per card)
+                        ui.multiply_opacity(card_alpha * crate::ui::colors::beyond_range_alpha(group[0]));
                         if small {
                             compact_card(
                                 ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
@@ -216,7 +229,7 @@ pub(super) fn cards(
                 if glass && let Some(slot) = slot {
                     ui.painter().set(
                         slot,
-                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha),
+                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha * console_blur),
                     );
                 }
                 ui.add_space(4.0);
@@ -478,6 +491,8 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
@@ -738,6 +753,22 @@ mod tests {
         assert!(!same_sender(&whisper, &shout));
         assert!(!same_sender(&shout, &said));
         assert!(same_sender(&said, &line(ChatKind::OWN, "Me", 0)));
+    }
+
+    /// A resident who walks out of the say range between two lines: the
+    /// far line gets its own card, dimmed whole.
+    #[test]
+    fn a_line_from_beyond_the_say_range_gets_its_own_card() {
+        let said = ChatKind::Local(ChatType::Normal);
+        let near = line(said, "Nova", 1);
+        let mut far = line(said, "Nova", 1);
+        far.beyond_range = true;
+        let far_again = far.clone();
+        assert!(!same_sender(&near, &far));
+        assert!(same_sender(&far, &far_again));
+        let lines = [&near, &far, &far_again];
+        let sizes: Vec<usize> = groups(&lines).iter().map(Vec::len).collect();
+        assert_eq!(sizes, vec![1, 2]);
     }
 
     /// A card's body leaves the name to the head, except an emote's, whose

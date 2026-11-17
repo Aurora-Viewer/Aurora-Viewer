@@ -31,6 +31,7 @@ pub mod objcache;
 pub mod objects;
 mod offer_hosts;
 pub mod offline_im;
+pub mod open_region;
 pub mod outfits;
 mod packet_loss;
 pub mod pathfinding;
@@ -264,8 +265,11 @@ impl NetClient {
                     NetCommand::Login(req) => {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
+                    // Session-scoped offers cannot be submitted offline. Drop the receipt
+                    // without exposing a login session or inventory bucket in diagnostics.
+                    NetCommand::OfferInventory { .. } | NetCommand::CheckInventoryOffer { .. } => {}
                     // (the offline demo moves its agent every frame)
-                    NetCommand::AgentControls(_) => {}
+                    NetCommand::AgentControls(_) | NetCommand::ForceAgentUpdate => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),
                 }
             }

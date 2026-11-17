@@ -111,33 +111,36 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.8 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.10 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Building, like the Legacy Viewer</h3>
-      Edit Face selects the faces of what you wear again, and Derender
-      with Edit linked parts hides only the selected part.
+      <h3>The Director</h3>
+      Film in the world: keep camera views as keyframes on a timeline,
+      play them back as one smooth shot with the world alone, and record
+      it to a video file with your own ffmpeg.
     </td>
     <td width="50%" valign="top">
-      <h3>Chat and voice</h3>
-      The channel selector shows by every nearby chat input and keeps the
-      channel you chose. Nearby voice now connects on slow, high-latency
-      links too.
+      <h3>Transparency in its true order</h3>
+      Glass, curtains and the layers of mesh hair show in the right order
+      at every pixel, even when they cross. Choose it in Preferences ›
+      Graphics, "Order of transparent surfaces"; the Stochastic choice
+      is thanks to Anne Skydancer.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Right on every graphics card</h3>
-      Tree leaves and mesh hair look right again on AMD cards, and
-      blended eyelashes stay visible behind mesh hair.
+      <h3>Weather and water</h3>
+      Aurora Weather reaches farther, with puddles and lying snow up to
+      256 m away and much steadier snow. Water and ambient occlusion cost
+      less for the same image.
     </td>
     <td valign="top">
-      <h3>Smoother starts</h3>
-      A small Aurora window shows while the viewer starts and after an
-      update's restart. The avatar complexity notice no longer repeats,
-      and invisible HUD buttons take a left click again.
+      <h3>More like the Legacy Viewer</h3>
+      The Conversation log, draw distance up to 1024 m, the Animation
+      Speed menu, beacons, radar marks, Doppler on moving sounds, and
+      objects saved as Collada or OBJ.
     </td>
   </tr>
 </table>
@@ -440,8 +443,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Write with ease**: a spell checker with suggestions in the chat bars,
   conversations and notecards, auto-replace (`brb`…) if you like, `@` to
   mention someone in the conversation, names completed as you type, and `/`
-  in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
-  line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
+  in nearby chat to find and play a gesture. Shift+Enter starts a new
+  line, and pasted paragraphs keep their shape; the chat's keys can be
+  changed in Preferences › Controls › Shortcuts. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations. A long
   IM goes out as several messages instead of being cut off.
 - **Messages that matter, in front of you**: a message an estate manager
@@ -1073,8 +1077,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
@@ -1295,6 +1300,11 @@ openly.
 
 Questions and answers, and the details:
 [AI use policy](https://aurora-viewer.org/ai-policy/).
+
+## Security
+
+Found a vulnerability? Please report it privately, not in a public issue:
+[SECURITY.md](SECURITY.md) explains how, and what happens next.
 
 ## Privacy
 

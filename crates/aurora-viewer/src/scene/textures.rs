@@ -75,6 +75,41 @@ pub fn is_builtin_transparent(id: &Uuid) -> bool {
     *id == aurora_prim::te::TRANSPARENT_TEXTURE || *id == super::avatar::IMG_INVISIBLE || *id == aurora_prim::te::WATER_EXCLUSION_TEXTURE
 }
 
+/// Solid 0x7f the Legacy Viewer writes into `IMG_DEFAULT`
+/// (`LLViewerTextureManager::init`, llviewertexture.cpp).
+const IMG_DEFAULT_GREY: [u8; 4] = [0x7f, 0x7f, 0x7f, 0xff];
+
+/// Slot of a texture this viewer paints itself. `None` when the asset is fetched.
+///
+/// `IMG_DEFAULT` is the empty `@setcam_textures` substitute (rlvhelper.cpp).
+/// The Legacy Viewer fills it locally and does not keep the downloaded
+/// texels (`LLViewerTextureManager::init`, llviewertexture.cpp), so faces
+/// and particles that acquire it bind the missing grey and queue no fetch.
+fn reserved_slot(id: &Uuid) -> Option<u32> {
+    if id.is_nil() || *id == aurora_prim::te::BLANK_TEXTURE {
+        Some(aurora_render::textures::WHITE)
+    } else if is_builtin_transparent(id) {
+        Some(aurora_render::textures::TRANSPARENT)
+    } else if *id == aurora_prim::te::IMG_DEFAULT {
+        Some(aurora_render::textures::MISSING)
+    } else {
+        None
+    }
+}
+
+/// 1×1 preview of a reserved texture. The nil id has no preview of its own.
+fn reserved_preview(id: &Uuid) -> Option<[u8; 4]> {
+    if is_builtin_transparent(id) {
+        Some([0; 4])
+    } else if *id == aurora_prim::te::BLANK_TEXTURE {
+        Some([255; 4])
+    } else if *id == aurora_prim::te::IMG_DEFAULT {
+        Some(IMG_DEFAULT_GREY)
+    } else {
+        None
+    }
+}
+
 fn first_bytes(px: f32) -> usize {
     if px <= 0.0 {
         return INITIAL_BYTES;
@@ -1017,6 +1052,17 @@ impl SlotTable for Renderer {
     }
 }
 
+/// The alpha classes of the renderer's built-in slots: the transparent
+/// texture has no visible pixel. Every renderer has them, the one of a GPU
+/// recovery too (`gpu_reset_into`): without them, a face of the built-in
+/// transparent texture is drawn opaque, as the shine layers of mesh heads
+/// (eyebrows, lips, eyes) black after a reset.
+fn builtin_alpha() -> Vec<AlphaKind> {
+    let mut a = vec![AlphaKind::Opaque; 16];
+    a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
+    a
+}
+
 /// Alpha class of a bindless slot; a change bumps `generation` and is
 /// listed in `changes` (`TextureStreamer::take_alpha_changes`).
 fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mut Vec<u32>, slot: u32, a: AlphaKind) {
@@ -1236,11 +1282,7 @@ impl PreviewSource {
     /// Appearance editing can use resident pixels immediately and improve
     /// them as finer levels arrive; export still requires the original data.
     pub fn bake_ready(&self, id: Uuid) -> bool {
-        self.local.is_some()
-            || self.decoded.is_some()
-            || self.procedural
-            || is_builtin_transparent(&id)
-            || id == aurora_prim::te::BLANK_TEXTURE
+        self.local.is_some() || self.decoded.is_some() || self.procedural || reserved_preview(&id).is_some()
     }
 
     pub fn bake_revision(&self) -> PreviewRevision {
@@ -1254,10 +1296,10 @@ impl PreviewSource {
     }
 
     pub fn bake_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
-        if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
+        if let Some(rgba) = reserved_preview(&id) {
             return Some(Arc::new(aurora_render::preview::Image {
                 size: [1, 1],
-                rgba: if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }.into(),
+                rgba: rgba.to_vec().into(),
             }));
         }
         let blocks = self.blocks.clone();
@@ -1416,11 +1458,8 @@ impl PreviewSource {
         // Reserved world textures have GPU texels but no fetched asset or
         // cache file. A missing transparent map would expose a white shell
         // over the skin of a layered mesh head.
-        if is_builtin_transparent(&id) {
-            return Some(image(1, 1, vec![0; 4]));
-        }
-        if id == aurora_prim::te::BLANK_TEXTURE {
-            return Some(image(1, 1, vec![255; 4]));
+        if let Some(rgba) = reserved_preview(&id) {
+            return Some(image(1, 1, rgba.to_vec()));
         }
         if self.procedural
             && let Some((pixels, w, h)) = crate::demo::local_texture(&id)
@@ -1511,12 +1550,7 @@ impl TextureStreamer {
                 (id, mask)
             })
             .collect(),
-            // built-in slots: the transparent texture has no visible pixel
-            alpha_by_slot: {
-                let mut a = vec![AlphaKind::Opaque; 16];
-                a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
-                a
-            },
+            alpha_by_slot: builtin_alpha(),
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
@@ -1654,6 +1688,7 @@ impl TextureStreamer {
     pub fn describe(&self, id: &Uuid) -> String {
         match self.entries.get(id) {
             None if is_builtin_transparent(id) => "built-in transparent, never downloaded".into(),
+            None if *id == aurora_prim::te::IMG_DEFAULT => "built-in grey, never downloaded".into(),
             None => "not requested".into(),
             Some(e) => format!(
                 "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}{}{}{}",
@@ -1694,7 +1729,7 @@ impl TextureStreamer {
     /// Diagnostic: why a face drawn with `slot` for texture `id` would not
     /// show that texture (None when it should).
     pub fn face_problem(&self, id: &Uuid, slot: u32, table: &aurora_render::textures::TextureTable) -> Option<&'static str> {
-        if id.is_nil() || *id == aurora_prim::te::BLANK_TEXTURE || is_builtin_transparent(id) || self.local_slots.contains_key(id) {
+        if reserved_slot(id).is_some() || self.local_slots.contains_key(id) {
             return None;
         }
         let Some(e) = self.entries.get(id) else {
@@ -1755,14 +1790,8 @@ impl TextureStreamer {
     }
 
     pub fn acquire(&mut self, renderer: &mut Renderer, id: Uuid, source: TexSource) -> u32 {
-        if id.is_nil() {
-            return aurora_render::textures::WHITE;
-        }
-        if is_builtin_transparent(&id) {
-            return aurora_render::textures::TRANSPARENT;
-        }
-        if id == aurora_prim::te::BLANK_TEXTURE {
-            return aurora_render::textures::WHITE;
+        if let Some(slot) = reserved_slot(&id) {
+            return slot;
         }
         if let Some(slot) = self.acquire_known(id, &source) {
             return slot;
@@ -1838,13 +1867,14 @@ impl TextureStreamer {
     /// holds is forgotten by `update`, at once or, while a disk read, a
     /// decode or a download of it is under way, once that is over (its
     /// result would bring the old data back). Built-in textures (blank,
-    /// transparent, those of the demo) are left alone, as Firestorm leaves
-    /// IMG_DEFAULT and its default textures. Returns whether it was asked.
+    /// transparent, the flat grey of IMG_DEFAULT, those of the demo) are
+    /// left alone, as the Legacy Viewer leaves IMG_DEFAULT and its default
+    /// textures. Returns whether it was asked.
     pub fn refresh(&mut self, id: &Uuid) -> bool {
         if self.legacy_bump_entries.contains_key(id) {
             return false; // The face also refreshes its real height source.
         }
-        if id.is_nil() || is_builtin_transparent(id) || *id == aurora_prim::te::BLANK_TEXTURE || self.local_slots.contains_key(id) {
+        if reserved_slot(id).is_some() || self.local_slots.contains_key(id) {
             return false;
         }
         match self.entries.get_mut(id) {
@@ -1871,7 +1901,7 @@ impl TextureStreamer {
     fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
         // their staged data is in the old device's pool
         self.uploads = Default::default();
-        self.alpha_by_slot.clear();
+        self.alpha_by_slot = builtin_alpha();
         self.alpha_channel_by_slot.clear();
         self.alpha_changes.clear();
         self.first_texels.clear();
@@ -2308,9 +2338,8 @@ impl TextureStreamer {
         }
         // Reserved textures bypass asset streaming and therefore never
         // reach the upload callback that normally prepares UI images.
-        if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
-            self.ui_ready
-                .insert(id, (1, 1, if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }));
+        if let Some(rgba) = reserved_preview(&id) {
+            self.ui_ready.insert(id, (1, 1, rgba.to_vec()));
             return true;
         }
         // procedural textures of the offline demo are never streamed
@@ -2401,15 +2430,11 @@ impl TextureStreamer {
 
     /// A face with this texture shows what it will show for now: loaded,
     /// not coming (`is_unavailable`), or drawn without a download (the
-    /// blank and the built-in transparent textures, local ones), which
-    /// never have an entry and so never count as loaded.
+    /// blank, the flat grey of IMG_DEFAULT and the built-in transparent
+    /// textures, local ones), which never have an entry and so never count
+    /// as loaded.
     pub fn is_settled(&self, id: &Uuid) -> bool {
-        id.is_nil()
-            || *id == aurora_prim::te::BLANK_TEXTURE
-            || is_builtin_transparent(id)
-            || self.local_slots.contains_key(id)
-            || self.is_loaded(id)
-            || self.is_unavailable(id)
+        reserved_slot(id).is_some() || self.local_slots.contains_key(id) || self.is_loaded(id) || self.is_unavailable(id)
     }
 
     /// Discard level on the GPU (None until the first upload).
@@ -5549,6 +5574,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_gpu_recovery_keeps_the_transparent_texture_invisible() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let transparent = aurora_render::textures::TRANSPARENT as usize;
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        let mut e = entry(None, 100.0);
+        e.slot = 20;
+        s.entries.insert(id(1), e);
+        let mut table = Slots {
+            left: vec![30],
+            ..Default::default()
+        };
+        s.gpu_reset_into(&mut table);
+        // the textures got slots of the new table, the built-in ones kept
+        // their class: the shine layers of mesh heads stay see-through
+        assert_eq!(s.entries[&id(1)].slot, 30);
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        assert_eq!(s.alpha_by_slot[30], AlphaKind::Opaque);
+    }
+
     /// A failed download of texture `n` (in slot `10 + n`, never loaded).
     fn fail(s: &mut TextureStreamer, n: u128, status: u16) {
         let key = 1000 + n as u64;
@@ -6089,6 +6134,28 @@ mod tests {
         // the invisible bake is never downloaded, so never refreshed either
         assert!(!b.s.refresh(&super::super::avatar::IMG_INVISIBLE));
         assert!(b.s.entries.is_empty());
+        // IMG_DEFAULT is painted locally (llviewertexture.cpp), so a refresh
+        // neither downloads it nor drops a cache file for it.
+        let grey = aurora_prim::te::IMG_DEFAULT;
+        assert_eq!(reserved_slot(&grey), Some(aurora_render::textures::MISSING));
+        assert!(!b.s.refresh(&grey));
+        assert!(b.s.forgotten.is_empty() && b.s.todo.is_empty() && !b.s.entries.contains_key(&grey));
+        assert!(b.s.is_settled(&grey));
+        let source = PreviewSource {
+            local: None,
+            bytes: Arc::default(),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded: None,
+            size: None,
+            procedural: false,
+        };
+        assert!(source.clone().bake_ready(grey));
+        let baked = source.clone().bake_image(grey).expect("built-in grey");
+        assert_eq!(baked.size, [1, 1]);
+        assert_eq!(baked.rgba.as_ref(), &[0x7f, 0x7f, 0x7f, 0xff]);
+        assert_eq!(source.image(grey).expect("built-in grey").rgba.as_ref(), &[0x7f, 0x7f, 0x7f, 0xff]);
+        assert_eq!(b.s.describe(&grey), "built-in grey, never downloaded");
         // a texture not held: only its files go
         let id = Uuid::from_u128(0x7e59);
         for file in b.files(id) {

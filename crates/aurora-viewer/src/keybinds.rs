@@ -12,11 +12,39 @@ use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
-/// A physical input: `Key("KeyW")`, `Mouse("Middle")`.
+/// A physical input: `Key("KeyW")`, `Mouse("Middle")`. The names are fixed
+/// identifiers, never translated: the label is `Input::label`'s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "SavedInput")]
 pub enum Input {
     Key(String),
     Mouse(String),
+}
+
+/// An [`Input`] as the settings file holds it. The mouse buttons used to be
+/// saved under their translated names, which Japanese wrote 中央, 戻る and
+/// 前進: those read back as the fixed names, whatever the language now.
+#[derive(Deserialize)]
+enum SavedInput {
+    Key(String),
+    Mouse(String),
+}
+
+impl From<SavedInput> for Input {
+    fn from(saved: SavedInput) -> Input {
+        match saved {
+            SavedInput::Key(key) => Input::Key(key),
+            SavedInput::Mouse(button) => Input::Mouse(
+                match button.as_str() {
+                    "中央" => "Middle",
+                    "戻る" => "Back",
+                    "前進" => "Forward",
+                    _ => return Input::Mouse(button),
+                }
+                .to_owned(),
+            ),
+        }
+    }
 }
 
 impl Input {
@@ -29,9 +57,9 @@ impl Input {
     pub fn mouse(b: MouseButton) -> Option<Input> {
         match b {
             MouseButton::Left | MouseButton::Right => None,
-            MouseButton::Middle => Some(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into())),
-            MouseButton::Back => Some(Input::Mouse(aurora_i18n::tr!("keybinds-back").into())),
-            MouseButton::Forward => Some(Input::Mouse(aurora_i18n::tr!("keybinds-forward").into())),
+            MouseButton::Middle => Some(Input::Mouse("Middle".into())),
+            MouseButton::Back => Some(Input::Mouse("Back".into())),
+            MouseButton::Forward => Some(Input::Mouse("Forward".into())),
             MouseButton::Other(n) => Some(Input::Mouse(format!("Other{n}"))),
         }
     }
@@ -112,6 +140,7 @@ fn key_label(k: &str) -> String {
         "ArrowRight" => aurora_i18n::tr!("keybinds-right-arrow"),
         "PageUp" => aurora_i18n::tr!("keybinds-previous-page"),
         "PageDown" => aurora_i18n::tr!("keybinds-next-page"),
+        // LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
         "Home" => aurora_i18n::tr!("keybinds-origin"),
         "End" => aurora_i18n::tr!("keybinds-end-2"),
         "Insert" => aurora_i18n::tr!("keybinds-insert"),
@@ -203,6 +232,27 @@ impl Binding {
             shift: false,
             alt: false,
         }
+    }
+
+    /// Whether an egui key press is this binding: the chat fields'
+    /// shortcuts (`is_chat`), read from the field's own events. The key
+    /// is compared by its physical place, as the world's bindings are
+    /// (egui names keys as winit's codes: `KeyA`, `Enter`, `ArrowUp`;
+    /// Numpad Enter arrives as Enter). The modifiers must match exactly.
+    /// Command counts as Control on macOS, as `control_down` does for a key
+    /// and as the shortcut table labels it: the Legacy Viewer's MASK_CONTROL
+    /// is Command there (LLKeyboardMacOSX::currentMask), Command+Up included
+    /// (LLChatEntry's history). A navigation key also matches by what it
+    /// does: the keypad's 8 with Num Lock off is an Up arrow. A mouse
+    /// binding never matches a key.
+    pub fn matches_egui(&self, key: egui::Key, physical: Option<egui::Key>, m: egui::Modifiers) -> bool {
+        let Input::Key(code) = &self.input else {
+            return false;
+        };
+        egui::Key::from_name(code).is_some_and(|bound| bound == physical.unwrap_or(key) || (navigation(bound) && bound == key))
+            && self.ctrl == control_down(m.ctrl, m.mac_cmd, false)
+            && self.shift == m.shift
+            && self.alt == m.alt
     }
 
     pub fn label(&self) -> String {
@@ -351,6 +401,10 @@ pub enum Action {
     /// (handle_look_at_selection, H and Shift+H).
     FocusSelection,
     ZoomSelection,
+    /// Advanced › Shortcuts › Look at Last Chatter (View.LookAtLastChatter,
+    /// menu_viewer.xml, `shortcut="control|\"`): the camera over our
+    /// shoulder, on the last resident or object heard.
+    LookAtLastChatter,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -372,6 +426,8 @@ pub enum Action {
     CamPanRight,
     CamPanUp,
     CamPanDown,
+    CamRollLeft,
+    CamRollRight,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -480,6 +536,49 @@ pub enum Action {
     EnvSunset,
     EnvMidnight,
     EnvShared,
+    /// The chat fields' own shortcuts (`ui/chat/shortcuts.rs`), read there
+    /// from the field's key events and never by the world (`is_chat`). The
+    /// Legacy Viewer hard-codes them (FSFloaterIM::handleKeyHere,
+    /// FSNearbyChatControl::handleKeyHere, LLChatEntry and
+    /// LLFloaterIMContainer::handleKeyHere, indra/newview); Aurora lets
+    /// them be rebound (human request of 2026-11-15). A line break: the
+    /// Legacy Ctrl+Shift+Enter second, Shift+Enter first.
+    ChatNewLine,
+    /// Shout in nearby chat. The Legacy Viewer's Ctrl+Enter
+    /// (FSUseCtrlShout) is not bound by default (human request of
+    /// 2026-11-15): the volume menu shouts, or a key the user sets.
+    ChatShout,
+    /// Whisper in nearby chat. The Legacy Viewer's Shift+Enter
+    /// (FSUseShiftWhisper) is the line break here: unbound by default.
+    ChatWhisper,
+    /// Send as ((OOC)) (FSUseAltOOC: Alt+Enter).
+    ChatOoc,
+    /// The sent message before / after the one shown (LLChatEntry's
+    /// Ctrl+Up / Ctrl+Down history).
+    ChatHistoryPrevious,
+    ChatHistoryNext,
+    /// The conversation below / above in the list, round it
+    /// (LLFloaterIMContainer::handleKeyHere's Alt+Down / Alt+Up, and
+    /// Ctrl+Tab / Ctrl+Shift+Tab).
+    ChatNextConversation,
+    ChatPreviousConversation,
+}
+
+/// The chat fields' shortcuts: matched on the fields' key events
+/// (`Binding::matches_egui`), never by the world's dispatch, and they only
+/// conflict with each other.
+pub fn is_chat(a: Action) -> bool {
+    matches!(
+        a,
+        Action::ChatNewLine
+            | Action::ChatShout
+            | Action::ChatWhisper
+            | Action::ChatOoc
+            | Action::ChatHistoryPrevious
+            | Action::ChatHistoryNext
+            | Action::ChatNextConversation
+            | Action::ChatPreviousConversation
+    )
 }
 
 impl Action {
@@ -522,11 +621,14 @@ pub fn is_held(a: Action) -> bool {
             | Action::CamPanRight
             | Action::CamPanUp
             | Action::CamPanDown
+            | Action::CamRollLeft
+            | Action::CamRollRight
             | Action::HudDrag
     )
 }
 
-/// Actions by section, with their French labels (preferences table order).
+/// Actions by section, with their French labels (preferences table order;
+/// `ui/options/pages/shortcuts.rs` groups them in tabs by this order).
 pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
     static TABLE: aurora_i18n::Localized<Vec<(&'static str, Vec<(Action, &'static str)>)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -560,6 +662,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
                     (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
                     (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
+                    (Action::LookAtLastChatter, aurora_i18n::tr!("keybinds-look-at-last-chatter")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -575,6 +678,8 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
                     (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
                     (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                    (Action::CamRollLeft, aurora_i18n::tr!("controls-roll-left")),
+                    (Action::CamRollRight, aurora_i18n::tr!("controls-roll-right")),
                 ],
             ),
             (
@@ -583,6 +688,22 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Chat, aurora_i18n::tr!("keybinds-type-in-chat")),
                     (Action::PushToTalk, aurora_i18n::tr!("keybinds-speak-push-to-talk")),
                     (Action::ToggleMic, aurora_i18n::tr!("extra-enable-mute-microphone")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("keybinds-chat-typing"),
+                vec![
+                    (Action::ChatNewLine, aurora_i18n::tr!("keybinds-chat-new-line")),
+                    (Action::ChatShout, aurora_i18n::tr!("keybinds-chat-shout")),
+                    (Action::ChatWhisper, aurora_i18n::tr!("keybinds-chat-whisper")),
+                    (Action::ChatOoc, aurora_i18n::tr!("keybinds-chat-ooc")),
+                    (Action::ChatHistoryPrevious, aurora_i18n::tr!("keybinds-chat-history-previous")),
+                    (Action::ChatHistoryNext, aurora_i18n::tr!("keybinds-chat-history-next")),
+                    (Action::ChatNextConversation, aurora_i18n::tr!("keybinds-chat-next-conversation")),
+                    (
+                        Action::ChatPreviousConversation,
+                        aurora_i18n::tr!("keybinds-chat-previous-conversation"),
+                    ),
                 ],
             ),
             (
@@ -795,6 +916,8 @@ impl KeyBindings {
             // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
             (Action::FocusSelection, [k(K::KeyH), None]),
             (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
+            // menu_viewer.xml: Look at Last Chatter, shortcut="control|\"
+            (Action::LookAtLastChatter, [kmod(K::Backslash, true, false), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -816,14 +939,13 @@ impl KeyBindings {
             (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
+            (Action::CamRollLeft, [k(K::KeyR), None]),
+            (Action::CamRollRight, [k(K::KeyT), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
             // SL default push-to-talk: middle mouse button
-            (
-                Action::PushToTalk,
-                [Some(Binding::plain(Input::Mouse(aurora_i18n::tr!("keybinds-middle").into()))), None],
-            ),
+            (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
@@ -987,6 +1109,23 @@ impl KeyBindings {
             (Action::EnvSunset, [kmod(K::KeyN, true, true), None]),
             (Action::EnvMidnight, [kmod(K::KeyX, true, true), None]),
             (Action::EnvShared, [kmod(K::KeyJ, true, true), None]),
+            // the chat fields' (`is_chat`): the defaults the human chose on
+            // 2026-11-15. Send (Enter), Close (Ctrl+W) and Find (Ctrl+F)
+            // stay fixed.
+            (Action::ChatNewLine, [kmod(K::Enter, false, true), kmod(K::Enter, true, true)]),
+            (Action::ChatShout, [None, None]),
+            (Action::ChatWhisper, [None, None]),
+            (Action::ChatOoc, [kalt(K::Enter, false, false), None]),
+            (Action::ChatHistoryPrevious, [kmod(K::ArrowUp, true, false), None]),
+            (Action::ChatHistoryNext, [kmod(K::ArrowDown, true, false), None]),
+            (
+                Action::ChatNextConversation,
+                [kmod(K::Tab, true, false), kalt(K::ArrowDown, false, false)],
+            ),
+            (
+                Action::ChatPreviousConversation,
+                [kmod(K::Tab, true, true), kalt(K::ArrowUp, false, false)],
+            ),
         ];
         KeyBindings { map: defaults }
     }
@@ -1003,6 +1142,78 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
     };
     let shifted = Mods { shift: true, ..ctrl };
     text_field_keeps(code, ctrl) || text_field_keeps(code, shifted)
+}
+
+/// Whether a chat field's shortcut (`is_chat`) may take this binding. The
+/// field reads its own key events, so refused are only what it could never
+/// see: a mouse button, a key egui has no name for (it never arrives as
+/// one), and the fixed Send (Enter), Close (Ctrl+W) and Find (Ctrl+F),
+/// taken before the field. Any other key is the user's choice, a plain
+/// letter included.
+pub fn chat_accepts(b: &Binding) -> bool {
+    let Input::Key(name) = &b.input else {
+        return false;
+    };
+    let Some(key) = egui::Key::from_name(name) else {
+        return false;
+    };
+    let fixed = match key {
+        egui::Key::Enter => !b.ctrl && !b.alt && !b.shift,
+        egui::Key::W | egui::Key::F => b.ctrl && !b.alt && !b.shift,
+        _ => false,
+    };
+    !fixed
+}
+
+/// Keys that move or edit rather than type: the keypad sends them with
+/// Num Lock off, from another physical place.
+fn navigation(key: egui::Key) -> bool {
+    use egui::Key as E;
+    matches!(
+        key,
+        E::ArrowUp
+            | E::ArrowDown
+            | E::ArrowLeft
+            | E::ArrowRight
+            | E::Home
+            | E::End
+            | E::PageUp
+            | E::PageDown
+            | E::Insert
+            | E::Delete
+            | E::Enter
+    )
+}
+
+/// Whether a focused text field keeps this binding's chord on every
+/// keyboard layout (`text_field_keeps`), so that a world shortcut on it
+/// never runs while typing. A letter is judged by the character it types
+/// at that moment (`text_field_keeps_key`): Ctrl + the Q place selects all
+/// on AZERTY but quits on QWERTY, so a letter is never counted as kept.
+fn kept_on_every_layout(b: &Binding) -> bool {
+    use KeyCode as K;
+    let Input::Key(name) = &b.input else {
+        return false;
+    };
+    let code = match name.as_str() {
+        "ArrowLeft" => K::ArrowLeft,
+        "ArrowRight" => K::ArrowRight,
+        "ArrowUp" => K::ArrowUp,
+        "ArrowDown" => K::ArrowDown,
+        "Home" => K::Home,
+        "End" => K::End,
+        "Backspace" => K::Backspace,
+        "Delete" => K::Delete,
+        _ => return false,
+    };
+    text_field_keeps(
+        code,
+        Mods {
+            ctrl: b.ctrl,
+            shift: b.shift,
+            alt: b.alt,
+        },
+    )
 }
 
 /// Chords a focused text field keeps. Menu accelerators match the mask
@@ -1313,7 +1524,7 @@ impl KeyBindings {
                 // a new action's default key may already be the user's own
                 // choice for another action (Space for jumping): theirs stays
                 for slot in &mut b {
-                    if slot.as_ref().is_some_and(|d| !self.users(d).is_empty()) {
+                    if slot.as_ref().is_some_and(|d| !self.rivals(a, d).is_empty()) {
                         *slot = None;
                     }
                 }
@@ -1363,7 +1574,7 @@ impl KeyBindings {
                 let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
                     continue;
                 };
-                if old == new || self.get(*action)[slot].as_ref() != Some(old) || self.users(new).iter().any(|a| a != action) {
+                if old == new || self.get(*action)[slot].as_ref() != Some(old) || !self.rivals(*action, new).is_empty() {
                     continue;
                 }
                 self.set(*action, slot, Some(new.clone()));
@@ -1406,6 +1617,21 @@ impl KeyBindings {
             .collect()
     }
 
+    /// The other actions using this binding that it conflicts with. A chat
+    /// field's shortcut (`is_chat`) and a world's meet only on a Ctrl / Alt
+    /// chord the field does not keep on every layout
+    /// (`kept_on_every_layout`): the world's runs first while typing
+    /// (`shortcut_while_typing` in app.rs, as the Legacy Viewer's menu
+    /// accelerators go before the focused field), so the chat's would
+    /// never be seen.
+    pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
+        let meet_while_typing = (b.ctrl || b.alt) && !kept_on_every_layout(b);
+        self.users(b)
+            .into_iter()
+            .filter(|x| *x != a && (is_chat(*x) == is_chat(a) || meet_while_typing))
+            .collect()
+    }
+
     /// Is a held action active? A binding needs its modifiers and accepts
     /// more (Shift makes arrows strafe in SL), but the held binding of the
     /// same key with the most matching modifiers wins (LLViewerInput::scanKey:
@@ -1440,6 +1666,7 @@ impl KeyBindings {
     pub fn triggered(&self, input: &Input, m: Mods) -> Option<Action> {
         let exact = self.map.iter().find(|(a, bs)| {
             !is_held(*a)
+                && !is_chat(*a)
                 && bs
                     .iter()
                     .flatten()
@@ -1453,7 +1680,7 @@ impl KeyBindings {
         }
         self.map
             .iter()
-            .find(|(a, bs)| !is_held(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
+            .find(|(a, bs)| !is_held(*a) && !is_chat(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
             .map(|(a, _)| *a)
     }
 
@@ -1485,7 +1712,10 @@ impl KeyBindings {
                 .flatten()
                 .any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift)
             && !self.map.iter().any(|(a, bs)| {
-                *a != Action::Up && *a != Action::HudDrag && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
+                *a != Action::Up
+                    && *a != Action::HudDrag
+                    && !is_chat(*a)
+                    && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
             })
     }
 
@@ -1517,6 +1747,26 @@ impl KeyBindings {
 mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
+
+    /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
+    /// French keyboards print Début. Japanese keyboards print Home.
+    #[test]
+    fn the_home_key_is_labelled_home() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-origin"), "Home");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-origin"), "Début");
+        assert_eq!(key_label("Home"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-origin"));
+    }
+
+    /// LLKeyboard names KEY_END "End" (indra/llwindow/llkeyboard.cpp). Japanese
+    /// keyboards print End, as they print Home: 終了 read as "Quit".
+    #[test]
+    fn the_end_key_keeps_its_keyboard_name() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-end-2"), "Fin");
+        assert_eq!(key_label("End"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-end-2"));
+    }
 
     /// Space stops moving while held, as the Legacy Viewer's stop_moving;
     /// a settings file from before it keeps a Space the user gave to
@@ -1724,6 +1974,61 @@ mod tests {
     }
 
     #[test]
+    fn camera_roll_defaults_hold_release_and_yield_to_modified_commands() {
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        for (action, code, command) in [
+            (Action::CamRollLeft, KeyCode::KeyR, Action::Rebake),
+            (Action::CamRollRight, KeyCode::KeyT, Action::ShowTransparency),
+        ] {
+            let input = Input::key(code);
+            assert_eq!(kb.get(action), [Some(Binding::plain(input.clone())), None]);
+            assert_eq!(kb.users(&Binding::plain(input.clone())), vec![action], "no other plain-key default");
+            let mut down = HashSet::new();
+            assert_eq!(kb.update_held_input(&mut down, &input, true, Mods::default()), None);
+            assert!(kb.held(action, &down, Mods::default()));
+            kb.update_held_input(&mut down, &input, false, Mods::default());
+            assert!(!kb.held(action, &down, Mods::default()));
+            let modified = Mods {
+                ctrl: true,
+                alt: true,
+                ..Default::default()
+            };
+            assert_eq!(kb.update_held_input(&mut down, &input, true, modified), Some(command));
+            assert!(!kb.held(action, &down, modified));
+            assert!(!kb.held(action, &down, Mods::default()));
+        }
+    }
+
+    #[test]
+    fn camera_roll_bindings_upgrade_without_replacing_custom_or_cleared_keys() {
+        for action in [Action::CamRollLeft, Action::CamRollRight] {
+            let mut kb = KeyBindings::default();
+            let defaults = kb.get(action);
+            kb.map.retain(|(a, _)| *a != action);
+            assert_eq!(kb.clone().sanitized().get(action), defaults);
+            kb.set(Action::CamPanUp, 0, defaults[0].clone());
+            let mut kb = kb.sanitized();
+            assert_eq!(kb.get(action), [None, None]);
+            assert_eq!(kb.get(Action::CamPanUp)[0], defaults[0]);
+            let binding = kalt(KeyCode::KeyB, false, false);
+            kb.set(action, 1, binding.clone());
+            let saved = serde_json::to_string(&kb).expect("save bindings");
+            let mut kb = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
+            assert_eq!(kb.get(action), [None, binding]);
+            assert!(kb.held(
+                action,
+                &HashSet::from([Input::key(KeyCode::KeyB)]),
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                }
+            ));
+            kb.set(action, 1, None);
+            assert_eq!(kb.sanitized().get(action), [None, None]);
+        }
+    }
+
+    #[test]
     fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
         let ctrl = Mods {
             ctrl: true,
@@ -1789,6 +2094,7 @@ mod tests {
             (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
             (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
             (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+            (KeyCode::Backslash, m(true, false, false), Action::LookAtLastChatter),
         ] {
             assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
             assert_eq!(
@@ -2023,6 +2329,31 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_shortcut_takes_only_keys_its_field_can_see() {
+        let key = |code: KeyCode, ctrl: bool, shift: bool, alt: bool| Binding::captured(Input::key(code), Mods { ctrl, shift, alt });
+        let accepts = |b: Binding| chat_accepts(&b);
+        // the chosen defaults, a function key, Ctrl / Alt chords
+        assert!(accepts(key(KeyCode::Enter, false, true, false)));
+        assert!(accepts(key(KeyCode::Enter, true, true, false)));
+        assert!(accepts(key(KeyCode::Enter, false, false, true)));
+        assert!(accepts(key(KeyCode::ArrowUp, true, false, false)));
+        assert!(accepts(key(KeyCode::Tab, true, false, false)));
+        assert!(accepts(key(KeyCode::F5, false, false, false)));
+        assert!(accepts(key(KeyCode::KeyP, true, false, false)));
+        // a mouse button, a key egui does not name
+        assert!(!chat_accepts(&Binding::captured(Input::Mouse("Middle".into()), Mods::default())));
+        assert!(!accepts(key(KeyCode::NumpadMultiply, true, false, false)));
+        // the fixed Send, Close and Find
+        assert!(!accepts(key(KeyCode::Enter, false, false, false)));
+        assert!(!accepts(key(KeyCode::KeyW, true, false, false)));
+        assert!(!accepts(key(KeyCode::KeyF, true, false, false)));
+        // any other key is the user's choice, a plain letter included
+        for code in [KeyCode::KeyW, KeyCode::Digit1, KeyCode::Space, KeyCode::ArrowUp] {
+            assert!(accepts(key(code, false, false, false)), "{code:?}");
+        }
+    }
+
+    #[test]
     fn hud_shortcuts_warn_of_conflicts_without_suppressing_other_held_actions() {
         let mut kb = KeyBindings::default();
         let ctrl = Mods {
@@ -2033,7 +2364,28 @@ mod tests {
         let b = Binding::captured(input.clone(), ctrl);
         kb.set(Action::HudDrag, 0, Some(b.clone()));
         kb.set(Action::PushToTalk, 1, Some(b.clone()));
-        assert_eq!(kb.users(&b), vec![Action::PushToTalk, Action::HudDrag]);
+        assert_eq!(kb.rivals(Action::HudDrag, &b), vec![Action::PushToTalk]);
+        // the chat's Ctrl+Up (sent messages) is no conflict: it is the chat
+        // field's alone (`is_chat`)
+        assert!(kb.users(&b).contains(&Action::ChatHistoryPrevious));
+        assert!(kb.rivals(Action::ChatHistoryPrevious, &b).is_empty());
+        // but a chat key on a world chord that runs while typing is one: the
+        // world's would take the key first (Ctrl+P, Preferences)
+        let ctrl_p = Binding::captured(Input::key(KeyCode::KeyP), ctrl);
+        kb.set(Action::ChatWhisper, 0, Some(ctrl_p.clone()));
+        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_p), vec![Action::Preferences]);
+        assert!(kb.rivals(Action::Preferences, &ctrl_p).contains(&Action::ChatWhisper));
+        // a letter too, even one a field keeps on some layout: Ctrl + the Q
+        // place selects all on AZERTY but quits on QWERTY
+        // (`text_field_keeps_key` judges the letter typed)
+        let ctrl_q = Binding::captured(Input::key(KeyCode::KeyQ), ctrl);
+        kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
+        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit]);
+        // a plain key never meets: the world's do not run while typing
+        let f5 = Binding::captured(Input::key(KeyCode::F5), Mods::default());
+        kb.set(Action::ChatWhisper, 0, Some(f5.clone()));
+        kb.set(Action::Fly, 1, Some(f5.clone()));
+        assert!(kb.rivals(Action::ChatWhisper, &f5).is_empty());
         let down = [input].into_iter().collect();
         assert!(kb.held(Action::HudDrag, &down, ctrl));
         assert!(kb.held(Action::PushToTalk, &down, ctrl));
@@ -2386,10 +2738,11 @@ mod tests {
             ] {
                 assert_eq!(kb.get(action)[1], k(key), "{action:?} on layout {i}");
             }
-            // and no default steals another's key
+            // and no default steals another's key (the chat fields' keys
+            // only meet each other: `is_chat`)
             for (action, binds) in &kb.map {
                 for b in binds.iter().flatten() {
-                    assert_eq!(kb.users(b), vec![*action], "{b:?} on layout {i}");
+                    assert_eq!(kb.rivals(*action, b), Vec::<Action>::new(), "{b:?} on layout {i}");
                 }
             }
         }
@@ -2439,6 +2792,24 @@ mod tests {
         assert!(kb.held(Action::Forward, &down, shift));
         assert!(kb.held(Action::PushToTalk, &down, Mods::default()));
         assert!(!kb.held(Action::Back, &down, shift));
+    }
+
+    #[test]
+    fn mouse_buttons_keep_fixed_names_and_old_japanese_ones_read_back() {
+        for (button, name) in [
+            (MouseButton::Middle, "Middle"),
+            (MouseButton::Back, "Back"),
+            (MouseButton::Forward, "Forward"),
+        ] {
+            assert_eq!(Input::mouse(button), Some(Input::Mouse(name.into())));
+        }
+        for (saved, name) in [("中央", "Middle"), ("戻る", "Back"), ("前進", "Forward"), ("Other9", "Other9")] {
+            let json = serde_json::to_string(&Input::Mouse(saved.into())).expect("save input");
+            let input: Input = serde_json::from_str(&json).expect("read input");
+            assert_eq!(input, Input::Mouse(name.into()));
+        }
+        let key: Input = serde_json::from_str(r#"{"Key":"KeyW"}"#).expect("read key");
+        assert_eq!(key, Input::Key("KeyW".into()));
     }
 
     #[test]

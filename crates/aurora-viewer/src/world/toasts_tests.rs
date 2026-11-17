@@ -35,6 +35,8 @@ fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, i
             kind: ChatKind::Im,
             source: from,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         },
         true,
     );
@@ -67,6 +69,8 @@ fn nearby_chat_does_not_raise_the_conversations_button_count() {
         kind: ChatKind::Local(aurora_net::ChatType::Normal),
         source: TOM,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     });
     // the conversation list still counts it on its nearby chat row
     assert_eq!(w.chat_unread, 1);
@@ -88,6 +92,8 @@ fn nearby_chat_alone_lights_neither_the_outline_nor_the_pill() {
         kind: ChatKind::Local(aurora_net::ChatType::Normal),
         source: TOM,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     });
     assert!(w.chat_unread > 0);
     assert_eq!(w.conversations_badge(), 0);
@@ -342,6 +348,7 @@ fn clicking_a_message_card_reads_its_conversation_and_focuses_its_tab() {
         // acknowledged: gone from the bell, the conversation read, its tab asked
         assert!(!w.notifications.list.iter().any(|n| n.id == id));
         assert_eq!(w.social.ims.iter().find(|s| s.other == session).unwrap().unread, 0);
+        assert!(w.social.focus_im_to_type, "the click leaves it ready to type in");
         assert_eq!(w.social.focus_im.take(), Some(session));
     }
     assert_eq!(w.notifications.unread(), 0);
@@ -354,6 +361,7 @@ fn clicking_a_friend_online_starts_an_im_and_offline_opens_nothing() {
     let off = w.notifications.push_presence(TOM, "Tom Smith is offline.", false);
     assert_eq!(w.open_from_notification(on), Some(JANE));
     assert!(w.social.has_session(&JANE));
+    assert!(w.social.focus_im_to_type);
     assert_eq!(w.social.focus_im.take(), Some(JANE));
     assert_eq!(w.open_from_notification(off), None);
     assert!(w.social.focus_im.is_none());

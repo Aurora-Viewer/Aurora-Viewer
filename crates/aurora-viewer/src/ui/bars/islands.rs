@@ -404,9 +404,11 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
+            let surface = ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
             ui.set_min_size(rect.size());
-            body(ui)
+            let out = body(ui);
+            crate::ui::surface_opacity::fade_after(ui.ctx(), ui.layer_id(), surface, p, crate::ui::surface_opacity::bars());
+            out
         })
         .inner
 }
@@ -1182,12 +1184,17 @@ mod tests {
             show_name_tags: true,
             fly_override: false,
             quiet_snapshots: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             release_keys: false,
             marketplace: false,
+            avatar_welcome: false,
+            linden_home: false,
             destinations: false,
             parcel_landmark: None,
             can_set_home: false,
             can_go_home: true,
+            home_entry: true,
             release_notes: false,
             region_console: false,
             god_level: 0,
@@ -1218,6 +1225,7 @@ mod tests {
             ik_keys: String::new(),
             edit_particles: false,
             save_to_contents: false,
+            build_options: Default::default(),
             health: Default::default(),
             hover_tips: Default::default(),
             world_overlays: Default::default(),

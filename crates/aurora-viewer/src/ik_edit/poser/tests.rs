@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn poser_sensitivity_is_persisted_and_scales_the_shared_gizmo_setting() {
+    let mut editor = Editor {
+        poser: State {
+            active: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut config = crate::settings::Settings::default().poser;
+    assert!(!editor.sync_poser_settings(&mut config));
+    editor.set_poser_sensitivity(0.8);
+    assert!(editor.sync_poser_settings(&mut config));
+    assert_eq!(config.sensitivity, 0.8);
+    assert_eq!(editor.poser.sensitivity, 0.8);
+    assert!(!editor.sync_poser_settings(&mut config));
+
+    editor.set_poser_sensitivity(f32::NAN);
+    assert_eq!(editor.poser.sensitivity, super::super::gizmo::DEFAULT_SENSITIVITY);
+    assert_eq!(editor.poser.config.sensitivity, super::super::gizmo::DEFAULT_SENSITIVITY);
+}
 use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 
@@ -241,6 +263,48 @@ fn poser_bone_marker_drag_rotates_the_pose_without_creating_a_binding_or_ik_goal
         assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations[bone], initial);
     }
 }
+
+#[test]
+fn poser_pelvis_marker_drag_rotates_the_root_without_breaking_its_children() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let pelvis = rig.pelvis;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[pelvis].w_axis.truncate());
+    let pointer = proj.project(frame.joints[pelvis].w_axis.truncate()).unwrap().0;
+    let initial = editor.poser.sessions[&world.agent_id].pose.rotations[pelvis];
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    let p = crate::theme::Theme::default().palette();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let end = pointer + egui::vec2(35.0, -20.0);
+    for events in [
+        Vec::new(),
+        Vec::new(),
+        vec![egui::Event::PointerMoved(pointer), button(pointer, true)],
+        vec![egui::Event::PointerMoved(end)],
+        vec![button(end, false)],
+    ] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        render(&mut world, &editor);
+    }
+
+    assert_eq!(editor.selected, Some(pelvis));
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(initial.dot(session.pose.rotations[pelvis]).abs() < 0.999);
+    assert_attached(&rig, &session.pose, &base, frame.model);
+    assert_eq!(session.undo.len(), 1);
+    assert!(editor.goals.is_empty());
+    assert!(editor.graph.definition.bindings.is_empty());
+}
+
 #[test]
 fn poser_static_layer_keeps_fk_ancestors_scales_and_world_locks() {
     let (mut world, mut editor) = fixture();
@@ -280,6 +344,104 @@ fn poser_static_layer_keeps_fk_ancestors_scales_and_world_locks() {
             .0
             .abs_diff_eq(scaled.scales[chest], 1e-5)
     );
+}
+
+#[test]
+fn poser_shape_changes_rebase_pose_and_undo_onto_the_new_rest() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let head = rig.names["mHead"];
+    let chest = rig.names["CHEST"];
+    let hip = rig.pelvis;
+    let initial_rest = Arc::new(crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    });
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().rebase(initial_rest.clone());
+    let frame = Frame::new(&world).unwrap();
+    editor.select(head, &rig, &frame);
+    let head_position = editor.poser.sessions[&world.agent_id].pose.positions[head];
+    editor.poser_transform(&rig, &frame, head_position, Quat::from_rotation_z(0.4), true);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.checkpoint();
+    let posed_head = session.pose.rotations[head];
+    let old_hip = session.pose.positions[hip];
+    let old_hip_world = session.pose.matrices(&rig, frame.model)[hip].w_axis.z;
+    let mut changed_rest = (*initial_rest).clone();
+    changed_rest.scale[chest] *= 1.3;
+    changed_rest.local_pos[hip].z += 0.12;
+    session.rebase(Arc::new(changed_rest));
+
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    assert!(session.edited(head));
+    assert!(!session.edited(chest));
+    let matrices = session.pose.matrices(&rig, frame.model);
+    assert!((matrices[hip].w_axis.z - old_hip_world - 0.12).abs() < 1e-4);
+
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.history(false);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (rig.local_pos[hip] + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+
+    // A redo entry follows the rest too: undo, return to the first shape, redo.
+    session.history(false);
+    session.rebase(initial_rest);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
+    assert!((session.pose.positions[hip] - old_hip).length() < 1e-5);
+}
+
+#[test]
+fn poser_rebase_from_a_flat_rest_axis_takes_the_new_rest_scale() {
+    // Shape sliders can drive a joint's rest scale to zero on one axis
+    // (#1249); the pose's ratio to it must not blow the joint up.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(rest));
+    assert!(session.pose.scales[chest].is_finite());
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
+}
+
+#[test]
+fn poser_a_rest_axis_still_flat_after_another_shape_change_keeps_the_pose_valid() {
+    // Pose, a slider flattens the chest's X (#1249), then another slider
+    // changes the rest while that axis stays flat: the pose and its undo
+    // steps must stay usable, not be dropped for a zero scale.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let neck = rig.names["NECK"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let mut flat_taller = flat.clone();
+    flat_taller.scale[neck] *= 1.2;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(flat_taller));
+    let scale = session.pose.scales[chest];
+    assert!(super::data::scale_valid(scale), "chest scale {scale} is out of the poser's bounds");
+    assert!(session.pose.scales.iter().all(|s| super::data::scale_valid(*s)));
 }
 fn assert_attached(rig: &Rig, pose: &SubjectPose, reference: &SubjectPose, model: Mat4) {
     let matrices = pose.matrices(rig, model);
@@ -329,6 +491,75 @@ fn poser_moving_wrists_fingers_and_ankles_preserves_the_complete_shaped_hierarch
     editor.commit_manipulation(rig, &frame, false);
     assert_attached(rig, &editor.poser.sessions[&world.agent_id].pose, &base, frame.model);
 }
+
+#[test]
+fn poser_rotating_the_pelvis_moves_the_body_as_one_attached_hierarchy() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let frame = editor.editor_frame(&world).unwrap();
+    let pelvis = rig.pelvis;
+    let torso = rig.names["mTorso"];
+    let before = editor.poser.sessions[&world.agent_id].pose.matrices(rig, frame.model);
+    let rotation = Quat::from_rotation_x(0.45);
+
+    editor.select(pelvis, rig, &frame);
+    editor.set_rotation(rotation);
+    editor.commit_manipulation(rig, &frame, true);
+
+    let session = &editor.poser.sessions[&world.agent_id];
+    let after = session.pose.matrices(rig, frame.model);
+    assert!(session.pose.rotations[pelvis].dot(rotation).abs() > 0.99999);
+    assert!(
+        after[torso].w_axis.truncate().distance(before[torso].w_axis.truncate()) > 0.01,
+        "the torso follows the root rotation"
+    );
+    assert_attached(rig, &session.pose, &base, frame.model);
+}
+
+#[test]
+fn poser_selects_and_rotates_every_animation_joint_without_breaking_the_hierarchy() {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let animated: Vec<_> = rig
+        .canonical_names
+        .iter()
+        .enumerate()
+        .filter_map(|(bone, name)| name.starts_with('m').then_some(bone))
+        .collect();
+    assert!(animated.len() > 100, "the rig includes the full Bento skeleton");
+
+    for bone in animated {
+        let frame = editor.editor_frame(&world).unwrap();
+        editor.select_pose_bone(bone, &rig, &frame);
+        assert_eq!(editor.selected, Some(bone), "select {}", rig.canonical_names[bone]);
+        let before = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
+        let world_rotation = (frame.model.inverse() * frame.joints[bone]).to_scale_rotation_translation().1;
+        editor.set_rotation(Quat::from_rotation_z(0.02) * world_rotation);
+        editor.poser.drag_checkpoint = false;
+        assert!(
+            editor.commit_poser_manipulation(&rig, &frame, true),
+            "edit {}",
+            rig.canonical_names[bone]
+        );
+        render(&mut world, &editor);
+
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        assert!(pose.rotations[bone].is_finite(), "rotation of {}", rig.canonical_names[bone]);
+        assert!(
+            before.dot(pose.rotations[bone]).abs() < 0.999999,
+            "rotation changed for {}",
+            rig.canonical_names[bone]
+        );
+        assert!(pose.valid(&rig), "valid pose after {}", rig.canonical_names[bone]);
+        assert_attached(&rig, pose, &base, frame.model);
+    }
+
+    assert!(editor.goals.is_empty());
+    assert!(editor.graph.definition.bindings.is_empty());
+}
+
 #[test]
 fn poser_world_pins_and_imported_translations_cannot_detach_children() {
     let (world, editor) = fixture();

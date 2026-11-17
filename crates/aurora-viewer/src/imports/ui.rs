@@ -284,6 +284,14 @@ fn mesh_blocked(imports: &Imports, connected: bool, account: Uuid) -> bool {
     connected && has_selected_mesh(imports) && imports.mesh_permission_denied && imports.mesh_permission_account == account
 }
 
+fn start_action(choice: Choice) -> Action {
+    if choice == Choice::Bulk {
+        Action::Start
+    } else {
+        Action::StartFor(choice)
+    }
+}
+
 fn price_label(imports: &Imports, prices: &Prices, connected: bool, account: Uuid) -> String {
     if imports.choice == Choice::Local {
         return aurora_i18n::tr!("import-local-free").into();
@@ -328,12 +336,7 @@ pub fn show(
     imports.sync_destinations(prefs, world, inventory_prefs);
     imports.reconcile_active();
     let prices = if imports.demo_started {
-        Prices {
-            texture: Some(10),
-            large_texture: Some(40),
-            sound: Some(10),
-            animation: Some(10),
-        }
+        imports.demo_prices()
     } else {
         world.login.as_ref().map(|login| Prices::from_login(&login.raw)).unwrap_or_default()
     };
@@ -368,7 +371,8 @@ pub fn show(
             let modal = widgets::Modal::new(egui::Id::unique("import_confirmation")).show(ctx, |ui| {
                 ui.set_width(380.0_f32.min(ctx.content_rect().width() - 60.0).max(180.0));
                 widgets::section_header(ui, p, "file-upload-filled", aurora_i18n::tr!("import-confirm-title"));
-                if let Some(cost) = imports.total(&prices) {
+                // A free upload only gets here for its folders: no price to confirm.
+                if let Some(cost) = imports.total(&prices).filter(|cost| *cost != 0) {
                     ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
                     if imports.has_shared_textures() {
                         ui.label(aurora_i18n::tr!("import-confirm-shared-textures"));
@@ -384,11 +388,7 @@ pub fn show(
                     #[cfg(test)]
                     ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_confirm_upload"), start.rect));
                     if start.clicked() {
-                        actions.push(if choice == Choice::Bulk {
-                            Action::Start
-                        } else {
-                            Action::StartFor(choice)
-                        });
+                        actions.push(start_action(choice));
                         imports.confirm = false;
                     }
                     if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {

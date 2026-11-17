@@ -84,25 +84,41 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
 pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
-    if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
-        return;
+    if double_clicked(response)
+        && let Some(action) = wear_toggle(world, it, worn)
+    {
+        actions.push(action);
+    }
+}
+
+/// What a double-click on `it` does (`double_click`), when RLVa allows it:
+/// None for what cannot be worn, a worn body part, or a lock. Also the
+/// Favorite Wearables rows' Wear / Take off button.
+pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Action> {
+    if !matches!(it.asset_type, 5 | 6 | 13) {
+        return None;
     }
     let locks = world.rlva_wear_locks();
     if worn {
-        if it.asset_type != 13 && locks.can_remove(it.id) {
-            actions.push(Action::Remove(it.id));
-        }
+        (it.asset_type != 13 && locks.can_remove(it.id)).then_some(Action::Remove(it.id))
     } else {
         let replace = it.asset_type == 13;
         let allowed = locks.wear(&world.inventory, it.id, 0);
-        if if replace { allowed.replace } else { allowed.add } {
-            actions.push(Action::WearItem {
-                item: it.id,
-                replace,
-                point: 0,
-            });
-        }
+        (if replace { allowed.replace } else { allowed.add }).then_some(Action::WearItem {
+            item: it.id,
+            replace,
+            point: 0,
+        })
     }
+}
+
+/// The list a row's menu is opened in: an outfit of My Outfits, which
+/// offers Delete from outfit, or the Favorite Wearables window, which offers
+/// Assign to Folder with the favorites' subfolders instead (is_outfit_menu
+/// and is_wearable_favorite of LLWearableItemsList::ContextMenu::updateItemsVisibility).
+pub(super) enum List<'a> {
+    Outfit(Uuid),
+    Favorites(&'a [(Uuid, String)]),
 }
 
 /// The menu of an outfit's item row `it`, acting on `selected` (the row
@@ -118,7 +134,7 @@ pub(super) fn context_menu(
     p: &Palette,
     world: &World,
     st: &mut AppearanceUi,
-    folder: Uuid,
+    list: List<'_>,
     it: &InvItem,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
@@ -208,6 +224,23 @@ pub(super) fn context_menu(
                 actions.extend(ids.into_iter().map(Action::Favorite));
             }
         }
+        // gestures are activated, not worn (the inventory's Activate /
+        // Deactivate entry)
+        let gestures: Vec<Uuid> = items.iter().filter(|it| it.asset_type == 21).map(|it| it.id).collect();
+        if matches!(list, List::Favorites(_)) && !gestures.is_empty() {
+            let active = gestures.iter().all(|id| world.active_gestures.contains(id));
+            let label = if active {
+                aurora_i18n::tr!("gesture-deactivate")
+            } else {
+                aurora_i18n::tr!("gesture-activate")
+            };
+            if menu::item(ui, p, "player-play-filled", label) {
+                actions.push(Action::Gesture(gestures, !active));
+            }
+        }
+        if let List::Favorites(folders) = list {
+            assign_menu(ui, p, world, folders, &items, actions);
+        }
         if menu::item_if(
             ui,
             p,
@@ -217,17 +250,38 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::ShowOriginal(it.id));
         }
-        if menu::item_if(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
-            st.pending.is_none(),
-        ) {
+        if let List::Outfit(folder) = list
+            && menu::item_if(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
+                st.pending.is_none(),
+            )
+        {
             actions.push(Action::DeleteFromOutfit {
                 folder,
                 items: items.iter().map(|it| it.id).collect(),
             });
+        }
+    });
+}
+
+/// Assign to Folder: the favorites' subfolders, by name
+/// (populate_assign_to_folder_menu); one links the selected originals it
+/// does not hold yet (assign_to_favorite_folder).
+fn assign_menu(ui: &mut egui::Ui, p: &Palette, world: &World, folders: &[(Uuid, String)], items: &[&InvItem], actions: &mut Vec<Action>) {
+    use crate::world::wearable_favorites as favorites;
+    let label = aurora_i18n::tr!("wearable-favorites-assign");
+    menu::submenu(ui, p, "folder-filled", label, !folders.is_empty(), |ui| {
+        for (id, name) in folders {
+            if menu::item(ui, p, "folder-filled", name) {
+                let ids: Vec<Uuid> = items.iter().map(|it| it.id).collect();
+                let targets = favorites::droppable(&world.inventory, &ids, *id);
+                if let Some(change) = favorites::link(&world.inventory, &targets, *id) {
+                    actions.push(Action::Folders(change));
+                }
+            }
         }
     });
 }

@@ -139,16 +139,23 @@ pub fn set_lists(lists: Vec<List>) {
     *LISTS.write() = shared(lists);
     let spawned = std::thread::Builder::new().name("aurora-autoreplace-save".into()).spawn(move || {
         let path = user_file();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = crate::atomic_file::write(&path, xml.as_bytes()) {
-            log::warn!("autoreplace: {}: {e}", path.display());
+        if let Err(e) = OWED.write(&path, xml.into_bytes()) {
+            log::warn!("autoreplace: {}: {e}; kept, tried again later", path.display());
         }
     });
     if let Err(e) = spawned {
         log::warn!("autoreplace: no thread: {e}");
     }
+}
+
+/// The lists whose write was refused (the session uses them from memory):
+/// tried again (`save_retry`) and once more at exit. The Legacy Viewer's
+/// LLAutoReplace::saveToUserSettings writes once.
+static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("aurora-autoreplace-retry", "autoreplace lists");
+
+/// The viewer closing: lists still owed are tried once more.
+pub fn save_before_exit() {
+    OWED.finish();
 }
 
 /// The bundled lists again.
