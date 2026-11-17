@@ -147,6 +147,10 @@ pub struct Watch {
     pub pending: bool,
     /// Failed reloads of the current change (LLLocalBitmap::mUpdateRetries).
     pub failures: u8,
+    /// Whether the reload under way was started by this watch, not by the
+    /// Reload button: only those are retried quietly, as the Legacy Viewer
+    /// only retries inside its timer (LLLocalBitmapMgr::doUpdates).
+    pub auto: bool,
 }
 impl Watch {
     pub fn new(mut paths: Vec<PathBuf>) -> Self {
@@ -158,6 +162,7 @@ impl Watch {
             next: Instant::now() + Duration::from_secs(3),
             pending: false,
             failures: 0,
+            auto: false,
         }
     }
     /// After a successful reload: the stamp seen when the change was noticed

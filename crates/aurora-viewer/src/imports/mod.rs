@@ -1216,6 +1216,8 @@ impl Imports {
                 Worker::Reloaded(id, result) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
                         entry.reloading = false;
+                        // a reload the watch started (not the Reload button)
+                        let auto = entry.watch.as_mut().is_some_and(|watch| std::mem::take(&mut watch.auto));
                         match result {
                             Ok(mut loaded) if entry.material_index < loaded.len() || (loaded.len() == 1 && loaded[0].id == id) => {
                                 let index = if loaded.len() == 1 && loaded[0].id == id {
@@ -1241,7 +1243,11 @@ impl Imports {
                                 entry.empty_alpha = updated.empty_alpha;
                                 let seen = entry.watch.take().map(|watch| watch.stamp);
                                 entry.watch = updated.watch.take();
-                                if let (Some(watch), Some(seen)) = (&mut entry.watch, &seen) {
+                                // A manual reload keeps the stamp taken when
+                                // the files were read: the one the watch held
+                                // is the previous load's, and would reload
+                                // the same file again at the next check.
+                                if auto && let (Some(watch), Some(seen)) = (&mut entry.watch, &seen) {
                                     watch.reloaded(seen);
                                 }
                             }
@@ -1250,8 +1256,14 @@ impl Imports {
                             // decode: the local preview keeps its last good
                             // version and tries again at the next check
                             // (LLLocalBitmap::updateSelf), and only shows the
-                            // error once the retries are spent.
-                            Err(_) if entry.source.is_some() && entry.watch.as_mut().is_some_and(local::Watch::failed) => {
+                            // error once the retries are spent. A press on
+                            // Reload shows its error at once.
+                            Err(_)
+                                if auto
+                                    && entry.local_live
+                                    && entry.source.is_some()
+                                    && entry.watch.as_mut().is_some_and(local::Watch::failed) =>
+                            {
                                 entry.status = Status::Ready;
                             }
                             Err(error) => entry.status = Status::Error(error),
@@ -1374,6 +1386,7 @@ impl Imports {
                             watch.failures = 0;
                         }
                         watch.stamp = stamp;
+                        watch.auto = true;
                     }
                 }
                 Worker::Remote(asset, image) => self.cached_map(asset, image),

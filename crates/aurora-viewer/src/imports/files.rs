@@ -1261,6 +1261,55 @@ mod tests {
             "given up until the next change"
         );
     }
+    /// A press on Reload answers at once: a broken file shows its error
+    /// without the watch's quiet retries, and a good one is not loaded a
+    /// second time by the next check.
+    #[test]
+    fn a_manual_reload_shows_a_broken_file_at_once_and_is_not_repeated_by_the_watch() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+        let id = entries[0].id;
+        let mut imports = Imports {
+            entries,
+            ..Default::default()
+        };
+        let settle = |imports: &mut Imports| {
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            for _ in 0..1000 {
+                if !imports.entries[0].reloading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                imports.poll(&ctx, &jobs, &world, &Default::default());
+            }
+            assert!(!imports.entries[0].reloading, "reload finishes");
+        };
+
+        // A changed export, reloaded by hand: the next check finds nothing new.
+        image::save_buffer(&path, &[90u8; 8 * 8 * 4], 8, 8, image::ColorType::Rgba8).expect("export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Ready));
+        let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+        imports
+            .tx
+            .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+            .expect("send");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(!imports.entries[0].reloading, "the watch does not load the same file again");
+
+        // A broken file, reloaded by hand: its error shows on the first press.
+        std::fs::write(&path, b"broken").expect("broken export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Error(_)), "the error shows at once");
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, 0, "no quiet retry");
+    }
     #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
         let files = Files::new();
