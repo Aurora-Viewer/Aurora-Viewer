@@ -1223,6 +1223,17 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
     if set && matches!(piece, Some(Category::Tops | Category::Pants | Category::Shorts | Category::Skirts)) {
         return whole;
     }
+    // (a pack word, `[Moon Hair] Ada Fatpack`, `[Store Jewelry] Lily Set`,
+    // says how it is sold, not what it is: only an outfit or a costume
+    // named in the rest is one)
+    let outfit = rest.split(|c: char| !c.is_alphanumeric()).any(|w| {
+        ["outfit", "outfits", "costume", "costumes"]
+            .iter()
+            .any(|k| w.eq_ignore_ascii_case(k))
+    });
+    if piece == Some(Category::Outfits) && !outfit {
+        return whole;
+    }
     piece.or(whole)
 }
 

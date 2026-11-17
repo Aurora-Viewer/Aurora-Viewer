@@ -4080,6 +4080,17 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         "{}",
         path("[Willow Tree] Ada Poses")
     );
+    // a pack word in the rest says how it is sold, not what it is
+    assert!(
+        path("[Moon Hair] Ada Fatpack").contains(Category::Hair.folder()),
+        "{}",
+        path("[Moon Hair] Ada Fatpack")
+    );
+    assert!(
+        path("[Swallow Jewelry] Lily Set").contains(Category::Jewelry.folder()),
+        "{}",
+        path("[Swallow Jewelry] Lily Set")
+    );
     // a set's piece under a set's bracketed name is that set
     assert!(
         path("[Summer Bikini] Top - Black").contains(Category::Swimwear.folder()),
