@@ -1852,14 +1852,17 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_HOVER_TRACE=1`** (any mode, the grid included): a `hover trace`
   line in the log each time the object under the hover cursor changes, or
   where the answer comes from (`app/hover_pick.rs`): `Cpu` (nothing posed
-  near the ray), `Answer` (the drawn faces of this pixel), `Between` (the
-  last answer's posed object, searched from the depth under the pointer
-  while it moves), `Fallback` (the CPU search, for want of an answer that
-  speaks for the pixel), `Foreground` (the CPU found a surface in front).
-  The line gives the object's local id, whether a left click acts on it
-  (`touch`), its distance and the depth's along the ray, and the posed
-  object the last answer saw (`under`). A cursor that flickers shows as
-  lines alternating between two sources or two objects.
+  near the ray), `Answer` (the drawn faces of this pixel), `Followed` (the
+  last answer's worn mesh, met by the pointer's ray on the CPU while it
+  moves), `Between` (the last answer's posed object, searched from the
+  depth under the pointer while it moves), `Fallback` (the CPU search, for
+  want of an answer that speaks for the pixel), `Foreground` (the CPU found
+  a surface in front). The line gives the object's local id, whether a left
+  click acts on it (`touch`), what it is (`kind`: the skeleton it is rigged
+  to if any, whether the GPU poses it, whether it is worn, whether it has a
+  face at alpha 0), its distance and the depth's along the ray, and the
+  posed object the last answer saw (`under`). A cursor that flickers shows
+  as lines alternating between two sources or two objects.
 - **`AURORA_DEMO_LAND_BESIDE=1`**: a 4 m square frame (a box prim hollowed
   at 85 %) lying on the bare ground 5 m along the start view. Its box spans
   the ground in its middle, its surface does not, as the box of a mesh

@@ -4,11 +4,14 @@
 //! supplies the same attachment/body policy as a press, without waiting
 //! for the GPU. HUDs retain their separate pick and cursor policy.
 //!
-//! An answer speaks for its pixel. While the pointer moves, the last one
-//! still tells which posed object is drawn around it, and the CPU works out
-//! the rest at each frame (`Scene::drawn_hover_between`): the cursor used
-//! to fall back on the CPU's answer until the pointer stopped, and
-//! flickered over a clicker worn under a mesh body. No query is added.
+//! An answer speaks for its pixel. While the pointer moves, the cursor
+//! used to fall back on the CPU's answer until the pointer stopped, and
+//! flickered wherever the two differ: over a scripted rigged mesh the
+//! click acts on, over a clicker worn under a mesh body, over a scripted
+//! mesh worn unrigged. So the last answer still tells, at each frame,
+//! which worn mesh the cursor was on (the CPU tests it alone under the
+//! pointer, `Scene::drawn_hover_on`) and which posed object is drawn
+//! around (`Scene::drawn_hover_between`). No query is added.
 //!
 //! `AURORA_HOVER_TRACE=1` writes a `hover trace` line each time the
 //! cursor's target or where it comes from changes (docs/TESTING.md).
@@ -62,9 +65,20 @@ struct Kept {
     question: Question,
     hit: Hit,
     at: Instant,
-    /// The posed object of its nearest opaque face and how far along the
-    /// asked ray, when no blended face lay in front of it.
+    /// The posed object the cursor was on at its pixel and how far along
+    /// the asked ray (`Scene::drawn_hover_under`).
     under: Option<(usize, f32)>,
+    /// How far (m) behind the opaque depth of its pixel `hit` is: 0 in
+    /// front of it.
+    behind: f32,
+}
+
+/// What `Kept::behind` keeps of an answer.
+fn behind(hit: Hit, question: &Question) -> f32 {
+    match (hit.0, question.depth) {
+        (Some(point), Some(depth)) => (point - depth).dot(question.ray.1).max(0.0),
+        _ => 0.0,
+    }
 }
 
 impl Kept {
@@ -79,25 +93,6 @@ impl Kept {
     }
 }
 
-/// What `Kept::under` keeps of an answer.
-fn under(
-    scene: &crate::scene::Scene,
-    world: &crate::world::World,
-    drawn: &aurora_render::Drawn,
-    ray: (Vec3, Vec3),
-) -> Option<(usize, f32)> {
-    if drawn.blend.is_some() {
-        return None;
-    }
-    let face = drawn.opaque?;
-    let (idx, _) = scene.record_object(face.record)?;
-    // only what the CPU cannot find where it is shown
-    scene
-        .drawn_status(world, idx)
-        .posed_by_gpu
-        .then_some((idx, (face.point - ray.0).dot(ray.1)))
-}
-
 /// Where the cursor's target comes from (AURORA_HOVER_TRACE).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Source {
@@ -107,7 +102,10 @@ enum Source {
     Fallback,
     /// The answer of the GPU for this pixel.
     Answer,
-    /// The last answer's object, searched from the depth under the pointer.
+    /// The last answer's object, met by the pointer's ray on the CPU.
+    Followed,
+    /// The last answer's posed object, searched from the depth under the
+    /// pointer.
     Between,
     /// The CPU found another surface in front of the answer's.
     Foreground,
@@ -153,8 +151,15 @@ impl HoverDrawn {
             self.traced = Some((source, hit.1));
             let local = |i: usize| world.objects.get(i).map(|o| o.key.local_id);
             let along = |p: Vec3| ray.map(|(o, d)| (p - o).dot(d));
+            // what the object is: rigged (and to whose skeleton), a mesh
+            // the GPU poses, worn, with a face that is not drawn (alpha 0)
+            let kind = hit.1.map(|i| {
+                let s = scene.drawn_status(world, i);
+                let undrawn = scene.gpu.get(i).is_some_and(|g| g.faces.len() < g.built_faces);
+                (s.rigged, s.posed_by_gpu, s.worn, undrawn)
+            });
             log::info!(
-                "hover trace: {source:?} object={:?} touch={} at={:?} depth={:?} under={:?} cursor={:.0},{:.0}",
+                "hover trace: {source:?} object={:?} touch={} kind={kind:?} at={:?} depth={:?} under={:?} cursor={:.0},{:.0}",
                 hit.1.and_then(local),
                 hit.1
                     .is_some_and(|i| crate::interaction::target(world, i, &std::collections::HashMap::new()).is_some()),
@@ -208,11 +213,13 @@ impl HoverDrawn {
                     } else {
                         scene.drawn_hover(world, &drawn, asked.ray, asked.depth, asked.far)
                     };
+                    let question = if here { question } else { asked };
                     self.kept = Some(Kept {
-                        question: if here { question } else { asked },
+                        question,
                         hit,
                         at: now,
-                        under: under(scene, world, &drawn, asked.ray),
+                        under: scene.drawn_hover_under(world, &drawn, asked.ray),
+                        behind: behind(hit, &question),
                     });
                 }
             } else if late {
@@ -238,6 +245,8 @@ impl HoverDrawn {
             .is_some_and(|g| g.rigged || g.owner_avatar.is_some());
         let (hit, source) = if kept.question.same(&question, posed) {
             (kept.hit, Source::Answer)
+        } else if let Some(point) = kept.hit.1.and_then(|idx| scene.drawn_hover_on(world, idx, ray, depth, kept.behind)) {
+            ((Some(point), kept.hit.1), Source::Followed)
         } else if let Some(hit) = kept
             .between(&question)
             .and_then(|(under, depth)| scene.drawn_hover_between(world, under, ray, depth, far))
@@ -329,6 +338,7 @@ mod tests {
             hit: (Some(Vec3::X * 5.1), Some(3)),
             at: Instant::now(),
             under: Some((2, 5.0)),
+            behind: 0.0,
         };
         // the pointer moved over the same body: its surface is a little
         // nearer or farther there
@@ -351,9 +361,15 @@ mod tests {
             }),
             None
         );
-        // an answer with a blended face in front, or of an object the CPU
-        // finds by itself, speaks for its pixel alone
+        // an answer of an object the CPU finds by itself speaks for its
+        // pixel alone
         let alone = Kept { under: None, ..kept };
         assert_eq!(alone.between(&moved(Some(on_body))), None);
+        // the answer met its object 10 cm under the surface of the body
+        assert!((behind(kept.hit, &q) - 0.1).abs() < 1e-6);
+        // in front of it, or with nothing opaque behind: not under anything
+        assert_eq!(behind((Some(Vec3::X * 4.9), Some(3)), &q), 0.0);
+        assert_eq!(behind(kept.hit, &Question { depth: None, ..q }), 0.0);
+        assert_eq!(behind((None, None), &q), 0.0);
     }
 }

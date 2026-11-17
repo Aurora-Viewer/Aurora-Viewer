@@ -226,10 +226,11 @@ impl Scene {
     /// pixel alone, and the next one comes [`super::hover::REFRESH`] later:
     /// until then the cursor showed what the CPU finds, nothing under a
     /// rigged mesh, and flickered over a clicker worn under a mesh body
-    /// whenever the pointer moved. Here `under`, the object whose opaque
-    /// face the last answer saw nearest, is taken to be the one under the
-    /// pointer still, at the `depth` read now, and the searches of the CPU
-    /// run from there as they do for an answer. No query of the GPU.
+    /// whenever the pointer moved. Here `under`, the posed object the last
+    /// answer saw there ([`Self::drawn_hover_under`]), is taken to be the
+    /// one under the pointer still, at the `depth` read now, and the
+    /// searches of the CPU run from there as they do for an answer. No
+    /// query of the GPU.
     ///
     /// None when the guess has nothing to stand on, and the CPU's own
     /// answer is the cursor's as before: `under` is an object the CPU
@@ -262,6 +263,58 @@ impl Scene {
         let adjusted = self.touch_depth_under(world, under, at, ray, Some(depth), far, Some(&near));
         let point = self.action_point(world, Some(ray), adjusted, false, far);
         Some((point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true))))
+    }
+
+    /// The posed object the cursor is on at the pixel of an answer, and how
+    /// far along `ray`, the ray asked: what [`Self::drawn_hover_between`]
+    /// takes to be under the pointer still once it has moved. The nearest
+    /// opaque face's, or the blended face's in front of it when the answer
+    /// gives that one the click: a layer of a mesh body a few millimetres
+    /// over its skin, where "Rigged attachments of other avatars" is on. A
+    /// blended face the click passes through is as if it were not there.
+    /// None when the object is one the CPU finds by itself, and speaks for.
+    pub fn drawn_hover_under(&self, world: &World, drawn: &Drawn, ray: (Vec3, Vec3)) -> Option<(usize, f32)> {
+        let posed = |face: DrawnFace| {
+            let (idx, _) = self.record_object(face.record)?;
+            self.drawn_status(world, idx)
+                .posed_by_gpu
+                .then_some((idx, (face.point - ray.0).dot(ray.1)))
+        };
+        if let Some(face) = drawn.blend {
+            let over = posed(face)?;
+            if self.takes(world, Gesture::Touch, over.0, false) {
+                return Some(over);
+            }
+        }
+        posed(drawn.opaque?)
+    }
+
+    /// [`Self::drawn_hover`] between two answers of the GPU, for the mesh
+    /// `idx` the last one gave the cursor: where `ray`, the pointer's now,
+    /// meets it, if it does. The searches of the CPU leave the faces shown
+    /// of a mesh worn unrigged to the answers (picking.rs,
+    /// `worn_unrigged_mesh`), though the CPU knows where it is: between two
+    /// answers the cursor lost it whenever the pointer moved. Here that
+    /// object is tested alone, every face of it, where the CPU places it.
+    /// No query of the GPU.
+    ///
+    /// `behind`: how far (m) behind the opaque depth of its pixel the answer
+    /// met the object, 0 in front of it. Deeper than that under `depth`,
+    /// the depth under the pointer now, something hides it there.
+    ///
+    /// None for any other object: the CPU finds it by itself, or cannot
+    /// place it (rigged, [`Self::drawn_hover_between`] guesses). None when
+    /// the pointer left the object: the next answer says what is there.
+    pub fn drawn_hover_on(&self, world: &World, idx: usize, ray: (Vec3, Vec3), depth: Option<Vec3>, behind: f32) -> Option<Vec3> {
+        if !self.drawn_status(world, idx).posed_by_gpu {
+            return None;
+        }
+        // (FacePick::Edit: the faces shown; None for a rigged mesh)
+        let t = self
+            .face_hit_mode(world, idx, ray, Instant::now(), true, picking::FacePick::Edit)?
+            .t;
+        let hidden = depth.is_some_and(|d| t > (d - ray.0).dot(ray.1) + behind + SAME);
+        (!hidden).then(|| ray.0 + ray.1 * t)
     }
 
     /// A press on our displayed body, including meshes skinned to it.
@@ -1008,6 +1061,139 @@ mod tests {
         scene.rigged_clicks.others = true;
         assert_eq!(between(&scene, moved, on_body), Some((Some(on_body), Some(body))));
         assert_eq!(between(&scene, beside, on_body_beside), Some((Some(on_body_beside), Some(body))));
+    }
+
+    /// A scripted mesh worn unrigged, with a blended face: the answer of
+    /// the GPU gives it the cursor, and the hover search of the CPU leaves
+    /// its shown faces to the answers. While the pointer moves over it, the
+    /// cursor stays on it; it leaves it with the pointer, or when something
+    /// hides it there.
+    #[test]
+    fn the_hover_stays_on_the_worn_mesh_of_the_last_answer_while_the_pointer_is_over_it() {
+        let (mut world, mut scene, mesh, wall) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
+        // the mesh's face at x = 2.5, the skin 4 mm behind it
+        let o = world.objects.get_mut(mesh).unwrap();
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        let mut volume = o.volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0xface),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        o.render.local_volume = Some(Box::new(volume));
+        scene.gpu[mesh].owner_avatar = wearer;
+        scene.gpu[mesh].built_faces = scene.gpu[mesh].faces.len();
+        scene.pick.changed(mesh);
+        scene.gpu[wall].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let skin = |ray: (Vec3, Vec3)| Some(ray.0 + ray.1 * 2.504);
+        let drawn = Drawn {
+            blend: Some(DrawnFace {
+                record: 0,
+                point: Vec3::new(2.5, 0.0, 50.0),
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, skin(ray), 100.0).1, Some(mesh), "an answer");
+        assert_eq!(
+            scene.hover_pick(&world, Some(ray), skin(ray), 100.0).1,
+            None,
+            "the hover search of the CPU"
+        );
+
+        // the pointer moved 2 cm over the mesh
+        let moved = (Vec3::new(0.0, 0.02, 50.0), Vec3::X);
+        let on = scene.drawn_hover_on(&world, mesh, moved, skin(moved), 0.0);
+        assert!(
+            on.is_some_and(|p| (p - Vec3::new(2.5, 0.02, 50.0)).length() < 1e-3),
+            "on the mesh: {on:?}"
+        );
+        assert!(
+            scene.drawn_hover_on(&world, mesh, moved, None, 0.0).is_some(),
+            "nothing opaque behind"
+        );
+        // it left the mesh
+        let beside = (Vec3::new(0.0, 2.0, 50.0), Vec3::X);
+        assert_eq!(scene.drawn_hover_on(&world, mesh, beside, skin(beside), 0.0), None);
+        // an arm passes 20 cm in front of it there
+        let arm = Some(moved.0 + moved.1 * 2.3);
+        assert_eq!(scene.drawn_hover_on(&world, mesh, moved, arm, 0.0), None);
+        // unless the answer met it that deep already
+        assert!(scene.drawn_hover_on(&world, mesh, moved, arm, 0.2).is_some());
+        // an object the CPU finds by itself, an avatar: never from here
+        let far_behind = Some(moved.0 + moved.1 * 9.0);
+        assert_eq!(scene.drawn_hover_on(&world, wall, moved, far_behind, 0.0), None);
+        assert_eq!(scene.drawn_hover_on(&world, wearer.unwrap(), moved, None, 0.0), None);
+        // a rigged mesh is not where the CPU has its triangles
+        scene.gpu[mesh].rigged = true;
+        assert_eq!(scene.drawn_hover_on(&world, mesh, moved, skin(moved), 0.0), None);
+    }
+
+    /// The layers of a scripted mesh body: a blended one a few millimetres
+    /// over the opaque skin. Between two answers the cursor follows the
+    /// object the click acts on there: the layer where "Rigged attachments
+    /// of other avatars" gives it the click, and what is under the body
+    /// where the click passes through both. The cursor used to fall back
+    /// on the CPU's search, which sees neither, whenever a blended face lay
+    /// in front.
+    #[test]
+    fn the_hover_between_two_answers_knows_the_blended_layer_of_a_mesh_body() {
+        let (mut world, mut scene, layer, skin) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
+        for idx in [layer, skin] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+            scene.gpu[idx].rigged = true;
+            scene.gpu[idx].owner_avatar = wearer;
+        }
+        scene.gpu[skin].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let face = |record, x| {
+            Some(DrawnFace {
+                record,
+                point: Vec3::new(x, 0.0, 50.0),
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            })
+        };
+        let layered = Drawn {
+            blend: face(0, 2.5),
+            opaque: face(1, 2.504),
+        };
+        // the click passes through both: the skin, for the search under it
+        assert_eq!(scene.drawn_hover_under(&world, &layered, ray), Some((skin, 2.504)));
+        // the layer takes the click
+        scene.rigged_clicks.others = true;
+        assert_eq!(scene.drawn_hover_under(&world, &layered, ray), Some((layer, 2.5)));
+        let moved = (Vec3::new(0.0, 0.02, 50.0), Vec3::X);
+        let on_skin = Vec3::new(2.504, 0.02, 50.0);
+        assert_eq!(
+            scene.drawn_hover_between(&world, layer, moved, on_skin, 100.0),
+            Some((Some(on_skin), Some(layer)))
+        );
+        // no blended face: the skin, as before
+        let bare = Drawn { blend: None, ..layered };
+        assert_eq!(scene.drawn_hover_under(&world, &bare, ray), Some((skin, 2.504)));
+        // a blended prim the CPU finds by itself speaks for its pixel
+        scene.gpu[layer].rigged = false;
+        scene.gpu[layer].owner_avatar = None;
+        assert_eq!(scene.drawn_hover_under(&world, &layered, ray), None);
+        // nothing posed
+        assert_eq!(scene.drawn_hover_under(&world, &Drawn::default(), ray), None);
     }
 
     /// A scripted animesh rezzed in front of a scripted prim: with
