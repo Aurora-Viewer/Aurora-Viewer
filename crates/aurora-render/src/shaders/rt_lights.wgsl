@@ -17,8 +17,8 @@
 // A light's rays stop short of its own prim (`source.x`), so its bulb or its
 // lamp's body does not shadow it. Projectors keep their shadow maps.
 
-// After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl and wgpu_ray_query's
-// enable (rt_shadows.rs `source`).
+// After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
+// wgpu_ray_query's enable (rt_shadows.rs `source`).
 
 struct Params {
     // This frame's projection inverted (with the prepass's jitter), and
@@ -48,8 +48,10 @@ struct Light {
 const CANDIDATES: u32 = 8u;
 // The most a choice kept from last frame counts for, against this frame's.
 const CONFIDENCE_MAX: f32 = 20.0;
-// Frames the share's history averages at most.
+// Frames the share's history averages at most; on a surface that moved on
+// its own, whose shadows sweep over it, fewer.
 const HISTORY: f32 = 12.0;
+const HISTORY_MOVING: f32 = 4.0;
 const MAX_LIGHTS: u32 = 64u;
 // Rays a pixel traces on a frame with no history.
 const RESET_RAYS: u32 = 8u;
@@ -67,6 +69,8 @@ const RESET_RAYS: u32 = 8u;
 // The share: r the share, g the frames it averages, b the pixel's distance.
 @group(0) @binding(7) var prev_share: texture_2d<f32>;
 @group(0) @binding(8) var out_share: texture_storage_2d<rgba16float, write>;
+// the depth prepass's motion (rt_history.wgsl), or black without it
+@group(0) @binding(12) var motion_tex: texture_2d<f32>;
 
 // cs_lights_filter (its own bind group: it reads what cs_lights wrote)
 @group(0) @binding(9) var share_tex: texture_2d<f32>;
@@ -106,19 +110,6 @@ fn rand(seed: ptr<function, u32>) -> f32 {
     return f32(*seed >> 8u) / 16777216.0;
 }
 
-// Where `p` was on last frame's screen (pixels), or negative off it.
-fn prev_pixel(p: vec3<f32>) -> vec2<f32> {
-    let clip = params.prev_clip_from_world * vec4<f32>(p, 1.0);
-    if (clip.w <= 0.0) {
-        return vec2<f32>(-1.0);
-    }
-    let ndc = clip.xy / clip.w;
-    if (any(abs(ndc) >= vec2<f32>(1.0))) {
-        return vec2<f32>(-1.0);
-    }
-    return (ndc * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5)) * params.screen.xy;
-}
-
 @compute @workgroup_size(8, 8)
 fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel = vec2<i32>(id.xy);
@@ -150,19 +141,18 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // last frame's at the same surface
-    let before = prev_pixel(world);
+    let came = back_of(pixel, world, dist);
     var back = vec2<i32>(-1);
-    if (params.mode.w > 0.5 && before.x >= 0.0) {
-        let b = clamp(vec2<i32>(before), vec2<i32>(0), vec2<i32>(params.screen.xy) - vec2<i32>(1));
+    if (params.mode.w > 0.5 && came.at.x >= 0.0) {
+        let b = clamp(vec2<i32>(came.at), vec2<i32>(0), vec2<i32>(params.screen.xy) - vec2<i32>(1));
         let was = textureLoad(prev_share, b, 0).b;
-        let expected = distance(world, params.prev_camera.xyz);
-        if (was > 0.0 && abs(was - expected) < 0.02 + 0.03 * expected) {
+        if (was > 0.0 && abs(was - came.expected) < came.tolerance) {
             back = b;
         }
     }
     // with no history (a photo, a new size), more rays at once
     let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
-    let origin = world + n * (0.01 + 0.002 * dist);
+    let origin = ray_origin(world, n, dist);
     var seen_sum = 0.0;
     var chosen = 0u;
     var w = 0.0;
@@ -251,7 +241,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     var frames = min(f32(rays), HISTORY);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back, 0);
-        frames = min(h.g + 1.0, HISTORY);
+        frames = min(h.g + 1.0, select(HISTORY, HISTORY_MOVING, came.moving));
         share = mix(h.r, sample, 1.0 / frames);
     }
     textureStore(out_share, pixel, vec4<f32>(share, frames, dist, 0.0));

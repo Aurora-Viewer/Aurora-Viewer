@@ -14,8 +14,8 @@
 // `cs_gi_filter`, at full resolution: a depth-aware 5×5 gather of the half
 // resolution, which blurs the noise left and keeps the edges.
 
-// After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl and wgpu_ray_query's
-// enable (rt_shadows.rs `source`).
+// After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
+// wgpu_ray_query's enable (rt_shadows.rs `source`).
 
 struct Params {
     // This frame's projection (with the prepass's jitter), its inverse, and
@@ -37,8 +37,10 @@ struct Params {
     mode: vec4<f32>,
 };
 
-// Frames the history averages at most.
+// Frames the history averages at most; on a surface that moved on its own,
+// whose light changes as it goes, fewer.
 const HISTORY: f32 = 32.0;
+const HISTORY_MOVING: f32 = 8.0;
 // Rays a pixel traces on a frame with no history.
 const RESET_RAYS: u32 = 16u;
 // The brightest a sample counts (in the lit colour's units): a rare ray
@@ -57,6 +59,8 @@ const SAMPLE_MAX: f32 = 8.0;
 @group(0) @binding(7) var out_dist: texture_storage_2d<r32float, write>;
 // last frame's lit scene (the scene copy, not yet made this frame)
 @group(0) @binding(8) var scene_tex: texture_2d<f32>;
+// the depth prepass's motion (rt_history.wgsl), or black without it
+@group(0) @binding(12) var motion_tex: texture_2d<f32>;
 
 // cs_gi_filter (its own bind group: the history it reads is what cs_gi
 // wrote)
@@ -74,20 +78,6 @@ fn cosine_dir(n: vec3<f32>, u: vec2<f32>) -> vec3<f32> {
     let t = vec3<f32>(1.0 + s * n.x * n.x * a, s * b, -s * n.x);
     let bt = vec3<f32>(b, s + n.y * n.y * a, -n.y);
     return normalize(t * (r * cos(phi)) + bt * (r * sin(phi)) + n * sqrt(max(1.0 - u.x, 0.0)));
-}
-
-// Where `p` was on last frame's screen (full resolution pixels), or
-// negative off it.
-fn prev_pixel(p: vec3<f32>) -> vec2<f32> {
-    let clip = params.prev_clip_from_world * vec4<f32>(p, 1.0);
-    if (clip.w <= 0.0) {
-        return vec2<f32>(-1.0);
-    }
-    let ndc = clip.xy / clip.w;
-    if (any(abs(ndc) >= vec2<f32>(1.0))) {
-        return vec2<f32>(-1.0);
-    }
-    return (ndc * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5)) * params.screen.xy;
 }
 
 // Last frame's lit colour where the view sees `p` (the view's depth this
@@ -133,7 +123,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     let world = unproject(pixel, depth);
     let n = normal_at(pixel, world, depth);
     let dist = distance(world, params.camera.xyz);
-    let origin = world + n * (0.01 + 0.002 * dist);
+    let origin = ray_origin(world, n, dist);
     let posed = params.mode.y > 0.5;
     // with no history (a photo, a new size), more rays at once
     let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
@@ -194,14 +184,13 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     // last frame's at the same surface
     var color = sample;
     var count = min(f32(rays), HISTORY);
-    let before = prev_pixel(world);
-    if (params.mode.w > 0.5 && before.x >= 0.0) {
-        let ph = clamp(vec2<i32>(before * 0.5), vec2<i32>(0), vec2<i32>(params.half.xy) - vec2<i32>(1));
+    let back = back_of(pixel, world, dist);
+    if (params.mode.w > 0.5 && back.at.x >= 0.0) {
+        let ph = clamp(vec2<i32>(back.at * 0.5), vec2<i32>(0), vec2<i32>(params.half.xy) - vec2<i32>(1));
         let was = textureLoad(prev_dist, ph, 0).r;
-        let expected = distance(world, params.prev_camera.xyz);
-        if (was > 0.0 && abs(was - expected) < 0.02 + 0.03 * expected) {
+        if (was > 0.0 && abs(was - back.expected) < back.tolerance) {
             let h = textureLoad(prev_color, ph, 0);
-            count = min(h.a + 1.0, HISTORY);
+            count = min(h.a + 1.0, select(HISTORY, HISTORY_MOVING, back.moving));
             color = mix(h.rgb, sample, 1.0 / count);
         }
     }

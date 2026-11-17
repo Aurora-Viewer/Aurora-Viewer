@@ -1272,6 +1272,7 @@ fn source(parts: &[&str]) -> String {
 
 const RT_VIEW: &str = include_str!("shaders/rt_view.wgsl");
 const RT_LIGHT: &str = include_str!("shaders/rt_light.wgsl");
+const RT_HISTORY: &str = include_str!("shaders/rt_history.wgsl");
 
 /// A posed face's geometry: `vertices` unindexed, three a triangle; an
 /// alpha-masked face is tested at its hits.
@@ -1850,7 +1851,7 @@ impl Gi {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt gi"),
-            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_gi.wgsl")]).into()),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")]).into()),
         });
         let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
         let trace_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1865,6 +1866,7 @@ impl Gi {
                 storage_texture_entry(6, GI_FORMAT),
                 storage_texture_entry(7, GI_DIST_FORMAT),
                 texture_entry(8, unfiltered),
+                texture_entry(12, unfiltered),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1921,7 +1923,7 @@ impl Lights {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt lights"),
-            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_lights.wgsl")]).into()),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")]).into()),
         });
         let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
         let lights_entry = storage_entry(2, true);
@@ -1937,6 +1939,7 @@ impl Lights {
                 tlas_entry(6),
                 texture_entry(7, unfiltered),
                 storage_texture_entry(8, SHARE_FORMAT),
+                texture_entry(12, unfiltered),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2038,6 +2041,7 @@ impl RtShadows {
         camera: glam::Vec3,
         point_lights: &[crate::types::PointLight],
         depth: &wgpu::TextureView,
+        motion: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
     ) {
         let scene_group = self.scene_group(device, scene);
@@ -2108,6 +2112,7 @@ impl RtShadows {
                 },
                 view(7, &lt.share[read]),
                 view(8, &lt.share[write]),
+                view(12, motion),
             ],
         });
         let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2176,6 +2181,7 @@ impl RtShadows {
         light: &TraceLight,
         intensity: f32,
         depth: &wgpu::TextureView,
+        motion: &wgpu::TextureView,
         scene_copy: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
     ) {
@@ -2237,6 +2243,7 @@ impl RtShadows {
                 view(6, &gt.color[write]),
                 view(7, &gt.dist[write]),
                 view(8, scene_copy),
+                view(12, motion),
             ],
         });
         let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2444,8 +2451,11 @@ mod tests {
             ("rt_shadows", &[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")][..]),
             ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
             ("rt_reflect", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")][..]),
-            ("rt_gi", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_gi.wgsl")][..]),
-            ("rt_lights", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_lights.wgsl")][..]),
+            ("rt_gi", &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")][..]),
+            (
+                "rt_lights",
+                &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")][..],
+            ),
         ] {
             let src = source(parts);
             let module = match naga::front::wgsl::parse_str(&src) {
