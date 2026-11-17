@@ -207,6 +207,11 @@ pub struct Renderer {
     /// (`motion_history.rs`). The same size, unless video memory was full
     /// when the palettes grew.
     prev_palette_buffer: wgpu::Buffer,
+    /// What `palette_buffer` holds, kept when the device traces: the
+    /// ray-traced shadows build a skeleton again only when it moved
+    /// (rt_shadows.rs).
+    rt_palettes: Vec<[[f32; 4]; 4]>,
+    rt_poses: crate::rt_shadows::PoseTracker,
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
     /// `shift_world`'s moves not yet sent with a frame.
@@ -774,6 +779,8 @@ impl Renderer {
             motion_cut: false,
             world_shift: [0.0; 2],
             palettes_uploaded: 0,
+            rt_palettes: Vec::new(),
+            rt_poses: Default::default(),
             vertices_uploaded: 0,
             geometry_uploaded: 0,
             skin_bind_buffer,
@@ -963,6 +970,7 @@ impl Renderer {
                     self.writes.write_buffer(buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 }
             }
+            self.mirror_palettes(mats, a, ((slot + 1) * per).min(fits));
         }
     }
 
@@ -983,6 +991,19 @@ impl Renderer {
     pub fn shift_world(&mut self, by: Vec3) {
         self.world_shift[0] += by.x;
         self.world_shift[1] += by.y;
+    }
+
+    /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
+    /// shadows (`rt_palettes`).
+    fn mirror_palettes(&mut self, mats: &[[[f32; 4]; 4]], a: usize, b: usize) {
+        let b = b.min(mats.len());
+        if a >= b || !self.device.features().contains(crate::rt_shadows::FEATURES) {
+            return;
+        }
+        if self.rt_palettes.len() < b {
+            self.rt_palettes.resize(b, glam::Mat4::IDENTITY.to_cols_array_2d());
+        }
+        self.rt_palettes[a..b].copy_from_slice(&mats[a..b]);
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -1013,6 +1034,7 @@ impl Renderer {
         let mats = &mats[..mats.len().min(self.palette_buffer.size() as usize / 64)];
         self.writes.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
         self.palettes_uploaded += (mats.len() * 64) as u64;
+        self.mirror_palettes(mats, 0, mats.len());
     }
 
     /// Upload only some palettes (`per` matrices each, by slot index): the
@@ -1040,6 +1062,7 @@ impl Renderer {
                 self.writes
                     .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
                 self.palettes_uploaded += ((b - a) * 64) as u64;
+                self.mirror_palettes(mats, a, b);
             }
         }
     }
@@ -1057,6 +1080,7 @@ impl Renderer {
             self.writes
                 .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
             self.palettes_uploaded += ((b - a) * 64) as u64;
+            self.mirror_palettes(mats, a, b);
         }
     }
 
@@ -1581,6 +1605,7 @@ impl Renderer {
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
+        let rt_camera = params.camera_pos;
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1610,7 +1635,14 @@ impl Renderer {
             input_at: self.input_at.take(),
             rt: self.device.features().contains(crate::rt_shadows::FEATURES).then(|| {
                 let mut faces = crate::rt_shadows::Faces::default();
-                crate::rt_shadows::gather(&self.records, &self.cull, &mut faces);
+                crate::rt_shadows::gather(
+                    &self.records,
+                    &self.cull,
+                    &self.rt_palettes,
+                    rt_camera,
+                    &mut self.rt_poses,
+                    &mut faces,
+                );
                 std::sync::Arc::new(faces)
             }),
         };

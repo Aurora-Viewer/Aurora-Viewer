@@ -82,7 +82,8 @@ pub struct Instance {
 }
 
 /// A rigged or worn face: its world positions exist only once posed, so the
-/// pose pass (shaders/rt_pose.wgsl) writes them each frame.
+/// pose pass (shaders/rt_pose.wgsl) writes them on the frames its skeleton's
+/// bottom level is built again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Posed {
     pub record: u32,
@@ -91,20 +92,104 @@ pub struct Posed {
     pub index_count: u32,
 }
 
-/// What the frame traces: faces placed by their model matrix, and faces
-/// posed on the GPU.
+/// A skeleton's faces (an avatar with what it wears, or an animated
+/// object), keyed by its palette's first entry: one bottom level each, built
+/// again on the frames `rebuild` says, from `Faces::posed[first..first + count]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PosedGroup {
+    pub key: u32,
+    pub first: u32,
+    pub count: u32,
+    /// Posed vertices of all its faces (one per index).
+    pub vertices: u32,
+    pub rebuild: bool,
+}
+
+/// What the frame traces: faces placed by their model matrix, and the
+/// skeletons' faces, posed on the GPU.
 #[derive(Clone, Debug, Default)]
 pub struct Faces {
     pub placed: Vec<Instance>,
+    /// The faces of the skeletons built again this frame, by skeleton.
     pub posed: Vec<Posed>,
+    pub groups: Vec<PosedGroup>,
+}
+
+/// Posed triangles built again in one frame, nearest skeleton first (the
+/// nearest is always built); the others keep an earlier frame's pose.
+const REBUILD_TRIANGLES: u64 = 1 << 19;
+/// How far from its joint a vertex is taken to be when a joint turns (m).
+const JOINT_REACH: f32 = 1.0;
+
+/// What the main thread remembers of each skeleton's last built pose, so a
+/// skeleton whose vertices moved less than a shadow ray's start can tell
+/// keeps its bottom level (wgpu has no refit: a level is only built again
+/// from scratch): the nearest skeletons first, within a frame's budget.
+#[derive(Default)]
+pub(crate) struct PoseTracker {
+    seen: HashMap<u32, Seen>,
+    frame: u64,
+    scratch: Vec<Candidate>,
+}
+
+struct Seen {
+    faces: u64,
+    /// A level was built for these faces (one left waiting by the budget
+    /// has none yet).
+    built: bool,
+    joints: Vec<[[f32; 4]; 4]>,
+    models: Vec<[[f32; 4]; 4]>,
+    last: u64,
+}
+
+struct Candidate {
+    key: u32,
+    face: Posed,
+    model: [[f32; 4]; 4],
+    origin: [f32; 3],
+}
+
+/// How far a vertex can have moved between two placements of its joint.
+fn drift(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> f32 {
+    let mut d = 0.0f32;
+    for c in 0..3 {
+        for r in 0..3 {
+            d = d.max((a[c][r] - b[c][r]).abs() * JOINT_REACH);
+        }
+    }
+    for r in 0..3 {
+        d = d.max((a[3][r] - b[3][r]).abs());
+    }
+    d
+}
+
+/// The drift a skeleton at `distance` may have before its shadow shows it:
+/// the trace's ray start offset there (rt_shadows.wgsl).
+fn drift_allowed(distance: f32) -> f32 {
+    0.01 + 0.002 * distance
+}
+
+fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    (glam::Mat4::from_cols_array_2d(a) * glam::Mat4::from_cols_array_2d(b)).to_cols_array_2d()
 }
 
 /// The faces to trace this frame, from the records and the culling tables
 /// the main thread keeps: opaque faces only (alpha-masked and blended ones
-/// are not traced yet), and no HUD.
-pub(crate) fn gather(records: &RecordStore, cull: &CullTables, out: &mut Faces) {
+/// are not traced yet), and no HUD. `palettes` is what the GPU's joint
+/// palettes hold, `camera` the eye.
+pub(crate) fn gather(
+    records: &RecordStore,
+    cull: &CullTables,
+    palettes: &[[[f32; 4]; 4]],
+    camera: glam::Vec3,
+    tracker: &mut PoseTracker,
+    out: &mut Faces,
+) {
     out.placed.clear();
     out.posed.clear();
+    out.groups.clear();
+    tracker.frame += 1;
+    tracker.scratch.clear();
     for id in 0..records.faces.len() {
         let Some(face) = records.faces.get(id) else {
             continue;
@@ -141,11 +226,25 @@ pub(crate) fn gather(records: &RecordStore, cull: &CullTables, out: &mut Faces) 
         }
         let worn_or_posed = object_flags::AVATAR | object_flags::RIGGED | object_flags::POSED;
         if object.flags & worn_or_posed != 0 || object.anchor != 0 || rf & (flags::SKINNED | flags::ANCHORED | flags::LIP_SYNC) != 0 {
-            out.posed.push(Posed {
-                record: id as u32,
-                base_vertex: face.base_vertex as u32,
-                first_index: face.first_index,
-                index_count,
+            let key = record.flags[1];
+            let palette = |i: u32| palettes.get(i as usize);
+            // where the face stands, as rt_pose.wgsl places it
+            let origin = match (rf & flags::SKINNED != 0, rf & flags::ANCHORED != 0) {
+                (true, true) => palette(key + crate::types::SKELETON_ANCHOR).map(|m| m[3]),
+                (false, true) => palette(key).map(|m| mul(m, &record.model)[3]),
+                _ => Some(record.model[3]),
+            }
+            .unwrap_or(record.model[3]);
+            tracker.scratch.push(Candidate {
+                key,
+                face: Posed {
+                    record: id as u32,
+                    base_vertex: face.base_vertex as u32,
+                    first_index: face.first_index,
+                    index_count,
+                },
+                model: record.model,
+                origin: [origin[0], origin[1], origin[2]],
             });
         } else {
             out.placed.push(Instance {
@@ -155,6 +254,111 @@ pub(crate) fn gather(records: &RecordStore, cull: &CullTables, out: &mut Faces) 
                 model: record.model,
             });
         }
+    }
+    choose_rebuilds(palettes, camera, tracker, out);
+}
+
+/// Groups the posed candidates by skeleton and picks the skeletons built
+/// again this frame: new ones, those whose faces changed, and those whose
+/// vertices drifted past what a shadow shows, nearest first within
+/// [`REBUILD_TRIANGLES`].
+fn choose_rebuilds(palettes: &[[[f32; 4]; 4]], camera: glam::Vec3, tracker: &mut PoseTracker, out: &mut Faces) {
+    use std::hash::{Hash, Hasher};
+    let frame = tracker.frame;
+    let stride = crate::types::PALETTE_STRIDE as usize;
+    tracker.scratch.sort_by_key(|c| c.key);
+    // (start, end, distance, must) of each skeleton's run of candidates
+    let mut runs: Vec<(usize, usize, f32, bool)> = Vec::new();
+    let mut start = 0;
+    while start < tracker.scratch.len() {
+        let key = tracker.scratch[start].key;
+        let mut end = start;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        while end < tracker.scratch.len() && tracker.scratch[end].key == key {
+            let f = tracker.scratch[end].face;
+            (f.record, f.base_vertex, f.first_index, f.index_count).hash(&mut hasher);
+            end += 1;
+        }
+        let faces = hasher.finish();
+        let run = &tracker.scratch[start..end];
+        let distance = glam::Vec3::from(run[0].origin).distance(camera);
+        let joints = palettes
+            .get(key as usize..(key as usize + stride).min(palettes.len()))
+            .unwrap_or(&[]);
+        let must = match tracker.seen.get_mut(&key) {
+            Some(seen) if seen.built && seen.faces == faces && seen.joints.len() == joints.len() => {
+                seen.last = frame;
+                let moved = seen
+                    .joints
+                    .iter()
+                    .zip(joints)
+                    .map(|(a, b)| drift(a, b))
+                    .chain(seen.models.iter().zip(run).map(|(a, c)| drift(a, &c.model)))
+                    .fold(0.0f32, f32::max);
+                moved > drift_allowed(distance)
+            }
+            Some(seen) if seen.faces == faces => {
+                seen.last = frame;
+                true
+            }
+            _ => {
+                tracker.seen.insert(
+                    key,
+                    Seen {
+                        faces,
+                        built: false,
+                        joints: Vec::new(),
+                        models: Vec::new(),
+                        last: frame,
+                    },
+                );
+                true
+            }
+        };
+        runs.push((start, end, distance, must));
+        start = end;
+    }
+    tracker.seen.retain(|_, s| s.last == frame);
+    // the skeletons that must be built again, nearest first, within budget
+    let mut order: Vec<usize> = (0..runs.len()).filter(|&r| runs[r].3).collect();
+    order.sort_by(|&a, &b| runs[a].2.total_cmp(&runs[b].2));
+    let mut chosen = vec![false; runs.len()];
+    let mut triangles = 0u64;
+    for r in order {
+        let (s, e, _, _) = runs[r];
+        let tris: u64 = tracker.scratch[s..e].iter().map(|c| c.face.index_count as u64 / 3).sum();
+        if triangles > 0 && triangles + tris > REBUILD_TRIANGLES {
+            continue;
+        }
+        triangles += tris;
+        chosen[r] = true;
+    }
+    for (r, &(s, e, _, _)) in runs.iter().enumerate() {
+        let run = &tracker.scratch[s..e];
+        let key = run[0].key;
+        let vertices: u32 = run.iter().map(|c| c.face.index_count).sum();
+        let first = out.posed.len() as u32;
+        if chosen[r] {
+            out.posed.extend(run.iter().map(|c| c.face));
+            if let Some(seen) = tracker.seen.get_mut(&key) {
+                seen.built = true;
+                seen.joints.clear();
+                seen.joints.extend_from_slice(
+                    palettes
+                        .get(key as usize..(key as usize + stride).min(palettes.len()))
+                        .unwrap_or(&[]),
+                );
+                seen.models.clear();
+                seen.models.extend(run.iter().map(|c| c.model));
+            }
+        }
+        out.groups.push(PosedGroup {
+            key,
+            first,
+            count: if chosen[r] { run.len() as u32 } else { 0 },
+            vertices,
+            rebuild: chosen[r],
+        });
     }
 }
 
@@ -208,24 +412,34 @@ struct PoseParams {
     counts: [u32; 4],
 }
 
-/// The pose pass and what it writes: the posed vertices and the bottom
-/// level built from them each frame.
+/// The pose pass and what it writes: the posed vertices of the skeletons
+/// built again this frame, their bottom levels, and a top level of them all.
 struct Poser {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
     params: wgpu::Buffer,
     faces: Option<wgpu::Buffer>,
     vertices: Option<wgpu::Buffer>,
-    /// The bottom level and the vertices it was made for.
-    blas: Option<(wgpu::Blas, u32)>,
-    /// A top level of its own, of the one posed bottom level: rebuilt each
-    /// frame, while the scene's stands as long as nothing moves.
+    /// Each skeleton's bottom level, by its palette's first entry.
+    levels: HashMap<u32, Level>,
+    /// A top level of its own: built again on the frames a skeleton was,
+    /// while the scene's stands as long as nothing in it moves.
     tlas: Option<wgpu::Tlas>,
-    /// The vertices posed this frame (0: none, the top level is stale).
-    posed: u32,
+    /// The skeletons the top level holds, in its order.
+    placed: Vec<u32>,
+    /// Where each skeleton built this frame starts in the posed vertices.
+    offsets: Vec<(usize, u32)>,
     table: Vec<PoseFace>,
+    frame: u64,
     /// A buffer too big to bind was logged.
     warned: bool,
+}
+
+struct Level {
+    blas: wgpu::Blas,
+    /// The vertices it was made for (it is built for as many or fewer).
+    capacity: u32,
+    used: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -256,6 +470,8 @@ pub struct RtStats {
     pub waiting: usize,
     pub posed_faces: usize,
     pub posed_vertices: u64,
+    pub skeletons: usize,
+    pub skeletons_built: usize,
 }
 
 pub(crate) struct RtShadows {
@@ -379,7 +595,7 @@ impl Timer {
         if self.frames >= Self::REPORT && self.count > 0 {
             let n = self.count as f64;
             log::info!(
-                "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {} frames); {} placed faces, {} bottom levels ({} built last frame, {} triangles), {} waiting; {} posed faces ({} vertices)",
+                "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {} frames); {} placed faces, {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices)",
                 self.sums[0] / n,
                 self.sums[1] / n,
                 self.sums[2] / n,
@@ -389,6 +605,8 @@ impl Timer {
                 stats.built,
                 stats.built_triangles,
                 stats.waiting,
+                stats.skeletons,
+                stats.skeletons_built,
                 stats.posed_faces,
                 stats.posed_vertices,
             );
@@ -581,40 +799,50 @@ impl Poser {
             params,
             faces: None,
             vertices: None,
-            blas: None,
+            levels: HashMap::new(),
             tlas: None,
-            posed: 0,
+            placed: Vec::new(),
+            offsets: Vec::new(),
             table: Vec::new(),
+            frame: 0,
             warned: false,
         }
     }
 
-    /// Poses `faces` into the posed buffer (up to [`POSED_VERTICES`]) and
-    /// readies the bottom level for them: the vertices posed, 0 when none.
+    /// Poses the faces of the skeletons built again this frame into the
+    /// posed buffer (up to [`POSED_VERTICES`]): the vertices posed.
     fn pose(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         scene: &crate::packet::SceneGpu,
-        faces: &[Posed],
+        faces: &Faces,
     ) -> u32 {
-        self.posed = 0;
+        self.frame += 1;
         self.table.clear();
+        self.offsets.clear();
         let mut total = 0u64;
-        for f in faces {
-            if total + f.index_count as u64 > POSED_VERTICES {
-                break;
+        for (g, group) in faces.groups.iter().enumerate() {
+            if !group.rebuild || total + group.vertices as u64 > POSED_VERTICES {
+                continue;
             }
-            self.table.push(PoseFace {
-                record: f.record,
-                base_vertex: f.base_vertex,
-                first_index: f.first_index,
-                index_count: f.index_count,
-                out_offset: total as u32,
-                _pad: [0; 3],
-            });
-            total += f.index_count as u64;
+            let run = faces
+                .posed
+                .get(group.first as usize..(group.first + group.count) as usize)
+                .unwrap_or(&[]);
+            self.offsets.push((g, total as u32));
+            for f in run {
+                self.table.push(PoseFace {
+                    record: f.record,
+                    base_vertex: f.base_vertex,
+                    first_index: f.first_index,
+                    index_count: f.index_count,
+                    out_offset: total as u32,
+                    _pad: [0; 3],
+                });
+                total += f.index_count as u64;
+            }
         }
         if total == 0 {
             return 0;
@@ -633,6 +861,7 @@ impl Poser {
                 log::warn!("AURORA_RT_SHADOWS: a scene buffer is larger than the device binds; avatars cast no traced shadow");
                 self.warned = true;
             }
+            self.offsets.clear();
             return 0;
         }
         let table_bytes = (self.table.len() * std::mem::size_of::<PoseFace>()) as u64;
@@ -644,91 +873,51 @@ impl Poser {
                 mapped_at_creation: false,
             }));
         }
-        // the bottom level is made for a power of two of triangles, and
-        // built each frame for those posed
-        let capacity = (total / 3).next_power_of_two().max(1024) * 3;
-        if self.vertices.as_ref().is_none_or(|b| b.size() < capacity * POSED_BYTES) {
+        let bytes = total.next_power_of_two().max(3 << 10) * POSED_BYTES;
+        if self.vertices.as_ref().is_none_or(|b| b.size() < bytes) {
             self.vertices = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rt shadows posed vertices"),
-                size: capacity * POSED_BYTES,
+                size: bytes,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
                 mapped_at_creation: false,
             }));
         }
-        if self.blas.as_ref().is_none_or(|(_, n)| (*n as u64) < total) {
-            let blas = device.create_blas(
-                &wgpu::CreateBlasDescriptor {
-                    label: Some("rt shadows posed"),
-                    flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
-                    update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-                },
-                wgpu::BlasGeometrySizeDescriptors::Triangles {
-                    descriptors: vec![posed_size(capacity as u32)],
-                },
-            );
-            self.blas = Some((blas, capacity as u32));
-        }
-        if self.tlas.is_none() {
-            self.tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
-                label: Some("rt shadows posed"),
-                max_instances: 1,
-                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-            }));
-        }
         let (Some(table), Some(posed)) = (self.faces.as_ref(), self.vertices.as_ref()) else {
+            self.offsets.clear();
             return 0;
         };
         queue.write_buffer(table, 0, bytemuck::cast_slice(&self.table));
-        let groups = (total as u32).div_ceil(64);
-        let x = groups.min(65_535);
-        let y = groups.div_ceil(x);
+        let workgroups = (total as u32).div_ceil(64);
+        let x = workgroups.min(65_535);
+        let y = workgroups.div_ceil(x);
         let record_vec4s = (std::mem::size_of::<crate::types::DrawRecord>() / 16) as u32;
         let params = PoseParams {
             counts: [self.table.len() as u32, total as u32, record_vec4s, x * 64],
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+        let buffers = [
+            &self.params,
+            table,
+            &scene.records,
+            &scene.palettes,
+            &scene.skin_binds,
+            &scene.vertices,
+            &scene.skin,
+            &scene.indices,
+            posed,
+        ];
+        let entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
+            .iter()
+            .enumerate()
+            .map(|(binding, b)| wgpu::BindGroupEntry {
+                binding: binding as u32,
+                resource: b.as_entire_binding(),
+            })
+            .collect();
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rt shadows pose"),
             layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: table.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: scene.records.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: scene.palettes.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: scene.skin_binds.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: scene.vertices.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: scene.skin.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: scene.indices.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: posed.as_entire_binding(),
-                },
-            ],
+            entries: &entries,
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("rt shadows pose"),
@@ -737,38 +926,104 @@ impl Poser {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(x, y, 1);
-        self.posed = total as u32;
-        self.posed
+        total as u32
     }
 
-    /// Builds the posed bottom level from what the pose wrote, and its top
-    /// level.
-    fn build(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let (true, Some((blas, _)), Some(buffer), Some(tlas)) = (self.posed > 0, &self.blas, &self.vertices, self.tlas.as_mut()) else {
-            return;
+    /// Builds the bottom levels of the skeletons posed this frame, and the
+    /// top level when one was built or the skeletons changed: the levels
+    /// built, and the skeletons the top level holds.
+    fn build(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, faces: &Faces) -> (usize, usize) {
+        let frame = self.frame;
+        // levels made (or grown) for the skeletons built this frame
+        for &(g, _) in &self.offsets {
+            let group = faces.groups[g];
+            let level = self.levels.get(&group.key);
+            if level.is_none_or(|l| l.capacity < group.vertices) {
+                let capacity = ((group.vertices / 3).next_power_of_two() * 3).max(group.vertices);
+                let blas = device.create_blas(
+                    &wgpu::CreateBlasDescriptor {
+                        label: Some("rt shadows skeleton"),
+                        flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                        update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+                    },
+                    wgpu::BlasGeometrySizeDescriptors::Triangles {
+                        descriptors: vec![posed_size(capacity)],
+                    },
+                );
+                self.levels.insert(
+                    group.key,
+                    Level {
+                        blas,
+                        capacity,
+                        used: frame,
+                    },
+                );
+            }
+        }
+        for group in &faces.groups {
+            if let Some(level) = self.levels.get_mut(&group.key) {
+                level.used = frame;
+            }
+        }
+        self.levels.retain(|_, l| l.used == frame);
+        let placed: Vec<u32> = faces.groups.iter().map(|g| g.key).filter(|k| self.levels.contains_key(k)).collect();
+        if self.offsets.is_empty() && placed == self.placed {
+            return (0, placed.len());
+        }
+        let wanted = placed.len().max(1).next_power_of_two().max(64);
+        if self.tlas.as_ref().is_none_or(|t| t.get().len() < wanted) {
+            self.tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
+                label: Some("rt shadows skeletons"),
+                max_instances: wanted as u32,
+                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+            }));
+        }
+        let (Some(tlas), Some(buffer)) = (self.tlas.as_mut(), self.vertices.as_ref()) else {
+            return (0, 0);
         };
         const IDENTITY: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        tlas[0] = Some(wgpu::TlasInstance::new(blas, IDENTITY, 0, 0xFF));
-        let size = posed_size(self.posed);
-        let entry = wgpu::BlasBuildEntry {
-            blas,
-            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
-                size: &size,
-                vertex_buffer: buffer,
-                first_vertex: 0,
-                vertex_stride: POSED_BYTES,
-                index_buffer: None,
-                first_index: None,
-                transform_buffer: None,
-                transform_buffer_offset: None,
-            }]),
-        };
-        encoder.build_acceleration_structures(std::iter::once(&entry), std::iter::once(&*tlas));
+        {
+            let slots = tlas.get_mut_slice(0..wanted).expect("top level of `wanted` slots");
+            for (slot, key) in slots.iter_mut().zip(placed.iter().map(Some).chain(std::iter::repeat(None))) {
+                *slot = key
+                    .and_then(|k| self.levels.get(k))
+                    .map(|l| wgpu::TlasInstance::new(&l.blas, IDENTITY, 0, 0xFF));
+            }
+        }
+        let sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor> =
+            self.offsets.iter().map(|&(g, _)| posed_size(faces.groups[g].vertices)).collect();
+        let entries: Vec<wgpu::BlasBuildEntry<'_>> = self
+            .offsets
+            .iter()
+            .zip(&sizes)
+            .filter_map(|(&(g, offset), size)| {
+                let level = self.levels.get(&faces.groups[g].key)?;
+                Some(wgpu::BlasBuildEntry {
+                    blas: &level.blas,
+                    geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
+                        size,
+                        vertex_buffer: buffer,
+                        first_vertex: offset,
+                        vertex_stride: POSED_BYTES,
+                        index_buffer: None,
+                        first_index: None,
+                        transform_buffer: None,
+                        transform_buffer_offset: None,
+                    }]),
+                })
+            })
+            .collect();
+        encoder.build_acceleration_structures(entries.iter(), std::iter::once(&*tlas));
+        let built = entries.len();
+        drop(entries);
+        self.placed = placed;
+        (built, self.placed.len())
     }
 
-    /// The posed top level to trace this frame, if any.
+    /// The posed top level to trace this frame, if it holds a skeleton.
     fn traced(&self) -> Option<&wgpu::Tlas> {
-        self.tlas.as_ref().filter(|_| self.posed > 0)
+        self.tlas.as_ref().filter(|_| !self.placed.is_empty())
     }
 }
 
@@ -870,13 +1125,7 @@ impl RtShadows {
                 }),
             }));
         }
-        let posed = self.poser.pose(device, queue, encoder, scene, &faces.posed);
-        // the trace reads the posed top level only when there is one
-        queue.write_buffer(
-            &self.buffer,
-            (std::mem::offset_of!(ParamsU, mode) + 12) as u64,
-            bytemuck::bytes_of(&if posed > 0 { 1.0f32 } else { 0.0 }),
-        );
+        let posed = self.poser.pose(device, queue, encoder, scene, faces);
         if let Some(timer) = &self.timer {
             drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt shadows posed"),
@@ -887,10 +1136,18 @@ impl RtShadows {
                 }),
             }));
         }
-        self.poser.build(encoder);
+        let (skeletons_built, skeletons) = self.poser.build(device, encoder, faces);
+        // the trace reads the posed top level only when it holds a skeleton
+        queue.write_buffer(
+            &self.buffer,
+            (std::mem::offset_of!(ParamsU, mode) + 12) as u64,
+            bytemuck::bytes_of(&if skeletons > 0 { 1.0f32 } else { 0.0 }),
+        );
         let posed_faces = if posed > 0 { self.poser.table.len() } else { 0 };
         self.stats.posed_faces = posed_faces;
         self.stats.posed_vertices = posed as u64;
+        self.stats.skeletons = skeletons;
+        self.stats.skeletons_built = skeletons_built;
         let same_arena = self.arena.as_ref().is_some_and(|(v, i)| v == vertices && i == indices);
         if !same_arena {
             self.bottoms.clear();
@@ -1029,6 +1286,8 @@ impl RtShadows {
             waiting,
             posed_faces,
             posed_vertices: posed as u64,
+            skeletons,
+            skeletons_built,
         };
         for ((key, _), blas) in new.into_iter().zip(created) {
             self.bottoms.insert(key, Bottom { blas, used: frame });
@@ -1111,6 +1370,67 @@ fn row_major(m: &[[f32; 4]; 4]) -> [f32; 12] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn candidate(key: u32, record: u32, x: f32) -> Candidate {
+        let mut model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        model[3][0] = x;
+        Candidate {
+            key,
+            face: Posed {
+                record,
+                base_vertex: 0,
+                first_index: 0,
+                index_count: 300,
+            },
+            model,
+            origin: [x, 0.0, 0.0],
+        }
+    }
+
+    fn choose(tracker: &mut PoseTracker, candidates: Vec<Candidate>) -> Vec<(u32, bool)> {
+        tracker.frame += 1;
+        tracker.scratch = candidates;
+        let mut out = Faces::default();
+        choose_rebuilds(&[], glam::Vec3::ZERO, tracker, &mut out);
+        out.groups.iter().map(|g| (g.key, g.rebuild)).collect()
+    }
+
+    #[test]
+    fn rt_shadows_a_still_skeleton_keeps_its_level() {
+        let mut t = PoseTracker::default();
+        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.0)]), vec![(0, true)]);
+        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.0)]), vec![(0, false)]);
+        // less than the ray's start offset at 5 m (0.02 m): kept
+        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.015)]), vec![(0, false)]);
+        // further: built again
+        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.05)]), vec![(0, true)]);
+        // another face set: built again even when still
+        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.05), candidate(0, 2, 5.05)]), vec![(0, true)]);
+    }
+
+    #[test]
+    fn rt_shadows_rebuilds_go_nearest_first_within_the_budget() {
+        let mut t = PoseTracker::default();
+        let big = |key: u32, x: f32| {
+            let mut c = candidate(key, key, x);
+            c.face.index_count = (REBUILD_TRIANGLES * 3 / 2) as u32;
+            c
+        };
+        let groups = choose(&mut t, vec![big(1, 30.0), big(2, 3.0), big(3, 10.0)]);
+        // the nearest two fit, the farthest waits for a later frame
+        assert_eq!(groups, vec![(1, false), (2, true), (3, true)]);
+        let groups = choose(&mut t, vec![big(1, 30.0), big(2, 3.0), big(3, 10.0)]);
+        assert_eq!(groups, vec![(1, true), (2, false), (3, false)]);
+    }
+
+    #[test]
+    fn rt_shadows_drift_counts_a_turn_at_the_joint_reach() {
+        let a = glam::Mat4::IDENTITY.to_cols_array_2d();
+        let b = glam::Mat4::from_rotation_z(0.01).to_cols_array_2d();
+        let d = drift(&a, &b);
+        assert!((d - 0.01 * JOINT_REACH).abs() < 1e-3, "{d}");
+        assert_eq!(drift(&a, &a), 0.0);
+    }
 
     #[test]
     fn rt_shadows_mode_parses_the_variable() {
