@@ -549,10 +549,7 @@ impl Updater {
                     }
                     Workspace::new(parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
-                        match e.downcast_ref::<std::io::Error>().map(std::io::Error::kind) {
-                            Some(std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem) => Failure::Protected,
-                            _ => Failure::Filesystem,
-                        }
+                        prepare_failure(&e)
                     })
                 })
                 .await
@@ -606,6 +603,23 @@ fn should_offer(required: bool, manual: bool, mode: Mode, ignored: &str, tag: &s
 /// skipped ("Skip this version"); a required one even then.
 fn announces(release: &Release, announced: &str, ignored: &str) -> bool {
     release.tag != announced && (release.required || release.tag != ignored)
+}
+
+/// Why preparing the transaction failed. On Linux, a folder this account
+/// cannot write belongs to a sandbox or a system package: the window explains
+/// that and links the release page. Windows installs in the user's own folder
+/// and has no such bundled sandbox; its old message already says the folder
+/// is not writable, so it must stay as it was.
+fn prepare_failure(error: &anyhow::Error) -> Failure {
+    let denied = matches!(
+        error.downcast_ref::<std::io::Error>().map(std::io::Error::kind),
+        Some(std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem)
+    );
+    if cfg!(target_os = "linux") && denied {
+        Failure::Protected
+    } else {
+        Failure::Filesystem
+    }
 }
 
 #[cfg(test)]
@@ -858,5 +872,16 @@ mod tests {
         updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.open && matches!(updater.state, State::Offer));
         assert!(updater.take_notice().is_none());
+    }
+
+    #[test]
+    fn a_folder_this_account_cannot_write_is_protected_only_on_linux() {
+        let expected = cfg!(target_os = "linux");
+        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let read_only = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem));
+        assert_eq!(matches!(prepare_failure(&denied), Failure::Protected), expected);
+        assert_eq!(matches!(prepare_failure(&read_only), Failure::Protected), expected);
+        let other = anyhow::anyhow!("disk full");
+        assert!(matches!(prepare_failure(&other), Failure::Filesystem));
     }
 }
