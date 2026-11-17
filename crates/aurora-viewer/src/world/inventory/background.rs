@@ -310,6 +310,18 @@ impl BackgroundFetch {
             self.orphans_pending = None;
             self.orphans_failed = true;
         }
+        self.watch(inv, now);
+        let mut steps = 0;
+        while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
+            let Some((id, kind)) = self.queue.pop_front() else {
+                break;
+            };
+            steps += 1;
+            self.step(inv, agent, id, kind, &mut out);
+        }
+        for library in [false, true] {
+            self.send_legacy(inv, agent, library, &mut out);
+        }
         // A folder the user's own read holds (`waiting`) whose answer never
         // comes is read again after the deadline: it never keeps the walk
         // busy for the session.
@@ -327,18 +339,6 @@ impl BackgroundFetch {
                     self.orphaned.remove(id);
                 }
             }
-        }
-        self.watch(inv, now);
-        let mut steps = 0;
-        while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
-            let Some((id, kind)) = self.queue.pop_front() else {
-                break;
-            };
-            steps += 1;
-            self.step(inv, agent, id, kind, &mut out);
-        }
-        for library in [false, true] {
-            self.send_legacy(inv, agent, library, &mut out);
         }
         self.queue.extend(self.waiting.drain(..));
         if self.is_idle()

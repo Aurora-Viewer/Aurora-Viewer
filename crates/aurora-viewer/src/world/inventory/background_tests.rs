@@ -875,3 +875,25 @@ fn a_gateway_timeout_on_the_last_deep_batch_splits_it() {
         "freed after its own deadline"
     );
 }
+
+/// A folder the user's own read holds, never answered, is read again after
+/// the deadline: it never keeps the walk busy for the session.
+#[test]
+fn a_users_read_never_answered_is_asked_again() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    // the user's read took folder 10 and never comes back
+    inv.folders.get_mut(&id(10)).expect("folder").state = FetchState::Fetching;
+    fetch.waiting.push((id(10), Kind::Recursive));
+    let start = Instant::now();
+    fetch.pump_at(&mut inv, AGENT, start);
+    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetching, "not yet");
+    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
+    assert_eq!(inv.folders[&id(10)].state, FetchState::Unknown, "given up past the deadline");
+    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
+    assert!(
+        fetch.pending.contains(&id(10)) || fetch.in_flight.values().any(|r| r.folder == id(10) || r.children.contains(&id(10))),
+        "asked again by the walk"
+    );
+}

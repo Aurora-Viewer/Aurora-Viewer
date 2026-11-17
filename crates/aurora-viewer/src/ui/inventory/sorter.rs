@@ -684,9 +684,11 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
         ),
     };
     let count = piece.entries(inv);
+    // (no read-back of the folder being emptied: it is the one too large
+    // to read; the delete's own answer settles the piece)
     actions.push(InvAction::Edit(Mutation {
         operations,
-        refresh: vec![job.folder],
+        refresh: Vec::new(),
         removed,
         ..Default::default()
     }));
