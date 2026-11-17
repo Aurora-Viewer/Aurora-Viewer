@@ -32,6 +32,11 @@ pub(crate) use syntax::highlight as highlight_lsl;
 
 pub enum Action {
     Debug,
+    /// Rename only the inventory/task item metadata, never the source text.
+    Rename {
+        target: ScriptTarget,
+        name: String,
+    },
     Include {
         request: Uuid,
         name: String,
@@ -853,6 +858,7 @@ impl Editors {
             )
             .cascade(super::widgets::CascadeGroup::Script)
             .allow_partial_outside()
+            .rename_title(e.name.clone(), e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none())
             .show(ctx, p, &mut open, |ui| {
                 view::body(
                     ui,
@@ -864,6 +870,16 @@ impl Editors {
                     &mut actions,
                 );
             });
+            if let Some(name) = super::widgets::take_title_rename(ctx, &id)
+                && e.can_edit
+                && e.loaded
+                && e.saving.is_none()
+                && e.loading.is_none()
+                && name != e.name
+            {
+                e.name = name.clone();
+                actions.push(Action::Rename { target: e.target, name });
+            }
             view::dialogs(
                 ctx,
                 p,
@@ -1170,6 +1186,7 @@ mod tests {
             assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
             assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
             let output = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            assert!(!editors.panels.search.open, "Ctrl+F closes the open Find dialog");
             assert!(editor_focused(&ctx));
             assert_eq!(
                 output
@@ -1177,8 +1194,15 @@ mod tests {
                     .iter()
                     .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
                     .count(),
-                1
+                0
             );
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
+            assert!(
+                editors.panels.search.owns(source_id(second)),
+                "Ctrl+F reopens Find for the same editor"
+            );
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
             frame(&ctx, &mut editors, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
             assert_eq!(
                 editing::cursor(&ctx, source_id(second)).as_sorted_char_range(),
@@ -1243,6 +1267,12 @@ mod tests {
                 for _ in 0..3 {
                     frame_settings(&ctx, &mut editors, &mut settings, vec![]);
                 }
+                assert!(!editors.panels.search.open, "first Ctrl+F toggles Find closed");
+                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+                for _ in 0..3 {
+                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                }
+                assert!(editors.panels.search.owns(source_id(target)));
                 assert!(ctx.memory(|m| m.has_focus(query_id)));
                 assert_eq!(editors.panels.search.query, "étoile 🌟");
                 assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..8.into());
@@ -1342,7 +1372,9 @@ mod tests {
         assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
         assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
         editing::select(&ctx, query_id, 2..2, true);
-        for width in [840.0, 1250.0, 660.0, 840.0] {
+        // The Whole Words option needs more room than the original two options.
+        // Preserve the transition test with widths that comfortably fit or not.
+        for width in [1100.0, 1250.0, 660.0, 1100.0] {
             super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
             settings.search_inline = false;
             for _ in 0..4 {
@@ -1355,8 +1387,8 @@ mod tests {
             }
             let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             let query = ctx.read_response(query_id).unwrap();
-            assert_eq!(query.layer_id.id, if width > 800.0 { parent_id } else { search_id });
-            if width > 800.0 {
+            assert_eq!(query.layer_id.id, if width > 1000.0 { parent_id } else { search_id });
+            if width > 1000.0 {
                 let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
                 let source_after = ctx.read_response(source_id(target)).unwrap().rect;
                 assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
@@ -1386,9 +1418,9 @@ mod tests {
                     .iter()
                     .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
                     .count(),
-                if width > 800.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
+                if width > 1000.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
             );
-            if width > 800.0 {
+            if width > 1000.0 {
                 let label_pos = |label| {
                     output
                         .shapes
