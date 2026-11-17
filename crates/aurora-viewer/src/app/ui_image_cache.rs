@@ -43,6 +43,25 @@ pub(super) struct UiImageCache {
 }
 
 impl UiImageCache {
+    /// Keep the immediate preview of an upload. Only a grid receipt gives
+    /// us an asset that can be fetched again after the preview is evicted.
+    pub fn store_upload(
+        &mut self,
+        images: &mut HashMap<Uuid, egui::TextureHandle>,
+        asset: Uuid,
+        texture: egui::TextureHandle,
+        can_reload: bool,
+    ) {
+        let id = texture.id();
+        let [w, h] = texture.size();
+        if let Some(old) = images.insert(asset, texture) {
+            self.forget(&asset, old.id());
+        }
+        if can_reload {
+            self.note(asset, id, w as u32, h as u32, Instant::now());
+        }
+    }
+
     /// `texture` now shows `image`, `width` × `height` (a finer copy of the
     /// same texture replaces the size noted).
     pub fn note(&mut self, image: Uuid, texture: TextureId, width: u32, height: u32, now: Instant) {
@@ -224,6 +243,39 @@ mod tests {
         cache.forget(&id(1), TextureId::User(3));
         assert!(cache.held.is_empty() && cache.owners.is_empty());
         assert_eq!(cache.bytes, 0);
+    }
+
+    #[test]
+    fn grid_uploads_can_be_evicted_and_offline_uploads_keep_their_only_copy() {
+        let ctx = egui::Context::default();
+        let mut images = HashMap::new();
+        let mut cache = UiImageCache::default();
+        let upload = |side| {
+            ctx.load_texture(
+                "outfit",
+                egui::ColorImage::filled([side; 2], egui::Color32::RED),
+                Default::default(),
+            )
+        };
+        let (grid, offline) = (id(1), id(2));
+        cache.store_upload(&mut images, grid, upload(512), true);
+        let first = images[&grid].id();
+        cache.store_upload(&mut images, grid, upload(1024), true);
+        cache.store_upload(&mut images, offline, upload(512), false);
+        assert_eq!(cache.bytes, 4 * 1024 * 1024);
+        assert!(!cache.owners.contains_key(&first));
+        assert!(ctx.tex_manager().read().meta(first).is_none());
+
+        let now = Instant::now() + IDLE;
+        cache.note(id(3), TextureId::User(3), 2048, 3072, now);
+        let current = images[&grid].id();
+        let gone = cache.evict(true, now);
+        assert_eq!(gone, [grid]);
+        for id in gone {
+            images.remove(&id);
+        }
+        assert!(ctx.tex_manager().read().meta(current).is_none());
+        assert!(ctx.tex_manager().read().meta(images[&offline].id()).is_some());
     }
 
     #[test]

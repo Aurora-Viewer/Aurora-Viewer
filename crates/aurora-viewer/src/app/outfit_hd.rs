@@ -302,7 +302,7 @@ impl App {
                     let texture = self
                         .egui_ctx
                         .load_texture(format!("img-{asset}"), image, egui::TextureOptions::LINEAR);
-                    self.ui_images.insert(asset, texture);
+                    self.ui_image_cache.store_upload(&mut self.ui_images, asset, texture, !self.demo);
                 }
                 log::info!(
                     "outfit HD picture: saved for L$ {}, {} older one(s) to the Trash",
