@@ -130,6 +130,10 @@ impl EnvironmentUi {
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
         .show(ctx, p, open, |ui| {
+            // same idea as the Weather window: the label column follows the
+            // longest label in the language shown, so "Sky environment" and
+            // "Water environment" never run under their lists (issue #3866)
+            let label_w = selector_label_width(ui);
             let mut weather_open = self.weather_open;
             self.selector_body(
                 ui,
@@ -137,7 +141,7 @@ impl EnvironmentUi {
                 view,
                 loading,
                 Some(time_of_day),
-                LABEL_W,
+                label_w,
                 lighting,
                 Some((&mut weather_open, &mut *weather)),
                 &mut out,
@@ -246,8 +250,11 @@ impl EnvironmentUi {
                         p.ink,
                     );
                     resp.on_hover_text(tip);
+                    // leave room for the two < > arrows after the list
+                    let arrows = 2.0 * ui.spacing().interact_size.y + 2.0 * ui.spacing().item_spacing.x;
+                    let combo_w = (ui.available_width() - arrows).clamp(120.0, COMBO_W);
                     ui.add_enabled_ui(free, |ui| {
-                        if let Some(a) = self.list_row(ui, p, kind, shown) {
+                        if let Some(a) = self.list_row(ui, p, kind, shown, combo_w) {
                             out.push(a);
                         }
                     });
@@ -364,8 +371,10 @@ impl EnvironmentUi {
         ui.label(RichText::new(status).size(11.0).color(p.muted_dim));
     }
 
-    /// One list with its < > arrows.
-    fn list_row(&mut self, ui: &mut egui::Ui, p: &Palette, kind: SettingsKind, shown: Shown) -> Option<EnvAction> {
+    /// One list with its < > arrows. `combo_w` is what is left of the row
+    /// after the label column (capped), so a wider label never pushes the
+    /// lists off the Environment window.
+    fn list_row(&mut self, ui: &mut egui::Ui, p: &Palette, kind: SettingsKind, shown: Shown, combo_w: f32) -> Option<EnvAction> {
         let salt = ("env_list", kind as u8);
         // opened by `settings_list` itself: its combo sits in a child `Ui`,
         // whose ids are not this one's
@@ -379,7 +388,7 @@ impl EnvironmentUi {
             self.search_list = None;
             ui.data_mut(|d| d.insert_temp(demo_open_id(&salt), text.to_owned()));
         }
-        settings_list(ui, p, &self.catalog, kind, shown, salt, COMBO_W).map(|id| EnvAction::Pick(kind, id))
+        settings_list(ui, p, &self.catalog, kind, shown, salt, combo_w).map(|id| EnvAction::Pick(kind, id))
     }
 
     /// "Personal lighting": edits the local sky at once. Returns
@@ -1002,6 +1011,25 @@ fn weather_label_width(ui: &egui::Ui) -> f32 {
     (widest + 10.0).max(LABEL_W).ceil()
 }
 
+/// The Environment window's label column: as wide as "Sky environment",
+/// "Water environment", "Day/Night" and "Time" in the language shown, so
+/// none of them runs under its list (Quick preferences keeps its own wider
+/// column).
+fn selector_label_width(ui: &egui::Ui) -> f32 {
+    let font = egui::FontId::proportional(12.5);
+    let labels = [
+        aurora_i18n::tr!("ui-environment-sky-environment"),
+        aurora_i18n::tr!("ui-environment-water-environment"),
+        aurora_i18n::tr!("extra-day-night"),
+        aurora_i18n::tr!("ui-environment-time"),
+    ];
+    let widest = labels
+        .iter()
+        .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), egui::Color32::PLACEHOLDER).size().x))
+        .fold(0.0f32, f32::max);
+    (widest + 10.0).max(LABEL_W).ceil()
+}
+
 /// The compass point nearest `degrees` (clockwise from north).
 pub(crate) fn compass_point(degrees: f32) -> String {
     let i = ((degrees.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8;
@@ -1469,5 +1497,37 @@ mod tests {
         assert!(d.y < -0.99, "90° is south of east: {d}");
         let (_, e) = azimuth_elevation(rotation_from(0.0, 90.0));
         assert!((e - 90.0).abs() < 0.1, "{e}");
+    }
+
+    #[test]
+    fn environment_selector_label_column_fits_its_labels() {
+        // the old 74-point column left "Sky environment" and "Water
+        // environment" painted over their lists (#3866)
+        let theme = crate::theme::Theme::default();
+        let ctx = egui::Context::default();
+        theme.apply(&ctx, 1.0);
+        let mut measured = 0.0_f32;
+        let mut water_w = 0.0_f32;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            measured = selector_label_width(ui);
+            let font = egui::FontId::proportional(12.5);
+            water_w = ui.fonts_mut(|f| {
+                f.layout_no_wrap(
+                    aurora_i18n::tr!("ui-environment-water-environment").to_string(),
+                    font,
+                    egui::Color32::PLACEHOLDER,
+                )
+                .size()
+                .x
+            });
+        });
+        assert!(
+            measured + 0.5 >= water_w + 10.0,
+            "column {measured} must cover water label {water_w}"
+        );
+        assert!(
+            measured > LABEL_W,
+            "English needs more than the old {LABEL_W}-point column, got {measured}"
+        );
     }
 }
