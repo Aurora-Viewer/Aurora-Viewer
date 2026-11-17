@@ -18805,6 +18805,7 @@ impl App {
                 ui::chat::thumbnails::show(
                     ui,
                     &p,
+                    icons,
                     &mut self.world,
                     &mut self.chat_ui,
                     &mut self.panels,

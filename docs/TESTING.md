@@ -8065,8 +8065,9 @@ failure. Grid validation and any paid upload are performed by the human.
   the chat field; `top`: an island at the top right of the windows' area;
   `off`: none. One square per open conversation (picture, insignia or
   conference glyph) with the red unread counter; with more conversations
-  than room (`AURORA_DEMO_CONV=many`), a "+N" square lists the others and
-  the unread ones stay in sight. With `AURORA_DEMO_FLASH=1`, Tess's
+  than room (`AURORA_DEMO_CONV=many`), left and right scroll arrows page
+  through them in list order without moving a centred dock (#3552). With
+  `AURORA_DEMO_FLASH=1`, Tess's
   thumbnail flashes from the 10th second (eight rises, then a faint mark
   until her conversation is opened).
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every

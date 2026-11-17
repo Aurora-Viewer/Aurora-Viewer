@@ -98,9 +98,9 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
 /// reduced size (`MIN_BUTTON`) and their labels are cut, and a chat island
 /// that would still push the dock out shrinks. Both islands are as high as
 /// the buttons and their margins. The conversations' thumbnails take
-/// `thumbs(room, button, height)` after the chat island, within the room
-/// the dock leaves at its size: the dock keeps its place unless it would
-/// cover them, then stands right after them.
+/// `thumbs(room, button, height)` after the chat island, only in the gap
+/// before the dock at its place (#3552): they never shove a centred dock,
+/// and scroll when there are more than fit (LLChicletPanel).
 pub fn geometry_styled(
     screen: Rect,
     chat_width: f32,
@@ -129,13 +129,13 @@ pub fn geometry_styled(
     }
     let width = row_width(&widths, button);
     let height = button + V_PAD * 2.0;
-    let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
-    let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
+    // dock from the chat island alone: thumbnails never move it (#3552)
     let x = match style.align {
         // centred on the screen, as the mockup's dock
-        Align::Center => (left + ((right - left - width) / 2.0).round()).max(dock_start),
-        align => sizing::place(align, dock_start, right, width),
+        Align::Center => (left + ((right - left - width) / 2.0).round()).max(start),
+        align => sizing::place(align, start, right, width),
     };
+    let thumbs_w = thumbs((x - start - AFTER_CHAT).max(0.0), button, height).max(0.0);
     let chat = Rect::from_min_max(Pos2::new(left, bottom - height), Pos2::new(chat_right, bottom));
     let dock = Rect::from_min_max(Pos2::new(x, bottom - height), Pos2::new(x + width, bottom));
     Geometry {
@@ -1211,6 +1211,36 @@ mod tests {
         assert!(!has(dock.of(&skin, false)));
         assert!(has(dock.of(&skin, true)));
         assert!(!has(dock.of(&skin, false)));
+    }
+
+    /// #3552: conversation thumbnails fill only the gap before a centred
+    /// dock; they never shove it off centre (LLChicletPanel keeps its strip
+    /// and scrolls instead).
+    #[test]
+    fn many_conversation_thumbnails_do_not_move_a_centred_dock() {
+        let s = screen(1920.0);
+        let style = Style::default();
+        assert_eq!(style.align, Align::Center);
+        let natural = |square: f32| vec![square; 12];
+        let empty = geometry_styled(s, 0.0, style, natural, |_, _, _| 0.0);
+        let full = geometry_styled(s, 0.0, style, natural, |room, _, _| room);
+        assert!((empty.dock.center().x - s.center().x).abs() <= 1.0, "{:?}", empty.dock);
+        assert_eq!(empty.dock.left(), full.dock.left());
+        assert!(full.thumbs.width() > 0.0, "{:?}", full.thumbs);
+        assert!(
+            full.thumbs.right() + AFTER_CHAT <= full.dock.left() + 0.5,
+            "thumbs {:?} dock {:?}",
+            full.thumbs,
+            full.dock
+        );
+        // a dock against the chat island leaves the thumbnails no room
+        let left = Style {
+            align: Align::Start,
+            ..style
+        };
+        let left = geometry_styled(s, 0.0, left, natural, |room, _, _| room);
+        assert_eq!(left.dock.left(), left.chat.right() + AFTER_CHAT);
+        assert_eq!(left.thumbs.width(), 0.0);
     }
 
     /// The handle on the island's right edge sets its width, saved on
