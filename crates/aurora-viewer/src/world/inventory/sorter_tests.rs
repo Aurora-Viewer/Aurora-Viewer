@@ -3624,3 +3624,31 @@ fn hunt_prizes_and_gifts_from_a_store_stay_whole() {
         assert_ne!(delivery_mark(name), Some(Mark::Strong), "{name}");
     }
 }
+
+/// Audit 52: a set whose folders are its parts moves whole; a shelf of
+/// other stores' tagged pieces stays a shelf.
+#[test]
+fn a_set_of_untagged_parts_moves_whole() {
+    let none = HashSet::new();
+    for (name, parts) in [
+        ("Boho Bedroom Set", ["Bed", "Night Table", "Floor Lamp"]),
+        ("Vesper Bridal Set", ["Pearl Necklace", "Drop Earrings", "Crystal Tiara"]),
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, part) in parts.iter().enumerate() {
+            add_folder(&mut inv, 910 + n as u128, 900, part);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(
+            !plan.moves.iter().any(|m| (910..913).any(|n| m.id == id(n))),
+            "{name} is never split"
+        );
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Bedroom");
+    add_folder(&mut inv, 910, 900, "[Vesper] Bed");
+    add_folder(&mut inv, 911, 900, "[Kira] Lamp");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(900)), "a shelf never moves whole");
+}

@@ -2136,6 +2136,12 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     // (the folder's own store tag on a subfolder says nothing: `Mila - Photo
     // Studio` holding `[Mila] Poses`)
     let name_store = store(name);
+    // (a name ending in one set's word, `Boho Bedroom Set` holding `Bed` and
+    // `Night Table`, `Vesper Bridal Set` holding `Pearl Necklace`: its
+    // folders are its parts, another store's tag alone shows a shelf)
+    let one_set = name_words
+        .last()
+        .is_some_and(|w| matches!(w.as_str(), "set" | "kit" | "bundle" | "pack" | "collection"));
     let holds_deliveries = subs.iter().any(|s| {
         let sub = s.info.name.trim();
         if let Some(tag) = store(sub)
@@ -2143,7 +2149,7 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
         {
             return true;
         }
-        if parts_seen {
+        if parts_seen || one_set {
             return false;
         }
         let read = classify(sub, -1, 0);

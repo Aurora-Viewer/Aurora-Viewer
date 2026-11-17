@@ -384,7 +384,11 @@ impl Snapshot {
             .filter(|it| {
                 !matches!(it.asset_type, 2 | 3)
                     && !matches!(it.inv_type, 2 | 3)
-                    && !it.name.trim_start().to_lowercase().starts_with("snapshot :")
+                    // (a snapshot anywhere, renamed or Aurora's 360° one:
+                    // `360 Snapshot : <place>`; its name holds a place)
+                    && it.inv_type != 15
+                    && !it.name.to_lowercase().contains("snapshot :")
+                    && !crate::snapshot::capture_360::is_marked(&it.name)
                     && !hidden(it.parent)
             })
             .collect();

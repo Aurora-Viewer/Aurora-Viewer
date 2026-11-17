@@ -641,6 +641,7 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
             (901, 2, "A Resident", 2),
             (902, 30, "Kira Boots", 6),
             (903, 30, "Snapshot : Some Region (12, 34, 56)", 0),
+            (904, 30, "360 Snapshot : Some Region (12, 34, 56)", 0),
         ]
         .into_iter()
         .map(|(n, parent, name, kind)| InvItem {
