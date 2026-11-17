@@ -166,8 +166,13 @@ pub struct Faces {
     pub eye: [f32; 3],
     /// Why the sets were made, added up since the start (for the log):
     /// sets made at once for a near face, then the faces that were gone,
-    /// had moved, had another geometry, were to come in and to go out.
-    pub why: [u64; 6],
+    /// had moved, had another geometry, were to come in and to go out; and
+    /// the gone ones by cause: their slot freed, no geometry, no longer
+    /// traced, now a skeleton's.
+    pub why: [u64; 10],
+    /// What the main thread spent on this, added up since the start (µs):
+    /// in all, and on making the sets.
+    pub spent: [u64; 2],
     /// The placed faces that moved lately, or wait for the next still set:
     /// placed anew each frame, in the top level of the posed faces.
     pub moving: Vec<Instance>,
@@ -192,9 +197,14 @@ const STILL_FRAMES: u16 = 120;
 /// not built again each time it goes.
 const RELAPSES_MAX: u8 = 6;
 /// Frames between two still sets at least, unless a near face of the set
-/// moved or went: wgpu builds the level from scratch, a few milliseconds
-/// for a region's faces.
+/// moved: wgpu builds the level from scratch, a few milliseconds for a
+/// region's faces.
 const STILL_EVERY: u64 = 15;
+/// Frames a near face of the still set may be gone before a set is made
+/// without it: its shadow stays that long. (A face whose slot is handed
+/// out again is gone too, and its shadow should stay: made at once, such
+/// sets came every few frames on a busy region.)
+const QUICK: u64 = 8;
 /// Faces whose change waits for a still set that make one as soon as
 /// [`STILL_EVERY`] allows (a region that loads, an arrival by teleport).
 const MANY: usize = 256;
@@ -269,6 +279,8 @@ struct Track {
     /// The set holds it with a geometry it no longer has (another level of
     /// detail): it stays so until the next set.
     stale: bool,
+    /// The set holds it and a frame did not find it (counted once).
+    missed: bool,
 }
 
 /// A face's kinds ([`Track::kind`]): not traced, a placed face (opaque or
@@ -332,9 +344,10 @@ impl Tally {
 /// moved, that was the frame's largest cost on the grid (a busy region:
 /// 98,000 faces, 10 to 23 ms on the render thread).
 ///
-/// A near face of the level that moves or goes makes a new set at once
-/// (the level would cast its shadow where it no longer is). The other
-/// changes are gathered ([`MANY`], [`SOON`], [`LATER`]): a face that
+/// A near face of the level that moves makes a new set at once (the level
+/// would cast its shadow where it no longer is), one that goes within
+/// [`QUICK`]. The other changes are gathered ([`MANY`], [`SOON`],
+/// [`LATER`]): a face that
 /// arrives or comes to rest is among the moving ones meanwhile, so that
 /// none is ever in neither; a far one that moved is in both, a far one
 /// that went still in the level; one whose level of detail changed keeps
@@ -351,8 +364,14 @@ pub(crate) struct StillTracker {
     set_at: u64,
     changed_at: u64,
     /// Why the sets were made, added up since the start ([`Faces::why`]).
-    why: [u64; 6],
+    why: [u64; 10],
 }
+
+/// Why a frame did not find a face ([`Faces::why`], after the first six).
+const SLOT_FREED: usize = 6;
+const NO_GEOMETRY: usize = 7;
+const NOT_TRACED_NOW: usize = 8;
+const POSED_NOW: usize = 9;
 
 impl StillTracker {
     /// Forgets every face: after the world's origin moved, they all stand
@@ -393,9 +412,21 @@ impl StillTracker {
         Some(self.tally.count(t))
     }
 
+    /// Counts face `id`, which this frame did not find for the reason
+    /// `why`, if the still set holds it (for the log).
+    fn missing(&mut self, id: usize, why: usize) {
+        if let Some(t) = self.tracks.get_mut(id)
+            && t.in_still
+            && !std::mem::replace(&mut t.missed, true)
+        {
+            self.why[why] += 1;
+        }
+    }
+
     /// Notes face `id` on `frame` as one that is not a placed face to
     /// trace (`kind`: not traced, or a skeleton's).
     fn other(&mut self, id: usize, frame: u64, place: u64, shape: u32, kind: u8) {
+        self.missing(id, if kind == POSED { POSED_NOW } else { NOT_TRACED_NOW });
         if let Some(t) = self.tracks.get_mut(id) {
             // one the still set holds stays so until the set made for its
             // leaving (`decide`: this frame did not find it)
@@ -406,6 +437,7 @@ impl StillTracker {
                 kind,
                 in_still: t.in_still,
                 set_near: t.set_near,
+                missed: t.missed,
                 ..Track::default()
             };
         }
@@ -465,7 +497,8 @@ impl StillTracker {
     fn decide(&mut self, frame: u64) -> bool {
         let tally = &self.tally;
         let gone = self.held - tally.found.min(self.held);
-        let urgent = tally.urgent || tally.found_near < self.held_near;
+        let urgent = tally.urgent;
+        let gone_near = tally.found_near < self.held_near;
         let wrong = tally.left + tally.stale + gone;
         let changes = wrong + tally.arrivals + tally.leavers;
         if changes == 0 && !urgent {
@@ -475,7 +508,11 @@ impl StillTracker {
         if self.changed_at == 0 {
             self.changed_at = frame;
         }
-        let patience = if wrong > 0 { SOON } else { LATER };
+        let patience = match (gone_near, wrong > 0) {
+            (true, _) => QUICK,
+            (false, true) => SOON,
+            (false, false) => LATER,
+        };
         let gathered = changes >= MANY || frame - self.changed_at >= patience;
         if !(self.set_at == 0 || urgent || (gathered && frame - self.set_at >= STILL_EVERY)) {
             return false;
@@ -494,6 +531,7 @@ impl StillTracker {
             t.set_near = t.in_still && t.near;
             t.left = false;
             t.stale = false;
+            t.missed = false;
             self.held += t.in_still as usize;
             self.held_near += t.set_near as usize;
         }
@@ -650,6 +688,8 @@ pub(crate) struct PoseTracker {
     cells: Arc<Vec<Cell>>,
     small: Vec<Small>,
     set: u64,
+    /// `Faces::spent`.
+    spent: [u64; 2],
 }
 
 struct Seen {
@@ -736,6 +776,7 @@ pub(crate) fn gather(
     tracker: &mut PoseTracker,
     out: &mut Faces,
 ) {
+    let started = std::time::Instant::now();
     out.moving.clear();
     out.posed.clear();
     out.groups.clear();
@@ -755,12 +796,15 @@ pub(crate) fn gather(
     tracker.placed.begin(faces);
     for id in 0..faces {
         let Some(face) = records.faces.get(id) else {
+            tracker.placed.missing(id, SLOT_FREED);
             continue;
         };
         if face.index_count < 3 || face.base_vertex < 0 {
+            tracker.placed.missing(id, NO_GEOMETRY);
             continue;
         }
         let Some(record) = records.get(id as u32) else {
+            tracker.placed.missing(id, SLOT_FREED);
             continue;
         };
         let (place, shape) = (place_of(&record.model), shape_of(face));
@@ -781,7 +825,7 @@ pub(crate) fn gather(
             None => face.object == NO_OBJECT && rf & flags::TERRAIN != 0,
             Some(object) => {
                 object.flags & object_flags::ACTIVE != 0
-                    && object.flags & object_flags::HUD == 0
+                    && object.flags & (object_flags::HUD | object_flags::HIDDEN) == 0
                     && matches!(face.bits & pass::BITS, pass::OPAQUE | pass::OPAQUE_2S | pass::MASK | pass::MASK_2S)
                     && rf & flags::ALPHA_BLEND == 0
             }
@@ -841,6 +885,7 @@ pub(crate) fn gather(
     // the still set, on the frames it changes; the faces it holds are then
     // no longer among the moving ones
     if tracker.placed.decide(frame) {
+        let set_started = std::time::Instant::now();
         let placed = &tracker.placed;
         let mut large = Vec::new();
         tracker.small.clear();
@@ -868,6 +913,7 @@ pub(crate) fn gather(
         tracker.still = Arc::new(large);
         tracker.cells = Arc::new(cells_of(&mut tracker.small, &tracker.cells));
         tracker.set += 1;
+        tracker.spent[1] += set_started.elapsed().as_micros() as u64;
     }
     out.still = tracker.still.clone();
     out.cells = tracker.cells.clone();
@@ -877,6 +923,8 @@ pub(crate) fn gather(
     let placed = &tracker.placed;
     out.moving.retain(|i| placed.moving(i.record as usize));
     choose_rebuilds(palettes, camera, tracker, out);
+    tracker.spent[0] += started.elapsed().as_micros() as u64;
+    out.spent = tracker.spent;
 }
 
 /// Groups the posed candidates by skeleton and picks the skeletons built
@@ -1073,6 +1121,8 @@ struct Poser {
     /// placed faces after them.
     placed: Vec<u32>,
     movers: usize,
+    /// The slots of the top level its last build filled.
+    filled: usize,
     /// Where each skeleton built this frame starts in the posed vertices,
     /// and each merged cell posed this frame after them.
     offsets: Vec<(usize, u32)>,
@@ -1117,6 +1167,17 @@ struct Bottom {
     used: u64,
     /// A face of the still set uses it.
     held: bool,
+}
+
+/// The render thread's time in [`RtShadows::encode`] since the last log.
+#[derive(Default)]
+struct Cpu {
+    frames: u32,
+    us: u64,
+    most: u64,
+    /// The frames a still set came, and their time.
+    sets: u32,
+    set_us: u64,
 }
 
 /// A merged cell's bottom level: a geometry per face, in world space.
@@ -1416,8 +1477,13 @@ pub(crate) struct RtShadows {
     /// The still faces by size, for the log: how many have up to 64, 256,
     /// 1024 and 4096 triangles or more, and their triangles.
     still_sizes: [(u32, u64); 5],
-    /// `Faces::why` at the last log.
-    why: [u64; 6],
+    /// `Faces::why`, `Faces::spent` and the set's number at the last log,
+    /// and since then: the frames encoded, the time it took on the render
+    /// thread (µs) in all, at most, and on the frames a set came.
+    why: [u64; 10],
+    spent: [u64; 2],
+    logged_set: u64,
+    cpu: Cpu,
     frame: u64,
     pub stats: RtStats,
     timer: Option<Timer>,
@@ -1673,7 +1739,10 @@ impl RtShadows {
             scene_instances: 0,
             scene_builds: 0,
             still_sizes: [(0, 0); 5],
-            why: [0; 6],
+            why: [0; 10],
+            spent: [0; 2],
+            logged_set: 0,
+            cpu: Cpu::default(),
             frame: 0,
             stats: RtStats::default(),
             timer: Timer::new(device, queue, 4),
@@ -1742,6 +1811,7 @@ impl Poser {
             tlas: None,
             placed: Vec::new(),
             movers: 0,
+            filled: 0,
             offsets: Vec::new(),
             baked: Vec::new(),
             table: Vec::new(),
@@ -1929,13 +1999,14 @@ impl Poser {
             return (0, placed.len());
         }
         let wanted = (placed.len() + movers.len()).max(1).next_power_of_two().max(64);
-        if self.tlas.as_ref().is_none_or(|t| t.get().len() < wanted) {
+        if self.tlas.as_ref().is_none_or(|t| !fits(t.get().len(), wanted)) {
             self.tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
                 label: Some("rt shadows skeletons"),
                 max_instances: wanted as u32,
                 flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
                 update_mode: wgpu::AccelerationStructureUpdateMode::Build,
             }));
+            self.filled = 0;
         }
         // the faces' records, each skeleton's where its instance says,
         // then each moving face's own
@@ -1958,9 +2029,10 @@ impl Poser {
             return (0, 0);
         };
         {
-            // every slot: one past this frame's would keep an earlier
-            // frame's instance
-            let slots = tlas.get().len();
+            // this frame's slots, and those the last build filled past
+            // them, which would keep its instances
+            let filled = placed.len() + movers.len();
+            let slots = filled.max(std::mem::replace(&mut self.filled, filled));
             let slots = tlas.get_mut_slice(0..slots).expect("the top level's own slots");
             for (n, slot) in slots.iter_mut().enumerate() {
                 *slot = match n.checked_sub(placed.len()) {
@@ -2248,14 +2320,19 @@ impl RtShadows {
         scene: &crate::packet::SceneGpu,
         faces: &Faces,
     ) {
+        let started = std::time::Instant::now();
         let (vertices, indices) = (&scene.vertices, &scene.indices);
         self.frame += 1;
         let frame = self.frame;
         if let Some(timer) = &mut self.timer {
             if let Some((ms, frames)) = timer.harvest() {
                 let st = &self.stats;
+                let main: [u64; 2] =
+                    std::array::from_fn(|i| faces.spent[i].saturating_sub(std::mem::replace(&mut self.spent[i], faces.spent[i])));
+                let sets = faces.set.saturating_sub(std::mem::replace(&mut self.logged_set, faces.set));
+                let cpu = std::mem::take(&mut self.cpu);
                 log::info!(
-                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices)",
+                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame, {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame",
                     ms[0],
                     ms[1],
                     ms[2],
@@ -2266,7 +2343,7 @@ impl RtShadows {
                     st.cells_built,
                     st.cells_waiting,
                     std::mem::take(&mut self.scene_builds),
-                    std::array::from_fn::<u64, 6, _>(|i| faces.why[i].saturating_sub(std::mem::replace(&mut self.why[i], faces.why[i]))),
+                    std::array::from_fn::<u64, 10, _>(|i| faces.why[i].saturating_sub(std::mem::replace(&mut self.why[i], faces.why[i]))),
                     self.still_sizes,
                     st.bottoms,
                     st.built,
@@ -2276,6 +2353,12 @@ impl RtShadows {
                     st.skeletons_built,
                     st.posed_faces,
                     st.posed_vertices,
+                    main[0] as f64 / 1000.0 / frames.max(1) as f64,
+                    main[1] as f64 / 1000.0 / sets.max(1) as f64,
+                    sets,
+                    cpu.us as f64 / 1000.0 / cpu.frames.max(1) as f64,
+                    cpu.most as f64 / 1000.0,
+                    cpu.set_us as f64 / 1000.0 / cpu.sets.max(1) as f64,
                 );
             }
             // the pose's start: an empty pass's timestamp, as the pose may
@@ -2484,7 +2567,7 @@ impl RtShadows {
         if rebuild {
             // grown in powers of two
             let wanted = (self.still.len() + cells.len()).max(1).next_power_of_two().max(1024);
-            if self.tlas.as_ref().is_none_or(|t| t.get().len() < wanted) {
+            if self.tlas.as_ref().is_none_or(|t| !fits(t.get().len(), wanted)) {
                 self.tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
                     label: Some("rt shadows scene"),
                     max_instances: wanted as u32,
@@ -2661,6 +2744,14 @@ impl RtShadows {
             skeletons_built,
         };
         self.trace(device, encoder, t, depth, contact, scene);
+        let us = started.elapsed().as_micros() as u64;
+        self.cpu.frames += 1;
+        self.cpu.us += us;
+        self.cpu.most = self.cpu.most.max(us);
+        if new_set {
+            self.cpu.sets += 1;
+            self.cpu.set_us += us;
+        }
     }
 
     /// The trace of the mask through the top level as it stands.
@@ -3652,6 +3743,17 @@ impl RtShadows {
     }
 }
 
+/// Whether a top level of `slots` suits `wanted` instances (a power of
+/// two): large enough, and less than four times too large. wgpu walks every
+/// slot of a level at each build and sizes the build by them: the level
+/// built each frame, left at the 65,536 slots of an arrival (when a
+/// region's faces all count as moving for a few frames), cost over a
+/// millisecond a frame on the render thread and one more on the GPU for
+/// the rest of the session.
+fn fits(slots: usize, wanted: usize) -> bool {
+    slots >= wanted && slots < 4 * wanted
+}
+
 /// The transform of a top level's instance whose level is in world space.
 const IDENTITY: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
 
@@ -3841,16 +3943,39 @@ mod tests {
 
     #[test]
     fn rt_shadows_a_face_that_goes_leaves_the_still_set() {
-        // a near one at once
+        // a near one quickly: its shadow stays a few frames (its slot may
+        // only have been handed out again)
         let (mut t, mut n) = (StillTracker::default(), 0);
-        frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
-        assert_eq!(frame(&mut t, &mut n, &[near(0, 1)]), (true, vec![]));
+        for _ in 0..2 * STILL_EVERY {
+            frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
+        }
+        assert_eq!(until_set(&mut t, &mut n, &[near(0, 1)], &[]), QUICK + 1);
         assert!(t.in_still(0) && !t.in_still(1));
+        // and no more often than the sets may follow each other
+        assert_eq!(until_set(&mut t, &mut n, &[], &[]), STILL_EVERY);
+        assert!(!t.in_still(0));
         // a far one soon
         let (mut t, mut n) = (StillTracker::default(), 0);
         frame(&mut t, &mut n, &[near(0, 1), far(1, 2)]);
         assert_eq!(until_set(&mut t, &mut n, &[near(0, 1)], &[]), SOON + 1);
         assert!(t.in_still(0) && !t.in_still(1));
+    }
+
+    #[test]
+    fn rt_shadows_a_gone_face_is_counted_once_by_its_cause() {
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[far(0, 1), far(1, 2)]);
+        // not found on two frames: one count; a face no set holds: none
+        t.missing(1, SLOT_FREED);
+        t.missing(1, SLOT_FREED);
+        t.missing(5, NO_GEOMETRY);
+        t.other(0, n + 1, 1, 0, NOT_TRACED);
+        t.other(0, n + 2, 1, 0, NOT_TRACED);
+        assert_eq!(t.why[SLOT_FREED..], [1, 0, 1, 0]);
+        // the next set forgets them: gone again later counts again
+        until_set(&mut t, &mut n, &[far(1, 2)], &[]);
+        t.missing(1, NO_GEOMETRY);
+        assert_eq!(t.why[SLOT_FREED..], [1, 1, 1, 0]);
     }
 
     #[test]
@@ -3903,12 +4028,20 @@ mod tests {
     fn rt_shadows_a_face_that_stops_being_traced_leaves_the_still_set() {
         let (mut t, mut n) = (StillTracker::default(), 0);
         frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
-        // face 1 turns into a face that is not traced (a blended one)
-        n += 1;
-        t.begin(8);
-        assert_eq!(t.same(0, n, 1, 0), Some(false));
-        t.other(1, n, 2, 0, NOT_TRACED);
-        assert!(t.decide(n));
+        // face 1 turns into a face that is not traced (a blended one):
+        // the next set, which comes quickly, is without it
+        let mut frames = 0;
+        loop {
+            n += 1;
+            frames += 1;
+            t.begin(8);
+            assert_eq!(t.same(0, n, 1, 0), Some(false));
+            t.other(1, n, 2, 0, NOT_TRACED);
+            if t.decide(n) {
+                break;
+            }
+            assert!(t.in_still(1) && frames < STILL_EVERY);
+        }
         assert!(t.in_still(0) && !t.in_still(1));
         // and is not looked at again while it stays the same
         n += 1;
@@ -4036,6 +4169,14 @@ mod tests {
         assert_eq!(size_step(32.0), 32.0);
         assert_eq!(size_step(200.0), 128.0);
         assert_eq!(size_step(-5.0), 0.0);
+    }
+
+    #[test]
+    fn rt_shadows_a_top_level_far_too_large_is_made_again() {
+        assert!(fits(64, 64) && fits(128, 64));
+        // too small, and four times too large (after an arrival's burst)
+        assert!(!fits(64, 128));
+        assert!(!fits(256, 64) && !fits(65536, 1024));
     }
 
     #[test]
