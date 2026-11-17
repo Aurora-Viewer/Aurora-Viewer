@@ -3681,8 +3681,8 @@ fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvActio
                 return;
             }
             let at = unix_now();
-            // (read on the files' thread from a copy: the frame only copies,
-            // and a quit waits for the file like the journal's)
+            // (read on its own thread from a copy: the frame only copies,
+            // and the journal's own writes never wait behind a 50 MB file)
             let copy = sorter::snapshot(inv);
             let when = chrono::DateTime::from_timestamp(at, 0).map_or_else(
                 || at.to_string(),
@@ -3696,7 +3696,7 @@ fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvActio
                 &when,
             );
             let (tx, rx) = std::sync::mpsc::channel();
-            in_order(move || {
+            std::thread::spawn(move || {
                 let snapshot = sorter::journal::Snapshot::take_to_share(&copy, at);
                 let unread = snapshot.unread.len();
                 let result = sorter::journal::save_shared(&path, &snapshot)
