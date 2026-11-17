@@ -235,7 +235,7 @@ pub fn group(cx: &mut Cx) {
 /// stays written beside it.
 fn direct_row(cx: &mut Cx, direct: Direct, [label, hint, warning]: [&str; 3], f: &super::super::cx::F<bool>) {
     let p = cx.p;
-    cx.row_with(label, hint, f, |ui, s, st, _| {
+    cx.wide().row_with(label, hint, f, |ui, s, st, _| {
         let mut on = *direct.get(s);
         let mut changed = false;
         ui.vertical(|ui| {

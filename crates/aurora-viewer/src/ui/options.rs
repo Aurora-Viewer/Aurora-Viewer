@@ -310,6 +310,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
+        "proxy" => row(Page::Network, 0, tr!("ui-options-proxy-direct-voice")),
         _ => None,
     };
     let audio = match what {
@@ -318,7 +319,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
-    if what == "auto-accept" {
+    if what == "auto-accept" || what == "proxy" {
         st.demo_open_cogs = true;
     }
     if let Some(section) = audio {
