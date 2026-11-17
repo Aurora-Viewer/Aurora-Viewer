@@ -4064,6 +4064,11 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         path("01. [Moon Hair] Ada Dress")
     );
     assert!(
+        path("(3) [Moon Hair] Ada Dress").contains(Category::Dresses.folder()),
+        "{}",
+        path("(3) [Moon Hair] Ada Dress")
+    );
+    assert!(
         path("(2 Moons Hair) Ada Dress").contains(Category::Dresses.folder()),
         "{}",
         path("(2 Moons Hair) Ada Dress")

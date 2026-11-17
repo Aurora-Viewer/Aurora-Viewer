@@ -1163,9 +1163,12 @@ fn without_number(name: &str) -> &str {
 /// A name that opens with an enclosed tag (`[Store] rest`, `**Store**
 /// rest`): the tag and the rest of the name.
 fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
-    // (the name as it is first, `(2 Moons Hair) rest`; then past a series
-    // number, as `store` reads it: `01. [Store] rest`)
-    tag_at(name.trim()).or_else(|| tag_at(without_number(name.trim()).trim_start()))
+    // (the name as it is first, `(2 Moons Hair) rest`, when its tag reads as
+    // a store; then past a series number, as `store` reads it: `01. [Store]
+    // rest`, `(3) [Store] rest`)
+    tag_at(name.trim())
+        .filter(|(tag, _)| store_tag(tag, true).is_some())
+        .or_else(|| tag_at(without_number(name.trim()).trim_start()))
 }
 
 fn tag_at(text: &str) -> Option<(&str, &str)> {
