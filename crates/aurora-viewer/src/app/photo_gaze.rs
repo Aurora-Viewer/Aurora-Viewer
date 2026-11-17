@@ -5,10 +5,12 @@
 //!   window is open: a FOCUS target on a global point, the type the Legacy
 //!   Viewer sends when the camera locks on a point (LLAgentCamera::
 //!   setFocusGlobal → setLookAt(LOOKAT_TARGET_FOCUS), indra/newview/
-//!   llagentcamera.cpp). It goes through `set_look_at`, so the privacy
-//!   settings and the look-at range apply as for any other target, and the
-//!   others see the same ViewerEffect the Legacy Viewer sends: no new
-//!   message. The head and eyes take it within LLHeadRotMotion's limits,
+//!   llagentcamera.cpp). What is sent goes through `set_look_at`, so the
+//!   privacy settings and the look-at range apply as for any other target,
+//!   and the others see the same ViewerEffect the Legacy Viewer sends: no
+//!   new message. Our own head takes the camera on our viewer even with
+//!   "no look-at target, even for me" (`lookat::LookAts::own_local`): the
+//!   switch is a choice made for the photo, and nothing more is sent. The head and eyes take it within LLHeadRotMotion's limits,
 //!   and on our viewer over every animation (`own_over_animations`): an AO
 //!   stand that keys the head would otherwise hold it, and the photo is
 //!   drawn here. The others' viewers blend our animations as the Legacy
@@ -62,14 +64,21 @@ impl App {
     /// now stands. Sends are throttled by `lookat::Own::set` (5 cm, 0.25 s).
     pub(super) fn update_photo_gaze(&mut self) {
         use crate::world::lookat;
-        // (privacy "no look-at target, even for me" keeps the head ahead)
-        self.world.look_at.own_over_animations = self.photo_gaze_wanted() && !self.world.look_at.own_ahead;
-        match gaze(self.photo_gaze_wanted(), self.photo_gaze) {
+        let wanted = self.photo_gaze_wanted();
+        self.world.look_at.own_over_animations = wanted;
+        let camera = self
+            .world
+            .main_origin()
+            .map(|(mx, my)| glam::DVec3::new(mx as f64, my as f64, 0.0) + self.camera.position.as_dvec3());
+        // our head on our viewer, even with "no look-at target, even for
+        // me": the switch is a choice made for the photo
+        self.world.look_at.own_local = camera.filter(|_| wanted);
+        match gaze(wanted, self.photo_gaze) {
             Gaze::Camera => {
-                let Some((mx, my)) = self.world.main_origin() else {
+                let Some(at) = camera else {
                     return;
                 };
-                let at = glam::DVec3::new(mx as f64, my as f64, 0.0) + self.camera.position.as_dvec3();
+                // what the others get: through the privacy settings
                 self.set_look_at(lookat::FOCUS, None, at);
                 self.photo_gaze = true;
             }

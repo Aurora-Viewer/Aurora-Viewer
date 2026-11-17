@@ -5866,13 +5866,13 @@ impl Scene {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
-            let target = if owner == world.agent_id {
-                Some(world.look_at.own.target)
+            let (target, ahead) = if owner == world.agent_id {
+                let (target, ahead) = world.look_at.own_gaze();
+                (Some(target), ahead)
             } else {
-                world.look_at.remote.get(&owner).copied()
+                (world.look_at.remote.get(&owner).copied(), false)
             };
             use crate::world::lookat::Gaze;
-            let ahead = owner == world.agent_id && world.look_at.own_ahead;
             let look = match crate::world::lookat::gaze(target, ahead) {
                 Gaze::Unknown | Gaze::Ahead => Some((false, None)),
                 Gaze::Cleared => Some((true, None)),
