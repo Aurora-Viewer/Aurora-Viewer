@@ -92,12 +92,6 @@ pub enum UdpEdit {
     Purge(Uuid),
 }
 
-/// Waits until a folder made over the circuit shows in its parent. The
-/// simulator handles inventory packets on several threads, and files an item
-/// whose folder does not exist yet in a default folder without a word
-/// (`Scene.AddInventoryItem`, OpenSim's Scene.Inventory.cs). The Legacy Viewer
-/// fills a new folder from the creation's callback; UDP has no answer, so the
-/// fetch service stands in for it.
 /// Items read back fifty to a `FetchInventory2` request, one request at a
 /// time (LLInventoryModel::fetchItemHttp): a batch of two hundred moves is
 /// four requests, never two hundred.
@@ -127,6 +121,12 @@ async fn read_items_in_bulk(http: &reqwest::Client, fetch: &str, owner: Uuid, id
     (reads, omitted)
 }
 
+/// Waits until a folder made over the circuit shows in its parent. The
+/// simulator handles inventory packets on several threads, and files an item
+/// whose folder does not exist yet in a default folder without a word
+/// (`Scene.AddInventoryItem`, OpenSim's Scene.Inventory.cs). The Legacy Viewer
+/// fills a new folder from the creation's callback; UDP has no answer, so the
+/// fetch service stands in for it.
 pub(crate) async fn folder_landed(http: &reqwest::Client, fetch_cap: &str, owner: Uuid, parent: Uuid, folder: Uuid) -> bool {
     const RETRIES: u32 = 6;
     for attempt in 0..=RETRIES {
@@ -775,7 +775,7 @@ where
                     None => (super::ais::read_items(http, cap, owner, &items).await, Vec::new()),
                 }
             };
-            let Ok((read_items, left_out)) = tokio::time::timeout_at(deadline, items_read).await else {
+            let Ok((mut read_items, left_out)) = tokio::time::timeout_at(deadline, items_read).await else {
                 log::warn!("inventory: the read-back of a move ran out of time");
                 break;
             };
@@ -789,6 +789,9 @@ where
                     break;
                 }
             };
+            // (an AIS read's 404 is no proof a moved item is gone, a stale
+            // capability answers it too: read again, never counted as done)
+            read_items.failed.extend(std::mem::take(&mut read_items.missing));
             // a read the server did not answer (busy, throttled): the next
             // attempt waits longer, never hammering it
             let refused = !read_items.failed.is_empty() || read_folders.len() < moved.len();
