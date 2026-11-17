@@ -7138,7 +7138,8 @@ impl App {
             self.receive_event(ev, sent);
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
-            if now.duration_since(t_ev) > Duration::from_millis(8) {
+            // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
+            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on) {
                 break;
             }
         }
@@ -13640,7 +13641,7 @@ impl App {
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         self.busy_pause_frame(gfx.renderer.vr_engaged());
-        self.gaming_mode_frame();
+        self.gaming_mode_frame(gfx.renderer.vr_engaged());
         if stats.presented && !gfx.shown && !self.exit_windows_hidden {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
@@ -13706,10 +13707,10 @@ impl App {
             self.instances.peers().in_front(),
             timed || !self.settings.background_fps_cap,
         );
-        // gaming mode: the loop crawls, slower still out of sight
-        // (app/gaming_mode.rs)
+        // gaming mode: the loop crawls, slower still out of sight; not
+        // while a photo is drawn (app/gaming_mode.rs)
         let hidden = self.occluded || gfx.window.is_minimized().unwrap_or(false);
-        let cap = gaming_mode::cap(cap, self.gaming_mode.on && !timed, hidden);
+        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden);
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:

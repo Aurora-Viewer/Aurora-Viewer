@@ -5,9 +5,12 @@
 //! `VISIBLE_FPS` while the window can be seen and `HIDDEN_FPS` once it is
 //! minimised or covered, and the in-world media stop drawing (Hidden
 //! priority, media/update.rs). The network, the chat, the sounds and the
-//! notifications go on. Back in front, it ends by itself
-//! (`gaming_mode_leave_on_focus`), or with the button again. Not in the
-//! Legacy Viewer.
+//! notifications go on: with fewer frames, each one may apply more of the
+//! network's events (`event_budget`). Back in front, it ends by itself
+//! (`gaming_mode_leave_on_focus`), or with the button again. A headset that
+//! presents ends it too: the OpenXR frame waiter paces VR, and a world that
+//! stops drawing in front of the eyes is not a pause (busy_pause.rs leaves
+//! VR alone the same way). Not in the Legacy Viewer.
 
 use super::*;
 
@@ -17,6 +20,11 @@ const VISIBLE_FPS: f32 = 5.0;
 /// Frames per second minimised or covered: enough to read the network's
 /// news and raise the notifications, nothing is seen.
 const HIDDEN_FPS: f32 = 2.0;
+/// Time a frame may spend applying the network's events (8 ms otherwise,
+/// `App::pump_network_events`). At `HIDDEN_FPS` that is 120 ms a second,
+/// what the 15 fps background cap gives at 8 ms a frame: a busy region's
+/// object updates do not pile up behind the slow loop.
+const EVENT_BUDGET: Duration = Duration::from_millis(60);
 
 #[derive(Debug, Default)]
 pub(super) struct GamingMode {
@@ -33,6 +41,12 @@ pub(super) fn cap(cap: f32, on: bool, hidden: bool) -> f32 {
     }
     let low = if hidden { HIDDEN_FPS } else { VISIBLE_FPS };
     if cap >= 1.0 { cap.min(low) } else { low }
+}
+
+/// The time a frame may spend applying the network's events, gaming mode
+/// `on` or not.
+pub(super) fn event_budget(on: bool) -> Duration {
+    if on { EVENT_BUDGET } else { Duration::from_millis(8) }
 }
 
 /// `AURORA_DEMO_GAMING_MODE=<frame>`: gaming mode turns on at that frame,
@@ -69,8 +83,14 @@ impl App {
         self.gaming_mode.on && !self.snapshots.drawing()
     }
 
-    /// Every frame: the demo scenario.
-    pub(super) fn gaming_mode_frame(&mut self) {
+    /// Every frame, after the render: a headset presenting ends gaming mode
+    /// (`vr`), then the demo scenario.
+    pub(super) fn gaming_mode_frame(&mut self, vr: bool) {
+        if vr && self.gaming_mode.on {
+            log::info!("gaming mode ends: a headset presents");
+            self.set_gaming_mode(false);
+            return;
+        }
         if self.demo && !self.gaming_mode.demo_done && demo_from().is_some_and(|from| self.frame_count >= from) {
             self.gaming_mode.demo_done = true;
             self.set_gaming_mode(true);
@@ -103,5 +123,14 @@ mod tests {
         assert_eq!(cap(120.0, true, false), VISIBLE_FPS);
         assert_eq!(cap(120.0, true, true), HIDDEN_FPS);
         assert_eq!(cap(1.0, true, false), 1.0, "a lower cap of the user stays");
+    }
+
+    #[test]
+    fn the_slow_loop_applies_as_many_events_a_second_as_the_background_cap() {
+        assert_eq!(event_budget(false), Duration::from_millis(8));
+        let per_second = |budget: Duration, fps: f32| budget.as_secs_f32() * fps;
+        let background = per_second(event_budget(false), 15.0);
+        assert!(per_second(event_budget(true), HIDDEN_FPS) >= background - 1e-6);
+        assert!(per_second(event_budget(true), VISIBLE_FPS) >= background);
     }
 }
