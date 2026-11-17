@@ -1143,6 +1143,45 @@ fn rlva_camera_owner_and_clamps_are_temporary_and_reject_nonfinite_values() {
 }
 
 #[test]
+fn rlva_camera_view_holds_the_offsets_and_the_mouselook_rule() {
+    use camera::CameraView;
+    let mut r = enabled();
+    assert_eq!(r.camera_view(), CameraView::default());
+    assert!(r.can_mouselook());
+    command(&mut r, A, "@setcam_eyeoffset:-4/0/1=n,setcam_eyeoffsetscale:NaN=n");
+    let view = r.camera_view();
+    assert_eq!(view.eye_offset, Some(glam::Vec3::new(-4.0, 0.0, 1.0)));
+    assert_eq!((view.focus_offset, view.eye_offset_scale), (None, None), "not a number is no scale");
+    assert!(view.preset_locked && !view.no_mouselook);
+    command(&mut r, A, "@clear");
+    assert!(!r.camera_view().preset_locked);
+    // RlvActions::canChangeToMouselook
+    for (set, lift) in [
+        ("@camdistmin:1=n", "@camdistmin:1=y"),
+        ("@setcam_avdistmin:0.5=n", "@setcam_avdistmin:0.5=y"),
+        ("@setcam_mouselook=n", "@setcam_mouselook=y"),
+    ] {
+        command(&mut r, A, set);
+        assert!(!r.can_mouselook() && r.camera_view().no_mouselook, "{set}");
+        command(&mut r, A, lift);
+        assert!(r.can_mouselook() && !r.camera_view().no_mouselook, "{lift}");
+    }
+    command(&mut r, A, "@setcam_avdistmin:0=n");
+    assert!(r.can_mouselook(), "a minimum of zero forbids nothing");
+    command(&mut r, A, "@clear");
+    // under an exclusive @setcam only its owner's restrictions count
+    command(&mut r, B, "@setcam_mouselook=n,setcam_avdistmin:3=n");
+    assert!(!r.can_mouselook());
+    command(&mut r, A, "@setcam=n");
+    assert!(r.can_mouselook());
+    command(&mut r, A, "@setcam_mouselook=n");
+    assert!(!r.can_mouselook());
+    r.configure(false);
+    assert_eq!(r.camera_view(), CameraView::default());
+    assert!(r.can_mouselook());
+}
+
+#[test]
 fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
     let mut r = enabled();
     let query = |name: &str| Command::parse(&format!("{name}=123")).unwrap();

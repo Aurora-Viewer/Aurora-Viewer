@@ -439,6 +439,11 @@ pub struct Camera {
     rlva_at_min: bool,
     rlva_at_max: bool,
     rlva_origin: Vec3,
+    /// What RLVa holds of the avatar view, as of the last `update`: the
+    /// wheel, the keys and a mode change come between two frames, and must
+    /// see the offsets the camera is placed with and the same refusal of
+    /// mouselook.
+    rlva: crate::world::rlva::camera::CameraView,
 }
 
 /// A view imposed on the camera for a frame (`Camera::fixed_view`).
@@ -548,6 +553,7 @@ impl Default for Camera {
             rlva_at_min: false,
             rlva_at_max: false,
             rlva_origin: Vec3::ZERO,
+            rlva: Default::default(),
         }
     }
 }
@@ -686,9 +692,43 @@ impl Camera {
         }
     }
 
-    /// LLAgentCamera::changeCameraToMouselook.
+    /// Take what RLVa holds of the view now: once a frame, and before a
+    /// mode its own commands force, which the restrictions that came with
+    /// them in the same message already bind.
+    pub fn read_rlva(&mut self, rlva: &crate::world::rlva::Rlva) {
+        self.rlva = rlva.camera_view();
+    }
+
+    /// LLAgentCamera::getCameraOffsetInitial: the offset behind the avatar,
+    /// RLVa's (`@setcam_eyeoffset`) before the user's.
+    fn offset_initial(&self, s: &CameraSettings) -> Vec3 {
+        self.rlva.eye_offset.unwrap_or_else(|| s.camera_offset())
+    }
+
+    /// LLAgentCamera::getFocusOffsetInitial (`@setcam_focusoffset`).
+    fn focus_initial(&self, s: &CameraSettings) -> Vec3 {
+        self.rlva.focus_offset.unwrap_or_else(|| s.focus_offset())
+    }
+
+    /// LLAgentCamera::getCameraOffsetScale (`@setcam_eyeoffsetscale`).
+    fn offset_scale(&self, s: &CameraSettings) -> f32 {
+        self.rlva.eye_offset_scale.unwrap_or(s.offset_scale)
+    }
+
+    /// The distance behind the avatar at a zoom fraction of 1, never zero:
+    /// what the zoom fraction is a fraction of. The zoom must measure it on
+    /// the offsets the camera is placed with, or each wheel click is off by
+    /// the ratio of the two and the zoom runs away (#3372).
+    fn initial_distance(&self, s: &CameraSettings) -> f32 {
+        (self.offset_initial(s).length() * self.offset_scale(s)).max(0.001)
+    }
+
+    /// LLAgentCamera::changeCameraToMouselook: refused up front where RLVa
+    /// forbids mouselook (RlvActions::canChangeToMouselook), so that the
+    /// view never enters it to be thrown out a frame later, the cursor taken
+    /// in between (#3357). The wheel then stops at the closest zoom.
     pub fn change_to_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings, animate: bool) {
-        if !s.enable_mouselook {
+        if !s.enable_mouselook || self.rlva.no_mouselook {
             return;
         }
         self.enter_mouselook(agent, s, animate);
@@ -857,7 +897,7 @@ impl Camera {
             if self.third_person() && self.avatar.seat.is_none() {
                 // rear view: the avatar turns to where the camera looks;
                 // front view: to the camera
-                let off = s.camera_offset();
+                let off = self.offset_initial(s);
                 let rotxy = off.y.atan2(off.x);
                 let at = self.forward();
                 if at.truncate().length_squared() > 1e-6 {
@@ -869,7 +909,7 @@ impl Camera {
         } else if self.focus_on_avatar && !on {
             // LLAgentCamera::setFocusOnAvatar (indra/newview/llagentcamera.cpp)
             // keeps our avatar as the unlocked target, so camera keys still track it.
-            let focus = self.avatar.position + self.frame_rotation(agent) * s.focus_offset();
+            let focus = self.avatar.position + self.frame_rotation(agent) * self.focus_initial(s);
             let own = (!self.own.is_nil()).then_some(self.own);
             self.focus_on_avatar = false;
             self.set_focus_global(Some(focus), own, None, s);
@@ -1190,7 +1230,7 @@ impl Camera {
                 // Movement returns from a viewed avatar to the player's pan
                 // point without changing the boom, heading or pan level.
                 self.start_animation(s);
-                self.focus_target = self.avatar.position + Vec3::Z * s.focus_offset().z + self.avatar_pan_offset;
+                self.focus_target = self.avatar.position + Vec3::Z * self.focus_initial(s).z + self.avatar_pan_offset;
                 self.focus_object = Some(self.own);
                 self.focus_geom = None;
                 self.focus_object_offset = self.focus_target - self.avatar.position;
@@ -1489,7 +1529,7 @@ impl Camera {
         self.orbit_yaw = yaw;
         self.pitch = pitch;
         if let Some(d) = distance {
-            self.zoom_fraction = d / (s.camera_offset().length() * s.offset_scale).max(0.001);
+            self.zoom_fraction = d / self.initial_distance(s);
         }
     }
 
@@ -1628,7 +1668,7 @@ impl Camera {
 
     fn orbit_in_with_mouselook(&mut self, meters: f32, agent: &mut AgentState, s: &CameraSettings, allow_mouselook: bool) {
         if self.focus_on_avatar && self.third_person() {
-            let initial = (s.camera_offset().length() * s.offset_scale).max(0.001);
+            let initial = self.initial_distance(s);
             self.zoom_fraction = (self.target_distance - meters) / initial;
             if allow_mouselook && self.zoom_fraction < MIN_ZOOM_FRACTION && meters > 0.0 {
                 // no need to animate, the camera is already there
@@ -1701,6 +1741,13 @@ impl Camera {
         }
         let root_root_two = 2f32.sqrt().sqrt();
         if self.focus_on_avatar && self.third_person() {
+            if (shift || ctrl) && self.rlva.preset_locked {
+                // RlvActions::isCameraPresetLocked: the Legacy Viewer writes
+                // the user's rear view here, which its RLVa view hides until
+                // the lock ends. Aurora's view reads the offsets RLVa left to
+                // the user, so they stay as they are: stricter.
+                return false;
+            }
             if shift {
                 s.focus_offset[2] += 0.1 * clicks;
                 s.preset = CameraPreset::Custom;
@@ -1711,7 +1758,7 @@ impl Camera {
                 s.preset = CameraPreset::Custom;
                 return true;
             }
-            let initial = (s.camera_offset().length() * s.offset_scale).max(0.001);
+            let initial = self.initial_distance(s);
             let fraction = self.target_distance / initial * (1.0 - root_root_two.powf(clicks));
             self.orbit_in(fraction * initial, agent, s);
         } else {
@@ -2142,6 +2189,7 @@ impl Camera {
     }
 
     fn update_moving(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        self.read_rlva(&world.rlva);
         if self.vr_mode.is_none() {
             self.follow_seated_camera(world, s, f.now);
         }
@@ -2152,9 +2200,10 @@ impl Camera {
             return;
         }
         let settings = world.rlva.camera_settings(s, f.aspect);
-        let no_mouselook =
-            world.rlva.camera_value("setcam_mouselook").is_some() || world.rlva.camera_limit("setcam_avdistmin", 0.0, true) > 0.0;
-        if self.mouselook() && no_mouselook {
+        if self.mouselook() && self.rlva.no_mouselook {
+            // a restriction that arrives in mouselook ends it
+            // (RlvBehaviourModifierHandler<RLV_MODIFIER_SETCAM_AVDISTMIN>::onValueChange,
+            // indra/newview/rlvhandler.cpp)
             self.change_to_default(&mut world.agent, &settings);
         }
         if world.rlva.camera_value("setcam_unlock").is_some() && !self.focus_on_avatar {
@@ -2253,7 +2302,7 @@ impl Camera {
                         .unwrap_or_else(|| self.third_person_camera(&world.agent, s, f));
                     let at = self
                         .sit_camera_point(world, f.now, false)
-                        .unwrap_or(self.avatar.position + self.frame_rotation(&world.agent) * s.focus_offset());
+                        .unwrap_or(self.avatar.position + self.frame_rotation(&world.agent) * self.focus_initial(s));
                     self.follow
                         .reset(eye, at, self.avatar.follow_root, self.follow_rotation(&world.agent));
                 }
@@ -2545,7 +2594,7 @@ impl Camera {
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
         let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f.follow_joint_offset);
-        let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
+        let offset = frame * (self.offset_initial(s) * self.zoom_fraction * self.offset_scale(s));
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
         if !s.disable_constraints && self.collide_plane != Vec4::ZERO && self.avatar.seat.is_none() {
@@ -2652,7 +2701,7 @@ impl Camera {
                 Some(p) => p,
                 None => {
                     self.avatar.position
-                        + self.frame_rotation(agent) * s.focus_offset()
+                        + self.frame_rotation(agent) * self.focus_initial(s)
                         + self.third_person_joint_delta(s, f.follow_joint_offset)
                 }
             },
@@ -3016,7 +3065,7 @@ impl Camera {
                 }
             }
             if self.focus_on_avatar && self.vr_input.zoom > 0.0 && self.anim.is_none() && self.vr_last_frame != Some(frame.now) {
-                let initial = (settings.camera_offset().length() * settings.offset_scale).max(0.001);
+                let initial = self.initial_distance(settings);
                 let limit = MIN_ZOOM_FRACTION.min(VR_AVATAR_MIN_DOLLY / initial);
                 if self.zoom_fraction <= limit + 1e-5 {
                     // The native boom can reach its limit before the tracked eye
@@ -4847,6 +4896,135 @@ mod tests {
         settle(&mut cam, &mut w, &s);
         let farther = cam.position.distance(focus);
         assert!(farther > at_limit + 0.02, "one click out moves away at once: {farther}");
+    }
+
+    #[test]
+    fn rlva_refuses_mouselook_up_front() {
+        // #3357: the M key and the wheel entered mouselook, which the next
+        // frame ended, the cursor taken in between.
+        for (set, lift) in [
+            ("@camdistmin:1=n", "@camdistmin:1=y"),
+            ("@setcam_avdistmin:1=n", "@setcam_avdistmin:1=y"),
+            ("@setcam_mouselook=n", "@setcam_mouselook=y"),
+        ] {
+            let mut s = CameraSettings::default();
+            let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let mut cam = Camera::default();
+            settle(&mut cam, &mut w, &s);
+            rlva_command(&mut w, set);
+            settle(&mut cam, &mut w, &s);
+            cam.toggle_mouselook(&mut w.agent, &s);
+            assert!(!cam.mouselook(), "{set}: the M key");
+            for _ in 0..40 {
+                cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
+                assert!(!cam.mouselook(), "{set}: the wheel");
+                cam.update(&mut w, &s, &frame(1.0 / 60.0));
+            }
+            settle(&mut cam, &mut w, &s);
+            assert!(cam.third_person() && cam.focus_on_avatar, "{set}: still behind the avatar");
+            assert!(
+                (cam.zoom_fraction - MIN_ZOOM_FRACTION).abs() < 1e-5,
+                "{set}: the wheel stops at the closest zoom"
+            );
+            if set != "@setcam_mouselook=n" {
+                let distance = cam.position.distance(w.agent.position);
+                assert!(distance > 0.999, "{set}: held at the minimum distance: {distance}");
+            }
+            rlva_command(&mut w, lift);
+            cam.update(&mut w, &s, &frame(1.0 / 60.0));
+            cam.toggle_mouselook(&mut w.agent, &s);
+            assert!(cam.mouselook(), "{lift}: mouselook is allowed again");
+        }
+    }
+
+    #[test]
+    fn rlva_forced_mode_reads_the_restrictions_of_its_own_message() {
+        // "@setcam_mouselook=y,setcam_mode:mouselook=force" and its opposite
+        // arrive between two frames: the mode follows the rules as they are.
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        rlva_command(&mut w, "@setcam_mouselook=n");
+        settle(&mut cam, &mut w, &s);
+        rlva_command(&mut w, "@setcam_mouselook=y");
+        cam.read_rlva(&w.rlva);
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        assert!(cam.mouselook(), "lifted, then forced");
+        cam.change_to_default(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        rlva_command(&mut w, "@setcam_avdistmin:2=n");
+        cam.read_rlva(&w.rlva);
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        assert!(!cam.mouselook(), "restricted, then forced");
+    }
+
+    #[test]
+    fn rlva_offsets_keep_the_wheel_and_key_zoom_steady() {
+        // #3372: the zoom was measured on the user's offsets while the
+        // camera was placed with RLVa's, each step off by their ratio.
+        let step = 2f32.sqrt().sqrt();
+        let own = CameraSettings::default().camera_offset().length();
+        for (command, rest) in [
+            ("@setcam_eyeoffset:-6/0/1=n", 37f32.sqrt()),
+            ("@setcam_eyeoffsetscale:2.5=n", own * 2.5),
+            ("@setcam_eyeoffset:-1/0/0.5=n,setcam_eyeoffsetscale:0.5=n", 1.25f32.sqrt() * 0.5),
+            ("@setcam_focusoffset:2/0/1=n", own),
+        ] {
+            let mut s = CameraSettings::default();
+            let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let mut cam = Camera::default();
+            settle(&mut cam, &mut w, &s);
+            rlva_command(&mut w, command);
+            settle(&mut cam, &mut w, &s);
+            assert!(
+                (cam.target_distance - rest).abs() < 0.01,
+                "{command}: placed with RLVa's offsets: {}",
+                cam.target_distance
+            );
+            for clicks in 1..=2 {
+                cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+                settle(&mut cam, &mut w, &s);
+                let ratio = cam.target_distance / rest;
+                assert!(
+                    (ratio - step.powi(clicks)).abs() < 0.01,
+                    "{command}: {clicks} click(s) out: {ratio}"
+                );
+            }
+            cam.scroll(-2.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+            assert!((cam.target_distance - rest).abs() < 0.01, "{command}: two clicks back in");
+            let keys = CameraKeys {
+                zoom_in: 1.0,
+                ..Default::default()
+            };
+            cam.apply_keys(keys, false, &mut w.agent, &s, 0.1);
+            settle(&mut cam, &mut w, &s);
+            let ratio = cam.target_distance / rest;
+            assert!((ratio - 0.9).abs() < 0.01, "{command}: a tenth closer by the keys: {ratio}");
+        }
+    }
+
+    #[test]
+    fn rlva_preset_lock_keeps_the_offsets_from_the_wheel() {
+        let mut s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.scroll(1.0, false, true, &mut w.agent, &mut s), "Shift + wheel raises the focus");
+        assert!(cam.scroll(1.0, true, false, &mut w.agent, &mut s), "Ctrl + wheel raises the camera");
+        let own = s.clone();
+        // one offset held: the two others are the user's, and locked
+        rlva_command(&mut w, "@setcam_eyeoffset:-4/0/1=n");
+        settle(&mut cam, &mut w, &s);
+        let view = (cam.position, cam.target);
+        assert!(!cam.scroll(1.0, false, true, &mut w.agent, &mut s));
+        assert!(!cam.scroll(1.0, true, false, &mut w.agent, &mut s));
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(s, own);
+        assert_eq!((cam.position, cam.target), view);
+        rlva_command(&mut w, "@setcam_eyeoffset:-4/0/1=y");
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.scroll(1.0, false, true, &mut w.agent, &mut s), "the user's again once released");
     }
 
     #[test]
