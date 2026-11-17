@@ -376,7 +376,7 @@ impl WebView {
                 self.folder_commands.push(command);
                 continue;
             }
-            if let Some(url) = clicked_url(&ev) {
+            if let Some(url) = ev.clicked_url() {
                 super::context::request(ui.ctx(), clicked_link_action(url));
                 continue;
             }
@@ -525,16 +525,6 @@ impl WebView {
     }
 }
 
-/// Links from the browser are actionable only after a user click. CEF sends
-/// custom schemes separately and records whether navigation had a gesture;
-/// a redirect or script navigation must never trigger a SLURL action.
-fn clicked_url(event: &MediaEvent) -> Option<&str> {
-    match event {
-        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
-        _ => None,
-    }
-}
-
 /// `scheme://host:port` of a web address.
 fn origin(url: &str) -> Option<String> {
     reqwest::Url::parse(url)
@@ -557,8 +547,9 @@ fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, document: O
     (document == Some(trusted)).then_some(command)
 }
 
-/// Follow the same SLURL and app-link rules as a clicked link in chat.
-fn clicked_link_action(url: &str) -> super::context::CtxAction {
+/// Follow the same SLURL and app-link rules as a clicked link in chat
+/// (also used for a link clicked in a page shown on a prim, `media/update.rs`).
+pub(crate) fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
     if let Some(place) = crate::slurl::place_link(url) {
         let location = place.location;
@@ -581,21 +572,21 @@ mod tests {
     #[test]
     fn custom_scheme_links_require_a_click_gesture() {
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "clicked".into(),
             }),
             Some("secondlife:///app/teleport/Aurora/12/34/56")
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "navigated".into(),
             }),
             None
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: String::new(),
                 nav_type: "clicked".into(),
             }),

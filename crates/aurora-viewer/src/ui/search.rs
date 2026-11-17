@@ -266,6 +266,7 @@ fn event_start(exact: u32, listed: Option<&Value>) -> Option<i64> {
 /// The directory queries Pacific calendar days. Advancing the calendar uses
 /// today's offset; recomputing it 24 hours later could skip or repeat a date.
 fn directory_day(now: i64, days: i32) -> (usize, i64, usize) {
+    let now = super::bars::clock::clock_timestamp(ClockZone::Slt, now);
     let offset = super::bars::clock::offset(ClockZone::Slt, now);
     let (_, month, day, weekday, ..) = super::land::parts_at(now + i64::from(days) * 86_400, offset);
     (month, day, weekday)

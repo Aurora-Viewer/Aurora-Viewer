@@ -28,6 +28,7 @@ pub(crate) mod keycap;
 pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
+pub(crate) mod reorder;
 mod resize;
 mod restricted_text;
 #[cfg(test)]

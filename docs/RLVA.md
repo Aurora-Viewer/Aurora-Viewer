@@ -119,7 +119,10 @@ script authors; the command lists below describe this branch specifically.
   are greyed under either tplm or tploc; the Home buttons and the teleport
   itself give way only under both.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
-  touchhud/this, interact and fartouch.
+  touchhud/this, interact and fartouch. Interact drops every pick, a HUD's
+  included: no click action, media, menu or selection by a click, on a HUD
+  as in the world; our own avatar keeps its menu and a worn HUD its Touch
+  entry. Fartouch leaves the HUDs alone.
   Vendor payments obey buy; resident payments obey pay. Fartouch includes
   the exact distance boundary; sitting/teleport distances remain exclusive.
   A worn removal-locked HUD cannot be hidden through the HUD switch and
@@ -204,7 +207,9 @@ script authors; the command lists below describe this branch specifically.
   HUD attachments and also applies to photos without the interface; opaque
   overlay texels suppress object hits while terrain navigation remains usable.
   setcam_textures/camtextures temporarily replace world diffuse/PBR base
-  textures and particle textures, leaving avatars and attachments intact;
+  textures and particle textures, leaving avatars and attachments intact.
+  An empty value is the Legacy Viewer's flat grey (`IMG_DEFAULT`), painted
+  locally and not fetched; an explicit id uses that texture.
   getcam_textures reads the active override. showself/showselfhead preserve
   HUD visibility. setcam_avdist/camavdist silhouettes use the reference's
   dark colour and take precedence over render exceptions.

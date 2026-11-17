@@ -563,7 +563,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     c.invoke(
                         "play-world",
                         TEXT,
-                        "player-play-filled",
+                        "world-filled",
                         aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Animation {
@@ -590,9 +590,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         "play-sound",
                         TEXT,
                         "volume",
-                        aurora_i18n::tr!("common-play"),
+                        aurora_i18n::tr!("common-play-locally"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Sound(it.asset_id),
+                    );
+                    c.invoke(
+                        "play-sound-world",
+                        TEXT,
+                        "world-filled",
+                        aurora_i18n::tr!("common-play-in-world"),
+                        single && !it.asset_id.is_nil(),
+                        InvAction::TriggerSound(it.asset_id),
                     );
                 }
                 if kind == 56 || all {
@@ -1210,7 +1218,8 @@ pub(super) fn execute(
         }
         Command::Share(ids) => {
             st.share_items = ids;
-            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+            // LLAvatarActions::shareWithAvatars: allow_multiple true
+            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
@@ -1318,6 +1327,46 @@ mod tests {
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
     }
+    #[test]
+    fn sound_menu_separates_local_and_world_playback_for_items_links_and_bulk_selection() {
+        let mut inv = inventory();
+        let sound = Uuid::from_u128(8105);
+        let link = Uuid::from_u128(8113);
+        inv.items.get_mut(&link).expect("link").asset_id = sound;
+        let asset = inv.items[&sound].asset_id;
+        for ids in [vec![sound], vec![link], vec![sound, link]] {
+            let mut st = InventoryUi::default();
+            st.selection.extend(ids.iter().copied());
+            let c = build(&inv, ids[0], &st, &InventoryPreferences::default(), &facts());
+            for (key, label, local) in [
+                ("play-sound", aurora_i18n::tr!("common-play-locally"), true),
+                ("play-sound-world", aurora_i18n::tr!("common-play-in-world"), false),
+            ] {
+                let entry = c.entries.iter().find(|e| e.id == key).expect("sound action");
+                assert!(entry.enabled);
+                assert_eq!(entry.label, label);
+                let Kind::Action(index) = entry.kind else { panic!("action") };
+                let actions = match c.commands[index].as_ref().expect("command") {
+                    Command::Invoke(action) => vec![action],
+                    Command::Batch(batch) => batch.iter().collect(),
+                    _ => panic!("sound command"),
+                };
+                assert_eq!(actions.len(), ids.len());
+                assert!(
+                    actions
+                        .iter()
+                        .all(|action| matches!(action, InvAction::Sound(id) if local && *id == asset)
+                            || matches!(action, InvAction::TriggerSound(id) if !local && *id == asset))
+                );
+            }
+        }
+        inv.items.get_mut(&sound).expect("sound").asset_id = Uuid::nil();
+        let c = build(&inv, sound, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+        for key in ["play-sound", "play-sound-world"] {
+            assert!(!c.entries.iter().find(|e| e.id == key).expect("sound action").enabled);
+        }
+    }
+
     #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();

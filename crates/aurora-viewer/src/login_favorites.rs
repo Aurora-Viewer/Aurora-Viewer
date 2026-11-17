@@ -12,13 +12,14 @@
 //! (ShowFavoritesOnLogin, settings_per_account.xml, on by default). Off, the
 //! record keeps only that choice (removeFavoritesRecordOfUser). Writes go to
 //! a thread of their own and merge into the latest file under an OS lock, so
-//! another Aurora's accounts are kept.
+//! another Aurora's accounts are kept; a refused write keeps its changes and
+//! is tried again, and once more at exit (`save_retry`).
 
 use aurora_net::StartLocation;
-use crossbeam_channel::{Receiver, Sender};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::thread::JoinHandle;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const FILE: &str = "stored_favorites.json";
@@ -83,6 +84,7 @@ fn shown_by_default() -> bool {
     true
 }
 
+#[derive(Clone)]
 enum Change {
     Set(Record),
     Remove(Key),
@@ -114,7 +116,7 @@ fn apply(records: &mut Vec<Record>, change: Change) {
 }
 
 /// The latest file, these changes merged in, written back under its lock.
-fn write_changes(path: &Path, changes: Vec<Change>) -> std::io::Result<()> {
+fn write_changes(path: &Path, changes: &[Change]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -131,49 +133,43 @@ fn write_changes(path: &Path, changes: Vec<Change>) -> std::io::Result<()> {
         Vec::new()
     });
     for change in changes {
-        apply(&mut records, change);
+        apply(&mut records, change.clone());
     }
     let bytes = serde_json::to_vec_pretty(&records).map_err(std::io::Error::other)?;
     crate::atomic_file::write(path, &bytes)
 }
 
+/// The changes not on the disk yet, in their order, and the thread that
+/// writes them. A change stays here until a write that holds it reaches the
+/// disk: a refused write is tried again later (`save_retry`), and dropped
+/// (the viewer closing) the writer tries once more
+/// (LLFavoritesOrderStorage::destroyClass, which saves again at exit what
+/// saveFavoritesRecord could not write).
 struct Writer {
-    sender: Option<Sender<Change>>,
-    worker: Option<JoinHandle<()>>,
+    owed: Arc<Mutex<Vec<Change>>>,
+    retrying: crate::save_retry::Retrying,
 }
 
 impl Writer {
     fn start(path: PathBuf) -> Option<Self> {
-        let (sender, changes): (Sender<Change>, Receiver<Change>) = crossbeam_channel::unbounded();
-        let worker = std::thread::Builder::new().name("aurora-login-favorites".into()).spawn(move || {
-            while let Ok(first) = changes.recv() {
-                let mut batch = vec![first];
-                batch.extend(changes.try_iter());
-                if let Err(error) = write_changes(&path, batch) {
-                    log::warn!("stored favourites not saved: {error}");
-                }
+        let owed = Arc::new(Mutex::new(Vec::<Change>::new()));
+        let queue = owed.clone();
+        let retrying = crate::save_retry::Retrying::start("aurora-login-favorites", "stored favourites", move || {
+            let batch = queue.lock().clone();
+            if batch.is_empty() {
+                return Ok(());
             }
-        });
-        match worker {
-            Ok(worker) => Some(Self {
-                sender: Some(sender),
-                worker: Some(worker),
-            }),
-            Err(error) => {
-                log::warn!("Cannot start the stored favourites' writer: {error}");
-                None
-            }
-        }
+            write_changes(&path, &batch)?;
+            // the changes made during the write wait for the next one
+            queue.lock().drain(..batch.len());
+            Ok(())
+        })?;
+        Some(Self { owed, retrying })
     }
-}
 
-impl Drop for Writer {
-    /// The last changes reach the disk before the viewer closes.
-    fn drop(&mut self) {
-        self.sender.take();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+    fn send(&self, change: Change) {
+        self.owed.lock().push(change);
+        self.retrying.ask();
     }
 }
 
@@ -300,8 +296,8 @@ impl Store {
         if self.writer.is_none() {
             self.writer = Writer::start(path.clone());
         }
-        if let Some(sender) = self.writer.as_ref().and_then(|w| w.sender.as_ref()) {
-            let _ = sender.send(change);
+        if let Some(writer) = &self.writer {
+            writer.send(change);
         }
     }
 
@@ -513,6 +509,35 @@ mod tests {
         read_back.load(path);
         assert_eq!(read_back.favorites(&other), [fav(9, "Theirs")]);
         assert_eq!(read_back.favorites(&alpha), [fav(1, "Ours")]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The folder refuses the write (here a file stands where it should be):
+    /// the choice stays in memory, later calls see it, and the try at exit
+    /// writes it once the folder takes writes again.
+    #[test]
+    fn a_refused_write_keeps_the_choice_and_writes_it_later() {
+        let (root, path) = temp_path("login-favorites-refused");
+        std::fs::write(&root, b"in the way").unwrap();
+        let alpha = key("synthetic-grid", "synthetic alpha");
+        let beta = key("synthetic-grid", "synthetic beta");
+        let mut store = Store::default();
+        store.load(path.clone());
+        store.update(&beta, vec![fav(4, "Four")]);
+        store.set_shown(&alpha, false);
+        // the writer meets the refusal (at once: the folder cannot be made)
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!store.shown(&alpha), "memory keeps the choice");
+        // the same choice again: memory already matches, nothing new sent
+        store.set_shown(&alpha, false);
+        assert_eq!(store.writer.as_ref().map(|w| w.owed.lock().len()), Some(2), "nothing dropped");
+        std::fs::remove_file(&root).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        store.flush();
+        let mut again = Store::default();
+        again.load(path);
+        assert!(!again.shown(&alpha));
+        assert_eq!(again.favorites(&beta), [fav(4, "Four")]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

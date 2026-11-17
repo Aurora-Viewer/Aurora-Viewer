@@ -255,24 +255,82 @@ pub fn read_words(path: &Path) -> Vec<String> {
     }
 }
 
-/// LLSpellChecker::addToDictFile: the list written again with `word` added.
+/// The words added to or ignored by the dictionary whose write was refused,
+/// with their list, in their order. The Legacy Viewer reads the list again
+/// and writes it once (LLSpellChecker::addToDictFile), so a word whose
+/// write fails is in that session's dictionary only; here it stays owed
+/// and is written with the next word, by the retry (`save_retry`) or at
+/// exit (`save_before_exit`).
+static OWED: parking_lot::Mutex<Vec<(PathBuf, String)>> = parking_lot::Mutex::new(Vec::new());
+
+static RETRY: crate::save_retry::OnDemand = crate::save_retry::OnDemand::new("aurora-spelling-words", "dictionary words");
+
+/// LLSpellChecker::addToDictFile: the list written again with `word` added,
+/// and with the words still owed.
 pub fn append_word(path: &Path, word: &str) {
-    let mut words = read_words(path);
-    if words.iter().any(|known| known == word) {
-        return;
+    let mut owed = OWED.lock();
+    owed.push((path.to_owned(), word.to_owned()));
+    if let Err(e) = write_owed(&mut owed) {
+        log::warn!("spelling: {e}; the words are kept and tried again");
+        drop(owed);
+        RETRY.ask(|| write_owed(&mut OWED.lock()));
     }
-    words.push(word.to_owned());
+}
+
+/// The viewer closing: the words still owed are tried once more.
+pub fn save_before_exit() {
+    RETRY.finish();
+}
+
+/// Each list with its owed words written; the words of a list whose write
+/// fails stay owed.
+fn write_owed(owed: &mut Vec<(PathBuf, String)>) -> std::io::Result<()> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for (path, _) in owed.iter() {
+        if !paths.contains(path) {
+            paths.push(path.clone());
+        }
+    }
+    let mut refused = None;
+    for path in paths {
+        let words: Vec<&str> = owed.iter().filter(|(p, _)| *p == path).map(|(_, w)| w.as_str()).collect();
+        match add_words(&path, &words) {
+            Ok(()) => owed.retain(|(p, _)| *p != path),
+            Err(e) => {
+                refused.get_or_insert(std::io::Error::new(e.kind(), format!("{}: {e}", path.display())));
+            }
+        }
+    }
+    refused.map_or(Ok(()), Err)
+}
+
+/// The list read again, the new `words` added at its end. A list that
+/// cannot be read (held by another program) is not replaced by the new
+/// words alone: the words wait.
+fn add_words(path: &Path, new: &[&str]) -> std::io::Result<()> {
+    let mut words: Vec<String> = match std::fs::read(path) {
+        Ok(bytes) => dic_lines(&decode(&bytes, None)).map(str::to_owned).collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    let known = words.len();
+    for word in new {
+        if !words.iter().any(|w| w == word) {
+            words.push((*word).to_owned());
+        }
+    }
+    if words.len() == known {
+        return Ok(());
+    }
     let mut text = format!("{}\n", words.len());
     for word in &words {
         text.push_str(word);
         text.push('\n');
     }
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    if let Err(e) = crate::atomic_file::write(path, text.as_bytes()) {
-        log::warn!("spelling: {}: {e}", path.display());
-    }
+    crate::atomic_file::write(path, text.as_bytes())
 }
 
 pub fn custom_path(dir: &Path) -> PathBuf {

@@ -23,7 +23,10 @@ Many parts of this program are Rust ports of the Second Life viewer
 (Copyright © Linden Research, Inc.) and of the Firestorm viewer
 (Copyright © The Phoenix Firestorm Project, Inc.), both distributed under the
 GNU Lesser General Public License, version 2.1. Each ported file says which
-original sources it follows ("originally LGPL 2.1").
+original sources it follows ("originally LGPL 2.1"). The exceptions, files
+under another licence, are named with their licence in the Licence column of
+"Authors of the ported code" below, and each has its own section (the pose
+stand, Beer-Ware Licence).
 
 As permitted by section 3 of the LGPL 2.1, the copy of that code included in
 this program is distributed under the GNU General Public License, version 3 or
@@ -59,7 +62,8 @@ The Second Life viewer and Firestorm sources hold code written by other
 viewer projects and by individual residents, who keep the copyright on it.
 The ported parts of Aurora Viewer that follow their files are listed below,
 with the authors named in those files' notices. Their code is originally
-LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
+LGPL 2.1 unless the Licence column says otherwise, distributed here under
+GPL-3.0-or-later as described above.
 
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
@@ -80,6 +84,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Group titles, `newview/fsfloatergrouptitles.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_titles.rs` | Originally LGPL 2.1 |
 | Place details, `newview/fsfloaterplacedetails.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/place_details.rs`, `ui/places.rs`, `world/place_details.rs` | Originally LGPL 2.1 |
 | Partial inventory, `newview/fsfloaterpartialinventory.cpp` — Copyright © 2022 Ansariel Hiller | `aurora-viewer/src/ui/inventory.rs` | Originally LGPL 2.1 |
+| Favorite wearables, `newview/fsfloaterwearablefavorites.cpp` — Copyright © 2018 Ansariel Hiller | `aurora-viewer/src/world/wearable_favorites.rs`, `ui/appearance/wearable_favorites.rs`, `app/wearable_favorites.rs` | Originally LGPL 2.1 |
 | Stream title, `newview/fsfloaterstreamtitle.cpp` — Copyright © 2022 Ansariel Hiller; `streamtitledisplay.cpp` — Copyright © 2010 Katharine Berry, © 2013 Cinder Roxley | `aurora-viewer/src/stream_title.rs`, `ui/stream_title.rs`, `app.rs` | Originally LGPL 2.1 |
 | Desktop notifications, `newview/growlmanager.cpp` — Copyright © 2010 Katharine Berry | `aurora-viewer/src/system_notify.rs`, `app/attention.rs`, `world/attention.rs` | Originally LGPL 2.1 |
 | Search, `newview/fsfloatersearch.cpp` — Copyright © 2012 Cinder Roxley | `aurora-net/src/search.rs`; `aurora-viewer/src/ui/search.rs`, `ui/search/details.rs`, `world/search.rs` | Originally LGPL 2.1 |
@@ -97,6 +102,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Bundled assets
 
@@ -395,6 +401,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Pose stand by Cinder Roxley
+
+The pose stand (`crates/aurora-viewer/src/pose_stand.rs`,
+`ui/pose_stand.rs`, `app/pose_stand.rs`) is a port of the Legacy Viewer's
+`newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp` and
+`fspose.h`, which are not LGPL: their author released them under the Beer-Ware Licence (Revision 42),
+whose only condition is to retain this notice, kept here and at the top of
+the three Aurora files:
+
+"THE BEER-WARE LICENSE" (Revision 42):
+Cinder Roxley wrote this file. As long as you retain this notice you can do
+whatever you want with this stuff. If we meet some day, and you think this
+stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
 
 ## SMAA
 

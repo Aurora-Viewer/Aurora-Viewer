@@ -185,7 +185,8 @@ impl App {
         // Build tools own their modifiers, including Ctrl for rotation.
         // The gesture's Control key is the physical key. Command is a
         // shortcut modifier on macOS and must not start the drag.
-        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.physical_mods())
+        // (the gesture starts from a pick of the HUD: none under @interact)
+        !self.build.open && !self.world.rlva_drops_picks() && self.settings.keybinds.held(Action::HudDrag, &self.down, self.physical_mods())
     }
 
     fn demo_hud_drag_binding(&self) -> Option<crate::keybinds::Binding> {
