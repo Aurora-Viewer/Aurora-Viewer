@@ -33,6 +33,7 @@ pub(crate) mod default_permissions;
 mod delete;
 pub use delete::DeleteRequest;
 pub(crate) use delete::DeleteSelection;
+pub(crate) use delete::request_from_window as delete_from_window;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;

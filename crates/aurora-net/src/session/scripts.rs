@@ -290,9 +290,9 @@ mod tests {
         let neighbour_addr = neighbour.local_addr().expect("object address");
         let (events, received) = crossbeam_channel::unbounded();
         let sh = Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),

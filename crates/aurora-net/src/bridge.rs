@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn transport_diagnostics_never_include_the_private_url_from_reqwest() {
-        let error = reqwest::Client::new()
+        let error = crate::test_http_client()
             .get("not a URL")
             .build()
             .expect_err("invalid builder")
