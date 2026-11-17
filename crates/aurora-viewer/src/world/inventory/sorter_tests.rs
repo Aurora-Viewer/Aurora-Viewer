@@ -4103,6 +4103,16 @@ fn a_stores_bracketed_name_never_decides_the_category() {
     }
     // a worn layer named for a decor thing is its layer
     assert_eq!(classify("Brazil Flag Face Paint", 5, 14).category, Some(Category::Tattoos));
+    // worn things named for a decor thing, as objects
+    for (name, category) in [
+        ("Pride Flag Cape", Category::Jackets),
+        ("Pride Flag Sash", Category::Accessories),
+        ("Flag Bandana", Category::Accessories),
+        ("Christmas Tree Onesie", Category::Sleepwear),
+        ("Xmas Tree Top", Category::Tops),
+    ] {
+        assert_eq!(classify(name, 6, 0).category, Some(category), "{name}");
+    }
     assert_eq!(
         classify("Pride Flag Face Paint - LeLutka EvoX", 5, 14).category,
         Some(Category::Tattoos)

@@ -358,6 +358,12 @@
     {
       "category": "jackets",
       "words": [
+        "cape",
+        "capes",
+        "cloak",
+        "cloaks",
+        "poncho",
+        "shawl",
         "jacket",
         "jackets",
         "coat",
@@ -400,6 +406,8 @@
     {
       "category": "sleepwear",
       "words": [
+        "onesie",
+        "onesies",
         "robe",
         "kimono",
         "pajamas",
@@ -455,6 +463,11 @@
     {
       "category": "accessories",
       "words": [
+        "sash",
+        "bandana",
+        "bandanas",
+        "armband",
+        "wristband",
         "bobby pin",
         "bobby pins",
         "top hat",
@@ -598,7 +611,7 @@
     {
       "category": "decor",
       "words": [
-        "tree top",
+        "tree top star",
         "tree topper",
         "grass",
         "tree",
