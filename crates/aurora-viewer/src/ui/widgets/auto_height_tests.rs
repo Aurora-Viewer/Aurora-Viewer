@@ -8,7 +8,7 @@ const ID: &str = "auto_height_test";
 
 fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, content: f32) -> Option<egui::Rect> {
     let mut open = true;
-    let _ = ctx.run_ui(
+    let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
             ..Default::default()
@@ -25,6 +25,8 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, content: f
                 });
         },
     );
+    // no renderer takes the font atlas here
+    output.textures_delta.clear();
     ctx.memory(|m| m.area_rect(egui::Id::unique(ID)))
 }
 

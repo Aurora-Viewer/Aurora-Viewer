@@ -13,7 +13,7 @@ const STRIP: egui::Rect = egui::Rect {
 /// One pass: a background area over `STRIP` (solid or not, shown or not)
 /// and, when asked, a window over its left end.
 fn pass(ctx: &egui::Context, solid: bool, shown: bool, window: bool, events: Vec<egui::Event>) {
-    let _ = ctx.run_ui(
+    let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 400.0))),
             events,
@@ -43,6 +43,8 @@ fn pass(ctx: &egui::Context, solid: bool, shown: bool, window: bool, events: Vec
             }
         },
     );
+    // no renderer takes the font atlas here
+    output.textures_delta.clear();
 }
 
 /// After a few passes with the pointer in the open world, as when the user
