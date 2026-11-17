@@ -9526,12 +9526,17 @@ pub fn projector_bench_done() -> bool {
 const POINT_SHADOW_WALL: (f32, f32) = (146.0, 114.0);
 
 /// Framing of AURORA_DEMO_POINT_SHADOW: the room side of the wall, fixed, or
-/// (`orbit`) swinging from side to side.
+/// (`orbit`) swinging from side to side, or (`turn`) looking away from the
+/// wall from frame 800 to 900, then back: the warm light stays in view but
+/// loses its map to a light of the plaza, and must take it back.
 fn point_shadow_camera(mode: &str, frame: u64) -> (Vec3, Vec3) {
     let (x, y) = POINT_SHADOW_WALL;
     let floor = height(x, y) + 0.3;
     if mode.starts_with("window") || mode.starts_with("glass") {
         return (Vec3::new(x - 4.5, y + 1.5, floor + 1.8), Vec3::new(x - 1.5, y - 0.3, floor));
+    }
+    if mode == "turn" && (800..900).contains(&frame) {
+        return (Vec3::new(x - 8.0, y, floor + 3.0), Vec3::new(x - 16.0, y, floor + 0.8));
     }
     let swing = if mode == "orbit" {
         (frame.saturating_sub(700) as f32 * 0.02).sin() * 3.0
