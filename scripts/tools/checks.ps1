@@ -55,8 +55,8 @@ function Get-MsvcName {
     }
 }
 
-# Everything the environment needs. -Offline skips the network checks (is
-# main, Firestorm or Rust behind?), which take a few seconds.
+# Everything the environment needs. -Offline skips the network checks (are
+# main or the Legacy Viewer sources behind?), which take a few seconds.
 function Get-Checks($P, [switch]$Offline) {
     $rows = New-Object System.Collections.ArrayList
     $add = { param($r) [void]$rows.Add($r) }
@@ -69,10 +69,15 @@ function Get-Checks($P, [switch]$Offline) {
     & $add (New-Check msvc 'Visual Studio C++ tools' $msvc $(if ($msvc) { 'ok' } else { 'todo' }) $(if ($msvc) { 'nothing to do' } else { 'installed with winget (several GB)' }))
 
     $rustup = if (Get-Command rustup -ErrorAction SilentlyContinue) { (rustup --version 2>$null) -replace '^rustup\s+(\S+).*$', 'rustup $1' }
+    # the Rust version the repository names (rust-toolchain.toml)
+    $pinned = $null
+    $toolchainFile = Join-Path $P.Repo 'rust-toolchain.toml'
+    if ((Test-Path -LiteralPath $toolchainFile) -and ((Get-Content -LiteralPath $toolchainFile -Raw) -match '(?m)^channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"')) { $pinned = $Matches[1] }
     if (-not $rustup) {
         & $add (New-Check rust 'Rust' $null todo 'installed with winget (rustup, for your account)')
-    } elseif (-not $Offline -and ((rustup check 2>$null) -match '^stable.*Update available')) {
-        & $add (New-Check rust 'Rust' "$rustup, stable behind" stale 'stable version updated')
+    } elseif ($pinned -and -not ((rustup toolchain list 2>$null) -match "^$([regex]::Escape($pinned))-")) {
+        # rustup would install it at the first build; the repair does it now
+        & $add (New-Check rust 'Rust' "$rustup, Rust $pinned missing" stale "Rust $pinned installed (rust-toolchain.toml)")
     } else {
         & $add (New-Check rust 'Rust' $rustup ok 'nothing to do')
     }
@@ -249,12 +254,15 @@ function Invoke-Repair($P) {
     }
 
     Write-Title 'Rust toolchain and crates'
+    . (Get-CommonScript $P)
+    # rust-toolchain.toml: the project's Rust version, with rustfmt and clippy.
+    # One install at a time for the PC: an agent's build may be installing it
+    # at this very moment (Install-RustVersion, scripts/common.ps1)
+    Install-RustVersion $P.Repo
     Push-Location $P.Repo
     try {
-        # rust-toolchain.toml: the latest stable, with rustfmt and clippy
-        rustup toolchain install
+        rustup show active-toolchain
         if ($LASTEXITCODE -ne 0) { rustup show }
-        rustup update stable --no-self-update
         cargo fetch --locked
         if ($LASTEXITCODE -ne 0) { throw 'downloading the crates (cargo fetch).' }
     } finally {
@@ -263,7 +271,6 @@ function Invoke-Repair($P) {
 
     Write-Title 'Compiler cache (sccache)'
     # the tasks take the dependencies already built by another one from it
-    . (Get-CommonScript $P)
     if (-not (Find-Sccache)) {
         try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
     } elseif (Get-Command winget -ErrorAction SilentlyContinue) {

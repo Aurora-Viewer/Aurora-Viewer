@@ -31,6 +31,7 @@ aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 aurora-media = { version = "0.1.0", path = "../aurora-media" }
 aurora-net = { version = "0.1.0", path = "../aurora-net" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-render = { version = "0.1.0", path = "../aurora-render" }
 aurora-voice = { version = "0.1.0", path = "../aurora-voice" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
@@ -38,7 +39,6 @@ crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 # experimental: only makes egui::theme public (the text fields' size, theme.rs)
 egui = { version = "0.37.0", features = ["experimental", "monochrome_emoji_fonts", "persistence"] }
-egui-wgpu = "0.37.0"
 egui-winit = "0.37.0"
 emojis = "0.9.0"
 # imported Hunspell dictionaries in their own SET encoding (spelling.rs);
@@ -83,7 +83,6 @@ ttf-parser = "0.25.1"
 unicode-bidi = "0.3.18"
 unicode-bidi-mirroring = "0.4.0"
 uuid = { version = "1.27.0", features = ["v4"] }
-wgpu = "30.0.1"
 winit = "0.30"
 ron = "0.12.2"
 flate2 = "1.1.10"
@@ -176,6 +175,11 @@ winresource = { version = "0.1.34", default-features = false }
 # The Khronos OpenXR loader built into the exe (needs CMake): the published
 # Windows viewer (release.yml); local builds load the runtime's loader.
 xr-static-loader = ["aurora-render/xr-static-loader"]
+
+# libmimalloc-sys is never named in the sources: it is listed only to hold
+# the version mimalloc builds (see the comment above its line)
+[package.metadata.cargo-machete]
+ignored = ["libmimalloc-sys"]
 
 [lints]
 workspace = true

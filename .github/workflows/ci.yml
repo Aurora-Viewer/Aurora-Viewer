@@ -18,12 +18,13 @@ on:
     branches: [main]
 
 # a push to main that has started is never cancelled (as in macos.yml): when
-# the cache key changed, its jobs build the cache from nothing for about ten
-# minutes, and the next merge would otherwise cancel them before they save
-# it. A push still waiting is replaced by the next one all the same: GitHub
-# keeps one pending run per group. So a hung run of main holds every later
-# push back until it ends, hence the timeouts of the jobs and of the cache
-# saves below (a save hung 6 hours on 2026-11-04)
+# the cache key changed, its jobs build the cache from nothing for about
+# twenty minutes (the dependencies are optimised, see the "ci" profile), and
+# the next merge would otherwise cancel them before they save it. A push
+# still waiting is replaced by the next one all the same: GitHub keeps one
+# pending run per group. So a hung run of main holds every later push back
+# until it ends, hence the timeouts of the jobs and of the cache saves below
+# (a save hung 6 hours on 2026-11-04)
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -52,13 +53,12 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
-      # the runner's toolchain carries two more targets (gnu, i686) that
-      # every update would download again for nothing
+      # the version of rust-toolchain.toml, the same as on every PC: not the
+      # runner's own stable, which changes the day a release comes out
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add rustfmt clippy
       # caches are written from main only, and read by every PR and queue
       # run: PR caches would otherwise evict main's from the 10 GB quota.
@@ -81,8 +81,9 @@ jobs:
       - name: Formatting
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check
-      # profile "ci" (Cargo.toml): unoptimized, no debug info, built fast;
-      # on main, only when the cache has to be written again (see the top)
+      # profile "ci" (Cargo.toml): the workspace unoptimised, no debug info,
+      # built fast; its dependencies, optimised a little, come from the cache.
+      # On main, only when the cache has to be written again (see the top)
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
@@ -127,7 +128,7 @@ jobs:
       - name: Rust stable
         if: steps.changes.outputs.needed == 'true'
         run: |
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add clippy
       # the key is named, not the job's: the old one holds clippy's output
       # only, and main, finding it, would never build the tests into it
@@ -204,13 +205,16 @@ jobs:
     # merge queue runs them on the combined code before anything lands.
     #
     # The run is split in three parts on three runners, each building the
-    # tests itself in about 5 minutes (the build is the same, the cache
-    # too): the chat tests of the viewer (`ui::chat::`, about 4 minutes of
-    # running), its other interface tests (`ui::`, about 4 minutes) and
-    # everything else (about 3 minutes). Filters and `--skip` are exact
-    # complements, so every test of every binary runs in one part and only
-    # one, whatever modules are added later; a new module only moves the
-    # balance. The interface part may run on the self-hosted runner (see
+    # tests itself in 4 to 7 minutes, by the processor GitHub's runner
+    # happens to have (the build is the same, the cache too): the chat tests
+    # of the viewer (`ui::chat::`, about 2 minutes of running), its other
+    # interface tests (`ui::`, 2 to 3 minutes) and everything else (about
+    # 5 minutes). The interface tests run mostly in the dependencies, which
+    # the "ci" profile optimises; the rest is the workspace's own code,
+    # unoptimised, and is now the longest part. Filters and `--skip` are
+    # exact complements, so every test of every binary runs in one part and
+    # only one, whatever modules are added later; a new module only moves
+    # the balance. The interface part may run on the self-hosted runner (see
     # windows-runner); main's cache builds stay on GitHub's runners.
     name: tests (Windows, ${{ matrix.part }})
     needs: windows-runner
@@ -250,11 +254,20 @@ jobs:
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
+      # self-hosted: rustup's folder is the runner's own, next to its build
+      # folder, as on the Mac (.github/actions/mac-runner). Two runners of one
+      # machine that share the account's folder both install a new Rust
+      # version at the same moment, and each breaks the other's. PowerShell 7
+      # named, as below
+      - name: Rust folder (self-hosted)
+        if: runner.environment == 'self-hosted'
+        shell: pwsh
+        run: |
+          "RUSTUP_HOME=$(Join-Path (Split-Path $env:RUNNER_WORKSPACE) 'aurora-rustup')" >> $env:GITHUB_ENV
       - name: Rust stable
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         run: |
-          ./.github/drop-extra-targets.ps1
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
       # self-hosted: the build folder stays between runs, outside the
       # checkout (which `git clean` empties), and takes no cache; it is
       # emptied when the disk runs low
