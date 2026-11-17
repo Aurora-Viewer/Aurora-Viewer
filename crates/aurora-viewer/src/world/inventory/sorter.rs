@@ -635,6 +635,11 @@ fn has(words: &[String], phrase: &str) -> bool {
 
 /// A name's words less its permission tags: `NO MOD`, `Copy/Mod`,
 /// `mod/trans` say what the owner may do, not that it is a body mod.
+const BODY_PARTS: [&str; 15] = [
+    "belly", "boobs", "breasts", "breast", "butt", "thigh", "thighs", "nipples", "body", "waifu", "waifus", "bump", "hips", "chest",
+    "booty",
+];
+
 fn without_permissions(words: Vec<String>) -> Vec<String> {
     const PERMS: [&str; 7] = ["no", "copy", "trans", "transfer", "mod", "mods", "modify"];
     let perm = |i: usize| words.get(i).is_some_and(|w| PERMS.contains(&w.as_str()));
@@ -645,7 +650,10 @@ fn without_permissions(words: Vec<String>) -> Vec<String> {
             // (`mod` beside another permission word, or `no`/`copy`/`trans`
             // beside a `mod`)
             let tagged = |j: Option<usize>| j.is_some_and(|j| perm(j) && (modify(w) || modify(&words[j])));
-            !(PERMS.contains(&w) && (tagged(i.checked_sub(1)) || tagged(Some(i + 1))))
+            // (a lone `mod`, `Floor Lamp (Mod)`, is a permission too, unless a
+            // body part comes before it: `Belly Mod`)
+            let lone = modify(w) && i.checked_sub(1).is_none_or(|j| !BODY_PARTS.contains(&words[j].as_str()));
+            !(PERMS.contains(&w) && (tagged(i.checked_sub(1)) || tagged(Some(i + 1)) || lone))
         })
         .collect();
     words.into_iter().zip(keep).filter_map(|(w, k)| k.then_some(w)).collect()
@@ -731,6 +739,17 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         }
         other => other,
     };
+    // (flexi hair, platform shoes: only when no other word says what it is,
+    // `Flexi Gown` is a dress, `Skybox Platform` a build)
+    let category = category.or_else(|| {
+        if has(&words, "flexi") {
+            Some(Category::Hair)
+        } else if has(&words, "platform") && body(&words).is_some() {
+            Some(Category::Shoes)
+        } else {
+            None
+        }
+    });
     // Makeup and a head's own content (EvoX, the head's standard) are the
     // head's, never a body's: `Isis Eyeshadow EvoX BOM` names a product,
     // not Belleza's Isis body.
@@ -744,7 +763,16 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     // makeup, unless a makeup word of its own says so, `Tone Blush`)
     let skin_signs =
         has(&words, "tone") || has(&words, "no brows") || has(&words, "overlay") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
-    const MAKEUP_OWN: [&str; 11] = [
+    const MAKEUP_OWN: [&str; 20] = [
+        "brow",
+        "brows",
+        "eyebrow",
+        "eyebrows",
+        "lash",
+        "lashes",
+        "eyelash",
+        "eyelashes",
+        "freckles",
         "blush",
         "highlighter",
         "lipstick",
@@ -760,7 +788,16 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     let category = match category {
         Some(Category::BodyAddons) if head_named => Some(Category::Heads),
         Some(Category::Heads) if head_named && skin_signs => Some(Category::Skins),
-        Some(Category::Makeup) if head_named && skin_signs && !MAKEUP_OWN.iter().any(|m| has(&words, m)) => Some(Category::Skins),
+        // (`no brows` is a skin's version, never its makeup)
+        Some(Category::Makeup)
+            if head_named
+                && skin_signs
+                && !MAKEUP_OWN
+                    .iter()
+                    .any(|m| has(&words, m) && !(m.starts_with("brow") && has(&words, "no brows"))) =>
+        {
+            Some(Category::Skins)
+        }
         other => other,
     };
     // (makeup and a head's own content are never a body's; beside a head's
@@ -1080,21 +1117,37 @@ pub fn store<'a>(name: &'a str) -> Option<String> {
     .or_else(|| (text != name.trim()).then(|| store_tag(text, false)).flatten())
 }
 
+/// [`store`] from a tag only: a numbered name's rest (`02. Casual`) is no
+/// sign of a delivery, the user numbers their own shelves too.
+fn store_tagged(name: &str) -> Option<String> {
+    let found = store(name)?;
+    (without_number(name.trim()) == name.trim() || store(without_number(name.trim()).trim()).is_some()).then_some(found)
+}
+
 /// A name less a leading number of a series: `12. `, `#4 `, `(3) `, `04 - `,
 /// `1) `; never a name that is only a number, nor one that goes on with a
 /// unit or a word glued to it (`3D Ears`, `2nd Life`).
 fn without_number(name: &str) -> &str {
-    let rest = name.strip_prefix('#').or_else(|| name.strip_prefix('(')).unwrap_or(name);
+    let (rest, opened) = match name.strip_prefix('#').or_else(|| name.strip_prefix('(')) {
+        Some(rest) => (rest, true),
+        None => (name, false),
+    };
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     if digits == 0 || digits > 3 {
         return name;
     }
     let after = &rest[digits..];
-    let after = after.strip_prefix(')').unwrap_or(after);
-    let marked = after.strip_prefix(['.', '-', ':', ')']).unwrap_or(after);
+    // (a mark must end the number: `12.`, `1)`, `04 -`, `3:`; or it opened
+    // with `#` or `(`. A bare number is a word of the name: `100 Roses`)
+    let closed = after.strip_prefix(')');
+    let spaced = after.trim_start_matches(' ');
+    let marked = match closed.or_else(|| spaced.strip_prefix(['.', '-', ':'])) {
+        Some(rest) => rest,
+        None if opened && after.starts_with(' ') => after,
+        None => return name,
+    };
     let marked = marked.trim_start_matches([' ', '-', '.']);
-    // (a space or a mark must end the number)
-    if after.chars().next().is_none_or(|c| c.is_alphanumeric()) || marked.is_empty() {
+    if marked.is_empty() {
         return name;
     }
     marked
@@ -1647,7 +1700,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
     let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
     // a store before a dash (`Clothes - Winter`) is too weak a sign for a
     // folder of the user's: only a tag (`[Store]`, `*Store*`) makes it one
-    let store_named = store(name).is_some();
+    let store_named = store_tagged(name).is_some();
     let tagged = store_named && VOCABULARY.store_tags.enclosed.iter().any(|(open, _)| name.starts_with(*open));
     let named = target(name, -1, 0, None, &[], false).is_some();
     // an unpacked delivery whatever it sells: an unpacker's marks in its
@@ -2240,7 +2293,7 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     // (another store's tagged delivery always shows a shelf)
     // (the folder's own store tag on a subfolder says nothing: `Mila - Photo
     // Studio` holding `[Mila] Poses`)
-    let name_store = store(name);
+    let name_store = store_tagged(name);
     // (a name ending in one set's word, `Boho Bedroom Set` holding `Bed` and
     // `Night Table`, `Vesper Bridal Set` holding `Pearl Necklace`: its
     // folders are its parts, another store's tag alone shows a shelf)
@@ -2249,7 +2302,7 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
         .is_some_and(|w| matches!(w.as_str(), "set" | "kit" | "bundle" | "pack" | "collection"));
     let holds_deliveries = subs.iter().any(|s| {
         let sub = s.info.name.trim();
-        if let Some(tag) = store(sub)
+        if let Some(tag) = store_tagged(sub)
             && !name_store.as_deref().is_some_and(|own| same_store(own, &tag))
         {
             return true;
@@ -2416,7 +2469,7 @@ fn plural_kind(w: &str) -> bool {
 /// The words of a name that are its own: not a kind, a body's name, a
 /// shelf word, a number or the store's name.
 fn product_words(name: &str) -> Vec<String> {
-    let store_words = store(name).map(|s| joined_words(&s)).unwrap_or_default();
+    let store_words = store_tagged(name).map(|s| joined_words(&s)).unwrap_or_default();
     let is_kind = |w: &String| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w));
     words(name)
         .into_iter()
@@ -3403,7 +3456,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
             // the sort folder itself is never one entry to take whole
             let system = f.info.type_default != -1 || Some(*sub) == base;
             let made = reserved.contains(&name.to_lowercase())
-                || prefs.stores && in_sorted(*sub) && store(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
+                || prefs.stores && in_sorted(*sub) && store_tagged(name).is_none() && target(name, -1, 0, None, &[], false).is_none();
             // (nor one of the user's own: it is opened, its contents read)
             if !system && !made && !own.contains(sub) && movable(inv, *sub, protected, &holds_worn) {
                 let name_words = words(name);
@@ -4071,6 +4124,7 @@ fn plan_with(
             plan.kept_list.push((name, kept_reason(inv, id, prefs, protected, &holds_worn)));
         }
     }
+    let reserved = sorter_folder_names(prefs);
     // Reading thousands of names against every phrase is the heavy part:
     // it runs on all cores, the inventory itself is only read above.
     use rayon::prelude::*;
@@ -4085,7 +4139,11 @@ fn plan_with(
                     // a delivery whose name says nothing of what it is
                     // (`A.TOMO-SUGAR FUZZ-SET4`, `$PD$ TAHARI`): what most of
                     // its things say
-                    .or_else(|| folder.then(|| target_from_items(inv, id, prefs)).flatten())
+                    .or_else(|| {
+                        (folder && product_folder_in(inv, id, &reserved))
+                            .then(|| target_from_items(inv, id, prefs))
+                            .flatten()
+                    })
             };
             let unpacker = classify(&name, asset_type, flags).unpacker;
             (id, folder, from, name, to, unpacker)

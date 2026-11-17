@@ -3941,3 +3941,48 @@ fn identical_no_copy_deliveries_stay_unless_asked() {
     assert!(duplicates_of(&inv, false).rows.is_empty(), "kept to trade");
     assert_eq!(duplicates_of(&inv, true).whole_deliveries, 1, "when asked, the second goes whole");
 }
+
+/// Audit 55: numbered shelves, a bare number, brows beside a head, flexi
+/// and platform only alone, a lone mod tag, a sub-shelf that says nothing.
+#[test]
+fn audit_55_misfires() {
+    assert_eq!(without_number("100 Roses"), "100 Roses");
+    assert_eq!(without_number("24 Karat Gold"), "24 Karat Gold");
+    assert_eq!(without_number("12. Brindle&Co"), "Brindle&Co");
+    assert_eq!(without_number("04 - Brindle&Co"), "Brindle&Co");
+    assert!(store_tagged("02. Casual").is_none(), "a numbered shelf is no store's delivery");
+    assert_eq!(classify("Velmora Brows Honey EvoX", 6, 0).category, Some(Category::Makeup));
+    assert_eq!(classify("Kira Lashes Light Lelutka", 6, 0).category, Some(Category::Makeup));
+    assert_eq!(
+        classify("[kira] mavis / ghost / no brows / evo X", 6, 0).category,
+        Some(Category::Skins)
+    );
+    assert_ne!(classify("Velmora Flexi Gown", 6, 0).category, Some(Category::Hair));
+    assert_eq!(classify("Velmora Flexi Bun", 6, 0).category, Some(Category::Hair));
+    assert_eq!(classify("Brindle Flexi", 6, 0).category, Some(Category::Hair));
+    assert_ne!(classify("Brindle Skybox Platform", 6, 0).category, Some(Category::Shoes));
+    assert_eq!(classify("[Velmora] Daisie Platforms - noir", 6, 0).category, Some(Category::Shoes));
+    assert_eq!(classify("Kira Platform Reborn", 6, 0).category, Some(Category::Shoes));
+    assert_ne!(classify("Kira Floor Lamp (Mod)", 6, 0).category, Some(Category::BodyAddons));
+    assert_eq!(classify("Kira Belly Mod", 6, 0).category, Some(Category::BodyAddons));
+    // sorting one folder: a sub-shelf that says nothing stays
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Clothes");
+    add_folder(&mut inv, 81, 80, "Summer");
+    for (n, item) in [
+        "Velmora Hex Dress",
+        "Kira Gown",
+        "Zorin Dress",
+        "Lace Dress",
+        "Kira Top",
+        "Velmora Tee",
+    ]
+    .iter()
+    .enumerate()
+    {
+        add_item(&mut inv, 900 + n as u128, 81, item, 0);
+    }
+    let none = HashSet::new();
+    let plan = plan(&inv, id(80), &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(81)), "the user's shelf stays");
+}
