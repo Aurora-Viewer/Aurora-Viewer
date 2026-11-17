@@ -1024,6 +1024,10 @@ pub struct PointLight {
     pub falloff: f32,
     /// A light with a texture lights its frustum only, through the texture.
     pub projector: Option<Projector>,
+    /// Half the diagonal of the prim the light shines from (m): what lies
+    /// that near the light (its bulb, its lamp's body) does not shadow it in
+    /// the traced light (rt_lights.wgsl). 0 for lights of no prim.
+    pub source_radius: f32,
 }
 
 /// Frustum and texture of a projector (a prim light with a light texture),

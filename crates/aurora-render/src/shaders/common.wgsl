@@ -1341,6 +1341,8 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
 const SPECULAR_AA: u32 = 0x8000u;
+// The point lights' share is traced (common.wgsl `local_share`).
+const LOCAL_TRACED: u32 = 0x800000u;
 
 // Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
 // Geometric Specular Antialiasing with Projected-Space NDF Filtering", in
@@ -1542,6 +1544,28 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
         return 1.0;
     }
     return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
+}
+
+// What arrives of the point lights' light at a pixel of the main view: the
+// traced lights' share (rt_lights.wgsl, `.b` of the traced mask). 1
+// elsewhere: other views, blended faces, without the traced lights.
+fn local_share(frag: vec2<f32>) -> f32 {
+    if ((frame.light_mode.z & LOCAL_TRACED) == 0u || !contact_surface || in_reflection_pass()) {
+        return 1.0;
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(contact_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return 1.0;
+    }
+    return textureLoad(contact_tex, p, 0).b;
+}
+
+// Point light `i` of the frame with its colour times `share` (local_share).
+fn shared_light(i: i32, share: f32) -> Light {
+    var lt = frame.lights[i];
+    lt.color_falloff = vec4<f32>(lt.color_falloff.rgb * share, lt.color_falloff.w);
+    return lt;
 }
 
 // The sun's shadow of an opaque surface of the main view: the shadow map,
@@ -1897,8 +1921,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // local lights
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;
@@ -2578,8 +2603,9 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
     var local = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;
@@ -2666,8 +2692,9 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
     var col = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;

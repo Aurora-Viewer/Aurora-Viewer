@@ -254,3 +254,17 @@ fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
     let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
     return !masked_out(record, s.uv);
 }
+
+// A hash of `v` (PCG), for the passes' random numbers.
+fn pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+// Two numbers in [0, 1) for pixel `p` on frame `frame`.
+fn random2(p: vec2<u32>, frame: u32) -> vec2<f32> {
+    let a = pcg(p.x + pcg(p.y + pcg(frame)));
+    let b = pcg(a);
+    return vec2<f32>(f32(a >> 8u), f32(b >> 8u)) / 16777216.0;
+}

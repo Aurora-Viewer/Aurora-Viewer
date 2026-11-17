@@ -39,6 +39,8 @@ struct Params {
 
 // Frames the history averages at most.
 const HISTORY: f32 = 32.0;
+// Rays a pixel traces on a frame with no history.
+const RESET_RAYS: u32 = 16u;
 // The brightest a sample counts (in the lit colour's units): a rare ray
 // that meets a lamp would leave a bright speck for the history's length.
 const SAMPLE_MAX: f32 = 8.0;
@@ -61,18 +63,6 @@ const SAMPLE_MAX: f32 = 8.0;
 @group(0) @binding(9) var gi_color: texture_2d<f32>;
 @group(0) @binding(10) var gi_dist: texture_2d<f32>;
 @group(0) @binding(11) var out_gi: texture_storage_2d<rgba16float, write>;
-
-fn pcg(v: u32) -> u32 {
-    let s = v * 747796405u + 2891336453u;
-    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-    return (w >> 22u) ^ w;
-}
-
-fn random2(p: vec2<u32>, frame: u32) -> vec2<f32> {
-    let a = pcg(p.x + pcg(p.y + pcg(frame)));
-    let b = pcg(a);
-    return vec2<f32>(f32(a >> 8u), f32(b >> 8u)) / 16777216.0;
-}
 
 // A direction about `n`, more of them where the cosine is larger.
 fn cosine_dir(n: vec3<f32>, u: vec2<f32>) -> vec3<f32> {
@@ -144,60 +134,66 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = normal_at(pixel, world, depth);
     let dist = distance(world, params.camera.xyz);
     let origin = world + n * (0.01 + 0.002 * dist);
-    let dir = cosine_dir(n, random2(vec2<u32>(id.xy), frame));
     let posed = params.mode.y > 0.5;
+    // with no history (a photo, a new size), more rays at once
+    let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
+    var sample = vec3<f32>(0.0);
+    for (var ray = 0u; ray < rays; ray++) {
+        let dir = cosine_dir(n, random2(vec2<u32>(id.xy), frame * RESET_RAYS + ray));
 
-    var t = -1.0;
-    var record = 0u;
-    var primitive = 0u;
-    var bary = vec2<f32>(0.0);
-    var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, 0.0, params.mode.x, origin, dir));
-    while (rayQueryProceed(&rq)) {
-        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
-            rayQueryConfirmIntersection(&rq);
-        }
-    }
-    let hs = rayQueryGetCommittedIntersection(&rq);
-    if (hs.kind != RAY_QUERY_INTERSECTION_NONE) {
-        t = hs.t;
-        record = hit_record(false, hs.instance_custom_data, hs.geometry_index);
-        primitive = hs.primitive_index;
-        bary = hs.barycentrics;
-    }
-    if (posed) {
-        let reach = select(params.mode.x, t, t >= 0.0);
-        var rp: ray_query;
-        rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, 0.0, reach, origin, dir));
-        while (rayQueryProceed(&rp)) {
-            if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
-                rayQueryConfirmIntersection(&rp);
+        var t = -1.0;
+        var record = 0u;
+        var primitive = 0u;
+        var bary = vec2<f32>(0.0);
+        var rq: ray_query;
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, 0.0, params.mode.x, origin, dir));
+        while (rayQueryProceed(&rq)) {
+            if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
+                rayQueryConfirmIntersection(&rq);
             }
         }
-        let hp2 = rayQueryGetCommittedIntersection(&rp);
-        if (hp2.kind != RAY_QUERY_INTERSECTION_NONE) {
-            t = hp2.t;
-            record = hit_record(true, hp2.instance_custom_data, hp2.geometry_index);
-            primitive = hp2.primitive_index;
-            bary = hp2.barycentrics;
+        let hs = rayQueryGetCommittedIntersection(&rq);
+        if (hs.kind != RAY_QUERY_INTERSECTION_NONE) {
+            t = hs.t;
+            record = hit_record(false, hs.instance_custom_data, hs.geometry_index);
+            primitive = hs.primitive_index;
+            bary = hs.barycentrics;
         }
-    }
-    var sample = vec3<f32>(0.0);
-    if (t >= 0.0) {
-        let hit = origin + dir * t;
-        let before = seen_before(hit);
-        if (before.a > 0.0) {
-            sample = before.rgb;
-        } else {
-            let s = surface_at(record, primitive, bary, dir);
-            sample = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed);
+        if (posed) {
+            let reach = select(params.mode.x, t, t >= 0.0);
+            var rp: ray_query;
+            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, 0.0, reach, origin, dir));
+            while (rayQueryProceed(&rp)) {
+                if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
+                    rayQueryConfirmIntersection(&rp);
+                }
+            }
+            let hp2 = rayQueryGetCommittedIntersection(&rp);
+            if (hp2.kind != RAY_QUERY_INTERSECTION_NONE) {
+                t = hp2.t;
+                record = hit_record(true, hp2.instance_custom_data, hp2.geometry_index);
+                primitive = hp2.primitive_index;
+                bary = hp2.barycentrics;
+            }
         }
+        var one = vec3<f32>(0.0);
+        if (t >= 0.0) {
+            let hit = origin + dir * t;
+            let before = seen_before(hit);
+            if (before.a > 0.0) {
+                one = before.rgb;
+            } else {
+                let s = surface_at(record, primitive, bary, dir);
+                one = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed);
+            }
+        }
+        sample += min(one, vec3<f32>(SAMPLE_MAX));
     }
-    sample = min(sample, vec3<f32>(SAMPLE_MAX));
+    sample = sample / f32(rays);
 
     // last frame's at the same surface
     var color = sample;
-    var count = 1.0;
+    var count = min(f32(rays), HISTORY);
     let before = prev_pixel(world);
     if (params.mode.w > 0.5 && before.x >= 0.0) {
         let ph = clamp(vec2<i32>(before * 0.5), vec2<i32>(0), vec2<i32>(params.half.xy) - vec2<i32>(1));

@@ -82,6 +82,13 @@ pub fn gi() -> bool {
     *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_GI").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
 }
 
+/// Whether the local point lights' shadows are traced too
+/// (`AURORA_RT_LIGHTS`, with `AURORA_RT_SHADOWS`).
+pub fn local_lights() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_LIGHTS").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
+}
+
 /// Whether to ask a device for [`FEATURES`]: the experiment is on and the
 /// adapter has them.
 pub fn wanted(adapter: wgpu::Features) -> bool {
@@ -501,6 +508,60 @@ pub(crate) struct Targets {
     pub result: wgpu::TextureView,
     pub reflect: Option<wgpu::TextureView>,
     pub gi: Option<GiTargets>,
+    pub lights: Option<LightTargets>,
+}
+
+/// The traced point lights' choices and share (two of each: one read while
+/// the other is written), and the sun's mask before the share joins it.
+pub(crate) struct LightTargets {
+    choice: [wgpu::TextureView; 2],
+    share: [wgpu::TextureView; 2],
+    sun: wgpu::TextureView,
+}
+
+const CHOICE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+const SHARE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The lights pass's constants (must match `Params` in rt_lights.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LightsU {
+    world_from_clip: [[f32; 4]; 4],
+    prev_clip_from_world: [[f32; 4]; 4],
+    camera: [f32; 4],
+    prev_camera: [f32; 4],
+    screen: [f32; 4],
+    mode: [f32; 4],
+}
+
+/// A light of the frame's list (must match `Light` in rt_lights.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
+struct TracedLightU {
+    pos_radius: [f32; 4],
+    color_falloff: [f32; 4],
+    source: [f32; 4],
+}
+
+/// The most lights of the frame's list (the frame uniform's).
+const MAX_TRACED_LIGHTS: usize = 64;
+
+/// The traced point lights' passes (shaders/rt_lights.wgsl).
+struct Lights {
+    trace_layout: wgpu::BindGroupLayout,
+    filter_layout: wgpu::BindGroupLayout,
+    trace: wgpu::ComputePipeline,
+    filter: wgpu::ComputePipeline,
+    buffer: wgpu::Buffer,
+    lights: wgpu::Buffer,
+    /// Last frame's lights: the same list keeps last frame's choices.
+    listed: Vec<TracedLightU>,
+    timer: Option<Timer>,
+    last: usize,
+    history_for: Option<(u32, u32)>,
+    prev_clip_from_world: glam::Mat4,
+    prev_camera: glam::Vec3,
+    frame: u32,
 }
 
 /// The traced indirect light's history, at half resolution (two of each:
@@ -639,6 +700,7 @@ pub(crate) struct RtShadows {
     poser: Poser,
     reflect: Option<Reflect>,
     gi: Option<Gi>,
+    lights: Option<Lights>,
     /// The posed top level holds a skeleton this frame.
     posed_live: bool,
 }
@@ -880,6 +942,7 @@ impl RtShadows {
             poser: Poser::new(device, &scene_layout),
             reflect: reflections().then(|| Reflect::new(device, queue, &scene_layout, textures)),
             gi: gi().then(|| Gi::new(device, queue, &scene_layout, textures)),
+            lights: local_lights().then(|| Lights::new(device, queue, &scene_layout, textures)),
             posed_live: false,
             scene_layout,
             warned: false,
@@ -1193,8 +1256,6 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// A ray-traced shader's source: ray queries enabled, then what the passes
-/// share (shaders/rt_common.wgsl), then its own.
 /// A ray-traced shader's source: the enables, rt_common.wgsl, then `parts`
 /// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
 fn source(parts: &[&str]) -> String {
@@ -1304,7 +1365,39 @@ impl Targets {
                 result: view("rt gi", size, GI_FORMAT),
             }
         });
-        Some(Targets { size, result, reflect, gi })
+        let lights = local_lights().then(|| {
+            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+            let view = |label: &'static str, format: wgpu::TextureFormat| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width: size.0,
+                            height: size.1,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            LightTargets {
+                choice: [view("rt light choices", CHOICE_FORMAT), view("rt light choices", CHOICE_FORMAT)],
+                share: [view("rt light share", SHARE_FORMAT), view("rt light share", SHARE_FORMAT)],
+                sun: view("rt sun mask", RESULT_FORMAT),
+            }
+        });
+        Some(Targets {
+            size,
+            result,
+            reflect,
+            gi,
+            lights,
+        })
     }
 }
 
@@ -1601,7 +1694,8 @@ impl RtShadows {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&t.result),
+                    // with the traced lights, their filter writes the mask
+                    resource: wgpu::BindingResource::TextureView(t.lights.as_ref().map_or(&t.result, |l| &l.sun)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
@@ -1820,6 +1914,244 @@ impl Gi {
             prev_camera: glam::Vec3::ZERO,
             frame: 0,
         }
+    }
+}
+
+impl Lights {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rt lights"),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_lights.wgsl")]).into()),
+        });
+        let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
+        let lights_entry = storage_entry(2, true);
+        let trace_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt lights trace"),
+            entries: &[
+                uniform_entry::<LightsU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                lights_entry,
+                texture_entry(3, unfiltered),
+                storage_texture_entry(4, CHOICE_FORMAT),
+                tlas_entry(5),
+                tlas_entry(6),
+                texture_entry(7, unfiltered),
+                storage_texture_entry(8, SHARE_FORMAT),
+            ],
+        });
+        let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt lights filter"),
+            entries: &[
+                uniform_entry::<LightsU>(),
+                texture_entry(9, unfiltered),
+                texture_entry(10, unfiltered),
+                storage_texture_entry(11, RESULT_FORMAT),
+            ],
+        });
+        let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        // the trace reads the scene's tables and textures at each candidate
+        // hit (rt_common.wgsl `stops`)
+        let trace = pipeline(
+            "rt lights trace",
+            &[Some(&trace_layout), Some(scene_layout), Some(textures)],
+            "cs_lights",
+        );
+        let filter = pipeline("rt lights filter", &[Some(&filter_layout)], "cs_lights_filter");
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rt lights"),
+            size: std::mem::size_of::<LightsU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let lights = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rt lights list"),
+            size: (std::mem::size_of::<TracedLightU>() * MAX_TRACED_LIGHTS) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        log::info!("AURORA_RT_LIGHTS: ray-traced point light shadows on");
+        Lights {
+            trace_layout,
+            filter_layout,
+            trace,
+            filter,
+            buffer,
+            lights,
+            listed: Vec::new(),
+            timer: Timer::new(device, queue, 3),
+            last: 0,
+            history_for: None,
+            prev_clip_from_world: glam::Mat4::IDENTITY,
+            prev_camera: glam::Vec3::ZERO,
+            frame: 0,
+        }
+    }
+}
+
+/// The frame's lights as rt_lights.wgsl reads them, in the frame uniform's
+/// order.
+fn traced_lights(lights: &[crate::types::PointLight]) -> Vec<TracedLightU> {
+    lights
+        .iter()
+        .take(MAX_TRACED_LIGHTS)
+        .map(|l| TracedLightU {
+            pos_radius: l.position.extend(l.radius).to_array(),
+            color_falloff: l.color.extend(l.falloff).to_array(),
+            source: [l.source_radius, if l.projector.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0],
+        })
+        .collect()
+}
+
+impl RtShadows {
+    /// Whether the point lights' shadows are traced: the frame then binds
+    /// the mask with their share (common.wgsl `local_share`).
+    pub(crate) fn traces_lights(&self) -> bool {
+        self.lights.is_some()
+    }
+
+    /// Traces the point lights' share into the mask's `.b`, after the sun's
+    /// pass (which wrote the targets' sun mask) and before the scene is lit.
+    /// Runs on every traced frame while the traced lights are on: the mask
+    /// the frame binds is its.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_lights(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &Targets,
+        clip_from_world: glam::Mat4,
+        camera: glam::Vec3,
+        point_lights: &[crate::types::PointLight],
+        depth: &wgpu::TextureView,
+        scene: &crate::packet::SceneGpu,
+    ) {
+        let scene_group = self.scene_group(device, scene);
+        let (Some(l), Some(tlas), Some(lt)) = (self.lights.as_mut(), self.tlas.as_ref(), t.lights.as_ref()) else {
+            return;
+        };
+        if let Some(timer) = &mut l.timer
+            && let Some((ms, frames)) = timer.harvest()
+        {
+            log::info!(
+                "AURORA_RT_LIGHTS: trace {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {} lights listed)",
+                ms[0],
+                ms[1],
+                l.listed.len()
+            );
+        }
+        let listed = traced_lights(point_lights);
+        let same_lights = listed == l.listed;
+        if !listed.is_empty() {
+            queue.write_buffer(&l.lights, 0, bytemuck::cast_slice(&listed));
+        }
+        l.listed = listed;
+        let (read, write) = (l.last, 1 - l.last);
+        let valid = l.history_for == Some(t.size);
+        let (w, h) = (t.size.0 as f32, t.size.1 as f32);
+        let u = LightsU {
+            world_from_clip: clip_from_world.inverse().to_cols_array_2d(),
+            prev_clip_from_world: l.prev_clip_from_world.to_cols_array_2d(),
+            camera: camera.extend(1.0).to_array(),
+            prev_camera: l.prev_camera.extend(1.0).to_array(),
+            screen: [w, h, 1.0 / w, 1.0 / h],
+            mode: [
+                l.listed.len() as f32,
+                if self.posed_live { 1.0 } else { 0.0 },
+                (l.frame % (1 << 20)) as f32,
+                match (valid, same_lights) {
+                    (false, _) => 0.0,
+                    (true, false) => 1.0,
+                    (true, true) => 3.0,
+                },
+            ],
+        };
+        queue.write_buffer(&l.buffer, 0, bytemuck::bytes_of(&u));
+        let uniform = wgpu::BindGroupEntry {
+            binding: 0,
+            resource: l.buffer.as_entire_binding(),
+        };
+        let trace_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt lights trace"),
+            layout: &l.trace_layout,
+            entries: &[
+                uniform.clone(),
+                view(1, depth),
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: l.lights.as_entire_binding(),
+                },
+                view(3, &lt.choice[read]),
+                view(4, &lt.choice[write]),
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::AccelerationStructure(tlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    // without posed faces the scene's stands in, unread
+                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
+                view(7, &lt.share[read]),
+                view(8, &lt.share[write]),
+            ],
+        });
+        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt lights filter"),
+            layout: &l.filter_layout,
+            entries: &[uniform, view(9, &lt.share[write]), view(10, &lt.sun), view(11, &t.result)],
+        });
+        let groups = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt lights trace"),
+                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            pass.set_pipeline(&l.trace);
+            pass.set_bind_group(0, &trace_group, &[]);
+            pass.set_bind_group(1, &scene_group, &[]);
+            pass.set_bind_group(2, &scene.textures, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt lights filter"),
+                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: Some(2),
+                }),
+            });
+            pass.set_pipeline(&l.filter);
+            pass.set_bind_group(0, &filter_group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
+        }
+        if let Some(timer) = &mut l.timer {
+            timer.resolve(encoder);
+        }
+        l.last = write;
+        l.history_for = Some(t.size);
+        l.prev_clip_from_world = clip_from_world;
+        l.prev_camera = camera;
+        l.frame = l.frame.wrapping_add(1);
     }
 }
 
@@ -2113,6 +2445,7 @@ mod tests {
             ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
             ("rt_reflect", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")][..]),
             ("rt_gi", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_gi.wgsl")][..]),
+            ("rt_lights", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_lights.wgsl")][..]),
         ] {
             let src = source(parts);
             let module = match naga::front::wgsl::parse_str(&src) {
