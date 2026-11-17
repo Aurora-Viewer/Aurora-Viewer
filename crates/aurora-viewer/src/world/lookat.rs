@@ -392,6 +392,11 @@ pub struct LookAts {
     /// Our avatar looks straight ahead, head and eyes: no target at all
     /// (PrivateLocalLookAtTarget), set by the app each frame (`gaze`).
     pub own_ahead: bool,
+    /// Our head and eyes take the look-at over the animations (an AO
+    /// stand): the photo window's "Look at camera", set by the app each
+    /// frame. Only our viewer draws it so; the others blend our animations
+    /// as usual.
+    pub own_over_animations: bool,
 }
 
 impl Default for LookAts {
@@ -402,6 +407,7 @@ impl Default for LookAts {
             requests: Vec::new(),
             last_chatter: None,
             own_ahead: false,
+            own_over_animations: false,
         }
     }
 }

@@ -8,8 +8,11 @@
 //!   llagentcamera.cpp). It goes through `set_look_at`, so the privacy
 //!   settings and the look-at range apply as for any other target, and the
 //!   others see the same ViewerEffect the Legacy Viewer sends: no new
-//!   message. The head and eyes take it as any target (LLHeadRotMotion's
-//!   limits).
+//!   message. The head and eyes take it within LLHeadRotMotion's limits,
+//!   and on our viewer over every animation (`own_over_animations`): an AO
+//!   stand that keys the head would otherwise hold it, and the photo is
+//!   drawn here. The others' viewers blend our animations as the Legacy
+//!   Viewer does, so they see the stand's head where it keys one.
 //! - **Turn to camera** turns the body once toward the camera, with the
 //!   turn of FSTurnAvatarToSelectedObject (`selection_turn`: the yaw flags
 //!   go out with the AgentUpdate). A camera that follows the avatar would
@@ -59,6 +62,8 @@ impl App {
     /// now stands. Sends are throttled by `lookat::Own::set` (5 cm, 0.25 s).
     pub(super) fn update_photo_gaze(&mut self) {
         use crate::world::lookat;
+        // (privacy "no look-at target, even for me" keeps the head ahead)
+        self.world.look_at.own_over_animations = self.photo_gaze_wanted() && !self.world.look_at.own_ahead;
         match gaze(self.photo_gaze_wanted(), self.photo_gaze) {
             Gaze::Camera => {
                 let Some((mx, my)) = self.world.main_origin() else {
