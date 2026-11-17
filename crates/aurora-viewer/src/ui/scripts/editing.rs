@@ -535,6 +535,52 @@ pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
     }
 }
 
+/// LLScrollContainer::autoScroll: a mouse selection held at the edge of the
+/// visible source, or past it, scrolls the view towards the pointer. egui
+/// 0.37 only scrolls a TextEdit to its cursor after a keyboard change, so a
+/// drag never reached the lines outside the view. `visible` is the text's
+/// visible area and `content` the whole laid-out text, both on screen.
+/// Within 16 px of an edge, the rate starts at 130 px/s and gains 156 px/s
+/// every second, up to 1300 px/s: the scroll_container defaults (100, 120
+/// and 1000) made 30% faster, as a script is often taller than one view.
+pub(super) fn drag_autoscroll(ui: &egui::Ui, response: &egui::Response, visible: egui::Rect, content: egui::Rect, horizontal: bool) {
+    const MIN_RATE: f32 = 130.0;
+    const MAX_RATE: f32 = 1300.0;
+    const ACCELERATION: f32 = 156.0;
+    const ZONE: f32 = 16.0;
+    let rate_id = response.id.with("drag_autoscroll_rate");
+    let pointer = response.dragged().then(|| ui.input(|i| i.pointer.interact_pos())).flatten();
+    let mut direction = egui::Vec2::ZERO;
+    if let Some(pointer) = pointer {
+        for axis in [0, 1] {
+            if axis == 0 && !horizontal {
+                continue;
+            }
+            let zone = ZONE.min(visible.size()[axis] / 3.0);
+            // Content moving down shows what is above the view.
+            if pointer[axis] < visible.min[axis] + zone && content.min[axis] < visible.min[axis] - 0.5 {
+                direction[axis] = 1.0;
+            } else if pointer[axis] > visible.max[axis] - zone && content.max[axis] > visible.max[axis] + 0.5 {
+                direction[axis] = -1.0;
+            }
+        }
+    }
+    if direction == egui::Vec2::ZERO {
+        ui.ctx().data_mut(|d| d.remove::<f32>(rate_id));
+        return;
+    }
+    let dt = ui.input(|i| i.stable_dt).min(0.1);
+    let rate = ui.ctx().data_mut(|d| {
+        let rate = d.get_temp_mut_or(rate_id, MIN_RATE);
+        let now = *rate;
+        *rate = (*rate + dt * ACCELERATION).min(MAX_RATE);
+        now
+    });
+    ui.scroll_with_delta_animation(direction * rate * dt, egui::style::ScrollAnimation::none());
+    // The pointer may stay still: the next frame extends the selection.
+    ui.ctx().request_repaint();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
