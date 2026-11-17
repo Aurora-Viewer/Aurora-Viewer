@@ -364,7 +364,9 @@ mod tests {
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, view: &mut PanoView, image: &Arc<Image>) -> egui::Response {
         let p = crate::theme::Theme::default().palette();
         let mut out = None;
-        let _ = ctx.run_ui(
+        // (the textures egui asked for are dropped with the frame: with debug
+        // assertions on, epaint panics on a delta left unread)
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(500.0, 400.0))),
                 events,
@@ -374,6 +376,7 @@ mod tests {
                 out = Some(view.show(ui, &p, egui::Id::unique("pano-test"), image, Vec2::new(200.0, 100.0)));
             },
         );
+        output.textures_delta.clear();
         out.expect("the viewer was shown")
     }
 
