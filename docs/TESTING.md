@@ -2894,7 +2894,7 @@ connects to 127.0.0.1, answers the challenge with the challenge file, lists
 the scripts and follows the first one ("Demo editor: following the
 script."); the demo saves the script with a syntax error, and the editor
 gets the compile result ("Demo editor: compile result received, 1 error,
-line 4."). The log says `demo editor sync:` for each step. Nothing leaves
+line 6."; the demo compiler says `(5, 9)`, counted from 0). The log says `demo editor sync:` for each step. Nothing leaves
 the computer. A port already in use shows "Failed to start external editor
 server on port …" instead.
 
