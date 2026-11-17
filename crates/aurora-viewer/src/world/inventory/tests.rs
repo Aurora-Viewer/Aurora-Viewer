@@ -1692,3 +1692,81 @@ mod outgoing_offers {
         assert!(inv.items.contains_key(&item));
     }
 }
+
+/// A link's original found unreadable after its attempts is never read
+/// again: on a huge inventory, dead links read over and over took requests
+/// from the folder walk.
+#[test]
+fn a_broken_links_original_is_never_read_again() {
+    let mut inv = Inventory::default();
+    let dead = Uuid::from_u128(77);
+    let other = Uuid::from_u128(78);
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[dead]);
+    }
+    let mut asked = vec![dead, other];
+    inv.drop_broken(&mut asked);
+    assert_eq!(asked, vec![other]);
+}
+
+/// An item already on its way is never asked twice: copies of the same
+/// read counted their failures as attempts, twenty at once. Its answer, its
+/// failure or the deadline frees it.
+#[test]
+fn an_item_on_its_way_is_never_read_twice() {
+    let mut inv = Inventory::default();
+    let (a, b) = (Uuid::from_u128(77), Uuid::from_u128(78));
+    let now = std::time::Instant::now();
+    let mut first = vec![a, b, a];
+    inv.claim_item_reads(&mut first, false, now);
+    assert_eq!(first, vec![a, b], "once each");
+    let mut again = vec![a, b];
+    inv.claim_item_reads(&mut again, false, now);
+    assert!(again.is_empty(), "both still on their way");
+    // (a worn attachment's read is filed differently: it still goes)
+    let mut worn = vec![a];
+    inv.claim_item_reads(&mut worn, true, now);
+    assert_eq!(worn, vec![a]);
+    assert!(inv.item_reading(a, true, now));
+    // a failure counts once, then the item may be asked again
+    inv.items_failed(&[a]);
+    assert_eq!(inv.item_failures[&a], 1);
+    let mut retry = vec![a, b];
+    inv.claim_item_reads(&mut retry, false, now);
+    assert_eq!(retry, vec![a]);
+    // a read never answered frees its item after the deadline
+    let mut late = vec![b];
+    inv.claim_item_reads(&mut late, false, now + ITEM_READ_DEADLINE);
+    assert_eq!(late, vec![b]);
+    // a late copy of a broken link's read counts nothing more
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[a]);
+    }
+    let attempts = inv.item_failures[&a];
+    inv.items_failed(&[a]);
+    assert_eq!(inv.item_failures[&a], attempts);
+    let mut dead = vec![a];
+    inv.claim_item_reads(&mut dead, false, now + ITEM_READ_DEADLINE);
+    assert!(dead.is_empty(), "a broken link is never read again");
+}
+
+/// A server busy for a while never marks a real item broken for the
+/// session: one only unreadable is read again after the pause; one the
+/// server answered missing never.
+#[test]
+fn an_unreadable_item_is_read_again_after_a_pause() {
+    let mut inv = Inventory::default();
+    let (busy, gone) = (Uuid::from_u128(77), Uuid::from_u128(78));
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[busy]);
+    }
+    inv.items_missing(vec![gone]);
+    let mut asked = vec![busy, gone];
+    inv.drop_broken(&mut asked);
+    assert!(asked.is_empty(), "both left out for now");
+    // past the pause
+    *inv.gave_up_at.get_mut(&busy).expect("given up") -= ITEM_GIVE_UP;
+    let mut asked = vec![busy, gone];
+    inv.drop_broken(&mut asked);
+    assert_eq!(asked, vec![busy], "only the unreadable one is read again");
+}
