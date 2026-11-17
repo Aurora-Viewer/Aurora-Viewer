@@ -589,15 +589,15 @@ fn an_unanswered_read_frees_its_slot_and_is_asked_again() {
     let first = fetch.pump_at(&mut inv, AGENT, start);
     let sent = first.iter().filter(|c| matches!(c, NetCommand::FetchInventoryTree { .. })).count();
     assert!(sent > 0 && fetch.in_flight.len() == sent);
-    // no reply ever comes: past the deadline the slots are free again
-    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
-    assert!(fetch.in_flight.is_empty(), "the slots are freed");
-    assert_eq!(fetch.retries.len(), sent, "each read waits for its retry");
-    let again = fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE + BACKGROUND_BACKOFF[0]);
-    assert!(
-        again.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
-        "asked again"
-    );
+    // no reply ever comes: past the deadline the slots are free again, and
+    // each read is asked again (a subtree at once in parts, a folder alone
+    // after its retry)
+    let deadline = start + READ_DEADLINE;
+    let mut again = fetch.pump_at(&mut inv, AGENT, deadline);
+    assert!(fetch.in_flight.values().all(|r| r.sent == deadline), "the old slots are freed");
+    again.extend(fetch.pump_at(&mut inv, AGENT, deadline + BACKGROUND_BACKOFF[0]));
+    let asked = again.iter().filter(|c| matches!(c, NetCommand::FetchInventoryTree { .. })).count();
+    assert!(asked >= sent, "asked again: {asked} of {sent}");
 }
 
 /// A folder the walk gave up on is asked again later in the session, a few
@@ -658,4 +658,72 @@ fn failed_and_unread_folders_are_asked_again_later() {
     let reads = run_with(fetch, &mut inv, &server);
     assert!(!reads.is_empty(), "the watchdog asked again");
     assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched);
+}
+
+/// A subtree read that times out is read in parts at once, never repeated
+/// as is (onAISFolderCalback's fallback); a folder left fetching with no
+/// read of the walk is read again once the deadline is over.
+#[test]
+fn a_timed_out_subtree_read_falls_back_at_once_and_lost_folders_are_read_again() {
+    let mut inv = skeleton(&[(10, 1, -1), (11, 10, -1)]);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let start = Instant::now();
+    let mut now = start;
+    // read the root alone, then its subtree batch, which times out
+    let mut timed_out = false;
+    for _ in 0..10 {
+        now += std::time::Duration::from_secs(1);
+        for command in fetch.pump_at(&mut inv, AGENT, now) {
+            if let NetCommand::FetchInventoryOrphans { request } = command {
+                fetch.on_orphans_reply(request, true);
+                continue;
+            }
+            let NetCommand::FetchInventoryTree {
+                request,
+                parent,
+                children,
+                depth,
+                ..
+            } = command
+            else {
+                continue;
+            };
+            if depth > 0 && !timed_out {
+                timed_out = true;
+                fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::new(FetchFailure::Transient, None)), now);
+                assert!(fetch.retries.is_empty(), "never repeated as is");
+                assert!(
+                    fetch.queue.iter().any(|(_, k)| *k == Kind::FolderAndContent),
+                    "read in parts at once"
+                );
+                continue;
+            }
+            let server = Server {
+                tree: &[(10, 1, -1), (11, 10, -1)],
+                cap: 50,
+                items: 0,
+                failure: &|_| None,
+            };
+            let read = Read { parent, children, depth };
+            let outcome = server.answer(&read).map(|contents| {
+                inv.apply(contents);
+            });
+            fetch.on_reply_at(&mut inv, request, &[], outcome, now);
+        }
+    }
+    assert!(timed_out);
+    assert!(unfetched(&inv).is_empty(), "everything read in parts");
+    // a folder some other read left fetching is read again after the deadline
+    inv.folders.get_mut(&id(11)).expect("folder").state = FetchState::Fetching;
+    fetch.swept = None;
+    fetch.pump_at(&mut inv, AGENT, now);
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Fetching, "not yet");
+    fetch.swept = None;
+    let later = now + READ_DEADLINE;
+    let commands = fetch.pump_at(&mut inv, AGENT, later);
+    assert!(
+        commands.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
+        "asked again"
+    );
 }

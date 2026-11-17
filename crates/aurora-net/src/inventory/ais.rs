@@ -137,6 +137,8 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 /// The Legacy Viewer's default request timeout is 30 s; a large inventory
 /// reply can be slower, so this stays generous.
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): a subtree read.
+pub const TREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +261,14 @@ pub async fn fetch_tree(
         url.push_str("&children=");
         url.push_str(&ids.join(","));
     }
-    let doc = get(http, url).await?;
+    // (a subtree read waits AISAPI::HTTP_TIMEOUT (180 s), as the Legacy
+    // Viewer's does: a large subtree's reply takes longer than a folder's;
+    // a timeout is tried once more, then the walk reads it in smaller parts)
+    let doc = if depth > 0 {
+        get_with(http, url, TREE_TIMEOUT, 1).await?
+    } else {
+        get(http, url).await?
+    };
     parse_tree_reply(&doc, owner, parent, children, depth).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
 }
 
@@ -286,17 +295,25 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
+    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS).await
+}
+
+/// [`get`] with its own timeout, and how many times a timeout is tried
+/// again (a refusal keeps the usual retries).
+async fn get_with(http: &reqwest::Client, url: String, timeout: std::time::Duration, timeout_retries: u32) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
+    let mut timeouts = 0;
     loop {
         attempt += 1;
         let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
-        let sent = tokio::time::timeout(REQUEST_TIMEOUT, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
+        let sent = tokio::time::timeout(timeout, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
         let response = match sent {
             Err(_) => {
                 if let Some(t) = timed {
                     t.finish(0, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                timeouts += 1;
+                if attempt <= RETRY_ATTEMPTS && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, None)).await;
                     continue;
                 }
@@ -329,16 +346,18 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
             return Err(failure);
         }
         let wait = retry_after(&response);
-        let body = match tokio::time::timeout(REQUEST_TIMEOUT, response.bytes()).await {
+        let body = match tokio::time::timeout(timeout, response.bytes()).await {
             Err(_) => {
                 if let Some(t) = timed {
                     t.finish(status, 0, false);
                 }
-                if attempt <= RETRY_ATTEMPTS {
+                timeouts += 1;
+                if attempt <= RETRY_ATTEMPTS && timeouts <= timeout_retries {
                     tokio::time::sleep(retry_backoff(attempt, wait)).await;
                     continue;
                 }
-                return Err(FetchError::new(FetchFailure::Transient, Some(status)));
+                // (a timeout: no status, the walk reads it in parts)
+                return Err(FetchError::new(FetchFailure::Transient, None));
             }
             Ok(Err(error)) => {
                 if let Some(t) = timed {

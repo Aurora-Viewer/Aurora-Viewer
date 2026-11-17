@@ -1688,6 +1688,12 @@ impl World {
         commands
     }
 
+    /// The background inventory walk's state (Dev Toolbox N4).
+    pub fn inventory_loading_report(&self) -> String {
+        self.inventory_background
+            .report(&self.inventory, self.inventory.missing_items.len(), std::time::Instant::now())
+    }
+
     /// Read these folders with all they hold through the background walk
     /// (Auto-sort's layout to share), in its batches and at its pace.
     pub fn fetch_inventory_subtrees(&mut self, folders: &[Uuid]) {
@@ -4566,10 +4572,16 @@ impl World {
                 None
             }
             NetEvent::InventoryItems(items) => {
+                for item in &items {
+                    self.inventory.items_reading.remove(&item.id);
+                }
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
+                for item in &items {
+                    self.inventory.items_reading.remove(&item.id);
+                }
                 self.inventory.add_attachment_items(items);
                 None
             }
