@@ -1163,8 +1163,12 @@ fn without_number(name: &str) -> &str {
 /// A name that opens with an enclosed tag (`[Store] rest`, `**Store**
 /// rest`): the tag and the rest of the name.
 fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
-    // (a series number first, as `store` reads it: `01. [Store] rest`)
-    let text = without_number(name.trim()).trim_start();
+    // (the name as it is first, `(2 Moons Hair) rest`; then past a series
+    // number, as `store` reads it: `01. [Store] rest`)
+    tag_at(name.trim()).or_else(|| tag_at(without_number(name.trim()).trim_start()))
+}
+
+fn tag_at(text: &str) -> Option<(&str, &str)> {
     let first = text.chars().next()?;
     let (open, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
     // (the opening run of marks skipped, as `store` does: `..::Store::..`)
