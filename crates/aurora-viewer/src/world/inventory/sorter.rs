@@ -1265,7 +1265,8 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
                 | Category::Outfits
         )
     );
-    if !product {
+    // (a tattoo store's layers draw jewelry too: `[Ink Tattoo] Ada Choker`)
+    if !product || (piece == Some(Category::Jewelry) && classify(tag, -1, 0).category == Some(Category::Tattoos)) {
         return whole;
     }
     piece.or(whole)
