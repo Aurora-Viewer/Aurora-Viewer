@@ -9,7 +9,7 @@
 //! before it is deleted itself, then the folder's own items. A piece the
 //! server refuses is split smaller ([`split_piece`]), down to one item.
 
-use super::Inventory;
+use super::{FetchState, Inventory};
 use uuid::Uuid;
 
 /// The entries (folders and items, at any depth) a folder may hold to be
@@ -66,6 +66,31 @@ pub fn entries_below(inv: &Inventory, folder: Uuid) -> usize {
     count
 }
 
+/// A folder not read with all it holds: failed, over the server's limit,
+/// or not loaded. What it holds was never seen, so it is never deleted.
+pub fn blind(inv: &Inventory, id: Uuid) -> bool {
+    inv.too_big.contains(&id) || inv.folders.get(&id).is_none_or(|f| f.state != FetchState::Fetched)
+}
+
+/// A blind folder at any depth below `folder`, or the folder itself: it
+/// is never deleted whole (the unseen would go with it).
+pub fn holds_blind(inv: &Inventory, folder: Uuid) -> bool {
+    let mut stack = vec![folder];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        if blind(inv, id) {
+            return true;
+        }
+        if let Some(f) = inv.folders.get(&id) {
+            stack.extend(f.children.iter().copied());
+        }
+    }
+    false
+}
+
 /// The pieces that empty `folder` (Pre-Trash or the Trash), never the
 /// folder itself: its subfolders deepest first, then its own items.
 pub fn purge_pieces(inv: &Inventory, folder: Uuid) -> Vec<Piece> {
@@ -81,8 +106,14 @@ pub fn purge_pieces(inv: &Inventory, folder: Uuid) -> Vec<Piece> {
 }
 
 fn pieces_of(inv: &Inventory, id: Uuid, out: &mut Vec<Piece>) {
+    // (a folder never read is left, with what holds it: only what was seen
+    // is deleted)
+    if blind(inv, id) {
+        return;
+    }
     let Some(f) = inv.folders.get(&id) else { return };
-    if entries_below(inv, id) <= PURGE_FOLDER {
+    let blind_below = holds_blind(inv, id);
+    if !blind_below && entries_below(inv, id) <= PURGE_FOLDER {
         out.push(Piece::Folder(id));
         return;
     }
@@ -92,8 +123,10 @@ fn pieces_of(inv: &Inventory, id: Uuid, out: &mut Vec<Piece>) {
     for chunk in f.items.chunks(PURGE_ITEMS) {
         out.push(Piece::Items(chunk.to_vec()));
     }
-    // (empty by now)
-    out.push(Piece::Emptied(id));
+    // (empty by now, unless it holds a folder never read)
+    if !blind_below {
+        out.push(Piece::Emptied(id));
+    }
 }
 
 /// A refused piece in smaller ones: a folder's own folders and its items a
@@ -209,5 +242,20 @@ mod tests {
         let halves = split_piece(&inv, &Piece::Items(vec![id(1), id(2), id(3)])).expect("halves");
         assert_eq!(halves.len(), 2);
         assert!(split_piece(&inv, &Piece::Items(vec![id(1)])).is_none());
+        // a subfolder never read: neither it nor what holds it goes whole
+        add_folder(&mut inv, 30, 1);
+        add_folder(&mut inv, 31, 30);
+        add_items(&mut inv, 30, 5_000, 3);
+        inv.folders.get_mut(&id(31)).expect("folder").state = FetchState::Failed;
+        let pieces = purge_pieces(&inv, id(1));
+        assert!(
+            !pieces
+                .iter()
+                .any(|p| matches!(p, Piece::Folder(f) | Piece::Emptied(f) if *f == id(30) || *f == id(31)))
+        );
+        assert!(
+            pieces.iter().any(|p| matches!(p, Piece::Items(v) if v.contains(&id(5_000)))),
+            "what was seen goes"
+        );
     }
 }

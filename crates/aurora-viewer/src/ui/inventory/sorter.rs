@@ -664,8 +664,8 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
                 if inv.folders.contains_key(&id)
                     && inside(id)
                     && !holds_worn(id)
-                    && sorter::unloaded_below(inv, id, &[]).is_empty()
-                    && inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched) =>
+                    // (never a folder holding one never read: split instead)
+                    && !sorter::purge::holds_blind(inv, id) =>
             {
                 piece
             }
@@ -2142,15 +2142,20 @@ pub(super) fn show(
     // again when the inventory changes, at most once a second while loading
     if state.tab == CLEANUP || !waiting.is_empty() {
         for folder in [sorter::pre_trash(inv), rules::system(inv, 14)].into_iter().flatten() {
-            let stale = state.purge_seen.get(&folder).is_none_or(|(generation, at, loaded, _)| {
-                *generation != inv.generation && (*loaded || at.elapsed() >= std::time::Duration::from_secs(1))
-            });
+            let stale = state
+                .purge_seen
+                .get(&folder)
+                .is_none_or(|(generation, at, _, _)| *generation != inv.generation && at.elapsed() >= std::time::Duration::from_secs(1));
             if stale {
                 let unloaded = sorter::unloaded_below(inv, folder, &[]);
-                let fetched = inv.folders.get(&folder).is_some_and(|f| f.state == FetchState::Fetched);
+                // (a folder over the server's limit is emptied piece by piece
+                // from what is known of it; one that failed waits for the
+                // walk's own retries, never asked here in a loop)
+                let root = inv.folders.get(&folder).map(|f| f.state);
+                let readable = root == Some(FetchState::Fetched) || inv.too_big.contains(&folder);
                 let all_read = ask_for(inv, unloaded);
-                let loaded = fetched && all_read;
-                if !fetched {
+                let loaded = readable && all_read;
+                if !readable {
                     ask_for(inv, [folder]);
                 }
                 let count = sorter::purge::entries_below(inv, folder);
