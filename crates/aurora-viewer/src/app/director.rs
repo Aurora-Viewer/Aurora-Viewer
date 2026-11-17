@@ -112,6 +112,8 @@ pub(super) struct DirectorState {
     demo_done: bool,
     /// The demo's film waits for the ffmpeg found to answer.
     demo_record: bool,
+    /// The path taken by hand, the keyframes' animations and their list.
+    pub(super) extra: super::director_extra::DirectorExtra,
 }
 
 impl App {
@@ -163,12 +165,17 @@ impl App {
     /// field on: its f-number, and the distance it is focused at along the
     /// view (the lock's target when one is in sight, else the distance set).
     pub(super) fn director_dof(&self) -> Option<(f32, f32)> {
-        let f_number = self.director.d.dof.filter(|_| self.panels.director && self.in_world())?;
+        if !self.panels.director || !self.in_world() {
+            return None;
+        }
         let (eye, at) = (self.camera.position, self.camera.target - self.camera.position);
         let distance = match self.director.aim {
             Some(point) => crate::dof::distance_along(eye, at, point),
             None => self.director.d.focus,
         };
+        // the keyframes' own lens while the track gives the view
+        let (f_number, distance) = crate::director_keys::lens(&self.director.d, self.director.d.dof, distance);
+        let f_number = f_number?;
         Some((
             f_number,
             if distance.is_finite() {
@@ -455,12 +462,12 @@ impl App {
 
     /// The track may not take the view: RLVa restricts the camera, or the
     /// view is a headset's.
-    fn director_restricted(&self) -> bool {
+    pub(super) fn director_restricted(&self) -> bool {
         self.world.rlva.camera_restricted() || self.vr_camera.is_some()
     }
 
     /// The current view, as a keyframe keeps it.
-    fn director_pose(&self) -> Pose {
+    pub(super) fn director_pose(&self) -> Pose {
         Pose::from_view(
             self.camera.position,
             self.camera.forward(),
@@ -505,6 +512,7 @@ impl App {
             self.director.d.stop();
         }
         self.director.d.tick(dt);
+        self.director_extra_frame(open);
         if matches!(was, Mode::Playing { .. }) && !self.director.d.playing() {
             log::info!("director: playback ended at {:.1} s", self.director.d.time);
         }
@@ -574,6 +582,9 @@ impl App {
     /// Escape ends a playback or a scrub, or the choosing in the scene the
     /// Director's isolation started; true when it did.
     pub(super) fn director_escape(&mut self) -> bool {
+        if self.director_extra_escape() {
+            return true;
+        }
         if self.director.d.mode != Mode::Editing {
             self.director.d.stop();
             return true;
@@ -664,6 +675,7 @@ impl App {
         let live = self.director_live();
         let (rows, _) = self.photo_isolate_rows();
         let mut isolate = Vec::new();
+        self.director_refresh_choices();
         let (ffmpeg, formats) = match &self.director.ffmpeg {
             Ffmpeg::Ready(tool) => (
                 Some(Some(tool.path.as_path())),
@@ -674,6 +686,8 @@ impl App {
         };
         let mut record_changed = false;
         let mut open = self.panels.director;
+        let mut capture_out = Vec::new();
+        let (capture, key_rows) = self.director.extra.views(&self.world.inventory, live.restricted, &mut capture_out);
         ui::director::window(
             ctx,
             p,
@@ -715,9 +729,12 @@ impl App {
                 lighting,
                 out: &mut env,
             },
+            capture,
+            key_rows,
             &mut actions,
         );
         self.panels.director = open;
+        self.director_capture_actions(capture_out);
         if record_changed {
             self.settings.save();
         }
@@ -789,6 +806,7 @@ impl App {
                 Action::Redo => {
                     self.director.history.redo(&mut self.director.d);
                 }
+                Action::MoveKey(index, pose) => self.director_move_key(index, pose),
             }
         }
     }
@@ -876,7 +894,7 @@ impl App {
     /// Play the track: mouselook ends, the HUDs are left if they go, and the
     /// interface is no longer drawn (`director_playing`).
     fn director_play(&mut self) {
-        if self.director_restricted() {
+        if self.director_restricted() || self.director.extra.taking() {
             return;
         }
         if self.camera.mouselook() {
@@ -983,6 +1001,7 @@ impl App {
             self.director.d.key_color = Some(director::KEY_GREEN);
             log::info!("director demo: our avatar alone on a green screen");
         }
+        self.director_extra_demo(&mode);
     }
 
     /// The demo's film starts once there is something to write it with: the
