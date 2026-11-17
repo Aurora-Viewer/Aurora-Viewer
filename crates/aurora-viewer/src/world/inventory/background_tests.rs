@@ -242,7 +242,7 @@ fn whole_inventory_loads_in_a_few_batched_recursive_reads() {
     assert!(
         reads
             .iter()
-            .all(|r| r.parent == id(1) && r.depth == 0 || r.depth == MAX_FOLDER_DEPTH)
+            .all(|r| r.parent == id(1) && r.depth == 0 || r.depth == MAX_FOLDER_DEPTH || r.depth == NARROW_DEPTH)
     );
     assert!(reads.iter().any(|r| r.parent == id(900) && r.children.is_empty()));
     assert_eq!(reads.len(), 5, "one read per folder would be {}", inv.folders.len());
@@ -302,13 +302,18 @@ fn what_the_depth_limit_leaves_is_fetched_by_the_verify_walk() {
         },
     );
     assert!(unfetched(&inv).is_empty());
-    // each recursive read goes from the first folder the previous one left
-    let deep: Vec<Uuid> = reads
+    // what each read left is read by batches from its parent, never one
+    // read a folder (only the two roots are read alone)
+    let alone: Vec<Uuid> = reads
         .iter()
         .filter(|r| r.children.is_empty() && r.depth > 0)
         .map(|r| r.parent)
         .collect();
-    assert!(deep.contains(&id(13)) && deep.contains(&id(16)), "{deep:?}");
+    assert_eq!(alone, [id(900)], "{alone:?}");
+    assert!(
+        reads.iter().any(|r| r.children == [id(13)]),
+        "the chain goes on from where the limit left it"
+    );
 }
 
 #[test]
@@ -330,7 +335,8 @@ fn reads_too_big_fall_back_to_the_folder_then_its_folders() {
     );
     assert!(unfetched(&inv).is_empty());
     let shapes: Vec<(Uuid, Vec<Uuid>, i32)> = reads.iter().skip(1).map(|r| (r.parent, r.children.clone(), r.depth)).collect();
-    let deep = MAX_FOLDER_DEPTH;
+    // (a narrow walk: its reads go a few levels deep)
+    let deep = NARROW_DEPTH;
     assert_eq!(
         shapes,
         [
@@ -519,7 +525,7 @@ fn without_ais_only_for_the_library_the_inventory_keeps_its_recursive_reads() {
     let library: Vec<&Read> = reads.iter().filter(|r| inv.folders[&r.parent].library).collect();
     assert!(library.iter().all(|r| r.depth == 0), "library level by level");
     assert!(
-        reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth == MAX_FOLDER_DEPTH),
+        reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth > 0),
         "inventory still through AIS"
     );
 }
@@ -726,4 +732,69 @@ fn a_timed_out_subtree_read_falls_back_at_once_and_lost_folders_are_read_again()
         commands.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
         "asked again"
     );
+}
+
+/// A huge inventory under one folder: the walk never waits on one deep read
+/// holding everything, it reads a few levels at a time while it is narrow
+/// and fills its slots side by side (never past the pool), each read still
+/// a batch of up to 20 folders.
+#[test]
+fn a_narrow_walk_reads_shallow_and_widens_to_its_slots() {
+    // one folder, 60 folders below it, each a chain six deep
+    let mut tree = vec![(10, 1, -1)];
+    for n in 0..60u128 {
+        let top = 100 + n * 10;
+        tree.push((top, 10, -1));
+        for level in 1..6u128 {
+            tree.push((top + level, top + level - 1, -1));
+        }
+    }
+    let mut inv = skeleton(&tree);
+    let server = Server {
+        tree: &tree,
+        cap: MAX_FOLDER_DEPTH,
+        items: 1,
+        failure: &|_| None,
+    };
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let mut now = Instant::now();
+    let mut widest = 0;
+    let mut deepest_first = None;
+    for _ in 0..200 {
+        now += std::time::Duration::from_secs(1);
+        let commands = fetch.pump_at(&mut inv, AGENT, now);
+        widest = widest.max(fetch.in_flight.len());
+        assert!(fetch.in_flight.len() <= MAX_IN_FLIGHT, "never past the pool");
+        for command in commands {
+            match command {
+                NetCommand::FetchInventoryOrphans { request } => {
+                    fetch.on_orphans_reply(request, true);
+                }
+                NetCommand::FetchInventoryTree {
+                    request,
+                    parent,
+                    children,
+                    depth,
+                    ..
+                } => {
+                    assert!(children.len() <= BATCH);
+                    if parent == id(10) || children.contains(&id(10)) {
+                        deepest_first.get_or_insert(depth);
+                    }
+                    let outcome = server.answer(&Read { parent, children, depth }).map(|contents| {
+                        inv.apply(contents);
+                    });
+                    fetch.on_reply_at(&mut inv, request, &[], outcome, now);
+                }
+                _ => {}
+            }
+        }
+        if fetch.is_idle() && unfetched(&inv).is_empty() {
+            break;
+        }
+    }
+    assert!(unfetched(&inv).is_empty(), "{:?}", unfetched(&inv));
+    assert_eq!(deepest_first, Some(NARROW_DEPTH), "the lone first read goes a few levels deep");
+    assert!(widest >= 3, "the walk widens: {widest} reads side by side");
 }

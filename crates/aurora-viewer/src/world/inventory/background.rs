@@ -26,6 +26,14 @@ use uuid::Uuid;
 const MAX_IN_FLIGHT: usize = 19;
 /// BatchSizeAIS3: folders per subset read.
 const BATCH: usize = 20;
+/// How deep a read goes while the walk is narrow (its queued and sent
+/// reads fill fewer than half the slots): a huge inventory's first folders read 50
+/// levels deep each held all the rest in one reply, near the timeout, one
+/// slot of 19 in use. A few levels at a time, the next folders are known at
+/// once and read side by side; once the slots are busy, reads go
+/// `MAX_FOLDER_DEPTH` deep again, as the Legacy Viewer's always do. The
+/// same reads, the same batches and pool: only their depth changes.
+const NARROW_DEPTH: i32 = 3;
 /// bulkFetch's max_batch_size: folders per `FetchInventoryDescendents2` read.
 const LEGACY_BATCH: usize = 10;
 /// bulkFetch's max_concurrent_fetches.
@@ -459,6 +467,15 @@ impl BackgroundFetch {
         )
     }
 
+    /// A subtree read's depth: [`NARROW_DEPTH`] while the walk is narrow.
+    fn depth(&self) -> i32 {
+        if self.queue.len() + self.in_flight.len() < MAX_IN_FLIGHT / 2 {
+            NARROW_DEPTH
+        } else {
+            MAX_FOLDER_DEPTH
+        }
+    }
+
     pub fn on_orphans_reply(&mut self, request: u64, success: bool) -> bool {
         if self.orphans_pending != Some(request) {
             return false;
@@ -483,7 +500,7 @@ impl BackgroundFetch {
         match kind {
             Kind::Recursive | Kind::FolderAndContent => match folder.state {
                 FetchState::Unknown | FetchState::Failed => {
-                    let depth = if kind == Kind::Recursive { MAX_FOLDER_DEPTH } else { 0 };
+                    let depth = if kind == Kind::Recursive { self.depth() } else { 0 };
                     self.send(inv, agent, kind, id, Vec::new(), depth, out, 0);
                 }
                 FetchState::Fetching if self.pending.contains(&id) => {}
@@ -493,11 +510,9 @@ impl BackgroundFetch {
                 // the root, or the cache): its folders by batches, as after
                 // that read in onAISFolderCalback, not one read each
                 FetchState::Fetched if kind == Kind::FolderAndContent => self.queue.push_front((id, Kind::ContentRecursive)),
-                // already fetched: check what is inside
-                FetchState::Fetched => {
-                    let children = folder.children.clone();
-                    self.queue.extend(children.into_iter().map(|child| (child, Kind::Recursive)));
-                }
+                // already fetched: check what is inside, its unread folders
+                // by batches (a read cut by its depth left them)
+                FetchState::Fetched => self.queue.push_back((id, Kind::ContentRecursive)),
             },
             Kind::ContentRecursive => {
                 let mut batch = Vec::new();
@@ -518,7 +533,8 @@ impl BackgroundFetch {
                     }
                 }
                 if !batch.is_empty() {
-                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out, 0);
+                    let depth = self.depth();
+                    self.send(inv, agent, kind, id, batch, depth, out, 0);
                 }
                 if done {
                     self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
@@ -728,11 +744,9 @@ impl BackgroundFetch {
             }
             match (kind, fetched) {
                 // got the folder and its content: verify the content, in
-                // case the depth limit or a failure left some of it
-                (Kind::Recursive | Kind::ContentRecursive, true) => {
-                    let children = inv.folders.get(&id).map(|f| f.children.clone()).unwrap_or_default();
-                    self.queue.extend(children.into_iter().map(|child| (child, Kind::Recursive)));
-                }
+                // case the depth limit or a failure left some of it (its
+                // unread folders by batches, never one read each)
+                (Kind::Recursive | Kind::ContentRecursive, true) => self.queue.push_back((id, Kind::ContentRecursive)),
                 // a full recursive read failed: the folder and its content
                 // separately
                 (Kind::Recursive, false) => self.queue.push_back((id, Kind::FolderAndContent)),
