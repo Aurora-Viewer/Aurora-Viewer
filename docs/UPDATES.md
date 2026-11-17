@@ -200,7 +200,7 @@ up the successful transactions after the helper has finished.
 
 ## Validation
 
-`cargo test -p aurora-updater`: loopback HTTP server and throwaway packages
+The workspace tests: loopback HTTP server and throwaway packages
 for SemVer, required update, tampered hash, incomplete transfer,
 cancellation, dangerous archives (ZIP and tar.gz, with their permission
 bits), lock, backup and rollback of the package and of the data.

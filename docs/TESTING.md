@@ -8822,7 +8822,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `-Beta` serves `0.2.101-beta.20261025.1` as a GitHub pre-release and starts
   the isolated profile on the Beta channel: the offer shows; Preferences ›
   Language and updates › Versions › Stable hides it, Beta brings it back.
-  The script needs PowerShell 7 (`pwsh`). On Linux, `scripts/test-update-linux.py`
+  The script needs PowerShell 7 (`pwsh`).
+  Add `-ClearCache` and/or `-ResetSettings` to the script to test the
+  publishing choices. The dialog must announce the effects before download
+  and restart. After the new viewer is closed, `cache/update-marker.txt`
+  must be gone if the cache was to be cleared; `profile/settings.json`
+  must be back to the default values if requested (initial test distance:
+  300 m), and `profile/update-marker.txt` must stay present in all cases.
+  Add `-Required` to impose the next version: no Skip or
+  Later choice, Esc does not close the dialog, and the login button stays
+  disabled with the blocking reason even if the fields are filled. In
+  any isolated installation, a label indicates that login to a grid
+  is disabled; only enter synthetic values for this test.
+  On Linux, `scripts/test-update-linux.py`
   (`python3 scripts/test-update-linux.py`) prepares the same two packages as
   `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
   tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
@@ -8836,17 +8848,6 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the package into a folder root owns (`sudo cp -r`) and run it from there:
   the update window says the folder belongs to a sandbox or another account,
   links the release page, and nothing is downloaded or replaced.
-  Add `-ClearCache` and/or `-ResetSettings` to the script to test the
-  publishing choices. The dialog must announce the effects before download
-  and restart. After the new viewer is closed, `cache/update-marker.txt`
-  must be gone if the cache was to be cleared; `profile/settings.json`
-  must be back to the default values if requested (initial test distance:
-  300 m), and `profile/update-marker.txt` must stay present in all cases.
-  Add `-Required` to impose the next version: no Skip or
-  Later choice, Esc does not close the dialog, and the login button stays
-  disabled with the blocking reason even if the fields are filled. In
-  any isolated installation, a label indicates that login to a grid
-  is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
 - **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
