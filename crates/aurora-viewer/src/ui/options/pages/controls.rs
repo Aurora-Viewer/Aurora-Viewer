@@ -45,7 +45,9 @@ pub fn page(cx: &mut Cx) {
     // click passes through them, as LLToolPie::handleMouseDown does for all
     // of them (`pick_rigged = false`); animesh are on at the human's request.
     cx.group(tr!("ui-options-rigged-clicks"), |cx| {
-        cx.toggle(
+        // (a search for "rigged" lists it with the other two)
+        let section = tr!("ui-options-rigged-clicks").to_string();
+        cx.keywords(&section).toggle(
             tr!("ui-options-rigged-click-animesh"),
             tr!("ui-options-rigged-click-animesh-help"),
             &field!(rigged_click_animesh),
