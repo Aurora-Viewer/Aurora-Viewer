@@ -273,7 +273,10 @@ pub async fn fetch_tree(
         // walk's deadline never frees a slot while its request still runs)
         tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0))
             .await
-            .unwrap_or_else(|_| Err(FetchError::new(FetchFailure::Transient, None)))?
+            // (only a run of throttles and overloads, 429 or 503 with their
+            // waits, reaches it: answered as an overload, so the walk
+            // waits instead of splitting the read into more of them)
+            .unwrap_or_else(|_| Err(FetchError::new(FetchFailure::Transient, Some(503))))?
     } else {
         get(http, url).await?
     };

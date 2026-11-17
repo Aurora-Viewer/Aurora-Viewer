@@ -660,7 +660,27 @@ where
             }
             Operation::Delete { id, folder } => {
                 let kind = if *folder { "category" } else { "item" };
-                ais(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map(), step).await?;
+                // (already gone, 404 or 410: the delete is done. A piece of
+                // a long purge whose answer was lost, or that failed after
+                // deleting part of it, is sent again and settles at once)
+                match crate::outfits::send_detailed(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await {
+                    Err(refusal) if matches!(refusal.status, Some(404 | 410)) => {
+                        log::debug!("inventory delete of {kind} {id}: already gone");
+                    }
+                    Err(refusal) => {
+                        log::warn!(
+                            "inventory operation {}/{} ({}) failed: HTTP {}, error_code={:?}, error_description={:?}",
+                            step.0 + 1,
+                            step.1,
+                            describe(step.2),
+                            refusal.status.map_or_else(|| "no reply".into(), |s| s.to_string()),
+                            refusal.code,
+                            refusal.description,
+                        );
+                        return Err(refusal.message);
+                    }
+                    Ok(_) => {}
+                }
             }
             Operation::Purge(id) => {
                 ais(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map(), step).await?;

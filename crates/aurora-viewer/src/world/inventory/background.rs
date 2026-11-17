@@ -322,6 +322,9 @@ impl BackgroundFetch {
         for library in [false, true] {
             self.send_legacy(inv, agent, library, &mut out);
         }
+        // (a folder no longer fetching keeps no old clock)
+        self.orphaned
+            .retain(|id, _| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching));
         // A folder the user's own read holds (`waiting`) whose answer never
         // comes is read again after the deadline: it never keeps the walk
         // busy for the session.
