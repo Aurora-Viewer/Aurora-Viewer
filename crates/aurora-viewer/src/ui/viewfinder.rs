@@ -364,6 +364,12 @@ pub fn af_label(focus: PhotoFocus) -> &'static str {
     }
 }
 
+/// The values a 360° picture has no use for: the lens (six faces of 90°)
+/// and the focus (no depth of field). Greyed, and not turned, in 360°.
+fn dial_greyed(pano: bool, dial: Dial) -> bool {
+    pano && matches!(dial, Dial::Focal | Dial::Aperture | Dial::Distance)
+}
+
 fn guide_label(g: Guide) -> &'static str {
     match g {
         Guide::None => aurora_i18n::tr!("photo-vf-guide-none"),
@@ -390,9 +396,11 @@ fn dot(ui: &mut egui::Ui, p: &Palette) {
     shadow_text(ui.painter(), p, r.center(), Align2::CENTER_CENTER, "·", regular(13.0), p.ink);
 }
 
-fn next_destination(d: Destination) -> Destination {
+fn next_destination(d: Destination, pano: bool) -> Destination {
     match d {
         Destination::Disk => Destination::Inventory,
+        // (a panorama goes to the disk or the inventory only)
+        Destination::Inventory if pano => Destination::Disk,
         Destination::Inventory => Destination::Profile,
         // a postcard needs its e-mail, written in the panel
         Destination::Profile | Destination::Email => Destination::Disk,
@@ -409,7 +417,16 @@ fn next_time(time: Option<u8>) -> Option<u8> {
 
 /// The next size of the destination: the disk's resolutions (the typed
 /// one stays in the drawer), the inventory's textures, the profile's.
-fn next_size(s: &mut Settings, destination: Destination) {
+fn next_size(s: &mut Settings, destination: Destination, pano: bool) {
+    if pano {
+        // a panorama's disk size is its quality; the inventory's is fixed
+        if destination == Destination::Disk {
+            let all = crate::snapshot::capture_360::Quality::ALL;
+            let i = all.iter().position(|q| *q == s.capture_360.quality).unwrap_or(0);
+            s.capture_360.quality = all[(i + 1) % all.len()];
+        }
+        return;
+    }
     match destination {
         Destination::Disk => {
             let all: Vec<Resolution> = Resolution::ALL.into_iter().filter(|r| *r != Resolution::Custom).collect();
@@ -512,6 +529,10 @@ impl Viewfinder {
     ) -> Vec<Out> {
         let mut out = Vec::new();
         panel.looks.hover = None;
+        // (a 360° picture has no lens to turn: the dial left on one goes to the exposure)
+        if dial_greyed(panel.pano, self.dial) {
+            self.dial = Dial::Exposure;
+        }
         let before = s.clone();
         let light_before = panel.light;
         let screen = ctx.content_rect();
@@ -523,13 +544,15 @@ impl Viewfinder {
 
         // the photo's proportions: the rest darkened, a fine frame, the guide
         let ratio = f.photo.0 as f32 / f.photo.1.max(1) as f32;
-        let frame = panel::fit(screen, ratio);
+        // (a 360° picture has no frame: the whole view is taken)
+        let frame = if panel.pano { screen } else { panel::fit(screen, ratio) };
         for r in panel::outside(screen, frame) {
             back.rect_filled(r, 0.0, p.navy.gamma_multiply(0.66));
         }
         let border = if shows { 0.5 } else { 0.25 };
         back.rect_stroke(frame, 0.0, Stroke::new(1.0, p.ink.gamma_multiply(border)), StrokeKind::Inside);
-        if shows && s.guide != Guide::None {
+        // (a 360° picture has no frame to compose in)
+        if shows && s.guide != Guide::None && !panel.pano {
             panel::guide_lines(&back, frame, s.guide, p.ink.gamma_multiply(0.4));
         }
         if !s.looks.is_empty() {
@@ -542,7 +565,9 @@ impl Viewfinder {
         if full {
             self.top_bar(ctx, p, &back, screen, s, panel, f, &mut out);
         }
-        self.af_point(ctx, p, &front, s, f);
+        if !panel.pano {
+            self.af_point(ctx, p, &front, s, f);
+        }
         // (the last photo's card takes its place while it shows)
         let card = f.now < self.review_until && f.review.is_some();
         if shows && !self.hinted && !self.menu && !self.help && !card {
@@ -698,15 +723,22 @@ impl Viewfinder {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 18.0;
+                    // (a 360° picture has no frame to compose in: the guides are off)
+                    let guide = if panel.pano { Guide::None } else { s.guide };
                     if icon_text_button(
                         ui,
                         p,
                         "grid-3x3",
-                        guide_label(s.guide),
-                        p.ink,
-                        aurora_i18n::tr!("photo-vf-guide-tip"),
+                        guide_label(guide),
+                        if panel.pano { p.muted_dim } else { p.ink },
+                        if panel.pano {
+                            aurora_i18n::tr!("photo-not-in-360")
+                        } else {
+                            aurora_i18n::tr!("photo-vf-guide-tip")
+                        },
                     )
                     .clicked()
+                        && !panel.pano
                     {
                         s.guide = next_guide(s.guide);
                     }
@@ -754,8 +786,14 @@ impl Viewfinder {
                     {
                         s.huds = !s.huds;
                     }
-                    let quality = if s.quality { p.ink } else { p.muted_dim };
-                    if icon_switch(ui, p, "sparkles-filled", quality, aurora_i18n::tr!("photo-vf-quality-tip")).clicked() {
+                    // (greyed in a 360° picture, as the window's "Photo quality" row)
+                    let quality = if s.quality && !panel.pano { p.ink } else { p.muted_dim };
+                    let tip = if panel.pano {
+                        aurora_i18n::tr!("photo-not-in-360")
+                    } else {
+                        aurora_i18n::tr!("photo-vf-quality-tip")
+                    };
+                    if icon_switch(ui, p, "sparkles-filled", quality, tip).clicked() && !panel.pano {
                         s.quality = !s.quality;
                     }
                     if icon_text_button(
@@ -768,13 +806,18 @@ impl Viewfinder {
                     )
                     .clicked()
                     {
-                        panel.destination = next_destination(panel.destination);
+                        panel.destination = next_destination(panel.destination, panel.pano);
                         out.push(Out::Panel(Action::Changed));
                     }
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let font = bold(ctx, 13.0);
                     // the file's format: the disk's choice (the profile feed takes a PNG)
                     match panel.destination {
+                        Destination::Disk if panel.pano => {
+                            // (the bar starts with 360°: the file is a JPEG)
+                            text_button(ui, p, FileFormat::Jpeg.label(), font.clone(), p.ink, "");
+                            dot(ui, p);
+                        }
                         Destination::Disk => {
                             if text_button(ui, p, s.format.label(), font.clone(), p.ink, aurora_i18n::tr!("photo-vf-file-tip")).clicked() {
                                 let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
@@ -794,8 +837,11 @@ impl Viewfinder {
                     }
                     // a common resolution as its badge (HD, QHD, 4K…), the
                     // pixels in its tip; the window's or a typed size in pixels
-                    let pixels = format!("{} × {}", f.photo.0, f.photo.1);
-                    let preset = (panel.destination == Destination::Disk).then(|| s.resolution.short()).flatten();
+                    let photo = if panel.pano { panel.pano_output(s) } else { f.photo };
+                    let pixels = format!("{} × {}", photo.0, photo.1);
+                    let preset = (panel.destination == Destination::Disk && !panel.pano)
+                        .then(|| s.resolution.short())
+                        .flatten();
                     let clicked = match preset {
                         Some(short) => {
                             let tip = format!("{pixels} · {}", aurora_i18n::tr!("photo-vf-size-tip"));
@@ -804,12 +850,22 @@ impl Viewfinder {
                         None => text_button(ui, p, &pixels, font.clone(), p.ink, aurora_i18n::tr!("photo-vf-size-tip")).clicked(),
                     };
                     if clicked {
-                        next_size(s, panel.destination);
+                        next_size(s, panel.destination, panel.pano);
                     }
                     dot(ui, p);
-                    if text_button(ui, p, aspect_label(s.aspect), font, p.ink, aurora_i18n::tr!("photo-vf-format-tip")).clicked() {
-                        let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
-                        s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], f.window);
+                    let format = if panel.pano {
+                        aurora_i18n::tr!("photo-format-360")
+                    } else {
+                        aspect_label(s.aspect)
+                    };
+                    if text_button(ui, p, format, font, p.ink, aurora_i18n::tr!("photo-vf-format-tip")).clicked() {
+                        if panel.pano {
+                            // (a click on the badge leaves the 360° format)
+                            panel.set_pano(false);
+                        } else {
+                            let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
+                            s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], f.window);
+                        }
                     }
                 });
             });
@@ -1233,7 +1289,10 @@ impl Viewfinder {
         // the confirmation dot
         let dot = Pos2::new(screen.left() + GAP + 6.0, y);
         let t = self.af.phase_time(f.now);
+        // (no focus in a 360° picture: its controls say so instead)
+        let af_on = !panel.pano;
         match self.af.phase {
+            _ if !af_on => {}
             Phase::Lock | Phase::Track => {
                 back.circle_filled(dot, 6.0, p.success);
             }
@@ -1250,7 +1309,7 @@ impl Viewfinder {
                 back.circle_stroke(dot, 5.25, Stroke::new(1.5, p.muted.gamma_multiply(0.8)));
             }
         }
-        if ctl {
+        if ctl && af_on {
             self.af_choices(ctx, p, screen, s, Pos2::new(dot.x + 6.0 + 10.0, y), out);
         }
         let c = af_color(p, self.af.phase, false);
@@ -1259,11 +1318,17 @@ impl Viewfinder {
             p,
             Pos2::new(dot.x + 6.0 + 14.0, y),
             Align2::LEFT_CENTER,
-            if ctl { "" } else { af_label(s.dof.focus) },
+            if !af_on {
+                aurora_i18n::tr!("photo-not-in-360")
+            } else if ctl {
+                ""
+            } else {
+                af_label(s.dof.focus)
+            },
             bold(ctx, 15.0),
-            c,
+            if af_on { c } else { p.muted_dim },
         );
-        let area = if ctl {
+        let area = if ctl || !af_on {
             ""
         } else if s.dof.focus == PhotoFocus::Manual {
             aurora_i18n::tr!("photo-vf-area-manual")
@@ -1284,15 +1349,17 @@ impl Viewfinder {
 
         // the zone kept sharp
         let right = screen.right() - GAP;
-        shadow_text(
-            back,
-            p,
-            Pos2::new(right, y - 4.0),
-            Align2::RIGHT_BOTTOM,
-            aurora_i18n::tr!("photo-vf-sharp-from"),
-            regular(11.0),
-            p.muted,
-        );
+        if af_on {
+            shadow_text(
+                back,
+                p,
+                Pos2::new(right, y - 4.0),
+                Align2::RIGHT_BOTTOM,
+                aurora_i18n::tr!("photo-vf-sharp-from"),
+                regular(11.0),
+                p.muted,
+            );
+        }
         let range = if s.dof.enabled {
             let (near, far) = f.sharp;
             if far >= vf::INFINITY {
@@ -1303,7 +1370,17 @@ impl Viewfinder {
         } else {
             aurora_i18n::tr!("photo-vf-all-sharp").to_owned()
         };
-        if s.dof.enabled {
+        if !af_on {
+            shadow_text(
+                back,
+                p,
+                Pos2::new(right, y - 2.0),
+                Align2::RIGHT_TOP,
+                aurora_i18n::tr!("photo-not-in-360"),
+                regular(13.0),
+                p.muted_dim,
+            );
+        } else if s.dof.enabled {
             shadow_text(
                 back,
                 p,
@@ -1360,12 +1437,13 @@ impl Viewfinder {
                         })
                         .inner
                     };
+                    let hint = aurora_i18n::tr!("photo-not-in-360");
                     let resp = dial(
                         ui,
                         Dial::Focal,
                         &format!("{} mm", f.focal_mm.round() as i32),
-                        false,
-                        aurora_i18n::tr!("photo-vf-focal-tip"),
+                        dial_greyed(panel.pano, Dial::Focal),
+                        if panel.pano { hint } else { aurora_i18n::tr!("photo-vf-focal-tip") },
                         self.dial,
                     );
                     self.dial_input(ui, &resp, Dial::Focal, s, panel, fov, f, out);
@@ -1374,8 +1452,12 @@ impl Viewfinder {
                         ui,
                         Dial::Aperture,
                         &format!("f/{}", aurora_i18n::number(f64::from(n), if n < 10.0 { 1 } else { 0 })),
-                        !s.dof.enabled,
-                        aurora_i18n::tr!("photo-vf-aperture-tip"),
+                        !s.dof.enabled || dial_greyed(panel.pano, Dial::Aperture),
+                        if panel.pano {
+                            hint
+                        } else {
+                            aurora_i18n::tr!("photo-vf-aperture-tip")
+                        },
                         self.dial,
                     );
                     self.dial_input(ui, &resp, Dial::Aperture, s, panel, fov, f, out);
@@ -1482,8 +1564,12 @@ impl Viewfinder {
                         ui,
                         Dial::Distance,
                         &text,
-                        false,
-                        aurora_i18n::tr!("photo-vf-distance-tip"),
+                        dial_greyed(panel.pano, Dial::Distance),
+                        if panel.pano {
+                            hint
+                        } else {
+                            aurora_i18n::tr!("photo-vf-distance-tip")
+                        },
                         self.dial,
                     );
                     self.dial_input(ui, &resp, Dial::Distance, s, panel, fov, f, out);
@@ -1505,6 +1591,9 @@ impl Viewfinder {
         f: &Frame,
         out: &mut Vec<Out>,
     ) {
+        if dial_greyed(panel.pano, dial) {
+            return;
+        }
         if resp.clicked() {
             self.dial = dial;
         }
@@ -2256,8 +2345,17 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     let window = f.window;
     v.push((
         aurora_i18n::tr!("photo-section-format"),
-        aspect_label(s.aspect).to_owned(),
-        Box::new(move |s, _| {
+        if panel.pano {
+            aurora_i18n::tr!("photo-format-360").to_owned()
+        } else {
+            aspect_label(s.aspect).to_owned()
+        },
+        Box::new(move |s, panel| {
+            if panel.pano {
+                // (as the window's chips: the next click leaves the 360° format)
+                panel.set_pano(false);
+                return Some(Out::Panel(Action::Changed));
+            }
             let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
             s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], window);
             None
@@ -2265,6 +2363,10 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     ));
     // the size: the disk's resolution, or the destination's own sizes
     let size_value = match panel.destination {
+        _ if panel.pano => {
+            let (w, h) = panel.pano_output(s);
+            format!("{w} × {h}")
+        }
         Destination::Disk => match s.resolution {
             Resolution::Window => aurora_i18n::tr!("photo-resolution-window").to_owned(),
             Resolution::Custom => aurora_i18n::tr!("photo-resolution-custom").to_owned(),
@@ -2283,7 +2385,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-resolution"),
         size_value,
         Box::new(|s, panel| {
-            next_size(s, panel.destination);
+            next_size(s, panel.destination, panel.pano);
             None
         }),
     ));
@@ -2291,24 +2393,37 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-destination"),
         destination_label(panel.destination).to_owned(),
         Box::new(|_, panel| {
-            panel.destination = next_destination(panel.destination);
+            panel.destination = next_destination(panel.destination, panel.pano);
             Some(Out::Panel(Action::Changed))
         }),
     ));
     v.push((
         aurora_i18n::tr!("photo-file-format"),
-        s.format.label().to_owned(),
-        Box::new(|s, _| {
-            let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
-            s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+        if panel.pano {
+            aurora_i18n::tr!("photo-360-format").to_owned()
+        } else {
+            s.format.label().to_owned()
+        },
+        Box::new(|s, panel| {
+            if !panel.pano {
+                let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
+                s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+            }
             None
         }),
     ));
     v.push((
         aurora_i18n::tr!("photo-quality"),
-        yes_no(s.quality),
-        Box::new(|s, _| {
-            s.quality = !s.quality;
+        if panel.pano {
+            aurora_i18n::tr!("photo-vf-off").to_owned()
+        } else {
+            yes_no(s.quality)
+        },
+        Box::new(|s, panel| {
+            // (not in a 360° picture)
+            if !panel.pano {
+                s.quality = !s.quality;
+            }
             None
         }),
     ));
@@ -2479,5 +2594,21 @@ mod cut_short_tests {
         assert!(!cuts_short(Some(2), None, true));
         // the very first photo has nothing to cut short
         assert!(!cuts_short(None, Some(1), true));
+    }
+}
+
+#[cfg(test)]
+mod dial_tests {
+    use super::*;
+
+    /// In a 360° picture the lens and the focus are greyed and not turned
+    /// (the exposure still is); in an ordinary photo every dial works.
+    #[test]
+    fn the_lens_and_the_focus_are_greyed_in_360() {
+        for dial in [Dial::Focal, Dial::Aperture, Dial::Distance] {
+            assert!(dial_greyed(true, dial), "{dial:?}");
+            assert!(!dial_greyed(false, dial), "{dial:?}");
+        }
+        assert!(!dial_greyed(true, Dial::Exposure));
     }
 }
