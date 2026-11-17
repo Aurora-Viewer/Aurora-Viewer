@@ -4096,9 +4096,14 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         ("[Moon Hair] Ada - Henna", Category::Hair),
         ("Christmas Tree Poses", Category::Animations),
         ("Flag HUD", Category::Huds),
+        ("Pride Flag Bike", Category::Vehicles),
+        ("[Willow Tree] LeLutka Evo X Head", Category::Heads),
     ] {
         assert!(path(name).contains(category.folder()), "{name}: {}", path(name));
     }
+    // a worn layer named for a decor thing is its layer
+    assert_eq!(classify("Brazil Flag Face Paint", 5, 14).category, Some(Category::Tattoos));
+    assert_eq!(classify("Pride Flag Decor", 5, 14).category, Some(Category::Decor));
     // a pack word in the rest says how it is sold, not what it is
     assert!(
         path("[Moon Hair] Ada Fatpack").contains(Category::Hair.folder()),

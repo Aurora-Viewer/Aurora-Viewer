@@ -761,13 +761,25 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     // Costume`, `Flag Outfit`, is an outfit; a name that says decor stays)
     let category = match category {
         Some(Category::Decor) if !has(&words, "decor") && (has(&words, "costume") || has(&words, "outfit")) => Some(Category::Outfits),
-        // (poses or a HUD named for a decor thing, `Christmas Tree Poses`,
-        // `Flag HUD`, are poses or a HUD; a name that says decor stays)
+        // (a thing named for a decor thing is that thing: poses, a HUD, a
+        // head, a vehicle, a pet (`Christmas Tree Poses`, `Flag HUD`,
+        // `Pride Flag Bike`), and a worn layer its layer (`Brazil Flag Face
+        // Paint`); a name that says decor stays)
         Some(Category::Decor) if !has(&words, "decor") => VOCABULARY
             .categories
             .iter()
-            .find(|(c, keys)| matches!(c, Category::Animations | Category::Huds) && keys.iter().any(|k| has(&words, k)))
+            .find(|(c, keys)| {
+                matches!(
+                    c,
+                    Category::Heads | Category::Animations | Category::Huds | Category::Vehicles | Category::Pets
+                ) && keys.iter().any(|k| has(&words, k))
+            })
             .map(|(c, _)| *c)
+            .or_else(|| {
+                matches!(asset_type, 5 | 13)
+                    .then(|| Category::of_asset(asset_type, flags))
+                    .flatten()
+            })
             .or(category),
         other => other,
     };
