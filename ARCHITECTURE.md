@@ -1186,7 +1186,8 @@ a server-wide parcel inventory. Reference: `FSAreaSearch::findObjects`,
 (`indra/newview/fsareasearch.cpp`).
 
 `blender_live/` implements LiveMesh: the opt-in loopback Blender transport, bounded v1 rest-mesh
-snapshots and UI. Both matching Blender package layouts are bundled by
+snapshots and UI. `blender_live/token.rs` draws the key each start of the preview
+writes to the user's data folder, which the add-on must send before it is greeted. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
 `installer.rs` discovers bounded application directories, PATH and Windows
