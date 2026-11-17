@@ -504,6 +504,9 @@ pub struct App {
     /// was made again without it, and VR waits for the next start
     /// (`reopen_without_vr`).
     vr_runtime_gone: bool,
+    /// The renderer made again for ray tracing still had no ray queries:
+    /// not tried again in this run (`reopen_for_ray_tracing`).
+    ray_tracing_refused: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -1894,6 +1897,7 @@ impl App {
             restart_into_vr: false,
             vr_set_up: false,
             vr_runtime_gone: false,
+            ray_tracing_refused: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -14354,6 +14358,14 @@ impl App {
                 .is_some_and(|g| g.renderer.vr_runtime_lost() && !g.renderer.vr_engaged())
         {
             if !self.reopen_without_vr(event_loop) {
+                self.close_while_gpu_stalled(event_loop);
+            }
+            return;
+        }
+        // ray tracing turned on, and the device opened without ray queries: a
+        // new renderer with them (gpu_recovery.rs)
+        if self.ray_tracing_wants_reopen() {
+            if !self.reopen_for_ray_tracing(event_loop) {
                 self.close_while_gpu_stalled(event_loop);
             }
             return;

@@ -1767,7 +1767,7 @@ fn taa_motion_now() -> bool {
 }
 
 /// AURORA_PROFILE: the summary also wants the time each step waited.
-fn profile() -> bool {
+pub(crate) fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE").is_some())
 }
@@ -2152,12 +2152,22 @@ impl Drop for Backend {
     /// properly after a "GPU device lost" then ended with a Rust panic
     /// (#1650). A lost device only closes the viewer, so the surface is left
     /// to the process, which releases it with the driver's objects.
+    ///
+    /// The same for a renderer replaced while its device works
+    /// (`Renderer::leave_surface`): with its surface destroyed, the next
+    /// renderer's first `acquire_next_image` segfaults in NVIDIA's Linux
+    /// driver on Wayland (620.70), where the replacement after a loss, which
+    /// leaves it, draws.
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
             return;
         }
         self.wait_pipeline_workers();
+        if self.lost.surface_left() {
+            log::info!("renderer replaced: the window surface is left to the process");
+            return;
+        }
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -4290,7 +4300,8 @@ impl Backend {
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
-        let rt = crate::rt_shadows::RtShadows::new(&device, &queue, &tex_layout);
+        // (made when the settings turn ray tracing on: `follow_ray_tracing`)
+        let rt = None;
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -5651,7 +5662,11 @@ impl Backend {
                     },
                 )
             };
-            let traced = (crate::rt_shadows::reflections() && device.features().contains(crate::rt_shadows::FEATURES))
+            // (on a device that can trace: the option is turned on at any
+            // time)
+            let traced = device
+                .features()
+                .contains(crate::rt_shadows::FEATURES)
                 .then(|| composite("ssr traced", "fs_ssr_rt"));
             (composite("ssr", "fs_ssr"), traced)
         });
@@ -6258,7 +6273,7 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let rt = crate::rt_shadows::Targets::new(device, w, h);
+        let rt = crate::rt_shadows::Targets::new(device, w, h, crate::rt_shadows::traced(device, s.ray_tracing));
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -7130,6 +7145,7 @@ impl Backend {
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
+            || crate::rt_shadows::traced(&self.device, s.ray_tracing) != crate::rt_shadows::traced(&self.device, self.settings.ray_tracing)
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
@@ -7172,6 +7188,7 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
+        self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
@@ -7190,6 +7207,31 @@ impl Backend {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
+        }
+    }
+
+    /// The ray tracer follows the settings: made when they turn ray
+    /// tracing on, dropped with the levels it built when they turn it off
+    /// (its targets go with the others, `make_targets`).
+    fn follow_ray_tracing(&mut self) {
+        let options = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing);
+        match (&mut self.rt, options.shadows) {
+            (Some(rt), true) => rt.set_options(&self.device, &self.queue, &self.tex_layout, options),
+            (None, true) => {
+                let started = std::time::Instant::now();
+                self.rt = Some(crate::rt_shadows::RtShadows::new(
+                    &self.device,
+                    &self.queue,
+                    &self.tex_layout,
+                    options,
+                ));
+                log::info!("ray tracer made in {} ms", started.elapsed().as_millis());
+            }
+            (Some(_), false) => {
+                self.rt = None;
+                log::info!("ray tracing off");
+            }
+            (None, false) => {}
         }
     }
 

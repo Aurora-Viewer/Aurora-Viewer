@@ -1864,6 +1864,8 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// Preferences › Graphics › Ray tracing.
+    pub ray_tracing: RayTracingSettings,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2828,6 +2830,7 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            ray_tracing: RayTracingSettings::OFF,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -4016,6 +4019,7 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            ray_tracing: self.ray_tracing.render(),
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4128,6 +4132,43 @@ impl Default for MapSettings {
             world_grid_coords: false,
             world_double_click_tp: true,
             ban_lines: 1,
+        }
+    }
+}
+
+/// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
+/// experimental, all off by default, and only on a graphics card with ray
+/// queries (`aurora_render::RayTracingSupport`). The renderer adds what
+/// each needs: the sun's shadows only with the shadows, the reflections
+/// only with the screen-space ones.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RayTracingSettings {
+    /// The sun's and the moon's shadows traced, in the shadow maps' place.
+    /// The others trace the scene it builds: none without it.
+    pub enabled: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place.
+    pub reflections: bool,
+}
+
+impl RayTracingSettings {
+    pub const OFF: RayTracingSettings = RayTracingSettings {
+        enabled: false,
+        lights: false,
+        indirect: false,
+        reflections: false,
+    };
+
+    pub fn render(self) -> aurora_render::RayTracing {
+        aurora_render::RayTracing {
+            shadows: self.enabled,
+            lights: self.lights,
+            indirect: self.indirect,
+            reflections: self.reflections,
         }
     }
 }

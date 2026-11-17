@@ -1745,6 +1745,44 @@ fn the_graphics_card_group_shows_the_startup_notice() {
     }
 }
 
+/// Graphics › Light › Ray tracing: the rows are there whatever the graphics
+/// card, and the reason it cannot trace shows under the group's title, only
+/// when there is one.
+#[test]
+fn the_ray_tracing_group_says_why_the_card_cannot_trace() {
+    use aurora_render::RayTracingSupport as Support;
+    let light = 1;
+    let unsupported = aurora_i18n::tr!("ui-options-ray-tracing-unsupported").to_string();
+    let vr = aurora_i18n::tr!("ui-options-ray-tracing-vr").to_string();
+    let row = aurora_i18n::tr!("ui-options-ray-traced-shadows").to_string();
+    for (support, shown) in [
+        (Support::Unsupported, Some(&unsupported)),
+        (Support::Vr, Some(&vr)),
+        (Support::NotOpened, None),
+        (Support::Ready, None),
+    ] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        st.ray_tracing = support;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, light, Vec::new());
+        }
+        let shows = |text: &str| texts.iter().any(|t| t.source == text);
+        assert!(shows(&row), "the ray tracing row is on the Light tab with {support:?}");
+        for text in [&unsupported, &vr] {
+            assert_eq!(shows(text), shown == Some(text), "{text} with {support:?}");
+        }
+        // off by default, and nothing here turns it on
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::OFF);
+    }
+    // found by the words people type, its options behind the cog too
+    let mut s = Settings::default();
+    assert!(counts(&mut s, "raytracing").hits(Page::Graphics) >= 1);
+    s.ray_tracing.lights = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Graphics), 1);
+}
+
 /// Accessibility gathers rows of other pages: each one is drawn there, and
 /// only there besides its own page (the search and the counts keep it on
 /// its page).
