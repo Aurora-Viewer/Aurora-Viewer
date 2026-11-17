@@ -7,7 +7,7 @@
 // The ray's origin and its offset: pushed off the surface along the normal
 // bent towards the eye, by more far away, where depth is coarser.
 
-enable wgpu_ray_query;
+// After rt_common.wgsl and wgpu_ray_query's enable (rt_shadows.rs `source`).
 
 struct Params {
     // This frame's clip-from-world inverted, with the jitter the depth
@@ -29,7 +29,7 @@ struct Params {
 @group(0) @binding(2) var contact_tex: texture_2d<f32>;
 @group(0) @binding(3) var scene_tlas: acceleration_structure;
 @group(0) @binding(4) var out_tex: texture_storage_2d<rgba8unorm, write>;
-// The avatars and what they wear, posed this frame (rt_pose.wgsl).
+// The avatars and what they wear, posed (rt_pose.wgsl).
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
 
 fn unproject(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
@@ -71,6 +71,19 @@ fn normal_at(pixel: vec2<i32>, world: vec3<f32>, depth: f32) -> vec3<f32> {
     return n;
 }
 
+// Whether a candidate hit stops the ray: an opaque face always (the
+// traversal commits those itself), an alpha-masked one where its texture is
+// over its cutoff. (Naga takes no ray query as a function's argument, so
+// each trace runs its own loop around this.)
+fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return false;
+    }
+    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
+    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
+    return !masked_out(record, s.uv);
+}
+
 @compute @workgroup_size(8, 8)
 fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel = vec2<i32>(id.xy);
@@ -97,14 +110,21 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     var shadow = 0.0;
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
-    // every geometry is opaque: the traversal commits its hits itself
-    while (rayQueryProceed(&rq)) {}
+    while (rayQueryProceed(&rq)) {
+        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
+            rayQueryConfirmIntersection(&rq);
+        }
+    }
     if (rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE) {
         shadow = 1.0;
     } else if (params.mode.w > 0.5) {
         var rp: ray_query;
         rayQueryInitialize(&rp, posed_tlas, ray);
-        while (rayQueryProceed(&rp)) {}
+        while (rayQueryProceed(&rp)) {
+            if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
+                rayQueryConfirmIntersection(&rp);
+            }
+        }
         if (rayQueryGetCommittedIntersection(&rp).kind != RAY_QUERY_INTERSECTION_NONE) {
             shadow = 1.0;
         }

@@ -4285,7 +4285,7 @@ impl Backend {
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
-        let rt = crate::rt_shadows::RtShadows::new(&device, &queue);
+        let rt = crate::rt_shadows::RtShadows::new(&device, &queue, &tex_layout);
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
