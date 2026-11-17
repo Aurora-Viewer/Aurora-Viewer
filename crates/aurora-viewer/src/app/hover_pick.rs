@@ -9,6 +9,9 @@
 //! the rest at each frame (`Scene::drawn_hover_between`): the cursor used
 //! to fall back on the CPU's answer until the pointer stopped, and
 //! flickered over a clicker worn under a mesh body. No query is added.
+//!
+//! `AURORA_HOVER_TRACE=1` writes a `hover trace` line each time the
+//! cursor's target or where it comes from changes (docs/TESTING.md).
 
 use aurora_render::{DrawnMode, Renderer};
 use glam::Vec3;
@@ -77,18 +80,42 @@ impl Kept {
 }
 
 /// What `Kept::under` keeps of an answer.
-fn under(scene: &crate::scene::Scene, drawn: &aurora_render::Drawn, ray: (Vec3, Vec3)) -> Option<(usize, f32)> {
+fn under(
+    scene: &crate::scene::Scene,
+    world: &crate::world::World,
+    drawn: &aurora_render::Drawn,
+    ray: (Vec3, Vec3),
+) -> Option<(usize, f32)> {
     if drawn.blend.is_some() {
         return None;
     }
     let face = drawn.opaque?;
     let (idx, _) = scene.record_object(face.record)?;
-    // what the CPU cannot find where it is shown, and what holds it
+    // only what the CPU cannot find where it is shown
     scene
-        .gpu
-        .get(idx)
-        .filter(|g| !g.hud && (g.rigged || g.owner_avatar.is_some() || g.is_avatar))?;
-    Some((idx, (face.point - ray.0).dot(ray.1)))
+        .drawn_status(world, idx)
+        .posed_by_gpu
+        .then_some((idx, (face.point - ray.0).dot(ray.1)))
+}
+
+/// Where the cursor's target comes from (AURORA_HOVER_TRACE).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    /// The search of the CPU: nothing posed near the ray.
+    Cpu,
+    /// The same, for want of an answer of the GPU that speaks for the pixel.
+    Fallback,
+    /// The answer of the GPU for this pixel.
+    Answer,
+    /// The last answer's object, searched from the depth under the pointer.
+    Between,
+    /// The CPU found another surface in front of the answer's.
+    Foreground,
+}
+
+fn trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("AURORA_HOVER_TRACE").is_some())
 }
 
 #[derive(Default)]
@@ -96,6 +123,8 @@ pub(super) struct HoverDrawn {
     pending: Option<(u64, Question, Instant)>,
     kept: Option<Kept>,
     last_request: Option<Instant>,
+    /// AURORA_HOVER_TRACE: what the last line said.
+    traced: Option<(Source, Option<usize>)>,
 }
 
 impl HoverDrawn {
@@ -119,10 +148,42 @@ impl HoverDrawn {
         far: f32,
         click_waiting: bool,
     ) -> Hit {
+        let (hit, source) = self.answer(renderer, scene, world, cursor, ray, depth, far, click_waiting);
+        if trace_enabled() && self.traced != Some((source, hit.1)) {
+            self.traced = Some((source, hit.1));
+            let local = |i: usize| world.objects.get(i).map(|o| o.key.local_id);
+            let along = |p: Vec3| ray.map(|(o, d)| (p - o).dot(d));
+            log::info!(
+                "hover trace: {source:?} object={:?} touch={} at={:?} depth={:?} under={:?} cursor={:.0},{:.0}",
+                hit.1.and_then(local),
+                hit.1
+                    .is_some_and(|i| crate::interaction::target(world, i, &std::collections::HashMap::new()).is_some()),
+                hit.0.and_then(along),
+                depth.and_then(along),
+                self.kept.and_then(|k| k.under).map(|(i, at)| (local(i), at)),
+                cursor.0,
+                cursor.1,
+            );
+        }
+        hit
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn answer(
+        &mut self,
+        renderer: &mut Renderer,
+        scene: &mut crate::scene::Scene,
+        world: &crate::world::World,
+        cursor: (f32, f32),
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        far: f32,
+        click_waiting: bool,
+    ) -> (Hit, Source) {
         let cpu = scene.hover_pick(world, ray, depth, far);
         let Some(ray) = ray.filter(|_| !click_waiting && scene.hover_needs_drawn()) else {
             self.cancel(renderer);
-            return cpu;
+            return (cpu, Source::Cpu);
         };
         // request_drawn truncates to a physical pixel. Fractional pointer
         // motion inside that pixel must not invalidate its answer. Keep
@@ -151,7 +212,7 @@ impl HoverDrawn {
                         question: if here { question } else { asked },
                         hit,
                         at: now,
-                        under: under(scene, &drawn, asked.ray),
+                        under: under(scene, world, &drawn, asked.ray),
                     });
                 }
             } else if late {
@@ -165,7 +226,7 @@ impl HoverDrawn {
             self.last_request = Some(now);
         }
         let Some(kept) = self.kept.filter(|kept| now.duration_since(kept.at) < REFRESH * 2) else {
-            return cpu;
+            return (cpu, Source::Fallback);
         };
         // An animated opaque attachment changes the depth at every
         // frame. Keep its cursor between queries, just as a Blend
@@ -175,14 +236,21 @@ impl HoverDrawn {
             .1
             .and_then(|i| scene.gpu.get(i))
             .is_some_and(|g| g.rigged || g.owner_avatar.is_some());
-        let hit = if kept.question.same(&question, posed) {
-            kept.hit
-        } else if let Some((under, depth)) = kept.between(&question) {
-            scene.drawn_hover_between(world, under, ray, depth, far)
+        let (hit, source) = if kept.question.same(&question, posed) {
+            (kept.hit, Source::Answer)
+        } else if let Some(hit) = kept
+            .between(&question)
+            .and_then(|(under, depth)| scene.drawn_hover_between(world, under, ray, depth, far))
+        {
+            (hit, Source::Between)
         } else {
-            return cpu;
+            return (cpu, Source::Fallback);
         };
-        if foreground(cpu, hit, ray) { cpu } else { hit }
+        if foreground(cpu, hit, ray) {
+            (cpu, Source::Foreground)
+        } else {
+            (hit, source)
+        }
     }
 }
 

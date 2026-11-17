@@ -229,9 +229,14 @@ impl Scene {
     /// whenever the pointer moved. Here `under`, the object whose opaque
     /// face the last answer saw nearest, is taken to be the one under the
     /// pointer still, at the `depth` read now, and the searches of the CPU
-    /// run from there as they do for an answer. No query of the GPU; a
-    /// wrong guess (the pointer left the object) lasts until the next
-    /// answer.
+    /// run from there as they do for an answer. No query of the GPU.
+    ///
+    /// None when the guess has nothing to stand on, and the CPU's own
+    /// answer is the cursor's as before: `under` is an object the CPU
+    /// places by itself, or the surface under the pointer is one it knows
+    /// (an object it finds there, the ground): the pointer left `under`. A
+    /// wrong guess (the pointer went from a posed surface to another) lasts
+    /// until the next answer.
     pub fn drawn_hover_between(
         &self,
         world: &World,
@@ -239,19 +244,24 @@ impl Scene {
         ray: (Vec3, Vec3),
         depth: Vec3,
         far: f32,
-    ) -> (Option<Vec3>, Option<usize>) {
-        let at = (depth - ray.0).dot(ray.1);
+    ) -> Option<(Option<Vec3>, Option<usize>)> {
+        if !self.drawn_status(world, under).posed_by_gpu
+            || self.interaction_at_ray(world, depth, ray, true).is_some()
+            || world.ground_height(depth).is_some_and(|z| depth.z <= z + SAME)
+        {
+            return None;
+        }
+        // as `designated` for an opaque face of `under` at the depth
+        if self.takes(world, Gesture::Touch, under, false) {
+            return Some((Some(depth), Some(under)));
+        }
         // (each frame the pointer moves: only the objects the ray can meet)
         let mut near = Vec::new();
         self.pick.ray_candidates(ray, &mut near);
+        let at = (depth - ray.0).dot(ray.1);
         let adjusted = self.touch_depth_under(world, under, at, ray, Some(depth), far, Some(&near));
         let point = self.action_point(world, Some(ray), adjusted, false, far);
-        // as `designated` for an opaque face of `under` at the depth
-        let before = point.filter(|p| *p != depth).is_some_and(|p| (p - ray.0).dot(ray.1) + SAME < at);
-        if !before && self.takes(world, Gesture::Touch, under, false) {
-            return (Some(depth), Some(under));
-        }
-        (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
+        Some((point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true))))
     }
 
     /// A press on our displayed body, including meshes skinned to it.
@@ -978,18 +988,26 @@ mod tests {
         let moved = (Vec3::new(0.0, 0.02, 50.0), Vec3::X);
         let on_body = Vec3::new(2.5, 0.02, 50.0);
         let between = |scene: &Scene, ray: (Vec3, Vec3), depth: Vec3| scene.drawn_hover_between(&world, body, ray, depth, 100.0);
-        let (point, object) = between(&scene, moved, on_body);
+        let (point, object) = between(&scene, moved, on_body).expect("a posed surface");
         assert_eq!(object, Some(prim));
         assert!((point.unwrap().x - 2.6).abs() < 1e-3, "on the prim: {point:?}");
         // beside the prim: nothing under the body there
         let beside = (Vec3::new(0.0, 2.0, 50.0), Vec3::X);
-        assert_eq!(between(&scene, beside, Vec3::new(2.5, 2.0, 50.0)).1, None);
+        let on_body_beside = Vec3::new(2.5, 2.0, 50.0);
+        assert_eq!(between(&scene, beside, on_body_beside), Some((Some(on_body_beside), None)));
+        // the pointer left the body for a surface the CPU knows (the prim,
+        // seen beside the body), or the last answer was not a posed
+        // object's: the CPU's own search is the cursor's, as before
+        let on_prim = Vec3::new(2.6, 0.02, 50.0);
+        assert_eq!(scene.interaction_at_ray(&world, on_prim, moved, true), Some(prim));
+        assert_eq!(between(&scene, moved, on_prim), None);
+        assert_eq!(scene.drawn_hover_between(&world, prim, moved, on_body, 100.0), None);
 
         // "Rigged attachments of other avatars": the body, where the
         // pointer is now
         scene.rigged_clicks.others = true;
-        assert_eq!(between(&scene, moved, on_body), (Some(on_body), Some(body)));
-        assert_eq!(between(&scene, beside, Vec3::new(2.5, 2.0, 50.0)).1, Some(body));
+        assert_eq!(between(&scene, moved, on_body), Some((Some(on_body), Some(body))));
+        assert_eq!(between(&scene, beside, on_body_beside), Some((Some(on_body_beside), Some(body))));
     }
 
     /// A scripted animesh rezzed in front of a scripted prim: with
