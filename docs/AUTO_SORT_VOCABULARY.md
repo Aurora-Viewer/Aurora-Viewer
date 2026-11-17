@@ -70,3 +70,74 @@ development build read another file instead of the built-in one, so a change
 can be tried without rebuilding; a file that does not read is ignored, with
 the reason in the log. A published (release) build always uses the built-in
 vocabulary.
+
+## How to add…
+
+| To add | Where | Example |
+|---|---|---|
+| A body | `bodies`: a new entry with its folder name, `strong` words (only that body uses them) and `weak` words (also ordinary words, counted only when no strong word names a body) | `{ "body": "Kira", "strong": ["kira body"], "weak": ["kira"], "hides": [] }` |
+| A head platform | `categories` › `heads` for its name; the code also treats `lelutka`, `catwa`, `genus`, `evox`, `evo x` and `akeruka` as a head's name (below) | `"anotherhead"` |
+| A category word | that category's `words`, at the place its priority needs: earlier categories win, and a longer phrase of another category beats the word it is built on | `"sneakers"` in `shoes`; `"platform bed"` in `furniture` beats `"platform"` in `shoes` |
+| A store tag shape | `store_tag_patterns`: a pair in `enclosed` or a mark in `separators` | `["{", "}"]`, `" :: "` |
+| A status word that looks like a store tag | `store_stopwords` | `"new"` |
+| An unpacker word | `unpackers` | `"wear to unpack"` |
+| A skin tone | `skin_tones` | `"porcelain"` |
+| A Squish or Waifus spelling | `variants` | `"sqz"` |
+
+## Rules in the code, not in the file
+
+A few readings need more than a list of words. They live in
+`crates/aurora-viewer/src/world/inventory/sorter.rs` (`classify`, `store`,
+`judge_product_folder`) and are tested in `sorter_tests.rs`:
+
+- **A permission tag is not a word of the product**: `NO MOD`, `Copy/Mod`,
+  `mod/trans` are left out before anything is read (`without_permissions`),
+  so `NO MOD` is never a body mod.
+- **Makeup and a head's own content are the head's**: a makeup word, or an
+  add-on named for a head (`Genus Addon`), never goes under a body. Beside a
+  head's name only a body's own name counts (`Tattoo EVO-X [REBORN]` stays
+  Reborn's), never a weak word that is also a product's (`Venus Freckles
+  EvoX`).
+- **A head's skin is a skin**: beside a head's name, a tone, a no-brows
+  version or an overlay is a skin, unless a makeup word of its own says
+  otherwise (`Tone Blush` is makeup).
+- **A name that says decor is decor**: `Kitchen Decor . Glasses` is decor,
+  never worn glasses (`hair decor` stays the hair's).
+- **Stores**: a name written in spaced letters (`. z o r i n a .`) is one
+  store, and a numbered series (`12. Store`, `#4 Store`, `(3) Store`) is that
+  store, so it meets in one folder.
+- **A delivery whose name says nothing** goes where three in five of its
+  objects, clothing, body parts, animations and gestures read as; a mixed one
+  stays.
+
+## Global vocabulary and the user's own rules
+
+| | Global vocabulary | The user's own |
+|---|---|---|
+| What | how every name is read, for everyone | Rules (My rules tab), Store hints and creator hints (Options), My folders, excluded folders |
+| Where | `vocabulary.json`, built into the viewer | the user's inventory preferences, per account; Rules and hints can be shared as text (Share… / Import…) |
+| Who changes it | a pull request, with the corpus test | the user, in the Auto-sort window |
+| Wins | — | a rule always comes first; a store hint gives a category only to names that say nothing |
+
+A store that a creator names oddly is never added to the vocabulary: the user
+adds a store hint (`Store → Makeup`), and items that say what they are keep
+their own category.
+
+## Tests for a change
+
+Add the names your change is for to the corpus (`corpus.json`), and for a rule
+in the code a test in `sorter_tests.rs` named for what it guarantees, with
+made-up store names only (no real store, creator or resident):
+
+```rust
+/// A name that says decor is decor.
+#[test]
+fn decor_glasses_are_decor() {
+    assert_eq!(classify("Brindle . Kitchen Decor . Glasses 8", 6, 0).category, Some(Category::Decor));
+}
+```
+
+```powershell
+cargo test --workspace sorter
+cargo test --workspace vocabulary
+```

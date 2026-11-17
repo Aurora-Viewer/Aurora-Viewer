@@ -1347,6 +1347,13 @@ impl InventoryUi {
                     ..Default::default()
                 };
             }
+            "cleanup-duplicates" => {
+                state.tab = CLEANUP;
+                prefs.cleanup = sorter::Cleanup {
+                    find: Find::Duplicates,
+                    ..Default::default()
+                };
+            }
             "share" => {
                 state.tab = OPTIONS;
                 state.share = Some(sorter::share::Share::all(prefs));

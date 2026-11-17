@@ -6296,7 +6296,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, Auto-sort, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_SORTER_TAB=preview\|rules\|options\|cleanup\|cleanup-custom\|share\|import\|picker\|confirm-whole` | With a `sorter` inventory mode: sample rules and store hints, and Auto-sort on one tab, window or confirmation |
+| `AURORA_DEMO_SORTER_TAB=preview\|rules\|options\|cleanup\|cleanup-custom\|cleanup-duplicates\|share\|import\|picker\|confirm-whole` | With a `sorter` inventory mode: sample rules and store hints, and Auto-sort on one tab, window or confirmation |
 | `AURORA_SORTER_VOCAB=<path>` | Development builds: Auto-sort reads this vocabulary file instead of the built-in one |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
@@ -7164,7 +7164,7 @@ failure. Grid validation and any paid upload are performed by the human.
   to the Trash; Whole inventory asks twice. `AURORA_DEMO_SORTER_TAB` (with one of these
   modes) fills the demo's own Auto-sort settings with three rules (a path, one of my
   folders, Pre-Trash), two store hints, a creator hint and an excluded folder, then opens a tab
-  (`preview`, `rules`, `options`, `cleanup`; `cleanup-custom` picks June 2013, three
+  (`preview`, `rules`, `options`, `cleanup`; `cleanup-duplicates` opens Clean up › Duplicates; `cleanup-custom` picks June 2013, three
   types and empty folders), the Share or Import window (`import` pastes a friend's
   text: rules and hints already there, a new rule, a new Pre-Trash rule shown in red and
   unticked, a sort folder renamed `Tidy` (unticked) and the store option flipped, each
