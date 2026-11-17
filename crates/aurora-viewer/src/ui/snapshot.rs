@@ -199,8 +199,13 @@ pub struct View<'a> {
     pub email: Option<EmailView>,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
+    /// Preferences' shadow quality and ambient occlusion, under the
+    /// photo's own (`snapshot::light`).
     pub shadow_quality: u8,
     pub ambient_occlusion: u8,
+    /// The photo quality's boost is on: its levels are the most the photo
+    /// can choose (`snapshot::light::photo_level`).
+    pub quality_boost: bool,
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
@@ -1289,11 +1294,15 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, labels: &[&str]) {
+/// A level of the photo's (shadows, occlusion) on Preferences' stepped
+/// slider: Preferences' `current` until one is chosen; under the photo
+/// quality's boost, never past it.
+fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
+    use crate::snapshot::light::photo_level;
     ui.horizontal(|ui| {
-        let mut level = value.unwrap_or(current);
+        let mut level = photo_level(true, *value, current, boost);
         if super::options::stepped(ui, p, &mut level, labels) {
-            *value = Some(level);
+            *value = Some(photo_level(true, Some(level), current, boost));
         }
     });
 }
@@ -1325,6 +1334,7 @@ fn light_rows(
                     p,
                     &mut l.shadow_quality,
                     view.shadow_quality,
+                    view.quality_boost,
                     &[
                         tr!("ui-options-disabled-2"),
                         tr!("ui-options-low"),
@@ -1340,6 +1350,7 @@ fn light_rows(
                     p,
                     &mut l.ambient_occlusion,
                     view.ambient_occlusion,
+                    view.quality_boost,
                     &[tr!("ui-options-disabled"), tr!("ui-options-low"), tr!("ui-options-high")],
                 );
             });
@@ -2012,6 +2023,9 @@ mod tests {
             profile_posted: false,
             email: None,
             exposure: 0.0,
+            shadow_quality: 0,
+            ambient_occlusion: 0,
+            quality_boost: false,
             hdr: true,
             env: EnvView {
                 catalog,

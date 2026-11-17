@@ -822,10 +822,10 @@ fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<
     .changed()
 }
 
-/// Stepped slider with a named level shown next to it.
+/// Stepped slider with a named level shown next to it; narrower than
+/// Preferences' width where the row is (the photo's Light panel).
 pub(super) fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     let max = labels.len().saturating_sub(1) as u8;
-    let label_for = |v: u8| labels.get(v.min(max) as usize).copied().unwrap_or("");
     let font = egui::FontId::proportional(12.0);
     let width = labels
         .iter()
@@ -845,7 +845,7 @@ pub(super) fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str
             .trailing_fill(true)
             .show_value(false),
     );
-    let label = label_for(*v);
+    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     ui.add_sized(
         vec2(width, ui.spacing().interact_size.y),
         egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),
