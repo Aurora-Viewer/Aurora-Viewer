@@ -3286,6 +3286,7 @@ ui-options-contact-marker-anchor-above = Above the name plate
 ui-options-contact-marker-anchor-body = Chest
 ui-options-name-tags = Avatar name tags
 ui-options-show-own-tag = Show my name tag
+ui-options-show-own-tag-help = Hidden with the others while both switches below are off, as with Avatar Name Tags on Off in the Legacy Viewer.
 ui-options-show-friend-tags = Show friends' name tags
 ui-options-show-other-tags = Show other residents' name tags
 # Quick preferences: the name tags row (AvatarNameTagMode)

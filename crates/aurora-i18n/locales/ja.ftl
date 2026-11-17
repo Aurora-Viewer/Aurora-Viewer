@@ -3267,6 +3267,7 @@ ui-options-contact-marker-anchor-above = 名前プレートの上
 ui-options-contact-marker-anchor-body = 胸
 ui-options-name-tags = アバターの名前タグ
 ui-options-show-own-tag = 自分の名前タグを表示
+ui-options-show-own-tag-help = 下の２つの設定が両方ともオフの間は、他の名前タグと一緒に非表示になります（レガシービューアで名前タグを「非表示」にした場合と同じです）。
 ui-options-show-friend-tags = フレンドの名前タグを表示
 ui-options-show-other-tags = 他の住人の名前タグを表示
 # Quick preferences: the name tags row (AvatarNameTagMode)

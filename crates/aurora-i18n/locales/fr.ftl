@@ -3289,6 +3289,7 @@ ui-options-contact-marker-anchor-above = Au-dessus de la plaque de nom
 ui-options-contact-marker-anchor-body = Poitrine
 ui-options-name-tags = Étiquettes des avatars
 ui-options-show-own-tag = Afficher mon étiquette
+ui-options-show-own-tag-help = Masquée avec les autres tant que les deux réglages ci-dessous sont désactivés, comme avec les étiquettes sur « Aucune » dans le Legacy Viewer.
 ui-options-show-friend-tags = Afficher les étiquettes des amis
 ui-options-show-other-tags = Afficher les étiquettes des autres
 # Quick preferences: the name tags row (AvatarNameTagMode)
