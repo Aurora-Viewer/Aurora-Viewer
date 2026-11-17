@@ -30,6 +30,20 @@ const BATCH: usize = 20;
 const LEGACY_BATCH: usize = 10;
 /// bulkFetch's max_concurrent_fetches.
 const LEGACY_IN_FLIGHT: usize = 12;
+/// How long a read may stay unanswered before its slot is freed and it is
+/// tried again like a throttled one: beyond the HTTP layer's own worst case
+/// (ais.rs: a 60 s timeout, five attempts, their backoff). A reply that
+/// never comes (a task lost, a connection dropped without an error) never
+/// holds one of the pool's slots for the rest of the session.
+const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(360);
+/// An idle walk with folders left unread looks at them again this often:
+/// what a lost reply or a dropped retry left is asked for in the walk's own
+/// batches, at its own pace.
+const WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
+/// Folders the walk gave up on (failed after their retries) are asked for
+/// again this often, a few times a session, never in a loop.
+const FAILED_AGAIN: std::time::Duration = std::time::Duration::from_secs(600);
+const FAILED_ROUNDS: u32 = 6;
 /// LLFolderType::FT_MARKETPLACE_LISTINGS, loaded by its own window.
 const MARKETPLACE_LISTINGS: i32 = 53;
 /// Queue entries looked at per frame (bulkFetch stops after 6 ms).
@@ -62,6 +76,8 @@ struct Request {
     children: Vec<Uuid>,
     depth: i32,
     attempt: u32,
+    /// When it was sent ([`READ_DEADLINE`]).
+    sent: Instant,
 }
 
 /// A read waiting for its next attempt after a transient failure.
@@ -105,6 +121,13 @@ pub struct BackgroundFetch {
     too_big_announced: bool,
     /// The HTTP status of the refusal that found the first over-limit folder.
     too_big_status: Option<u16>,
+    /// The clock of the current pump: when its reads are sent.
+    clock: Option<Instant>,
+    /// When the idle walk last looked for folders left unread.
+    swept: Option<Instant>,
+    /// When the failed folders were last asked again, and how many times.
+    failed_round: Option<Instant>,
+    failed_rounds: u32,
 }
 
 impl BackgroundFetch {
@@ -202,6 +225,25 @@ impl BackgroundFetch {
     /// waiting for the real backoff).
     pub fn pump_at(&mut self, inv: &mut Inventory, agent: Uuid, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
+        self.clock = Some(now);
+        // a read unanswered past its deadline frees its slot and is tried
+        // again like a throttled one
+        let expired: Vec<u64> = self
+            .in_flight
+            .iter()
+            .filter(|(_, r)| now.saturating_duration_since(r.sent) >= READ_DEADLINE)
+            .map(|(request, _)| *request)
+            .collect();
+        if !expired.is_empty() {
+            log::warn!(
+                "inventory background fetch: {} reads unanswered for {} s, asked again",
+                expired.len(),
+                READ_DEADLINE.as_secs()
+            );
+            for request in expired {
+                self.on_reply_at(inv, request, &[], Err(FetchError::new(FetchFailure::Transient, None)), now);
+            }
+        }
         // llstartup::STATE_INVENTORY_SEND calls findLostItems once per
         // session, including when the regular folders came from cache.
         if self.started && !self.orphans_requested {
@@ -234,6 +276,7 @@ impl BackgroundFetch {
             }
         }
         self.retries = waiting;
+        self.watch(inv, now);
         let mut steps = 0;
         while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
             let Some((id, kind)) = self.queue.pop_front() else {
@@ -259,6 +302,63 @@ impl BackgroundFetch {
             );
         }
         out
+    }
+
+    /// The stall watchdog: an idle walk that left folders unread (a reply
+    /// lost, a retry dropped) asks for them again in its own batches, each
+    /// unread folder's parent read for its unfetched folders; the folders it
+    /// gave up on are asked again a few times a session. Never a folder over
+    /// the server's limit, nor Marketplace Listings.
+    fn watch(&mut self, inv: &Inventory, now: Instant) {
+        if !self.started || !self.is_idle() || self.swept.is_some_and(|at| now.saturating_duration_since(at) < WATCHDOG) {
+            return;
+        }
+        self.swept = Some(now);
+        let failed_due =
+            self.failed_rounds < FAILED_ROUNDS && self.failed_round.is_none_or(|at| now.saturating_duration_since(at) >= FAILED_AGAIN);
+        let mut parents: Vec<Uuid> = Vec::new();
+        let mut failed: Vec<Uuid> = Vec::new();
+        let mut stack = vec![inv.root, inv.lib_root];
+        let mut seen = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(f) = inv.folders.get(&id) else { continue };
+            if f.info.type_default == MARKETPLACE_LISTINGS || inv.too_big.contains(&id) {
+                continue;
+            }
+            match f.state {
+                FetchState::Fetched => stack.extend(f.children.iter().copied()),
+                FetchState::Unknown => {
+                    if !parents.contains(&f.info.parent) {
+                        parents.push(f.info.parent);
+                    }
+                }
+                FetchState::Failed => failed.push(id),
+                FetchState::Fetching => {}
+            }
+        }
+        // (the first walk ends on its own; a folder the user's own read
+        // fails stays for the failed rounds)
+        parents.retain(|p| inv.folders.get(p).is_some_and(|f| f.state == FetchState::Fetched));
+        if !parents.is_empty() {
+            log::warn!(
+                "inventory background fetch: idle with unread folders under {} folders, asked again",
+                parents.len()
+            );
+            self.queue.extend(parents.into_iter().map(|p| (p, Kind::ContentRecursive)));
+        }
+        if failed_due && !failed.is_empty() {
+            self.failed_round = Some(now);
+            self.failed_rounds += 1;
+            log::warn!(
+                "inventory background fetch: {} folders that failed asked again (round {} of {FAILED_ROUNDS})",
+                failed.len(),
+                self.failed_rounds
+            );
+            self.queue.extend(failed.into_iter().map(|id| (id, Kind::Recursive)));
+        }
     }
 
     pub fn on_orphans_reply(&mut self, request: u64, success: bool) -> bool {
@@ -419,6 +519,7 @@ impl BackgroundFetch {
                 children,
                 depth,
                 attempt,
+                sent: self.clock.unwrap_or_else(Instant::now),
             },
         );
         self.busy.get_or_insert_with(|| (Instant::now(), 0)).1 += 1;
@@ -439,6 +540,7 @@ impl BackgroundFetch {
             children,
             depth,
             attempt,
+            ..
         }) = self.in_flight.remove(&request)
         else {
             return;

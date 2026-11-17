@@ -183,7 +183,13 @@ fn run_keeping_fetch(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &S
             reads.push(read);
         }
     }
-    panic!("the background fetch never ended");
+    panic!(
+        "the background fetch never ended: queue {:?}, {} in flight, {} retries, unfetched {:?}",
+        fetch.queue,
+        fetch.in_flight.len(),
+        fetch.retries.len(),
+        unfetched(inv)
+    );
 }
 
 fn unfetched(inv: &Inventory) -> Vec<Uuid> {
@@ -570,4 +576,86 @@ fn a_folder_too_big_even_at_depth_zero_is_reported_and_its_subfolders_still_load
         "the alert names the folder once, with the refusal's status"
     );
     assert!(fetch.take_too_big().0.is_empty());
+}
+
+/// A read that never gets an answer frees its slot after the deadline and
+/// is asked again: lost replies never stall the walk for the session.
+#[test]
+fn an_unanswered_read_frees_its_slot_and_is_asked_again() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let start = Instant::now();
+    let first = fetch.pump_at(&mut inv, AGENT, start);
+    let sent = first.iter().filter(|c| matches!(c, NetCommand::FetchInventoryTree { .. })).count();
+    assert!(sent > 0 && fetch.in_flight.len() == sent);
+    // no reply ever comes: past the deadline the slots are free again
+    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
+    assert!(fetch.in_flight.is_empty(), "the slots are freed");
+    assert_eq!(fetch.retries.len(), sent, "each read waits for its retry");
+    let again = fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE + BACKGROUND_BACKOFF[0]);
+    assert!(
+        again.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
+        "asked again"
+    );
+}
+
+/// A folder the walk gave up on is asked again later in the session, a few
+/// times, never in a loop; an idle walk with a folder left unread reads it.
+#[test]
+fn failed_and_unread_folders_are_asked_again_later() {
+    let tree = [(10, 1, -1), (11, 1, -1)];
+    let mut inv = skeleton(&tree);
+    let failing = std::cell::Cell::new(true);
+    let failure =
+        |read: &Read| (failing.get() && (read.parent == id(11) || read.children.contains(&id(11)))).then_some(FetchFailure::Fatal);
+    let server = Server {
+        tree: &tree,
+        cap: 50,
+        items: 1,
+        failure: &failure,
+    };
+    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Failed);
+    // the idle walk's next look asks for it again, then waits its round
+    let later = Instant::now() + std::time::Duration::from_secs(100_000);
+    let again = fetch.pump_at(&mut inv, AGENT, later);
+    assert!(
+        again.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
+        "asked again"
+    );
+    assert_eq!(fetch.failed_rounds, 1);
+    // (its answer, still a failure)
+    for command in again {
+        if let NetCommand::FetchInventoryTree {
+            request,
+            parent,
+            children,
+            depth,
+            ..
+        } = command
+        {
+            let read = Read { parent, children, depth };
+            let outcome = server.answer(&read).map(|contents| {
+                inv.apply(contents);
+            });
+            fetch.on_reply_at(&mut inv, request, &[], outcome, later);
+        }
+    }
+    // the server gives it now: the next round reads it
+    failing.set(false);
+    fetch.failed_round = None;
+    fetch.swept = None;
+    run_keeping_fetch(fetch, &mut inv, &server);
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Fetched);
+    // an idle walk with a folder left unread (a reply lost) reads it
+    let mut inv = skeleton(&tree);
+    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
+    if let Some(f) = inv.folders.get_mut(&id(10)) {
+        f.state = FetchState::Unknown;
+    }
+    fetch.swept = None;
+    let reads = run_with(fetch, &mut inv, &server);
+    assert!(!reads.is_empty(), "the watchdog asked again");
+    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched);
 }
