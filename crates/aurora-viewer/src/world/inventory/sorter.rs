@@ -689,6 +689,17 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
             Some(longer.map_or(*first, |(c, _)| c))
         })
         .or_else(|| Category::of_asset(asset_type, flags));
+    // (a worn thing's display piece: `Velvet Heels Decor`, `Handbag (decor)`)
+    let category = match category {
+        Some(c)
+            if typed.is_none()
+                && words.last().is_some_and(|w| w == "decor")
+                && !matches!(c, Category::Furniture | Category::Decor | Category::Vehicles | Category::Pets) =>
+        {
+            Some(Category::Decor)
+        }
+        other => other,
+    };
     let body = body(&words);
     // A body skin says which body and how it looks, not what it is:
     // `The "Harbor Body" for eBody Reborn (Porcelain)`.
@@ -1548,7 +1559,7 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         Some(Mark::Strong) => true,
         Some(Mark::Plain) => !shelf_marked && !words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str())),
         // (a shelf word inside a product's name does not stop its brand:
-        // `Lyrium. My Little Grimoire` holding `Lyrium. My Little Grimoire
+        // `Zorin. My Little Book` holding `Zorin. My Little Book
         // Curvy`; `My Stuff`'s things never start with `my`)
         None => (!shelf_marked || brand_first(inv, f, name)) && shares_its_name(inv, f, name),
     };
@@ -1570,8 +1581,28 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
         // whose it is (`Hex Dress`, `[Velmora] Hex`); a shelf is opened even
         // named for a kind or a body (`Stuff`, `2024`, `Hunt Gifts`, `My
         // Shoes`, `Old Hair`, `Reborn Stuff`)
-        tagged || store_named || named && names_a_product(name)
+        tagged || store_named || named && names_a_product(name) && one_product_named(inv, f, name)
     }
+}
+
+/// A folder of loose items names one product with a word of its own: not
+/// a shelf marker (`Shoes Backup`), nor a colour or a material beside a
+/// plural kind (`Black Dresses`, `Leather Jackets`: the user's shelf of
+/// them), unless an item carries the folder's whole name (`Black Dresses
+/// HUD`).
+fn one_product_named(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
+    let name_words = words(name);
+    let many = name_words
+        .iter()
+        .any(|w| (plural_kind(w) || loose_plural(w)) && !SOLD_AS_MANY.contains(&w.as_str()));
+    let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
+    let own = product_words(name)
+        .iter()
+        .any(|w| !SHELF_MARKERS.contains(&w.as_str()) && !(many && (FINISHES.contains(&w.as_str()) || tone(w))));
+    own || f.items.iter().filter_map(|i| inv.items.get(i)).any(|it| {
+        let item_words = words(&it.name);
+        name_words.iter().all(|w| item_words.contains(w))
+    })
 }
 
 /// How a name shows an unpacker: `Strong` marks (a bracketed `(unpacked)`,
@@ -1652,7 +1683,7 @@ fn delivery_mark(name: &str) -> Option<Mark> {
     if version_tag(name) {
         return Some(Mark::Strong);
     }
-    // (`MadPea Old Milk Cans Unboxed`: the unpacker's own word after a
+    // (`Brindle Old Milk Cans Unboxed`: the unpacker's own word after a
     // product's name; `Unboxed Items`, `Unpacked Stuff` stay piles)
     if let Some((last, rest)) = name_words.split_last()
         && matches!(last.as_str(), "unboxed" | "unpacked")
@@ -1713,7 +1744,7 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
                 && !loose_plural(w)
         })
         .collect();
-    // (a dated name is the user's: `Mia & Me 10.12.2016`)
+    // (a dated name is the user's: `Zoe & Me 10.12.2016`)
     // (whole tokens of digits and dots only: `v1.0.2024` is a version)
     let dated = name
         .split(|c: char| c.is_whitespace() || "()[]{}".contains(c))
@@ -1755,8 +1786,8 @@ fn shares_its_name(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
 }
 
 /// Most of a folder's items start with the folder's own first word, a
-/// brand's place (`Lyrium. My Little Grimoire` holding `Lyrium. My Little
-/// Grimoire - Curvy`).
+/// brand's place (`Zorin. My Little Book` holding `Zorin. My Little
+/// Book - Curvy`).
 fn brand_first(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
     let Some(first) = words(name).into_iter().next() else {
         return false;
@@ -1992,7 +2023,9 @@ fn delivery_by_default(inv: &Inventory, f: &super::Folder, name: &str, named: bo
     let name_words = words(name);
     let occasion = name_words.iter().any(|w| OCCASION_WORDS.contains(&w.as_str()));
     // one thing named (`Kimono Set`, `Old Hat 2009`)
+    // (never beside a shelf word: `Skin Gifts`, `Skin Demos`)
     let singular_kind = named
+        && !name_words.iter().any(|w| SHELF_WORDS.contains(&w.as_str()))
         && name_words
             .iter()
             .any(|w| is_kind(w) && !plural_kind(w) && !MASS_KINDS.contains(&w.as_str()))
@@ -2307,7 +2340,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 53] = [
+const SHELF_WORDS: [&str; 54] = [
     "my",
     "old",
     "new",
@@ -2361,6 +2394,7 @@ const SHELF_WORDS: [&str; 53] = [
     "mens",
     "unisex",
     "gachas",
+    "demos",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone

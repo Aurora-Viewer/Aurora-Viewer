@@ -518,6 +518,17 @@
     {
       "category": "furniture",
       "words": [
+        "salon chair",
+        "tattoo chair",
+        "nail table",
+        "shoe bench",
+        "shoe shelf",
+        "shoe rack",
+        "coat rack",
+        "hat rack",
+        "hat stand",
+        "jewelry box",
+        "makeup vanity",
         "chair",
         "chairs",
         "sofa",
@@ -552,6 +563,7 @@
     {
       "category": "decor",
       "words": [
+        "hair dryer",
         "decor",
         "plant",
         "plants",

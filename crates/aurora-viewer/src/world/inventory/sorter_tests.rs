@@ -3388,7 +3388,7 @@ fn shelf_dashes_holidays_genders_and_dates_are_shelves() {
         ("Xmas Decor", &["Zephyr Wreath", "Quillon Candle"]),
         ("Female", &["Velmora Top Female", "Kira Hair Female", "Lumen Boots (Female)"]),
         ("Swimwear Men", &["Zephyr Trunks", "Quillon Shorts"]),
-        ("Mia & Me 10.12.2016", &["Mia's gift", "Mia Birthday Card"]),
+        ("Zoe & Me 10.12.2016", &["Zoe's gift", "Zoe Birthday Card"]),
     ];
     for (name, items) in shelves {
         let mut inv = fixture(&[]);
@@ -3575,4 +3575,34 @@ fn colour_first_versions_keep_an_occasion_product_whole() {
             "{name} is never opened"
         );
     }
+}
+
+/// Audit 51: a colour or shelf-marker shelf of loose items, a pile of
+/// demos and a part kind's gift shelf open; a worn thing's display piece
+/// is decor or furniture.
+#[test]
+fn colour_shelves_demo_piles_and_display_pieces() {
+    let none = HashSet::new();
+    for (name, items) in [
+        ("Black Dresses", ["Velmora Hex Dress Black", "Kira Gown Black"]),
+        ("Shoes Backup", ["Velmora Pumps", "Kira Boots"]),
+        ("Hair Demos", ["Calyx Bun Hair DEMO", "Wren Messy Bun DEMO"]),
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, item) in items.iter().enumerate() {
+            add_item(&mut inv, 950 + n as u128, 900, item, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        assert!(!plan.moves.iter().any(|m| m.id == id(900)), "{name} never moves whole");
+    }
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Skin Gifts");
+    add_folder(&mut inv, 901, 900, "Ilse Skin Gift");
+    add_folder(&mut inv, 902, 900, "Kira Skin Gift");
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(!plan.moves.iter().any(|m| m.id == id(900)), "Skin Gifts never moves whole");
+    assert_eq!(classify("Velvet Heels Decor", 6, 0).category, Some(Category::Decor));
+    assert_eq!(classify("Shoe Rack", 6, 0).category, Some(Category::Furniture));
+    assert_eq!(classify("Tattoo Chair", 6, 0).category, Some(Category::Furniture));
 }

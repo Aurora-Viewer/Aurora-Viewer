@@ -636,16 +636,21 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
     // (the folders hang under My Inventory, as the inventory keeps them)
     inv.folders.get_mut(&id(1)).expect("root").children = vec![id(14), id(2), id(30)];
     inv.add_items(
-        [(900, 14, "Deleted Thing", 6), (901, 2, "A Resident", 2), (902, 30, "Kira Boots", 6)]
-            .into_iter()
-            .map(|(n, parent, name, kind)| InvItem {
-                id: id(n),
-                parent: id(parent),
-                name: name.into(),
-                asset_type: kind,
-                ..Default::default()
-            })
-            .collect(),
+        [
+            (900, 14, "Deleted Thing", 6),
+            (901, 2, "A Resident", 2),
+            (902, 30, "Kira Boots", 6),
+            (903, 30, "Snapshot : Some Region (12, 34, 56)", 0),
+        ]
+        .into_iter()
+        .map(|(n, parent, name, kind)| InvItem {
+            id: id(n),
+            parent: id(parent),
+            name: name.into(),
+            asset_type: kind,
+            ..Default::default()
+        })
+        .collect(),
     );
     let shared = Snapshot::take_to_share(&inv, 1);
     assert!(shared.account.is_nil());

@@ -352,7 +352,9 @@ impl Snapshot {
     /// residents' names) or Landmarks (places the user goes); calling cards
     /// and landmarks elsewhere are left out too.
     pub fn take_to_share(inv: &Inventory, at: i64) -> Self {
-        const LEFT_OUT: [i32; 4] = [14, 16, 2, 3];
+        // (the Trash, Lost and Found, Calling Cards, Landmarks, the Photo
+        // Album and Favorites: places and residents)
+        const LEFT_OUT: [i32; 6] = [14, 16, 2, 3, 15, 23];
         // (the folders shown, found once from My Inventory down: one walk,
         // never one walk up per entry at 400,000 items)
         let mut shown: HashSet<Uuid> = HashSet::new();
@@ -379,7 +381,12 @@ impl Snapshot {
         let mut items: Vec<_> = inv
             .items
             .values()
-            .filter(|it| !matches!(it.asset_type, 2 | 3) && !hidden(it.parent))
+            .filter(|it| {
+                !matches!(it.asset_type, 2 | 3)
+                    && !matches!(it.inv_type, 2 | 3)
+                    && !it.name.trim_start().to_lowercase().starts_with("snapshot :")
+                    && !hidden(it.parent)
+            })
             .collect();
         items.sort_by_key(|it| it.id);
         let items = items.iter().map(|it| (number(it.id), number(it.parent), it.name.clone())).collect();
