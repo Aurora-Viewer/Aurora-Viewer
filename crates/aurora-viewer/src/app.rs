@@ -76,6 +76,8 @@ mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod director;
+mod director_extra;
+mod director_render;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -7135,7 +7137,7 @@ impl App {
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
-            self.receive_event(ev, sent);
+            self.receive_event(ev, self.director_render_stamp(sent));
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
@@ -10572,6 +10574,8 @@ impl App {
         } else {
             now.duration_since(self.last_frame).as_secs_f32().min(0.1)
         };
+        // (the Director's offline render: one frame of its film at a time)
+        let dt = self.director_render_dt().unwrap_or(dt);
         // the photo mode's frozen world: the camera and the interface keep
         // the frame's time, what moves in the world gets none
         let frozen = self.photo_world_frozen();
@@ -10669,6 +10673,7 @@ impl App {
             self.camera.shift(shift);
             self.capture_360.shift(shift);
             self.director.d.track.shift(shift);
+            self.director.extra.shift(shift);
             if let Some(session) = &mut self.studio_photo_session {
                 session.camera.shift(shift);
             }
@@ -12766,6 +12771,8 @@ impl App {
                     .unwrap_or(0),
             ),
         };
+        // the Director's fades and titles, drawn into the picture
+        fp.rlva_overlays.extend(self.director_finish_overlays((w, h)));
         if let Some(view) = studio_view {
             self.studio_render(&mut gfx.renderer, &mut fp, view);
         } else {
