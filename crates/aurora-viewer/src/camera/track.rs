@@ -17,6 +17,7 @@
 
 use crate::director::shots::{Ease, KeyShot};
 use crate::director::{Aim, Joint, KeyAim, Target};
+use crate::director_keys::{ExtraFile, KeyExtra};
 use crate::joystick::flycam::Flycam;
 use glam::{Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -174,6 +175,10 @@ pub struct KeyFile {
     pub dolly_zoom: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<[f64; 3]>,
+    /// Its animation, lens and time of day (`director_keys`); absent when
+    /// it sets none, and from older files.
+    #[serde(default, skip_serializing_if = "ExtraFile::is_empty")]
+    pub extra: ExtraFile,
 }
 
 /// What a keyframe looks at, as a track's file keeps it: the joint by its
@@ -273,6 +278,8 @@ pub struct Keyframe {
     pub aim: KeyAim,
     /// Its easing, its dolly zoom, the target it travels with.
     pub shot: KeyShot,
+    /// The animation it starts or stops, its own lens and time of day.
+    pub extra: KeyExtra,
 }
 
 /// How the camera goes from a keyframe to the next.
@@ -382,6 +389,7 @@ impl Track {
                     ease: key.shot.ease,
                     dolly_zoom: key.shot.dolly_zoom,
                     follow: key.shot.anchor.map(|anchor| super::presets::to_global(origin, anchor)),
+                    extra: ExtraFile::of(&key.extra),
                 })
                 .collect(),
         }
@@ -429,6 +437,7 @@ impl Track {
                         .filter(|anchor| anchor.iter().all(|v| v.is_finite()))
                         .map(|anchor| super::presets::from_global(origin, anchor)),
                 },
+                extra: key.extra.read(),
             });
         }
         let mut track = Track {
@@ -464,6 +473,7 @@ impl Track {
             rest: false,
             aim: KeyAim::Lock,
             shot: KeyShot::default(),
+            extra: KeyExtra::default(),
         });
         self.tidy();
         if first {
@@ -485,6 +495,7 @@ impl Track {
             rest: false,
             aim: KeyAim::Lock,
             shot: KeyShot::default(),
+            extra: KeyExtra::default(),
         });
         self.tidy();
         Some(self.keys.len() - 1)
@@ -527,6 +538,35 @@ impl Track {
         if let Some(key) = self.keys.get_mut(index) {
             key.shot = shot;
         }
+    }
+
+    /// The animation, lens and time of day of keyframe `index`.
+    pub fn set_extra(&mut self, index: usize, extra: KeyExtra) {
+        if let Some(key) = self.keys.get_mut(index) {
+            key.extra = extra;
+        }
+    }
+
+    /// Keyframes laid after the last one at the times they give (a path
+    /// taken by hand, `director_capture`): each at least `MIN_GAP` after the
+    /// one before and no later than `MAX_TIME`, as many as the track still
+    /// takes. How many were laid.
+    pub fn push_keys(&mut self, keys: impl IntoIterator<Item = Keyframe>) -> usize {
+        let mut laid = 0;
+        for mut key in keys {
+            let after = self.keys.last().map(|last| last.time + MIN_GAP);
+            key.time = match after {
+                Some(after) => key.time.max(after),
+                None => 0.0,
+            };
+            if self.is_full() || !key.time.is_finite() || key.time > MAX_TIME {
+                break;
+            }
+            self.keys.push(key);
+            laid += 1;
+        }
+        self.tidy();
+        laid
     }
 
     /// The keyframes around `time` and how far the view has turned from what

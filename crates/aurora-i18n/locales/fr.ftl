@@ -419,6 +419,53 @@ pose-stand-arms-upward-legs-together = Bras vers le haut, jambes jointes
 toolbar-command-snapshot-to-disk = Photo sur disque
 toolbar-command-photo-roll = Pellicule
 toolbar-command-director = Director
+# Director — capture and animations
+director-capture = Parcours à la main
+director-capture-start = Enregistrer mon parcours
+director-capture-start-tip = Faites voler la caméra comme vous voulez filmer (caméra Alt, caméra libre ou flycam) : la vue est gardée vingt fois par seconde, et Arrêter en fait des images clés au rythme de votre vol.
+director-capture-taking = Enregistrement du parcours : { $time }, { $views ->
+    [one] { $views } vue
+   *[other] { $views } vues
+    }
+director-capture-stop = Arrêter et créer les images clés
+director-capture-stop-tip = Le parcours devient des images clés après la fin du trajet, au rythme où vous l’avez volé. Ctrl+Z le reprend.
+director-capture-cancel-tip = Abandonner ce parcours (Échap).
+director-capture-detail = Détail
+director-capture-detail-tip = À quel point les images clés suivent votre parcours : plus de détail garde ses petits mouvements, avec plus d’images clés.
+director-capture-hint = Votre parcours s’ajoute après la fin du trajet, ou devient le trajet s’il est vide.
+director-capture-done = Votre parcours a donné { $count ->
+    [one] { $count } image clé
+   *[other] { $count } images clés
+    } sur { $time }.
+director-capture-short = Le parcours était trop court pour être lu : enregistrez un peu plus longtemps.
+director-capture-full = Le trajet n’a plus de place pour ce parcours.
+director-capture-dropped = Le parcours est abandonné : le Director s’est fermé, une téléportation a commencé ou RLVa restreint la caméra.
+director-capture-restricted = RLVa restreint la caméra : aucun parcours ne peut être enregistré.
+director-key-anim = Animation
+director-key-anim-none = Aucune
+director-key-anim-tip = Une animation de votre inventaire que votre avatar joue quand la lecture passe cette image clé (ou déposez-en une ici depuis l’inventaire). Tout ce que le trajet a lancé s’arrête à la fin de la lecture.
+director-key-anim-missing = { $name } (introuvable)
+director-key-anim-missing-tip = Cette animation n’est plus dans votre inventaire : la lecture la saute.
+director-key-anim-clear = Pas d’animation ici
+director-key-anim-until = Jusqu’à
+director-key-anim-until-tip = Où l’animation s’arrête : à une image clé suivante, ou à la fin de la lecture.
+director-key-anim-end = Fin de la lecture
+director-key-anim-stops = Arrête
+director-key-anim-stops-tip = Une animation lancée par une image clé précédente s’arrête ici.
+director-key-anim-stops-clear = La laisser jouer
+director-key-lens-time = Objectif et heure du jour
+director-key-aperture = Ouverture
+director-key-aperture-tip = La profondeur de champ de cette image clé ; entre deux images clés, elle change en douceur.
+director-key-focus = Mise au point
+director-key-focus-tip = La distance de mise au point de cette image clé, au lieu de celle du trajet (la cible, ou sa distance de mise au point).
+director-key-hour = Heure du jour
+director-key-hour-tip = Le soleil à cette image clé, sur votre vue seulement : rien n’est envoyé à la région. Entre deux images clés il se déplace en douceur ; votre ciel revient à la fin de la lecture.
+director-key-track-value = Valeur du trajet
+director-key-live = En direct
+director-key-set = Définir
+director-key-set-tip = Donner à cette image clé sa propre valeur.
+director-key-unset = Revenir à la valeur du trajet
+director-key-unset-live = Revenir au ciel en direct
 director-title = Director
 director-camera = Caméra
 director-lens = Angle de vue

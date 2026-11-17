@@ -75,6 +75,7 @@ mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod director;
+mod director_extra;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -10664,6 +10665,7 @@ impl App {
             self.camera.shift(shift);
             self.capture_360.shift(shift);
             self.director.d.track.shift(shift);
+            self.director.extra.shift(shift);
             if let Some(session) = &mut self.studio_photo_session {
                 session.camera.shift(shift);
             }

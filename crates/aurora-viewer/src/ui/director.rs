@@ -35,7 +35,7 @@ pub const WINDOW: &str = "director";
 
 const WIDTH: f32 = 340.0;
 const LABEL_W: f32 = 112.0;
-const SLIDER_W: f32 = 120.0;
+pub(super) const SLIDER_W: f32 = 120.0;
 /// What the window keeps clear of the room the bars leave: its own title
 /// and margins, the timeline strip under it, and a little air.
 const WINDOW_MARGIN: f32 = 230.0;
@@ -113,6 +113,8 @@ pub enum Action {
     /// This keyframe travels with its target (from where it is now), or
     /// stays where it is in the world.
     KeyTravel(usize, bool),
+    /// A keyframe's camera dragged in the world to this view.
+    MoveKey(usize, Pose),
 }
 
 /// The saved tracks as the window shows them.
@@ -191,7 +193,7 @@ pub struct Env<'a> {
     pub out: &'a mut Vec<EnvAction>,
 }
 
-fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(super) fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), Sense::hover());
         ui.painter()
@@ -222,7 +224,7 @@ fn degrees(ui: &mut egui::Ui, value: f32, range: RangeInclusive<f32>, fill: bool
 }
 
 /// "m:ss", with the tenths when `tenths`.
-fn clock(seconds: f32, tenths: bool) -> String {
+pub(crate) fn clock(seconds: f32, tenths: bool) -> String {
     let total = (seconds.max(0.0) * 10.0).round() as u32;
     let (minutes, rest, tenth) = (total / 600, (total / 10) % 60, total % 10);
     if tenths {
@@ -247,6 +249,8 @@ pub fn window(
     record: Record<'_>,
     tracks: Tracks<'_>,
     env: Env<'_>,
+    capture: super::director_capture::CaptureView<'_>,
+    key_rows: super::director_key_rows::KeyRows<'_>,
     actions: &mut Vec<Action>,
 ) {
     if !*open {
@@ -268,6 +272,8 @@ pub fn window(
                 });
                 widgets::collapsing(ui, p, "director_shots", aurora_i18n::tr!("director-shots"), false, |ui| {
                     shots::shots_section(ui, p, d, live)
+                widgets::collapsing(ui, p, "director_capture", aurora_i18n::tr!("director-capture"), false, |ui| {
+                    super::director_capture::capture_section(ui, p, d, capture);
                 });
                 let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
                     Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
@@ -275,6 +281,7 @@ pub fn window(
                 };
                 widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
                     keyframe_section(ui, p, d, actions);
+                    super::director_key_rows::keyframe_rows(ui, p, d, &key_rows);
                 });
                 widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
                     path_section(ui, p, d);
@@ -1663,8 +1670,9 @@ pub fn world(
             .pivot(Align2::CENTER_CENTER)
             .fixed_pos(at)
             .constrain(false)
-            .show(ctx, |ui| ui.allocate_response(Vec2::splat(MARKER), Sense::click()))
+            .show(ctx, |ui| ui.allocate_response(Vec2::splat(MARKER), Sense::click_and_drag()))
             .inner;
+        super::director_drag::key_drag(ctx, p, proj, d, index, key.pose, &response, actions);
         if response.double_clicked() {
             actions.push(Action::GoTo(index));
         } else if response.clicked() {

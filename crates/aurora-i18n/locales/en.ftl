@@ -419,6 +419,53 @@ pose-stand-arms-upward-legs-together = Arms upward, Legs together
 toolbar-command-snapshot-to-disk = Snapshot to disk
 toolbar-command-photo-roll = Photo roll
 toolbar-command-director = Director
+# Director — capture and animations
+director-capture = Path by hand
+director-capture-start = Record my path
+director-capture-start-tip = Fly the camera as you want it filmed (alt-camera, free camera or flycam): the view is kept twenty times a second, and Stop turns it into keyframes at the pace you flew.
+director-capture-taking = Recording your path: { $time }, { $views ->
+    [one] { $views } view
+   *[other] { $views } views
+    }
+director-capture-stop = Stop and make keyframes
+director-capture-stop-tip = The path becomes keyframes after the end of the track, at the pace you flew it. Ctrl+Z takes it back.
+director-capture-cancel-tip = Drop this path (Escape).
+director-capture-detail = Detail
+director-capture-detail-tip = How closely the keyframes follow your path: more detail keeps its smaller moves, with more keyframes.
+director-capture-hint = Your path is added after the end of the track, or becomes the track when it is empty.
+director-capture-done = Your path became { $count ->
+    [one] { $count } keyframe
+   *[other] { $count } keyframes
+    } over { $time }.
+director-capture-short = The path was too short to play: record a little longer.
+director-capture-full = The track has no room left for this path.
+director-capture-dropped = The path was dropped: the Director closed, a teleport began or RLVa restricted the camera.
+director-capture-restricted = RLVa restricts the camera: no path can be recorded.
+director-key-anim = Animation
+director-key-anim-none = None
+director-key-anim-tip = An animation of your inventory that your avatar plays when the track passes this keyframe (or drop one here from the inventory). Whatever the track started stops when the playback ends.
+director-key-anim-missing = { $name } (missing)
+director-key-anim-missing-tip = This animation is no longer in your inventory: the playback skips it.
+director-key-anim-clear = No animation here
+director-key-anim-until = Until
+director-key-anim-until-tip = Where the animation stops: at a later keyframe, or when the playback ends.
+director-key-anim-end = End of the playback
+director-key-anim-stops = Stops
+director-key-anim-stops-tip = An animation an earlier keyframe started stops here.
+director-key-anim-stops-clear = Let it play on
+director-key-lens-time = Lens and time of day
+director-key-aperture = Aperture
+director-key-aperture-tip = This keyframe's depth of field; between two keyframes it changes smoothly.
+director-key-focus = Focus
+director-key-focus-tip = The distance this keyframe is focused at, instead of the track's (the target, or its focus distance).
+director-key-hour = Time of day
+director-key-hour-tip = The sun at this keyframe, on your own view only: nothing is sent to the region. Between two keyframes it moves smoothly; your own sky comes back when the playback ends.
+director-key-track-value = Track's value
+director-key-live = Live
+director-key-set = Set
+director-key-set-tip = Give this keyframe a value of its own.
+director-key-unset = Back to the track's value
+director-key-unset-live = Back to the live sky
 director-title = Director
 director-camera = Camera
 director-lens = Viewing angle
