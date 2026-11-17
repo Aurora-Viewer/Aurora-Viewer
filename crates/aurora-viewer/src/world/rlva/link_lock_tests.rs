@@ -46,7 +46,7 @@ const CHEST: u8 = 1;
 const SKULL: u8 = 2;
 const LEFT_SHOULDER: u8 = 3;
 
-fn folder(world: &mut World, id: u128, parent: Uuid, name: &str, kind: i32) -> Uuid {
+pub(super) fn folder(world: &mut World, id: u128, parent: Uuid, name: &str, kind: i32) -> Uuid {
     let id = Uuid::from_u128(id);
     world.inventory.folders.insert(
         id,
@@ -70,7 +70,7 @@ fn folder(world: &mut World, id: u128, parent: Uuid, name: &str, kind: i32) -> U
     id
 }
 
-fn object(id: u128, parent: Uuid) -> InvItem {
+pub(super) fn object(id: u128, parent: Uuid) -> InvItem {
     InvItem {
         id: Uuid::from_u128(id),
         parent,
@@ -80,7 +80,7 @@ fn object(id: u128, parent: Uuid) -> InvItem {
     }
 }
 
-fn link(id: u128, parent: Uuid, to: Uuid) -> InvItem {
+pub(super) fn link(id: u128, parent: Uuid, to: Uuid) -> InvItem {
     InvItem {
         id: Uuid::from_u128(id),
         parent,
@@ -93,7 +93,7 @@ fn link(id: u128, parent: Uuid, to: Uuid) -> InvItem {
 
 /// Wears `item` at `point`; returns its object. As on the grid, the object
 /// has an id of its own: only a temporary attachment goes by its object id.
-fn wear(world: &mut World, item: Uuid, point: u8) -> Uuid {
+pub(super) fn wear(world: &mut World, item: Uuid, point: u8) -> Uuid {
     let handle = world.main_region.expect("the demo region");
     let mut object = crate::demo::outfit_attachment(&AttachRequest {
         item_id: item,

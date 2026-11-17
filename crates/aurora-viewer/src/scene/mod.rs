@@ -21,6 +21,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod draw_limits;
 pub mod drawn;
+pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
 mod foot_scope;
@@ -793,6 +794,15 @@ pub struct SceneStats {
     pub skeletons_rebuilt: usize,
     /// How the avatars of the last lists are drawn.
     pub avatars: AvatarCounts,
+    /// Avatars, ours included, within the draw distance (Autotune).
+    pub avatars_in_range: usize,
+    /// Avatars, ours included, nearer than `Scene::avatar_count_radius`, and
+    /// than it less `autotune::DISTANCE_MARGIN`, within the draw distance
+    /// (Autotune's distance mode); 0 when it is 0. `avatars_within_radius`
+    /// is the radius they were counted with.
+    pub avatars_within: usize,
+    pub avatars_well_within: usize,
+    pub avatars_within_radius: f32,
 }
 
 /// How the avatars of a frame's lists are drawn (`avatar summary`).
@@ -1036,6 +1046,11 @@ pub struct Scene {
     pub selection_silhouettes: HashSet<usize>,
     /// Selected texture-entry bits for each prim; all 45 TE slots must fit.
     pub selection_faces: HashMap<usize, u64>,
+    /// The faces of `selection_faces` picked in the build tool's Select face
+    /// mode, which also get the face-select pattern (`face_pattern.rs`).
+    pub pattern_faces: HashMap<usize, u64>,
+    /// The face-select pattern's texture, held once a face showed it.
+    face_pattern: face_pattern::Texture,
     selection_changed: Option<Instant>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
@@ -1097,6 +1112,17 @@ pub struct Scene {
     complexity_slice: usize,
     /// Avatars drawn (the nearest ones; own avatar always).
     pub max_avatars: usize,
+    /// While Autotune lowers `max_avatars`: the avatars (slots) the user
+    /// keeps in full, set to always render fully or friends when friends
+    /// are always shown fully, drawn in full anyway among the nearest
+    /// `avatar_keep_full_within` (the user's own limit). The Legacy Viewer's
+    /// Autotune spares them too (LLVOAvatar::updateTooSlow). Empty, and 0,
+    /// otherwise.
+    pub avatar_keep_full: std::collections::HashSet<usize>,
+    pub avatar_keep_full_within: usize,
+    /// The distance within which `stats.avatars_within` counts the avatars
+    /// (m, 0 for none).
+    pub avatar_count_radius: f32,
     /// Build reflection draw lists (planar reflections enabled).
     pub reflections: bool,
     /// Camera vertical field of view (LOD scaling).
@@ -1428,6 +1454,33 @@ fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
     1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
 }
 
+/// Layer rank of a face of an object that is neither rigged nor a HUD
+/// (`DrawRecord::set_layer_rank`).
+///
+/// The layers of mesh eyes, jewels and decals are often one set of triangles
+/// given to several faces: they lie exactly on one another. The Legacy Viewer
+/// sorts the blended faces of such an object by the distance of their bounds
+/// (LLFace::CompareDistanceGreater in LLVolumeGeometryManager::genDrawInfo,
+/// indra/newview/llvovolume.cpp), the same for all of these, and so draws
+/// them in the order of the faces, each over those before it; the sorted
+/// order does the same (`blend_order::sort`). The exact and the stochastic
+/// orders compose the fragments of a pixel by their depth, where such layers
+/// have none between them and came out mixed, each for a share: a pupil
+/// through which its iris showed. A blended face takes the rank of its
+/// number, so the later face lies over the earlier ones there too. The other
+/// passes keep rank 0: a blended face still passes the depth of an opaque or
+/// masked face it lies on. `AURORA_BLEND_FACE_RANK=0`: no rank, as before, to
+/// compare.
+fn stacked_layer_rank(pass: Pass, te_index: u8) -> u32 {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let off = *OFF.get_or_init(|| std::env::var("AURORA_BLEND_FACE_RANK").is_ok_and(|v| v.trim() == "0"));
+    if pass == Pass::Blend && !off {
+        u32::from(te_index).min(flags::LAYER_RANK_MAX)
+    } else {
+        0
+    }
+}
+
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
 /// face `fi`: see [`tex_anim_record`].
 fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
@@ -1543,8 +1596,17 @@ impl Scene {
             return;
         }
         self.selection_changed = Some(Instant::now());
-        for &idx in self.selection_faces.keys().chain(selected.keys()) {
-            let changed = self.selection_faces.get(&idx).copied().unwrap_or(0) ^ selected.get(&idx).copied().unwrap_or(0);
+        Self::rebuild_invisible_picks(world, &self.selection_faces, &selected);
+        self.selection_faces = selected;
+    }
+
+    /// Marks for a rebuild the objects whose set of picked faces changed on
+    /// a fully transparent face: its record exists only while a pick holds
+    /// it, so a placement update alone cannot restore or drop it. Shared by
+    /// the halo's faces and the face-select pattern's.
+    pub(super) fn rebuild_invisible_picks(world: &mut World, old: &HashMap<usize, u64>, new: &HashMap<usize, u64>) {
+        for &idx in old.keys().chain(new.keys()) {
+            let changed = old.get(&idx).copied().unwrap_or(0) ^ new.get(&idx).copied().unwrap_or(0);
             let invisible = changed != 0
                 && world.objects.get(idx).is_some_and(|object| {
                     (0..aurora_prim::te::MAX_TES)
@@ -1557,7 +1619,18 @@ impl Scene {
                 object.render.needs_records = true;
             }
         }
-        self.selection_faces = selected;
+    }
+
+    /// Whether object `idx` holds a picked face, for the halo or for the
+    /// face-select pattern (the pattern shows with "Show highlight" off).
+    pub(super) fn has_picks(&self, idx: usize) -> bool {
+        self.selection_faces.contains_key(&idx) || self.pattern_faces.contains_key(&idx)
+    }
+
+    /// The faces of object `idx` that need a record even when fully
+    /// transparent: the halo's and the pattern's.
+    pub(super) fn picked_faces(&self, idx: usize) -> u64 {
+        self.selection_faces.get(&idx).copied().unwrap_or(0) | self.pattern_faces.get(&idx).copied().unwrap_or(0)
     }
 
     pub fn reveal_selected_faces(&mut self) {
@@ -1695,6 +1768,8 @@ impl Scene {
             mesh_lod_resets: HashMap::new(),
             selection_silhouettes: Default::default(),
             selection_faces: Default::default(),
+            pattern_faces: Default::default(),
+            face_pattern: Default::default(),
             selection_changed: None,
             debug_alpha: None,
             beacon_highlights: Default::default(),
@@ -1728,6 +1803,9 @@ impl Scene {
             complexity_round: Vec::new(),
             complexity_slice: 0,
             max_avatars: 16,
+            avatar_keep_full: Default::default(),
+            avatar_keep_full_within: 0,
+            avatar_count_radius: 0.0,
             reflections: true,
             fov_y: 1.0,
             env_tex: [(Uuid::nil(), 0); 6],
@@ -2405,6 +2483,7 @@ impl Scene {
                 self.textures.release(&id);
             }
         }
+        self.face_pattern.forget(&mut self.textures);
         for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
             self.textures.release(&id);
         }
@@ -2814,7 +2893,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() || types.any_object() || world.avatar_studio {
+        } else if iso.hides() || types.any_object() || world.avatar_studio {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     g.hidden = left_out(idx, g.hud);
@@ -3379,8 +3458,15 @@ impl Scene {
                     let mode = f.record_flags();
                     let mode_changed = before != mode;
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
-                    if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
+                    // (`object_auto_mask`: neither rigged nor a HUD, the
+                    // objects whose blended faces take a rank of their own)
+                    if (mode_changed || object_auto_mask)
+                        && let Some(mut r) = renderer.records.get(record).copied()
+                    {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                        if object_auto_mask {
+                            r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
+                        }
                         renderer.records.set(record, r);
                     }
                     renderer.records.set_face(record, face);
@@ -3425,10 +3511,19 @@ impl Scene {
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
-            if mode != 0
+            // (`object_auto_mask`: neither rigged nor a HUD)
+            let rank = if object_auto_mask {
+                stacked_layer_rank(pass, f.te_index)
+            } else {
+                0
+            };
+            if (mode != 0 || rank != 0)
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
+                if object_auto_mask {
+                    r.set_layer_rank(rank);
+                }
                 renderer.records.set(f.record, r);
             }
             renderer.records.set_face(f.record, cull_face(f, idx, fi == 0));
@@ -4042,7 +4137,7 @@ impl Scene {
             _ => None,
         };
         let hud_zoom = if g.hud { world.hud_scale(idx) } else { 1.0 };
-        let selected_faces = self.selection_faces.get(&idx).copied().unwrap_or(0);
+        let selected_faces = self.picked_faces(idx);
         // a Linden plant: its species texture, alpha-tested at 0.5, whatever
         // its texture entry says
         let plant = plants::plant_face(o);
@@ -4177,11 +4272,7 @@ impl Scene {
                     .flatten();
                 let material = loaded.map(|m| (*m).clone()).or_else(|| {
                     (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
-                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
-                            legacy_mat::alpha_mode::BLEND
-                        } else {
-                            legacy_mat::alpha_mode::NONE
-                        },
+                        diffuse_alpha_mode: self.textures.default_alpha_mode(&tf.texture),
                         ..Default::default()
                     })
                 });
@@ -4899,10 +4990,13 @@ impl Scene {
                 .collect()
         };
         avatars.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        let mut avatar_ok = vec![false; self.gpu.len()];
-        for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
-            avatar_ok[*i] = true;
-        }
+        let mut avatar_ok = impostors::in_full(
+            &avatars,
+            self.gpu.len(),
+            self.max_avatars,
+            &self.avatar_keep_full,
+            self.avatar_keep_full_within,
+        );
         for &index in self.portals.planes.keys() {
             avatar_ok[index] = true;
         }
@@ -4910,7 +5004,7 @@ impl Scene {
         // complete, and one over the complexity limit is its silhouette)
         let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
-            .skip(self.max_avatars.max(1))
+            .filter(|(_, index)| !avatar_ok.get(*index).copied().unwrap_or(false))
             .filter(|(_, index)| !self.portals.planes.contains_key(index))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
@@ -4947,6 +5041,25 @@ impl Scene {
             }
         }
         self.stats.avatars_hidden = imp_avatars.len();
+        // (sorted by distance, ours first at -1)
+        let within = |radius: f32| {
+            let radius = radius.min(dd);
+            if radius > 0.0 {
+                avatars.partition_point(|(d, _)| *d < radius)
+            } else {
+                0
+            }
+        };
+        self.stats.avatars_in_range = within(dd);
+        let radius = self.avatar_count_radius;
+        let (outer, inner) = if radius > 0.0 {
+            (within(radius), within(radius - crate::settings::autotune::DISTANCE_MARGIN))
+        } else {
+            (0, 0)
+        };
+        self.stats.avatars_within = outer;
+        self.stats.avatars_well_within = inner;
+        self.stats.avatars_within_radius = radius;
         // every frame, not only with the probes: the crash report's last state
         // and the grid's viewer statistics read these too
         self.stats.avatars = AvatarCounts {
@@ -5019,7 +5132,7 @@ impl Scene {
                         || bits & list_index::SPECIAL != 0
                         || debug
                         || selection.contains_key(&i)
-                        || self.selection_faces.contains_key(&i)
+                        || self.has_picks(i)
                         || self.photo_marks.contains(&i)
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
@@ -5039,7 +5152,7 @@ impl Scene {
                         || g.special
                         || debug
                         || selection.contains_key(&i)
-                        || self.selection_faces.contains_key(&i)
+                        || self.has_picks(i)
                         || self.photo_marks.contains(&i)
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
@@ -5073,6 +5186,7 @@ impl Scene {
         let mirror_plane = self.mirror_plane;
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
+        let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
@@ -5103,6 +5217,7 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
@@ -5131,6 +5246,7 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            select_pattern: Vec::new(),
             part_faces: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
@@ -5302,12 +5418,13 @@ impl Scene {
                         Some(false) => l.select_child.push(cmd),
                         None => {}
                     }
-                    if selection_faces
-                        .get(&idx)
-                        .is_some_and(|mask| mask & 1u64.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
+                    if face_pattern::has_face(selection_faces, idx, f.te_index)
                         || ((photo_marks.contains(&idx) || give_marks.contains(&idx)) && pass != Pass::Hidden)
                     {
                         l.select_faces.push(cmd);
+                    }
+                    if face_pattern::has_face(pattern_faces, idx, f.te_index) {
+                        l.select_pattern.push(cmd);
                     }
                     // the poser's hovered part: the subject's body and what it
                     // wears (the shader keeps the part's own skinned
@@ -5449,6 +5566,7 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
@@ -5530,6 +5648,7 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
@@ -5792,13 +5911,9 @@ impl Scene {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
-            let target = if owner == world.agent_id {
-                Some(world.look_at.own.target)
-            } else {
-                world.look_at.remote.get(&owner).copied()
-            };
+            let (target, ahead) = world.look_at.gaze_of(owner, world.agent_id);
+            let photo_look = world.look_at.photo.at(owner, world.agent_id).is_some();
             use crate::world::lookat::Gaze;
-            let ahead = owner == world.agent_id && world.look_at.own_ahead;
             let look = match crate::world::lookat::gaze(target, ahead) {
                 Gaze::Unknown | Gaze::Ahead => Some((false, None)),
                 Gaze::Cleared => Some((true, None)),
@@ -5865,6 +5980,8 @@ impl Scene {
             motions.ground = self.grounding_frame(world, idx, now);
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
             motions.aurora_feet = self.ground_avatar_feet;
+            motions.look_over_animations = photo_look;
+            motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -6255,6 +6372,11 @@ impl Scene {
         }
     }
 
+    /// The cached rest skeleton of `owner`, as last built by `skeleton_of`.
+    pub(crate) fn skeleton_base(&self, owner: &Uuid) -> Option<Arc<anim::SkeletonBase>> {
+        self.skeletons.get(owner).map(|skeleton| skeleton.base.clone())
+    }
+
     /// Rest skeleton of an avatar (or animesh) and the vertical offset of
     /// its pelvis from the object position:
     /// - the shape (visual parameters of its last appearance),
@@ -6617,6 +6739,27 @@ mod layer_rank_tests {
             assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
             // the same object keeps its rank on every rebuild
             assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
+    }
+
+    #[test]
+    fn a_later_blended_face_lies_over_the_earlier_ones() {
+        // the four layers of a mesh eye: faces 1, 2, 3 and 6
+        let ranks = [1u8, 2, 3, 6].map(|face| stacked_layer_rank(Pass::Blend, face));
+        assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]), "{ranks:?}");
+        // a prim has up to nine faces: the last two share the highest rank
+        assert_eq!(stacked_layer_rank(Pass::Blend, 8), flags::LAYER_RANK_MAX);
+        assert_eq!(stacked_layer_rank(Pass::Blend, 0), 0);
+    }
+
+    #[test]
+    fn the_other_passes_keep_the_depth_they_have() {
+        // a blended face must still pass the depth of an opaque or masked
+        // face it lies on (#3059): those are never brought nearer
+        for pass in [Pass::Opaque, Pass::OpaqueTwoSided, Pass::Mask, Pass::MaskTwoSided, Pass::Hidden] {
+            for face in 0..9 {
+                assert_eq!(stacked_layer_rank(pass, face), 0, "{pass:?} face {face}");
+            }
         }
     }
 }
@@ -7795,6 +7938,28 @@ mod tests {
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
     }
 
+    /// The build tools default a face to Alpha blending from the texture's
+    /// alpha channel, and offer Alpha mode for it: a channel with no
+    /// see-through texel stays in the opaque pass with or without that
+    /// material, and an explicit Mask leaves it.
+    #[test]
+    fn blending_an_opaque_alpha_channel_keeps_the_opaque_pass() {
+        let alpha = [AlphaKind::Opaque];
+        let channel = [true];
+        let face = |legacy: Option<u8>| FaceDraw {
+            legacy_alpha: legacy,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        for legacy in [None, Some(legacy_mat::alpha_mode::BLEND), Some(legacy_mat::alpha_mode::NONE)] {
+            assert_eq!(face_mode(&face(legacy), &alpha, &channel, true).0, Pass::Opaque);
+        }
+        assert_eq!(
+            face_mode(&face(Some(legacy_mat::alpha_mode::MASK)), &alpha, &channel, true).0,
+            Pass::Mask
+        );
+    }
+
     /// LLFace::canRenderAsMask: never auto alpha-mask a rigged face, a HUD
     /// face, or a glowing face. Soft genital / hair alphas stay Blend. An
     /// explicit MASK material or PBR mask still Masks.
@@ -7948,6 +8113,66 @@ mod tests {
         assert!(!world.objects.get(idx).unwrap().render.needs_records);
         scene.set_face_selection(&mut world, HashMap::new());
         assert!(world.objects.get(idx).unwrap().render.needs_records);
+    }
+
+    /// With "Show highlight" off the halo's faces are empty and the picked
+    /// faces alone are set (`face_picks`): the object stays visited every
+    /// frame, so the pattern does not blink with the usage frames. This tests
+    /// the `has_picks` helper the two visit predicates call, not the predicates
+    /// themselves (a capture covers those).
+    #[test]
+    fn pattern_picks_alone_keep_an_object_visited() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        let mut scene = Scene::new(Default::default(), lib);
+        assert!(!scene.has_picks(7), "nothing picked: no extra visit");
+        scene.set_face_pattern(&mut world, &HashMap::from([(7, 1 << 3)]));
+        assert!(scene.selection_faces.is_empty());
+        assert!(scene.has_picks(7));
+        assert!(!scene.has_picks(8), "another object");
+        assert_eq!(scene.picked_faces(7), 1 << 3);
+        // the halo's pulse is not the pattern's to time
+        assert!(scene.selection_changed.is_none());
+        scene.set_face_selection(&mut world, HashMap::from([(7, 1 << 5)]));
+        assert_eq!(scene.picked_faces(7), (1 << 3) | (1 << 5));
+        scene.set_face_pattern(&mut world, &HashMap::new());
+        assert_eq!(scene.picked_faces(7), 1 << 5, "the halo's own face stays");
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert!(!scene.has_picks(7));
+    }
+
+    /// A fully transparent face picked for the pattern alone (highlight off)
+    /// gets its record, and loses it when the pick is cleared.
+    #[test]
+    fn invisible_face_picked_for_the_pattern_alone_gets_and_loses_its_record() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::face_selection_events(false)) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let object = world.objects.get_mut(idx).unwrap();
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        object.render.needs_records = false;
+        object.material_dirty = false;
+        let mut scene = Scene::new(Default::default(), lib);
+        // a visible face: no rebuild
+        scene.set_face_pattern(&mut world, &HashMap::from([(idx, 1 << 1)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        // the invisible face: rebuilt, and the record is no longer skipped
+        scene.set_face_pattern(&mut world, &HashMap::from([(idx, (1 << 1) | 1)]));
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
+        assert!(world.objects.get(idx).unwrap().material_dirty);
+        assert!(scene.selection_faces.is_empty());
+        assert_ne!(scene.picked_faces(idx) & 1, 0, "its record is made");
+        world.objects.get_mut(idx).unwrap().render.needs_records = false;
+        world.objects.get_mut(idx).unwrap().material_dirty = false;
+        scene.set_face_pattern(&mut world, &HashMap::from([(idx, (1 << 1) | 1)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records, "unchanged: no rebuild");
+        scene.set_face_pattern(&mut world, &HashMap::new());
+        assert!(world.objects.get(idx).unwrap().render.needs_records, "cleared: the record goes");
+        assert_eq!(scene.picked_faces(idx), 0);
+        assert!(scene.selection_changed.is_none());
     }
 
     #[test]

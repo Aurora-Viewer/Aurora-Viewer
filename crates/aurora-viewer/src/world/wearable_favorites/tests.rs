@@ -45,7 +45,7 @@ fn targets(entries: &[Entry]) -> Vec<u128> {
 fn the_folder_is_created_once_in_the_viewer_folder() {
     let mut inv = bare();
     assert!(folder(&inv).is_none());
-    let change = create_plan(&inv).expect("both folders to create");
+    let change = create_plan(&inv, true).expect("both folders to create");
     // #Aurora, then #Wearable Favorites inside it
     let names: Vec<_> = change
         .operations
@@ -58,14 +58,30 @@ fn the_folder_is_created_once_in_the_viewer_folder() {
     assert_eq!(names, [ROOT, FOLDER]);
     demo_mutate(&mut inv, AGENT, change).expect("created");
     let favorites = folder(&inv).expect("found by name");
-    assert!(create_plan(&inv).is_none(), "nothing more to create");
+    assert!(create_plan(&inv, true).is_none(), "nothing more to create");
     // an existing #Aurora only gets the subfolder
     let mut inv2 = bare();
     let (brand, _) = create_folder(inv2.root, ROOT);
     demo_mutate(&mut inv2, AGENT, brand).expect("brand");
-    let change = create_plan(&inv2).expect("subfolder");
+    let change = create_plan(&inv2, true).expect("subfolder");
     assert_eq!(change.operations.len(), 1);
     assert!(entries(&inv, favorites, favorites).is_empty());
+}
+
+#[test]
+fn the_folder_waits_for_the_bridge_to_make_aurora() {
+    // the bridge is making `#Aurora`: no second one is asked for
+    let mut inv = bare();
+    assert!(create_plan(&inv, false).is_none());
+    // once its `#Aurora` is listed, only the favorites folder, in it
+    let (brand, _) = create_folder(inv.root, ROOT);
+    demo_mutate(&mut inv, AGENT, brand).expect("brand");
+    let change = create_plan(&inv, false).expect("subfolder");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Folder { name, .. }] if name == FOLDER),
+        "{:?}",
+        change.operations
+    );
 }
 
 #[test]
@@ -131,16 +147,16 @@ fn the_three_orders_follow_the_legacy_comparators() {
     let root = folder(&inv).expect("favorites");
     let mut all = entries(&inv, root, root);
     let names = |all: &[Entry]| -> Vec<String> { all.iter().map(|e| inv.items[&e.target].name.clone()).collect() };
-    sort(&inv, &mut all, SortOrder::Name);
+    sort(&inv, &mut all, SortOrder::Name, &[]);
     let by_name = names(&all);
     let mut expected = by_name.clone();
     expected.sort_by_key(|n| n.to_uppercase());
     assert_eq!(by_name, expected);
-    sort(&inv, &mut all, SortOrder::MostRecent);
+    sort(&inv, &mut all, SortOrder::MostRecent, &[]);
     // the newest original first (seed_demo dates them one day apart)
     let dates: Vec<i64> = all.iter().map(|e| inv.items[&e.target].created_at).collect();
     assert!(dates.windows(2).all(|w| w[0] >= w[1]), "{dates:?}");
-    sort(&inv, &mut all, SortOrder::TypeName);
+    sort(&inv, &mut all, SortOrder::TypeName, &[]);
     // clothing (by wearable type), objects (by name), body parts
     let kinds: Vec<i32> = all.iter().map(|e| inv.items[&e.target].asset_type).collect();
     assert_eq!(kinds, [5, 5, 5, 6, 6, 6, 6, 13]);
@@ -153,12 +169,47 @@ fn the_three_orders_follow_the_legacy_comparators() {
 }
 
 #[test]
-fn the_filter_reads_the_title_and_its_worn_tag() {
-    assert!(matches("", "Boots", None));
-    assert!(matches("  boo ", "Boots", None));
-    assert!(!matches("hair", "Boots", None));
-    assert!(matches("worn", "Boots", Some("worn on Left Foot")));
-    assert!(!matches("worn", "Boots", None));
+fn the_filter_reads_the_title_its_worn_tag_and_the_type() {
+    assert!(matches("", "Boots", None, "Shoes"));
+    assert!(matches("  boo ", "Boots", None, "Shoes"));
+    assert!(!matches("hair", "Boots", None, "Shoes"));
+    assert!(matches("worn", "Boots", Some("worn on Left Foot"), "Object"));
+    assert!(!matches("worn", "Boots", None, "Object"));
+    // the type too (Aurora's addition)
+    assert!(matches("shoe", "Boots", None, "Shoes"));
+    assert!(!matches("shirt", "Boots", None, "Shoes"));
+}
+
+#[test]
+fn the_custom_order_follows_the_saved_one_then_the_type() {
+    let inv = seeded();
+    let root = folder(&inv).expect("favorites");
+    let mut all = entries(&inv, root, root);
+    sort(&inv, &mut all, SortOrder::TypeName, &[]);
+    let by_type: Vec<Uuid> = all.iter().map(|e| e.target).collect();
+    // nothing saved: the type order
+    sort(&inv, &mut all, SortOrder::Custom, &[]);
+    assert_eq!(all.iter().map(|e| e.target).collect::<Vec<_>>(), by_type);
+    // the last two saved first, the others after them in type order; an id
+    // saved for a favorite gone since is skipped
+    let n = by_type.len();
+    let saved = [by_type[n - 1], Uuid::from_u128(0xdead), by_type[n - 2]];
+    sort(&inv, &mut all, SortOrder::Custom, &saved);
+    let got: Vec<Uuid> = all.iter().map(|e| e.target).collect();
+    assert_eq!(got[..2], [by_type[n - 1], by_type[n - 2]]);
+    assert_eq!(got[2..], by_type[..n - 2]);
+}
+
+#[test]
+fn a_drag_moves_one_place_and_a_drop_inserts_once() {
+    let (a, b, c, d) = (id(1), id(2), id(3), id(4));
+    assert_eq!(moved(&[a, b, c], 0, 2), [b, c, a]);
+    assert_eq!(moved(&[a, b, c], 2, 0), [c, a, b]);
+    assert_eq!(moved(&[a, b, c], 1, 9), [a, c, b], "past the end: last");
+    assert_eq!(moved(&[a, b], 5, 0), [a, b], "a row gone: nothing moves");
+    assert_eq!(inserted(&[a, b], 1, &[d, c]), [a, d, c, b]);
+    assert_eq!(inserted(&[a, b], 1, &[b, c]), [a, c, b], "one already there stays put");
+    assert_eq!(inserted(&[a], 7, &[c]), [a, c]);
 }
 
 #[test]

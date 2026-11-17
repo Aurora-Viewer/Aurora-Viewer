@@ -49,14 +49,30 @@ pub(super) fn at_start(trouble: bool, kept: bool, demo: Option<&str>) -> Option<
     }
 }
 
+/// Settings are kept aside, but the level is no longer Potato: the user set
+/// their graphics back by hand in Preferences (#3631). The way back has
+/// nothing left to offer, and would replace what they chose since.
+fn left_by_hand(kept: bool, level: Option<Preset>) -> bool {
+    kept && level != Some(Preset::Potato)
+}
+
 impl App {
     pub(super) fn safe_graphics_at_start(&mut self) {
         let trouble = crate::crash::take_gpu_trouble();
         if trouble {
             log::warn!("the last session ended with the graphics card in trouble: safe graphics offered");
         }
+        let path = backup_path();
+        let mut kept = path.exists();
+        if left_by_hand(kept, Preset::matching(&self.settings)) {
+            match std::fs::remove_file(&path) {
+                Ok(()) => log::info!("safe graphics left by hand: the settings kept aside dropped"),
+                Err(e) => log::warn!("{FILE} not removed ({e})"),
+            }
+            kept = false;
+        }
         let demo = std::env::var_os("AURORA_DEMO").and_then(|_| std::env::var("AURORA_DEMO_SAFE_GRAPHICS").ok());
-        self.login_form.safe_graphics = at_start(trouble, backup_path().exists(), demo.as_deref());
+        self.login_form.safe_graphics = at_start(trouble, kept, demo.as_deref());
     }
 
     /// A second GPU loss within a few minutes (gpu_recovery.rs): the Potato
@@ -133,6 +149,24 @@ mod tests {
         assert_eq!(at_start(false, true, None), Some(SafeGraphics::Active));
         assert_eq!(at_start(false, false, Some("active")), Some(SafeGraphics::Active));
         assert_eq!(at_start(false, false, Some("other")), None);
+    }
+
+    /// #3631: the card came back at every start once the graphics were set
+    /// back in Preferences, and its Restore would have undone that choice.
+    #[test]
+    fn graphics_set_back_by_hand_end_the_way_back() {
+        let mut settings = crate::settings::Settings::default();
+        Preset::Potato.apply(&mut settings);
+        assert!(
+            !left_by_hand(true, Preset::matching(&settings)),
+            "still on the safe graphics: the card stays"
+        );
+        Preset::High.apply(&mut settings);
+        assert!(left_by_hand(true, Preset::matching(&settings)));
+        assert!(left_by_hand(true, None), "a custom level counts as the user's own");
+        assert!(!left_by_hand(false, Preset::matching(&settings)), "nothing kept aside");
+        // new trouble still offers the safe graphics
+        assert_eq!(at_start(true, false, None), Some(SafeGraphics::Offer));
     }
 
     #[test]

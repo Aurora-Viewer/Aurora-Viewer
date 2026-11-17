@@ -711,7 +711,10 @@ fn preview_panel(
     // the outfit's paid HD picture once it has loaded (`outfit_hd`), else
     // its picture; the cards keep the thumbnail
     let hd = model::outfit_hd_picture(inv, id);
-    if let Some(hd) = hd {
+    if ui.is_rect_visible(picture)
+        && let Some(hd) = hd
+    {
+        st.wanted_outfit_portrait = Some(hd);
         st.wanted_images.insert(hd);
     }
     let image = st.outfit_picture(inv, id);

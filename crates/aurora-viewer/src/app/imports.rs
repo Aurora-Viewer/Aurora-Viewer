@@ -701,7 +701,10 @@ impl App {
                     self.imports.open_map_picker(id, slot);
                 }
                 Action::MapDrop(id, slot, target) => {
-                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |_| true) {
+                    let god = self.world.god_level > 0;
+                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |item| {
+                        crate::ui::texture_library::map_source(&self.world.inventory, item, god)
+                    }) {
                         self.imports.drop_map(id, slot, resource.asset);
                     }
                 }

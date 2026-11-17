@@ -25,6 +25,10 @@ owned animesh roots, then every nearby avatar with its consent action (see
 Consent); Privacy › "Who can ask to pose my avatar" is its last entry. Other subjects must be within 50 m, in the same region and unmuted.
 Several subjects can retain independent poses at once. Eligibility is
 checked every frame; losing it removes the corresponding local pose.
+An active pose follows shape and worn-mesh rest changes: joint positions and
+scales are rebased while authored rotations, locks and undo history are kept.
+This extends the Legacy Viewer behavior, which does not rebase an open pose
+after a shape change.
 
 ### Compact window
 

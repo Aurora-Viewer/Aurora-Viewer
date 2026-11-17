@@ -160,6 +160,20 @@ impl Popped {
         });
     }
 
+    pub(super) fn rekey(&mut self, from: Uuid, to: Uuid) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.conversation == Some(from)) {
+            // Keep the floater's identity, geometry and minimized state.
+            w.conversation = Some(to);
+            w.view.selected = Some(to);
+            if w.view.selection.0 == Some(from) {
+                w.view.selection.0 = Some(to);
+            }
+            if w.view.reveal == Some(from) {
+                w.view.reveal = Some(to);
+            }
+        }
+    }
+
     /// The window of `conversation` waits for the next frame to draw: the
     /// Conversations window drew that conversation in this one (one field,
     /// one selection in a frame).

@@ -44,6 +44,38 @@ pub enum AgentVerb {
     ReportAbuse,
 }
 
+/// What a link's block verb does, given whether its resident or object is
+/// blocked now (LLAgentHandler::handle, indra/newview/llpanelprofile.cpp:
+/// `mute` only an unblocked resident, `unmute` only a blocked one, the same
+/// for an object's `block` and `unblock`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockStep {
+    /// Not a block verb: it runs as it is.
+    Other,
+    /// Already in the state asked for: nothing happens.
+    Nothing,
+    /// Add the block at once, as the Legacy Viewer does.
+    Block,
+    /// Remove the block only once the user confirms. Stricter than the
+    /// Legacy Viewer, which unblocks at once: the link comes from a text
+    /// someone else wrote (a chat line, a web page, a message outside the
+    /// viewer), and must not lift a block the user set against a harasser
+    /// without them knowing.
+    AskUnblock,
+}
+
+impl AgentVerb {
+    pub fn block_step(&self, blocked: bool) -> BlockStep {
+        match self {
+            Self::Mute | Self::Block(_) if blocked => BlockStep::Nothing,
+            Self::Mute | Self::Block(_) => BlockStep::Block,
+            Self::Unmute | Self::Unblock(_) if blocked => BlockStep::AskUnblock,
+            Self::Unmute | Self::Unblock(_) => BlockStep::Nothing,
+            _ => BlockStep::Other,
+        }
+    }
+}
+
 /// The object of `secondlife:///app/objectim/<id>?name=…&owner=…&slurl=…`,
 /// the inspector's data (LLObjectIMHandler's payload).
 #[derive(Debug, Clone, PartialEq)]
@@ -305,6 +337,31 @@ mod tests {
 
     fn uid() -> Uuid {
         Uuid::parse_str(ID).expect("test id")
+    }
+
+    #[test]
+    fn block_verbs_ask_before_unblocking() {
+        let object = || "Sign".to_owned();
+        for blocked in [false, true] {
+            for verb in [
+                AgentVerb::Im,
+                AgentVerb::Pay,
+                AgentVerb::OfferTeleport,
+                AgentVerb::RequestFriend,
+                AgentVerb::RemoveFriend,
+                AgentVerb::ReportAbuse,
+            ] {
+                assert_eq!(verb.block_step(blocked), BlockStep::Other, "{verb:?}");
+            }
+        }
+        assert_eq!(AgentVerb::Mute.block_step(false), BlockStep::Block);
+        assert_eq!(AgentVerb::Mute.block_step(true), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Block(object()).block_step(false), BlockStep::Block);
+        assert_eq!(AgentVerb::Block(object()).block_step(true), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Unmute.block_step(true), BlockStep::AskUnblock);
+        assert_eq!(AgentVerb::Unmute.block_step(false), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Unblock(object()).block_step(true), BlockStep::AskUnblock);
+        assert_eq!(AgentVerb::Unblock(object()).block_step(false), BlockStep::Nothing);
     }
 
     #[test]
