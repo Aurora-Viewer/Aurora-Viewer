@@ -5255,7 +5255,7 @@ pub fn events() -> Vec<NetEvent> {
             ));
         }
     }
-    // AURORA_DEMO_POINT_SHADOW=1|orbit|window|glass: a warm point light behind a wall with
+    // AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass: a warm point light behind a wall with
     // a doorway, seen from the other side, and a blue one inside its own
     // solid 80 cm prim with a post beside it. With AURORA_POINT_SHADOWS=2 the
     // warm light only passes the doorway, the prim lets its own light out
@@ -5380,6 +5380,39 @@ pub fn events() -> Vec<NetEvent> {
                 ExtraParams::default(),
                 "",
             ));
+            if mode == "room" {
+                // two lamps of the same brightness on either side of our
+                // avatar (`point_shadow_start`), 3.4 m away, each with a post
+                // beside it: the circling camera passes close to one, then
+                // to the other, while the avatar stays as near to both
+                let start = point_shadow_start();
+                let lamps = [
+                    (9752, Vec3::new(start.x - 3.4, y, floor + 1.6), [0.6, 1.0, 0.6, 1.0]),
+                    (9754, Vec3::new(start.x + 3.4, y, floor + 1.6), [1.0, 0.6, 0.6, 1.0]),
+                ];
+                for (id, at, color) in lamps {
+                    add(prim(
+                        id,
+                        at,
+                        Quat::IDENTITY,
+                        Vec3::splat(0.1),
+                        boxp,
+                        plain(color),
+                        light(color, 6.0),
+                        "",
+                    ));
+                    add(prim(
+                        id + 1,
+                        Vec3::new(at.x, at.y + 0.6, floor + 1.0),
+                        Quat::IDENTITY,
+                        Vec3::new(0.25, 0.25, 2.0),
+                        boxp,
+                        plain([0.6, 0.6, 0.6, 1.0]),
+                        ExtraParams::default(),
+                        "",
+                    ));
+                }
+            }
         }
     }
     // AURORA_DEMO_PROJECTOR=1|point: a projector (a light with a light
@@ -6720,6 +6753,12 @@ pub fn events() -> Vec<NetEvent> {
         avatars.extend(wolf_attachments(false));
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
+    // AURORA_DEMO_POINT_SHADOW=room: in the room, among its lights
+    let start = if std::env::var("AURORA_DEMO_POINT_SHADOW").is_ok_and(|m| m == "room") {
+        point_shadow_start()
+    } else {
+        start
+    };
     // AURORA_DEMO_POS="x,y" moves the start position (captures)
     let start = match std::env::var("AURORA_DEMO_POS")
         .ok()
@@ -9146,13 +9185,27 @@ pub fn projector_bench_done() -> bool {
 /// Where AURORA_DEMO_POINT_SHADOW builds: the middle of its wall.
 const POINT_SHADOW_WALL: (f32, f32) = (146.0, 114.0);
 
+/// Where our avatar stands in AURORA_DEMO_POINT_SHADOW=room: 5 m from the
+/// wall, on the room's side.
+fn point_shadow_start() -> Vec3 {
+    let (x, y) = POINT_SHADOW_WALL;
+    Vec3::new(x - 5.0, y, height(x, y) + 0.3 + 0.84)
+}
+
 /// Framing of AURORA_DEMO_POINT_SHADOW: the room side of the wall, fixed, or
 /// (`orbit`) swinging from side to side, or (`turn`) looking away from the
 /// wall from frame 800 to 900, then back: the warm light stays in view but
-/// loses its map to a light of the plaza, and must take it back.
+/// loses its map to a light of the plaza, and must take it back; or
+/// (`room`) circling our avatar 4 m away from frame 700.
 fn point_shadow_camera(mode: &str, frame: u64) -> (Vec3, Vec3) {
     let (x, y) = POINT_SHADOW_WALL;
     let floor = height(x, y) + 0.3;
+    if mode == "room" {
+        let avatar = point_shadow_start();
+        let angle = frame.saturating_sub(700) as f32 * 0.012;
+        let eye = Vec3::new(avatar.x + angle.cos() * 4.0, avatar.y + angle.sin() * 4.0, floor + 2.2);
+        return (eye, Vec3::new(avatar.x, avatar.y, floor + 1.0));
+    }
     if mode.starts_with("window") || mode.starts_with("glass") {
         return (Vec3::new(x - 4.5, y + 1.5, floor + 1.8), Vec3::new(x - 1.5, y - 0.3, floor));
     }
