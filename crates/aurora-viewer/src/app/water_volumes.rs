@@ -37,6 +37,9 @@ pub(super) struct Detector {
     next_sweep: Option<Instant>,
     floor: Option<(Vec3, Instant, Option<f32>)>,
     active: bool,
+    /// The matched volumes as they stand this frame (`water`), for the
+    /// water effects' bubbles and splashes in them.
+    near: Vec<Volume>,
 }
 
 impl Detector {
@@ -121,6 +124,11 @@ impl Detector {
         }
     }
 
+    /// The volumes near our avatar this frame, for the water effects.
+    pub(super) fn near(&self) -> &[Volume] {
+        &self.near
+    }
+
     /// Names known, names asked, volumes matched (the demo's log).
     pub(super) fn counts(&self) -> (usize, usize, usize) {
         (self.names.len(), self.asked.len(), self.matched.len())
@@ -128,15 +136,17 @@ impl Detector {
 
     /// The water of the volume around `position`, if any.
     pub(super) fn water(&mut self, world: &World, scene: &Scene, position: Vec3, height: f32, now: Instant) -> Option<Water> {
+        self.near.clear();
         if !self.active || self.matched.is_empty() {
             return None;
         }
-        let volumes: Vec<Volume> = self
-            .matched
-            .iter()
-            .filter_map(|id| world.objects.index_of_uuid(id))
-            .filter_map(|idx| scene.water_volume(world, idx))
-            .collect();
+        self.near.extend(
+            self.matched
+                .iter()
+                .filter_map(|id| world.objects.index_of_uuid(id))
+                .filter_map(|idx| scene.water_volume(world, idx)),
+        );
+        let volumes = &self.near;
         let Some(top) = volumes.iter().filter(|v| v.over(position)).map(Volume::top).max_by(f32::total_cmp) else {
             self.floor = None;
             return None;
@@ -176,6 +186,10 @@ impl super::App {
                 },
             );
             self.settings.water_volumes = crate::demo::prim_water::settings(&mode);
+            // its bubbles and splashes, whatever the saved settings say
+            self.settings.water_effects.enabled = true;
+            self.settings.water_effects.bubbles = true;
+            self.settings.water_effects.splashes = true;
             for event in crate::demo::prim_water::events(&mode) {
                 self.world.apply(event);
             }
@@ -204,17 +218,21 @@ impl super::App {
             self.settings.movements.entry(self.world.agent_id).or_default().swimming = true;
         }
         // No prim collision nor bridge motor offline: a scripted loop at the
-        // surface, under water, above the volume (out of it), then back.
+        // surface, swimming 6 m across under water (bubbles), above the
+        // volume (out of it), then falling back in (a splash).
         if self.frame_count > 360 {
             let phase = (self.frame_count - 360) % 720;
             let surface = crate::demo::prim_water::surface();
-            let z = match phase {
-                0..180 => surface - 0.6,
-                180..360 => surface - 1.6,
-                360..540 => surface + 3.0,
-                _ => surface - 0.6,
+            let (x, z) = match phase {
+                0..180 => (0.0, surface - 0.6),
+                180..360 => (-3.0 + (phase - 180) as f32 / 30.0, surface - 1.4),
+                360..540 => (0.0, surface + 3.0),
+                _ => {
+                    let t = (phase - 540) as f32 / 60.0;
+                    (0.0, (surface + 3.0 - 4.905 * t * t).max(surface - 0.6))
+                }
             };
-            self.world.agent.position = crate::demo::prim_water::CENTER.with_z(z);
+            self.world.agent.position = crate::demo::prim_water::CENTER + Vec3::new(x, 0.0, z);
             self.world.agent.velocity = Vec3::ZERO;
             if phase % 180 == 170 {
                 log::info!(

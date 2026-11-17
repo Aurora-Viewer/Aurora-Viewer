@@ -11959,6 +11959,8 @@ impl App {
         self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
+            // prim water (#2008): its bubbles and splashes too
+            self.scene.set_water_volumes(self.water_volumes.near());
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
