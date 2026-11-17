@@ -4542,6 +4542,7 @@ media-plugins-consent = Les pages web (profils, recherche, navigateur web) et le
 media-plugins-consent-later = Plus tard
 media-plugins-consent-later-hint = Vous pourrez le télécharger plus tard dans Préférences › Son et voix › Média, ou là où une page web ou un média s'afficherait.
 common-inventory = Inventaire
+inventory-dual-panel = Inventaire à deux panneaux
 ui-inventory-inventory = { "Inventaire : " }{ $value0 }
 task-inventory-unreadable-object-inventory = Inventaire de l'objet illisible.
 task-inventory-incomplete-object-inventory = Inventaire de l'objet incomplet.
