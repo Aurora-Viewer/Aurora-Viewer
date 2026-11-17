@@ -2262,7 +2262,7 @@ impl App {
             env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
-            dual_inventory_ui: Default::default(),
+            dual_inventory_ui: ui::inventory::InventoryUi::dual_pane(),
             inventory_mutation_editor: None,
             texture_library: Default::default(),
             library_demo_seeded: false,
@@ -3520,9 +3520,8 @@ impl App {
         self.places_ui.forget_question();
         self.url_confirm = None;
         self.inventory_ui = Default::default();
-        self.dual_inventory_ui = Default::default();
+        self.dual_inventory_ui = ui::inventory::InventoryUi::dual_pane();
         self.inventory_mutation_editor = None;
-        self.panels.inventory_dual = false;
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account
         // must not save them into its sets
@@ -19771,9 +19770,9 @@ impl App {
                 ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
+                // the dual-panel layout, from the toolbar or the window's button
+                self.settings.inventory.dual_panel = self.panels.inventory_dual;
                 self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
-                self.inventory_ui.preferences_dirty |= self.dual_inventory_ui.preferences_dirty;
-                self.dual_inventory_ui.preferences_dirty = false;
                 self.inventory_ui.preferences_dirty |= self.settings.imports != import_preferences;
                 if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
                     self.inventory_ui.preferences_dirty = false;

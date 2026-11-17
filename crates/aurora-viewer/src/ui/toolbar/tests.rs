@@ -166,11 +166,13 @@ fn water_mode_toolbar_buttons_are_opt_in_and_preserve_saved_placements() {
     .expect("custom toolbar");
     saved["toolbar_common"]["water_walk_button_added"] = true.into();
     let mut restored: crate::settings::Settings = serde_json::from_value(saved).expect("retired upgrade flag is accepted");
-    assert!(restored.migrate_toolbar(uuid::Uuid::from_u128(101)), "dual inventory is added once");
+    assert!(
+        !restored.migrate_toolbar(uuid::Uuid::from_u128(101)),
+        "login keeps custom placements"
+    );
     let toolbar = restored.toolbar.as_mut().expect("common toolbar");
     assert_eq!(toolbar.location("movement", &layout), Some(Bar::Bottom));
     assert_eq!(toolbar.location("water_walk", &layout), Some(Bar::Right));
-    assert_eq!(toolbar.location("inventory_dual", &layout), Some(Bar::Bottom));
     state.pending = Some(Edit::Restore);
     assert!(state.commit(&layout, toolbar));
     for command in ["movement", "water_walk"] {
@@ -179,14 +181,6 @@ fn water_mode_toolbar_buttons_are_opt_in_and_preserve_saved_placements() {
             "restore keeps water controls optional: {command}"
         );
     }
-    assert!(
-        restored.migrate_toolbar(uuid::Uuid::from_u128(101)),
-        "reset defaults are marked migrated"
-    );
-    assert!(
-        !restored.migrate_toolbar(uuid::Uuid::from_u128(101)),
-        "next login keeps the saved toolbar"
-    );
 }
 
 #[test]
@@ -221,9 +215,9 @@ fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accoun
     assert_eq!(
         common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
         if cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos")) {
-            vec!["inventory", "inventory_dual", "vr_view", "director"]
+            vec!["inventory", "vr_view", "director"]
         } else {
-            vec!["inventory", "inventory_dual", "director"]
+            vec!["inventory", "director"]
         }
     );
     assert!(common.locked);
@@ -1116,25 +1110,4 @@ fn director_button_is_added_next_to_the_photo_button_once() {
     placed.migrate_director_button();
     assert_eq!(commands(placed.buttons.as_ref().expect("custom toolbar")), ["snapshot"]);
     assert_eq!(commands(&placed.left), ["director"]);
-}
-#[test]
-fn dual_inventory_is_migrated_to_saved_bottom_bars_once() {
-    let mut settings = ToolbarSettings {
-        buttons: Some(vec![button("people"), button("inventory"), button("preferences")]),
-        left: vec![button("inventory_dual")],
-        ..Default::default()
-    };
-    assert!(settings.ensure_dual_inventory_button());
-    assert_eq!(
-        commands(settings.buttons.as_ref().expect("saved toolbar")),
-        ["people", "inventory", "inventory_dual", "preferences"]
-    );
-    assert!(settings.left.is_empty(), "the command belongs on the bottom bar");
-    assert!(!settings.ensure_dual_inventory_button(), "migration is idempotent");
-    settings
-        .buttons
-        .as_mut()
-        .expect("saved toolbar")
-        .retain(|b| b.command != "inventory_dual");
-    assert!(!settings.ensure_dual_inventory_button(), "manual removal is retained");
 }

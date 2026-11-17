@@ -2637,9 +2637,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "inventory_dual" => {
             panels.inventory = true;
             panels.inventory_dual = !panels.inventory_dual;
-            if panels.inventory_dual {
-                super::widgets::size_floater(ctx, "inventory", Vec2::new(900.0, 600.0));
-            }
+            super::inventory::resize_for_dual(ctx, panels.inventory_dual);
         }
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),

@@ -236,11 +236,14 @@ pub enum InvAction {
         item: Uuid,
         input: thumbnail::Input,
     },
-    /// Preserve the originating dual pane for actions with pane-local UI state.
+    /// An action of the dual-panel layout's right pane (`DUAL_PANE`): the
+    /// app answers in that pane (messages, documents, created items).
     Panel {
         editor: Uuid,
         action: Box<InvAction>,
     },
+    /// The window's dual-panel button: two panes side by side, or one.
+    DualPanel,
 }
 
 #[derive(Default)]
@@ -439,6 +442,30 @@ const ADDITIONAL_WINDOW: Uuid = Uuid::from_u128(0x6b1f_2c4e_9a37_4d58_8e21_0f3c_
 
 /// Its button's icon: a second inventory briefcase.
 const ADDITIONAL_ICON: &str = "briefcase-2-filled";
+
+/// The id of the dual-panel layout's right pane (the left one is the main
+/// window, whose id is nil): the app sends that pane's answers back to it.
+pub const DUAL_PANE: Uuid = Uuid::from_u128(0x4455_414c_494e_5645_4e54_4f52_5901);
+
+/// The dual-panel button's icon, in the toolbar and in the window.
+pub const DUAL_ICON: &str = "columns-2-filled";
+
+/// The size the window takes when it turns to two panes: twice its width
+/// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
+/// back to one pane, half of it. A size the user sets afterwards stays.
+pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
+    let size = egui::AreaState::load(ctx, egui::Id::unique("inventory"))
+        .and_then(|state| state.size)
+        .unwrap_or(DEFAULT_SIZE);
+    let size = if dual {
+        Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
+    } else {
+        Vec2::new((size.x * 0.5).max(DEFAULT_SIZE.x), size.y)
+    };
+    super::widgets::size_floater(ctx, "inventory", size);
+}
+
+const DUAL_SIZE: Vec2 = Vec2::new(900.0, 600.0);
 
 fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
@@ -645,8 +672,12 @@ pub struct InventoryUi {
     /// The folder the explorer lists (Aurora's medium and wide widths),
     /// nil for the root.
     browse: Uuid,
-    /// Left/right width ratio for the Total Commander-style inventory view.
+    /// The dual-panel layout's share of the width for the left pane.
     dual_split: Option<f32>,
+    /// The main window shows the dual-panel layout this frame (its button
+    /// is lit); `dual_clicked` when that button was pressed.
+    dual_layout: bool,
+    dual_clicked: bool,
     /// The explorer's rows of `browse`: its folders never open in place.
     flat: rows::PlainTree,
     side: aurora::Sidebar,
@@ -734,6 +765,20 @@ impl InventoryUi {
     /// additional window) carry the id of their own window.
     pub(crate) fn is_main(&self) -> bool {
         self.ui_id.is_nil()
+    }
+
+    /// The dual-panel layout's right pane, with its id from the start: the
+    /// app tells the panes apart by it, shown or not.
+    pub fn dual_pane() -> Self {
+        Self {
+            ui_id: DUAL_PANE,
+            ..Self::default()
+        }
+    }
+
+    /// A dialog of this pane that stays on screen with the window closed.
+    fn has_dialog(&self) -> bool {
+        self.dialog.is_some() || self.move_to.is_some() || self.thumbnail.item.is_some() || self.bulk_permissions.active()
     }
 
     pub(crate) fn additional_open(&self) -> bool {
@@ -1566,8 +1611,9 @@ fn status(
 }
 
 /// The main window's "Additional inventory window" button, beside "+" as
-/// the Legacy Viewer's `new_inv_btn`, lit while that window is open; the
-/// other windows have none.
+/// the Legacy Viewer's `new_inv_btn`, lit while that window is open, then
+/// the dual-panel button, lit in that layout; the other windows have
+/// neither.
 fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if !st.is_main() {
         return;
@@ -1584,6 +1630,17 @@ fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     additional_button_drawn(ui, button.response.rect);
     if button.inner {
         st.toggle_additional_window(ui.ctx());
+    }
+    let dual = ui.scope(|ui| super::widgets::icon_toggle(ui, p, DUAL_ICON, aurora_i18n::tr!("inventory-dual-panel"), st.dual_layout));
+    dual_button_drawn(ui, dual.response.rect);
+    st.dual_clicked |= dual.inner;
+}
+
+/// Where the dual-panel button was drawn, for the tests to click.
+fn dual_button_drawn(ui: &egui::Ui, rect: egui::Rect) {
+    if cfg!(test) {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_dual_button"), rect));
     }
 }
 
@@ -2202,7 +2259,19 @@ pub fn show(
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let mut dual_actions = Vec::new();
-    let mut dual = dual;
+    st.dual_layout = dual.is_some();
+    if std::mem::take(&mut st.dual_clicked) {
+        actions.push(InvAction::DualPanel);
+    }
+    // The right pane costs nothing while the window is closed, unless one
+    // of its own dialogs is still open.
+    let mut dual = match dual {
+        Some(pane) if !*open && !pane.has_dialog() => {
+            pane.pending_delete = None;
+            None
+        }
+        pane => pane,
+    };
     clipboard::prepare(st);
     if !*open {
         st.pending_delete = None;
@@ -2211,7 +2280,7 @@ pub fn show(
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open
-        || dual.as_deref().is_some()
+        || dual.is_some()
         || st.dialog.is_some()
         || st.move_to.is_some()
         || st.demo_menu.is_some()
@@ -2318,7 +2387,7 @@ pub fn show(
         if !*open {
             dual.pending_delete = None;
         }
-        dual.ui_id = Uuid::from_u128(0x4455_414c_494e_5645_4e54_4f52_5901);
+        debug_assert_eq!(dual.ui_id, DUAL_PANE, "the right pane comes from InventoryUi::dual_pane");
         dual.visible.clear();
         // Only the primary pane takes the automatic first-open focus. If both
         // search fields request it in the same frame, egui leaves keyboard
@@ -2360,12 +2429,8 @@ pub fn show(
         st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
     }
     let screen = ctx.content_rect();
-    let default_size = if dual.as_deref().is_some() {
-        Vec2::new(900.0, 600.0)
-    } else {
-        DEFAULT_SIZE
-    };
-    let default_position = if dual.as_deref().is_some() {
+    let default_size = if dual.is_some() { DUAL_SIZE } else { DEFAULT_SIZE };
+    let default_position = if dual.is_some() {
         egui::pos2(screen.center().x - default_size.x * 0.5, 56.0)
     } else {
         egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0)
@@ -2490,7 +2555,6 @@ pub fn show(
         controls::dialogs(ctx, p, dual, prefs);
         folder_colors::show(ctx, p, &world.inventory, dual, prefs);
         finish_hidden_rename(&world.inventory, dual, &mut dual_actions);
-        context_catalog::process_deferred(&mut world.inventory, dual, prefs, &facts, &mut dual_actions);
         dialogs::show(ctx, p, icons, &world.inventory, dual, prefs, &facts, images, &mut dual_actions);
         move_to::show(ctx, p, icons, &mut world.inventory, dual, prefs, &facts, &mut dual_actions);
         dialogs::preview(
@@ -2519,9 +2583,9 @@ pub fn show(
             &mut dual_actions,
         );
         if let Some(residents) = dual.share_picker.show(ctx, p, world)
-            && let Some(resident) = residents.first()
+            && !residents.is_empty()
         {
-            dual.dialog = Some(EditDialog::Share(std::mem::take(&mut dual.share_items), *resident));
+            dual.dialog = Some(EditDialog::Share(std::mem::take(&mut dual.share_items), residents));
         }
         st.wanted_images.extend(dual.wanted_images.drain());
         st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
@@ -3354,7 +3418,7 @@ mod tests {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.inventory = tests::view_inventory(false);
         let mut primary = InventoryUi::default();
-        let mut dual = InventoryUi::default();
+        let mut dual = InventoryUi::dual_pane();
         let mut prefs = InventoryPreferences::default();
         let mut open = true;
         let images = std::collections::HashMap::new();
@@ -3422,6 +3486,82 @@ mod tests {
         assert_eq!(dual_tab, 2, "the right pane responds to its tab click");
         assert_eq!(primary_tab, 2, "clicking the right pane leaves the left tab unchanged");
         let _ = painted(&texts, &recent);
+    }
+
+    /// The dual-panel button of the main window, in both styles, asks the
+    /// app for the layout (`InvAction::DualPanel`) and is lit while the
+    /// layout shows; the right pane has no such button.
+    #[test]
+    fn the_main_window_button_switches_the_dual_panel_layout() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let button_id = egui::Id::unique("inventory_dual_button");
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::appearance::seed_demo(&mut world.inventory, crate::demo::DEMO_AGENT);
+            let mut st = InventoryUi::default();
+            let mut dual = InventoryUi::dual_pane();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let mut frame = |st: &mut InventoryUi, mut dual: Option<&mut InventoryUi>, events: Vec<egui::Event>| {
+                let mut actions = Vec::new();
+                frames.run(events, |ui| {
+                    actions = show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        dual.as_deref_mut(),
+                        &mut prefs,
+                        &mut true,
+                        false,
+                        &images,
+                        &Default::default(),
+                        &Default::default(),
+                        &scripts,
+                        classic,
+                    );
+                });
+                actions
+            };
+            for _ in 0..3 {
+                frame(&mut st, None, Vec::new());
+            }
+            assert!(!st.dual_layout, "classic={classic}");
+            let pos = ctx
+                .data(|d| d.get_temp::<egui::Rect>(button_id))
+                .expect("the main window draws the button")
+                .center();
+            let mut asked = false;
+            for pressed in [true, false] {
+                let events = vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ];
+                asked |= frame(&mut st, None, events).iter().any(|a| matches!(a, InvAction::DualPanel));
+            }
+            asked |= frame(&mut st, None, Vec::new()).iter().any(|a| matches!(a, InvAction::DualPanel));
+            assert!(asked, "classic={classic}: the click asks for the layout");
+            let actions = frame(&mut st, Some(&mut dual), Vec::new());
+            assert!(st.dual_layout, "classic={classic}: lit in the layout");
+            assert!(
+                !actions.iter().any(|a| matches!(a, InvAction::DualPanel)),
+                "classic={classic}: asked once"
+            );
+            assert!(!dual.is_main(), "classic={classic}: the right pane has no button");
+        }
     }
 
     /// #1090: the main window's button opens the additional window on the
