@@ -14,7 +14,8 @@
 //! around (`Scene::drawn_hover_between`). No query is added.
 //!
 //! `AURORA_HOVER_TRACE=1` writes a `hover trace` line each time the
-//! cursor's target or where it comes from changes (docs/TESTING.md).
+//! cursor's target or where it comes from changes, and a `hover trace
+//! cost` line every 5 s with the time spent on the CPU (docs/TESTING.md).
 
 use aurora_render::{DrawnMode, Renderer};
 use glam::Vec3;
@@ -116,6 +117,83 @@ fn trace_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("AURORA_HOVER_TRACE").is_some())
 }
 
+/// AURORA_HOVER_TRACE: the time one part of the hover took, over the
+/// frames of a `hover trace cost` line.
+#[derive(Clone, Copy, Default)]
+struct Span {
+    calls: u32,
+    total: Duration,
+    max: Duration,
+}
+
+impl Span {
+    fn add(&mut self, took: Duration) {
+        self.calls += 1;
+        self.total += took;
+        self.max = self.max.max(took);
+    }
+}
+
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let us = |d: Duration| d.as_secs_f64() * 1e6;
+        let mean = if self.calls == 0 {
+            0.0
+        } else {
+            us(self.total) / f64::from(self.calls)
+        };
+        write!(
+            f,
+            "{} calls, mean {mean:.1} us, max {:.1} us, {:.3} ms in all",
+            self.calls,
+            us(self.max),
+            us(self.total) / 1000.0
+        )
+    }
+}
+
+/// AURORA_HOVER_TRACE: what the hover cost since the last `hover trace
+/// cost` line.
+#[derive(Default)]
+struct Cost {
+    since: Option<Instant>,
+    frames: u32,
+    /// The search of the CPU, at each frame.
+    cpu: Span,
+    /// What an answer of the GPU is turned into, when one comes in.
+    answer: Span,
+    /// The last answer's object looked for under a pointer that moved
+    /// (`Scene::drawn_hover_on`, `Scene::drawn_hover_between`).
+    between: Span,
+    /// How those ended: followed, between, neither (the CPU's answer).
+    ends: [u32; 3],
+}
+
+impl Cost {
+    const EVERY: Duration = Duration::from_secs(5);
+
+    fn frame(&mut self, now: Instant) {
+        self.frames += 1;
+        let since = *self.since.get_or_insert(now);
+        let over = now.duration_since(since);
+        if over < Self::EVERY {
+            return;
+        }
+        log::info!(
+            "hover trace cost: {} frames in {:.1} s; CPU search: {}; answers: {}; between two answers: {} (followed {}, between {}, neither {})",
+            self.frames,
+            over.as_secs_f32(),
+            self.cpu,
+            self.answer,
+            self.between,
+            self.ends[0],
+            self.ends[1],
+            self.ends[2],
+        );
+        *self = Self::default();
+    }
+}
+
 #[derive(Default)]
 pub(super) struct HoverDrawn {
     pending: Option<(u64, Question, Instant)>,
@@ -123,6 +201,8 @@ pub(super) struct HoverDrawn {
     last_request: Option<Instant>,
     /// AURORA_HOVER_TRACE: what the last line said.
     traced: Option<(Source, Option<usize>)>,
+    /// AURORA_HOVER_TRACE.
+    cost: Cost,
 }
 
 impl HoverDrawn {
@@ -147,6 +227,9 @@ impl HoverDrawn {
         click_waiting: bool,
     ) -> Hit {
         let (hit, source) = self.answer(renderer, scene, world, cursor, ray, depth, far, click_waiting);
+        if trace_enabled() {
+            self.cost.frame(Instant::now());
+        }
         if trace_enabled() && self.traced != Some((source, hit.1)) {
             self.traced = Some((source, hit.1));
             let local = |i: usize| world.objects.get(i).map(|o| o.key.local_id);
@@ -185,7 +268,13 @@ impl HoverDrawn {
         far: f32,
         click_waiting: bool,
     ) -> (Hit, Source) {
+        // (AURORA_HOVER_TRACE: the clock is read only then)
+        let timed = trace_enabled();
+        let started = timed.then(Instant::now);
         let cpu = scene.hover_pick(world, ray, depth, far);
+        if let Some(started) = started {
+            self.cost.cpu.add(started.elapsed());
+        }
         let Some(ray) = ray.filter(|_| !click_waiting && scene.hover_needs_drawn()) else {
             self.cancel(renderer);
             return (cpu, Source::Cpu);
@@ -208,6 +297,7 @@ impl HoverDrawn {
                     // The answer for a pixel the pointer has left is kept
                     // too: it tells what is drawn around it (`between`).
                     let here = asked.same_ray(&question);
+                    let started = timed.then(Instant::now);
                     let hit = if here {
                         scene.drawn_hover(world, &drawn, ray, depth, far)
                     } else {
@@ -221,6 +311,9 @@ impl HoverDrawn {
                         under: scene.drawn_hover_under(world, &drawn, asked.ray),
                         behind: behind(hit, &question),
                     });
+                    if let Some(started) = started {
+                        self.cost.answer.add(started.elapsed());
+                    }
                 }
             } else if late {
                 self.cancel(renderer);
@@ -245,15 +338,29 @@ impl HoverDrawn {
             .is_some_and(|g| g.rigged || g.owner_avatar.is_some());
         let (hit, source) = if kept.question.same(&question, posed) {
             (kept.hit, Source::Answer)
-        } else if let Some(point) = kept.hit.1.and_then(|idx| scene.drawn_hover_on(world, idx, ray, depth, kept.behind)) {
-            ((Some(point), kept.hit.1), Source::Followed)
-        } else if let Some(hit) = kept
-            .between(&question)
-            .and_then(|(under, depth)| scene.drawn_hover_between(world, under, ray, depth, far))
-        {
-            (hit, Source::Between)
         } else {
-            return (cpu, Source::Fallback);
+            let started = timed.then(Instant::now);
+            let followed = kept.hit.1.and_then(|idx| scene.drawn_hover_on(world, idx, ray, depth, kept.behind));
+            let found = match followed {
+                Some(point) => Some(((Some(point), kept.hit.1), Source::Followed)),
+                None => kept
+                    .between(&question)
+                    .and_then(|(under, depth)| scene.drawn_hover_between(world, under, ray, depth, far))
+                    .map(|hit| (hit, Source::Between)),
+            };
+            if let Some(started) = started {
+                self.cost.between.add(started.elapsed());
+                let end = match found {
+                    Some((_, Source::Followed)) => 0,
+                    Some(_) => 1,
+                    None => 2,
+                };
+                self.cost.ends[end] += 1;
+            }
+            let Some(found) = found else {
+                return (cpu, Source::Fallback);
+            };
+            found
         };
         if foreground(cpu, hit, ray) {
             (cpu, Source::Foreground)
@@ -371,5 +478,14 @@ mod tests {
         assert_eq!(behind((Some(Vec3::X * 4.9), Some(3)), &q), 0.0);
         assert_eq!(behind(kept.hit, &Question { depth: None, ..q }), 0.0);
         assert_eq!(behind((None, None), &q), 0.0);
+    }
+
+    #[test]
+    fn the_cost_line_gives_calls_mean_longest_and_sum() {
+        let mut span = Span::default();
+        span.add(Duration::from_micros(10));
+        span.add(Duration::from_micros(30));
+        assert_eq!(span.to_string(), "2 calls, mean 20.0 us, max 30.0 us, 0.040 ms in all");
+        assert_eq!(Span::default().to_string(), "0 calls, mean 0.0 us, max 0.0 us, 0.000 ms in all");
     }
 }

@@ -1862,7 +1862,13 @@ when unfocused") is ignored during a screenshot.
   to if any, whether the GPU poses it, whether it is worn, whether it has a
   face at alpha 0), its distance and the depth's along the ray, and the
   posed object the last answer saw (`under`). A cursor that flickers shows
-  as lines alternating between two sources or two objects.
+  as lines alternating between two sources or two objects. Every 5 s of
+  hovering, a `hover trace cost` line gives the time the hover took on the
+  CPU over those frames, as calls, mean, longest and sum: the CPU search
+  (each frame), what the answers of the GPU are turned into (ten a second
+  at most), and the search for the last answer's object while the pointer
+  moves (`between two answers`, with how many ended `followed`, `between`
+  or with neither). Compare the sums with the frames' time (5 s).
 - **`AURORA_DEMO_LAND_BESIDE=1`**: a 4 m square frame (a box prim hollowed
   at 85 %) lying on the bare ground 5 m along the start view. Its box spans
   the ground in its middle, its surface does not, as the box of a mesh
