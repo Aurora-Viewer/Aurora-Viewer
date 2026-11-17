@@ -7794,8 +7794,13 @@ impl App {
             self.volumes_save_at = None;
             self.world.calls.save_volumes();
         }
-        // each resident's voice volume (LLSpeakerVolumeStorage)
-        self.voice.apply_volumes(&self.world.calls.volumes);
+        // each resident's voice volume (LLSpeakerVolumeStorage); a private
+        // call's is also applied by the viewer (issue #2874)
+        let p2p_peer = self.world.calls.active.as_ref().and_then(|c| match c.kind {
+            crate::world::calls::CallKind::P2p { other } => Some(other),
+            _ => None,
+        });
+        self.voice.apply_volumes(&self.world.calls.volumes, p2p_peer);
         let report = if self.demo {
             let in_world = self.in_world();
             for ev in self.call_demo.scenario(&mut self.world, in_world) {
