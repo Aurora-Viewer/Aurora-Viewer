@@ -43,3 +43,12 @@ fn normal_at(pixel: vec2<i32>, world: vec3<f32>, depth: f32) -> vec3<f32> {
     }
     return n;
 }
+
+// Where a ray from the pixel at `world` starts: off the surface along its
+// normal bent towards the eye (the depth's normal is a face's, so on curved
+// meshes, avatars most of all, the eye's side is the one surely outside),
+// by more far away, where depth is coarser.
+fn ray_origin(world: vec3<f32>, n: vec3<f32>, dist: f32) -> vec3<f32> {
+    let off = normalize(n + normalize(params.camera.xyz - world));
+    return world + off * (0.01 + 0.002 * dist);
+}

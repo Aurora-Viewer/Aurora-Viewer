@@ -10461,6 +10461,8 @@ impl Backend {
                 &scene,
                 faces,
             );
+            // moved surfaces keep their history through the prepass's motion
+            let rt_motion = motion_view(self.motion_now, &self.targets, self.taa.as_ref()).unwrap_or(&self.dummies.black);
             if rt_lights_now {
                 rt.encode_lights(
                     &self.device,
@@ -10471,6 +10473,7 @@ impl Backend {
                     fu_camera,
                     &f.lights,
                     &self.targets.depth_ss,
+                    rt_motion,
                     &scene,
                 );
             }
@@ -10493,6 +10496,7 @@ impl Backend {
                     &light,
                     crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
                     &self.targets.depth_ss,
+                    rt_motion,
                     &self.targets.scene_copy,
                     &scene,
                 );

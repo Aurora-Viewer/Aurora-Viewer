@@ -4,8 +4,7 @@
 // the contact shadows' mask (binding 13 of the frame group): `.r` is 0 lit,
 // 1 in shadow, the darker of the traced shadow and the contact shadow, so
 // `sun_shadow` (common.wgsl) needs nothing more than that mask.
-// The ray's origin and its offset: pushed off the surface along the normal
-// bent towards the eye, by more far away, where depth is coarser.
+// The ray starts where rt_view.wgsl `ray_origin` puts it.
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -52,8 +51,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let world = unproject(pixel, depth);
     let n = normal_at(pixel, world, depth);
     let dist = distance(world, params.camera.xyz);
-    let off = normalize(n + normalize(params.camera.xyz - world));
-    let origin = world + off * (0.01 + 0.002 * dist);
+    let origin = ray_origin(world, n, dist);
     let dir = params.light.xyz;
     let ray = RayDesc(u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, params.mode.z, origin, dir);
     var shadow = 0.0;
