@@ -18,8 +18,8 @@
 //!   faces-mapping: one face on each of three textured surfaces (repeats,
 //!   offset and rotation; planar mapping; a PBR base color transform), for
 //!   the face-select pattern.
-//!   `,no-highlight` after any faces-* name turns "Show highlight" off at
-//!   frame 215 (faces-mapping,object:99620,no-highlight).
+//!   `,no-highlight` after any faces-* name turns "Show highlight" off when
+//!   the Edit tool opens, at 600 (faces-mapping,object:99620,no-highlight).
 //!   faces-texgen: frames A closely, selects a side face at 625, then
 //!   switches its mapping Default <-> Planar at 655 with the Texture tab's
 //!   edit (capture at 650 and 690).

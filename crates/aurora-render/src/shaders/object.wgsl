@@ -3116,6 +3116,19 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
 // the Texture tab's values. The whole face is drawn, holes of an alpha
 // mask and invisible faces included, as LL draws the face's triangles.
 //
+// Where it is blended: the world's pattern goes into the HDR scene with the
+// debug overlays (`fs_selection_pattern_hdr`), before exposure, tone mapping
+// and gamma, as LL's renderHighlights runs in renderGeomPostDeferred before
+// renderFinalize; the HUDs' over the finished HUD image (`fs_selection_pattern`),
+// as LL's HUDs are drawn after renderFinalize.
+//
+// Two visible differences, kept on purpose (better for the user):
+// - rigged faces get the pattern too; LL draws nothing on them (the rigged
+//   branch of LLFace::renderSelected is `#if 0`);
+// - it follows texture animation on every face; LL's stays still on faces
+//   large enough to animate through the texture matrix (MIN_TEX_ANIM_SIZE in
+//   LLFace::getGeometryVolume), since renderSelected sets no texture matrix.
+//
 // The asset is fetched from the grid; frame.features[FEATURE_FACE_SELECT_SLOT] is its slot once
 // loaded, 0 while it loads and offline. Meanwhile `face_select_standin`
 // draws the pattern LL describes for it ("white squares with the rounded
@@ -3157,8 +3170,8 @@ fn face_select_color(loaded: bool, texel: vec4<f32>, standin: f32) -> vec4<f32> 
     return vec4<f32>(c.rgb, c.a * 0.5);
 }
 
-@fragment
-fn fs_selection_pattern(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+// The pattern in linear color, straight alpha.
+fn selection_pattern(in: VsOut, front: bool) -> vec4<f32> {
     // (sampled and differentiated before any discard)
     let slot = frame.features[FEATURE_FACE_SELECT_SLOT];
     let texel = sample_tex(slot, in.uv);
@@ -3171,6 +3184,19 @@ fn fs_selection_pattern(in: VsOut, @builtin(front_facing) front: bool) -> @locat
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     let c = face_select_color(slot != 0u, texel, standin);
     if (c.a <= 0.002) { discard; }
+    return c;
+}
+
+// The world's faces: blended into the HDR scene, before the post pass.
+@fragment
+fn fs_selection_pattern_hdr(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return selection_pattern(in, front);
+}
+
+// The HUDs' faces: blended over the finished HUD image.
+@fragment
+fn fs_selection_pattern(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let c = selection_pattern(in, front);
     var rgb = c.rgb;
     if (!HUD_SRGB_TARGET) { rgb = ll_linear_to_srgb(rgb); }
     return vec4<f32>(rgb, c.a);

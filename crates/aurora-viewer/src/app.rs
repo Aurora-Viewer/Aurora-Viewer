@@ -11505,16 +11505,17 @@ impl App {
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
             let revealing = self.imports.local_status.revealing();
-            let build_faces = if revealing {
-                Default::default()
-            } else {
-                self.build.face_selection(&self.world, &self.settings.build)
-            };
-            // (TE mode's faces also show the face-select pattern)
+            // (TE mode's faces show the face-select pattern, and the halo
+            // with "Show highlight": the picks are gathered once)
             let pattern = if revealing {
                 Default::default()
             } else {
                 self.build.face_picks(&self.world)
+            };
+            let build_faces = if revealing {
+                Default::default()
+            } else {
+                crate::build::BuildTool::halo_faces(|| pattern.clone(), &self.settings.build)
             };
             let mut selected_faces = if revealing {
                 self.imports.appearance_status(&self.world.objects).faces

@@ -1104,8 +1104,11 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
-    /// The face-select pattern over the selected faces (selection.rs).
+    /// The face-select pattern over the selected HUD faces (selection.rs).
     selection_pattern: wgpu::RenderPipeline,
+    /// The face-select pattern over the selected world faces, blended into
+    /// the HDR scene with the debug overlays (selection.rs).
+    selection_pattern_hdr: wgpu::RenderPipeline,
     /// The poser's hovered part on the subject's skinned faces.
     part_mask: wgpu::RenderPipeline,
     /// The visible part of the subject's faces (part_pick.rs).
@@ -5445,9 +5448,22 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
-        // The face-select pattern (LLPipeline::renderSelectedFaces), blended
-        // over the finished image of the world view or of the HUDs, both in
-        // the surface format, with the coverage pass's depth state.
+        // The face-select pattern (LLPipeline::renderSelectedFaces) of the
+        // world's faces: blended into the HDR scene like the debug overlays,
+        // before exposure, tone mapping and gamma, as LL's renderHighlights
+        // runs in renderGeomPostDeferred, before renderFinalize. The scene
+        // alpha (the glow) is left alone.
+        let selection_pattern_hdr = pipe(PipeDesc {
+            cull: None,
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            ..base("selected face pattern", "vs_main", "fs_selection_pattern_hdr")
+        });
+        // The HUDs' pattern: blended over the finished HUD image in the
+        // surface format (LL draws the HUDs after renderFinalize), with the
+        // coverage pass's depth state.
         let selection_pattern = pipe(PipeDesc {
             cull: None,
             samples: 1,
@@ -5460,7 +5476,7 @@ impl Backend {
                 clamp: 0.0,
             },
             constants: &hud_constants,
-            ..base("selected face pattern", "vs_main", "fs_selection_pattern")
+            ..base("selected HUD face pattern", "vs_main", "fs_selection_pattern")
         });
         // The poser's hovered part: the subject's skinned faces kept where
         // their weights are the part's joints (`vs_part_mask`)
@@ -5882,6 +5898,7 @@ impl Backend {
             select_child_wire,
             selection_mask,
             selection_pattern,
+            selection_pattern_hdr,
             part_mask,
             part_pick,
             ssr: ssr_pipe,
@@ -10839,6 +10856,10 @@ impl Backend {
                 }
                 blended(pass, blend_pipe, rest_from, bn);
             }
+            // the face-select pattern, whatever "Show highlight" gives the
+            // halo: LL's renderHighlights calls renderSelectedFaces without
+            // reading RenderHighlightSelections, right before renderDebug
+            draw(pass, &self.pipelines.selection_pattern_hdr, rg.select_pattern);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -11679,19 +11700,6 @@ impl Backend {
             calls.set(calls.get() + 1);
         }
 
-        // The face-select pattern is drawn whether or not "Show highlight"
-        // gives the halo any face: the Legacy Viewer's renderHighlights calls
-        // renderSelectedFaces without reading RenderHighlightSelections. It
-        // needs only its own list and the depth, and goes before the halo.
-        // It carries no timestamp: the frame's last one is written by the
-        // pass before it, or by the halo's when that follows.
-        if rg.select_pattern.1 > 0 {
-            let mut pass = crate::selection::begin_pattern(&mut encoder, scene_target, post_depth);
-            bind_mesh(&mut pass, &self.groups.b);
-            draw(&mut pass, &self.pipelines.selection_pattern, rg.select_pattern);
-            drop(pass);
-            calls.set(calls.get() + 1);
-        }
         if rg.select_faces.1 > 0
             && let Some(selection) = &self.selection
         {
@@ -12003,7 +12011,8 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_debug_red, hud_debug_red_range);
             draw(&mut pass, &self.pipelines.hud_debug_blue, hud_debug_blue_range);
         }
-        // the HUD faces' pattern, whatever "Show highlight" says (above); only when
+        // the HUD faces' pattern, whatever "Show highlight" says (as the world's
+        // in the scene pass); only when
         // the HUD pass ran, which clears the HUD depth. With the halo off this pass
         // carries no timestamp, so its time is not in the GPU total.
         if draw_huds

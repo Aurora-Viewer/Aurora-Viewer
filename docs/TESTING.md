@@ -2567,7 +2567,7 @@ shader draws its stand-in, the same frame and cross. On the grid the
 texture is fetched the first time Select face is chosen and replaces the
 stand-in once loaded.
 Add `,no-highlight` (`faces-mapping,object:99620,no-highlight`, any `faces*`
-scenario) to turn "Show highlight" off at frame 215: at 700 the pattern
+scenario) to turn "Show highlight" off when the Edit tool opens, at 600: at 700 the pattern
 shows on the picked faces with no halo, as with it on.
 
 `faces-texgen,object:99620` textures the cubes as `faces-mapping`, frames

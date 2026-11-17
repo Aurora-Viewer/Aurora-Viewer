@@ -2755,10 +2755,17 @@ impl BuildTool {
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
     pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
+        Self::halo_faces(|| self.face_picks(world), s)
+    }
+
+    /// The faces of `picks` (`face_picks`) that get the selection halo:
+    /// none while "Show highlight" is off. `picks` is called only when
+    /// needed, so a caller that already has the picks can clone them.
+    pub fn halo_faces(picks: impl FnOnce() -> HashMap<usize, u64>, s: &BuildSettings) -> HashMap<usize, u64> {
         if !s.show_highlight {
             return HashMap::new();
         }
-        self.face_picks(world)
+        picks()
     }
 
     /// The faces picked in Select face mode, whatever "Show highlight" says:

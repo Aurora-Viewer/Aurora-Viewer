@@ -10,9 +10,10 @@
 //! originally LGPL 2.1): the grid texture IMG_FACE_SELECT, white at half
 //! alpha, laid on the face with the face's own texture coordinates, so it
 //! follows the repeats, offset, rotation and planar mapping of the diffuse
-//! (PBR: base color) map. It is drawn between the coverage mask and the
-//! halo composite, inside the face where the halo never reaches
-//! (`fs_selection_pattern` in object.wgsl).
+//! (PBR: base color) map. The world's pattern is blended into the HDR scene
+//! with the debug overlays, before tone mapping, as LL's renderHighlights
+//! (`fs_selection_pattern_hdr` in object.wgsl); the HUDs' over the finished
+//! HUD image (`begin_pattern`, `fs_selection_pattern`).
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
@@ -272,9 +273,8 @@ impl Overlay {
     }
 }
 
-/// The face-select pattern's pass: blended over `target` (the finished
-/// image of the world view or of the HUDs) behind the depth of what was
-/// drawn there, which it reads only.
+/// The HUD face-select pattern's pass: blended over `target` (the finished
+/// HUD image) behind the depth of what was drawn there, which it reads only.
 pub(crate) fn begin_pattern<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,
