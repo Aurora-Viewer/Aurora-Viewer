@@ -798,3 +798,80 @@ fn a_narrow_walk_reads_shallow_and_widens_to_its_slots() {
     assert_eq!(deepest_first, Some(NARROW_DEPTH), "the lone first read goes a few levels deep");
     assert!(widest >= 3, "the walk widens: {widest} reads side by side");
 }
+
+/// The last heavy batch that a gateway gives up on (504) is read in parts
+/// at once, never asked again as is after a wait; a deep read left
+/// unanswered is freed after its own, shorter deadline.
+#[test]
+fn a_gateway_timeout_on_the_last_deep_batch_splits_it() {
+    let tree = [(10, 1, -1), (11, 1, -1), (20, 10, -1), (21, 11, -1)];
+    let mut inv = skeleton(&tree);
+    // every deep read of 10 or 11 times out at the gateway
+    let gateway = |r: &Read| {
+        (r.depth > 0 && (r.children.contains(&id(10)) || r.children.contains(&id(11)) || r.parent == id(10) || r.parent == id(11)))
+            .then_some(FetchFailure::Transient)
+    };
+    let server = Server {
+        tree: &tree,
+        cap: MAX_FOLDER_DEPTH,
+        items: 1,
+        failure: &gateway,
+    };
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let mut now = Instant::now();
+    let mut split = false;
+    for _ in 0..100 {
+        // (one second a round: a backoff of 15 s would show as many rounds
+        // with nothing sent)
+        now += std::time::Duration::from_secs(1);
+        for command in fetch.pump_at(&mut inv, AGENT, now) {
+            match command {
+                NetCommand::FetchInventoryOrphans { request } => {
+                    fetch.on_orphans_reply(request, true);
+                }
+                NetCommand::FetchInventoryTree {
+                    request,
+                    parent,
+                    children,
+                    depth,
+                    ..
+                } => {
+                    let read = Read { parent, children, depth };
+                    let outcome = match server.answer(&read) {
+                        Ok(contents) => {
+                            inv.apply(contents);
+                            Ok(())
+                        }
+                        // (the server's 503 stands for the gateway's 504)
+                        Err(_) => {
+                            split = true;
+                            Err(FetchError::new(FetchFailure::Transient, Some(504)))
+                        }
+                    };
+                    fetch.on_reply_at(&mut inv, request, &[], outcome, now);
+                    assert!(fetch.retries.is_empty(), "never waits to ask the same deep read again");
+                }
+                _ => {}
+            }
+        }
+        if fetch.is_idle() && unfetched(&inv).is_empty() {
+            break;
+        }
+    }
+    assert!(split);
+    assert!(unfetched(&inv).is_empty(), "read in parts: {:?}", unfetched(&inv));
+    // a deep read never answered is freed after TREE_DEADLINE
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let start = Instant::now();
+    fetch.pump_at(&mut inv, AGENT, start);
+    let deep: Vec<u64> = fetch.in_flight.iter().filter(|(_, r)| r.depth > 0).map(|(k, _)| *k).collect();
+    assert!(!deep.is_empty());
+    fetch.pump_at(&mut inv, AGENT, start + TREE_DEADLINE);
+    assert!(
+        deep.iter().all(|k| !fetch.in_flight.contains_key(k)),
+        "freed after its own deadline"
+    );
+}

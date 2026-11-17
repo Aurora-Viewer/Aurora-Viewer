@@ -40,11 +40,14 @@ const LEGACY_BATCH: usize = 10;
 const LEGACY_IN_FLIGHT: usize = 12;
 /// How long a read may stay unanswered before its slot is freed and it is
 /// tried again like a throttled one: beyond the HTTP layer's own worst case
-/// (ais.rs: a subtree read's 180 s, twice, for the request and its reply,
-/// with its backoff; a folder's 60 s five times). A reply that
+/// (ais.rs: a folder's 60 s, five times, with its backoff; a subtree read
+/// has its own, [`TREE_DEADLINE`]). A reply that
 /// never comes (a task lost, a connection dropped without an error) never
 /// holds one of the pool's slots for the rest of the session.
 const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(900);
+/// A subtree read's deadline: one 180 s try (ais.rs `TREE_TIMEOUT`, no
+/// second one) and a throttle's waits; past it the read is split.
+const TREE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(240);
 /// An idle walk with folders left unread looks at them again this often:
 /// what a lost reply or a dropped retry left is asked for in the walk's own
 /// batches, at its own pace.
@@ -247,13 +250,14 @@ impl BackgroundFetch {
         let expired: Vec<u64> = self
             .in_flight
             .iter()
-            .filter(|(_, r)| now.saturating_duration_since(r.sent) >= READ_DEADLINE)
+            .filter(|(_, r)| now.saturating_duration_since(r.sent) >= if r.depth > 0 { TREE_DEADLINE } else { READ_DEADLINE })
             .map(|(request, _)| *request)
             .collect();
         if !expired.is_empty() {
             log::warn!(
-                "inventory background fetch: {} reads unanswered for {} s, asked again",
+                "inventory background fetch: {} reads unanswered past their deadline ({} s a subtree, {} s a folder), asked again",
                 expired.len(),
+                TREE_DEADLINE.as_secs(),
                 READ_DEADLINE.as_secs()
             );
             self.expired_total += expired.len();
@@ -671,7 +675,9 @@ impl BackgroundFetch {
             // LLInventoryModelBackgroundFetch::onAISFolderCalback falls back
             // on a failed recursive read; only a refusal, 429 or 5xx, or a
             // folder alone waits for its retry)
-            let timed_out = error.kind == FetchFailure::Transient && error.status.is_none() && depth > 0;
+            // (a gateway's timeout, 502 to 504, is a timeout too)
+            let timed_out =
+                error.kind == FetchFailure::Transient && depth > 0 && error.status.is_none_or(|status| matches!(status, 502..=504));
             if timed_out {
                 log::warn!(
                     "background inventory read of {folder} timed out ({} folders, depth {depth}): read in parts",

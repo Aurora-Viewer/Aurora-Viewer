@@ -263,9 +263,10 @@ pub async fn fetch_tree(
     }
     // (a subtree read waits AISAPI::HTTP_TIMEOUT (180 s), as the Legacy
     // Viewer's does: a large subtree's reply takes longer than a folder's;
-    // a timeout is tried once more, then the walk reads it in smaller parts)
+    // one that times out, or that a gateway gives up on, is never asked
+    // again as is: the walk reads it in smaller parts)
     let doc = if depth > 0 {
-        get_with(http, url, TREE_TIMEOUT, 1).await?
+        get_with(http, url, TREE_TIMEOUT, 0).await?
     } else {
         get(http, url).await?
     };
@@ -338,7 +339,11 @@ async fn get_with(http: &reqwest::Client, url: String, timeout: std::time::Durat
                 t.finish(status, 0, false);
             }
             let failure = FetchError::status_of(status);
-            if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS {
+            // (a gateway that gave up on a subtree read gives up on it
+            // again: the walk reads it in parts at once; a throttle, 429,
+            // waits as always)
+            let gateway = matches!(status, 502..=504) && timeout_retries < RETRY_ATTEMPTS;
+            if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
                 tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
                 continue;
