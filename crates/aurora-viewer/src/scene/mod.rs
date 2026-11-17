@@ -5044,7 +5044,11 @@ impl Scene {
         // (sorted by distance, ours first at -1)
         let within = |radius: f32| {
             let radius = radius.min(dd);
-            if radius > 0.0 { avatars.partition_point(|(d, _)| *d < radius) } else { 0 }
+            if radius > 0.0 {
+                avatars.partition_point(|(d, _)| *d < radius)
+            } else {
+                0
+            }
         };
         self.stats.avatars_in_range = within(dd);
         let radius = self.avatar_count_radius;
