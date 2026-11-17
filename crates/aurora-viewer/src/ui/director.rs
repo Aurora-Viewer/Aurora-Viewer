@@ -104,6 +104,9 @@ pub enum Action {
     FfmpegSite,
     /// Show the last film in its folder.
     RevealFilm,
+    /// Render the track offline, or stop the render (director_output.rs).
+    Render,
+    CancelRender,
     /// Save the track under the name typed, or load the saved one at this
     /// place of the list.
     SaveTrack,
@@ -164,6 +167,7 @@ pub struct Record<'a> {
     pub finishing: bool,
     /// The last film: its file, or why it could not be written.
     pub last: Option<Result<&'a std::path::Path, &'a str>>,
+    pub render: super::director_output::RenderState,
 }
 
 /// The photo's isolation as the window shows it (`snapshot::isolate`): its
@@ -184,7 +188,7 @@ pub struct Env<'a> {
     pub out: &'a mut Vec<EnvAction>,
 }
 
-fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(super) fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), Sense::hover());
         ui.painter()
@@ -215,7 +219,7 @@ fn degrees(ui: &mut egui::Ui, value: f32, range: RangeInclusive<f32>, fill: bool
 }
 
 /// "m:ss", with the tenths when `tenths`.
-fn clock(seconds: f32, tenths: bool) -> String {
+pub(super) fn clock(seconds: f32, tenths: bool) -> String {
     let total = (seconds.max(0.0) * 10.0).round() as u32;
     let (minutes, rest, tenth) = (total / 600, (total / 10) % 60, total % 10);
     if tenths {
@@ -275,8 +279,15 @@ pub fn window(
                 widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
                     picture_section(ui, p, d, live.target.is_some());
                 });
+                widgets::collapsing(ui, p, "director_fades", aurora_i18n::tr!("director-fades"), false, |ui| {
+                    super::director_look::fades_section(ui, p, &mut d.finish);
+                });
+                let duration = d.track.duration();
+                widgets::collapsing(ui, p, "director_titles", aurora_i18n::tr!("director-titles"), false, |ui| {
+                    super::director_look::titles_section(ui, p, &mut d.finish, duration);
+                });
                 widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
-                    record_section(ui, p, record, live, actions);
+                    super::director_output::output_section(ui, p, record, live, actions);
                 });
                 widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
                     tracks_section(ui, p, tracks, d.track.is_empty(), actions);
@@ -620,153 +631,13 @@ fn tracks_section(ui: &mut egui::Ui, p: &Palette, tracks: Tracks<'_>, empty: boo
     }
 }
 
-fn film_format(format: recorder::Format) -> &'static str {
+pub(super) fn film_format(format: recorder::Format) -> &'static str {
     match format {
         recorder::Format::Mp4 => aurora_i18n::tr!("director-record-format-mp4"),
         recorder::Format::ProRes => aurora_i18n::tr!("director-record-format-prores"),
         recorder::Format::ProResAlpha => aurora_i18n::tr!("director-record-format-prores-alpha"),
         recorder::Format::Webm => aurora_i18n::tr!("director-record-format-webm"),
         recorder::Format::Lossless => aurora_i18n::tr!("director-record-format-lossless"),
-    }
-}
-
-/// The recording: the ffmpeg it goes through (or how to get one), the
-/// film's format, rate and quality, the button, and the last film.
-fn record_section(ui: &mut egui::Ui, p: &Palette, record: Record<'_>, live: &Live, actions: &mut Vec<Action>) {
-    let Record {
-        options,
-        changed,
-        ffmpeg,
-        formats,
-        recording,
-        finishing,
-        last,
-    } = record;
-    let size = Vec2::new(0.0, 26.0);
-    let note = |ui: &mut egui::Ui, text: &str, color: Color32| {
-        ui.label(RichText::new(text).size(12.0).color(color));
-    };
-    match ffmpeg {
-        None => note(ui, aurora_i18n::tr!("director-record-looking"), p.muted),
-        Some(None) => {
-            note(ui, aurora_i18n::tr!("director-record-missing"), p.warn);
-            note(ui, aurora_i18n::tr!("director-record-missing-hint"), p.muted);
-            ui.horizontal_wrapped(|ui| {
-                for (icon, label, action) in [
-                    ("external-link", aurora_i18n::tr!("director-record-site"), Action::FfmpegSite),
-                    (
-                        "folder-open-filled",
-                        aurora_i18n::tr!("director-record-choose"),
-                        Action::ChooseFfmpeg,
-                    ),
-                    ("refresh", aurora_i18n::tr!("director-record-again"), Action::FindFfmpeg),
-                ] {
-                    if widgets::action_button(ui, p, icon, label, ActionKind::Flat, size).clicked() {
-                        actions.push(action);
-                    }
-                }
-            });
-        }
-        Some(Some(path)) => {
-            ui.horizontal(|ui| {
-                let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("director-record-found", name = name.as_ref()))
-                        .size(12.0)
-                        .color(p.muted),
-                )
-                .on_hover_text(path.to_string_lossy());
-                if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("director-record-choose"), true) {
-                    actions.push(Action::ChooseFfmpeg);
-                }
-            });
-        }
-    }
-    let before = options.clone();
-    row(ui, p, aurora_i18n::tr!("director-record-format"), |ui| {
-        egui::ComboBox::from_id_salt("director_record_format")
-            .selected_text(film_format(options.format))
-            .show_ui(ui, |ui| {
-                for (format, available) in recorder::Format::ALL.into_iter().zip(formats) {
-                    // (a format the ffmpeg found cannot write is shown, greyed)
-                    ui.add_enabled_ui(available || ffmpeg.is_none(), |ui| {
-                        ui.selectable_value(&mut options.format, format, film_format(format));
-                    });
-                }
-            });
-    });
-    row(ui, p, aurora_i18n::tr!("director-record-fps"), |ui| {
-        options.fps = options.rate();
-        egui::ComboBox::from_id_salt("director_record_fps")
-            .selected_text(options.fps.to_string())
-            .show_ui(ui, |ui| {
-                for rate in recorder::RATES {
-                    ui.selectable_value(&mut options.fps, rate, rate.to_string());
-                }
-            });
-    });
-    row(ui, p, aurora_i18n::tr!("director-record-quality"), |ui| {
-        let levels = [recorder::Quality::Light, recorder::Quality::Good, recorder::Quality::Best];
-        let mut level = levels.iter().position(|quality| *quality == options.quality).unwrap_or(1);
-        let names = [
-            (aurora_i18n::tr!("director-record-quality-light"), true),
-            (aurora_i18n::tr!("director-record-quality-good"), true),
-            (aurora_i18n::tr!("director-record-quality-best"), true),
-        ];
-        if widgets::segmented(ui, p, &mut level, &names) {
-            options.quality = levels[level];
-        }
-    });
-    *changed |= *options != before;
-    if options.format.alpha() {
-        note(ui, aurora_i18n::tr!("director-record-alpha-tip"), p.muted);
-    }
-    note(ui, aurora_i18n::tr!("director-record-no-sound"), p.muted);
-    let (icon, label, kind) = if recording.is_some() {
-        ("player-stop-filled", aurora_i18n::tr!("director-record-stop"), ActionKind::Danger)
-    } else {
-        ("player-record-filled", aurora_i18n::tr!("director-record-start"), ActionKind::Flat)
-    };
-    let tip = aurora_i18n::tr!("director-record-tip");
-    if widgets::action_button_if(ui, p, icon, label, kind, size, live.can_record && !finishing)
-        .on_hover_text(tip)
-        .on_disabled_hover_text(tip)
-        .clicked()
-    {
-        actions.push(Action::Record);
-    }
-    if let Some(seconds) = recording {
-        let text = aurora_i18n::tr!("director-record-recording", time = clock(seconds as f32, true));
-        note(ui, &text, p.danger);
-    } else if finishing {
-        note(ui, aurora_i18n::tr!("director-record-finishing"), p.muted);
-    } else if let Some(film) = last {
-        match film {
-            Ok(file) => {
-                let name = file.file_name().unwrap_or(file.as_os_str()).to_string_lossy();
-                let text = aurora_i18n::tr!("director-record-saved", name = name.as_ref());
-                ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.success)).truncate())
-                        .on_hover_text(file.to_string_lossy());
-                });
-                if widgets::action_button(
-                    ui,
-                    p,
-                    "folder-open-filled",
-                    aurora_i18n::tr!("director-record-reveal"),
-                    ActionKind::Flat,
-                    size,
-                )
-                .clicked()
-                {
-                    actions.push(Action::RevealFilm);
-                }
-            }
-            Err(why) => {
-                let text = aurora_i18n::tr!("director-record-failed", why = why);
-                note(ui, &text, p.warn);
-            }
-        }
     }
 }
 

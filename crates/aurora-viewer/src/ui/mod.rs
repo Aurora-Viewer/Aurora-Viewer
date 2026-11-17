@@ -44,6 +44,8 @@ pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
 pub mod director;
+pub mod director_look;
+pub mod director_output;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
