@@ -9,11 +9,13 @@
 //! the frame group, the darker of the two, so the shading reads one texture
 //! as before.
 //!
-//! What is traced: the opaque faces of objects placed in the world and the
-//! terrain. Not yet: rigged and worn faces (posed by the vertex shaders, so
-//! their positions exist on the GPU only), alpha-masked and blended faces.
-//! The shadow maps still shade those passes the mask does not cover (blended
-//! faces, reflections).
+//! What is traced: the opaque faces of objects placed in the world, the
+//! terrain, and the avatars with what they wear: their faces are posed on
+//! the GPU each frame (shaders/rt_pose.wgsl, the vertex shaders' skinning)
+//! into one bottom level and a top level of their own, built again every
+//! frame, while the scene's top level stands as long as nothing moves. Not yet: alpha-masked and
+//! blended faces. The shadow maps still shade those passes the mask does
+//! not cover (blended faces, reflections).
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -79,40 +81,77 @@ pub struct Instance {
     pub model: [[f32; 4]; 4],
 }
 
+/// A rigged or worn face: its world positions exist only once posed, so the
+/// pose pass (shaders/rt_pose.wgsl) writes them each frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Posed {
+    pub record: u32,
+    pub base_vertex: u32,
+    pub first_index: u32,
+    pub index_count: u32,
+}
+
+/// What the frame traces: faces placed by their model matrix, and faces
+/// posed on the GPU.
+#[derive(Clone, Debug, Default)]
+pub struct Faces {
+    pub placed: Vec<Instance>,
+    pub posed: Vec<Posed>,
+}
+
 /// The faces to trace this frame, from the records and the culling tables
-/// the main thread keeps (see the module's comment for what is left out).
-pub(crate) fn gather(records: &RecordStore, cull: &CullTables, out: &mut Vec<Instance>) {
-    out.clear();
+/// the main thread keeps: opaque faces only (alpha-masked and blended ones
+/// are not traced yet), and no HUD.
+pub(crate) fn gather(records: &RecordStore, cull: &CullTables, out: &mut Faces) {
+    out.placed.clear();
+    out.posed.clear();
     for id in 0..records.faces.len() {
         let Some(face) = records.faces.get(id) else {
             continue;
         };
-        if face.index_count < 3 {
+        if face.index_count < 3 || face.base_vertex < 0 {
             continue;
         }
         let Some(record) = records.get(id as u32) else {
             continue;
         };
         let rf = record.flags[0];
-        let placed = if face.object == NO_OBJECT {
-            rf & flags::TERRAIN != 0
-        } else {
-            let Some(object) = cull.objects.get(face.object as usize) else {
-                continue;
-            };
-            let worn_or_posed = object_flags::HUD | object_flags::AVATAR | object_flags::RIGGED | object_flags::POSED;
-            let face_pass = face.bits & pass::BITS;
-            object.flags & object_flags::ACTIVE != 0
-                && object.flags & worn_or_posed == 0
-                && object.anchor == 0
-                && (face_pass == pass::OPAQUE || face_pass == pass::OPAQUE_2S)
-                && rf & (flags::SKINNED | flags::ANCHORED | flags::ALPHA_MASK | flags::ALPHA_BLEND | flags::LIP_SYNC) == 0
+        let index_count = face.index_count - face.index_count % 3;
+        if face.object == NO_OBJECT {
+            if rf & flags::TERRAIN != 0 {
+                out.placed.push(Instance {
+                    base_vertex: face.base_vertex,
+                    first_index: face.first_index,
+                    index_count,
+                    model: record.model,
+                });
+            }
+            continue;
+        }
+        let Some(object) = cull.objects.get(face.object as usize) else {
+            continue;
         };
-        if placed {
-            out.push(Instance {
+        let face_pass = face.bits & pass::BITS;
+        if object.flags & object_flags::ACTIVE == 0
+            || object.flags & object_flags::HUD != 0
+            || !(face_pass == pass::OPAQUE || face_pass == pass::OPAQUE_2S)
+            || rf & (flags::ALPHA_MASK | flags::ALPHA_BLEND) != 0
+        {
+            continue;
+        }
+        let worn_or_posed = object_flags::AVATAR | object_flags::RIGGED | object_flags::POSED;
+        if object.flags & worn_or_posed != 0 || object.anchor != 0 || rf & (flags::SKINNED | flags::ANCHORED | flags::LIP_SYNC) != 0 {
+            out.posed.push(Posed {
+                record: id as u32,
+                base_vertex: face.base_vertex as u32,
+                first_index: face.first_index,
+                index_count,
+            });
+        } else {
+            out.placed.push(Instance {
                 base_vertex: face.base_vertex,
                 first_index: face.first_index,
-                index_count: face.index_count - face.index_count % 3,
+                index_count,
                 model: record.model,
             });
         }
@@ -144,6 +183,51 @@ const REACH: f32 = 512.0;
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// The most posed vertices (one per index) a frame traces: the faces past
+/// it are left out.
+const POSED_VERTICES: u64 = 1 << 22;
+/// Bytes of a posed vertex (a vec4 of f32).
+const POSED_BYTES: u64 = 16;
+
+/// A posed face of the pose pass (must match `Face` in rt_pose.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct PoseFace {
+    record: u32,
+    base_vertex: u32,
+    first_index: u32,
+    index_count: u32,
+    out_offset: u32,
+    _pad: [u32; 3],
+}
+
+/// The pose pass's constants (must match `Params` in rt_pose.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct PoseParams {
+    counts: [u32; 4],
+}
+
+/// The pose pass and what it writes: the posed vertices and the bottom
+/// level built from them each frame.
+struct Poser {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+    params: wgpu::Buffer,
+    faces: Option<wgpu::Buffer>,
+    vertices: Option<wgpu::Buffer>,
+    /// The bottom level and the vertices it was made for.
+    blas: Option<(wgpu::Blas, u32)>,
+    /// A top level of its own, of the one posed bottom level: rebuilt each
+    /// frame, while the scene's stands as long as nothing moves.
+    tlas: Option<wgpu::Tlas>,
+    /// The vertices posed this frame (0: none, the top level is stale).
+    posed: u32,
+    table: Vec<PoseFace>,
+    /// A buffer too big to bind was logged.
+    warned: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Key {
     base_vertex: i32,
@@ -170,6 +254,8 @@ pub struct RtStats {
     pub built: usize,
     pub built_triangles: u64,
     pub waiting: usize,
+    pub posed_faces: usize,
+    pub posed_vertices: u64,
 }
 
 pub(crate) struct RtShadows {
@@ -188,13 +274,14 @@ pub(crate) struct RtShadows {
     frame: u64,
     pub stats: RtStats,
     timer: Option<Timer>,
+    poser: Poser,
 }
 
 /// Readbacks in flight for the pass's timestamps.
 const RING: usize = 4;
 
-/// The GPU time of the builds and of the trace: three timestamps (before the
-/// builds, before the trace, after it), resolved and read back a few frames
+/// The GPU time of the pose, the builds and the trace: four timestamps
+/// (before the pose, after it, before the trace, after it), resolved and read back a few frames
 /// later; their averages are logged every [`Timer::REPORT`] frames.
 struct Timer {
     queries: wgpu::QuerySet,
@@ -202,10 +289,13 @@ struct Timer {
     ring: Vec<(wgpu::Buffer, std::sync::Arc<std::sync::atomic::AtomicU8>)>,
     next: usize,
     period_ns: f32,
-    sums: [f64; 2],
+    sums: [f64; 3],
     count: u32,
     frames: u32,
 }
+
+/// Timestamps a frame writes.
+const QUERIES: u32 = 4;
 
 /// `Timer::ring` states.
 const FREE: u8 = 0;
@@ -223,11 +313,11 @@ impl Timer {
         let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("rt shadows"),
             ty: wgpu::QueryType::Timestamp,
-            count: 3,
+            count: QUERIES,
         });
         let resolve = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rt shadows timestamps"),
-            size: 3 * 8,
+            size: QUERIES as u64 * 8,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -235,7 +325,7 @@ impl Timer {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("rt shadows timestamps readback"),
-                    size: 3 * 8,
+                    size: QUERIES as u64 * 8,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -248,7 +338,7 @@ impl Timer {
             ring,
             next: 0,
             period_ns: queue.get_timestamp_period(),
-            sums: [0.0; 2],
+            sums: [0.0; 3],
             count: 0,
             frames: 0,
         })
@@ -269,12 +359,13 @@ impl Timer {
                 }
                 MAPPED => {
                     if let Ok(data) = buffer.slice(..).get_mapped_range() {
-                        let mut t = [0u64; 3];
-                        bytemuck::cast_slice_mut::<u64, u8>(&mut t).copy_from_slice(&data[..24]);
-                        if t[1] >= t[0] && t[2] >= t[1] {
+                        let mut t = [0u64; QUERIES as usize];
+                        bytemuck::cast_slice_mut::<u64, u8>(&mut t).copy_from_slice(&data[..QUERIES as usize * 8]);
+                        if t.windows(2).all(|w| w[1] >= w[0]) {
                             let ms = |a: u64, b: u64| (b - a) as f64 * self.period_ns as f64 / 1e6;
-                            self.sums[0] += ms(t[0], t[1]);
-                            self.sums[1] += ms(t[1], t[2]);
+                            for (k, sum) in self.sums.iter_mut().enumerate() {
+                                *sum += ms(t[k], t[k + 1]);
+                            }
                             self.count += 1;
                         }
                     }
@@ -288,17 +379,20 @@ impl Timer {
         if self.frames >= Self::REPORT && self.count > 0 {
             let n = self.count as f64;
             log::info!(
-                "AURORA_RT_SHADOWS: build {:.3} ms, trace {:.3} ms (GPU, mean of {} frames); {} faces traced, {} bottom levels ({} built last frame, {} triangles), {} waiting",
+                "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {} frames); {} placed faces, {} bottom levels ({} built last frame, {} triangles), {} waiting; {} posed faces ({} vertices)",
                 self.sums[0] / n,
                 self.sums[1] / n,
+                self.sums[2] / n,
                 self.count,
                 stats.instances,
                 stats.bottoms,
                 stats.built,
                 stats.built_triangles,
                 stats.waiting,
+                stats.posed_faces,
+                stats.posed_vertices,
             );
-            self.sums = [0.0; 2];
+            self.sums = [0.0; 3];
             self.count = 0;
             self.frames = 0;
         }
@@ -307,10 +401,10 @@ impl Timer {
     /// After this frame's work: its timestamps to a free readback.
     fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
         use std::sync::atomic::Ordering;
-        encoder.resolve_query_set(&self.queries, 0..3, &self.resolve, 0);
+        encoder.resolve_query_set(&self.queries, 0..QUERIES, &self.resolve, 0);
         let (buffer, state) = &self.ring[self.next];
         if state.load(Ordering::Acquire) == FREE {
-            encoder.copy_buffer_to_buffer(&self.resolve, 0, buffer, 0, 3 * 8);
+            encoder.copy_buffer_to_buffer(&self.resolve, 0, buffer, 0, QUERIES as u64 * 8);
             state.store(WRITTEN, Ordering::Release);
             self.next = (self.next + 1) % RING;
         }
@@ -365,9 +459,7 @@ impl RtShadows {
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::AccelerationStructure {
-                        vertex_return: false,
-                    },
+                    ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -378,6 +470,12 @@ impl RtShadows {
                         format: RESULT_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
                     count: None,
                 },
             ],
@@ -414,9 +512,275 @@ impl RtShadows {
             frame: 0,
             stats: RtStats::default(),
             timer: Timer::new(device, queue),
+            poser: Poser::new(device),
         })
     }
+}
 
+impl Poser {
+    fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rt shadows pose"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/rt_pose.wgsl").into()),
+        });
+        let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt shadows pose"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<PoseParams>() as u64),
+                    },
+                    count: None,
+                },
+                storage(1, true),
+                storage(2, true),
+                storage(3, true),
+                storage(4, true),
+                storage(5, true),
+                storage(6, true),
+                storage(7, true),
+                storage(8, false),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rt shadows pose"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("rt shadows pose"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("cs_pose"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rt shadows pose"),
+            size: std::mem::size_of::<PoseParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            layout,
+            pipeline,
+            params,
+            faces: None,
+            vertices: None,
+            blas: None,
+            tlas: None,
+            posed: 0,
+            table: Vec::new(),
+            warned: false,
+        }
+    }
+
+    /// Poses `faces` into the posed buffer (up to [`POSED_VERTICES`]) and
+    /// readies the bottom level for them: the vertices posed, 0 when none.
+    fn pose(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &crate::packet::SceneGpu,
+        faces: &[Posed],
+    ) -> u32 {
+        self.posed = 0;
+        self.table.clear();
+        let mut total = 0u64;
+        for f in faces {
+            if total + f.index_count as u64 > POSED_VERTICES {
+                break;
+            }
+            self.table.push(PoseFace {
+                record: f.record,
+                base_vertex: f.base_vertex,
+                first_index: f.first_index,
+                index_count: f.index_count,
+                out_offset: total as u32,
+                _pad: [0; 3],
+            });
+            total += f.index_count as u64;
+        }
+        if total == 0 {
+            return 0;
+        }
+        let max = device.limits().max_storage_buffer_binding_size;
+        let bound = [
+            &scene.records,
+            &scene.palettes,
+            &scene.skin_binds,
+            &scene.vertices,
+            &scene.skin,
+            &scene.indices,
+        ];
+        if bound.iter().any(|b| b.size() > max) {
+            if !self.warned {
+                log::warn!("AURORA_RT_SHADOWS: a scene buffer is larger than the device binds; avatars cast no traced shadow");
+                self.warned = true;
+            }
+            return 0;
+        }
+        let table_bytes = (self.table.len() * std::mem::size_of::<PoseFace>()) as u64;
+        if self.faces.as_ref().is_none_or(|b| b.size() < table_bytes) {
+            self.faces = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt shadows posed faces"),
+                size: table_bytes.next_power_of_two().max(4096),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        // the bottom level is made for a power of two of triangles, and
+        // built each frame for those posed
+        let capacity = (total / 3).next_power_of_two().max(1024) * 3;
+        if self.vertices.as_ref().is_none_or(|b| b.size() < capacity * POSED_BYTES) {
+            self.vertices = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt shadows posed vertices"),
+                size: capacity * POSED_BYTES,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
+                mapped_at_creation: false,
+            }));
+        }
+        if self.blas.as_ref().is_none_or(|(_, n)| (*n as u64) < total) {
+            let blas = device.create_blas(
+                &wgpu::CreateBlasDescriptor {
+                    label: Some("rt shadows posed"),
+                    flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                    update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+                },
+                wgpu::BlasGeometrySizeDescriptors::Triangles {
+                    descriptors: vec![posed_size(capacity as u32)],
+                },
+            );
+            self.blas = Some((blas, capacity as u32));
+        }
+        if self.tlas.is_none() {
+            self.tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
+                label: Some("rt shadows posed"),
+                max_instances: 1,
+                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+            }));
+        }
+        let (Some(table), Some(posed)) = (self.faces.as_ref(), self.vertices.as_ref()) else {
+            return 0;
+        };
+        queue.write_buffer(table, 0, bytemuck::cast_slice(&self.table));
+        let groups = (total as u32).div_ceil(64);
+        let x = groups.min(65_535);
+        let y = groups.div_ceil(x);
+        let record_vec4s = (std::mem::size_of::<crate::types::DrawRecord>() / 16) as u32;
+        let params = PoseParams {
+            counts: [self.table.len() as u32, total as u32, record_vec4s, x * 64],
+        };
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt shadows pose"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: scene.records.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: scene.palettes.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: scene.skin_binds.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: scene.vertices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: scene.skin.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: scene.indices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: posed.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("rt shadows pose"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(x, y, 1);
+        self.posed = total as u32;
+        self.posed
+    }
+
+    /// Builds the posed bottom level from what the pose wrote, and its top
+    /// level.
+    fn build(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let (true, Some((blas, _)), Some(buffer), Some(tlas)) = (self.posed > 0, &self.blas, &self.vertices, self.tlas.as_mut()) else {
+            return;
+        };
+        const IDENTITY: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        tlas[0] = Some(wgpu::TlasInstance::new(blas, IDENTITY, 0, 0xFF));
+        let size = posed_size(self.posed);
+        let entry = wgpu::BlasBuildEntry {
+            blas,
+            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
+                size: &size,
+                vertex_buffer: buffer,
+                first_vertex: 0,
+                vertex_stride: POSED_BYTES,
+                index_buffer: None,
+                first_index: None,
+                transform_buffer: None,
+                transform_buffer_offset: None,
+            }]),
+        };
+        encoder.build_acceleration_structures(std::iter::once(&entry), std::iter::once(&*tlas));
+    }
+
+    /// The posed top level to trace this frame, if any.
+    fn traced(&self) -> Option<&wgpu::Tlas> {
+        self.tlas.as_ref().filter(|_| self.posed > 0)
+    }
+}
+
+/// The posed bottom level's geometry: `vertices` unindexed, three a triangle.
+fn posed_size(vertices: u32) -> wgpu::BlasTriangleGeometrySizeDescriptor {
+    wgpu::BlasTriangleGeometrySizeDescriptor {
+        vertex_format: wgpu::VertexFormat::Float32x3,
+        vertex_count: vertices,
+        index_format: None,
+        index_count: None,
+        flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+    }
 }
 
 impl Targets {
@@ -474,29 +838,31 @@ impl RtShadows {
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
     }
 
-    /// Builds what is missing of the bottom levels (within a budget), the top
-    /// level of `instances`, and traces the mask from `depth` (and `contact`,
-    /// the contact shadows' mask, or a black texture).
+    /// Poses the posed faces and builds their levels, builds what is missing
+    /// of the bottom levels (within a budget) and the scene's top level when
+    /// a face was added or moved, and traces the mask from `depth` (and `contact`, the contact shadows'
+    /// mask, or a black texture).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         t: &Targets,
         depth: &wgpu::TextureView,
         contact: &wgpu::TextureView,
-        vertices: &wgpu::Buffer,
-        indices: &wgpu::Buffer,
-        instances: &[Instance],
+        scene: &crate::packet::SceneGpu,
+        faces: &Faces,
     ) {
+        let (vertices, indices, instances) = (&scene.vertices, &scene.indices, faces.placed.as_slice());
         self.frame += 1;
         let frame = self.frame;
         if let Some(timer) = &mut self.timer {
             timer.harvest(&self.stats);
-            // the builds' start: an empty pass's timestamp, as wgpu times no
-            // build of its own
+            // the pose's start: an empty pass's timestamp, as the pose may
+            // not run and wgpu times no build of its own
             drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("rt shadows builds"),
+                label: Some("rt shadows start"),
                 timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
                     beginning_of_pass_write_index: Some(0),
@@ -504,10 +870,28 @@ impl RtShadows {
                 }),
             }));
         }
-        let same_arena = self
-            .arena
-            .as_ref()
-            .is_some_and(|(v, i)| v == vertices && i == indices);
+        let posed = self.poser.pose(device, queue, encoder, scene, &faces.posed);
+        // the trace reads the posed top level only when there is one
+        queue.write_buffer(
+            &self.buffer,
+            (std::mem::offset_of!(ParamsU, mode) + 12) as u64,
+            bytemuck::bytes_of(&if posed > 0 { 1.0f32 } else { 0.0 }),
+        );
+        if let Some(timer) = &self.timer {
+            drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt shadows posed"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: None,
+                }),
+            }));
+        }
+        self.poser.build(encoder);
+        let posed_faces = if posed > 0 { self.poser.table.len() } else { 0 };
+        self.stats.posed_faces = posed_faces;
+        self.stats.posed_vertices = posed as u64;
+        let same_arena = self.arena.as_ref().is_some_and(|(v, i)| v == vertices && i == indices);
         if !same_arena {
             self.bottoms.clear();
             self.arena = Some((vertices.clone(), indices.clone()));
@@ -643,6 +1027,8 @@ impl RtShadows {
             built: created.len(),
             built_triangles: triangles,
             waiting,
+            posed_faces,
+            posed_vertices: posed as u64,
         };
         for ((key, _), blas) in new.into_iter().zip(created) {
             self.bottoms.insert(key, Bottom { blas, used: frame });
@@ -691,6 +1077,11 @@ impl RtShadows {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&t.result),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    // without posed faces the scene's stands in, unread
+                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
             ],
         });
         {
@@ -698,8 +1089,8 @@ impl RtShadows {
                 label: Some("rt shadows"),
                 timestamp_writes: self.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
-                    beginning_of_pass_write_index: Some(1),
-                    end_of_pass_write_index: Some(2),
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
                 }),
             });
             pass.set_pipeline(&self.pipeline);

@@ -6473,12 +6473,11 @@ impl Backend {
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         // the traced mask holds the contact shadows too (rt_shadows.wgsl)
-        let contact = t
-            .rt
-            .as_ref()
-            .map(|r| &r.result)
-            .or(t.contact.as_ref().map(|c| &c.result))
-            .unwrap_or(&dummies.black);
+        let contact =
+            t.rt.as_ref()
+                .map(|r| &r.result)
+                .or(t.contact.as_ref().map(|c| &c.result))
+                .unwrap_or(&dummies.black);
         let il = t
             .gtao
             .as_ref()
@@ -10409,12 +10408,12 @@ impl Backend {
             };
             rt.encode(
                 &self.device,
+                &self.queue,
                 &mut encoder,
                 t,
                 &self.targets.depth_ss,
                 contact,
-                &scene.vertices,
-                &scene.indices,
+                &scene,
                 faces,
             );
         }
