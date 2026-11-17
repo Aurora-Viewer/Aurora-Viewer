@@ -10,7 +10,7 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::socks5::{self, Command, Handshake, Target};
 use crate::{Endpoint, HttpRoute, is_loopback_host, rule};
@@ -43,7 +43,7 @@ pub fn tcp_connect(host: &str, port: u16, timeout: Duration) -> std::io::Result<
         }
         HttpRoute::Web(endpoint) => {
             let mut stream = to_proxy(endpoint, timeout)?;
-            http_connect(&mut stream, host, port)?;
+            http_connect(&mut stream, host, port, Instant::now() + timeout)?;
             Ok(stream)
         }
     }
@@ -88,8 +88,10 @@ fn authority(host: &str, port: u16) -> String {
 }
 
 /// Opens an HTTP CONNECT tunnel on `stream`. The reply head is read byte by
-/// byte, so nothing past it (the start of the tunnel) is consumed.
-fn http_connect<S: Read + Write>(stream: &mut S, host: &str, port: u16) -> std::io::Result<()> {
+/// byte, so nothing past it (the start of the tunnel) is consumed; the whole
+/// head must arrive before `deadline` (a proxy that sends it a byte at a time
+/// does not hold the caller past it).
+fn http_connect<S: Read + Write>(stream: &mut S, host: &str, port: u16, deadline: Instant) -> std::io::Result<()> {
     // a host with a line break or a space would write other headers
     if host.bytes().any(|b| b.is_ascii_control() || b == b' ') {
         return Err(other("invalid host"));
@@ -101,6 +103,9 @@ fn http_connect<S: Read + Write>(stream: &mut S, host: &str, port: u16) -> std::
     while !head.ends_with(b"\r\n\r\n") {
         if head.len() >= MAX_CONNECT_REPLY {
             return Err(other("the proxy's reply is too long"));
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the proxy's reply is too slow"));
         }
         if stream.read(&mut byte)? == 0 {
             return Err(other("the proxy closed the connection"));
@@ -118,6 +123,8 @@ fn http_connect<S: Read + Write>(stream: &mut S, host: &str, port: u16) -> std::
 /// status line.
 fn connect_granted(head: &[u8]) -> bool {
     let line = head.split(|&b| b == b'\n').next().unwrap_or_default();
+    // `HTTP/1.1 200` without a reason phrase ends with the `\r`
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
     let mut parts = line.split(|&b| b == b' ');
     let version = parts.next().unwrap_or_default();
     let status = parts.next().unwrap_or_default();
@@ -146,6 +153,9 @@ mod tests {
             Ok(())
         }
     }
+    fn later() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
     fn script(reply: &[u8]) -> Script {
         Script {
             input: std::io::Cursor::new(reply.to_vec()),
@@ -156,7 +166,7 @@ mod tests {
     #[test]
     fn connect_tunnel_granted_without_reading_past_the_head() {
         let mut s = script(b"HTTP/1.1 200 Connection established\r\nVia: x\r\n\r\nTLS-BYTES");
-        http_connect(&mut s, "radio.example", 443).unwrap();
+        http_connect(&mut s, "radio.example", 443, later()).unwrap();
         assert_eq!(s.written, b"CONNECT radio.example:443 HTTP/1.1\r\nHost: radio.example:443\r\n\r\n");
         let mut rest = Vec::new();
         s.input.read_to_end(&mut rest).unwrap();
@@ -173,20 +183,30 @@ mod tests {
             b"HTTP/1.1 2000 OK\r\n\r\n",
         ] {
             assert!(
-                http_connect(&mut script(reply), "h", 1).is_err(),
+                http_connect(&mut script(reply), "h", 1, later()).is_err(),
                 "{:?}",
                 String::from_utf8_lossy(reply)
             );
         }
         let endless = vec![b'a'; MAX_CONNECT_REPLY + 10];
-        assert!(http_connect(&mut script(&endless), "h", 1).is_err());
+        assert!(http_connect(&mut script(&endless), "h", 1, later()).is_err());
+        // past its deadline, even a valid reply is refused
+        let past = Instant::now();
+        assert!(http_connect(&mut script(b"HTTP/1.1 200 OK\r\n\r\n"), "h", 1, past).is_err());
     }
 
     #[test]
     fn connect_refuses_header_injection() {
         let mut s = script(b"HTTP/1.1 200 OK\r\n\r\n");
-        assert!(http_connect(&mut s, "a\r\nX-Evil: 1", 80).is_err());
+        assert!(http_connect(&mut s, "a\r\nX-Evil: 1", 80, later()).is_err());
         assert!(s.written.is_empty());
+    }
+
+    #[test]
+    fn status_line_without_reason_phrase() {
+        assert!(connect_granted(b"HTTP/1.1 200\r\n\r\n"));
+        assert!(connect_granted(b"HTTP/1.0 200 OK\r\n\r\n"));
+        assert!(!connect_granted(b"HTTP/1.1 20\r\n\r\n"));
     }
 
     #[test]

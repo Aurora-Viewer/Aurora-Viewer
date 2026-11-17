@@ -844,6 +844,7 @@ impl reqwest::dns::Resolve for PublicOnly {
 async fn public_addresses(host: String) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
     let lookup = host.clone();
     let found = tokio::task::spawn_blocking(move || {
+        // proxy-guard: only without a proxy of the viewer (`public_only`)
         std::net::ToSocketAddrs::to_socket_addrs(&(lookup.as_str(), 0)).map(|addrs| addrs.collect::<Vec<_>>())
     })
     .await??;

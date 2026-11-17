@@ -8,10 +8,11 @@
 //! - The SOCKS 5 user name and password go to the OS credential store
 //!   (`crate::credentials`), never to the settings. The password is never
 //!   read back into the window; saving it is an explicit button.
-//! - Stricter than the Legacy Viewer: voice (WebRTC) cannot go through these
-//!   proxies and shows the real address to the voice servers, so it is off
-//!   while a proxy is on, unless the user turns direct voice back on after a
-//!   warning and a confirmation (`direct_voice_modal`).
+//! - Stricter than the Legacy Viewer: voice (WebRTC) and the media plugins
+//!   (the web browser without the HTTP proxy, the video plugin always) cannot
+//!   go through these proxies and show the real address, so they are off while
+//!   a proxy is on, unless the user turns them back on after a warning and a
+//!   confirmation (`Direct`, `direct_modal`).
 
 use super::super::cx::{Cx, Nothing, field};
 use super::super::{OptionsUi, SLIDER_W};
@@ -29,7 +30,13 @@ pub struct ProxyPage {
     username: String,
     password: String,
     status: Status,
-    confirm_direct_voice: bool,
+    /// The direct connection waiting for its confirmation.
+    confirm: Option<Direct>,
+    /// The authentication went back to None: the saved credentials are
+    /// removed when the window closes (the Legacy Viewer removes them on OK).
+    forget_on_close: bool,
+    /// New credentials were saved: they apply at the next start.
+    credentials_saved: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +48,41 @@ enum Status {
     Failed,
 }
 
+/// What may connect around the proxy once the user confirms it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direct {
+    Voice,
+    Media,
+}
+
+impl Direct {
+    fn get(self, s: &mut Settings) -> &mut bool {
+        match self {
+            Direct::Voice => &mut s.proxy.direct_voice,
+            Direct::Media => &mut s.proxy.direct_media,
+        }
+    }
+
+    /// The confirmation's title, text, button and icon.
+    fn confirm(self) -> [&'static str; 4] {
+        use aurora_i18n::tr;
+        match self {
+            Direct::Voice => [
+                tr!("ui-options-proxy-direct-voice-confirm-title"),
+                tr!("ui-options-proxy-direct-voice-confirm-text"),
+                tr!("ui-options-proxy-direct-voice-confirm"),
+                "microphone-filled",
+            ],
+            Direct::Media => [
+                tr!("ui-options-proxy-direct-media-confirm-title"),
+                tr!("ui-options-proxy-direct-media-confirm-text"),
+                tr!("ui-options-proxy-direct-media-confirm"),
+                "player-play-filled",
+            ],
+        }
+    }
+}
+
 /// The longest host the rule takes (`Endpoint::new`).
 const HOST_CHARS: usize = 253;
 
@@ -49,7 +91,7 @@ pub fn group(cx: &mut Cx) {
     let p = cx.p;
     cx.group(tr!("ui-options-proxy"), |cx| {
         cx.note(tr!("ui-options-proxy-restart-note"));
-        if crate::proxy::restart_needed(&cx.s.proxy) {
+        if crate::proxy::restart_needed(&cx.s.proxy) || cx.st.proxy.credentials_saved {
             cx.note(tr!("ui-options-proxy-restart-needed"));
         }
         // the HTTP proxy of the web pages (BrowserProxyEnabled)
@@ -95,11 +137,11 @@ pub fn group(cx: &mut Cx) {
                 &field!(proxy.socks_port),
                 |ui, s| port_field(ui, &mut s.proxy.socks_port),
             );
-            cx.row(
+            cx.row_with(
                 tr!("ui-options-proxy-auth"),
                 tr!("ui-options-proxy-auth-help"),
                 &field!(proxy.socks_auth),
-                |ui, s| {
+                |ui, s, st, _| {
                     let mut changed = false;
                     ui.vertical(|ui| {
                         for (auth, label) in [
@@ -112,10 +154,11 @@ pub fn group(cx: &mut Cx) {
                             }
                         }
                     });
-                    if changed && s.proxy.socks_auth == SocksAuth::None {
+                    if changed {
                         // LLFloaterPreferenceProxy::saveSettings: credentials
-                        // no longer used are removed from the store
-                        crate::credentials::forget_proxy();
+                        // no longer used are removed from the store, once
+                        // the window closes (a misclick loses nothing)
+                        st.proxy.forget_on_close = s.proxy.socks_auth == SocksAuth::None;
                     }
                     changed
                 },
@@ -160,31 +203,53 @@ pub fn group(cx: &mut Cx) {
                 changed
             },
         );
-        // Aurora's own: voice does not go through the proxy
+        // Aurora's own: voice and media do not go through the proxy
         cx.greyed(!cx.s.proxy.any_proxy());
         cx.keywords("proxy voice webrtc");
-        cx.row_with(
-            tr!("ui-options-proxy-direct-voice"),
-            tr!("ui-options-proxy-direct-voice-help"),
+        direct_row(
+            cx,
+            Direct::Voice,
+            [
+                tr!("ui-options-proxy-direct-voice"),
+                tr!("ui-options-proxy-direct-voice-help"),
+                tr!("ui-options-proxy-direct-voice-warning"),
+            ],
             &field!(proxy.direct_voice),
-            |ui, s, st, _| {
-                let mut on = s.proxy.direct_voice;
-                let mut changed = false;
-                ui.vertical(|ui| {
-                    if widgets::switch(ui, &p, &mut on).changed() {
-                        if on {
-                            // turned on only once the warning is confirmed
-                            st.proxy.confirm_direct_voice = true;
-                        } else {
-                            s.proxy.direct_voice = false;
-                            changed = true;
-                        }
-                    }
-                    ui.add(egui::Label::new(RichText::new(tr!("ui-options-proxy-direct-voice-warning")).size(11.5).color(p.warn)).wrap());
-                });
-                changed
-            },
         );
+        cx.keywords("proxy media video web browser");
+        direct_row(
+            cx,
+            Direct::Media,
+            [
+                tr!("ui-options-proxy-direct-media"),
+                tr!("ui-options-proxy-direct-media-help"),
+                tr!("ui-options-proxy-direct-media-warning"),
+            ],
+            &field!(proxy.direct_media),
+        );
+    });
+}
+
+/// A switch that lets `direct` connect around the proxy: turned off at once,
+/// turned on only once its warning is confirmed (`direct_modal`); the warning
+/// stays written beside it.
+fn direct_row(cx: &mut Cx, direct: Direct, [label, hint, warning]: [&str; 3], f: &super::super::cx::F<bool>) {
+    let p = cx.p;
+    cx.row_with(label, hint, f, |ui, s, st, _| {
+        let mut on = *direct.get(s);
+        let mut changed = false;
+        ui.vertical(|ui| {
+            if widgets::switch(ui, &p, &mut on).changed() {
+                if on {
+                    st.proxy.confirm = Some(direct);
+                } else {
+                    *direct.get(s) = false;
+                    changed = true;
+                }
+            }
+            ui.add(egui::Label::new(RichText::new(warning).size(11.5).color(p.warn)).wrap());
+        });
+        changed
     });
 }
 
@@ -278,6 +343,7 @@ fn credentials(ui: &mut egui::Ui, p: &Palette, st: &mut OptionsUi) {
                 .inner;
             if save {
                 page.status = if crate::credentials::store_proxy(&page.username, &page.password) {
+                    page.credentials_saved = true;
                     Status::Saved
                 } else {
                     Status::Failed
@@ -296,49 +362,41 @@ fn credentials(ui: &mut egui::Ui, p: &Palette, st: &mut OptionsUi) {
     });
 }
 
-/// Asked before voice may connect directly while a proxy is on.
-pub fn direct_voice_modal(ctx: &egui::Context, p: &Palette, s: &mut Settings, st: &mut OptionsUi, open: bool) {
-    use aurora_i18n::tr;
-    if !(st.proxy.confirm_direct_voice && open) {
-        st.proxy.confirm_direct_voice = false;
-        return;
+/// Each frame of the window: the direct connection's confirmation, and the
+/// credentials removed once the window closes with no authentication.
+pub fn frame(ctx: &egui::Context, p: &Palette, s: &mut Settings, st: &mut OptionsUi, open: bool) {
+    if !open && std::mem::take(&mut st.proxy.forget_on_close) && s.proxy.socks_auth == SocksAuth::None {
+        crate::credentials::forget_proxy();
+        st.proxy.loaded = false;
     }
-    let modal = widgets::Modal::new(egui::Id::unique("options_proxy_direct_voice")).show(ctx, |ui| {
+    direct_modal(ctx, p, s, st, open);
+}
+
+/// Asked before voice or media may connect directly while a proxy is on.
+fn direct_modal(ctx: &egui::Context, p: &Palette, s: &mut Settings, st: &mut OptionsUi, open: bool) {
+    let Some(direct) = st.proxy.confirm.filter(|_| open) else {
+        st.proxy.confirm = None;
+        return;
+    };
+    let [title, text, button, icon] = direct.confirm();
+    let modal = widgets::Modal::new(egui::Id::unique("options_proxy_direct")).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.label(
-            RichText::new(tr!("ui-options-proxy-direct-voice-confirm-title"))
-                .size(15.0)
-                .strong()
-                .color(p.ink),
-        );
+        ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(tr!("ui-options-proxy-direct-voice-confirm-text"))
-                .size(12.5)
-                .color(p.muted),
-        );
+        ui.label(RichText::new(text).size(12.5).color(p.muted));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let size = Vec2::new(0.0, 26.0);
-            if action_button(
-                ui,
-                p,
-                "microphone-filled",
-                tr!("ui-options-proxy-direct-voice-confirm"),
-                ActionKind::Danger,
-                size,
-            )
-            .clicked()
-            {
-                s.proxy.direct_voice = true;
-                st.proxy.confirm_direct_voice = false;
+            if action_button(ui, p, icon, button, ActionKind::Danger, size).clicked() {
+                *direct.get(s) = true;
+                st.proxy.confirm = None;
             }
-            if action_button(ui, p, "x", tr!("common-cancel"), ActionKind::Flat, size).clicked() {
-                st.proxy.confirm_direct_voice = false;
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.proxy.confirm = None;
             }
         });
     });
     if modal.should_close() {
-        st.proxy.confirm_direct_voice = false;
+        st.proxy.confirm = None;
     }
 }

@@ -152,7 +152,9 @@ fn the_run_removes_every_part_and_reports_absent_and_failed_ones() {
             &Done::Removed,
             &Done::Failed("store locked".into()),
             &Done::Removed,
-            // never saved
+            // never saved: the cache key, the crash reports' and the
+            // proxy's credentials
+            &Done::Absent,
             &Done::Absent,
             &Done::Absent,
             &Done::Removed,

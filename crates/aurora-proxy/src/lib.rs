@@ -78,6 +78,12 @@ pub struct ProxySettings {
     /// voice off while a proxy is on, unless the user turns this on after a
     /// warning. Off.
     pub direct_voice: bool,
+    /// Let the media plugins connect directly while a proxy is on: the web
+    /// browser without the HTTP proxy, the video plugin always (neither can
+    /// use a SOCKS 5 proxy). The Legacy Viewer always lets them go direct;
+    /// Aurora keeps them off unless the user turns this on after a warning.
+    /// Off.
+    pub direct_media: bool,
 }
 
 impl Default for ProxySettings {
@@ -92,6 +98,7 @@ impl Default for ProxySettings {
             web_host: String::new(),
             web_port: 3128,
             direct_voice: false,
+            direct_media: false,
         }
     }
 }
@@ -105,6 +112,7 @@ impl std::fmt::Debug for ProxySettings {
             .field("http_type", &self.http_type)
             .field("web_enabled", &self.web_enabled)
             .field("direct_voice", &self.direct_voice)
+            .field("direct_media", &self.direct_media)
             .finish_non_exhaustive()
     }
 }
@@ -225,6 +233,7 @@ pub struct Rule {
     /// Some proxy is on (`ProxySettings::any_proxy`).
     pub any_proxy: bool,
     pub direct_voice: bool,
+    pub direct_media: bool,
 }
 
 impl Default for Rule {
@@ -243,6 +252,7 @@ impl Rule {
             problem: None,
             any_proxy: false,
             direct_voice: false,
+            direct_media: false,
         }
     }
 
@@ -253,6 +263,7 @@ impl Rule {
         let mut rule = Self {
             any_proxy: settings.any_proxy(),
             direct_voice: settings.direct_voice,
+            direct_media: settings.direct_media,
             ..Self::direct()
         };
         let socks = if settings.socks_enabled {
@@ -302,6 +313,18 @@ impl Rule {
     /// Whether voice may connect: no proxy, or the user chose direct voice.
     pub fn voice_allowed(&self) -> bool {
         !self.any_proxy || self.direct_voice
+    }
+
+    /// Whether the web browser plugin may start: settings that can be used,
+    /// and no proxy, the HTTP proxy for it, or the user's direct media.
+    pub fn browser_allowed(&self) -> bool {
+        self.problem.is_none() && (!self.any_proxy || self.browser.is_some() || self.direct_media)
+    }
+
+    /// Whether the video plugin may start (it never goes through a proxy):
+    /// settings that can be used, and no proxy or the user's direct media.
+    pub fn video_allowed(&self) -> bool {
+        self.problem.is_none() && (!self.any_proxy || self.direct_media)
     }
 
     /// Whether HTTP requests go through a proxy of the viewer (and so its
@@ -359,16 +382,19 @@ fn socks_proxy(server: &SocksServer) -> Option<reqwest::Proxy> {
 
 /// The proxy of a blocked rule: port 0 of loopback, which no connection can
 /// reach, so a request fails on this computer and never leaves it. (reqwest's
-/// `Proxy::custom` would turn an error into a direct connection.)
+/// `Proxy::custom` would turn an error into a direct connection.) Loopback
+/// itself stays direct, as with every rule.
 fn blocked() -> reqwest::Proxy {
     #[allow(clippy::expect_used)]
-    reqwest::Proxy::all("socks5h://127.0.0.1:0").expect("a constant, valid proxy URL")
+    reqwest::Proxy::all("socks5h://127.0.0.1:0")
+        .expect("a constant, valid proxy URL")
+        .no_proxy(reqwest::NoProxy::from_string(LOOPBACK))
 }
 
 /// The environment's proxies, as reqwest's own reading of them
 /// (hyper_util::client::proxy::matcher::Builder::from_env), with loopback
-/// always direct (issue #3903). `REQUEST_METHOD` (a CGI) disables
-/// `HTTP_PROXY`, as there.
+/// always direct (issue #3903). `REQUEST_METHOD` (a CGI) disables them all,
+/// as there (`Builder::build`).
 fn environment_proxies(var: impl Fn(&str) -> Option<String>) -> Vec<reqwest::Proxy> {
     let first = |names: [&str; 2]| names.iter().find_map(|n| var(n).filter(|v| !v.trim().is_empty()));
     let mut bypass = LOOPBACK.to_owned();
@@ -378,8 +404,10 @@ fn environment_proxies(var: impl Fn(&str) -> Option<String>) -> Vec<reqwest::Pro
     }
     let bypass = || reqwest::NoProxy::from_string(&bypass);
     let mut out = Vec::new();
-    let cgi = var("REQUEST_METHOD").is_some();
-    if !cgi && let Some(url) = first(["HTTP_PROXY", "http_proxy"]) {
+    if var("REQUEST_METHOD").is_some() {
+        return out;
+    }
+    if let Some(url) = first(["HTTP_PROXY", "http_proxy"]) {
         out.extend(reqwest::Proxy::http(url).ok().map(|p| p.no_proxy(bypass())));
     }
     if let Some(url) = first(["HTTPS_PROXY", "https_proxy"]) {
@@ -391,7 +419,9 @@ fn environment_proxies(var: impl Fn(&str) -> Option<String>) -> Vec<reqwest::Pro
     out
 }
 
-/// Whether a URL's host is this computer (always direct).
+/// Whether a URL's host is this computer (always direct): a loopback address
+/// or `localhost` itself. A subdomain of `localhost` is not taken on its name
+/// (the system resolver may ask the network for it).
 pub fn is_loopback_host(host: &str) -> bool {
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = bare.parse::<IpAddr>() {
@@ -400,8 +430,7 @@ pub fn is_loopback_host(host: &str) -> bool {
             IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()),
         };
     }
-    let lower = bare.trim_end_matches('.').to_ascii_lowercase();
-    lower == "localhost" || lower.ends_with(".localhost")
+    bare.trim_end_matches('.').eq_ignore_ascii_case("localhost")
 }
 
 static RULE: OnceLock<Rule> = OnceLock::new();
@@ -416,10 +445,16 @@ pub fn install(rule: Rule) -> bool {
 }
 
 /// The installed rule; no proxy when none was installed (the tests, the
-/// tools).
+/// tools). The viewer installs it before its first connection: a warning
+/// says when something asked for it before.
 pub fn rule() -> &'static Rule {
     static DIRECT: OnceLock<Rule> = OnceLock::new();
-    RULE.get().unwrap_or_else(|| DIRECT.get_or_init(Rule::direct))
+    RULE.get().unwrap_or_else(|| {
+        DIRECT.get_or_init(|| {
+            log::warn!("network: no proxy rule installed yet, direct connections");
+            Rule::direct()
+        })
+    })
 }
 
 /// Builds a reqwest client that follows the rule: `configure` sets the
@@ -531,11 +566,46 @@ mod tests {
     }
 
     #[test]
+    fn media_behind_a_proxy() {
+        let socks = ProxySettings {
+            socks_enabled: true,
+            socks_host: "proxy.example".into(),
+            ..Default::default()
+        };
+        let rule = Rule::from_settings(&socks, None);
+        assert!(!rule.browser_allowed() && !rule.video_allowed());
+        let rule = Rule::from_settings(
+            &ProxySettings {
+                direct_media: true,
+                ..socks.clone()
+            },
+            None,
+        );
+        assert!(rule.browser_allowed() && rule.video_allowed());
+        // the HTTP proxy covers the browser, never the video
+        let web = ProxySettings {
+            web_enabled: true,
+            web_host: "web.example".into(),
+            ..socks.clone()
+        };
+        let rule = Rule::from_settings(&web, None);
+        assert!(rule.browser_allowed() && !rule.video_allowed());
+        // settings that cannot be used start nothing, direct media or not
+        let broken = ProxySettings {
+            socks_host: "bad host".into(),
+            direct_media: true,
+            ..socks
+        };
+        let rule = Rule::from_settings(&broken, None);
+        assert!(!rule.browser_allowed() && !rule.video_allowed());
+        assert!(Rule::direct().browser_allowed() && Rule::direct().video_allowed());
+    }
+
+    #[test]
     fn loopback_hosts() {
         for host in [
             "localhost",
             "LOCALHOST.",
-            "a.localhost",
             "127.0.0.1",
             "127.9.9.9",
             "::1",
@@ -544,7 +614,8 @@ mod tests {
         ] {
             assert!(is_loopback_host(host), "{host}");
         }
-        for host in ["localhost.example", "10.0.0.1", "example.org", "::2", "0.0.0.0"] {
+        // a subdomain of localhost is not taken on its name
+        for host in ["localhost.example", "a.localhost", "10.0.0.1", "example.org", "::2", "0.0.0.0"] {
             assert!(!is_loopback_host(host), "{host}");
         }
     }
@@ -633,9 +704,14 @@ mod tests {
             environment_proxies(env(&[("http_proxy", "http://p:1"), ("HTTPS_PROXY", "http://p:2")])).len(),
             2
         );
-        // a CGI's HTTP_PROXY is a request header, not a proxy
+        // in a CGI, HTTP_PROXY is a request header: no environment proxy
         assert_eq!(
-            environment_proxies(env(&[("HTTP_PROXY", "http://p:1"), ("REQUEST_METHOD", "GET")])).len(),
+            environment_proxies(env(&[
+                ("HTTP_PROXY", "http://p:1"),
+                ("HTTPS_PROXY", "http://p:2"),
+                ("REQUEST_METHOD", "GET")
+            ]))
+            .len(),
             0
         );
         assert_eq!(

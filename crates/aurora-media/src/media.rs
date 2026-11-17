@@ -234,6 +234,11 @@ pub struct BrowserSettings {
     /// The web proxy of Preferences › Network › Proxy (host, port), or
     /// `None` for a direct browser (BrowserProxyEnabled).
     pub proxy: Option<(String, u16)>,
+    /// Why the web browser plugin may not start (Preferences › Network ›
+    /// Proxy: it would connect around the proxy), shown to the user.
+    pub browser_refused: Option<String>,
+    /// The same for the video plugins (LibVLC, GStreamer).
+    pub video_refused: Option<String>,
 }
 
 impl Default for BrowserSettings {
@@ -248,6 +253,8 @@ impl Default for BrowserSettings {
             javascript_enabled: true,
             zoom_factor: 1.0,
             proxy: None,
+            browser_refused: None,
+            video_refused: None,
         }
     }
 }
@@ -349,6 +356,15 @@ impl MediaPlugin {
         target: &str,
         in_world: bool,
     ) -> std::io::Result<MediaPlugin> {
+        // any plugin but the browser is a video one: refused with them
+        let refused = if plugin == "media_plugin_cef" {
+            &browser.browser_refused
+        } else {
+            &browser.video_refused
+        };
+        if let Some(why) = refused {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, why.clone()));
+        }
         let file = paths.plugin_file(plugin);
         if !file.is_file() {
             return Err(std::io::Error::new(

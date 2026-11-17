@@ -8,18 +8,28 @@
 
 use std::path::{Path, PathBuf};
 
-/// What builds a client or a socket around the rule.
+/// What builds a client or a socket around the rule, or asks the system
+/// resolver for a name (which tells the network what is visited).
 const FORBIDDEN: &[&str] = &[
-    "Client::builder()",
+    "Client::builder(",
     "Client::new()",
     "ClientBuilder::new()",
+    "ClientBuilder::default()",
     "Client::default()",
+    "reqwest::Client as",
+    "reqwest::ClientBuilder as",
     "reqwest::get(",
     "reqwest::blocking",
     ".no_proxy()",
     ".proxy(",
     "TcpStream::connect",
+    "TcpSocket::new",
     "UdpSocket::bind",
+    "Socket::new(",
+    "::from_std(",
+    "lookup_host",
+    "to_socket_addrs",
+    "ureq::",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -102,8 +112,12 @@ fn code_only(src: &str) -> Vec<String> {
                 line.push_str("\"\"");
                 while let Some(n) = chars.next() {
                     match n {
+                        // an escape; `\` at the end of a line continues the
+                        // string on the next one, which keeps its number
                         '\\' => {
-                            chars.next();
+                            if chars.next() == Some('\n') {
+                                lines.push(std::mem::take(&mut line));
+                            }
                         }
                         '"' => break,
                         '\n' => lines.push(std::mem::take(&mut line)),
@@ -169,7 +183,7 @@ fn test_lines(code: &[String]) -> Vec<bool> {
 /// (`MediaDataClient::default()` is not `Client::default()`).
 fn contains_word(line: &str, pattern: &str) -> bool {
     line.match_indices(pattern)
-        .any(|(at, _)| pattern.starts_with('.') || !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+        .any(|(at, _)| pattern.starts_with(['.', ':']) || !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
 }
 
 /// Line `n` carries the marker, or the `//` comment lines right above it do.
@@ -225,6 +239,9 @@ fn production_code_follows_the_proxy_rule() {
 
 #[test]
 fn the_scanner_sees_through_comments_strings_and_tests() {
+    // a string continued over two lines keeps the lines' numbers
+    let continued = code_only("let s = \"a \\\n    b\";\nClient::new();\n");
+    assert!(continued[2].contains("Client::new()"), "{continued:?}");
     let src = "fn a() {\n    // Client::new()\n    let s = \"Client::new()\";\n    let c = '{';\n}\n#[cfg(test)]\nmod tests {\n    fn b() { Client::new(); }\n}\nfn c() { Client::new(); }\n";
     let code = code_only(src);
     let skip = test_lines(&code);
@@ -241,4 +258,5 @@ fn the_scanner_sees_through_comments_strings_and_tests() {
     assert!(reviewed(&raw, 2));
     assert!(!reviewed(&raw, 4));
     assert!(contains_word("reqwest::Client::default()", "Client::default()"));
+    assert!(contains_word("UdpSocket::from_std(s)", "::from_std("));
 }

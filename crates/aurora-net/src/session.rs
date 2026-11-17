@@ -511,18 +511,13 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     );
 
     // the relay's family: an IPv6 proxy needs an IPv6 socket
-    let bind = match association.as_ref().map(|a| a.relay()) {
-        Some(relay) if relay.is_ipv6() => "[::]:0",
-        _ => "0.0.0.0:0",
-    };
-    // proxy-guard: the circuits' socket; through the SOCKS 5 relay when the
-    // proxy is on (CircuitSocket wraps every datagram)
-    let sock = match UdpSocket::bind(bind).await {
+    let ipv6 = association.as_ref().is_some_and(|a| a.relay().is_ipv6());
+    let sock = match crate::circuit_socket::bind(ipv6).await {
         Ok(s) => {
             size_socket_buffers(&s);
             let s = Arc::new(s);
             Arc::new(match association.as_ref() {
-                Some(a) => CircuitSocket::relayed(s, a.relay()),
+                Some(a) => CircuitSocket::relayed(s, a.relay(), a.announced()),
                 None => CircuitSocket::direct(s),
             })
         }

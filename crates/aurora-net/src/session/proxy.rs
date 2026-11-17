@@ -23,22 +23,32 @@ pub(super) async fn start(_sh: &Shared) -> Result<Option<UdpAssociation>, String
     let Some(server) = rule.udp.as_ref() else {
         return Ok(None);
     };
-    // the proxy's own name is the one resolved on this computer
-    let proxy = tokio::net::lookup_host((server.endpoint.host(), server.endpoint.port()))
+    // proxy-guard: the proxy's own name is the one resolved on this computer
+    let addrs: Vec<_> = tokio::net::lookup_host((server.endpoint.host(), server.endpoint.port()))
         .await
-        .ok()
-        .and_then(|mut addrs| addrs.next())
-        .ok_or_else(|| socks_message(SocksError::InvalidHost))?;
-    match UdpAssociation::open(proxy, server.credentials.clone()).await {
-        Ok(association) => {
-            log::info!("SOCKS 5 UDP relay ready");
-            Ok(Some(association))
-        }
-        Err(error) => {
-            log::warn!("SOCKS 5 proxy: {error}");
-            Err(socks_message(error))
+        .map(Iterator::collect)
+        .unwrap_or_default();
+    if addrs.is_empty() {
+        return Err(socks_message(SocksError::InvalidHost));
+    }
+    // each address in turn, while it cannot be reached (`localhost` is ::1
+    // first on Windows, a proxy may listen on 127.0.0.1 only)
+    let mut last = SocksError::HostConnectFailed;
+    for proxy in addrs {
+        match UdpAssociation::open(proxy, server.credentials.clone()).await {
+            Ok(association) => {
+                log::info!("SOCKS 5 UDP relay ready");
+                return Ok(Some(association));
+            }
+            Err(SocksError::HostConnectFailed) => {}
+            Err(error) => {
+                last = error;
+                break;
+            }
         }
     }
+    log::warn!("SOCKS 5 proxy: {last}");
+    Err(socks_message(last))
 }
 
 /// Completes when the proxy ends the session's association; never without

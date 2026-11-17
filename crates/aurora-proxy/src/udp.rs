@@ -19,7 +19,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
-use crate::socks5::{ATYP_DOMAIN, ATYP_IPV4, ATYP_IPV6, Command, Credentials, Handshake, SocksError, run_async};
+use crate::socks5::{ATYP_DOMAIN, ATYP_IPV4, ATYP_IPV6, Bound, Command, Credentials, Handshake, SocksError, run_async};
 
 /// The header of an IPv4 datagram: RSV (2), FRAG, ATYP, address (4), port (2).
 pub const HEADER_V4: usize = 10;
@@ -104,6 +104,9 @@ pub fn unwrap(datagram: &[u8]) -> Result<(SocketAddr, &[u8]), Dropped> {
 pub struct UdpAssociation {
     control: TcpStream,
     relay: SocketAddr,
+    /// The relay's own address in the reply (BND.ADDR), when it names one
+    /// that differs: a proxy with several addresses may answer from it.
+    announced: Option<SocketAddr>,
 }
 
 impl UdpAssociation {
@@ -120,14 +123,22 @@ impl UdpAssociation {
             return Err(SocksError::Protocol);
         }
         // LLProxy::proxyHandshake: the proxy's address, the reply's port
+        let relay = SocketAddr::new(proxy.ip(), bound.port());
         Ok(Self {
             control,
-            relay: SocketAddr::new(proxy.ip(), bound.port()),
+            relay,
+            announced: announced(&bound, relay),
         })
     }
 
+    /// Where the datagrams are sent.
     pub fn relay(&self) -> SocketAddr {
         self.relay
+    }
+
+    /// Another address the relay's datagrams may come from (its BND.ADDR).
+    pub fn announced(&self) -> Option<SocketAddr> {
+        self.announced
     }
 
     /// Completes when the proxy ends the association: the control channel
@@ -137,6 +148,19 @@ impl UdpAssociation {
         let mut byte = [0u8; 1];
         let _ = self.control.read(&mut byte).await;
     }
+}
+
+/// The reply's BND.ADDR, when it is a real address other than the relay's:
+/// not unspecified (0.0.0.0, `::`), not a name. IPv4-mapped IPv6 becomes
+/// IPv4, as the senders `unwrap` returns.
+fn announced(bound: &Bound, relay: SocketAddr) -> Option<SocketAddr> {
+    let Bound::Addr(addr) = bound else { return None };
+    let ip = match addr.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        ip => ip,
+    };
+    let addr = SocketAddr::new(ip, addr.port());
+    (!ip.is_unspecified() && addr != relay).then_some(addr)
 }
 
 impl std::fmt::Debug for UdpAssociation {
@@ -216,18 +240,34 @@ mod tests {
             let mut request = [0u8; 10];
             s.read_exact(&mut request).await.unwrap();
             assert_eq!(request, [5, 3, 0, 1, 0, 0, 0, 0, 0, 0]);
-            // a BND.ADDR elsewhere is ignored: the relay is the proxy's address
+            // the datagrams go to the proxy's address; a BND.ADDR elsewhere
+            // is only another address they may come back from
             s.write_all(&[5, 0, 0, 1, 198, 51, 100, 9, 0x1F, 0x90]).await.unwrap();
             let _ = close_rx.await;
         });
         let creds = Credentials::new("bob".into(), "pw!".into()).unwrap();
         let mut association = UdpAssociation::open(proxy, Some(creds)).await.unwrap();
         assert_eq!(association.relay(), SocketAddr::new(proxy.ip(), 8080));
+        assert_eq!(association.announced(), Some("198.51.100.9:8080".parse().unwrap()));
         let _ = close_tx.send(());
         tokio::time::timeout(Duration::from_secs(5), association.closed())
             .await
             .expect("closed");
         server.await.unwrap();
+    }
+
+    #[test]
+    fn announced_addresses() {
+        let relay: SocketAddr = "203.0.113.1:7000".parse().unwrap();
+        let addr = |a: &str| Bound::Addr(a.parse().unwrap());
+        assert_eq!(announced(&addr("0.0.0.0:7000"), relay), None);
+        assert_eq!(announced(&addr("[::]:7000"), relay), None);
+        assert_eq!(announced(&addr("203.0.113.1:7000"), relay), None);
+        assert_eq!(announced(&Bound::Domain(7000), relay), None);
+        assert_eq!(
+            announced(&addr("[::ffff:198.51.100.2]:7000"), relay),
+            Some("198.51.100.2:7000".parse().unwrap())
+        );
     }
 
     #[tokio::test]
