@@ -343,6 +343,8 @@ impl CameraFollowJoint {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
+    /// Fine camera buttons and photo-pad movement, off for existing controls.
+    pub precision: bool,
     pub preset: CameraPreset,
     /// CameraOffsetRearView: camera offset from the avatar (x forward, y left, z up).
     pub camera_offset: [f32; 3],
@@ -459,6 +461,7 @@ impl Default for CameraSettings {
     fn default() -> Self {
         let (camera_offset, focus_offset, offset_scale) = CameraPreset::Rear.values().unwrap_or_default();
         CameraSettings {
+            precision: false,
             preset: CameraPreset::Rear,
             camera_offset,
             focus_offset,
@@ -508,6 +511,20 @@ impl Default for CameraSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CameraShot {
     pub name: String,
+    /// Optional quick-access slot (zero-based), sharing ordinary preset storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_slot: Option<u8>,
+    /// Roll belongs to the saved position; absent in older presets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll: Option<f32>,
+    /// Quick views keep the Ctrl-0/Ctrl-8 lens without photo DOF or exposure.
+    /// Missing in older slots: leave the current lens unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_fov: Option<f32>,
+    /// The focus object saved with a Legacy Viewer world-positioned quick view.
+    /// Its global camera and focus cannot be converted to an Object anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_focus_object: Option<uuid::Uuid>,
     pub camera_offset: [f32; 3],
     pub focus_offset: [f32; 3],
     /// What holds the camera; None: the preset leaves it where it is. A
@@ -532,6 +549,10 @@ impl CameraShot {
     pub fn at_avatar(name: String, camera_offset: [f32; 3], focus_offset: [f32; 3]) -> CameraShot {
         CameraShot {
             name,
+            quick_slot: None,
+            roll: None,
+            quick_fov: None,
+            quick_focus_object: None,
             camera_offset,
             focus_offset,
             anchor: avatar_anchor(),

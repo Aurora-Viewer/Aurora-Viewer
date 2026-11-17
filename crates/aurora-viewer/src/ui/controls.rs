@@ -87,6 +87,7 @@ pub struct ControlsUi {
     /// The flags of the last frame, to see which one was just raised.
     was: (bool, bool),
     naming: ShotNaming,
+    quick_names: [Option<String>; 8],
 }
 
 /// The name being typed for a new camera position (the Legacy Viewer's
@@ -116,8 +117,11 @@ pub struct View<'a> {
     pub zoom: f32,
     /// Camera roll in radians.
     pub roll: f32,
+    pub precision: bool,
     pub preset: CameraPreset,
     pub shots: &'a [CameraShot],
+    pub quick_state: crate::camera::account_slots::State,
+    pub quick_write_failed: bool,
     /// The views the user saved over their templates.
     pub views: &'a SavedViews,
     pub flying: bool,
@@ -161,6 +165,11 @@ pub enum ControlAction {
     /// Every camera setting back, like Preferences › Camera.
     ResetCamera,
     Zoom(f32),
+    Precision(bool),
+    QuickSave(u8, String),
+    QuickLoad(u8),
+    QuickImport,
+    QuickSetup,
     RollBy(f32),
     LevelRoll,
     Mouselook,
@@ -190,6 +199,9 @@ pub struct Output {
 }
 
 impl ControlsUi {
+    pub fn reset_quick_names(&mut self) {
+        self.quick_names = Default::default();
+    }
     /// The Aurora window (`camera` / `movement`: the toolbar's View and
     /// Movement, the World menu's entries; either opens it on its tab), or
     /// Firestorm's two windows when `classic`.
@@ -206,7 +218,10 @@ impl ControlsUi {
                     size,
                 )
                 .auto_height()
-                .show(ctx, p, camera, |ui| classic_camera(ui, p, view, &mut self.naming, &mut out));
+                .show(ctx, p, camera, |ui| {
+                    classic_camera(ui, p, view, &mut self.naming, &mut out);
+                    self.photo_tools(ui, p, view, &mut out);
+                });
             }
             if *movement {
                 let size = Vec2::new(230.0, 140.0);
@@ -258,6 +273,9 @@ impl ControlsUi {
                     }
                 } else {
                     self.body(ui, p, view, &mut out);
+                    if self.tab == Tab::Camera {
+                        self.photo_tools(ui, p, view, &mut out);
+                    }
                 }
             });
         }
@@ -301,6 +319,79 @@ impl ControlsUi {
             (Tab::Camera, None) => self.camera_tab(ui, p, view, out),
             (Tab::Movement, _) => movement_tab(ui, p, view, out),
         }
+    }
+
+    fn photo_tools(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+        let mut precision = view.precision;
+        if widgets::switch_labeled(ui, p, &mut precision, aurora_i18n::tr!("camera-precision"))
+            .on_hover_text(aurora_i18n::tr!("camera-precision-tip"))
+            .changed()
+        {
+            out.actions.push(ControlAction::Precision(precision));
+        }
+        widgets::collapsing(
+            ui,
+            p,
+            "quick_camera_views",
+            aurora_i18n::tr!("camera-quick-views"),
+            view.shots.iter().any(|s| s.quick_slot.is_some()),
+            |ui| {
+                use crate::camera::account_slots::State;
+                let ready = view.quick_state == State::Ready;
+                if !ready || view.quick_write_failed {
+                    ui.label(match view.quick_state {
+                        State::Loading => aurora_i18n::tr!("camera-account-loading"),
+                        State::Failed => aurora_i18n::tr!("camera-account-load-error"),
+                        State::Ready => aurora_i18n::tr!("camera-account-save-error"),
+                        State::Import => aurora_i18n::tr!("camera-account-import-help"),
+                        State::Inactive => aurora_i18n::tr!("camera-account-login"),
+                    });
+                    if (matches!(view.quick_state, State::Import | State::Failed) || view.quick_write_failed)
+                        && widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-setup")).clicked()
+                    {
+                        out.actions.push(ControlAction::QuickSetup);
+                    }
+                }
+                ui.label(aurora_i18n::tr!("camera-quick-tip"));
+                // The Controls floater starts near the bottom of the screen.
+                // Keep all eight slots reachable without growing past it.
+                let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 48.0).clamp(48.0, 240.0);
+                egui::ScrollArea::vertical().max_height(room).show(ui, |ui| {
+                    for slot in 0..8u8 {
+                        let saved = view.shots.iter().find(|s| s.quick_slot == Some(slot));
+                        let name =
+                            self.quick_names[usize::from(slot)].get_or_insert_with(|| saved.map_or_else(String::new, |s| s.name.clone()));
+                        ui.push_id(slot, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label((slot + 1).to_string());
+                                let width = (ui.available_width() - 2.0 * BUTTON_H - 2.0 * ui.spacing().item_spacing.x).max(40.0);
+                                ui.add_sized(
+                                    Vec2::new(width, BUTTON_H),
+                                    egui::TextEdit::singleline(name)
+                                        .char_limit(64)
+                                        .hint_text(aurora_i18n::tr!("camera-quick-name", slot = i64::from(slot) + 1)),
+                                );
+                                ui.add_enabled_ui(ready, |ui| {
+                                    if square_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("camera-quick-save")) {
+                                        out.actions.push(ControlAction::QuickSave(slot, name.clone()));
+                                    }
+                                });
+                                ui.add_enabled_ui(saved.is_some(), |ui| {
+                                    if square_button(ui, p, "camera-filled", aurora_i18n::tr!("camera-quick-load")) {
+                                        out.actions.push(ControlAction::QuickLoad(slot));
+                                    }
+                                });
+                            });
+                        });
+                    }
+                });
+                ui.add_enabled_ui(ready, |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-legacy-import")).clicked() {
+                        out.actions.push(ControlAction::QuickImport);
+                    }
+                });
+            },
+        );
     }
 
     fn camera_tab(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
@@ -660,7 +751,7 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
                 let now = ui.input(|i| i.time);
                 if ui.is_enabled() && response.is_pointer_button_down_on() {
                     let start = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
-                    let rate = 0.05 + ((now - start) as f32 / 0.25).clamp(0.0, 1.0) * 0.95;
+                    let rate = crate::camera::control_rate((now - start) as f32, view.precision);
                     let dt = ui.input(|i| i.stable_dt).min(0.1);
                     out.actions
                         .push(ControlAction::RollBy(direction * rate * 45.0_f32.to_radians() * dt));
@@ -1712,8 +1803,11 @@ mod tests {
         let view = View {
             zoom: 0.5,
             roll: 0.0,
+            precision: false,
             preset: CameraPreset::Rear,
             shots: &[],
+            quick_state: crate::camera::account_slots::State::Ready,
+            quick_write_failed: false,
             views: &SavedViews::default(),
             flying: false,
             always_run: false,
@@ -1894,8 +1988,11 @@ mod tests {
             let view = View {
                 zoom: 0.5,
                 roll: 0.3,
+                precision: false,
                 preset: CameraPreset::Rear,
                 shots: &[],
+                quick_state: crate::camera::account_slots::State::Ready,
+                quick_write_failed: false,
                 views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
@@ -2117,8 +2214,11 @@ mod tests {
             let view = View {
                 zoom: 0.5,
                 roll: 0.0,
+                precision: false,
                 preset: CameraPreset::Rear,
                 shots: &shots,
+                quick_state: crate::camera::account_slots::State::Ready,
+                quick_write_failed: false,
                 views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
@@ -2206,8 +2306,11 @@ mod tests {
         let view = |flying: bool, run_locked: bool, fly_locked: bool| View {
             zoom: 0.5,
             roll: 0.0,
+            precision: false,
             preset: CameraPreset::Rear,
             shots: &[],
+            quick_state: crate::camera::account_slots::State::Ready,
+            quick_write_failed: false,
             views: &views,
             flying,
             always_run: false,
