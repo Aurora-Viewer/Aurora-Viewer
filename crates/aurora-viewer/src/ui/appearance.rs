@@ -585,6 +585,11 @@ impl AppearanceUi {
         agent: Uuid,
         folder: Uuid,
     ) -> Vec<aurora_net::NetCommand> {
+        // (a read to ask again, a pause run out among them, is freed here
+        // too: the Appearance window may be closed)
+        for id in inv.take_item_retries() {
+            self.requested_items.remove(&id);
+        }
         self.filter_requests(model::prepare_contents(inv, agent, folder))
     }
 
