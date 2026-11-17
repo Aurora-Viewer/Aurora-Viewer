@@ -33,9 +33,14 @@ the file and says which word, for instance `"Tattoo" is read as "tattoo"`.
 An unknown section, an unknown category or a body that hides a body that does
 not exist are refused too.
 
-Never put a real resident's name or id in the file. Store names in general do
-not belong here either: a store is read from its tag, and users who want a
-store filed somewhere add a store hint or a creator hint in Options.
+The file names the brands creators write into item names, because that is
+how items are labelled: the body makers (Reborn and eBODY, Legacy, Maitreya and
+Lara, Belleza with Isis, Freya, Venus and Jake, Slink with Physique and
+Hourglass, Kupra and Inithium with Erika, Signature Gianni and Geralt,
+Aesthetic) and the head makers (LeLutka and EvoX, Catwa, Genus, Akeruka, Logo).
+Other stores do not belong here: a store's own folder comes from its tag, and
+anything store-specific beyond that is the user's store hint or creator hint in
+Options. Never a resident's name or id.
 
 ## Checking a change
 
@@ -127,7 +132,9 @@ their own category.
 
 Add the names your change is for to the corpus (`corpus.json`), and for a rule
 in the code a test in `sorter_tests.rs` named for what it guarantees, with
-made-up store names only (no real store, creator or resident):
+made-up store names wherever the rule does not depend on a real brand (a body
+or head maker's tag is used as creators write it), and never a resident's name
+or id:
 
 ```rust
 /// A name that says decor is decor.
