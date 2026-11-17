@@ -16,6 +16,7 @@
 //! overlay draws.
 
 use crate::director::{Aim, Joint, KeyAim, Target};
+use crate::director_keys::{ExtraFile, KeyExtra};
 use crate::joystick::flycam::Flycam;
 use glam::{Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -163,6 +164,10 @@ pub struct KeyFile {
     pub locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aim: Option<AimFile>,
+    /// Its animation, lens and time of day (`director_keys`); absent when
+    /// it sets none, and from older files.
+    #[serde(default, skip_serializing_if = "ExtraFile::is_empty")]
+    pub extra: ExtraFile,
 }
 
 /// What a keyframe looks at, as a track's file keeps it: the joint by its
@@ -260,6 +265,8 @@ pub struct Keyframe {
     /// What the view looks at here (`Director::key_aim`): between two
     /// keyframes it turns smoothly from what one looks at to the next's.
     pub aim: KeyAim,
+    /// The animation it starts or stops, its own lens and time of day.
+    pub extra: KeyExtra,
 }
 
 /// How the camera goes from a keyframe to the next.
@@ -366,6 +373,7 @@ impl Track {
                     rest: key.rest,
                     locked: matches!(key.aim, KeyAim::On(_)),
                     aim: Some(AimFile::of(key.aim)),
+                    extra: ExtraFile::of(&key.extra),
                 })
                 .collect(),
         }
@@ -405,6 +413,7 @@ impl Track {
                     None if key.locked => KeyAim::On(older),
                     None => KeyAim::Lock,
                 },
+                extra: key.extra.read(),
             });
         }
         let mut track = Track {
@@ -439,6 +448,7 @@ impl Track {
             pose,
             rest: false,
             aim: KeyAim::Lock,
+            extra: KeyExtra::default(),
         });
         self.tidy();
         if first {
@@ -459,6 +469,7 @@ impl Track {
             pose,
             rest: false,
             aim: KeyAim::Lock,
+            extra: KeyExtra::default(),
         });
         self.tidy();
         Some(self.keys.len() - 1)
@@ -493,6 +504,35 @@ impl Track {
         if let Some(key) = self.keys.get_mut(index) {
             key.aim = aim;
         }
+    }
+
+    /// The animation, lens and time of day of keyframe `index`.
+    pub fn set_extra(&mut self, index: usize, extra: KeyExtra) {
+        if let Some(key) = self.keys.get_mut(index) {
+            key.extra = extra;
+        }
+    }
+
+    /// Keyframes laid after the last one at the times they give (a path
+    /// taken by hand, `director_capture`): each at least `MIN_GAP` after the
+    /// one before and no later than `MAX_TIME`, as many as the track still
+    /// takes. How many were laid.
+    pub fn push_keys(&mut self, keys: impl IntoIterator<Item = Keyframe>) -> usize {
+        let mut laid = 0;
+        for mut key in keys {
+            let after = self.keys.last().map(|last| last.time + MIN_GAP);
+            key.time = match after {
+                Some(after) => key.time.max(after),
+                None => 0.0,
+            };
+            if self.is_full() || !key.time.is_finite() || key.time > MAX_TIME {
+                break;
+            }
+            self.keys.push(key);
+            laid += 1;
+        }
+        self.tidy();
+        laid
     }
 
     /// The keyframes around `time` and how far the view has turned from what
