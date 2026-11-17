@@ -218,9 +218,12 @@ fn shown_degrees(radians: f32) -> f32 {
 }
 
 /// A slider of an angle kept in radians and shown in degrees: the new angle
-/// when it moved.
+/// when it moved. egui's slider rounds what it is given to its decimals and
+/// calls that a change: the angle is rounded before, so that only a move of
+/// the hand is one (the live view angle went to the whole degree, 1° or 2°
+/// off, the moment the Camera tab was shown).
 fn degrees(ui: &mut egui::Ui, value: f32, range: RangeInclusive<f32>, fill: bool) -> Option<f32> {
-    let mut shown = shown_degrees(value).clamp(*range.start(), *range.end());
+    let mut shown = shown_degrees(value).clamp(*range.start(), *range.end()).round();
     ui.spacing_mut().slider_width = SLIDER_W;
     let slider = egui::Slider::new(&mut shown, range)
         .custom_parser(aurora_i18n::parse_number)
@@ -491,7 +494,8 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
     if live.free {
         row(ui, p, aurora_i18n::tr!("director-free-speed"), |ui| {
             let range = crate::camera::free::SPEED_RANGE;
-            let mut speed = live.free_speed.clamp(*range.start(), *range.end());
+            // rounded first, as in `degrees`: shown is not moved
+            let mut speed = (live.free_speed.clamp(*range.start(), *range.end()) * 10.0).round() / 10.0;
             ui.spacing_mut().slider_width = SLIDER_W;
             let slider = egui::Slider::new(&mut speed, range)
                 .custom_parser(aurora_i18n::parse_number)
@@ -846,45 +850,47 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     {
         d.track.set_rest(index, rest);
     }
-    // what it looks at when it plays: the lock's target while the lock is
-    // on, a target of its own, or where its camera was laid
-    row(ui, p, aurora_i18n::tr!("director-key-aim"), |ui| {
-        ui.add(egui::Label::new(RichText::new(key_aim_label(d, key.aim)).size(12.5).color(p.ink)).wrap())
-            .on_hover_text(aurora_i18n::tr!("director-key-aim-tip"));
-    });
-    ui.horizontal_wrapped(|ui| {
-        let size = Vec2::new(0.0, 26.0);
+    // its own lock, whatever the others' and the live camera's: on, it
+    // looks at a target of its own (the lock's, taken when it is turned
+    // on); off, where its camera was laid. A keyframe of an older track
+    // that follows the live lock (`KeyAim::Lock`) shows what it does now,
+    // and becomes one of the two once switched.
+    let mut locked = d.key_aim(index).is_some();
+    if widgets::switch_labeled(ui, p, &mut locked, aurora_i18n::tr!("director-key-lock"))
+        .on_hover_text(aurora_i18n::tr!("director-key-lock-tip"))
+        .changed()
+    {
+        let aim = match (locked, key.aim) {
+            (false, _) => KeyAim::Free,
+            (true, KeyAim::On(aim)) => KeyAim::On(aim),
+            (true, _) => KeyAim::On(d.lock.aim()),
+        };
+        d.track.set_aim(index, aim);
+    }
+    if locked {
+        let aim = d.track.keys().get(index).map_or(key.aim, |key| key.aim);
+        row(ui, p, aurora_i18n::tr!("director-key-aim"), |ui| {
+            ui.add(egui::Label::new(RichText::new(key_aim_label(d, aim)).size(12.5).color(p.ink)).wrap())
+                .on_hover_text(aurora_i18n::tr!("director-key-aim-tip"));
+        });
         let own = KeyAim::On(d.lock.aim());
-        let choices = [
-            (
-                own,
-                "crosshair",
-                aurora_i18n::tr!("director-key-aim-take"),
-                aurora_i18n::tr!("director-key-aim-take-tip"),
-            ),
-            (
-                KeyAim::Free,
-                "circle-x-filled",
-                aurora_i18n::tr!("director-key-aim-clear"),
-                aurora_i18n::tr!("director-key-aim-clear-tip"),
-            ),
-            (
-                KeyAim::Lock,
-                "link-filled",
-                aurora_i18n::tr!("director-key-aim-follow"),
-                aurora_i18n::tr!("director-key-aim-follow-tip"),
-            ),
-        ];
-        for (aim, icon, label, tip) in choices {
-            if widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, size, key.aim != aim)
-                .on_hover_text(tip)
-                .on_disabled_hover_text(tip)
-                .clicked()
-            {
-                d.track.set_aim(index, aim);
-            }
+        let tip = aurora_i18n::tr!("director-key-aim-take-tip");
+        if widgets::action_button_if(
+            ui,
+            p,
+            "crosshair",
+            aurora_i18n::tr!("director-key-aim-take"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            aim != own,
+        )
+        .on_hover_text(tip)
+        .on_disabled_hover_text(tip)
+        .clicked()
+        {
+            d.track.set_aim(index, own);
         }
-    });
+    }
     ui.horizontal_wrapped(|ui| {
         let size = Vec2::new(0.0, 26.0);
         if widgets::action_button(
@@ -1124,13 +1130,25 @@ pub fn timeline(ctx: &egui::Context, p: &Palette, d: &mut Director, bottom_top: 
                         ui.horizontal(|ui| strip_buttons(ui, p, d, live, actions));
                         ui.horizontal(|ui| strip_edits(ui, p, d, live, actions));
                     });
-                    let ruler_w = (ui.available_width() - CLOCK_W - super::director_ruler::BUTTONS_W - 12.0).max(80.0);
+                    let ruler_w = (ui.available_width() - CLOCK_W - 6.0).max(80.0);
                     ruler(ui, p, d, ruler_w, live.restricted, actions);
-                    super::director_ruler::zoom_buttons(ui, p, ruler_span(d.track.duration()), d.time);
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(CLOCK_W, RULER_H), Sense::hover());
-                    let text = format!("{} / {}", clock(d.time, true), clock(d.track.duration(), true));
-                    ui.painter()
-                        .text(rect.right_center(), Align2::RIGHT_CENTER, text, FontId::monospace(12.0), p.ink);
+                    // the clock beside the playback, the zoom under it,
+                    // both right-aligned like the two rows on the left
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(CLOCK_W, STRIP_BUTTON.y), Sense::hover());
+                        let text = format!("{} / {}", clock(d.time, true), clock(d.track.duration(), true));
+                        ui.painter()
+                            .text(rect.right_center(), Align2::RIGHT_CENTER, text, FontId::monospace(12.0), p.ink);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(CLOCK_W, STRIP_BUTTON.y),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add_space(CLOCK_W - super::director_ruler::BUTTONS_W);
+                                super::director_ruler::zoom_buttons(ui, p, ruler_span(d.track.duration()), d.time);
+                            },
+                        );
+                    });
                 });
             });
         });
@@ -1204,7 +1222,7 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
         "plus",
         aurora_i18n::tr!("director-add-keyframe"),
         ActionKind::Primary,
-        Vec2::new(0.0, STRIP_BUTTON.y),
+        Vec2::new(wide_button_w(ui), STRIP_BUTTON.y),
         !d.track.is_full(),
     )
     .on_hover_text(tip)
@@ -1213,6 +1231,14 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
     {
         actions.push(Action::AddKey);
     }
+}
+
+/// The width shared by "Keyframe" and "Update", one above the other at the
+/// end of the strip's two rows: the wider of the two, in any language.
+fn wide_button_w(ui: &egui::Ui) -> f32 {
+    let add = widgets::action_button_keyed_content(ui, "plus", aurora_i18n::tr!("director-add-keyframe"), None);
+    let update = widgets::action_button_keyed_content(ui, "refresh", aurora_i18n::tr!("director-update"), None);
+    (add.max(update) + widgets::KEYED_PAD).ceil()
 }
 
 /// The track's edits, under the playback's buttons: delete the selected
@@ -1274,7 +1300,7 @@ fn strip_edits(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, ac
         "refresh",
         aurora_i18n::tr!("director-update"),
         ActionKind::Flat,
-        Vec2::new(0.0, STRIP_BUTTON.y),
+        Vec2::new(wide_button_w(ui), STRIP_BUTTON.y),
         selected.is_some() && !d.playing(),
     )
     .on_hover_text(tip)
@@ -1814,6 +1840,25 @@ mod tests {
         d.clear();
         bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
         assert!(!asked(&bench.ctx));
+    }
+
+    #[test]
+    fn showing_the_camera_moves_nothing() {
+        let mut bench = Bench::new();
+        let mut actions = Vec::new();
+        // a view angle and a speed between two of the sliders' steps
+        let live = Live {
+            roll: 0.3,
+            free: true,
+            free_speed: 2.37,
+            ..live()
+        };
+        for _ in 0..4 {
+            bench.frame(vec![], |ctx, p| {
+                egui::Area::new(Id::unique("camera_test")).show(ctx, |ui| camera_section(ui, p, &live, &mut actions));
+            });
+        }
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     #[test]

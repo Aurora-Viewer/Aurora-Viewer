@@ -197,7 +197,8 @@ fn title_editor(ui: &mut egui::Ui, p: &Palette, title: &mut Title, duration: f32
     row(ui, p, aurora_i18n::tr!("director-title-size"), |ui| {
         ui.spacing_mut().slider_width = SLIDER_W;
         let (low, high) = (*director_titles::SIZE_RANGE.start(), *director_titles::SIZE_RANGE.end());
-        let mut percent = title.size() * 100.0;
+        // rounded first: egui's slider would call its own rounding a change
+        let mut percent = (title.size() * 100.0).round();
         let slider = egui::Slider::new(&mut percent, low * 100.0..=high * 100.0)
             .custom_parser(aurora_i18n::parse_number)
             .fixed_decimals(0)

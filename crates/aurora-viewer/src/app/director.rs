@@ -1054,14 +1054,15 @@ impl App {
         if mode == "lock" {
             let d = &mut self.director.d;
             d.lock.on = true;
-            // the second keyframe on the neck, the third on the head (a
-            // target of its own), the fourth's target cleared
+            // the first two keyframes on the neck, the third on the head
+            // (a target of its own), the fourth not locked
             let own = |joint| {
                 KeyAim::On(Aim {
                     target: Target::Own,
                     joint,
                 })
             };
+            d.track.set_aim(0, own(director::Joint::Neck));
             d.track.set_aim(1, own(director::Joint::Neck));
             d.track.set_aim(2, own(director::Joint::Head));
             d.track.set_aim(3, KeyAim::Free);

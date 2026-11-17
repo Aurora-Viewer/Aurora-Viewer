@@ -503,10 +503,12 @@ pub fn lay(d: &mut Director, shot: &Shot, made: &Made, anchor: Option<Vec3>) -> 
     if made.curved {
         d.track.curve = Curve::Smooth;
     }
-    let aim = match (made.aimed, d.lock.on) {
-        (false, _) => KeyAim::Free,
-        (true, true) => KeyAim::On(d.lock.aim()),
-        (true, false) => KeyAim::Lock,
+    // like a keyframe laid by hand: locked on the lock's target while it
+    // is on, else where its camera is laid (each keyframe keeps its own)
+    let aim = if made.aimed && d.lock.on {
+        KeyAim::On(d.lock.aim())
+    } else {
+        KeyAim::Free
     };
     let anchor = anchor.filter(|point| shot.travel && point.is_finite() && matches!(aim, KeyAim::On(_)));
     let soft_end = replace || !d.track.ease_ends;
@@ -811,8 +813,8 @@ mod tests {
         assert_eq!(first, 2);
         assert_eq!((d.selected, d.time), (Some(2), 3.0 + track::DEFAULT_GAP));
         assert_eq!(d.track.len(), 2 + made.keys.len());
-        // laid with the lock off, its keyframes follow the lock, like any
-        assert!(d.track.keys()[2..].iter().all(|k| k.aim == KeyAim::Lock));
+        // laid with the lock off, its keyframes look where they are laid
+        assert!(d.track.keys()[2..].iter().all(|k| k.aim == KeyAim::Free));
         // the track's smooth end is still on: no easing of its own
         assert!(d.track.ease_ends && d.track.keys().iter().all(|k| k.shot.ease.is_linear()));
         history.observe(&d, true);

@@ -233,7 +233,8 @@ fn key_parameters(ui: &mut egui::Ui, p: &Palette, shot: &mut Shot) {
     match shot.kind {
         Kind::Orbit => {
             row(ui, p, aurora_i18n::tr!("director-shot-arc"), |ui| {
-                let mut shown = shot.arc.to_degrees().clamp(*ARC_DEGREES.start(), *ARC_DEGREES.end());
+                // rounded first: egui's slider would call its own rounding a change
+                let mut shown = shot.arc.to_degrees().clamp(*ARC_DEGREES.start(), *ARC_DEGREES.end()).round();
                 ui.spacing_mut().slider_width = SLIDER_W;
                 let slider = egui::Slider::new(&mut shown, ARC_DEGREES)
                     .custom_parser(aurora_i18n::parse_number)

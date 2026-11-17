@@ -14,11 +14,12 @@
 //! keyframe taken meanwhile keeps that target as its own (`KeyAim::On`): a
 //! track can look at a dancer, then at another, the view passing from one
 //! to the next between their keyframes. A keyframe laid with the lock off
-//! follows the lock (`KeyAim::Lock`): played, it looks at the lock's target
-//! while the lock is on (a user who turns it on after laying the path
-//! expects the playback to follow the target), where its camera was laid
-//! while it is off. A keyframe whose target is cleared (`KeyAim::Free`)
-//! looks where its camera was laid, whatever the lock.
+//! looks where its camera was laid (`KeyAim::Free`). Each keyframe keeps
+//! its own lock, switched in its row: turning the live lock on or off
+//! changes none of them (the human's choice, 2026-11-17: keyframes that
+//! followed the live switch were all unlocked with it). Older tracks may
+//! still hold keyframes that follow the live lock (`KeyAim::Lock`), read
+//! and played as before.
 
 pub mod shots;
 
@@ -350,7 +351,7 @@ impl Director {
         } else {
             self.track.append(pose)
         }?;
-        let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Lock };
+        let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Free };
         self.track.set_aim(index, aim);
         self.selected = Some(index);
         self.time = self.track.keys()[index].time;
@@ -784,7 +785,7 @@ mod tests {
         d.lock.on = false;
         d.add_key(at(20.0));
         let aims: Vec<KeyAim> = d.track.keys().iter().map(|k| k.aim).collect();
-        assert_eq!(aims, [KeyAim::Lock, KeyAim::On(d.lock.aim()), KeyAim::Lock]);
+        assert_eq!(aims, [KeyAim::Free, KeyAim::On(d.lock.aim()), KeyAim::Free]);
         // played, the view turns to the target where the keyframes say so
         let target = Vec3::new(10.0, 50.0, 20.0);
         let towards = |d: &Director| {
@@ -802,10 +803,26 @@ mod tests {
     }
 
     #[test]
-    fn the_lock_turned_on_after_the_keyframes_locks_the_whole_playback() {
-        // the path laid first, the lock turned on afterwards: every keyframe
-        // follows the lock, and the playback follows the target throughout
+    fn the_live_lock_changes_no_keyframe() {
+        // the path laid first, the lock turned on afterwards: each keyframe
+        // keeps its own (off), and turning one on changes none of the others
         let mut d = three();
+        d.lock.on = true;
+        assert!(d.track.keys().iter().all(|key| key.aim == KeyAim::Free));
+        assert!((0..3).all(|index| d.key_aim(index).is_none()));
+        d.track.set_aim(1, KeyAim::On(d.lock.aim()));
+        d.lock.on = false;
+        assert_eq!((d.key_aim(0), d.key_aim(1), d.key_aim(2)), (None, Some(d.lock.aim()), None));
+    }
+
+    #[test]
+    fn an_older_track_that_follows_the_lock_still_follows_it() {
+        // keyframes of an older track that follow the live lock: the
+        // playback follows the target throughout while it is on
+        let mut d = three();
+        for index in 0..3 {
+            d.track.set_aim(index, KeyAim::Lock);
+        }
         assert!(d.aims().is_empty());
         d.lock.on = true;
         assert_eq!(d.aims(), [d.lock.aim()]);
