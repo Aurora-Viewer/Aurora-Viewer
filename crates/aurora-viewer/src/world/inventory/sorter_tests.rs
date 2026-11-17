@@ -3419,3 +3419,29 @@ fn a_versioned_name_with_a_year_is_no_date() {
         assert!(!moved.contains(&id(950)) && !moved.contains(&id(951)), "{name} is never opened");
     }
 }
+
+/// The share's read of a large tree is done once nothing is left to come:
+/// the Trash's tree (never asked for), a failed folder and one too large
+/// for the server never hold it; a folder still on its way does.
+#[test]
+fn the_shared_read_ends_whatever_the_trash_and_failed_folders_hold() {
+    let mut inv = fixture(&[]);
+    for n in 0..2000u128 {
+        add_folder(&mut inv, 10_000 + n, 1, &format!("Shelf {n}"));
+    }
+    // the Trash's folders are never read
+    add_folder(&mut inv, 900, 11, "Deleted");
+    inv.folders.get_mut(&id(900)).expect("folder").state = FetchState::Unknown;
+    add_folder(&mut inv, 901, 1, "failed");
+    inv.folders.get_mut(&id(901)).expect("folder").state = FetchState::Failed;
+    add_folder(&mut inv, 902, 1, "Huge");
+    inv.folders.get_mut(&id(902)).expect("folder").state = FetchState::Unknown;
+    inv.too_big.insert(id(902));
+    let progress = read_progress(&inv);
+    assert_eq!(progress.pending, 0, "nothing left to come");
+    assert_eq!(progress.failed, 2);
+    assert!(progress.read >= 2000);
+    // one still on its way holds it
+    inv.folders.get_mut(&id(10_000)).expect("folder").state = FetchState::Fetching;
+    assert_eq!(read_progress(&inv).pending, 1);
+}

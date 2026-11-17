@@ -85,8 +85,15 @@ struct Picker {
 
 /// The layout saved to the Desktop to share (`Save my inventory layout`).
 enum Share {
-    /// The whole inventory is read first (since when).
-    Loading(Instant),
+    /// The whole inventory is read first: since when, how far, and when it
+    /// last moved on.
+    Loading {
+        since: Instant,
+        progress: sorter::ReadProgress,
+        moved: Instant,
+        /// Saved now with what is read (`Save what's loaded now`).
+        now: bool,
+    },
     /// Written on another thread.
     Saving(std::sync::mpsc::Receiver<Result<(std::path::PathBuf, usize), String>>),
     /// Its path, and how many folders could not be read.
@@ -3609,24 +3616,40 @@ fn snapshot_date(at: i64) -> String {
 /// saved with what is loaded (a folder the server never gives).
 const SHARE_LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// How long the read may stand still (no folder read, failed or asked)
+/// before the layout is saved with what is there.
+const SHARE_STALL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The layout to share: the whole inventory read first (a few folders a
 /// frame, like the inventory's own search), then written to the Desktop on
 /// another thread. Folder and item names and where each is, never an asset
 /// id; nothing moves.
 fn share_step(inv: &mut Inventory, state: &mut State) {
     match state.shared.as_ref() {
-        Some(Share::Loading(since)) => {
-            let loaded = crate::world::inventory::actions::request_tree(inv, inv.root);
-            // (done too once nothing more can come: no folder on its way,
-            // and the rest failed or too large for the server to give)
-            let settled = || {
-                !inv.folders.values().any(|f| {
-                    !f.library
-                        && (f.state == crate::world::inventory::FetchState::Fetching
-                            || f.state == crate::world::inventory::FetchState::Unknown && !inv.too_big.contains(&f.info.id))
-                })
+        Some(Share::Loading { since, moved, now, .. }) => {
+            let (since, moved, now) = (*since, *moved, *now);
+            crate::world::inventory::actions::request_tree(inv, inv.root);
+            // Done once nothing is left to come (every folder read, failed
+            // or too large for the server), when nothing moved on for a
+            // while, at the limit, or when the user asks. The same trees the
+            // read walks: a folder it never asks for (the Trash's) never
+            // holds it.
+            let progress = sorter::read_progress(inv);
+            let moved = if let Some(Share::Loading { progress: last, .. }) = state.shared.as_ref()
+                && *last != progress
+            {
+                Instant::now()
+            } else {
+                moved
             };
-            if !loaded && !settled() && since.elapsed() < SHARE_LOAD_LIMIT {
+            let done = progress.pending == 0 || now || moved.elapsed() >= SHARE_STALL || since.elapsed() >= SHARE_LOAD_LIMIT;
+            if !done {
+                state.shared = Some(Share::Loading {
+                    since,
+                    progress,
+                    moved,
+                    now,
+                });
                 return;
             }
             let at = unix_now();
@@ -3677,7 +3700,7 @@ fn share_step(inv: &mut Inventory, state: &mut State) {
 fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
     use crate::ui::widgets::{ActionKind, action_button};
     let size = Vec2::new(0.0, 26.0);
-    let working = matches!(state.shared, Some(Share::Loading(_) | Share::Saving(_)));
+    let working = matches!(state.shared, Some(Share::Loading { .. } | Share::Saving(_)));
     ui.horizontal(|ui| {
         if ui
             .add_enabled_ui(!working, |ui| {
@@ -3693,7 +3716,13 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
             .inner
             .clicked()
         {
-            state.shared = Some(Share::Loading(Instant::now()));
+            let now = Instant::now();
+            state.shared = Some(Share::Loading {
+                since: now,
+                progress: sorter::ReadProgress::default(),
+                moved: now,
+                now: false,
+            });
         }
     });
     ui.label(
@@ -3702,13 +3731,36 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
             .color(p.muted),
     );
     let mut reveal = None;
+    let mut save_now = false;
     match &state.shared {
-        Some(Share::Loading(_)) => {
+        Some(Share::Loading { progress, .. }) => {
             ui.label(
                 RichText::new(aurora_i18n::tr!("inventory-sorter-share-layout-loading"))
                     .small()
                     .color(p.muted),
             );
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "inventory-sorter-share-layout-progress",
+                    read = progress.read,
+                    total = progress.total,
+                    failed = progress.failed
+                ))
+                .small()
+                .color(p.muted),
+            );
+            if action_button(
+                ui,
+                p,
+                "device-floppy-filled",
+                aurora_i18n::tr!("inventory-sorter-share-layout-now"),
+                ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                save_now = true;
+            }
         }
         Some(Share::Saving(_)) => {
             ui.label(
@@ -3753,6 +3805,9 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
             );
         }
         None => {}
+    }
+    if save_now && let Some(Share::Loading { now, .. }) = state.shared.as_mut() {
+        *now = true;
     }
     if let Some(path) = reveal
         && let Some(folder) = path.parent()

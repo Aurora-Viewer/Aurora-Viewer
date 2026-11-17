@@ -1142,6 +1142,43 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
     false
 }
 
+/// How far the whole inventory is read, for the layout to share: the
+/// folders of My Inventory as the inventory's own read walks them (never
+/// the Trash's nor Marketplace's trees, which it never asks for, nor the
+/// Library), read, failed or too large for the server, and still to come.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReadProgress {
+    pub total: usize,
+    pub read: usize,
+    pub failed: usize,
+    pub pending: usize,
+}
+
+pub fn read_progress(inv: &Inventory) -> ReadProgress {
+    let mut progress = ReadProgress::default();
+    let mut stack = vec![inv.root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        // (the same trees `actions::request_tree` reads)
+        if f.library || matches!(f.info.type_default, 14 | 50) {
+            continue;
+        }
+        progress.total += 1;
+        match f.state {
+            FetchState::Fetched => progress.read += 1,
+            FetchState::Failed => progress.failed += 1,
+            FetchState::Unknown if inv.too_big.contains(&id) => progress.failed += 1,
+            FetchState::Unknown | FetchState::Fetching => progress.pending += 1,
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    progress
+}
+
 /// A folder at or below `id` the server failed to give (its contents are
 /// unknown, never taken as empty): a folder holding one never moves whole,
 /// it may carry what no one has seen (something worn, a locked folder).
