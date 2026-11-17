@@ -1070,7 +1070,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
-| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, or a second of the track recorded (see Details) |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
@@ -1124,10 +1124,14 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
-- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha`**: at frame 620, the Director (toolbar
+- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha|orbit|capture|anim|montage|titles|render`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
-  in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  in the log). The window opens on the tab that shows what the scenario
+  sets: Camera for `lock`, `orbit` and `capture`, Look for `green` and
+  `titles`, Output for `record`, `record-alpha` and `render`, Library for
+  `montage`, Track otherwise (the Filters tab, the photo mode's looks, has
+  no scenario of its own: `AURORA_DEMO_SNAPSHOT` sets the looks it shows). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
   thousand frames a second and frame 700 is still under the loading fade.
   With `1` and a capture at frame 900: the window on the right (Camera,
   Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,
@@ -1154,7 +1158,15 @@ when unfocused") is ignored during a screenshot.
   avatar") on an empty background filled with the key green
   (`director demo: our avatar alone on a green screen`): the avatar alone,
   no sky, ground, water nor other avatar, on one flat green (0, 177, 64)
-  right up to its outline, the Director's interface over it. `record`
+  right up to its outline, the Director's interface over it. `montage`
+  plays a montage of two shots, kept in memory (no file written): the
+  track, then the same track backwards, cut from the last view of the first
+  to the first view of the second without a start delay between them
+  (`director demo: a montage of 2 shots, 18.0 s`, then `director: montage
+  cut to shot 2 of 2` at 9 s and `director: montage ended` once the last
+  view was held a second); the track of four keyframes is back in the
+  window afterwards, and the Montage section lists `Demo A` and `Demo B`.
+  `record`
   shortens the track to a second and records its playback at 24 frames a
   second (`director: recording <w>x<h> at 24 frames a second`), through the
   ffmpeg found (the film starts once it has answered, `director: ffmpeg at
@@ -1169,6 +1181,46 @@ when unfocused") is ignored during a screenshot.
   and quality through the computer's own ffmpeg, each film read back by it
   (its frames, their size, their colors, the transparency):
   `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
+  `orbit` locks the view on our avatar's neck and replaces the track by
+  the Shots section's orbit (`director demo: an orbit of 25 keyframes round
+  our avatar, 10.0 s`): one turn 6 m away and 1 m above the neck, a
+  keyframe every 15°, each looking at the neck and travelling with the
+  avatar; in the world a turquoise circle of twenty-five small cameras round
+  the avatar, the first selected, its first and last segments eased (the
+  Keyframe section says `Ease in` on the second, `Ease out` on the last,
+  and "Travel with its target" is ticked). Played, the avatar stays in the
+  middle of the picture all the way round; walking while it plays, the
+  circle goes with it.
+  `capture` replaces the track with a path flown by hand around our avatar
+  (a circle that speeds up, the view on the avatar, a small shake), taken
+  twenty times a second and made keyframes as "Stop and make keyframes"
+  does (`director demo: a path taken by hand, <n> keyframes over 8.0 s`):
+  diamonds unevenly spaced on the timeline, the turquoise path following the
+  circle without the shake, the last keyframe selected. `anim` keeps the four keyframes: the first
+  starts the first animation of the inventory and the third stops it
+  (`director demo: the first keyframe starts <name>, the third stops it`;
+  with an empty inventory, `director demo: no animation in the inventory`),
+  and the second, selected, has a lens and a time of its own (f/2, focused
+  at 3 m, 18:30, in its "Lens and time of day" rows; the other keyframes'
+  rows say "Track's value" and "Live"). Play it: our avatar plays the animation from
+  the first keyframe to the third and stops, the sun sinks toward the
+  evening around the second keyframe and comes back, the depth of field
+  narrows there, and the user's own sky and the track's lens are back once
+  the playback ends.
+  `titles` adds fades of a second in and out and two titles (`director
+  demo: fades of 1 s and two titles`), "Aurora Viewer / Director" in the
+  centre at the start and "A lower third" (amber, lower left) from 1 s to
+  4 s, then plays the track: captures at frames 640, 700 and 1150 show the
+  picture rising from black under the white title, the lower third fading
+  in, and the picture going to black at the end. `render` adds the same
+  fades and titles, shortens the track to a second and renders it offline
+  as PNG images at 1080p, 24 a second (`director: rendering 25 frames of
+  1920x1080 at 24 a second to <folder>`, then `director: render of 25
+  frames written to <folder>`): 25 files `Aurora_00000.png` to
+  `Aurora_00024.png` in a new `Aurora_<date>` folder of `<Videos>/Aurora
+  Viewer`, the first black, the title in the middle, the last black,
+  whatever the window's size; the Output section shows the progress
+  meanwhile.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -6318,6 +6370,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
+| `AURORA_DEMO_GAMING_MODE=<frame>` | From that frame, gaming mode is on as from its toolbar button: the Render pauses, the loop slows, with its notice and window title, until the window comes back in front |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -7738,6 +7791,17 @@ failure. Grid validation and any paid upload are performed by the human.
   Render when the card is overloaded" off, nothing pauses. A capture run
   pauses too (a real one never does): `AURORA_FPS_LIMIT=60`,
   `AURORA_DEMO_BUSY_PAUSE=900` and `AURORA_CAPTURE_FRAMES=1000`.
+- **`AURORA_DEMO_GAMING_MODE=<frame>`**: at that frame gaming mode turns
+  on, as from the toolbar's Gaming mode button: the world is no longer
+  drawn and what is left of it is blurred and darkened, the amber notice
+  "Gaming mode: Aurora is resting…" shows in the middle, the window title
+  ends with "— Gaming mode", the loop runs at 5 fps (2 fps minimised or
+  covered) and in-world media stop drawing. The log says `gaming mode on`.
+  Focus another window, then click back into Aurora: with Preferences ›
+  Graphics › "Leave gaming mode when Aurora comes back in front" on (the
+  default), it ends at once (`gaming mode off`); off, only the button ends
+  it, and the notice says so. A capture run pauses too but keeps its frame
+  rate: `AURORA_DEMO_GAMING_MODE=900` and `AURORA_CAPTURE_FRAMES=1000`.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer

@@ -85,6 +85,8 @@ pub const COMMANDS: &[Command] = commands![
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Aurora's own: the Director, a camera track to film with
     "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
+    "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", true;

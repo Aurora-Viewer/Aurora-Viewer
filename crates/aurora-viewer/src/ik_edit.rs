@@ -22,7 +22,7 @@ mod animations;
 mod authoring;
 mod bindings;
 mod clip;
-mod gizmo;
+pub(crate) mod gizmo;
 mod graph;
 mod links;
 mod object_data;
