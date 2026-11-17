@@ -12,6 +12,7 @@ use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::{self, Ctx};
 use crate::ui::{colors, menu, place_card, widgets};
+use crate::world::names::NameScope;
 use crate::world::place_details::{Place, Source, Stage};
 use crate::world::profiles::{self, Online};
 use crate::world::search::{self, Key, Row, RowIcon, Tab, Value};
@@ -142,8 +143,12 @@ fn person(
         wanted_pics.insert(id);
     }
     c.want_names.insert(id);
-    let name = world.social.avatar_names.complete(&id).unwrap_or_else(|| row_name.to_owned());
-    let gear = |ui: &mut egui::Ui| context::avatar_list_menu(ui, p, world, id, context::AvatarList::Name);
+    let name = world
+        .social
+        .avatar_names
+        .complete_in(NameScope::Roster, &id)
+        .unwrap_or_else(|| row_name.to_owned());
+    let gear = |ui: &mut egui::Ui| context::avatar_roster_menu(ui, p, world, id, context::AvatarList::Name);
     let buttons = [
         Btn::new("user-filled", aurora_i18n::tr!("search-aurora-profile")).primary(),
         Btn::new("message-circle-filled", aurora_i18n::tr!("search-aurora-message")).enabled(!own),
@@ -197,7 +202,7 @@ fn person(
     });
     let act = |a: CtxAction| context::request(ui.ctx(), a);
     match clicked {
-        Some(0) => act(CtxAction::Profile(id)),
+        Some(0) => act(CtxAction::RosterProfile(id)),
         Some(1) => act(CtxAction::Im(id)),
         Some(2) => act(CtxAction::OfferTeleport(id)),
         Some(3) => act(CtxAction::AddFriend(id)),

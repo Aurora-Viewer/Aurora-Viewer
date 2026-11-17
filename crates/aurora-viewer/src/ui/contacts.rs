@@ -1833,7 +1833,7 @@ fn sets_tab(
     let name_of = |id: &Uuid| {
         social
             .avatar_names
-            .get(id)
+            .get_in(NameScope::Roster, id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
             .unwrap_or_else(|| "â€¦".into())
@@ -1841,7 +1841,7 @@ fn sets_tab(
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
     let filter = st.set_filter.trim().to_lowercase();
-    members.retain(|id| super::people::matches_name(world, NameScope::World, id, &name_of(id), &filter));
+    members.retain(|id| super::people::matches_name(world, NameScope::Roster, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
         members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));

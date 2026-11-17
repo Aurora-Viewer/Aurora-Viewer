@@ -57,7 +57,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
         }
         Some(other) => {
             let names = &world.social.avatar_names;
-            let cached = names.get(&other);
+            let cached = names.get_in(crate::world::names::NameScope::Roster, &other);
             Identity {
                 title: cached
                     .map(|n| n.display(&names.options))

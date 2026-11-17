@@ -153,6 +153,13 @@ impl TextFilter {
         self.add(&aurora_net::land::uri_escape(original), replacement);
     }
 
+    /// Longest first, so that a name is replaced before a part of it.
+    fn sort(&mut self) {
+        self.replacements
+            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        self.replacements.dedup();
+    }
+
     fn reuse_matcher(&mut self, previous: &Self) {
         if self.replacements == previous.replacements
             && let Some(matcher) = previous.matcher.get()
@@ -215,7 +222,16 @@ impl World {
         self.social.avatar_names.set_rlva_nearby(nearby);
         let mut filter = self.rlva_text_filter(false);
         filter.reuse_matcher(&self.rlva_privacy);
+        let mut places = TextFilter::default();
+        self.rlva_hide_places(&mut places);
+        places.sort();
+        places.reuse_matcher(&self.rlva_place_privacy);
         for notification in &mut self.notifications.list {
+            let filter = if notification.kind.names() == NameScope::Roster {
+                &places
+            } else {
+                &filter
+            };
             filter.redact_notice(
                 &self.social.avatar_names,
                 &mut notification.title,
@@ -224,6 +240,7 @@ impl World {
             );
         }
         self.rlva_privacy = filter;
+        self.rlva_place_privacy = places;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
             let mut filter = self.rlva_text_filter(true);
             filter.reuse_matcher(&self.rlva_hover_privacy);
@@ -433,6 +450,13 @@ impl World {
                 }
             }
         }
+        self.rlva_hide_places(&mut filter);
+        filter.sort();
+        filter
+    }
+
+    /// What `@showloc` hides of a text: the regions around and the parcel.
+    fn rlva_hide_places(&self, filter: &mut TextFilter) {
         if self.rlva.has("showloc") {
             for region in self.regions.values() {
                 filter.add(&region.name, aurora_i18n::tr!("rlva-hidden-region"));
@@ -440,18 +464,32 @@ impl World {
             }
             filter.add(&self.parcel_name, aurora_i18n::tr!("rlva-hidden-parcel"));
         }
-        filter
-            .replacements
-            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
-        filter.replacements.dedup();
-        filter
     }
 
     pub fn rlva_filter_text<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        self.rlva_filter_text_in(NameScope::World, text)
+    }
+
+    /// `rlva_filter_text` for a text shown in `scope`: a place that names
+    /// its residents (`NameScope::Roster`: an IM session, RlvUtil::filterNames
+    /// is never run on its lines) keeps the names of the people around, and
+    /// hides the regions and the parcel like the others.
+    pub fn rlva_filter_text_in<'a>(&self, scope: NameScope, text: &'a str) -> Cow<'a, str> {
         if self.rlva.enabled() {
-            self.rlva_privacy.apply(text)
+            self.rlva_filter_in(scope).apply(text)
         } else {
             Cow::Borrowed(text)
+        }
+    }
+
+    /// The filter of the texts shown in `scope`: the places alone where the
+    /// residents are named (`NameScope::Roster`; a notice's scope is
+    /// `notifications::Kind::names`).
+    pub fn rlva_filter_in(&self, scope: NameScope) -> &TextFilter {
+        if scope == NameScope::Roster {
+            &self.rlva_place_privacy
+        } else {
+            &self.rlva_privacy
         }
     }
 }
@@ -1023,5 +1061,140 @@ mod tests {
         let me = world.agent_id;
         profiles.open(&mut world, me);
         assert_eq!(profiles.opened().last(), Some(&(me, NameScope::World)));
+    }
+
+    // ---- the places that name their resident besides the lists: IM
+    // sessions, the notices of messages and offers (follow-up of #3547)
+
+    fn line(kind: crate::world::ChatKind, source: Uuid, from: &str, text: &str) -> crate::world::ChatLine {
+        crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: from.into(),
+            text: text.into(),
+            kind,
+            source,
+            origin: crate::world::Origin::Live,
+            blocked: false,
+            beyond_range: false,
+        }
+    }
+
+    #[test]
+    fn shownames_names_those_around_in_an_im_session_and_hides_them_in_the_nearby_chat() {
+        use crate::ui::chat::{conversation_names, line_names, resolved_text_in, sender_name};
+        use crate::world::ChatKind;
+        let (world, near) = shownames_world();
+        let session = Some(near);
+        assert_eq!(conversation_names(None), NameScope::World);
+        assert_eq!(conversation_names(session.as_ref()), NameScope::Roster);
+        // the sender of a line, by the conversation it is read in
+        let said = line(ChatKind::Im, near, "Near Tester", "Near Tester is here");
+        assert_eq!(sender_name(&world, NameScope::Roster, "Me", &said), "Near Tester");
+        assert!(!sender_name(&world, NameScope::World, "Me", &said).contains("Tester"));
+        // its text: the session keeps the names it was written with
+        assert_eq!(resolved_text_in(&world, NameScope::Roster, &said.text), said.text);
+        assert!(!resolved_text_in(&world, NameScope::World, &said.text).contains("Tester"));
+        assert_eq!(world.rlva_filter_text_in(NameScope::Roster, &said.text), said.text);
+        assert_eq!(
+            world.rlva_filter_text_in(NameScope::Owner, &said.text),
+            world.rlva_filter_text(&said.text)
+        );
+        // the conversation itself, in the list and on its window
+        assert_eq!(world.session_title(&near), "Near Tester");
+        assert_eq!(
+            world.social.display_name_in(conversation_names(session.as_ref()), &near),
+            "Near Tester"
+        );
+        // outside its conversation (the on-screen chat), by the line's kind
+        assert_eq!(line_names(&ChatKind::Im), NameScope::Roster);
+        assert_eq!(line_names(&ChatKind::Invite(1)), NameScope::Roster);
+        for kind in [
+            ChatKind::Local(aurora_net::ChatType::Normal),
+            ChatKind::Object(aurora_net::ChatType::Normal),
+            ChatKind::OWN,
+            ChatKind::System,
+            ChatKind::ObjectIm,
+            ChatKind::InventoryOffer(1),
+            ChatKind::Payment(1),
+        ] {
+            assert_eq!(line_names(&kind), NameScope::World, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn shownames_leaves_the_places_hidden_in_an_im_session() {
+        let (mut world, _) = shownames_world();
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let region = world.region_name();
+        assert!(!region.is_empty());
+        let text = format!("Near Tester waits in {region}");
+        let nearby = world.rlva_filter_text(&text);
+        assert!(!nearby.contains("Tester") && !nearby.contains(&region), "{nearby}");
+        // stricter than the Legacy Viewer, whose IM windows filter nothing
+        let im = world.rlva_filter_text_in(NameScope::Roster, &text);
+        assert!(im.starts_with("Near Tester waits in ") && !im.contains(&region), "{im}");
+        // `@showloc` alone: the names are no one's to hide
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        assert_eq!(world.rlva_filter_text(&text), im);
+    }
+
+    #[test]
+    fn shownames_names_the_sender_of_a_message_or_an_offer_and_hides_a_giver_around() {
+        use crate::world::notifications::{Data, Kind};
+        let (mut world, near) = shownames_world();
+        let named = [
+            Kind::Message,
+            Kind::Call,
+            Kind::Teleport,
+            Kind::Friendship,
+            Kind::Group,
+            Kind::Presence,
+        ];
+        let hidden = [Kind::Inventory, Kind::Info, Kind::Alert, Kind::Script, Kind::Permissions, Kind::Url];
+        let link = || crate::world::notification_history::NameLink {
+            name: "Near Tester".into(),
+            target: crate::world::notification_history::NameTarget::Avatar(near),
+        };
+        let mut ids = Vec::new();
+        for kind in named.into_iter().chain(hidden) {
+            let id = world
+                .notifications
+                .push(kind, "Near Tester", "Near Tester has something for you.", Data::None);
+            world.notifications.list.last_mut().unwrap().name_links.push(link());
+            ids.push((kind, id));
+        }
+        world.refresh_rlva_privacy();
+        for (kind, id) in ids {
+            let n = world.notifications.list.iter().find(|n| n.id == id).unwrap();
+            let shown = named.contains(&kind);
+            assert_eq!(kind.names() == NameScope::Roster, shown, "{kind:?}");
+            assert_eq!(n.title == "Near Tester", shown, "{kind:?}: {}", n.title);
+            assert_eq!(n.body.contains("Near Tester"), shown, "{kind:?}: {}", n.body);
+            assert_eq!(n.name_links[0].name == "Near Tester", shown, "{kind:?}");
+            // what the notification centre keeps of it follows the same rule
+            let mut kept = (n.title.clone(), n.body.clone(), [link()]);
+            world
+                .rlva_filter_in(kind.names())
+                .redact_notice(&world.social.avatar_names, &mut kept.0, &mut kept.1, &mut kept.2);
+            assert_eq!(kept.2[0].name == "Near Tester", shown, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn shownames_names_who_offers_a_teleport_and_hides_who_gives_or_pays_in_the_same_conversation() {
+        let (world, near) = shownames_world();
+        // the cards of a conversation: an invitation's sender is named,
+        // an inventory offer's giver and a payment's other side follow the
+        // world's rule
+        assert_eq!(world.person_name_in(NameScope::Roster, &near).as_deref(), Some("Near Tester"));
+        let told = world.person_name_in(NameScope::World, &near).unwrap();
+        assert!(!told.contains("Tester"), "{told}");
+        assert_eq!(world.person_name(&near), Some(told));
+        // a resident away, whose name is not cached yet: the name they
+        // wrote with, never a stand-in
+        let away = Uuid::from_u128(0xF9);
+        assert_eq!(world.person_name_in(NameScope::Roster, &away), None);
     }
 }

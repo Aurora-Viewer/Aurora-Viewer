@@ -416,6 +416,9 @@ impl HistoryUi {
             emoji,
             pics,
             world,
+            // a transcript read again: the names of those around stay
+            // hidden in its text, whichever conversation it was
+            names: crate::world::names::NameScope::World,
             want_names,
             wanted: &mut no_pictures,
             own_name: &own_name,
@@ -473,6 +476,7 @@ impl HistoryUi {
                 lines,
                 first: clock.first,
                 world,
+                names: crate::world::names::NameScope::World,
                 own_name: &own_name,
             };
             // (no field here: what is typed goes nowhere)
