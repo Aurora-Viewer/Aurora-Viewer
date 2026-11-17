@@ -252,8 +252,11 @@ impl Scene {
             }
             // the wearer is looked up only while a switch drops worn lights
             // (with both on, every light is kept: no walk up its links)
-            let filtered = !self.attached_lights || !view.others_attached_lights;
-            if filtered && !light_visible(worn(world, o), world.agent_id, self.attached_lights, view.others_attached_lights) {
+            // (the 360° snapshot's "Hide all avatars" also turns the worn
+            // lights off, LLFloater360Capture's sRenderAttachedLights)
+            let photo_attached = self.attached_lights && !world.photo_isolation.hide_avatars;
+            let filtered = !photo_attached || !view.others_attached_lights;
+            if filtered && !light_visible(worn(world, o), world.agent_id, photo_attached, view.others_attached_lights) {
                 continue;
             }
             let dist = light_dist(center, l.radius, eye);

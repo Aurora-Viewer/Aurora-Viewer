@@ -216,6 +216,14 @@ worktree, branch, `target` folder and logs.
   `--release` only to measure performance: it rebuilds everything a second
   time (about 3 GB more). For a `--release` exe of `main`, the human has
   `scripts/build-release.ps1`.
+  - One exception, which `Cargo.toml` applies on its own
+    (`[profile.test.package.aurora-viewer]`): the viewer crate's test
+    executable is built without optimisation, because it is the heaviest
+    compile of the workspace and only runs the tests. It keeps the line
+    tables of `dev`, and nothing else is built differently: the
+    dependencies, the other crates, clippy and the viewer of `cargo run`
+    keep the `dev` profile. Pass no `--profile` and no `--config profile.…`
+    yourself: another setting builds the executable a second time.
 - `new-task.ps1` frees, on its way, the `incremental/` caches of the tasks
   that have built nothing for 24 hours, and the whole `target/` of the tasks
   whose PR is merged or that have built nothing for 2 days (the code stays).
@@ -310,8 +318,10 @@ Before each significant commit, and always before the PR:
   the command of `check.ps1`, takes 1.5 to 4 minutes and 3 to 8 GB, and
   `check.ps1` reuses what it built (`cargo check` costs the same and is not
   reused). A test build (`cargo test --workspace <filter>`) rebuilds the
-  viewer's whole test executable, about 9 minutes and 11 to 17 GB: run it
-  once the code compiles and lints, not after every edit.
+  viewer's whole test executable: about 3 minutes and 13 GB the first time,
+  30 to 50 seconds and 9 to 10 GB after an edit (it is built without
+  optimisation, section 3), more memory than clippy either way. Run it once
+  the code compiles and lints, not after every edit.
 - **Tools.** "Repair / update" of `aurora-tools.cmd` installs `rg`
   (ripgrep), `fd`, `jq` and `ast-grep`; Linux and macOS take them from
   their packages ([docs/LINUX.md](docs/LINUX.md),
@@ -372,6 +382,20 @@ Before each significant commit, and always before the PR:
 - **Up-to-date dependencies**: we use the latest versions (stable Rust,
   crates). A new dependency must be maintained, under a GPL v3 compatible
   licence (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), and justified in the PR.
+- **One Rust version for everyone**: `rust-toolchain.toml` names it, and
+  rustup installs it by itself at the first Cargo command, on every PC and
+  in the CI. A new stable release comes in through its own pull request,
+  which changes that line (Dependabot opens it; it is handled like its
+  other PRs, section 13): never change it in a task's PR, and never build
+  with another toolchain (`cargo +…`, `RUSTUP_TOOLCHAIN`). The only
+  exception is the fuzzing targets, which need nightly
+  (`cargo +nightly fuzz`, [docs/TESTING.md](docs/TESTING.md#fuzzing)). After
+  a pull that changes it, the next build downloads the new version and
+  recompiles everything once. `new-task.ps1` and `check.ps1` install it
+  first, one at a time for the PC: two Cargo commands that start together
+  on a PC that lacks it both install it, and one fails (`component download
+  failed`, or a `rustc` that is not found). Run it again, or run
+  `check.ps1` first after such a pull.
 - **Every change to `Cargo.lock`** (a dependency added, removed or updated,
   Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
   commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in

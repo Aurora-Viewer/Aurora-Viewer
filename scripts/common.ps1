@@ -63,11 +63,20 @@ function Get-IncrementalDirs([string]$Target) {
 #
 # With neither, the file is deleted: Cargo builds as before.
 
-# The marker changed when the gate came: a script from before it does not
-# know the file as its own and leaves it alone, instead of writing the gate
-# out of it at each run of an older worktree.
-$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
-$BuildCacheMarkerBeforeGate = '# Written by the Aurora Viewer scripts (Sync-BuildCache).'
+# The marker names the generation of the gate. A script of an older worktree
+# does not know a newer file as its own and leaves it alone, instead of
+# writing its own gate back at each of its runs: the file names the gate
+# built by the last script that wrote it. A change to the gate that every
+# worktree of the PC must get takes the next number here and moves the
+# marker it replaces to the older ones. 1 came with the gate; 2 runs the
+# compiler alone when sccache cannot be started (a command line just under
+# Windows' limit).
+$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate 2).'
+# Files of older scripts: this one's to replace.
+$BuildCacheOlderMarkers = @(
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache).',
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
+)
 
 function Find-Sccache {
     $cmd = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -146,7 +155,7 @@ function Sync-BuildCache([string]$Root) {
     if (-not $Root) { $Root = (Get-AuroraPaths).Root }
     $file = Join-Path $Root '.cargo\config.toml'
     if ((Test-Path -LiteralPath $file) -and
-        -not (Select-String -LiteralPath $file -Pattern $BuildCacheMarker, $BuildCacheMarkerBeforeGate -SimpleMatch -Quiet)) { return }
+        -not (Select-String -LiteralPath $file -Pattern (@($BuildCacheMarker) + $BuildCacheOlderMarkers) -SimpleMatch -Quiet)) { return }
     $sccache = Find-Sccache
     $gate = Get-BuildGate $Root
     if (-not $sccache -and -not $gate) {
@@ -177,6 +186,64 @@ function Sync-BuildCache([string]$Root) {
     if ((Test-Path -LiteralPath $file) -and ([IO.File]::ReadAllText($file) -eq $text)) { return }
     New-Item -ItemType Directory -Force -Path (Split-Path $file) | Out-Null
     [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding $false))
+}
+
+# --- The Rust version of rust-toolchain.toml ------------------------------------
+# rustup installs the named version by itself at the first Cargo command. Two
+# installs of one version at the same moment break each other: they share
+# rustup's download folder, and the one that fails takes back what it wrote
+# (on a Mac of the CI, the other's whole toolchain: rustc was gone under a
+# build that had just started). Several agents share a PC, so the scripts
+# install it first, one at a time. The lock is a named mutex: the OS frees
+# it if the script dies.
+
+# The version <Repo>\rust-toolchain.toml names, or $null: a channel such as
+# "stable" is not a version.
+function Get-RustVersion([string]$Repo) {
+    $file = Join-Path $Repo 'rust-toolchain.toml'
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    if ((Get-Content -LiteralPath $file -Raw) -match '(?m)^channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"') { return $Matches[1] }
+    $null
+}
+
+# rustup has this version installed.
+function Test-RustVersion([string]$Version) {
+    [bool](@(rustup toolchain list 2>$null) -match "^$([regex]::Escape($Version))-")
+}
+
+# Installs the version <Repo> names when rustup lacks it. Nothing to do
+# without rustup or without a named version: Cargo then says what is missing.
+function Install-RustVersion([string]$Repo) {
+    $version = Get-RustVersion $Repo
+    if (-not $version -or -not (Get-Command rustup -ErrorAction SilentlyContinue)) { return }
+    if (Test-RustVersion $version) { return }
+    $lock = New-Object Threading.Mutex($false, 'Local\AuroraViewerRustInstall')
+    $held = $false
+    try {
+        try {
+            $held = $lock.WaitOne()
+        } catch {
+            # the holder died during its install: the lock is now ours
+            $e = $_.Exception
+            while ($e -and -not ($e -is [Threading.AbandonedMutexException])) { $e = $e.InnerException }
+            if (-not $e) { throw }
+            $held = $true
+        }
+        # another script may have installed it while this one waited
+        if (-not (Test-RustVersion $version)) {
+            Write-Host "Installing Rust $version (rust-toolchain.toml)…" -ForegroundColor Cyan
+            Push-Location -LiteralPath $Repo
+            try {
+                # no version argument: rustup takes the file's, with its components
+                rustup toolchain install --profile minimal --no-self-update
+            } finally {
+                Pop-Location
+            }
+        }
+    } finally {
+        if ($held) { $lock.ReleaseMutex() }
+        $lock.Dispose()
+    }
 }
 
 # --- One heavy build at a time --------------------------------------------------

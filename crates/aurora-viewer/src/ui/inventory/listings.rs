@@ -307,7 +307,7 @@ mod tests {
         execute("show-window", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(state.windows.iter().any(|window| window.root == demo::HOODIE && window.open));
         assert!(
-            matches!(execute("reload", demo::HOODIE, &inv, &mut state, &mut prefs).as_slice(), [InvAction::Preview(id)] if *id == demo::HOODIE)
+            matches!(execute("reload", demo::HOODIE, &inv, &mut state, &mut prefs).as_slice(), [InvAction::Preview(id, _)] if *id == demo::HOODIE)
         );
     }
 

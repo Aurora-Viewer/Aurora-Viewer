@@ -169,6 +169,13 @@ struct Sim {
     link_up: bool,
     /// When the seed capability was last asked for (timelines).
     caps_asked_at: Option<Instant>,
+    /// The interest list mode this region was last told
+    /// (LLViewerRegion::mInterestListMode): the same one is not posted again.
+    interest_list: InterestListMode,
+    /// The queue of this region's InterestList posts: one task sends them
+    /// in order, so a slow `360` can never land after the `default` that
+    /// followed it.
+    interest_tx: Option<mpsc::UnboundedSender<(String, InterestListMode)>>,
 }
 
 impl Sim {
@@ -200,6 +207,8 @@ impl Sim {
             decode_failures: 0,
             link_up: false,
             caps_asked_at: None,
+            interest_list: InterestListMode::Default,
+            interest_tx: None,
         }
     }
 }
@@ -325,6 +334,8 @@ struct Session<'a> {
     refuse_neighbours: bool,
     /// The camera's vertical viewing angle, last told to the simulator.
     fov: f32,
+    /// The interest list mode asked of the regions (LLAgent::mInterestListMode).
+    interest_list: InterestListMode,
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
@@ -533,6 +544,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
+        interest_list: InterestListMode::Default,
         logout_started: None,
         finished: false,
         agent_moved: false,
@@ -1021,6 +1033,11 @@ impl Session<'_> {
             self.update_agent_language();
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
+            // LLAgent::capabilityReceivedCallback: the 360° snapshot's mode
+            // again for the agent's region
+            if self.interest_list != InterestListMode::Default {
+                self.post_interest_list(addr);
+            }
             if self.inventory_merchant_pending {
                 self.inventory_merchant_pending = false;
                 self.on_command(NetCommand::RequestInventoryMerchant);
@@ -1800,6 +1817,37 @@ impl Session<'_> {
                     }
                 }
             }
+            // LLAgent::changeInterestListMode: every region alive with its
+            // capabilities, the ones already in that mode unaffected
+            NetCommand::SetInterestListMode(mode) => {
+                if mode != self.interest_list {
+                    self.interest_list = mode;
+                    let addrs: Vec<SocketAddr> = self.sims.keys().copied().collect();
+                    for addr in addrs {
+                        self.post_interest_list(addr);
+                    }
+                }
+            }
+            NetCommand::OfferInventory {
+                session,
+                to,
+                id,
+                message,
+                bucket,
+                receipt,
+            } => {
+                if session == self.session_id() && !self.finished && self.logout_started.is_none() {
+                    let offer = self.im_dialog(to, crate::offer_hosts::INVENTORY_OFFERED, id, &message, bucket);
+                    if let Some(sim) = self.main.and_then(|addr| self.sims.get_mut(&addr)) {
+                        sim.circuit.send_offer(&self.sock, &self.sh.stats, &offer, receipt);
+                    }
+                }
+            }
+            NetCommand::CheckInventoryOffer { session, items, reply } => {
+                if session == self.session_id() && !self.finished && self.logout_started.is_none() {
+                    self.fetch_items(items, self.agent_id(), false, Some(reply));
+                }
+            }
             NetCommand::SendImDialog {
                 to,
                 dialog,
@@ -1807,16 +1855,7 @@ impl Session<'_> {
                 message,
                 bucket,
             } => {
-                let mut m = ImprovedInstantMessage::default();
-                m.agent_data.agent_id = self.agent_id();
-                m.agent_data.session_id = self.session_id();
-                let b = &mut m.message_block;
-                b.to_agent_id = to;
-                b.dialog = dialog;
-                b.id = id;
-                b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
-                b.message = str_field(&message);
-                b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
+                let m = self.im_dialog(to, dialog, id, &message, bucket);
                 // an offer's answer goes to the simulator that holds it, a
                 // neighbour's included; anything else through the agent's region
                 match self.offer_hosts.answer_to(dialog, id, |host| self.sims.contains_key(&host)) {
@@ -2384,8 +2423,8 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
-            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
-            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
+            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false, None),
+            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true, None),
             NetCommand::FetchInventoryOrphans { request } => {
                 let ais = self.main_cap("InventoryAPIv3");
                 let legacy = self.main_cap("FetchInventoryDescendents2");
@@ -3365,6 +3404,20 @@ impl Session<'_> {
         self.send_main(&m, true);
     }
 
+    fn im_dialog(&self, to: uuid::Uuid, dialog: u8, id: uuid::Uuid, message: &str, bucket: Vec<u8>) -> ImprovedInstantMessage {
+        let mut m = ImprovedInstantMessage::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        let b = &mut m.message_block;
+        b.to_agent_id = to;
+        b.dialog = dialog;
+        b.id = id;
+        b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
+        b.message = str_field(message);
+        b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
+        m
+    }
+
     fn send_im(&mut self, to: uuid::Uuid, text: &str, dialog: u8) {
         let mut m = ImprovedInstantMessage::default();
         m.agent_data.agent_id = self.agent_id();
@@ -3576,6 +3629,39 @@ impl Session<'_> {
         });
     }
 
+    /// LLViewerRegion::setInterestListMode: the mode posted to one region's
+    /// InterestList capability, `{"mode": "360" | "default"}` (nothing
+    /// without the capability, nothing to a region already in that mode);
+    /// the reply only logged.
+    fn post_interest_list(&mut self, addr: SocketAddr) {
+        let mode = self.interest_list;
+        let Some(sim) = self.sims.get_mut(&addr) else { return };
+        // (a region whose capabilities have not come is left for their
+        // arrival, as LLAgent::changeInterestListMode skips it)
+        let Some(url) = sim.caps.get("InterestList").cloned() else { return };
+        if sim.interest_list == mode {
+            return;
+        }
+        sim.interest_list = mode;
+        let handle = sim.handle;
+        let http = self.sh.caps_http.clone();
+        let tx = sim.interest_tx.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |url, mode| {
+                let http = http.clone();
+                async move {
+                    let body = caps::interest_list_body(mode);
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(_) => log::info!("InterestList mode {} posted to region {handle}", mode.as_str()),
+                        Err(e) => log::warn!("InterestList mode {} not posted to region {handle}: {e}", mode.as_str()),
+                    }
+                }
+            }));
+            tx
+        });
+        let _ = tx.send((url, mode));
+    }
+
     /// The capability of the agent's region (cloned for a request task).
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
@@ -3749,40 +3835,66 @@ impl Session<'_> {
         }
     }
 
-    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid, attachment: bool) {
-        if owner == self.agent_id()
-            && let Some(cap) = self.main_cap("InventoryAPIv3")
-        {
-            let http = self.sh.caps_http.clone();
-            let events = self.sh.events.clone();
-            tokio::spawn(async move {
-                for chunk in items.chunks(16) {
-                    let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
-                    send_item_reads(&events, reads, attachment);
-                }
-            });
-            return;
-        }
-        let Some(url) = self.main_cap("FetchInventory2") else {
-            emit(self.sh, NetEvent::InventoryItemsFailed { items });
-            return;
-        };
+    fn fetch_items(
+        &self,
+        items: Vec<uuid::Uuid>,
+        owner: uuid::Uuid,
+        attachment: bool,
+        offer_reply: Option<crossbeam_channel::Sender<crate::inventory::ais::ItemReads>>,
+    ) {
+        use crate::inventory::ais::ItemReads;
+        let ais = (owner == self.agent_id()).then(|| self.main_cap("InventoryAPIv3")).flatten();
+        let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
-        tokio::spawn(async move {
-            for chunk in items.chunks(50) {
-                let body = crate::inventory::fetch_items_body(chunk, owner);
-                let reads = match caps::post_llsd(&http, &url, &body).await {
-                    Ok(v) => crate::inventory::item_reads(&v, chunk),
-                    Err(e) => {
-                        log::warn!("item fetch failed: {e}");
-                        crate::inventory::ais::ItemReads {
-                            failed: chunk.to_vec(),
-                            ..Default::default()
+        let private = offer_reply.is_some();
+        let read = async move {
+            let mut all = ItemReads::default();
+            let mut receive = |mut reads: ItemReads| {
+                if private {
+                    all.items.append(&mut reads.items);
+                    all.missing.append(&mut reads.missing);
+                    all.failed.append(&mut reads.failed);
+                } else {
+                    send_item_reads(&events, reads, attachment);
+                }
+            };
+            if let Some(cap) = ais {
+                for chunk in items.chunks(16) {
+                    receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
+                }
+            } else if let Some(url) = legacy {
+                for chunk in items.chunks(50) {
+                    let body = crate::inventory::fetch_items_body(chunk, owner);
+                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                        Ok(doc) => crate::inventory::item_reads(&doc, chunk),
+                        Err(e) => {
+                            log::warn!("item fetch failed: {e}");
+                            ItemReads {
+                                failed: chunk.to_vec(),
+                                ..Default::default()
+                            }
                         }
-                    }
-                };
-                send_item_reads(&events, reads, attachment);
+                    };
+                    receive(reads);
+                }
+            } else {
+                receive(ItemReads {
+                    failed: items,
+                    ..Default::default()
+                });
+            }
+            all
+        };
+        tokio::spawn(async move {
+            if let Some(reply) = offer_reply {
+                // A stalled inventory server must release the private check.
+                // Dropping its sender leaves the original reserved for a manual recheck.
+                if let Ok(reads) = tokio::time::timeout(crate::inventory::ais::REQUEST_TIMEOUT, read).await {
+                    let _ = reply.try_send(reads);
+                }
+            } else {
+                read.await;
             }
         });
     }
@@ -5747,6 +5859,33 @@ fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
     )
 }
 
+/// How long one InterestList post may take: the caps client only bounds
+/// the connection, and a region that takes the request and never answers
+/// must not hold the next mode (the closing `default`) for good.
+const INTEREST_LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One region's InterestList posts, in the order asked and one at a time
+/// (the Legacy Viewer's posts are independent coroutines; a slow reply
+/// must not reorder the modes here). Modes queued while one is being
+/// posted are folded into the last, which is the one the region must end on.
+/// A post with no reply after `timeout` ([`INTEREST_LIST_TIMEOUT`]) is
+/// given up.
+async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, timeout: Duration, post: F)
+where
+    F: Fn(String, InterestListMode) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    while let Some(mut latest) = rx.recv().await {
+        while let Ok(next) = rx.try_recv() {
+            latest = next;
+        }
+        let mode = latest.1;
+        if tokio::time::timeout(timeout, post(latest.0, mode)).await.is_err() {
+            log::warn!("InterestList mode {} had no reply in {timeout:?}: given up", mode.as_str());
+        }
+    }
+}
+
 #[cfg(test)]
 mod coarse_tests {
     use super::*;
@@ -6590,6 +6729,85 @@ mod event_queue_tests {
         }
     }
 
+    #[tokio::test]
+    async fn inventory_offer_keeps_its_wire_dialog_and_an_old_login_cannot_send_or_read() {
+        use crate::InventoryOfferStatus::{Acknowledged, Transmitted};
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        sock.writable().await.unwrap();
+        let simulator = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let main = simulator.local_addr().unwrap();
+        let neighbour = "127.0.0.1:13002".parse().unwrap();
+        let (events, received) = unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, neighbour);
+        let current = session.session_id();
+        let previous = Uuid::from_u128(94);
+        let id = Uuid::from_u128(10);
+        let to = Uuid::from_u128(11);
+        let mut bucket = vec![6];
+        bucket.extend_from_slice(Uuid::from_u128(12).as_bytes());
+        let offer = |login, receipt| NetCommand::OfferInventory {
+            session: login,
+            to,
+            id,
+            message: "Fixture".into(),
+            bucket: bucket.clone(),
+            receipt,
+        };
+        let (send, stale) = unbounded();
+        session.on_command(offer(previous, send));
+        assert_eq!(stale.try_recv(), Err(TryRecvError::Disconnected));
+        let (send, stale) = unbounded();
+        session.on_command(NetCommand::CheckInventoryOffer {
+            session: previous,
+            items: vec![id],
+            reply: send,
+        });
+        assert_eq!(stale.try_recv(), Err(TryRecvError::Disconnected));
+
+        let (send, receipt) = unbounded();
+        session.on_command(offer(current, send));
+        assert_eq!(receipt.try_recv(), Ok(Transmitted));
+        let mut bytes = [0; 1500];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), simulator.recv_from(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        let packet = parse_packet(&bytes[..len]).unwrap();
+        let wire: ImprovedInstantMessage = packet.decode().unwrap();
+        assert_eq!(wire.message_block.dialog, 4);
+        assert_eq!(wire.message_block.to_agent_id, to);
+        assert_eq!(wire.message_block.id, id);
+        assert_eq!(wire.message_block.message, str_field("Fixture"));
+        assert_eq!(wire.message_block.binary_bucket, bucket);
+        session.main = Some(neighbour);
+        session.sims.get_mut(&main).unwrap().circuit.ack_received([packet.sequence]);
+        assert_eq!(receipt.try_recv(), Ok(Acknowledged));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+
+        // Absence of a read capability is inconclusive. Only the requester
+        // receives the result, even when it arrives from a different region.
+        let (send, reply) = unbounded();
+        session.on_command(NetCommand::CheckInventoryOffer {
+            session: current,
+            items: vec![id],
+            reply: send,
+        });
+        let reads = tokio::task::spawn_blocking(move || reply.recv_timeout(Duration::from_secs(2)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reads.failed, [id]);
+        assert!(reads.items.is_empty() && reads.missing.is_empty());
+        assert!(received.try_recv().is_err());
+        session.logout_started = Some(Instant::now());
+        let (send, closing) = unbounded();
+        session.on_command(offer(current, send));
+        assert_eq!(closing.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
     /// #3347: an object in a neighbouring region (camera shopping) offers
     /// through that region's circuit; its answer goes back there, as
     /// LLOfferInfo::mHost, not to the agent's region, which would not know
@@ -6720,9 +6938,9 @@ mod event_queue_tests {
 
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -6787,6 +7005,7 @@ mod event_queue_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7067,9 +7286,9 @@ mod script_dialog_tests {
 
     pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -7141,6 +7360,7 @@ mod script_dialog_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7686,5 +7906,80 @@ mod script_dialog_tests {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod interest_list_tests {
+    use super::*;
+
+    /// A slow `360` post finishes before the `default` asked after it is
+    /// sent, and the region ends on the latest mode.
+    #[tokio::test]
+    async fn interest_list_posts_are_ordered_and_end_on_the_latest() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360, InterestListMode::Default]);
+    }
+
+    /// A post that never answers is given up, and the mode asked after it
+    /// (the closing `default`) is still sent.
+    #[tokio::test]
+    async fn a_post_with_no_reply_does_not_hold_the_next_mode() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, Duration::from_millis(50), move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    std::future::pending::<()>().await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Default]);
+    }
+
+    /// Modes queued behind a post in flight fold into the last one.
+    #[tokio::test]
+    async fn queued_modes_fold_into_the_last() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for mode in [
+            InterestListMode::Capture360,
+            InterestListMode::Default,
+            InterestListMode::Capture360,
+        ] {
+            tx.send(("u".into(), mode)).expect("queue");
+        }
+        drop(tx);
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move { seen.lock().push(mode) }
+        })
+        .await;
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360]);
     }
 }

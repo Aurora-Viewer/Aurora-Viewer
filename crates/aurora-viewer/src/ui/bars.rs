@@ -88,6 +88,10 @@ pub enum BarAction {
     PhotoToDisk,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
+    /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
+    /// 360capture): the photo window in its 360° format, or closed when it
+    /// is already open in it.
+    Photo360,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -329,9 +333,12 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
-    /// RLVa leaves Teleport Home allowed (enable_teleport_home,
-    /// LLFloaterWorldMap's Go Home button).
+    /// RLVa leaves Teleport Home allowed (the Home buttons of the
+    /// navigation bar and of LLFloaterWorldMap).
     pub can_go_home: bool,
+    /// The Teleport Home menu entry (LLWorldEnableTeleportHome): greyed
+    /// under either @tplm or @tploc.
+    pub home_entry: bool,
     /// The agent's region has a ServerReleaseNotes page (Help › Server
     /// release notes) and a SimConsoleAsync console (Advanced › Region
     /// console, estate managers).
@@ -934,6 +941,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
+        // menu_viewer.xml: Pose Stand... (Floater.Show fs_posestand, enabled
+        // by fs_when_not_sitting): it opens the window, or brings it forward
+        // when open; the toolbar button is the one that toggles it
+        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
+            super::widgets::open_floater(ui.ctx(), super::pose_stand::WINDOW, &mut panels.pose_stand);
+            super::widgets::bring_floater_front(ui.ctx(), super::pose_stand::WINDOW);
+        }
         // menu_viewer.xml: Me › Experiences (Picks, before it there, has
         // no entry in this menu)
         flip_window(
@@ -951,7 +965,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::widgets::toggle_floater(ui.ctx(), super::avatar_welcome::WINDOW, &mut panels.avatar_welcome);
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
+        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
@@ -2652,6 +2666,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
+        // Floater.Toggle fs_posestand
+        "pose_stand" => toggle(super::pose_stand::WINDOW, &mut panels.pose_stand),
         // Floater.ToggleOrBringToFront omnifilter
         "omnifilter" => toggle(super::omnifilter::WINDOW, &mut panels.omnifilter),
         // Floater.Toggle conversation
@@ -2660,6 +2676,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.ToggleOrBringToFront 360capture
+        "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
@@ -2760,6 +2778,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
+        "360capture" => panels.snapshot && panels.snapshot_pano,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
@@ -2771,6 +2790,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "avatar" => panels.avatar_welcome,
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
+        "pose_stand" => panels.pose_stand,
         "omnifilter" => panels.omnifilter,
         "conversation_log" => panels.conversation_log,
         "performance" | "statistics" => panels.perf,
@@ -3541,10 +3561,13 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck)
+        // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck),
+        // and the pose stand's, dimmed while we sit (Agent.IsActionAllowed
+        // fs_when_not_sitting), its own ground lock included
         let no_pack = b.command == "avatar" && !toolbar.avatar_welcome;
         let no_guide = b.command == "destinations" && !toolbar.destinations;
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_pack && !no_guide;
+        let usable =
+            !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_pack && !no_guide && !(b.command == "pose_stand" && row.seated);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -4448,6 +4471,26 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
+    }
+
+    /// The 360° button opens the photo window in its 360° format and is lit
+    /// while it is open in it; it does not toggle a window of its own.
+    #[test]
+    fn the_360_button_is_the_photo_window_in_360() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("360capture"));
+        assert!(matches!(run_command(&ctx, "360capture", &mut panels), BarAction::Photo360));
+        assert!(!command_active("360capture", &panels, false, false, false));
+        panels.snapshot = true;
+        assert!(
+            !command_active("360capture", &panels, false, false, false),
+            "open in the ordinary format"
+        );
+        panels.snapshot_pano = true;
+        assert!(command_active("360capture", &panels, false, false, false));
+        panels.snapshot = false;
+        assert!(!command_active("360capture", &panels, false, false, false));
     }
 
     #[test]

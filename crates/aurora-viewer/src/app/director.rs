@@ -4,7 +4,7 @@
 
 use super::App;
 use crate::camera::track::Pose;
-use crate::director::{self, Director, History, Mode, Target};
+use crate::director::{self, Aim, Director, History, KeyAim, Mode, Target};
 use crate::keybinds::Mods;
 use crate::recorder::{self, Finishing, Recording, Sink, Tool};
 use crate::ui;
@@ -12,6 +12,7 @@ use crate::ui::director::Action;
 use crate::ui::environment::EnvAction;
 use aurora_render::Renderer;
 use glam::Vec3;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
@@ -71,9 +72,14 @@ pub(super) struct DirectorState {
     /// The view angle and the roll the user had when the window opened:
     /// they come back when it closes.
     before: Option<(f32, f32)>,
-    /// Where the lock's target is this frame, smoothed (`director::follow`);
-    /// `None` when nothing asks for it or it is not in sight.
+    /// Where what the view looks at now is this frame (`Director::current_aim`),
+    /// smoothed; `None` when it looks at nothing or it is not in sight.
     aim: Option<Vec3>,
+    /// Where each target the lock and the keyframes look at is this frame,
+    /// smoothed (`director::follow`), each on its own; the ones in sight.
+    pub(super) aims: HashMap<Aim, Vec3>,
+    /// A target asked for is not in sight.
+    lost: bool,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
     ffmpeg: Ffmpeg,
@@ -117,7 +123,17 @@ impl App {
     /// The HUDs go with the interface while the track plays, unless RLVa
     /// keeps one shown.
     pub(super) fn director_hides_huds(&self) -> bool {
-        (self.director.d.playing() || self.director.recording.is_some()) && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+        (self.director.d.playing() || self.director_filming()) && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+    }
+
+    /// A film is being recorded, of the track or of the live view: the world
+    /// is drawn alone, as while the track plays. The windows stay for the
+    /// live view (the film takes the 3D view before them), but the name
+    /// tags, the lock's ring, the guides and every other mark laid on the
+    /// world are drawn into that view (to be hidden behind what is nearer)
+    /// and would be filmed with it.
+    pub(super) fn director_filming(&self) -> bool {
+        self.director.recording.is_some()
     }
 
     /// The film being recorded keeps the transparency of the isolation's
@@ -250,10 +266,11 @@ impl App {
                 self.director.filed = Some(Err(aurora_i18n::tr!("director-track-failed", why = why.as_str())));
             }
             Filed::Loaded(name, bytes) => {
+                let older = self.director.d.lock.aim();
                 let track = serde_json::from_slice::<crate::camera::track::TrackFile>(&bytes)
                     .ok()
                     .zip(self.world.main_origin())
-                    .and_then(|(file, origin)| crate::camera::track::Track::from_file(&file, origin));
+                    .and_then(|(file, origin)| crate::camera::track::Track::from_file(&file, origin, older));
                 self.director.filed = Some(match track {
                     Some(track) => {
                         log::info!("director: track {name} loaded, {} keyframes", track.len());
@@ -491,26 +508,35 @@ impl App {
         if matches!(was, Mode::Playing { .. }) && !self.director.d.playing() {
             log::info!("director: playback ended at {:.1} s", self.director.d.time);
         }
-        // where the lock's target is, when the live camera or a keyframe
-        // asks for it: followed smoothly, found again at once after a loss
-        let lock = self.director.d.lock;
-        let wanted = open && !self.director_restricted() && (lock.on || self.director.d.track.keys().iter().any(|key| key.locked));
-        self.director.aim = wanted
-            .then(|| self.director_target())
-            .flatten()
-            .map(|to| director::follow(self.director.aim, to, lock.smoothing, dt));
-        self.camera.set_track_view(self.director.d.view(self.director.aim));
+        // where the targets are, those the live camera and the keyframes
+        // look at: each followed smoothly, found again at once after a loss
+        let wanted = if open && !self.director_restricted() {
+            self.director.d.aims()
+        } else {
+            Vec::new()
+        };
+        let smoothing = self.director.d.lock.smoothing;
+        let mut found = HashMap::with_capacity(wanted.len());
+        for &aim in &wanted {
+            if let Some(to) = self.director_target(aim) {
+                found.insert(aim, director::follow(self.director.aims.get(&aim).copied(), to, smoothing, dt));
+            }
+        }
+        self.director.lost = found.len() < wanted.len();
+        self.director.aim = self.director.d.current_aim().and_then(|aim| found.get(&aim).copied());
+        let view = self.director.d.view(|aim| found.get(&aim).copied());
+        self.director.aims = found;
+        self.camera.set_track_view(view);
     }
 
-    /// Where the lock's target is now: the joint of the avatar as it was
-    /// last drawn (its animation included), or the object's centre. `None`
-    /// when it is not in the scene.
-    fn director_target(&self) -> Option<Vec3> {
-        let lock = self.director.d.lock;
+    /// Where a target is now: the joint of the avatar as it was last drawn
+    /// (its animation included), or the object's centre. `None` when it is
+    /// not in the scene.
+    fn director_target(&self, aim: Aim) -> Option<Vec3> {
         let now = Instant::now();
-        match lock.target {
-            Target::Own => self.scene.joint_world(&self.world, &self.world.agent_id, lock.joint.bone(), now),
-            Target::Avatar(id) => self.scene.joint_world(&self.world, &id, lock.joint.bone(), now),
+        match aim.target {
+            Target::Own => self.scene.joint_world(&self.world, &self.world.agent_id, aim.joint.bone(), now),
+            Target::Avatar(id) => self.scene.joint_world(&self.world, &id, aim.joint.bone(), now),
             Target::Object(id) => {
                 let index = self.world.objects.index_of_uuid(&id)?;
                 crate::scene::Scene::object_transform(&self.world, index, now, 0).map(|(position, ..)| position)
@@ -600,6 +626,7 @@ impl App {
             restricted: self.director_restricted(),
             focus: self.camera.focus_object_id().is_some(),
             target: self.director.aim,
+            lost: self.director.lost,
             can_undo: self.director.history.can_undo(),
             can_redo: self.director.history.can_redo(),
             can_record: matches!(self.director.ffmpeg, Ffmpeg::Ready(_))
@@ -616,8 +643,7 @@ impl App {
         }
         let mut actions = Vec::new();
         let aspect = self.director.d.picture_aspect(self.camera_aspect());
-        let target = self.director.aim;
-        ui::director::guides(ctx, p, projector, &self.director.d, target);
+        ui::director::guides(ctx, p, projector, &self.director.d, self.director.aim);
         // choosing in the scene for the isolation, as the photo mode does
         let (_, hover) = self.photo_isolate_rows();
         let mut chosen = Vec::new();
@@ -625,7 +651,7 @@ impl App {
         for choice in chosen {
             self.photo_isolate_out(choice, ctx.pixels_per_point());
         }
-        ui::director::world(ctx, p, projector, &mut self.director.d, aspect, target, &mut actions);
+        ui::director::world(ctx, p, projector, &mut self.director.d, aspect, &self.director.aims, &mut actions);
         self.director_actions(actions);
     }
 
@@ -874,8 +900,10 @@ impl App {
     /// AURORA_DEMO_DIRECTOR: once in the world, the window opened on a
     /// track of four keyframes around our avatar; `play` plays it at once,
     /// without a start delay; `lock` locks the view on our avatar's neck,
-    /// live and at the two middle keyframes, in a 2.39:1 frame with the
-    /// rule of thirds; `green` shows our avatar alone on a green screen.
+    /// live and all along the track, its second keyframe on the neck and its
+    /// third on the head (targets of their own, kept when the lock goes
+    /// off), the fourth's target cleared, in a 2.39:1 frame with the rule
+    /// of thirds; `green` shows our avatar alone on a green screen.
     fn director_demo(&mut self) {
         if !self.demo {
             return;
@@ -918,8 +946,17 @@ impl App {
         if mode == "lock" {
             let d = &mut self.director.d;
             d.lock.on = true;
-            d.track.set_locked(1, true);
-            d.track.set_locked(2, true);
+            // the second keyframe on the neck, the third on the head (a
+            // target of its own), the fourth's target cleared
+            let own = |joint| {
+                KeyAim::On(Aim {
+                    target: Target::Own,
+                    joint,
+                })
+            };
+            d.track.set_aim(1, own(director::Joint::Neck));
+            d.track.set_aim(2, own(director::Joint::Head));
+            d.track.set_aim(3, KeyAim::Free);
             d.format = director::Format::Scope;
             d.thirds = true;
             log::info!("director demo: view locked on our avatar's neck, 2.39:1");

@@ -40,10 +40,62 @@ const SLIDER_SCALE_GLOW_B: f32 = -5.0;
 /// F_APPROXIMATELY_ZERO (llmath.h).
 const APPROXIMATELY_ZERO: f32 = 0.00001;
 
+/// The least width of the selector's label column; the real one comes from
+/// [`label_column_w`], so that "Sky environment" / "Water environment" are
+/// not painted over their lists (#3109).
 const LABEL_W: f32 = 74.0;
 const COMBO_W: f32 = 216.0;
 /// Height of a list's entries under its search field.
 const LIST_H: f32 = 420.0;
+const LABEL_FONT: f32 = 12.5;
+/// Width of the Environment window with a label column of [`LABEL_W`]; a
+/// wider column widens the window by as much.
+const SELECTOR_W: f32 = 440.0;
+
+/// The labels of the selector's rows: sky, water, day cycle and time of day.
+fn selector_labels() -> [&'static str; 4] {
+    [
+        aurora_i18n::tr!("ui-environment-sky-environment"),
+        aurora_i18n::tr!("ui-environment-water-environment"),
+        aurora_i18n::tr!("extra-day-night"),
+        aurora_i18n::tr!("ui-environment-time"),
+    ]
+}
+
+/// Widest of `labels` at the selector's label size, so the column fits the
+/// current language instead of a fixed English guess.
+fn label_column_w(ctx: &egui::Context, labels: &[&str]) -> f32 {
+    let font = egui::FontId::proportional(LABEL_FONT);
+    labels
+        .iter()
+        .map(|label| {
+            ctx.fonts_mut(|f| {
+                f.layout_no_wrap((*label).to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                    .size()
+                    .x
+            })
+        })
+        .fold(LABEL_W, f32::max)
+        .ceil()
+}
+
+/// Label in a fixed column, cut at the column's width so a long string
+/// cannot cover the list (on the width only: a large text size is taller
+/// than the row's 20 px and keeps its descenders).
+fn paint_selector_label(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, label_w: f32) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
+    let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range()).intersect(ui.clip_rect());
+    ui.painter().with_clip_rect(clip).text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(LABEL_FONT),
+        p.ink,
+    );
+    if !tip.is_empty() {
+        resp.on_hover_text(tip);
+    }
+}
 
 #[derive(Default)]
 pub struct EnvironmentUi {
@@ -121,11 +173,14 @@ impl EnvironmentUi {
         let screen = ctx.content_rect();
         // left of the notification toasts (top right)
         let pos = egui::pos2(screen.right() - 740.0, screen.top() + 90.0);
+        // as wide as its labels ask: English needs more than French or
+        // Japanese, whose labels fit the least column
+        let label_w = label_column_w(ctx, &selector_labels());
         Floater::new(
             "environment_selector",
             aurora_i18n::tr!("common-environment"),
             pos,
-            Vec2::new(440.0, 300.0),
+            Vec2::new(SELECTOR_W + label_w - LABEL_W, 300.0),
         )
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
@@ -212,23 +267,22 @@ impl EnvironmentUi {
         out: &mut Vec<EnvAction>,
     ) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+        let [sky, water, day, time] = selector_labels();
+        // Quick preferences passes a wide column; the Environment window's
+        // 74 px was too narrow for English "Water environment" (#3109).
+        let label_w = label_w.max(label_column_w(ui.ctx(), &[sky, water, day, time]));
         let free = !self.rlva_locked;
         let rows = [
-            (
-                SettingsKind::Sky,
-                aurora_i18n::tr!("ui-environment-sky-environment"),
-                aurora_i18n::tr!("ui-environment-sky-settings"),
-                view.sky,
-            ),
+            (SettingsKind::Sky, sky, aurora_i18n::tr!("ui-environment-sky-settings"), view.sky),
             (
                 SettingsKind::Water,
-                aurora_i18n::tr!("ui-environment-water-environment"),
+                water,
                 aurora_i18n::tr!("ui-environment-water-settings"),
                 view.water,
             ),
             (
                 SettingsKind::Day,
-                aurora_i18n::tr!("extra-day-night"),
+                day,
                 aurora_i18n::tr!("ui-environment-day-cycle-settings"),
                 view.day,
             ),
@@ -237,15 +291,7 @@ impl EnvironmentUi {
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        label,
-                        egui::FontId::proportional(12.5),
-                        p.ink,
-                    );
-                    resp.on_hover_text(tip);
+                    paint_selector_label(ui, p, label, tip, label_w);
                     ui.add_enabled_ui(free, |ui| {
                         if let Some(a) = self.list_row(ui, p, kind, shown) {
                             out.push(a);
@@ -312,14 +358,7 @@ impl EnvironmentUi {
         if let Some(time_of_day) = time_of_day {
             widgets::divider(ui, p);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
-                ui.painter().text(
-                    rect.left_center(),
-                    egui::Align2::LEFT_CENTER,
-                    aurora_i18n::tr!("ui-environment-time"),
-                    egui::FontId::proportional(12.5),
-                    p.ink,
-                );
+                paint_selector_label(ui, p, time, "", label_w);
                 for (i, name) in [
                     aurora_i18n::tr!("ui-environment-sunrise"),
                     aurora_i18n::tr!("common-midday"),
@@ -1367,6 +1406,47 @@ fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selector_label_column_fits_water_environment() {
+        let ctx = egui::Context::default();
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                // English whatever the language of the PC running the test
+                // (`tr!` follows it: "Env. eau" fits the old column)
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    width = label_column_w(
+                        ui.ctx(),
+                        &[
+                            aurora_i18n::text_in("en", "ui-environment-sky-environment"),
+                            aurora_i18n::text_in("en", "ui-environment-water-environment"),
+                            aurora_i18n::text_in("en", "extra-day-night"),
+                            aurora_i18n::text_in("en", "ui-environment-time"),
+                        ],
+                    );
+                });
+            },
+        );
+        // the font atlas of the first frame: dropped uncleared, it panics
+        // under debug assertions (`--profile ci`, the merge queue)
+        output.textures_delta.clear();
+        assert!(
+            width > LABEL_W,
+            "English Water environment needs more than the old {LABEL_W} px column, got {width}"
+        );
+        let water = aurora_i18n::text_in("en", "ui-environment-water-environment");
+        let water_w = ctx.fonts_mut(|f| {
+            f.layout_no_wrap(water.to_owned(), egui::FontId::proportional(LABEL_FONT), egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        });
+        assert!(width + 0.5 >= water_w, "column {width} must cover {water} ({water_w})");
+    }
 
     #[test]
     fn an_open_list_grows_as_inventory_arrives_and_stays_anchored_after_filtering() {

@@ -493,6 +493,7 @@ impl Notification {
             | Data::RegionRestart
             | Data::RegionMessage { .. }
             | Data::CallingCard { .. }
+            | Data::Permissions { .. }
             | Data::Delivery { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
             // closing the notice's toast declines its attachment
@@ -1091,7 +1092,7 @@ pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
         Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
         Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
         Response::Dismiss => match &n.data {
-            Data::Dialog { .. } | Data::TextBox { .. } => Outcome::Ignored,
+            Data::Dialog { .. } | Data::TextBox { .. } | Data::Permissions { .. } => Outcome::Ignored,
             Data::Inventory { object, .. } if !object.is_nil() => Outcome::Kept,
             Data::GroupNotice { attachment: Some(a), .. } if a.saved => Outcome::Kept,
             _ if n.close_declines() => Outcome::Declined,
@@ -1497,6 +1498,10 @@ mod tests {
                 caution: None,
             },
         );
+        let question = n.list.iter().find(|question| question.id == id).expect("permission question");
+        assert!(!question.close_declines());
+        assert_eq!(outcome_of(question, &Response::Dismiss), Outcome::Ignored);
+        assert_eq!(outcome_of(question, &Response::Decline), Outcome::Declined);
         let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), Uuid::nil());
         assert!(matches!(
             &cmds[..],

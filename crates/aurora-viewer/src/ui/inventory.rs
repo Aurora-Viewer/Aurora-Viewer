@@ -22,6 +22,7 @@ mod bulk_permissions;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
+pub(crate) use clipboard::return_focus_to;
 mod context;
 mod context_catalog;
 pub(crate) mod context_customize;
@@ -32,6 +33,7 @@ pub(crate) mod default_permissions;
 mod delete;
 pub use delete::DeleteRequest;
 pub(crate) use delete::DeleteSelection;
+pub(crate) use delete::request_from_window as delete_from_window;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
@@ -173,9 +175,10 @@ pub enum InvAction {
     Restore(Uuid),
     Share {
         items: Vec<Uuid>,
-        resident: Uuid,
+        residents: Vec<Uuid>,
     },
-    Preview(Uuid),
+    /// Preview the item and return to its originating inventory list when it closes.
+    Preview(Uuid, Option<egui::Id>),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
     EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
@@ -372,7 +375,8 @@ impl Facts {
 pub enum EditDialog {
     Properties(Uuid),
     Discard(Uuid),
-    Share(Vec<Uuid>, Uuid),
+    /// Items to give, then one or more residents (LLAvatarActions::shareWithAvatars).
+    Share(Vec<Uuid>, Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
     Empty(Uuid),
     Ungroup(Uuid),
@@ -581,6 +585,9 @@ pub struct InventoryUi {
     list_focus_frame: Option<u64>,
     /// Which row order the list drew last, for the work done outside it.
     shown_order: keyboard::ShownOrder,
+    /// The list's focus target that opened this document window, so closing
+    /// it hands the keyboard back there (see `clipboard::return_focus_to`).
+    document_owner: Option<egui::Id>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -2250,12 +2257,17 @@ pub fn show(
         .chain(st.windows.iter().map(|w| &*w.state))
         .chain(dual.as_deref())
     {
-        if let Some(EditDialog::Share(_, resident)) = &state.dialog {
-            world.social.want_name(*resident);
-            facts.names.insert(*resident, world.social.name_of(resident));
-            wanted.push(*resident);
-            if let Some(t) = pics.get(resident) {
-                facts.pictures.insert(*resident, t.clone());
+        if let Some(EditDialog::Share(_, residents)) = &state.dialog {
+            for resident in residents {
+                world.social.want_name(*resident);
+                facts.names.insert(*resident, world.social.name_of(resident));
+            }
+            // Only the first resident's portrait is shown.
+            if let Some(first) = residents.first() {
+                wanted.push(*first);
+                if let Some(t) = pics.get(first) {
+                    facts.pictures.insert(*first, t.clone());
+                }
             }
         }
     }
@@ -2467,9 +2479,9 @@ pub fn show(
         &mut actions,
     );
     if let Some(residents) = st.share_picker.show(ctx, p, world)
-        && let Some(resident) = residents.first()
+        && !residents.is_empty()
     {
-        st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), *resident));
+        st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), residents));
     }
     if let Some(dual) = dual {
         dual.hover
@@ -2674,9 +2686,9 @@ pub fn show(
             &mut actions,
         );
         if let Some(residents) = w.state.share_picker.show(ctx, p, world)
-            && let Some(resident) = residents.first()
+            && !residents.is_empty()
         {
-            w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), *resident));
+            w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), residents));
         }
         st.wanted_images.extend(w.state.wanted_images.drain());
         st.wanted_hover_images.extend(w.state.wanted_hover_images.drain());

@@ -216,6 +216,7 @@ mod tests {
                     strict: false,
                     param: Param::Reply(0),
                     environment_locked: false,
+                    received: Default::default(),
                 }
             ),
             Outcome::Rejected

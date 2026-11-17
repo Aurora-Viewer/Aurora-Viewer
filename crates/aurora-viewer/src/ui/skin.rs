@@ -65,6 +65,7 @@ impl Default for Layout {
                 tb("Command_Search_Icon", "search", aurora_i18n::tr!("search-title")),
                 tb("Command_Places_Icon", "places", aurora_i18n::tr!("common-places")),
                 tb("Command_Snapshot_Icon", "snapshot", aurora_i18n::tr!("photo-title")),
+                tb("movie", "director", aurora_i18n::tr!("toolbar-command-director")),
                 tb("Command_Map_Icon", "worldmap", aurora_i18n::tr!("common-world-map")),
                 tb("Command_MiniMap_Icon", "minimap", aurora_i18n::tr!("common-mini-map")),
                 tb("Command_Performance_Icon", "performance", aurora_i18n::tr!("common-performance")),

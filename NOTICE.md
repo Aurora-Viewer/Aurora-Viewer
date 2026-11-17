@@ -23,7 +23,10 @@ Many parts of this program are Rust ports of the Second Life viewer
 (Copyright © Linden Research, Inc.) and of the Firestorm viewer
 (Copyright © The Phoenix Firestorm Project, Inc.), both distributed under the
 GNU Lesser General Public License, version 2.1. Each ported file says which
-original sources it follows ("originally LGPL 2.1").
+original sources it follows ("originally LGPL 2.1"). The exceptions, files
+under another licence, are named with their licence in the Licence column of
+"Authors of the ported code" below, and each has its own section (the pose
+stand, Beer-Ware Licence).
 
 As permitted by section 3 of the LGPL 2.1, the copy of that code included in
 this program is distributed under the GNU General Public License, version 3 or
@@ -59,7 +62,8 @@ The Second Life viewer and Firestorm sources hold code written by other
 viewer projects and by individual residents, who keep the copyright on it.
 The ported parts of Aurora Viewer that follow their files are listed below,
 with the authors named in those files' notices. Their code is originally
-LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
+LGPL 2.1 unless the Licence column says otherwise, distributed here under
+GPL-3.0-or-later as described above.
 
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
@@ -80,6 +84,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Group titles, `newview/fsfloatergrouptitles.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_titles.rs` | Originally LGPL 2.1 |
 | Place details, `newview/fsfloaterplacedetails.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/place_details.rs`, `ui/places.rs`, `world/place_details.rs` | Originally LGPL 2.1 |
 | Partial inventory, `newview/fsfloaterpartialinventory.cpp` — Copyright © 2022 Ansariel Hiller | `aurora-viewer/src/ui/inventory.rs` | Originally LGPL 2.1 |
+| Favorite wearables, `newview/fsfloaterwearablefavorites.cpp` — Copyright © 2018 Ansariel Hiller | `aurora-viewer/src/world/wearable_favorites.rs`, `ui/appearance/wearable_favorites.rs`, `app/wearable_favorites.rs` | Originally LGPL 2.1 |
 | Stream title, `newview/fsfloaterstreamtitle.cpp` — Copyright © 2022 Ansariel Hiller; `streamtitledisplay.cpp` — Copyright © 2010 Katharine Berry, © 2013 Cinder Roxley | `aurora-viewer/src/stream_title.rs`, `ui/stream_title.rs`, `app.rs` | Originally LGPL 2.1 |
 | Desktop notifications, `newview/growlmanager.cpp` — Copyright © 2010 Katharine Berry | `aurora-viewer/src/system_notify.rs`, `app/attention.rs`, `world/attention.rs` | Originally LGPL 2.1 |
 | Search, `newview/fsfloatersearch.cpp` — Copyright © 2012 Cinder Roxley | `aurora-net/src/search.rs`; `aurora-viewer/src/ui/search.rs`, `ui/search/details.rs`, `world/search.rs` | Originally LGPL 2.1 |
@@ -97,6 +102,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Bundled assets
 
@@ -110,6 +116,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Noto Color Emoji font, version 2.057 — Copyright 2022 Google Inc. (googlefonts/noto-emoji, tag `v2026-09-24-unicode18_0`, built into the executable) | `assets/emoji/` | SIL Open Font License 1.1 ([LICENSE-OFL.txt](assets/emoji/LICENSE-OFL.txt)) |
 | MIT KEMAR HRTF measurements, diffuse-field equalized set — Copyright 1994 MIT Media Laboratory, by Bill Gardner and Keith Martin (https://sound.media.mit.edu/resources/KEMAR.html: "provided free with no restrictions on use, provided the authors are cited"); turned into minimum-phase filters by `scripts/generate-hrtf.py` (built into the executable; origin, citation and changes in [README.md](assets/hrtf/README.md)) | `assets/hrtf/kemar.bin` | Free use with credit to the authors (their terms, quoted in the README) |
 | Tycho-2 Catalogue — Høg E. et al. 2000 (A&A 355, L27; https://archive.eso.org/ASTROM/TYC-2/data/, CDS I/259); the naked-eye stars and a map of the fainter ones, made by `scripts/generate-star-catalog.py`, with V and B-V for its 50 brightest or colourless stars from the Hipparcos Catalogue (ESA 1997, ESA SP-1200) (built into the executable; origin and changes in [README.md](assets/stars/README.md)) | `assets/stars/stars.bin`, `assets/stars/milky_way.bin` | BSD-2-Clause, agreed by its lead author in 2015 ([LICENSE-TYCHO2.md](assets/stars/LICENSE-TYCHO2.md)) |
+| Cloud noise textures (128^3 base, 32^3 detail, 2D curl), made by `crates/aurora-render/examples/generate_cloud_noise.rs`, a CPU port of the noise generators of `clouds.wgsl` that follows the octaves and weights of sebh/TileableVolumeNoise (Copyright (c) 2017 Sébastien Hillaire, MIT; https://github.com/sebh/TileableVolumeNoise) (built into the executable) | `assets/clouds/cloud_noise.bin` | Generated by Aurora Viewer code: GPL-3.0-or-later; the recipe's MIT notice: section "Tileable volume noise by Sébastien Hillaire" below |
 | Aurora wolf logo and silhouette | `assets/branding/` | Part of Aurora Viewer, GPL-3.0-or-later |
 | Four modern native walk/run animations, Copyright Linden Research, Inc., unmodified from the Legacy Viewer's `indra/newview/app_settings/static_assets/` at revision `f9401764e4e98aa3800749044a152cb4dcf75437` (provenance in the directory's README) | `crates/aurora-viewer/assets/animations/locomotion/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Photo filters of the Second Life viewer `indra/newview/app_settings/filters` (the 30 XML files unchanged, from the Legacy Viewer's sources at commit `8ffe7065`), made by Linden Lab | `crates/aurora-render/src/looks/legacy/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
@@ -365,6 +372,49 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Tileable volume noise by Sébastien Hillaire
+
+The cloud noise generators of `crates/aurora-render/src/shaders/clouds.wgsl`
+(`gen_base`, `gen_detail`) and their CPU port
+`crates/aurora-render/src/clouds_noise.rs`, with the noise file it writes
+(`assets/clouds/cloud_noise.bin`), follow the octaves and weights of Sébastien
+Hillaire's TileableVolumeNoise
+(<https://github.com/sebh/TileableVolumeNoise>), MIT License:
+
+Copyright(c) 2017 Sébastien Hillaire
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Pose stand by Cinder Roxley
+
+The pose stand (`crates/aurora-viewer/src/pose_stand.rs`,
+`ui/pose_stand.rs`, `app/pose_stand.rs`) is a port of the Legacy Viewer's
+`newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp` and
+`fspose.h`, which are not LGPL: their author released them under the Beer-Ware Licence (Revision 42),
+whose only condition is to retain this notice, kept here and at the top of
+the three Aurora files:
+
+"THE BEER-WARE LICENSE" (Revision 42):
+Cinder Roxley wrote this file. As long as you retain this notice you can do
+whatever you want with this stuff. If we meet some day, and you think this
+stuff is worth it, you can buy me a beer in return <cinder.roxley@phoenixviewer.com>
 
 ## SMAA
 

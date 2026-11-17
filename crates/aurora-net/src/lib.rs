@@ -178,6 +178,16 @@ fn asset_limits(mode: AssetConnections, fixed: Option<usize>) -> (Option<usize>,
     }
 }
 
+/// The HTTP client of the tests that talk to a local `127.0.0.1` server.
+/// `reqwest::Client::new()` reads `http_proxy` / `https_proxy` from the
+/// environment and sends the loopback requests to that proxy: the tests then
+/// fail or wait for ever (#3903). The viewer's own clients (`NetClient::new`)
+/// keep the user's proxy.
+#[cfg(test)]
+pub(crate) fn test_http_client() -> reqwest::Client {
+    reqwest::Client::builder().no_proxy().build().expect("HTTP client")
+}
+
 impl NetClient {
     pub fn new(asset_connections: AssetConnections) -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -265,6 +275,9 @@ impl NetClient {
                     NetCommand::Login(req) => {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
+                    // Session-scoped offers cannot be submitted offline. Drop the receipt
+                    // without exposing a login session or inventory bucket in diagnostics.
+                    NetCommand::OfferInventory { .. } | NetCommand::CheckInventoryOffer { .. } => {}
                     // (the offline demo moves its agent every frame)
                     NetCommand::AgentControls(_) | NetCommand::ForceAgentUpdate => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),
