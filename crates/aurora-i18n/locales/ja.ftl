@@ -14455,6 +14455,7 @@ inventory-cleanup-empty-folders = 空のフォルダも含める
 inventory-purge-hint = 一度に空にできないほど大きいフォルダ（サーバーに拒否される場合）向け：少しずつ間隔をあけて完全に削除します。一時停止・停止できます。
 inventory-purge-trash-name = ごみ箱
 inventory-purge-steps = { $folder } を少しずつ空にする（{ $count }）
+inventory-purge-loading = 先に { $folder } を読み込み中…
 inventory-purge-title = { $folder } の中身をすべて完全に削除しますか？
 inventory-purge-text = { $folder } の { $count } 個の項目を少しずつ完全に削除します。元に戻せません。
 inventory-purge-go = 完全に削除

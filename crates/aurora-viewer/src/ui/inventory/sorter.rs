@@ -180,6 +180,11 @@ pub(super) struct State {
     waiting: Option<(u64, std::sync::Arc<Vec<Uuid>>, Option<Uuid>)>,
     /// Whether Pre-Trash is loaded with all it holds, at a generation.
     pre_trash_loaded: Option<(u64, bool)>,
+    /// Empty in small steps, per folder: read at that generation, when, all
+    /// it holds loaded, and its entries.
+    purge_seen: std::collections::HashMap<Uuid, (u64, Instant, bool, usize)>,
+    /// When a saved source's folders were last looked at while loading.
+    source_checked: Option<Instant>,
     /// The preview and Clean up's list being made off the frame, for a
     /// large inventory.
     planning: Option<Planning<(Plan, sorter::journal::Snapshot)>>,
@@ -656,7 +661,11 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
         let Some(piece) = job.pieces.pop_front() else { return };
         let piece = match piece {
             sorter::purge::Piece::Folder(id) | sorter::purge::Piece::Emptied(id)
-                if inv.folders.contains_key(&id) && inside(id) && !holds_worn(id) =>
+                if inv.folders.contains_key(&id)
+                    && inside(id)
+                    && !holds_worn(id)
+                    && sorter::unloaded_below(inv, id, &[]).is_empty()
+                    && inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched) =>
             {
                 piece
             }
@@ -1926,7 +1935,14 @@ pub(super) fn show(
         // (once loaded, it stays so: a 400,000-move run is not read again at
         // every change)
         Source::Saved(moves, _) => match state.source_loaded {
-            Some((generation, loaded)) if (generation == inv.generation || loaded) && state.source_excluded == prefs.sorter.excluded => {
+            Some((generation, loaded))
+                if (generation == inv.generation
+                    || loaded
+                    // (while its folders load, looked at once a second, never
+                    // every frame: a 400,000-move run is a long read)
+                    || state.source_checked.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1)))
+                    && state.source_excluded == prefs.sorter.excluded =>
+            {
                 loaded
             }
             _ => {
@@ -1946,6 +1962,7 @@ pub(super) fn show(
                 }
                 let loaded = ask_for(inv, read);
                 state.source_loaded = Some((inv.generation, loaded));
+                state.source_checked = Some(Instant::now());
                 loaded
             }
         },
@@ -2120,6 +2137,27 @@ pub(super) fn show(
             loaded
         }
     };
+    // Empty in small steps reads all a folder holds first, never deleting
+    // what it has not seen (a worn item in a subfolder not loaded yet); read
+    // again when the inventory changes, at most once a second while loading
+    if state.tab == CLEANUP || !waiting.is_empty() {
+        for folder in [sorter::pre_trash(inv), rules::system(inv, 14)].into_iter().flatten() {
+            let stale = state.purge_seen.get(&folder).is_none_or(|(generation, at, loaded, _)| {
+                *generation != inv.generation && (*loaded || at.elapsed() >= std::time::Duration::from_secs(1))
+            });
+            if stale {
+                let unloaded = sorter::unloaded_below(inv, folder, &[]);
+                let fetched = inv.folders.get(&folder).is_some_and(|f| f.state == FetchState::Fetched);
+                let all_read = ask_for(inv, unloaded);
+                let loaded = fetched && all_read;
+                if !fetched {
+                    ask_for(inv, [folder]);
+                }
+                let count = sorter::purge::entries_below(inv, folder);
+                state.purge_seen.insert(folder, (inv.generation, Instant::now(), loaded, count));
+            }
+        }
+    }
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -2958,12 +2996,18 @@ fn purge_buttons(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut St
     ui.horizontal_wrapped(|ui| {
         for (folder, name) in folders {
             let Some(folder) = folder else { continue };
-            let count = sorter::purge::entries_below(inv, folder);
+            let Some(&(_, _, loaded, count)) = state.purge_seen.get(&folder) else {
+                continue;
+            };
             if count == 0 {
                 continue;
             }
-            let label = aurora_i18n::tr!("inventory-purge-steps", folder = name.as_str(), count = count);
-            let go = ui.add_enabled_ui(!busy && state.purge.is_none() && state.trash.is_none(), |ui| {
+            let label = if loaded {
+                aurora_i18n::tr!("inventory-purge-steps", folder = name.as_str(), count = count)
+            } else {
+                aurora_i18n::tr!("inventory-purge-loading", folder = name.as_str())
+            };
+            let go = ui.add_enabled_ui(loaded && !busy && state.purge.is_none() && state.trash.is_none(), |ui| {
                 crate::ui::widgets::action_button(
                     ui,
                     p,

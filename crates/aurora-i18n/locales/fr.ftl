@@ -14606,6 +14606,7 @@ inventory-cleanup-empty-folders = Inclure les dossiers vides
 inventory-purge-hint = Pour un dossier trop grand pour être vidé d’un coup (le serveur refuse) : supprimé définitivement quelques entrées à la fois, à un rythme mesuré, avec Pause et Arrêter.
 inventory-purge-trash-name = Corbeille
 inventory-purge-steps = Vider { $folder } petit à petit ({ $count })
+inventory-purge-loading = Chargement de { $folder } d’abord…
 inventory-purge-title = Supprimer définitivement tout le contenu de { $folder } ?
 inventory-purge-text = { $count ->
     [one] 1 élément de { $folder } sera supprimé définitivement. Impossible d’annuler.

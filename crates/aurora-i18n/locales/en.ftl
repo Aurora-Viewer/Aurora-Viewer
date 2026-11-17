@@ -14601,6 +14601,7 @@ inventory-cleanup-empty-folders = Include empty folders
 inventory-purge-hint = For a folder too large to empty at once (the server refuses it): deleted for good a few entries at a time, paced, with Pause and Stop.
 inventory-purge-trash-name = Trash
 inventory-purge-steps = Empty { $folder } in small steps ({ $count })
+inventory-purge-loading = Loading { $folder } first…
 inventory-purge-title = Delete everything in { $folder } for good?
 inventory-purge-text = { $count ->
     [one] 1 entry in { $folder } will be deleted permanently. This cannot be undone.
