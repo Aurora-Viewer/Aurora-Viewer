@@ -1692,3 +1692,19 @@ mod outgoing_offers {
         assert!(inv.items.contains_key(&item));
     }
 }
+
+/// A link's original found unreadable after its attempts is never read
+/// again: on a huge inventory, dead links read over and over took requests
+/// from the folder walk.
+#[test]
+fn a_broken_links_original_is_never_read_again() {
+    let mut inv = Inventory::default();
+    let dead = Uuid::from_u128(77);
+    let other = Uuid::from_u128(78);
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[dead]);
+    }
+    let mut asked = vec![dead, other];
+    inv.drop_broken(&mut asked);
+    assert_eq!(asked, vec![other]);
+}

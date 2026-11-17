@@ -528,6 +528,15 @@ impl Inventory {
         }
     }
 
+    /// Leaves out of an item read the broken links' originals: confirmed
+    /// gone or unreadable after their attempts, never asked again this
+    /// session.
+    pub fn drop_broken(&self, items: &mut Vec<Uuid>) {
+        if !self.missing_items.is_empty() {
+            items.retain(|id| !self.broken(id));
+        }
+    }
+
     /// A broken link's original: confirmed gone, and not received since.
     pub fn broken(&self, id: &Uuid) -> bool {
         self.missing_items.contains(id) && !self.items.contains_key(id)

@@ -2315,6 +2315,16 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        // a link's original already found unreadable is never read again
+        // this session (LLViewerInventoryItem::isBrokenLink): on a huge
+        // inventory, hundreds of dead links each read over and over took
+        // requests from the folder walk
+        if let NetCommand::FetchItems { items, .. } = &mut cmd {
+            self.world.inventory.drop_broken(items);
+            if items.is_empty() {
+                return;
+            }
+        }
         if let NetCommand::SetAlwaysRun(run) = &mut cmd {
             *run &= !self.vr_walk_override.active();
         }
