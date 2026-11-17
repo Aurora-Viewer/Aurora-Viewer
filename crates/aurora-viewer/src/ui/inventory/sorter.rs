@@ -1458,6 +1458,13 @@ impl InventoryUi {
                     ..Default::default()
                 };
             }
+            "cleanup-demos" => {
+                state.tab = CLEANUP;
+                prefs.cleanup = sorter::Cleanup {
+                    find: Find::Demos,
+                    ..Default::default()
+                };
+            }
             "share" => {
                 state.tab = OPTIONS;
                 state.share = Some(sorter::share::Share::all(prefs));
@@ -2153,6 +2160,7 @@ pub(super) fn show(
                 move |inv: &Inventory| match options.cleanup.find {
                     Find::Old => sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn),
                     Find::Duplicates => sorter::plan_duplicates(inv, &options, &options.cleanup, cleanup_source, &protected, &worn),
+                    Find::Demos => sorter::plan_demos(inv, &options, &options.cleanup, cleanup_source, &protected, &worn),
                 }
             };
             if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
@@ -3773,7 +3781,8 @@ fn cleanup_tab(
     let base = options.base_name();
     let cleanup = &mut options.cleanup;
     ui.add_enabled_ui(!busy, |ui| {
-        let mut find = usize::from(cleanup.find == Find::Duplicates);
+        const FINDS: [Find; 3] = [Find::Old, Find::Duplicates, Find::Demos];
+        let mut find = FINDS.iter().position(|f| *f == cleanup.find).unwrap_or(0);
         let changed = ui.push_id("inventory_cleanup_find", |ui| {
             segmented(
                 ui,
@@ -3782,23 +3791,27 @@ fn cleanup_tab(
                 &[
                     (aurora_i18n::tr!("inventory-cleanup-find-old"), true),
                     (aurora_i18n::tr!("inventory-cleanup-find-duplicates"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-find-demos"), true),
                 ],
             )
         });
         if changed.inner {
-            cleanup.find = if find == 1 { Find::Duplicates } else { Find::Old };
+            cleanup.find = FINDS[find.min(FINDS.len() - 1)];
         }
     });
     let duplicates = cleanup.find == Find::Duplicates;
+    let demos = cleanup.find == Find::Demos;
     let intro = if duplicates {
         aurora_i18n::tr!("inventory-cleanup-duplicates-intro")
+    } else if demos {
+        aurora_i18n::tr!("inventory-cleanup-demos-intro")
     } else {
         aurora_i18n::tr!("inventory-cleanup-intro")
     };
     ui.label(RichText::new(intro).small().color(p.muted));
     ui.add_space(6.0);
     ui.add_enabled_ui(!busy, |ui| {
-        if !duplicates {
+        if !duplicates && !demos {
             section_header(ui, p, "calendar-filled", aurora_i18n::tr!("inventory-cleanup-when"));
             const AGES: [Age; 5] = [Age::OneYear, Age::TwoYears, Age::ThreeYears, Age::FiveYears, Age::Custom];
             let mut age = AGES.iter().position(|a| *a == cleanup.age).unwrap_or(0);
@@ -3904,7 +3917,7 @@ fn cleanup_tab(
                     .small()
                     .color(p.muted),
             );
-        } else {
+        } else if !demos {
             ui.push_id("inventory_cleanup_empty_folders", |ui| {
                 switch_labeled(
                     ui,
@@ -3952,6 +3965,8 @@ fn cleanup_tab(
     if plan.rows.is_empty() {
         let nothing = if duplicates {
             aurora_i18n::tr!("inventory-cleanup-duplicates-nothing").to_string()
+        } else if demos {
+            aurora_i18n::tr!("inventory-cleanup-demos-nothing").to_string()
         } else {
             aurora_i18n::tr!("inventory-cleanup-nothing", date = date.as_str()).to_string()
         };
@@ -3965,6 +3980,8 @@ fn cleanup_tab(
     let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
     let summary = if duplicates {
         aurora_i18n::tr!("inventory-cleanup-duplicates-summary", count = going_count, items = plan.duplicated)
+    } else if demos {
+        aurora_i18n::tr!("inventory-cleanup-demos-summary", count = going_count, items = items)
     } else {
         aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())
     };
@@ -3986,7 +4003,9 @@ fn cleanup_tab(
         // (copies go to Pre-Trash only, to be looked at: never straight
         // to the Trash)
         let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going_count);
+        // (demos too: to Pre-Trash, looked at there first)
         if !duplicates
+            && !demos
             && ui
                 .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
                 .inner

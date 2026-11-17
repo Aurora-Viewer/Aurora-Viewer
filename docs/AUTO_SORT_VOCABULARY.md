@@ -16,6 +16,7 @@ built into the viewer. Anyone can add a word there without reading Rust.
 | `categories` | Each category (its key, such as `dresses` or `body-addons`) and its words, **in the order they are tried**: the first match wins, so a "Lingerie Set" is lingerie, unless another category has a longer phrase built on the word that matched: "hair bow" (accessories) beats "hair", "dress shirt" (tops) beats "dress". Sets come last. |
 | `skin_tones` | Tones creators name body skins with (`porcelain`): a body name with a tone is a skin. |
 | `unpackers` | Words of a box that gives the real items when worn or rezzed. |
+| `demo_words` | Words that make a name a store's demo, for Clean up › Demos (`demo`, `demos`): a whole word only, never `demon`, and never a word of a dotted store name (`DEMO.RAMA.SALON`). |
 | `variants` | `squish` (`sq`, `squeeze`…) and `waifus` words: these versions get their own folder below the category. |
 | `store_tag_patterns` | `enclosed`: the pairs a store is written between (`[` `]`, `*` `*`…); `separators`: what follows a store at the start of a name (` - `, ` // `, `: `…). |
 | `store_stopwords` | Words of a status written like a store tag (`mesh`, `demo`, `new`…): a tag made only of them (`(Mesh)`, `[DEMO]`) is not a store. |

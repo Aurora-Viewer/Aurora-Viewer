@@ -4196,3 +4196,87 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         path("**Moon Hair** Ada Dress")
     );
 }
+
+/// A demo is a name with the word demo, however it is written; never a
+/// word built on it.
+#[test]
+fn a_demo_is_the_word_demo_never_demon() {
+    for name in [
+        "[Velmora] Aftermath Shirt - DEMO",
+        "[M O O N] - KIRA. Sneakers DEMO",
+        "(Demo) Ada Dress",
+        "Ada Dress [DEMO]",
+        "Ada_Hair_DEMO",
+        "-DEMO- Ada Boots",
+        "Velmora Demo Pack",
+        "Ada Hair Demos",
+        "Ada Dress DEMO.",
+        "Ada Dress ...DEMO...",
+    ] {
+        assert!(is_demo(name), "{name}");
+    }
+    for name in [
+        "{Mira} Demon Garters - Greyscale",
+        "Demolition Truck",
+        "Democrat Sign",
+        "Demonia Boots",
+        "Ada Dress",
+        "Demolished Wall",
+        "DEMO.KIRA.SALON - Ada Hair 'S'",
+    ] {
+        assert!(!is_demo(name), "{name}");
+    }
+}
+
+fn demos_of(inv: &Inventory, worn: &HashSet<Uuid>) -> CleanupPlan {
+    let cleanup = Cleanup {
+        find: Find::Demos,
+        ..Default::default()
+    };
+    plan_demos(inv, &Preferences::default(), &cleanup, inv.root, &HashSet::new(), worn)
+}
+
+/// The demo finder lists demo items, a delivered demo folder whole, and
+/// demos inside a store's delivery; never a worn demo, a link, nor a name
+/// built on the word.
+#[test]
+fn the_demo_finder_lists_demos_and_never_what_is_worn_or_a_link() {
+    let mut inv = fixture(&[]);
+    add_copy(&mut inv, 200, OBJECTS, "[Velmora] Aftermath Shirt - DEMO", 900, 100, true);
+    add_copy(&mut inv, 201, OBJECTS, "{Mira} Demon Garters - Greyscale", 901, 100, true);
+    add_copy(&mut inv, 202, 1, "[M O O N] - KIRA. Sneakers DEMO", 902, 100, true);
+    // a delivered demo: the folder goes whole
+    add_folder(&mut inv, 300, OBJECTS, "[Velmora] Hex Dress DEMO");
+    add_copy(&mut inv, 301, 300, "Hex Dress DEMO Maitreya", 903, 100, true);
+    add_copy(&mut inv, 302, 300, "Hex Dress DEMO Legacy", 904, 100, true);
+    // a store's delivery holding its demo too: the demo item only
+    add_folder(&mut inv, 310, OBJECTS, "[Velmora] Ryu Jeans");
+    add_copy(&mut inv, 311, 310, "Ryu Jeans Maitreya", 905, 100, true);
+    add_copy(&mut inv, 312, 310, "Ryu Jeans DEMO", 906, 100, true);
+    // worn: stays
+    add_copy(&mut inv, 320, OBJECTS, "Ada Hair DEMO", 907, 100, true);
+    // a link to a demo: stays
+    inv.add_items(vec![InvItem {
+        id: id(330),
+        parent: id(OBJECTS),
+        name: "Ada Boots DEMO".into(),
+        asset_type: 24,
+        inv_type: 6,
+        asset_id: id(320),
+        owner: id(AGENT),
+        ..Default::default()
+    }]);
+    let worn: HashSet<Uuid> = [id(320)].into_iter().collect();
+    let plan = demos_of(&inv, &worn);
+    let listed: HashSet<Uuid> = plan.rows.iter().map(|r| r.id).collect();
+    assert_eq!(
+        listed,
+        [id(200), id(202), id(300), id(312)].into_iter().collect::<HashSet<Uuid>>(),
+        "demo items, the demo folder whole, the demo in a delivery"
+    );
+    assert!(plan.rows.iter().any(|r| r.id == id(300) && r.folder && r.items == 2));
+    assert!(
+        plan.moves(&HashSet::new()).iter().all(|m| matches!(m.to, Dest::PreTrash)),
+        "to Pre-Trash, never deleted"
+    );
+}

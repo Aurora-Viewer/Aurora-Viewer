@@ -14735,6 +14735,13 @@ inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 exemplaire en trop de { $items } objets
    *[other] { $count } exemplaires en trop de { $items } objets
 }
+inventory-cleanup-find-demos = Démos
+inventory-cleanup-demos-intro = Trouve les copies de démonstration que les boutiques donnent pour essayer (un nom avec le mot DEMO, jamais Demon). Elles vont dans la Pré-corbeille pour que vous les regardiez ; un dossier de démo part entier. Rien n’est supprimé.
+inventory-cleanup-demos-nothing = Aucune démo de ces types.
+inventory-cleanup-demos-summary = { $count ->
+    [one] 1 démo ({ $items } objets)
+   *[other] { $count } démos ({ $items } objets)
+}
 inventory-cleanup-empty-group = Dossiers vides
 inventory-share-section = Partager mes réglages
 inventory-share-section-hint = Donnez vos règles, indices de boutique et options à quelqu'un sous forme de texte, pour une note ou un chat.

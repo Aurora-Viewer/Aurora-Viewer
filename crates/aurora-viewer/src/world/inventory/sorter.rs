@@ -3770,6 +3770,8 @@ pub enum Find {
     Old,
     /// The extra copies of an item held more than once ([`plan_duplicates`]).
     Duplicates,
+    /// A store's demo copies ([`plan_demos`]).
+    Demos,
 }
 
 impl Default for Cleanup {
@@ -4658,6 +4660,12 @@ pub mod journal;
 #[path = "sorter_duplicates.rs"]
 mod duplicates;
 pub use duplicates::plan_duplicates;
+
+#[path = "sorter_demos.rs"]
+mod demos;
+#[cfg(test)]
+use demos::is_demo;
+pub use demos::plan_demos;
 
 #[path = "sorter_purge.rs"]
 pub mod purge;

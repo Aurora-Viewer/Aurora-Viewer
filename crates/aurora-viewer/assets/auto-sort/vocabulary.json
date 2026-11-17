@@ -745,6 +745,10 @@
     "espresso",
     "chocolate"
   ],
+  "demo_words": [
+    "demo",
+    "demos"
+  ],
   "unpackers": [
     "unpack",
     "unpacker",

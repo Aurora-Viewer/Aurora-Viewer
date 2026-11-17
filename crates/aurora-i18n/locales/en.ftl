@@ -14730,6 +14730,13 @@ inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 extra copy of { $items } items
    *[other] { $count } extra copies of { $items } items
 }
+inventory-cleanup-find-demos = Demos
+inventory-cleanup-demos-intro = Find the demo copies stores give to try things on (a name with the word DEMO, never Demon). They go to Pre-Trash for you to look at; a demo folder goes whole. Nothing is deleted.
+inventory-cleanup-demos-nothing = No demo of these types found.
+inventory-cleanup-demos-summary = { $count ->
+    [one] 1 demo ({ $items } items)
+   *[other] { $count } demos ({ $items } items)
+}
 inventory-cleanup-empty-group = Empty folders
 inventory-share-section = Share my settings
 inventory-share-section-hint = Hand your rules, store hints and options to someone else as text, for a notecard or a chat.

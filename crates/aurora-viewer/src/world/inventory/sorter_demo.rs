@@ -132,6 +132,11 @@ const LOOSE: &[(&str, i32)] = &[
     ("Read me first", 7),
     ("Welcome to {Moonrise}", 7),
     ("Wave hello", 20),
+    // store demos, for Clean up › Demos; never the demon
+    ("[Birch Hollow] + Aftermath Shirt - DEMO", 6),
+    ("*Neverlace* - KIRA. Sneakers DEMO", 6),
+    ("Velmora Hex Dress [DEMO] Reborn", 6),
+    ("{Mira} Demon Garters - Greyscale", 6),
 ];
 
 fn folder(id: Uuid, parent: Uuid, name: &str, kind: i32) -> Folder {

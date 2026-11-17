@@ -66,6 +66,8 @@ struct Raw {
     categories: Vec<CategoryEntry>,
     skin_tones: Vec<String>,
     unpackers: Vec<String>,
+    #[serde(default)]
+    demo_words: Vec<String>,
     variants: Variants,
     store_tag_patterns: StoreTags,
     #[serde(default)]
@@ -84,6 +86,9 @@ pub struct Vocabulary {
     pub skin_tones: Vec<String>,
     /// A box to wear or rez that gives the real items.
     pub unpackers: Vec<String>,
+    /// The words that make a name a store's demo (Clean up › Demos), as a
+    /// whole word only: `demo`, never `demon`.
+    pub demo_words: Vec<String>,
     pub variants: Variants,
     pub store_tags: StoreTags,
     /// Words of a tag that names a status, not a store (`(Mesh)`, `[DEMO]`,
@@ -115,6 +120,10 @@ impl Vocabulary {
         }
         check(&mut problems, "skin_tones", &raw.skin_tones);
         check(&mut problems, "unpackers", &raw.unpackers);
+        check(&mut problems, "demo_words", &raw.demo_words);
+        if raw.demo_words.iter().any(|w| w.contains(' ')) {
+            problems.push("demo_words: one word each".to_owned());
+        }
         check(&mut problems, "variants/squish", &raw.variants.squish);
         check(&mut problems, "variants/waifus", &raw.variants.waifus);
         check(&mut problems, "store_stopwords", &raw.store_stopwords);
@@ -146,6 +155,7 @@ impl Vocabulary {
             categories,
             skin_tones: raw.skin_tones,
             unpackers: raw.unpackers,
+            demo_words: raw.demo_words,
             variants: raw.variants,
             store_tags: raw.store_tag_patterns,
             store_stopwords: raw.store_stopwords,
