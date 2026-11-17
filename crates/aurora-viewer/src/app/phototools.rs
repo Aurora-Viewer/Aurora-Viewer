@@ -15,7 +15,6 @@ impl App {
             self.demo_phototools();
         }
         let mut open = self.panels.phototools;
-        let photo_open = self.panels.snapshot;
         let out = self.phototools_ui.show(
             ctx,
             p,
@@ -28,7 +27,7 @@ impl App {
                 loading: self.world.eep.local_loading(),
                 time_of_day: self.panels.time_of_day,
                 lighting,
-                clouds: photo_open.then_some(&mut self.snapshots.ui.light.clouds_paused),
+                clouds: &mut self.snapshots.ui.light.clouds_paused,
             },
         );
         self.panels.phototools = open;

@@ -6896,7 +6896,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   frame, as the toolbar's button does, on the Environment tab (`env`, also the
   default) or the General one. Environment, as sections that fold: Environment
   settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
-  clouds, greyed while the photo window is closed), Quick environments (four
+  clouds, the same switch as the photo window's), Quick environments (four
   times of day, the shared environment), Environment presets (three "New"
   buttons), Reflections (SSR, mirrors, probes, probe range). General: General
   render settings (draw distance to exposure), Render options, Quality

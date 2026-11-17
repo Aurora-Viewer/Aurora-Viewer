@@ -16039,4 +16039,3 @@ phototools-quick-environments = Environnements rapides
 phototools-environment-presets = Préréglages d'environnement
 phototools-general-render = Paramètres généraux du rendu
 phototools-render-options = Options de rendu
-phototools-pause-clouds-photo-only = Disponible tant que la fenêtre photo est ouverte : c'est un réglage propre à la photo.

@@ -71,10 +71,9 @@ pub struct Env<'a> {
     pub time_of_day: u8,
     /// "Personal lighting" is asked.
     pub lighting: &'a mut bool,
-    /// The photo's "Pause clouds" while the photo window is open: the
-    /// switch is the photo's, as the Legacy Viewer's pauseCloudScroll is a
-    /// state of the session, and Aurora keeps none of its own.
-    pub clouds: Option<&'a mut bool>,
+    /// "Pause clouds": a state of the session, shared with the photo
+    /// window (the Legacy Viewer's pauseCloudScroll lasts the session).
+    pub clouds: &'a mut bool,
 }
 
 /// What the window asks of the app.
@@ -235,19 +234,11 @@ impl PhototoolsUi {
     }
 }
 
-/// "Pause Clouds": the photo window's switch (`snapshots.ui.light`), alive
-/// while that window is open.
+/// "Pause Clouds": a switch of the session, never saved, shared with the
+/// photo window's (`snapshots.ui.light.clouds_paused`).
 fn pause_clouds(ui: &mut egui::Ui, p: &Palette, env: &mut Env<'_>) {
     use aurora_i18n::tr;
-    let label = tr!("photo-light-pause-clouds");
-    let enabled = env.clouds.is_some();
-    let mut off = false;
-    ui.add_enabled_ui(enabled, |ui| {
-        let on = env.clouds.as_deref_mut().unwrap_or(&mut off);
-        widgets::switch_labeled(ui, p, on, label)
-            .on_hover_text(tr!("photo-light-pause-clouds-hint"))
-            .on_disabled_hover_text(tr!("phototools-pause-clouds-photo-only"));
-    });
+    widgets::switch_labeled(ui, p, env.clouds, tr!("photo-light-pause-clouds")).on_hover_text(tr!("photo-light-pause-clouds-hint"));
 }
 
 #[cfg(test)]

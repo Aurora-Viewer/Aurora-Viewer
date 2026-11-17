@@ -2739,7 +2739,7 @@ LUT_3D_SIZE {n}
             return;
         }
         if !self.panels.snapshot {
-            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            self.snapshots.ui.light = self.snapshots.ui.light.closed();
             // the outfit's auto portrait in its studio light
             if let Some(studio) = self.outfit_portrait_light() {
                 self.world.eep.set_photo(studio);

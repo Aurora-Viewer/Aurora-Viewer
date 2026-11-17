@@ -15910,4 +15910,3 @@ phototools-quick-environments = クイック環境
 phototools-environment-presets = 環境プリセット
 phototools-general-render = 一般描画設定
 phototools-render-options = 描画オプション
-phototools-pause-clouds-photo-only = 写真ウィンドウが開いている間のみ使えます。写真だけの設定です。
