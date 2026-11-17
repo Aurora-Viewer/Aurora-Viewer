@@ -3646,9 +3646,13 @@ fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvActio
             // what is left goes to the inventory's background walk, as the
             // Legacy Viewer's search does (whole subtrees in its batches,
             // its own pace and retries), never a read a folder a frame
-            let tops = sorter::unread_tops(inv, 400);
-            if !tops.is_empty() {
-                actions.push(InvAction::FetchSubtrees(tops));
+            // (only once the walk is idle: it reads the rest itself, at its
+            // own pace and with its own retries)
+            if !inv.walk_busy {
+                let tops = sorter::unread_tops(inv, 400);
+                if !tops.is_empty() {
+                    actions.push(InvAction::FetchSubtrees(tops));
+                }
             }
             // Done once nothing is left to come (every folder read, failed
             // or too large for the server), when nothing moved on for a
@@ -3656,14 +3660,16 @@ fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvActio
             // read walks: a folder it never asks for (the Trash's) never
             // holds it.
             let progress = sorter::read_progress(inv);
-            let moved = if let Some(Share::Loading { progress: last, .. }) = state.shared.as_ref()
-                && *last != progress
-            {
-                Instant::now()
-            } else {
-                moved
-            };
-            let done = progress.pending == 0 || now || moved.elapsed() >= SHARE_STALL || since.elapsed() >= SHARE_LOAD_LIMIT;
+            // (a walk still reading, or retrying, is progress: the stall
+            // counts only once nothing is on its way)
+            let moved =
+                if inv.walk_busy || matches!(state.shared.as_ref(), Some(Share::Loading { progress: last, .. }) if *last != progress) {
+                    Instant::now()
+                } else {
+                    moved
+                };
+            let settled = progress.pending == 0 && !inv.walk_busy;
+            let done = settled || now || moved.elapsed() >= SHARE_STALL || since.elapsed() >= SHARE_LOAD_LIMIT;
             if !done {
                 state.shared = Some(Share::Loading {
                     since,

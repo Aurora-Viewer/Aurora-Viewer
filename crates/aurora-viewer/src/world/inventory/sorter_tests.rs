@@ -3461,3 +3461,22 @@ fn the_shared_read_asks_only_the_topmost_unread_folders() {
     inv.too_big.insert(id(903));
     assert_eq!(unread_tops(&inv, 10), vec![id(900)]);
 }
+
+/// Audit 46: a gift or holiday shelf of other stores' deliveries named with
+/// its word is opened.
+#[test]
+fn gift_and_holiday_shelves_of_deliveries_open() {
+    let shelves: [(&str, &[&str]); 3] = [
+        ("Group Gifts", &["Kira GROUP GIFT Boots", "Velmora Group Gift Dress"]),
+        ("Christmas", &["Kira Christmas Dress", "Velmora Christmas Hat"]),
+        ("Xmas 2024", &["Kira Xmas Dress", "Velmora Xmas Hat"]),
+    ];
+    for (name, subs) in shelves {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+        }
+        assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
+    }
+}

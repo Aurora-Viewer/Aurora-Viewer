@@ -140,20 +140,28 @@ impl BackgroundFetch {
         self.legacy = [inventory, library];
     }
 
-    /// Read these folders with all they hold, before the rest of the walk
-    /// (LLInventoryModelBackgroundFetch::start(cat_id, recursive), as the
-    /// Legacy Viewer's search and Auto-sort's layout to share need the
-    /// whole tree): the walk's own batches (20 subtrees a request, 19 in
-    /// flight), never one request per folder. One already on its way or
-    /// queued is not asked twice.
+    /// Read what is left below these folders' parents, once the walk is
+    /// idle (LLInventoryModelBackgroundFetch::start(cat_id, recursive), as
+    /// Auto-sort's layout to share needs the whole tree): each parent's
+    /// unread folders in the walk's own batches (20 subtrees a read, 19 in
+    /// flight, Marketplace Listings left to its window), never one read a
+    /// folder, never past a folder waiting for its retry.
     pub fn fetch_subtrees(&mut self, inv: &Inventory, folders: &[Uuid]) {
         if !self.started {
             self.start(inv);
         }
-        for id in folders.iter().rev() {
-            if !self.pending.contains(id) && !self.queue.iter().any(|(queued, _)| queued == id) {
-                self.queue.push_front((*id, Kind::Recursive));
-            }
+        if !self.is_idle() {
+            return;
+        }
+        let mut parents: Vec<Uuid> = folders
+            .iter()
+            .filter_map(|id| inv.folders.get(id).map(|f| f.info.parent))
+            .filter(|p| inv.folders.contains_key(p))
+            .collect();
+        parents.sort_unstable();
+        parents.dedup();
+        for parent in parents {
+            self.queue.push_back((parent, Kind::ContentRecursive));
         }
     }
 

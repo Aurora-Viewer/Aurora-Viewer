@@ -1143,9 +1143,9 @@ fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
 }
 
 /// How far the whole inventory is read, for the layout to share: the
-/// folders of My Inventory as the inventory's own read walks them (never
-/// the Trash's nor Marketplace's trees, which it never asks for, nor the
-/// Library), read, failed or too large for the server, and still to come.
+/// folders of My Inventory the background walk reads (never the Trash's,
+/// Received Items' nor Marketplace Listings' trees, nor the Library), read,
+/// failed or too large for the server, and still to come.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ReadProgress {
     pub total: usize,
@@ -1165,7 +1165,7 @@ pub fn unread_tops(inv: &Inventory, limit: usize) -> Vec<Uuid> {
             continue;
         }
         let Some(f) = inv.folders.get(&id) else { continue };
-        if f.library || matches!(f.info.type_default, 14 | 50) {
+        if f.library || matches!(f.info.type_default, 14 | 50 | 53) {
             continue;
         }
         if f.state == FetchState::Unknown && !inv.too_big.contains(&id) {
@@ -1188,8 +1188,9 @@ pub fn read_progress(inv: &Inventory) -> ReadProgress {
             continue;
         }
         let Some(f) = inv.folders.get(&id) else { continue };
-        // (the same trees `actions::request_tree` reads)
-        if f.library || matches!(f.info.type_default, 14 | 50) {
+        // (the same trees the background walk reads; Marketplace Listings
+        // is read by its own window)
+        if f.library || matches!(f.info.type_default, 14 | 50 | 53) {
             continue;
         }
         progress.total += 1;
@@ -2127,7 +2128,15 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // the product's own words (`aphrodite`, `hex`): a subfolder sharing one
     // is a version of it (`Aphrodite HUD`, `Hex HUD`), the store's name
     // aside
-    let own = product_words(name);
+    // (an occasion is no product's own word, and beside a shelf word only a
+    // subfolder starting with one counts: `Group Gifts` holding `Kira
+    // GROUP GIFT Boots`, `Christmas` holding `Kira Christmas Dress` are
+    // shelves of other stores' deliveries)
+    let own: Vec<String> = product_words(name)
+        .into_iter()
+        .filter(|w| !OCCASION_WORDS.contains(&w.as_str()))
+        .collect();
+    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
     let mut versions = false;
     // the subfolders named only for a kind: one thing each (`Top`, `Head`,
     // `Shape`) are a delivery's parts; all of them plural (`Heads`,
@@ -2140,7 +2149,11 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
-        let named_again = sub_words.iter().any(|w| own.contains(w));
+        let named_again = if shelf_named {
+            sub_words.first().is_some_and(|w| own.contains(w))
+        } else {
+            sub_words.iter().any(|w| own.contains(w))
+        };
         // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
         // (a skin's tones too: `Light`, `Tan`, `Dark`)
         let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";

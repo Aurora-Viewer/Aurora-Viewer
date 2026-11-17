@@ -1683,7 +1683,9 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
-        self.inventory_background.pump(&mut self.inventory, self.agent_id)
+        let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
+        self.inventory.walk_busy = !self.inventory_background.is_idle();
+        commands
     }
 
     /// Read these folders with all they hold through the background walk
