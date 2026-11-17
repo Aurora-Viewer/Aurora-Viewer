@@ -10352,6 +10352,8 @@ impl App {
         let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
         let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
         self.scene.textures.set_window_state(focused, minimized);
+        // (gaming mode gives the textures back too, app/gaming_mode.rs)
+        self.scene.textures.set_stepped_back(self.gaming_mode_pauses());
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         // the busy card's switch, the same in every viewer (instances.rs)
