@@ -157,7 +157,7 @@ jobs:
       - name: Join and sign
         run: |
           lipo -create ffmpeg-macos-arm64/ffmpeg ffmpeg-macos-x64/ffmpeg -output ffmpeg
-          lipo -verify_arch ffmpeg arm64 x86_64
+          lipo ffmpeg -verify_arch arm64 x86_64
           codesign --force --sign - ffmpeg
           codesign --verify ffmpeg
           chmod 755 ffmpeg
