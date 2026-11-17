@@ -3997,3 +3997,12 @@ fn hats_bean_bags_fish_tanks_and_eye_masks() {
     assert_eq!(classify("Kira Sleep Eye Mask", 6, 0).category, Some(Category::Accessories));
     assert_eq!(classify("Velmora Lace Top", 6, 0).category, Some(Category::Tops));
 }
+
+/// Audit 71: flexi builds are no hair.
+#[test]
+fn flexi_builds_are_no_hair() {
+    for name in ["Brindle Flexi Grass", "Brindle Flexi Tree", "Kira Flexi Flag", "Zorin Flexi Banner"] {
+        assert_eq!(classify(name, 6, 0).category, Some(Category::Decor), "{name}");
+    }
+    assert_eq!(classify("Velmora Flexi Bun", 6, 0).category, Some(Category::Hair));
+}
