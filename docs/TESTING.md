@@ -4935,7 +4935,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
-| `AURORA_DEMO_POINT_SHADOW=1\|orbit\|turn\|window\|glass` | Point lights behind a wall with a doorway and in a closed shade, or through a window (fixed framing) |
+| `AURORA_DEMO_POINT_SHADOW=1\|orbit\|turn\|room\|window\|glass` | Point lights behind a wall with a doorway and in a closed shade, or through a window (fixed framing) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>[,<fog density>]]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
@@ -5309,7 +5309,7 @@ both open states and the selection count. Capture at frame 620.
   alpha panels — smooth scrolling, grid of 4 × 4 frames, ping-pong,
   rotation, scale (alpha mask: prepass and shadows), a cube animated on
   a single face, a legacy material (the normal map follows) and a PBR face.
-- **`AURORA_DEMO_POINT_SHADOW=1|orbit|turn|window|glass`**: a warm point light behind a wall
+- **`AURORA_DEMO_POINT_SHADOW=1|orbit|turn|room|window|glass`**: a warm point light behind a wall
   with a doorway, seen from the other side, and a blue one inside a solid
   80 cm prim, with a post beside it. Use `AURORA_DEMO_SUN=0,-40` for a dark
   sky. `AURORA_POINT_SHADOWS=0`: the warm light crosses the wall, as in the
@@ -5318,7 +5318,15 @@ both open states and the selection count. Capture at frame 620.
   side, for frame sequences. `turn` looks away from the wall from frame
   800 to 900, then back: with `2`, the warm light hands its map to a light
   of the plaza and must have its shadow whole again by frame 940, the
-  camera standing still. `window`: a point light outside a mullioned
+  camera standing still. `room`: our avatar stands in the room, near
+  the blue light, between two lamps of the same brightness 3.4 m away on
+  either side, each with a post beside it, and the camera circles it 4 m
+  away from frame 700, a turn every 9 seconds, passing close to one lamp
+  and then to the other: with `1` or `2`, the lamps keep their maps all the
+  way round (`AURORA_PROJECTOR_TRACE=1`'s `point trace:` lines show the
+  owners), and no shadow fades out and back as the camera passes; with
+  `AURORA_POINT_SHADOW_ANCHOR=0` the map follows the lamp nearest the
+  camera. `window`: a point light outside a mullioned
   window instead, lighting the floor inside at a low angle: with `2`, the
   frame and bars cast clean shadows. `glass` adds a blended pane (alpha
   0.3): it shades the point light by half, evenly, as it does the sun,
@@ -13238,6 +13246,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
 | `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
 | `AURORA_MIP_FILTER=weighted` | Colour of the mips averaged by the alpha, as before (distant foliage brighter than in the Legacy Viewer) |
+| `AURORA_POINT_SHADOW_ANCHOR=0` | Point-light shadows ranked from the camera alone, as before, to compare |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
@@ -13311,7 +13320,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
 | `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
-| `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
+| `AURORA_PROJECTOR_TRACE=1` | Log projector and point-light shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
@@ -13767,7 +13776,9 @@ What the inventory must show with these scenarios:
   2 a glow starts around the foot of objects, at 4 it is grainy).
 - **`AURORA_PROJECTOR_TRACE=1`**: writes `projector trace:` lines with the
   camera position, selected projector object indices, shadow-map
-  owners, their fade values and candidate priorities. It requires an info
+  owners, their fade values and candidate priorities, and, with point-light
+  shadows on, `point trace:` lines with the camera position, the selected
+  point lights, the owners of their maps and their fade values. It requires an info
   log filter (`RUST_LOG=warn,aurora_viewer::scene::lights=info` is enough).
   Use a separately named test log and unset the variable after diagnosis;
   these per-frame lines are intended for local investigation.
@@ -14935,6 +14946,12 @@ What the inventory must show with these scenarios:
   weighted average than next to the Legacy Viewer. The mips are made at
   decode and kept in the transcoded cache: delete the `.bc7` files of the
   textures compared (`<cache>/tex/<id>.bc7`) before each of the two launches.
+- **`AURORA_POINT_SHADOW_ANCHOR=0`**: point-light shadows ranked from the
+  camera wherever it is, as before. Otherwise, with the camera within 6 m
+  of our avatar, they are ranked from the avatar, and a light out of view
+  keeps its map; from 10 m on, from the camera; in between, from a point
+  that slides from one to the other. Compare with
+  `AURORA_DEMO_POINT_SHADOW=room` and `AURORA_POINT_SHADOWS=2`.
 - **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
   was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
   `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two

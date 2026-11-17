@@ -12971,6 +12971,14 @@ impl App {
                 // (`snapshot::light::render_settings`), so its budget follows it
                 projector_shadow_limit: projector_maps,
                 point_shadow_limit: point_maps,
+                // seated, through the seat's transform;
+                // AURORA_POINT_SHADOW_ANCHOR=0 ranks from the camera alone,
+                // as before, to compare
+                avatar: crate::scene::lights::point_anchor_enabled()
+                    .then_some(self.scene.agent_idx)
+                    .flatten()
+                    .and_then(|idx| crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0))
+                    .map(|(position, _, _)| position),
                 others_attached_lights: self.settings.others_attached_lights,
                 max_lights: self.settings.local_light_count as usize,
             };
