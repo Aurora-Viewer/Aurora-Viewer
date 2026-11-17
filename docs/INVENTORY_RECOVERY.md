@@ -36,6 +36,15 @@ Folder/tree reads retain their existing scheduling budget. This is a bound on
 single-item reads, not a claim that all HTTP requests in the viewer share one
 connection limit. The server's own throttling and availability still matter.
 
+After integration with main's interrupted-gift protection (#3957), this shared
+queue covers ordinary inventory and attachment-metadata commands. A
+`CheckInventoryOffer` request deliberately retains main's separate fresh-server
+read, private reply channel and timeout: accepted local inventory data cannot
+satisfy or cancel a no-copy offer verification. These private verification
+reads are outside the shared queue's 16-read budget. The production-session
+regression exercises AIS and legacy services and checks that private results
+never also enter ordinary or attachment inventory events.
+
 ## Folder retries
 
 Automatic folder requests must consult the background cooldown ownership.
@@ -106,6 +115,18 @@ run passed before the attachment follow-up: 9,826 tests, zero failures,
 (569 network; 8,297 viewer, 18 viewer ignored), formatting, Clippy and script
 checks. The reporter manually tested its actual Windows executable, version
 0.9.10+27.g5ce37919d, and confirmed inventory and attachment restoration.
+
+On 2026-11-17 the PR branch integrated upstream main at
+`9007c326dfd0dfd92328c434c1a942d910942025`. The accepted-item acknowledgment
+now runs after the dispatcher in `pump_network_events`. Main's private,
+fresh-server `CheckInventoryOffer` verification remains separate from shared
+item reads, with its original reply channel and timeout. Production-session
+regressions cover AIS and legacy offer checks without leaking their replies
+into ordinary or attachment events. The integrated branch passed the complete
+`scripts/check.ps1` on Windows MSVC with pinned Rust 1.100.0: 10,308 tests,
+zero failures, 59 existing ignored tests; script checks, formatting and Clippy
+also passed. This integration has local regression coverage; the live-grid
+human evidence above remains specific to the 5ce3791 executable.
 
 The reporter manually validated the original candidate on a large account:
 four partial/warm-cache sessions completed with no terminal item/folder failure

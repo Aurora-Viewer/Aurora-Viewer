@@ -2,7 +2,7 @@
 //! and Aurora's islands), the hover tips of the world ("Hover Tips":
 //! ShowHoverTips and what it enables) and what opens at startup.
 
-use super::super::cx::{Cx, field, fields};
+use super::super::cx::{Cx, Nothing, field, fields};
 
 pub fn page(cx: &mut Cx, tab: usize) {
     use aurora_i18n::tr;
@@ -118,6 +118,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         checkbox(ui, &p, &mut s.windows_stop_left, tr!("ui-options-edge-left")).changed()
                             | checkbox(ui, &p, &mut s.windows_stop_right, tr!("ui-options-edge-right")).changed()
                             | checkbox(ui, &p, &mut s.windows_stop_bottom, tr!("ui-options-edge-bottom")).changed()
+                    },
+                );
+                // not a setting: the windows' layout (ui_layout.ron), which
+                // "Reset everything…" also forgets with every setting
+                cx.row_with(
+                    tr!("ui-options-reset-windows"),
+                    tr!("ui-options-reset-windows-help"),
+                    &Nothing,
+                    |ui, _, st, _| {
+                        use crate::ui::widgets::{ActionKind, action_button};
+                        let button = action_button(
+                            ui,
+                            &p,
+                            "restore",
+                            tr!("ui-options-reset-windows-button"),
+                            ActionKind::Flat,
+                            egui::Vec2::new(0.0, 26.0),
+                        );
+                        if button.clicked() {
+                            st.confirm_reset = Some(super::super::ResetAsk::Windows);
+                        }
+                        false
                     },
                 );
                 cx.combo(

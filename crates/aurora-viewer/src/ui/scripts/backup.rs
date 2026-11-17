@@ -153,6 +153,22 @@ pub fn flush(limit: Duration) {
     }
 }
 
+/// The copies whose last write failed (the file held by another program,
+/// the folder refusing writes): `Book::plan` writes them again at the next
+/// interval, and when the viewer closes, with the text of then, though it
+/// did not change. The Legacy Viewer's onBackupTimer writes again only a
+/// text that changed since.
+static REFUSED: parking_lot::Mutex<Vec<PathBuf>> = parking_lot::Mutex::new(Vec::new());
+
+fn refused(path: &Path) -> bool {
+    REFUSED.lock().iter().any(|p| p == path)
+}
+
+/// A copy waits to be written again.
+pub fn any_refused() -> bool {
+    !REFUSED.lock().is_empty()
+}
+
 /// One job, on the copies' thread. The copy is flushed to the disk before
 /// it replaces the older one (`atomic_file::write`): it must survive the
 /// crash it is for.
@@ -164,16 +180,24 @@ pub fn apply(job: Job) {
                 .map_or(Ok(()), std::fs::create_dir_all)
                 .and_then(|()| encode(&copy))
                 .and_then(|bytes| crate::atomic_file::write(&path, &bytes));
+            let mut refused = REFUSED.lock();
+            refused.retain(|p| *p != path);
             match written {
                 Ok(()) => log::info!("script backup: unsaved changes copied ({} bytes)", copy.source.len()),
-                Err(e) => log::warn!("script backup: not written: {e}"),
+                Err(e) => {
+                    log::warn!("script backup: not written ({e}); tried again");
+                    refused.push(path);
+                }
             }
         }
-        Job::Remove(path) => match std::fs::remove_file(&path) {
-            Ok(()) => log::info!("script backup: removed"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => log::warn!("script backup: not removed: {e}"),
-        },
+        Job::Remove(path) => {
+            REFUSED.lock().retain(|p| *p != path);
+            match std::fs::remove_file(&path) {
+                Ok(()) => log::info!("script backup: removed"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("script backup: not removed: {e}"),
+            }
+        }
     }
 }
 
@@ -235,10 +259,11 @@ impl Book {
             .map_or(0, |d| d.as_secs() as i64);
         for d in docs.iter().filter(|d| d.unsaved && d.editable) {
             let hash = digest(d.name, d.source);
-            if self.owned.get(&d.target).is_some_and(|e| e.written == hash) {
+            let path = file(dir, d.target);
+            // planned before it is written: a refused write is planned again
+            if self.owned.get(&d.target).is_some_and(|e| e.written == hash) && !refused(&path) {
                 continue;
             }
-            let path = file(dir, d.target);
             jobs.push(Job::Write(
                 path.clone(),
                 Copy {
@@ -374,6 +399,39 @@ mod tests {
             writes(&book.plan(Some(dir), [doc(t, "abcd", true, true)], start + INTERVAL * 3, true)),
             1
         );
+    }
+
+    /// The copy's folder refuses the write (a file stands in its place): the
+    /// same text is planned again at the next interval, and written once
+    /// the folder takes writes.
+    #[test]
+    fn a_refused_copy_is_written_again_at_the_next_interval() {
+        let root = std::env::temp_dir().join(format!("aurora-script-backup-refused-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dir = root.join(FOLDER);
+        std::fs::write(&dir, b"in the way").unwrap();
+        let t = target(3, 4);
+        let mut book = Book::default();
+        let start = Instant::now();
+        for job in book.plan(Some(&dir), [doc(t, "unsaved", true, true)], start, false) {
+            apply(job);
+        }
+        assert!(refused(&file(&dir, t)));
+        std::fs::remove_file(&dir).unwrap();
+        let jobs = book.plan(Some(&dir), [doc(t, "unsaved", true, true)], start + INTERVAL, false);
+        assert_eq!(writes(&jobs), 1, "the same text, planned again");
+        for job in jobs {
+            apply(job);
+        }
+        assert!(!refused(&file(&dir, t)));
+        let copy = decode(std::fs::read(file(&dir, t)).unwrap()).expect("copy");
+        assert_eq!(copy.source, "unsaved");
+        assert!(
+            book.plan(Some(&dir), [doc(t, "unsaved", true, true)], start + INTERVAL * 2, false)
+                .is_empty(),
+            "written: not again"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

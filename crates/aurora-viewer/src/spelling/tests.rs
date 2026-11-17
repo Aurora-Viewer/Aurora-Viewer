@@ -121,6 +121,21 @@ fn the_users_words_count() {
     assert!(!dict.check("Zorblaxes"));
 }
 
+/// The folder of the list refuses the write (a file stands in its place):
+/// the word stays owed and is written with the next one, nothing dropped.
+#[test]
+fn a_word_whose_write_is_refused_is_written_with_the_next() {
+    let dir = scratch("custom-refused").join("words");
+    std::fs::write(&dir, b"in the way").expect("file in the way");
+    let path = dictionaries::custom_path(&dir);
+    dictionaries::append_word(&path, "Zorblax");
+    assert!(!path.exists());
+    std::fs::remove_file(&dir).expect("freed");
+    dictionaries::append_word(&path, "quuxing");
+    let file = std::fs::read_to_string(&path).expect("written");
+    assert_eq!(file.lines().collect::<Vec<_>>(), ["2", "Zorblax", "quuxing"]);
+}
+
 #[test]
 fn an_imported_dictionary_is_listed_used_and_removed() {
     let dir = scratch("import");

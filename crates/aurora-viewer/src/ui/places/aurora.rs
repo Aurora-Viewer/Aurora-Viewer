@@ -94,6 +94,8 @@ pub struct AuroraState {
     /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
     /// opened) once the list has one.
     pub demo_open: bool,
+    /// Landmark folders of the rail whose children are hidden (#3001).
+    collapsed_folders: HashSet<Uuid>,
 }
 
 impl AuroraState {
@@ -585,7 +587,13 @@ impl PlacesUi {
 
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink2(Vec2::new(8.0, 10.0))));
         r.set_clip_rect(rail);
-        self.rail(&mut r, p, c.world, cat, env);
+        // The rail used to paint every folder without a scroll area, so a
+        // tall tree clipped with no way to reach the bottom, and no way to
+        // collapse nested folders (#3001).
+        egui::ScrollArea::vertical()
+            .id_salt("places-rail")
+            .auto_shrink([false, false])
+            .show(&mut r, |ui| self.rail(ui, p, c.world, cat, env));
 
         let mut l = ui.new_child(egui::UiBuilder::new().max_rect(list));
         l.set_clip_rect(list);
@@ -682,10 +690,23 @@ impl PlacesUi {
         let at = ui.cursor().min + Vec2::new(10.0, 0.0);
         section(ui, p, aurora_i18n::tr!("ui-places-folders"), at);
         ui.add_space(22.0);
-        for f in model::folders(&world.inventory) {
+        let folders = model::folders(&world.inventory);
+        let has_children: HashSet<Uuid> = folders.windows(2).filter(|w| w[1].depth > w[0].depth).map(|w| w[0].id).collect();
+        let mut skip_deeper_than = None::<usize>;
+        for f in &folders {
+            if let Some(depth) = skip_deeper_than {
+                if f.depth > depth {
+                    continue;
+                }
+                skip_deeper_than = None;
+            }
             let n = cat.landmarks.iter().filter(|pl| pl.folder == Some(f.id)).count();
-            let resp = rail_row(
+            let branch = has_children.contains(&f.id);
+            let collapsed = branch && self.aurora.collapsed_folders.contains(&f.id);
+            let id = ui.make_persistent_id(("places-folder", f.id));
+            let (resp, caret) = widgets::rail_tree_row(
                 ui,
+                id,
                 p,
                 "folder-filled",
                 p.muted,
@@ -693,9 +714,19 @@ impl PlacesUi {
                 Some(n),
                 self.aurora.source == Source::Folder(f.id),
                 f.depth,
+                branch.then_some(!collapsed),
             );
-            if resp.clicked() {
+            if caret.is_some_and(|c| c.clicked()) {
+                if collapsed {
+                    self.aurora.collapsed_folders.remove(&f.id);
+                } else {
+                    self.aurora.collapsed_folders.insert(f.id);
+                }
+            } else if resp.clicked() {
                 self.set_source(Source::Folder(f.id));
+            }
+            if collapsed {
+                skip_deeper_than = Some(f.depth);
             }
             menu::context_menu(&resp, p, |ui| {
                 let inv = &world.inventory;
@@ -801,13 +832,17 @@ impl PlacesUi {
             return;
         }
         let reorder = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
+        let popup_open = egui::Popup::is_any_open(ui.ctx());
         let mut rects: Vec<(Rect, Uuid)> = Vec::new();
         for l in lines {
             let (key, place) = match l {
                 Line::Title(t) => {
                     ui.add_space(10.0);
                     let at = ui.cursor().min + Vec2::new(10.0, 0.0);
-                    section(ui, p, t, at);
+                    let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 20.0));
+                    if ui.is_rect_visible(bounds) {
+                        section(ui, p, t, at);
+                    }
                     ui.add_space(20.0);
                     continue;
                 }
@@ -835,6 +870,7 @@ impl PlacesUi {
                 self.history_zone,
             );
             widgets::reveal_search_selection(ui, &out.resp, selected);
+            let visible = ui.is_rect_visible(out.resp.rect);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -849,9 +885,7 @@ impl PlacesUi {
             }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
-            if let Some(s) = spot
-                && ui.is_rect_visible(out.resp.rect)
-            {
+            if visible && let Some(s) = spot {
                 self.want_snapshots.push(s);
             }
             if let Some(fav) = place.favorite.filter(|_| reorder) {
@@ -876,11 +910,14 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            // asked every frame: the menu shows as long as it is open
-            menu::context_menu(&out.resp, p, |ui| {
-                self.select(key, place, &world.inventory, history, actions);
-                self.place_menu(ui, p, world, key, place, actions);
-            });
+            // A menu stays under the pointer when its row scrolls out of view.
+            // The row still owns its reorder rank and its expanded narrow details.
+            if visible || (popup_open && out.resp.context_menu_opened()) {
+                menu::context_menu(&out.resp, p, |ui| {
+                    self.select(key, place, &world.inventory, history, actions);
+                    self.place_menu(ui, p, world, key, place, actions);
+                });
+            }
             if !wide && self.aurora.selected == Some(key) {
                 self.narrow_details(ui, c, place, actions);
             }
@@ -1534,25 +1571,30 @@ impl PlacesUi {
         ui.add_space(8.0);
         // the folders of the Landmarks tab, in chips
         if current == Source::All {
-            egui::ScrollArea::horizontal()
-                .id_salt("places-chips")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), self.aurora.source == Source::All)
-                            .clicked()
-                        {
-                            self.set_source(Source::All);
-                        }
-                        for f in model::folders(&world.inventory) {
-                            let on = self.aurora.source == Source::Folder(f.id);
-                            if widgets::pills::filter_pill(ui, p, "", &f.name, on).clicked() {
-                                self.set_source(Source::Folder(f.id));
-                            }
-                        }
-                    });
-                });
+            // the wheel moves the row, and the chosen folder comes into view (#3872)
+            widgets::chip_row(ui, "places-chips", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mut chosen = None;
+                let all = self.aurora.source == Source::All;
+                let chip = widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), all);
+                if all {
+                    chosen = Some((egui::Id::unique("all"), chip.rect));
+                }
+                if chip.clicked() {
+                    self.set_source(Source::All);
+                }
+                for f in model::folders(&world.inventory) {
+                    let on = self.aurora.source == Source::Folder(f.id);
+                    let chip = widgets::pills::filter_pill(ui, p, "", &f.name, on);
+                    if on {
+                        chosen = Some((egui::Id::unique(f.id), chip.rect));
+                    }
+                    if chip.clicked() {
+                        self.set_source(Source::Folder(f.id));
+                    }
+                }
+                chosen
+            });
             ui.add_space(8.0);
         }
         // the narrow list keeps the landmarks of the Landmarks tab only
@@ -2052,6 +2094,111 @@ mod tests {
         )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
+    }
+
+    #[test]
+    fn folder_caret_keeps_the_place_filter_and_keyboard_target() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = inventory();
+        // A deep branch and a sibling which moves when that branch folds.
+        world.inventory.apply(vec![FolderContents {
+            folder_id: id(11),
+            owner_id: Uuid::nil(),
+            version: 3,
+            folders: vec![folder(110, 11, -1)],
+            items: vec![],
+        }]);
+        for n in 110..127 {
+            let mut folders = vec![folder(n + 1, n, -1)];
+            if n == 110 {
+                folders.push(folder(150, n, -1));
+            }
+            world.inventory.apply(vec![FolderContents {
+                folder_id: id(n),
+                owner_id: Uuid::nil(),
+                version: 3,
+                folders,
+                items: vec![],
+            }]);
+        }
+        let cat = model::catalog(&world.inventory, &world.landmarks, &world.map, &[], false);
+        let env = Env {
+            sort: PlacesSort::default(),
+            favorites: &[],
+        };
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut places = PlacesUi {
+            filter: "lm100".into(),
+            ..Default::default()
+        };
+        let selected = Some(Key::Landmark(id(1000)));
+        places.aurora.selected = selected;
+
+        let frame = |places: &mut PlacesUi, events| {
+            let mut ids = [egui::Id::NULL; 3];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(180.0, 1000.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ids = [111, 126, 150].map(|n| ui.make_persistent_id(("places-folder", id(n))));
+                    places.rail(ui, &p, &world, &cat, &env);
+                },
+            );
+            output.textures_delta.clear();
+            ids
+        };
+        let [branch, deep, sibling] = frame(&mut places, vec![]);
+        let rect = |id| ctx.viewport(|v| v.prev_pass.widgets.get(id).map(|w| w.rect));
+        let visible = |id| rect(id).expect("visible folder control");
+        let caret = |id: egui::Id| id.with("rail_caret");
+        assert!(visible(deep).contains_rect(visible(caret(deep))), "deep caret fits in the rail");
+        let click = |places: &mut PlacesUi, pos| {
+            for pressed in [true, false] {
+                frame(
+                    places,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            frame(places, vec![]);
+        };
+        let before = visible(sibling).top();
+        click(&mut places, visible(caret(branch)).center());
+        assert!(visible(sibling).top() < before);
+        assert!(rect(deep).is_none());
+        assert_eq!(places.aurora.source, Source::All);
+        assert_eq!(places.aurora.selected, selected);
+        assert_eq!(places.filter, "lm100");
+
+        ctx.memory_mut(|m| m.request_focus(caret(branch)));
+        frame(
+            &mut places,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        frame(&mut places, vec![]);
+        assert_eq!(visible(sibling).top(), before);
+        assert_eq!(places.aurora.selected, selected);
+        click(&mut places, visible(sibling).center());
+        assert_eq!(places.aurora.source, Source::Folder(id(150)));
+        assert_eq!(places.aurora.selected, None);
+        assert_eq!(places.filter, "lm100");
     }
 
     fn place(inv: &Inventory, asset: u128) -> Place {

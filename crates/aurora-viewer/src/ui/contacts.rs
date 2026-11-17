@@ -208,6 +208,8 @@ pub fn demo_selection(world: &World, mode: &str) -> (Vec<Uuid>, Option<Uuid>) {
 #[derive(Default)]
 pub struct ContactsUi {
     import_job: Option<importing::Job>,
+    /// An import whose file a save thread is writing, with its account.
+    import_saving: Option<(Uuid, Box<crate::world::contact_sets::importing::Saving>)>,
     friend_filter: String,
     friends_sel: Vec<Uuid>,
     friends_anchor: Option<Uuid>,
@@ -1018,6 +1020,22 @@ fn friend_table(
     // follow them
     let rows_w = width - widgets::scroll_strip(ui);
     let name_w = ((rows_w - status_w - rights_w - 4.0) / names.len().max(1) as f32).max(40.0);
+    // A click anywhere in the list takes the keyboard, then the first letters
+    // of a name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
+    let focus = ui.make_persistent_id("contacts-friends-type-ahead");
+    let current = st.friends_sel.first().copied();
+    let navigation = crate::ui::people::type_ahead::Navigation::new(ui, focus, current, || {
+        rows.iter()
+            .map(|r| crate::ui::people::type_ahead::Entry {
+                id: r.id,
+                names: [r.user.as_str(), r.display.as_str(), r.full.as_str()],
+            })
+            .collect()
+    });
+    if let Some(id) = navigation.chosen {
+        st.friends_sel = vec![id];
+        st.friends_anchor = Some(id);
+    }
     // header
     let (hrect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), Sense::hover());
     ui.painter().rect_filled(hrect, 0.0, p.field);
@@ -1084,6 +1102,7 @@ fn friend_table(
                             == Some(r.id),
                     );
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
+                    navigation.row(ui, &resp, rect, r.id);
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }

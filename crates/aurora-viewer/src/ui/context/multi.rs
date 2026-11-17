@@ -75,7 +75,7 @@ pub fn avatars_menu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid])
         act(CtxAction::ConferenceCall(ids.to_vec()));
     }
     // MarkAvatar, for all of them (LLNetMap::setAvatarMarkColors)
-    crate::ui::avatar_marks::submenu(ui, p, world, ids);
+    crate::ui::avatar_marks::submenu(ui, p, world, ids, super::AvatarList::Nearby);
     // "*TODO: unimplemented" for several in Firestorm too
     menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
     menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));

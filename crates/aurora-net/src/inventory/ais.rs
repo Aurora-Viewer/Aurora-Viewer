@@ -136,7 +136,7 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 /// A stalled reply becomes a retriable error instead of hanging the walk.
 /// The Legacy Viewer's default request timeout is 30 s; a large inventory
 /// reply can be slower, so this stays generous.
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -673,7 +673,7 @@ mod tests {
             let (url, server) = inventory_server(folder, kind).await;
             for (target, favorite, expected) in [(3, true, [true, false]), (4, true, [true, true]), (3, false, [false, true])] {
                 let result = mutate(
-                    &reqwest::Client::new(),
+                    &crate::test_http_client(),
                     &url,
                     &format!("{url}/legacy"),
                     id(2),
@@ -700,7 +700,7 @@ mod tests {
             }
             // A fresh reader has no mutation acknowledgments to overlay. This
             // is also what a manual refresh or the next login must observe.
-            let refreshed = fetch_folders(&reqwest::Client::new(), &url, id(2), &[id(1)])
+            let refreshed = fetch_folders(&crate::test_http_client(), &url, id(2), &[id(1)])
                 .await
                 .expect("fresh AIS snapshot");
             if folder {
@@ -856,7 +856,7 @@ mod tests {
                 crate::test_http::finish(socket);
             }
         });
-        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(4)]).await;
+        let reads = read_items(&crate::test_http_client(), &url, id(2), &[id(3), id(4)]).await;
         let items = reads.items;
         let failed = reads.failed;
         assert_eq!(items.len(), 1);
@@ -977,7 +977,7 @@ mod tests {
             }
             seen
         });
-        let contents = fetch_tree(&reqwest::Client::new(), &url, id(2), id(1), &[], 0)
+        let contents = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0)
             .await
             .expect("a throttled or unavailable AIS read is retried");
         assert_eq!(fetched(&contents), [id(1)]);
@@ -1001,7 +1001,7 @@ mod tests {
                 .expect("response");
             1
         });
-        let error = fetch_tree(&reqwest::Client::new(), &url, id(2), id(1), &[], 0)
+        let error = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0)
             .await
             .expect_err("a folder over the limit is refused");
         assert_eq!(error.kind, FetchFailure::TooBig);
@@ -1043,13 +1043,13 @@ mod tests {
                 crate::test_http::finish(socket);
             }
         });
-        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(5), id(6)]).await;
+        let reads = read_items(&crate::test_http_client(), &url, id(2), &[id(3), id(5), id(6)]).await;
         server.await.expect("server");
         assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
         assert_eq!(reads.missing, [id(5)], "404: a broken link's original");
         assert_eq!(reads.failed, [id(6)], "a server error proves nothing");
         assert!(
-            fetch_items(&reqwest::Client::new(), "http://127.0.0.1:9", id(2), &[id(3)])
+            fetch_items(&crate::test_http_client(), "http://127.0.0.1:9", id(2), &[id(3)])
                 .await
                 .is_err(),
             "the all-or-nothing read still fails"

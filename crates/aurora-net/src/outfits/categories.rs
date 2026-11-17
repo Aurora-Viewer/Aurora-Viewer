@@ -228,7 +228,7 @@ mod tests {
         ] {
             let (url, task) = server(vec![(200, Llsd::new_map()), (200, reply(folder, parent, parent, &update))]).await;
             let result = mutate(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &url,
                 &format!("{url}/fetch"),
                 Uuid::nil(),
@@ -273,7 +273,7 @@ mod tests {
         let (url, task) = server(vec![(200, stale), (200, reply(folder, trash, parent, &update))]).await;
         let moves = std::sync::Mutex::new(Vec::new());
         let result = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -309,7 +309,7 @@ mod tests {
     async fn refused_trash_move_stops_before_any_request() {
         let (url, task) = server(Vec::new()).await;
         let error = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -337,7 +337,7 @@ mod tests {
         ])
         .await;
         let result = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -358,7 +358,7 @@ mod tests {
     async fn refused_category_update_stops_before_refresh_and_hides_private_data() {
         let (url, task) = server(vec![(403, llsd_map! { "error" => "private server information" })]).await;
         let error = mutate(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),

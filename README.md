@@ -443,8 +443,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Write with ease**: a spell checker with suggestions in the chat bars,
   conversations and notecards, auto-replace (`brb`…) if you like, `@` to
   mention someone in the conversation, names completed as you type, and `/`
-  in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
-  line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
+  in nearby chat to find and play a gesture. Shift+Enter starts a new
+  line, and pasted paragraphs keep their shape; the chat's keys can be
+  changed in Preferences › Controls › Shortcuts. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations. A long
   IM goes out as several messages instead of being cut off.
 - **Messages that matter, in front of you**: a message an estate manager
@@ -1076,8 +1077,9 @@ an "Open folder" button: quit Aurora, then delete them and the viewer.
 
 ## Build
 
-Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+Requirements: Windows 10/11, [Rust](https://rustup.rs) (rustup installs by
+itself the version that `rust-toolchain.toml` names), a GPU with Vulkan
+support. On Linux,
 see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
 [Installing on macOS](docs/MACOS.md#building-from-source).
 
@@ -1298,6 +1300,11 @@ openly.
 
 Questions and answers, and the details:
 [AI use policy](https://aurora-viewer.org/ai-policy/).
+
+## Security
+
+Found a vulnerability? Please report it privately, not in a public issue:
+[SECURITY.md](SECURITY.md) explains how, and what happens next.
 
 ## Privacy
 
