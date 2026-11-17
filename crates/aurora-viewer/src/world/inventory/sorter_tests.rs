@@ -4105,7 +4105,9 @@ fn a_stores_bracketed_name_never_decides_the_category() {
     assert_eq!(classify("Brazil Flag Face Paint", 5, 14).category, Some(Category::Tattoos));
     // worn things named for a decor thing, as objects
     for (name, category) in [
-        ("Pride Flag Cape", Category::Jackets),
+        ("Pride Flag Cloak", Category::Jackets),
+        ("Shawl Collar Sweater", Category::Tops),
+        ("Cape Sleeve Top", Category::Tops),
         ("Pride Flag Sash", Category::Accessories),
         ("Flag Bandana", Category::Accessories),
         ("Christmas Tree Onesie", Category::Sleepwear),
