@@ -105,6 +105,7 @@ pub fn rigged_model(lib: &AvatarLibrary) -> Model {
     }
 }
 
+#[cfg(test)]
 pub fn install_mesh(lib: &AvatarLibrary, scene: &mut Scene) -> Result<(), aurora_assets::AssetError> {
     install_variant_mesh(lib, scene, 0.0)
 }
