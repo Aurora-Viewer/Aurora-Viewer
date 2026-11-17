@@ -304,6 +304,64 @@ pub fn window(
                 );
             });
         });
+    clear_prompt(ctx, p, d);
+}
+
+fn clear_asked_id() -> Id {
+    Id::unique("director_clear_asked")
+}
+
+/// "Clear the track" asks first (the playback section's button and the
+/// timeline's): every keyframe goes, which the undo brings back.
+fn ask_clear(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(clear_asked_id(), true));
+}
+
+/// The question "Clear the track?", while it is asked: Clear empties it,
+/// Cancel, Escape or a click beside the question leaves it as it is.
+fn clear_prompt(ctx: &egui::Context, p: &Palette, d: &mut Director) {
+    if !ctx.data(|data| data.get_temp::<bool>(clear_asked_id())).unwrap_or(false) {
+        return;
+    }
+    if d.track.is_empty() || d.playing() {
+        ctx.data_mut(|data| data.remove_temp::<bool>(clear_asked_id()));
+        return;
+    }
+    let mut answer = None;
+    let modal = widgets::Modal::new(Id::unique("director_clear")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.label(RichText::new(aurora_i18n::tr!("director-clear-confirm")).size(17.0).color(p.ink));
+        ui.add_space(8.0);
+        ui.label(aurora_i18n::tr!("director-clear-confirm-text", count = d.track.len()));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let size = Vec2::new(0.0, 26.0);
+            if widgets::action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("director-clear-action"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                answer = Some(true);
+            }
+            if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    if let Some(clear) = answer {
+        ctx.data_mut(|data| data.remove_temp::<bool>(clear_asked_id()));
+        if clear {
+            d.clear();
+        }
+    }
 }
 
 fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec<Action>) {
@@ -1094,7 +1152,7 @@ fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
     )
     .clicked()
     {
-        d.clear();
+        ask_clear(ui.ctx());
     }
 }
 
@@ -1249,6 +1307,23 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
         && let Some(index) = d.selected
     {
         d.remove(index);
+    }
+    // every keyframe at once, once asked (`clear_prompt`)
+    let tip = aurora_i18n::tr!("director-clear-tip");
+    if widgets::action_button_if(
+        ui,
+        p,
+        "trash-x-filled",
+        "",
+        ActionKind::FlatDanger,
+        STRIP_BUTTON,
+        !d.track.is_empty(),
+    )
+    .on_hover_text(tip)
+    .on_disabled_hover_text(tip)
+    .clicked()
+    {
+        ask_clear(ui.ctx());
     }
     for (icon, tip, enabled, action) in [
         ("arrow-back-up", aurora_i18n::tr!("director-undo"), live.can_undo, Action::Undo),
@@ -1730,6 +1805,37 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             }
         }
+    }
+
+    #[test]
+    fn clearing_the_track_is_asked_first_and_escape_keeps_it() {
+        let mut bench = Bench::new();
+        let mut d = three();
+        let asked = |ctx: &egui::Context| ctx.data(|data| data.get_temp::<bool>(clear_asked_id())).unwrap_or(false);
+        // nothing asked: no question, the track as it is
+        bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx));
+        ask_clear(&bench.ctx);
+        for _ in 0..3 {
+            bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        }
+        assert!(asked(&bench.ctx), "the question waits for an answer");
+        assert_eq!(d.track.len(), 3);
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        bench.frame(vec![escape], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx), "Escape answers it");
+        assert_eq!(d.track.len(), 3, "and keeps the track");
+        // a track emptied meanwhile has nothing left to ask about
+        ask_clear(&bench.ctx);
+        d.clear();
+        bench.frame(vec![], |ctx, p| clear_prompt(ctx, p, &mut d));
+        assert!(!asked(&bench.ctx));
     }
 
     #[test]

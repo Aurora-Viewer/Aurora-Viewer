@@ -442,6 +442,13 @@ director-start-delay-tip = The first view is held this long before the camera le
 director-hide-huds = Hide the HUDs while playing
 director-loop = Loop
 director-clear = Clear the track
+director-clear-tip = Clear the track: every keyframe goes (asked first; Undo brings them back)
+director-clear-confirm = Clear the track?
+director-clear-confirm-text = { $count ->
+    [one] Its keyframe is deleted. Undo (Ctrl+Z) brings it back.
+   *[other] Its { $count } keyframes are deleted. Undo (Ctrl+Z) brings them back.
+    }
+director-clear-action = Clear
 director-environment = Environment
 director-rewind = Back to the start
 director-play = Play the track. The interface is hidden; Escape stops.

@@ -442,6 +442,13 @@ director-start-delay-tip = La première vue est tenue ce temps-là avant que la 
 director-hide-huds = Masquer les HUDs pendant la lecture
 director-loop = Boucle
 director-clear = Vider le trajet
+director-clear-tip = Vider le trajet : toutes les images clés s’en vont (après confirmation ; Annuler les ramène)
+director-clear-confirm = Vider le trajet ?
+director-clear-confirm-text = { $count ->
+    [one] Son image clé est supprimée. Annuler (Ctrl+Z) la ramène.
+   *[other] Ses { $count } images clés sont supprimées. Annuler (Ctrl+Z) les ramène.
+    }
+director-clear-action = Vider
 director-environment = Environnement
 director-rewind = Revenir au début
 director-play = Lire le trajet. L’interface est masquée ; Échap arrête.
