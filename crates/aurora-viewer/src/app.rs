@@ -6707,7 +6707,7 @@ impl App {
             // sound's: on foot, the weather's wind is heard as it blows,
             // not faster as we walk or run into it
             velocity: if agent.flying { agent.velocity } else { Vec3::ZERO },
-            rotation: agent.body_rotation(),
+            camera_view: self.camera.view(),
             audible: matches!(self.screen, Screen::World)
                 && !demo_silent
                 && (agent.flying || weather_wind)
