@@ -293,6 +293,7 @@ impl Scene {
                     color,
                     falloff: l.falloff * 0.5,
                     projector,
+                    source_radius: o.visual_scale().length() * 0.5,
                 },
                 texture,
             });
@@ -571,6 +572,7 @@ mod tests {
                 color: Vec3::ONE,
                 falloff: 0.0,
                 projector: None,
+                source_radius: 0.0,
             },
             texture: None,
         }

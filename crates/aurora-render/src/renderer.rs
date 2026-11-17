@@ -8953,6 +8953,10 @@ impl Backend {
         let rt_gi_now = self.rt_now
             && self.rt.as_ref().is_some_and(|r| r.lights_indirectly())
             && self.targets.rt.as_ref().is_some_and(|t| t.gi.is_some());
+        // the point lights' traced share, in the traced mask's `.b`
+        let rt_lights_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
@@ -9087,6 +9091,10 @@ impl Backend {
         // (common.wgsl SCREEN_INDIRECT)
         if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
+        }
+        // (common.wgsl LOCAL_TRACED)
+        if rt_lights_now {
+            main.light_sets.mode[2] |= 0x800000;
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {
@@ -10453,6 +10461,19 @@ impl Backend {
                 &scene,
                 faces,
             );
+            if rt_lights_now {
+                rt.encode_lights(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    t,
+                    rt_clip_from_world,
+                    fu_camera,
+                    &f.lights,
+                    &self.targets.depth_ss,
+                    &scene,
+                );
+            }
             if rt_gi_now {
                 let light = crate::rt_shadows::TraceLight {
                     clip_from_world: rt_clip_from_world,
