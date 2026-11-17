@@ -250,9 +250,10 @@ impl EnvironmentUi {
                         p.ink,
                     );
                     resp.on_hover_text(tip);
-                    // leave room for the two < > arrows after the list
+                    // label left, list + < > flush with the right of the row
+                    // (no dead gap after a short combo)
                     let arrows = 2.0 * ui.spacing().interact_size.y + 2.0 * ui.spacing().item_spacing.x;
-                    let combo_w = (ui.available_width() - arrows).clamp(120.0, COMBO_W);
+                    let combo_w = (ui.available_width() - arrows).max(120.0);
                     ui.add_enabled_ui(free, |ui| {
                         if let Some(a) = self.list_row(ui, p, kind, shown, combo_w) {
                             out.push(a);
@@ -372,8 +373,7 @@ impl EnvironmentUi {
     }
 
     /// One list with its < > arrows. `combo_w` is what is left of the row
-    /// after the label column (capped), so a wider label never pushes the
-    /// lists off the Environment window.
+    /// after the label column, so the list sits flush with the right edge.
     fn list_row(&mut self, ui: &mut egui::Ui, p: &Palette, kind: SettingsKind, shown: Shown, combo_w: f32) -> Option<EnvAction> {
         let salt = ("env_list", kind as u8);
         // opened by `settings_list` itself: its combo sits in a child `Ui`,
