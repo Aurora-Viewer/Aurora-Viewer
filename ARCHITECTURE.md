@@ -434,6 +434,13 @@ answer retains the posed attachment behind a cutout. System avatar alpha layers
 keep their displayed cutouts; HUD and camera pick policies remain separate.
 Priority comparisons reuse the full-ray CPU candidates of the click or
 hover query, excluding rigged geometry while retaining its GPU-hover request.
+A plain left click and the hover cursor pass through rigged meshes, as
+LLToolPie::handleMouseDown does (`pick_rigged = false`):
+`scene/drawn.rs::RiggedClicks`, the two preferences "Clickable animesh" and
+"Clickable rigged attachments" (off), gives them a scripted animesh or rigged
+attachment instead; with Alt, Ctrl or Shift held every scripted rigged mesh
+stays within reach (`App::rigged_clicks`). The right click and the build
+tools read the drawn faces whatever they say.
 Distance-only Left queries share the large-face hierarchies and alpha tests;
 the diagnostic reference still walks every object's triangles independently.
 CPU interactions (touch, hover, menus, media, selection and placement), including

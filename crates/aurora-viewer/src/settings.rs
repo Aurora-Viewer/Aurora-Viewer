@@ -1603,6 +1603,12 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
+    /// A left click acts on an animated object (animesh) with a touch script
+    /// or a click action, and on a rigged attachment with one: both off, the
+    /// click passes through them as in the Legacy Viewer (scene/drawn.rs;
+    /// Preferences › Mouse and keyboard).
+    pub clickable_animesh: bool,
+    pub clickable_rigged_attachments: bool,
     /// RenderVolumeSAProtection: prims and sculpts with a very large surface
     /// stop being drawn past a total each frame (scene/surface_area.rs; off).
     pub large_surface_protection: bool,
@@ -2682,6 +2688,8 @@ impl Default for Settings {
             fly_override_warned: false,
             avatar_align_mini: false,
             block_click_sit: false,
+            clickable_animesh: false,
+            clickable_rigged_attachments: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
             large_surface_sculpt_threshold: 150.0,
@@ -3833,6 +3841,14 @@ impl Settings {
         }
     }
 
+    /// The rigged meshes a left click acts on (scene/drawn.rs).
+    pub fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
+        crate::scene::drawn::RiggedClicks {
+            animesh: self.clickable_animesh,
+            attachments: self.clickable_rigged_attachments,
+        }
+    }
+
     /// Settings version 36: "Match the display" is new, and a file written
     /// before it reads the new default (serde), on on a Mac. Only a Mac
     /// profile still exactly on the former default (Medium, 100 %, no named
@@ -4580,6 +4596,20 @@ mod tests {
         let saved = serde_json::to_value(&changed).expect("save preference");
         let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
         assert!(!loaded.double_click_scripted);
+    }
+
+    #[test]
+    fn rigged_meshes_are_not_clickable_by_default_and_the_choice_round_trips() {
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without the preferences");
+        assert_eq!(missing.rigged_clicks(), crate::scene::drawn::RiggedClicks::default());
+        assert!(!missing.clickable_animesh && !missing.clickable_rigged_attachments);
+
+        let mut changed = missing;
+        changed.clickable_animesh = true;
+        let saved = serde_json::to_value(&changed).expect("save the preferences");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload the preferences");
+        let clicks = loaded.rigged_clicks();
+        assert!(clicks.animesh && !clicks.attachments, "each switch alone");
     }
 
     #[test]

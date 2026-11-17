@@ -2141,7 +2141,9 @@ pub(crate) mod tests {
         world.objects.get_mut(front).unwrap().update_flags = 1 << 7;
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::TOUCH;
         scene.gpu[front].rigged = true;
-        // another resident's: a rigged mesh we wear never takes the touch
+        // another resident's: a rigged mesh we wear never takes the touch,
+        // and theirs only with "Clickable rigged attachments"
+        scene.rigged_clicks.attachments = true;
         scene.gpu[front].owner_avatar = world
             .objects
             .avatars()

@@ -24,15 +24,26 @@
 //! attachment cannot be touched, sat on or bought by a click, the click
 //! goes to the avatar's collision volumes or to what is behind. Firestorm
 //! skins the mesh again on the CPU for each pick, which is why it is left
-//! out. Aurora reads what is drawn, so every gesture reaches a rigged mesh,
-//! where it is shown. Once designated it follows the rules of any object of
-//! its kind: click action, touch, IGNORE, transparency, rights, menus.
-//! Except that a left click on one with nothing to do with it (no touch
-//! script, no click action) goes on to what is behind, as in the Legacy
-//! Viewer: the scripted prims worn under a mesh body or rigged clothing
-//! stay touchable (`touch_passes_through`, `touch_depth`). A rigged mesh
-//! worn by our own avatar lets a left click through even when scripted, as
-//! in the Legacy Viewer: a press on our mesh body steers our avatar.
+//! out. Aurora reads what is drawn, so the menu and the build tools reach a
+//! rigged mesh where it is shown. Once designated it follows the rules of
+//! any object of its kind: click action, IGNORE, transparency, rights,
+//! menus.
+//!
+//! **The left click passes through a rigged mesh, as in the Legacy
+//! Viewer**, to what the click finds behind it: content made for that
+//! viewer counts on it, like the scripted prims worn inside a scripted mesh
+//! body, which the body would otherwise keep from their touch. Two
+//! preferences, off by default, give the left click and the hover cursor a
+//! rigged mesh with a touch script or a click action ([`RiggedClicks`]):
+//! "Clickable animesh" for animated objects, rezzed or worn, and "Clickable
+//! rigged attachments" for the meshes skinned to their wearer. Only the
+//! plain left click follows them: with Alt, Ctrl or Shift held, a click
+//! reaches a scripted rigged mesh as it did before them
+//! (`RiggedClicks::or_all`, at the human's request). Whatever the
+//! preferences say, a rigged mesh with nothing to do with the click lets it
+//! through (`touch_passes_through`, `touch_depth`), and so does a rigged
+//! mesh worn by our own avatar, even scripted: a press on our mesh body
+//! steers our avatar.
 //!
 //! **Wanted difference from the Legacy Viewer, inventory drops.** There,
 //! LLToolDragAndDrop::pick treats any attachment outside the HUD as its
@@ -65,9 +76,60 @@ pub enum Gesture {
     Drop,
 }
 
+/// The skeleton a rigged mesh is skinned to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rigged {
+    /// Its own: an animated object (animesh), rezzed or worn.
+    Animesh,
+    /// Its wearer's: a mesh body, rigged clothing or hair.
+    Attachment,
+}
+
+/// The rigged meshes a left click and the hover cursor act on (Preferences
+/// › Mouse and keyboard). Both off by default: the click passes through
+/// them, as LLToolPie::handleMouseDown and handleHover do with
+/// `pick_rigged = false` (indra/newview/lltoolpie.cpp).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RiggedClicks {
+    pub animesh: bool,
+    pub attachments: bool,
+}
+
+impl RiggedClicks {
+    /// Every scripted rigged mesh when `all`, whatever the preferences say:
+    /// only the plain left click passes through, a click made with Alt,
+    /// Ctrl or Shift held reaches what it reached before them.
+    pub fn or_all(self, all: bool) -> Self {
+        if all {
+            Self {
+                animesh: true,
+                attachments: true,
+            }
+        } else {
+            self
+        }
+    }
+
+    fn allows(self, kind: Rigged) -> bool {
+        match kind {
+            Rigged::Animesh => self.animesh,
+            Rigged::Attachment => self.attachments,
+        }
+    }
+}
+
+/// Whether a left click on the drawn face of an object goes on to what is
+/// behind it ([`Scene::touch_passes_through`]).
+pub fn passes_through(s: Status, clicks: RiggedClicks) -> bool {
+    let kept_out = s.rigged.is_some_and(|kind| !clicks.allows(kind));
+    s.posed_by_gpu && !s.avatar && (s.own_rigged || !s.actionable || kept_out)
+}
+
 /// What a gesture needs to know of the object of a drawn face.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
+    /// Skinned to a skeleton, and whose (HUDs and avatars aside).
+    pub rigged: Option<Rigged>,
     /// The CPU searches cannot find it where it is shown: rigged (animesh,
     /// rigged attachment) or a mesh worn by an avatar.
     pub posed_by_gpu: bool,
@@ -187,7 +249,10 @@ impl Scene {
             return Status::default();
         };
         let worn = g.owner_avatar.is_some() && !g.is_avatar;
+        // a worn animesh has a skeleton of its own, like a rezzed one
+        let own_skeleton = !worn || matches!(Self::skeleton_owner(world, idx), Some((_, a)) if Some(a) != g.owner_avatar);
         Status {
+            rigged: (g.rigged && !g.hud && !g.is_avatar).then_some(if own_skeleton { Rigged::Animesh } else { Rigged::Attachment }),
             posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.visual_volume().is_mesh())),
             worn: worn && !g.hud,
             actionable: crate::interaction::target(world, idx, &HashMap::new()).is_some(),
@@ -205,17 +270,19 @@ impl Scene {
         }
     }
 
-    /// Touch: a rigged mesh (or a mesh worn by an avatar) that has nothing
-    /// to do with a click, no touch script and no click action, lets it
-    /// through, as the Legacy Viewer's left click does with every rigged
-    /// mesh: a mesh body or rigged clothing does not hide the scripted prims
-    /// worn under it (#488). A rigged mesh we wear lets it through even with
-    /// a touch script: like LLToolPie::handleMouseDown (`pick_rigged =
-    /// false`), a press on our mesh body steers our avatar
-    /// (LLToolCamera::mMouseSteering) instead of touching the body.
+    /// Touch: a rigged mesh lets the click through, as the Legacy Viewer's
+    /// left click does with every rigged mesh (LLToolPie::handleMouseDown,
+    /// `pick_rigged = false`): a mesh body or rigged clothing, scripted or
+    /// not, does not hide the scripted prims worn under it (#488). The
+    /// preferences of [`RiggedClicks`] give the click to a scripted animesh
+    /// or rigged attachment instead. Three cases let it through whatever
+    /// they say: a rigged mesh, or a mesh worn by an avatar, with nothing
+    /// to do with a click (no touch script and no click action), and a
+    /// rigged mesh we wear, even with a touch script: a press on our mesh
+    /// body steers our avatar (LLToolCamera::mMouseSteering) instead of
+    /// touching the body.
     pub fn touch_passes_through(&self, world: &World, idx: usize) -> bool {
-        let s = self.drawn_status(world, idx);
-        s.posed_by_gpu && !s.avatar && (s.own_rigged || !s.actionable)
+        passes_through(self.drawn_status(world, idx), self.rigged_clicks)
     }
 
     /// The depth a left click searches from: the GPU's, or, when the
@@ -333,6 +400,7 @@ mod tests {
     use super::*;
 
     const RIGGED: Status = Status {
+        rigged: Some(Rigged::Animesh),
         posed_by_gpu: true,
         worn: false,
         actionable: false,
@@ -537,7 +605,8 @@ mod tests {
 
     /// #488: rigged clothing without a script over a scripted prim worn just
     /// under it. The touch goes on to the prim; the menu still designates
-    /// the clothing; a scripted rigged mesh keeps the touch.
+    /// the clothing; a scripted rigged mesh keeps the touch only when its
+    /// preference says so.
     #[test]
     fn a_touch_goes_through_a_rigged_mesh_without_an_action() {
         let (mut world, mut scene, clothing, prim) = super::super::picking::tests::indexed_scene_with_two_objects();
@@ -607,8 +676,24 @@ mod tests {
             Some(on_clothing)
         );
 
-        // scripted clothing keeps the touch
+        // scripted clothing lets the touch through as well, as in the
+        // Legacy Viewer; "Clickable animesh" does not speak for it
         world.objects.get_mut(clothing).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for animesh in [false, true] {
+            scene.rigged_clicks = RiggedClicks {
+                animesh,
+                attachments: false,
+            };
+            assert!(scene.touch_passes_through(&world, clothing));
+            assert_eq!(designated(&scene, &world, Gesture::Touch), None);
+            assert_eq!(designated(&scene, &world, Gesture::Menu), Some(clothing));
+        }
+
+        // "Clickable rigged attachments": it keeps the touch
+        scene.rigged_clicks = RiggedClicks {
+            animesh: false,
+            attachments: true,
+        };
         assert!(!scene.touch_passes_through(&world, clothing));
         assert_eq!(designated(&scene, &world, Gesture::Touch), Some(clothing));
         assert_eq!(
@@ -640,15 +725,193 @@ mod tests {
         );
         assert_eq!(built.map(|d| d.idx), Some(clothing));
 
-        // a scripted animesh we wear has a skeleton of its own: it keeps the
-        // touch, like a rezzed one (a pet worn on the head)
+        // a scripted animesh we wear has a skeleton of its own: it follows
+        // "Clickable animesh", like a rezzed one (a pet worn on the head)
         let wearer_local = world.objects.get(wearer.unwrap()).unwrap().key.local_id;
         let pet = world.objects.get_mut(clothing).unwrap();
         pet.parent_id = wearer_local;
         pet.extra.extended_mesh_flags = Some(aurora_prim::extra::EXTENDED_MESH_ANIMATED);
         assert_eq!(Scene::skeleton_owner(&world, clothing).map(|(_, a)| a), Some(clothing));
+        assert_eq!(scene.drawn_status(&world, clothing).rigged, Some(Rigged::Animesh));
+        assert!(scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), None);
+        scene.rigged_clicks = RiggedClicks {
+            animesh: true,
+            attachments: false,
+        };
         assert!(!scene.touch_passes_through(&world, clothing));
         assert_eq!(designated(&scene, &world, Gesture::Touch), Some(clothing));
+    }
+
+    /// The left click's rule alone: a rigged mesh with an action keeps the
+    /// click only when the preference of its kind is on; one we wear, or
+    /// one with nothing to do, never does; what is not rigged is not asked.
+    #[test]
+    fn a_rigged_mesh_keeps_a_click_only_when_its_preference_is_on() {
+        let scripted = |rigged| Status {
+            rigged: Some(rigged),
+            actionable: true,
+            worn: rigged == Rigged::Attachment,
+            ..RIGGED
+        };
+        for animesh in [false, true] {
+            for attachments in [false, true] {
+                let clicks = RiggedClicks { animesh, attachments };
+                assert_eq!(passes_through(scripted(Rigged::Animesh), clicks), !animesh);
+                assert_eq!(passes_through(scripted(Rigged::Attachment), clicks), !attachments);
+                let own = Status {
+                    own_rigged: true,
+                    ..scripted(Rigged::Attachment)
+                };
+                assert!(passes_through(own, clicks), "a press on our mesh body steers");
+                for kind in [Rigged::Animesh, Rigged::Attachment] {
+                    let passive = Status {
+                        actionable: false,
+                        ..scripted(kind)
+                    };
+                    assert!(passes_through(passive, clicks));
+                }
+                // a scripted mesh worn without a skin, a scripted prim and an
+                // avatar: found where they are, as before
+                let worn_mesh = Status {
+                    rigged: None,
+                    ..scripted(Rigged::Attachment)
+                };
+                assert!(!passes_through(worn_mesh, clicks));
+                let prim = Status {
+                    actionable: true,
+                    ..Status::default()
+                };
+                assert!(!passes_through(prim, clicks));
+                let avatar = Status {
+                    avatar: true,
+                    ..scripted(Rigged::Animesh)
+                };
+                assert!(!passes_through(avatar, clicks));
+            }
+        }
+        assert_eq!(
+            RiggedClicks::default(),
+            RiggedClicks {
+                animesh: false,
+                attachments: false
+            }
+        );
+        // a click with Alt, Ctrl or Shift keeps every scripted rigged mesh
+        assert_eq!(
+            RiggedClicks::default().or_all(true),
+            RiggedClicks {
+                animesh: true,
+                attachments: true
+            }
+        );
+        assert_eq!(RiggedClicks::default().or_all(false), RiggedClicks::default());
+    }
+
+    /// The reported case: a scripted mesh body worn by another resident,
+    /// with a scripted prim worn inside it. As in the Legacy Viewer, the
+    /// left click and the hover cursor reach the prim; "Clickable rigged
+    /// attachments" gives them to the body, as before.
+    #[test]
+    fn a_scripted_mesh_body_lets_the_touch_reach_the_prim_worn_inside_it() {
+        let (mut world, mut scene, body, prim) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
+        // the body's face at x = 2.5, the prim's 10 cm behind it
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
+        for idx in [body, prim] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        }
+        scene.gpu[body].rigged = true;
+        scene.gpu[body].owner_avatar = wearer;
+        scene.gpu[prim].owner_avatar = wearer;
+        scene.gpu[prim].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_body = Vec3::new(2.5, 0.0, 50.0);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: on_body,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(scene.drawn_status(&world, body).rigged, Some(Rigged::Attachment));
+        let touched = |scene: &Scene| {
+            let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0);
+            let hit = scene.action_point(&world, Some(ray), depth, false, 100.0)?;
+            match scene.designated(&world, Gesture::Touch, &drawn, Some(ray), Some(hit), Some(on_body), false) {
+                Some(shown) => Some(shown.idx),
+                None => scene.left_interaction_at_ray(&world, hit, ray, true),
+            }
+        };
+        assert_eq!(touched(&scene), Some(prim));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0).1, Some(prim));
+        scene.rigged_clicks.animesh = true;
+        assert_eq!(touched(&scene), Some(prim), "not an animesh");
+
+        scene.rigged_clicks.attachments = true;
+        assert_eq!(touched(&scene), Some(body));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0).1, Some(body));
+    }
+
+    /// A scripted animesh rezzed in front of a scripted prim: the left
+    /// click goes on to the prim, however far behind, unless "Clickable
+    /// animesh" is on; the menu designates the animesh either way.
+    #[test]
+    fn a_touch_passes_through_a_scripted_animesh_unless_it_is_clickable() {
+        let (mut world, mut scene, animesh, prim) = super::super::picking::tests::indexed_scene_with_two_objects();
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(9.0, 0.0, 50.0);
+        for idx in [animesh, prim] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        }
+        scene.gpu[animesh].rigged = true;
+        scene.gpu[prim].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_animesh = Vec3::new(2.5, 0.0, 50.0);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: on_animesh,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(scene.drawn_status(&world, animesh).rigged, Some(Rigged::Animesh));
+        let designated = |scene: &Scene, gesture, found| {
+            scene
+                .designated(&world, gesture, &drawn, Some(ray), found, Some(on_animesh), false)
+                .map(|d| d.idx)
+        };
+        let depth = scene
+            .touch_depth(&world, &drawn, Some(ray), Some(on_animesh), 100.0)
+            .expect("the prim behind");
+        assert!(depth.x > 8.0, "behind the animesh: {depth:?}");
+        assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(prim));
+        assert_eq!(designated(&scene, Gesture::Touch, Some(depth)), None);
+        assert_eq!(designated(&scene, Gesture::Menu, Some(on_animesh)), Some(animesh));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_animesh), 100.0).1, Some(prim));
+        scene.rigged_clicks.attachments = true;
+        assert_eq!(designated(&scene, Gesture::Touch, Some(depth)), None, "not an attachment");
+
+        scene.rigged_clicks.animesh = true;
+        assert_eq!(
+            scene.touch_depth(&world, &drawn, Some(ray), Some(on_animesh), 100.0),
+            Some(on_animesh)
+        );
+        assert_eq!(designated(&scene, Gesture::Touch, Some(on_animesh)), Some(animesh));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_animesh), 100.0).1, Some(animesh));
     }
 
     /// #1241: an invisible clicker (every face at alpha 0, no draw record)
@@ -832,10 +1095,14 @@ mod tests {
                         assert_eq!(target.clicked_id, world.objects.get(child).unwrap().full_id);
                         assert_eq!(target.root, world.objects.get(root).unwrap().full_id);
                     }
-                    for rigged in [false, true] {
+                    for (rigged, clickable) in [(false, false), (true, false), (true, true)] {
                         scene.gpu[child].rigged = rigged;
+                        scene.rigged_clicks.attachments = clickable;
                         assert_eq!(scene.drawn_status(&world, child).own_rigged, own && rigged);
-                        assert_eq!(scene.touch_passes_through(&world, child), rigged && (own || !scripted));
+                        // a rigged mesh keeps the touch only when scripted,
+                        // worn by another and made clickable
+                        let through = rigged && (own || !scripted || !clickable);
+                        assert_eq!(scene.touch_passes_through(&world, child), through);
                         for blend in [false, true] {
                             let drawn = if blend {
                                 Drawn {
@@ -851,8 +1118,8 @@ mod tests {
                             let picked = scene.designated(&world, Gesture::Touch, &drawn, None, None, None, false);
                             assert_eq!(
                                 picked.map(|p| p.idx),
-                                (scripted && !(own && rigged)).then_some(child),
-                                "own={own}, seated={seated}, rigged={rigged}, blend={blend}, scripted={scripted}"
+                                (scripted && !through).then_some(child),
+                                "own={own}, seated={seated}, rigged={rigged}, clickable={clickable}, blend={blend}, scripted={scripted}"
                             );
                             assert_eq!(
                                 scene

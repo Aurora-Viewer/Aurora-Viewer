@@ -1083,6 +1083,8 @@ pub struct Scene {
     /// surface protection that reads it (surface_area.rs).
     grid_area: HashMap<GeomKey, f32>,
     pub surface_protection: surface_area::Protection,
+    /// The rigged meshes a left click acts on (drawn.rs; none by default).
+    pub rigged_clicks: drawn::RiggedClicks,
     surface_measured: HashMap<usize, surface_area::Measure>,
     surface_hidden: std::collections::HashSet<usize>,
     /// How many geometries were measured at the last look for objects not
@@ -1792,6 +1794,7 @@ impl Scene {
             sculpt_area: HashMap::new(),
             grid_area: HashMap::new(),
             surface_protection: Default::default(),
+            rigged_clicks: Default::default(),
             surface_measured: HashMap::new(),
             surface_hidden: Default::default(),
             surface_scanned: 0,

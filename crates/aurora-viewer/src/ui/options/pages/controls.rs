@@ -40,6 +40,18 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-block-click-sit-help"),
             &field!(block_click_sit),
         );
+        // Off, as LLToolPie::handleMouseDown (`pick_rigged = false`): the
+        // left click passes through rigged meshes (scene/drawn.rs)
+        cx.toggle(
+            tr!("ui-options-clickable-animesh"),
+            tr!("ui-options-clickable-animesh-help"),
+            &field!(clickable_animesh),
+        );
+        cx.toggle(
+            tr!("ui-options-clickable-rigged-attachments"),
+            tr!("ui-options-clickable-rigged-attachments-help"),
+            &field!(clickable_rigged_attachments),
+        );
     });
     cx.group(tr!("ui-options-keyboard"), |cx| {
         cx.toggle(
