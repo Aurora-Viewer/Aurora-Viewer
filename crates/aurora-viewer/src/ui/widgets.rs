@@ -764,6 +764,19 @@ impl<'a> Floater<'a> {
             return None;
         }
         let min_id = egui::Id::unique((self.id, "minimized"));
+        // "Reset window positions and sizes" (`reset_windows`): back to its
+        // default place and size, expanded, at this frame
+        let reset = super::layout::take_reset(ctx, egui::Id::unique(self.id));
+        if reset {
+            ctx.data_mut(|d| {
+                d.remove::<bool>(min_id);
+                d.remove::<Vec2>(egui::Id::unique(self.id).with("expanded_size"));
+            });
+            if self.cascade.is_some() {
+                // it opens again as the first of its group
+                cascade::forget(ctx, egui::Id::unique(self.id));
+            }
+        }
         // persisted with the UI layout (ui_layout.ron)
         let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
         // minimized with its compact body: sized by that body
@@ -815,7 +828,7 @@ impl<'a> Floater<'a> {
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
-        let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false);
+        let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false) || (reset && self.resizable);
         let resizable = self.resizable && !minimized;
         // The windows live between the bars (`layout::work_area`): none
         // opens larger than that room, nor outside it.
@@ -823,6 +836,10 @@ impl<'a> Floater<'a> {
         self.min_size = self.min_size.min(work.size());
         self.default_size = self.default_size.min(work.size());
         self.default_pos = fit_in(work, self.default_pos, self.default_size);
+        if reset && self.cascade.is_none() {
+            super::layout::reanchor(ctx, window_id);
+            ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
+        }
         let opening = self
             .cascade
             .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
@@ -1286,7 +1303,11 @@ pub(crate) fn bare_window(
         .resizable(false)
         .constrain(true);
     let slot = super::layout::slot(ctx, window_id);
-    if let Some(pos) = slot.pos {
+    if super::layout::take_reset(ctx, window_id) {
+        // "Reset window positions and sizes": back to its default rect
+        super::layout::reanchor(ctx, window_id);
+        w = w.current_pos(default.min).fixed_size(default.size());
+    } else if let Some(pos) = slot.pos {
         w = w.current_pos(pos);
     }
     if let Some(limits) = slot.limits {
@@ -1485,6 +1506,17 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
         d.insert_temp(window_id.with("restore_size"), true);
         d.insert_temp(window_id.with(PLACE_POS), pos);
     });
+}
+
+/// "Reset window positions and sizes" (Preferences › Layout): every window
+/// back to its default place and size, expanded, without touching a
+/// setting (`layout::reset_windows`). The groups of preview windows forget
+/// the rect they open at, and the Performance window the one of its full
+/// view.
+pub fn reset_windows(ctx: &egui::Context) {
+    super::layout::reset_windows(ctx);
+    cascade::forget_saved(ctx);
+    super::perf::forget_monitor_rect(ctx);
 }
 
 /// Split what is left of `ui` between a list and the footer under it (its

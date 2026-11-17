@@ -17640,6 +17640,15 @@ impl App {
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
+        if res.reset_windows {
+            ui::widgets::reset_windows(ctx);
+            ui::layout::save(ctx);
+        }
+        if let Some(layout) = res.restore_layout
+            && let Err(e) = ui::layout::apply(ctx, &layout)
+        {
+            log::warn!("window layout not put back: {e}");
+        }
         if let Some(page) = res.reset_section {
             self.settings.save();
             self.world

@@ -7698,8 +7698,9 @@ failure. Grid validation and any paid upload are performed by the human.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
     The button itself asks first: `reset-ask` opens its "Reset …?"
-    dialog, `reset-all-ask` the one of "Reset everything…", and
-    `modified-ask` the one of "Reset them all…".
+    dialog, `reset-all-ask` the one of "Reset everything…",
+    `modified-ask` the one of "Reset them all…", and `reset-windows-ask`
+    (with `layout`) the one of Layout › Windows › "Reset windows…".
   - `restore` (with `system`): the confirmation of a settings restore, for
     a backup of the demo's own profile (preferences, windows' layout, skin,
     accounts' files when they exist); "Restore" puts them back as a real
