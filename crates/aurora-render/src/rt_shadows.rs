@@ -516,6 +516,10 @@ pub(crate) struct Targets {
 pub(crate) struct LightTargets {
     choice: [wgpu::TextureView; 2],
     share: [wgpu::TextureView; 2],
+    /// The share's denoiser guide, beside it (rt_denoise.wgsl).
+    guide: [wgpu::TextureView; 2],
+    /// The denoiser's two images, one read while the other is written.
+    ping: [wgpu::TextureView; 2],
     sun: wgpu::TextureView,
 }
 
@@ -554,6 +558,7 @@ struct Lights {
     filter: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
     lights: wgpu::Buffer,
+    denoise: Denoise,
     /// Last frame's lights: the same list keeps last frame's choices.
     listed: Vec<TracedLightU>,
     timer: Option<Timer>,
@@ -569,12 +574,42 @@ struct Lights {
 pub(crate) struct GiTargets {
     half: (u32, u32),
     color: [wgpu::TextureView; 2],
-    dist: [wgpu::TextureView; 2],
+    /// The history's denoiser guide, beside it (rt_denoise.wgsl).
+    guide: [wgpu::TextureView; 2],
+    /// The denoiser's two images at half resolution.
+    ping: [wgpu::TextureView; 2],
     pub result: wgpu::TextureView,
 }
 
 const GI_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const GI_DIST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// A history's denoiser guide: the normal, the distance from the eye, the
+/// luminance's second moment (rt_history.wgsl `pack_normal`).
+const GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The denoiser's images: rgb the value, a its variance.
+const DENOISE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The denoiser's à-trous passes, their step doubling from one pixel.
+const ATROUS_PASSES: usize = 4;
+
+/// A denoiser pass's constants (must match `Params` in rt_denoise.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct DenoiseU {
+    size: [f32; 4],
+}
+
+/// The denoiser of a traced pass's history (shaders/rt_denoise.wgsl):
+/// SVGF's variance, then its à-trous wavelet.
+struct Denoise {
+    layout: wgpu::BindGroupLayout,
+    variance: wgpu::ComputePipeline,
+    atrous: wgpu::ComputePipeline,
+    /// The variance pass's constants, then each à-trous pass's.
+    params: Vec<wgpu::Buffer>,
+    /// Which 8×8 tiles have any variance (rt_denoise.wgsl `tiles`).
+    tiles: Option<wgpu::Buffer>,
+    /// The size they were made for.
+    params_for: Option<(u32, u32)>,
+}
 /// How far an indirect ray goes (m): the light bounced from further off
 /// is faint, and shorter rays are quicker.
 const GI_REACH: f32 = 64.0;
@@ -601,8 +636,9 @@ struct Gi {
     trace: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
+    denoise: Denoise,
     timer: Option<Timer>,
-    /// The history written last frame (`GiTargets::color` and `dist`).
+    /// The history written last frame (`GiTargets::color` and `guide`).
     last: usize,
     /// The size the history was written at, None before the first frame.
     history_for: Option<(u32, u32)>,
@@ -1359,9 +1395,10 @@ impl Targets {
             GiTargets {
                 half,
                 color: [view("rt gi history", half, GI_FORMAT), view("rt gi history", half, GI_FORMAT)],
-                dist: [
-                    view("rt gi distance", half, GI_DIST_FORMAT),
-                    view("rt gi distance", half, GI_DIST_FORMAT),
+                guide: [view("rt gi guide", half, GUIDE_FORMAT), view("rt gi guide", half, GUIDE_FORMAT)],
+                ping: [
+                    view("rt gi denoise", half, DENOISE_FORMAT),
+                    view("rt gi denoise", half, DENOISE_FORMAT),
                 ],
                 result: view("rt gi", size, GI_FORMAT),
             }
@@ -1389,6 +1426,8 @@ impl Targets {
             LightTargets {
                 choice: [view("rt light choices", CHOICE_FORMAT), view("rt light choices", CHOICE_FORMAT)],
                 share: [view("rt light share", SHARE_FORMAT), view("rt light share", SHARE_FORMAT)],
+                guide: [view("rt light guide", GUIDE_FORMAT), view("rt light guide", GUIDE_FORMAT)],
+                ping: [view("rt light denoise", DENOISE_FORMAT), view("rt light denoise", DENOISE_FORMAT)],
                 sun: view("rt sun mask", RESULT_FORMAT),
             }
         });
@@ -1847,6 +1886,121 @@ fn view(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
     }
 }
 
+impl Denoise {
+    fn new(device: &wgpu::Device, label: &'static str) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/rt_denoise.wgsl").into()),
+        });
+        let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(label),
+            entries: &[
+                uniform_entry::<DenoiseU>(),
+                texture_entry(1, unfiltered),
+                texture_entry(2, unfiltered),
+                storage_texture_entry(3, DENOISE_FORMAT),
+                storage_entry(4, false),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = |entry: &'static str| {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let params = (0..=ATROUS_PASSES)
+            .map(|_| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: std::mem::size_of::<DenoiseU>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+        Denoise {
+            variance: pipeline("cs_variance"),
+            atrous: pipeline("cs_atrous"),
+            layout,
+            params,
+            tiles: None,
+            params_for: None,
+        }
+    }
+
+    /// Filters `history` (rgb its mean, a its frames) of `size` beside its
+    /// `guide`, through `ping`: the image of the two that holds the result.
+    #[allow(clippy::too_many_arguments)]
+    fn encode<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::ComputePass<'_>,
+        size: (u32, u32),
+        history: &'a wgpu::TextureView,
+        guide: &wgpu::TextureView,
+        ping: &'a [wgpu::TextureView; 2],
+    ) -> &'a wgpu::TextureView {
+        if self.params_for != Some(size) {
+            for (k, buffer) in self.params.iter().enumerate() {
+                let step = if k == 0 { 0.0 } else { (1u32 << (k - 1)) as f32 };
+                let u = DenoiseU {
+                    size: [size.0 as f32, size.1 as f32, step, 0.0],
+                };
+                queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
+            }
+            let count = size.0.div_ceil(8) as u64 * size.1.div_ceil(8) as u64;
+            self.tiles = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt denoise tiles"),
+                size: count * 4,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            }));
+            self.params_for = Some(size);
+        }
+        let Some(tiles) = &self.tiles else {
+            return history;
+        };
+        let groups = (size.0.div_ceil(8), size.1.div_ceil(8));
+        let mut input = history;
+        for (k, params) in self.params.iter().enumerate() {
+            let output = &ping[k % 2];
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("rt denoise"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params.as_entire_binding(),
+                    },
+                    view(1, input),
+                    view(2, guide),
+                    view(3, output),
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: tiles.as_entire_binding(),
+                    },
+                ],
+            });
+            pass.set_pipeline(if k == 0 { &self.variance } else { &self.atrous });
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
+            input = output;
+        }
+        input
+    }
+}
+
 impl Gi {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1864,7 +2018,7 @@ impl Gi {
                 tlas_entry(4),
                 tlas_entry(5),
                 storage_texture_entry(6, GI_FORMAT),
-                storage_texture_entry(7, GI_DIST_FORMAT),
+                storage_texture_entry(7, GUIDE_FORMAT),
                 texture_entry(8, unfiltered),
                 texture_entry(12, unfiltered),
             ],
@@ -1909,7 +2063,8 @@ impl Gi {
             trace,
             filter,
             buffer,
-            timer: Timer::new(device, queue, 3),
+            denoise: Denoise::new(device, "rt gi denoise"),
+            timer: Timer::new(device, queue, 4),
             last: 0,
             history_for: None,
             prev_clip_from_world: glam::Mat4::IDENTITY,
@@ -1940,6 +2095,8 @@ impl Lights {
                 texture_entry(7, unfiltered),
                 storage_texture_entry(8, SHARE_FORMAT),
                 texture_entry(12, unfiltered),
+                texture_entry(13, unfiltered),
+                storage_texture_entry(14, GUIDE_FORMAT),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1994,8 +2151,9 @@ impl Lights {
             filter,
             buffer,
             lights,
+            denoise: Denoise::new(device, "rt lights denoise"),
             listed: Vec::new(),
-            timer: Timer::new(device, queue, 3),
+            timer: Timer::new(device, queue, 4),
             last: 0,
             history_for: None,
             prev_clip_from_world: glam::Mat4::IDENTITY,
@@ -2052,9 +2210,10 @@ impl RtShadows {
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
-                "AURORA_RT_LIGHTS: trace {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {} lights listed)",
+                "AURORA_RT_LIGHTS: trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {} lights listed)",
                 ms[0],
                 ms[1],
+                ms[2],
                 l.listed.len()
             );
         }
@@ -2113,12 +2272,9 @@ impl RtShadows {
                 view(7, &lt.share[read]),
                 view(8, &lt.share[write]),
                 view(12, motion),
+                view(13, &lt.guide[read]),
+                view(14, &lt.guide[write]),
             ],
-        });
-        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rt lights filter"),
-            layout: &l.filter_layout,
-            entries: &[uniform, view(9, &lt.share[write]), view(10, &lt.sun), view(11, &t.result)],
         });
         let groups = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
         {
@@ -2136,13 +2292,30 @@ impl RtShadows {
             pass.set_bind_group(2, &scene.textures, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+        let denoised = {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt lights denoise"),
+                timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            l.denoise
+                .encode(device, queue, &mut pass, t.size, &lt.share[write], &lt.guide[write], &lt.ping)
+        };
+        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt lights filter"),
+            layout: &l.filter_layout,
+            entries: &[uniform, view(9, denoised), view(10, &lt.sun), view(11, &t.result)],
+        });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt lights filter"),
                 timestamp_writes: l.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
-                    beginning_of_pass_write_index: Some(1),
-                    end_of_pass_write_index: Some(2),
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
                 }),
             });
             pass.set_pipeline(&l.filter);
@@ -2193,9 +2366,10 @@ impl RtShadows {
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
-                "AURORA_RT_GI: trace {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
+                "AURORA_RT_GI: trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
                 ms[0],
                 ms[1],
+                ms[2],
                 gt.half.0,
                 gt.half.1
             );
@@ -2230,7 +2404,7 @@ impl RtShadows {
                 },
                 view(1, depth),
                 view(2, &gt.color[read]),
-                view(3, &gt.dist[read]),
+                view(3, &gt.guide[read]),
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::AccelerationStructure(tlas),
@@ -2241,23 +2415,9 @@ impl RtShadows {
                     resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
                 },
                 view(6, &gt.color[write]),
-                view(7, &gt.dist[write]),
+                view(7, &gt.guide[write]),
                 view(8, scene_copy),
                 view(12, motion),
-            ],
-        });
-        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rt gi filter"),
-            layout: &g.filter_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: g.buffer.as_entire_binding(),
-                },
-                view(1, depth),
-                view(9, &gt.color[write]),
-                view(10, &gt.dist[write]),
-                view(11, &gt.result),
             ],
         });
         {
@@ -2275,13 +2435,39 @@ impl RtShadows {
             pass.set_bind_group(2, &scene.textures, &[]);
             pass.dispatch_workgroups(gt.half.0.div_ceil(8), gt.half.1.div_ceil(8), 1);
         }
+        let denoised = {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt gi denoise"),
+                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            g.denoise
+                .encode(device, queue, &mut pass, gt.half, &gt.color[write], &gt.guide[write], &gt.ping)
+        };
+        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt gi filter"),
+            layout: &g.filter_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: g.buffer.as_entire_binding(),
+                },
+                view(1, depth),
+                view(9, denoised),
+                view(10, &gt.guide[write]),
+                view(11, &gt.result),
+            ],
+        });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt gi filter"),
                 timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
                     query_set: &timer.queries,
-                    beginning_of_pass_write_index: Some(1),
-                    end_of_pass_write_index: Some(2),
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
                 }),
             });
             pass.set_pipeline(&g.filter);
@@ -2452,12 +2638,14 @@ mod tests {
             ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
             ("rt_reflect", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")][..]),
             ("rt_gi", &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")][..]),
+            // standalone: no scene, no ray queries
+            ("rt_denoise", &[include_str!("shaders/rt_denoise.wgsl")][..]),
             (
                 "rt_lights",
                 &[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")][..],
             ),
         ] {
-            let src = source(parts);
+            let src = if name == "rt_denoise" { parts[0].to_owned() } else { source(parts) };
             let module = match naga::front::wgsl::parse_str(&src) {
                 Ok(m) => m,
                 Err(e) => panic!("{name}: {}", e.emit_to_string(&src)),

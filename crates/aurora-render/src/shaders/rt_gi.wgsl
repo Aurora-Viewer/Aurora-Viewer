@@ -11,8 +11,10 @@
 // not see is shaded here (rt_light.wgsl `hit_radiance`); a miss brings
 // nothing. The result is blended with last frame's, reprojected, until
 // `HISTORY` frames; a pixel whose history is another surface starts again.
-// `cs_gi_filter`, at full resolution: a depth-aware 5×5 gather of the half
-// resolution, which blurs the noise left and keeps the edges.
+// Its guide keeps the luminance's second moment beside, for the denoiser
+// (rt_denoise.wgsl), which then filters the half resolution.
+// `cs_gi_filter`, at full resolution: the denoised half resolution brought
+// up, through the nearest half resolution pixels at the same depth.
 
 // After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
 // wgpu_ray_query's enable (rt_shadows.rs `source`).
@@ -52,20 +54,21 @@ const SAMPLE_MAX: f32 = 8.0;
 
 // cs_gi
 @group(0) @binding(2) var prev_color: texture_2d<f32>;
-@group(0) @binding(3) var prev_dist: texture_2d<f32>;
+// the guide (rt_history.wgsl `pack_normal`): z the distance, w the
+// luminance's second moment
+@group(0) @binding(3) var prev_guide: texture_2d<f32>;
 @group(0) @binding(4) var scene_tlas: acceleration_structure;
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
 @group(0) @binding(6) var out_color: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(7) var out_dist: texture_storage_2d<r32float, write>;
+@group(0) @binding(7) var out_guide: texture_storage_2d<rgba16float, write>;
 // last frame's lit scene (the scene copy, not yet made this frame)
 @group(0) @binding(8) var scene_tex: texture_2d<f32>;
 // the depth prepass's motion (rt_history.wgsl), or black without it
 @group(0) @binding(12) var motion_tex: texture_2d<f32>;
 
-// cs_gi_filter (its own bind group: the history it reads is what cs_gi
-// wrote)
+// cs_gi_filter (its own bind group: it reads what the denoiser wrote)
 @group(0) @binding(9) var gi_color: texture_2d<f32>;
-@group(0) @binding(10) var gi_dist: texture_2d<f32>;
+@group(0) @binding(10) var gi_guide: texture_2d<f32>;
 @group(0) @binding(11) var out_gi: texture_storage_2d<rgba16float, write>;
 
 // A direction about `n`, more of them where the cosine is larger.
@@ -117,7 +120,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     // reversed depth: 0 is the sky
     if (depth <= 0.0) {
         textureStore(out_color, hp, vec4<f32>(0.0));
-        textureStore(out_dist, hp, vec4<f32>(0.0));
+        textureStore(out_guide, hp, vec4<f32>(0.0));
         return;
     }
     let world = unproject(pixel, depth);
@@ -128,6 +131,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     // with no history (a photo, a new size), more rays at once
     let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
     var sample = vec3<f32>(0.0);
+    var moment = 0.0;
     for (var ray = 0u; ray < rays; ray++) {
         let dir = cosine_dir(n, random2(vec2<u32>(id.xy), frame * RESET_RAYS + ray));
 
@@ -177,9 +181,12 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
                 one = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed);
             }
         }
-        sample += min(one, vec3<f32>(SAMPLE_MAX));
+        let kept = min(one, vec3<f32>(SAMPLE_MAX));
+        sample += kept;
+        moment += luma(kept) * luma(kept);
     }
     sample = sample / f32(rays);
+    moment = moment / f32(rays);
 
     // last frame's at the same surface
     var color = sample;
@@ -187,15 +194,16 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     let back = back_of(pixel, world, dist);
     if (params.mode.w > 0.5 && back.at.x >= 0.0) {
         let ph = clamp(vec2<i32>(back.at * 0.5), vec2<i32>(0), vec2<i32>(params.half.xy) - vec2<i32>(1));
-        let was = textureLoad(prev_dist, ph, 0).r;
-        if (was > 0.0 && abs(was - back.expected) < back.tolerance) {
+        let was = textureLoad(prev_guide, ph, 0);
+        if (was.z > 0.0 && abs(was.z - back.expected) < back.tolerance) {
             let h = textureLoad(prev_color, ph, 0);
             count = min(h.a + 1.0, select(HISTORY, HISTORY_MOVING, back.moving));
             color = mix(h.rgb, sample, 1.0 / count);
+            moment = mix(was.w, moment, 1.0 / count);
         }
     }
     textureStore(out_color, hp, vec4<f32>(color, count));
-    textureStore(out_dist, hp, vec4<f32>(dist, 0.0, 0.0, 0.0));
+    textureStore(out_guide, hp, vec4<f32>(pack_normal(n), dist, moment));
 }
 
 @compute @workgroup_size(8, 8)
@@ -215,20 +223,19 @@ fn cs_gi_filter(@builtin(global_invocation_id) id: vec3<u32>) {
     let last = vec2<i32>(params.half.xy) - vec2<i32>(1);
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
-    for (var y = -2; y <= 2; y++) {
-        for (var x = -2; x <= 2; x++) {
+    for (var y = -1; y <= 2; y++) {
+        for (var x = -1; x <= 2; x++) {
             let q = clamp(base + vec2<i32>(x, y), vec2<i32>(0), last);
-            let qd = textureLoad(gi_dist, q, 0).r;
+            let qd = textureLoad(gi_guide, q, 0).z;
             if (qd <= 0.0) {
                 continue;
             }
             let c = textureLoad(gi_color, q, 0);
             let off = vec2<f32>(q) - centre;
-            // nearer and of the same depth weigh more, and the longer
-            // histories (less noise)
-            let w_space = exp(-dot(off, off) * 0.35);
+            // nearer and of the same depth weigh more
+            let w_space = exp(-dot(off, off));
             let w_depth = exp(-abs(qd - dist) / (0.01 + 0.02 * dist));
-            let w = w_space * w_depth * c.a;
+            let w = w_space * w_depth;
             sum += c.rgb * w;
             weight += w;
         }

@@ -10,9 +10,10 @@
 // light that arrives (the ratio estimator, Heitz et al. 2018): that share,
 // blended with last frame's reprojected as rt_gi.wgsl's history, is what
 // the shading multiplies its point lights by (common.wgsl `local_share`),
-// whose light stays the Legacy Viewer's where nothing is in the way.
-// `cs_lights_filter`: a depth-aware 5×5 gather of the share, written with
-// the sun's mask (rt_shadows.wgsl) into the mask the frame binds, `.b`.
+// whose light stays the Legacy Viewer's where nothing is in the way. Its
+// guide keeps the second moment beside, for the denoiser (rt_denoise.wgsl).
+// `cs_lights_filter`: the denoised share, written with the sun's mask
+// (rt_shadows.wgsl) into the mask the frame binds, `.b`.
 //
 // A light's rays stop short of its own prim (`source.x`), so its bulb or its
 // lamp's body does not shadow it. Projectors keep their shadow maps.
@@ -66,13 +67,17 @@ const RESET_RAYS: u32 = 8u;
 @group(0) @binding(4) var out_choice: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(5) var scene_tlas: acceleration_structure;
 @group(0) @binding(6) var posed_tlas: acceleration_structure;
-// The share: r the share, g the frames it averages, b the pixel's distance.
+// The share: rgb the share, a the frames it averages.
 @group(0) @binding(7) var prev_share: texture_2d<f32>;
 @group(0) @binding(8) var out_share: texture_storage_2d<rgba16float, write>;
+// The guide (rt_history.wgsl `pack_normal`): z the distance, w the share's
+// second moment.
+@group(0) @binding(13) var prev_guide: texture_2d<f32>;
+@group(0) @binding(14) var out_guide: texture_storage_2d<rgba16float, write>;
 // the depth prepass's motion (rt_history.wgsl), or black without it
 @group(0) @binding(12) var motion_tex: texture_2d<f32>;
 
-// cs_lights_filter (its own bind group: it reads what cs_lights wrote)
+// cs_lights_filter (its own bind group: it reads what the denoiser wrote)
 @group(0) @binding(9) var share_tex: texture_2d<f32>;
 @group(0) @binding(10) var sun_tex: texture_2d<f32>;
 @group(0) @binding(11) var out_mask: texture_storage_2d<rgba8unorm, write>;
@@ -120,7 +125,8 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     // reversed depth: 0 is the sky
     if (depth <= 0.0) {
         textureStore(out_choice, pixel, vec4<f32>(0.0));
-        textureStore(out_share, pixel, vec4<f32>(1.0, 0.0, 0.0, 0.0));
+        textureStore(out_share, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
+        textureStore(out_guide, pixel, vec4<f32>(0.0));
         return;
     }
     let world = unproject(pixel, depth);
@@ -145,7 +151,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     var back = vec2<i32>(-1);
     if (params.mode.w > 0.5 && came.at.x >= 0.0) {
         let b = clamp(vec2<i32>(came.at), vec2<i32>(0), vec2<i32>(params.screen.xy) - vec2<i32>(1));
-        let was = textureLoad(prev_share, b, 0).b;
+        let was = textureLoad(prev_guide, b, 0).z;
         if (was > 0.0 && abs(was - came.expected) < came.tolerance) {
             back = b;
         }
@@ -154,6 +160,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
     let origin = ray_origin(world, n, dist);
     var seen_sum = 0.0;
+    var moment = 0.0;
     var chosen = 0u;
     var w = 0.0;
     var confidence = 0.0;
@@ -219,7 +226,10 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         if (chosen_target > 0.0 && confidence > 0.0) {
             w = sum / (confidence * chosen_target);
         }
-        // the chosen light's visibility, as the share of the light arriving
+        // the chosen light's visibility, as the share of the light arriving:
+        // drawn in proportion to its light, its visibility alone is the
+        // ratio's estimate (exactly 1 lit through, 0 shadowed through, so
+        // the denoiser leaves those alone)
         var sample = 1.0;
         if (w > 0.0 && total > 0.0) {
             let lt = lights[chosen];
@@ -230,21 +240,25 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
             if (reach > 0.0 && !unblocked(origin, toward / max(span, 1e-6), reach, params.mode.y > 0.5)) {
                 seen = 0.0;
             }
-            sample = clamp(chosen_target * w * seen / total, 0.0, 1.0);
+            sample = seen;
         }
         seen_sum += sample;
+        moment += sample * sample;
     }
     textureStore(out_choice, pixel, vec4<f32>(f32(chosen), w, confidence, 0.0));
     let sample = seen_sum / f32(rays);
+    moment = moment / f32(rays);
 
     var share = sample;
     var frames = min(f32(rays), HISTORY);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back, 0);
-        frames = min(h.g + 1.0, select(HISTORY, HISTORY_MOVING, came.moving));
+        frames = min(h.a + 1.0, select(HISTORY, HISTORY_MOVING, came.moving));
         share = mix(h.r, sample, 1.0 / frames);
+        moment = mix(textureLoad(prev_guide, back, 0).w, moment, 1.0 / frames);
     }
-    textureStore(out_share, pixel, vec4<f32>(share, frames, dist, 0.0));
+    textureStore(out_share, pixel, vec4<f32>(vec3<f32>(share), frames));
+    textureStore(out_guide, pixel, vec4<f32>(pack_normal(n), dist, moment));
 }
 
 @compute @workgroup_size(8, 8)
@@ -254,27 +268,6 @@ fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let sun = textureLoad(sun_tex, pixel, 0);
-    let here = textureLoad(share_tex, pixel, 0);
-    if (here.b <= 0.0) {
-        textureStore(out_mask, pixel, vec4<f32>(sun.rg, 1.0, sun.a));
-        return;
-    }
-    let last = vec2<i32>(params.screen.xy) - vec2<i32>(1);
-    var sum = 0.0;
-    var weight = 0.0;
-    for (var y = -2; y <= 2; y++) {
-        for (var x = -2; x <= 2; x++) {
-            let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), last);
-            let s = textureLoad(share_tex, q, 0);
-            if (s.b <= 0.0) {
-                continue;
-            }
-            let off = vec2<f32>(f32(x), f32(y));
-            let w = exp(-dot(off, off) * 0.25) * exp(-abs(s.b - here.b) / (0.01 + 0.02 * here.b)) * s.g;
-            sum += s.r * w;
-            weight += w;
-        }
-    }
-    let share = select(here.r, sum / max(weight, 1e-6), weight > 1e-4);
+    let share = clamp(textureLoad(share_tex, pixel, 0).r, 0.0, 1.0);
     textureStore(out_mask, pixel, vec4<f32>(sun.rg, share, sun.a));
 }
