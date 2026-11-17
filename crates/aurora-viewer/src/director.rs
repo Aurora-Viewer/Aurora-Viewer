@@ -20,6 +20,8 @@
 //! while it is off. A keyframe whose target is cleared (`KeyAim::Free`)
 //! looks where its camera was laid, whatever the lock.
 
+pub mod shots;
+
 use crate::camera::track::{self, Pose, Track};
 use glam::Vec3;
 use std::ops::RangeInclusive;
@@ -498,6 +500,8 @@ impl Director {
             Mode::Editing => return None,
             Mode::Scrubbing | Mode::Playing { .. } => self.track.sample(self.time)?,
         };
+        // (the keyframes that travel with their target moved with it)
+        let pose = shots::travelled(self, pose, &find);
         let (before, after, s) = self.track.around(self.time)?;
         let turned = |index: usize| match self.key_aim(index).and_then(&find) {
             Some(point) => pose.aimed(point, 1.0).rotation,
