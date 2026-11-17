@@ -2996,10 +2996,6 @@ ui-options-chat-thumbnails-chat-bar = Beside the chat bar
 ui-options-chat-thumbnails-top-right = Top right
 ui-options-chat-thumbnails-flash = Flash the thumbnails for new messages
 ui-options-chat-thumbnails-flash-hint = The thumbnail of a conversation that receives a message flashes, then keeps a mark until the conversation is read.
-ui-chat-thumbnails-more = { $n ->
-    [one] { $n } more conversation
-   *[other] { $n } more conversations
-    }
 ui-options-flash-conversations-button = Flash the Conversations button for new messages
 ui-options-flash-conversations-button-hint = When a message arrives with the Conversations window closed, its button flashes softly in violet, then stays tinted until the window is opened. Minimized, the window's bar flashes instead, then stays tinted while messages wait unread.
 ui-options-flash-conversations-nearby = Also for nearby chat

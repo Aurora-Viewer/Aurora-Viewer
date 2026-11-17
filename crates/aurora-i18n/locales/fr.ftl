@@ -2999,10 +2999,6 @@ ui-options-chat-thumbnails-chat-bar = À côté de la barre de chat
 ui-options-chat-thumbnails-top-right = En haut à droite
 ui-options-chat-thumbnails-flash = Faire clignoter les vignettes à chaque nouveau message
 ui-options-chat-thumbnails-flash-hint = La vignette d'une conversation qui reçoit un message clignote, puis garde une marque jusqu'à la lecture de la conversation.
-ui-chat-thumbnails-more = { $n ->
-    [one] { $n } autre conversation
-   *[other] { $n } autres conversations
-    }
 ui-options-flash-conversations-button = Faire clignoter le bouton Conversations pour les nouveaux messages
 ui-options-flash-conversations-button-hint = Quand un message arrive alors que la fenêtre Conversations est fermée, son bouton clignote doucement en violet, puis reste teinté jusqu'à l'ouverture de la fenêtre. Minimisée, c'est la barre de la fenêtre qui clignote, puis reste teintée tant que des messages attendent d'être lus.
 ui-options-flash-conversations-nearby = Aussi pour le chat local

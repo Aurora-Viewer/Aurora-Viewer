@@ -2977,10 +2977,6 @@ ui-options-chat-thumbnails-chat-bar = チャットバーの横
 ui-options-chat-thumbnails-top-right = 右上
 ui-options-chat-thumbnails-flash = 新着メッセージでサムネイルを点滅
 ui-options-chat-thumbnails-flash-hint = メッセージを受信した会話のサムネイルを点滅させ、既読になるまでマークを残します。
-ui-chat-thumbnails-more = { $n ->
-    [one] ほか{ $n }件の会話
-   *[other] ほか{ $n }件の会話
-    }
 ui-options-flash-conversations-button = 新着メッセージで「会話」ボタンを点滅
 ui-options-flash-conversations-button-hint = 会話ウィンドウを閉じているときにメッセージを受信すると、ボタンが紫色に柔らかく点滅し、ウィンドウを開くまで色が残ります。最小化中は代わりにウィンドウのバーが点滅し、未読メッセージがある間は色が残ります。
 ui-options-flash-conversations-nearby = 近くのチャットにも適用

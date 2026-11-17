@@ -16,18 +16,21 @@
 //! choice of Preferences › Chat); a message flashes the thumbnail like an
 //! entry of the list (`flash.rs`: eight soft rises with the Conversations
 //! button's mark, then a faint mark until it is read), where the Legacy
-//! Viewer flashes its IM well only; where it scrolls the chiclets with two
-//! arrows, a "+N" slot lists those that do not fit, the unread ones kept in
-//! sight first. Without room beside the chat bar (a dock aligned against
-//! the chat island, a narrow bar) they go to the top right.
+//! Viewer flashes its IM well only. When more conversations are open than
+//! fit, left and right scroll arrows page through them in list order, as
+//! LLChicletPanel's `chicklet_left_scroll_button` /
+//! `chicklet_right_scroll_button` (#3552). Without room beside the chat bar
+//! (a dock aligned against the chat island, a narrow bar) they go to the
+//! top right.
 
 use super::{ChatUi, ConvAction, presence, sidebar};
 use crate::settings::ChatThumbnails;
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::bars::islands;
+use crate::ui::icons::Icons;
 use crate::world::World;
-use egui::{Align2, Pos2, Rect, Sense, Vec2};
+use egui::{Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -47,6 +50,9 @@ pub struct Thumbnails {
     still: bool,
     /// The conversations and their unread counts, in the list's order.
     items: Vec<(Uuid, usize)>,
+    /// Index of the first thumbnail shown when the row scrolls
+    /// (LLChicletPanel's chiclet strip).
+    scroll: usize,
     /// The room the bottom bar left them this frame (`reserve`).
     slot: Option<Slot>,
     flashes: super::flash::Flashes,
@@ -66,15 +72,25 @@ struct Slot {
 impl Thumbnails {
     /// The thumbnails beside the chat bar: the room they take, a row of
     /// `size` squares with `pad` at each end, at most `room` (0: none, or
-    /// no room for one, they go to the top right).
+    /// no room for one, they go to the top right). When more conversations
+    /// are open than fit, the strip fills `room` so the scroll arrows sit
+    /// at its ends (LLChicletPanel).
     pub fn bar_width(&self, size: f32, pad: f32, room: f32) -> f32 {
         if self.place != ChatThumbnails::ChatBar || self.items.is_empty() {
             return 0.0;
         }
-        match fit(room, size, pad) {
-            0 => 0.0,
-            n => row_width(n.min(self.items.len()), size, pad),
+        let fits = fit(room, size, pad);
+        if fits == 0 {
+            return 0.0;
         }
+        if self.items.len() <= fits {
+            return row_width(self.items.len(), size, pad);
+        }
+        // overflow: need room for both arrows and at least one square
+        if scroll_capacity(room, size, pad) == 0 {
+            return 0.0;
+        }
+        room
     }
 
     /// The bottom bar left them `rect` (`bar_width` wide).
@@ -133,21 +149,33 @@ fn row_width(n: usize, size: f32, pad: f32) -> f32 {
     pad * 2.0 + n as f32 * size + n.saturating_sub(1) as f32 * GAP
 }
 
-/// What a row of `fit` squares shows of `items` (the list's order, with
-/// their unread counts): all of them when they fit; else `fit - 1` of them
-/// and the "+N" slot, the unread conversations kept in sight first, in the
-/// list's order. Returns the indices shown and those left to the "+N" slot.
-fn arrange(items: &[(Uuid, usize)], fit: usize) -> (Vec<usize>, Vec<usize>) {
-    if items.len() <= fit {
-        return ((0..items.len()).collect(), Vec::new());
+/// Width of one scroll arrow beside the chiclet strip (narrower than a
+/// thumbnail, as LLChicletPanel's scroll buttons).
+fn arrow_width(size: f32) -> f32 {
+    (size * 0.55).round().max(14.0)
+}
+
+/// How many thumbnails fit in `room` once both scroll arrows take their
+/// place (0: not enough room to scroll).
+fn scroll_capacity(room: f32, size: f32, pad: f32) -> usize {
+    let arrows = 2.0 * arrow_width(size) + 2.0 * GAP;
+    fit((room - arrows).max(0.0), size, pad)
+}
+
+/// The window of `n` conversations at `scroll`: all of them when
+/// `plain_fit` holds them; else `scroll_fit` squares between the arrows
+/// (LLChicletPanel). Returns `(start, count, arrows)`.
+fn window(n: usize, plain_fit: usize, scroll_fit: usize, scroll: usize) -> (usize, usize, bool) {
+    if n <= plain_fit {
+        return (0, n, false);
     }
-    let room = fit.saturating_sub(1);
-    let unread = items.iter().enumerate().filter(|(_, (_, n))| *n > 0).map(|(i, _)| i);
-    let read = items.iter().enumerate().filter(|(_, (_, n))| *n == 0).map(|(i, _)| i);
-    let mut shown: Vec<usize> = unread.chain(read).take(room).collect();
-    shown.sort_unstable();
-    let rest = (0..items.len()).filter(|i| !shown.contains(i)).collect();
-    (shown, rest)
+    if scroll_fit == 0 {
+        // too narrow for arrows and a square: show what fits from `scroll`
+        let start = scroll.min(n.saturating_sub(plain_fit.max(1)));
+        return (start, plain_fit.min(n), false);
+    }
+    let start = scroll.min(n.saturating_sub(scroll_fit));
+    (start, scroll_fit, true)
 }
 
 /// AURORA_DEMO_THUMBNAILS=bar|top|off: where the thumbnails stand for the
@@ -174,6 +202,11 @@ pub fn prepare(st: &mut ChatUi, world: &World, place: ChatThumbnails, flash: boo
     } else {
         st.reorder.sessions(world)
     };
+    if t.items.is_empty() {
+        t.scroll = 0;
+    } else {
+        t.scroll = t.scroll.min(t.items.len() - 1);
+    }
 }
 
 /// Is `id` on screen: the conversation shown in the Conversations window,
@@ -212,6 +245,7 @@ fn toggle(ctx: &egui::Context, world: &mut World, st: &mut ChatUi, panels: &mut 
 pub fn show(
     ui: &mut egui::Ui,
     p: &Palette,
+    icons: &Icons,
     world: &mut World,
     st: &mut ChatUi,
     panels: &mut Panels,
@@ -250,7 +284,7 @@ pub fn show(
     let mut moving = false;
     if slot.island {
         islands::area(&ctx, p, "conversation_thumbnails", slot.rect, |ui| {
-            moving = row(ui, p, world, st, panels, pics, images, slot, now);
+            moving = row(ui, p, icons, world, st, panels, pics, images, slot, now);
         });
     } else {
         let mut child = ui.new_child(
@@ -260,7 +294,7 @@ pub fn show(
         );
         // the counters overhang the bar's thumbnails
         child.set_clip_rect(slot.rect.expand(8.0));
-        moving = row(&mut child, p, world, st, panels, pics, images, slot, now);
+        moving = row(&mut child, p, icons, world, st, panels, pics, images, slot, now);
     }
     if moving {
         ctx.request_repaint();
@@ -272,6 +306,7 @@ pub fn show(
 fn row(
     ui: &mut egui::Ui,
     p: &Palette,
+    icons: &Icons,
     world: &mut World,
     st: &mut ChatUi,
     panels: &mut Panels,
@@ -282,7 +317,8 @@ fn row(
 ) -> bool {
     let ctx = ui.ctx().clone();
     let pad = (slot.rect.height() - slot.size) / 2.0;
-    let fits = fit(slot.rect.width(), slot.size, pad);
+    let plain = fit(slot.rect.width(), slot.size, pad);
+    let scrolled = scroll_capacity(slot.rect.width(), slot.size, pad);
     // what is unread in a conversation on screen is being read
     let items: Vec<(Uuid, usize)> = st
         .thumbnails
@@ -290,15 +326,38 @@ fn row(
         .iter()
         .map(|&(id, n)| (id, if shown(&ctx, st, panels.chat, id) { 0 } else { n }))
         .collect();
-    let (in_sight, rest) = arrange(&items, fits);
-    let square = |i: usize| {
+    let (start, count, arrows) = window(items.len(), plain, scrolled, st.thumbnails.scroll);
+    st.thumbnails.scroll = start;
+    let aw = arrow_width(slot.size);
+    let content_left = if arrows {
+        slot.rect.left() + pad + aw + GAP
+    } else {
+        slot.rect.left() + pad
+    };
+    let square = |at: usize| {
         Rect::from_min_size(
-            Pos2::new(slot.rect.left() + pad + i as f32 * (slot.size + GAP), slot.rect.top() + pad),
+            Pos2::new(content_left + at as f32 * (slot.size + GAP), slot.rect.top() + pad),
             Vec2::splat(slot.size),
         )
     };
     let mut moving = false;
-    for (at, &i) in in_sight.iter().enumerate() {
+    if arrows {
+        let left = Rect::from_min_size(Pos2::new(slot.rect.left() + pad, slot.rect.top() + pad), Vec2::new(aw, slot.size));
+        let right = Rect::from_min_size(
+            Pos2::new(slot.rect.right() - pad - aw, slot.rect.top() + pad),
+            Vec2::new(aw, slot.size),
+        );
+        let can_left = start > 0;
+        let can_right = start + count < items.len();
+        if scroll_arrow(ui, p, icons, left, "chevron-left", can_left, aurora_i18n::tr!("common-previous")) {
+            st.thumbnails.scroll = start.saturating_sub(1);
+        }
+        if scroll_arrow(ui, p, icons, right, "chevron-right", can_right, aurora_i18n::tr!("common-next")) {
+            st.thumbnails.scroll = (start + 1).min(items.len().saturating_sub(count));
+        }
+    }
+    for at in 0..count {
+        let i = start + at;
         let (id, unread) = items[i];
         let on_screen = shown(&ctx, st, panels.chat, id);
         let rect = square(at);
@@ -311,18 +370,33 @@ fn row(
             toggle(&ctx, world, st, panels, id, on_screen);
         }
     }
-    // the conversations left out keep their flash's timing
-    for &i in &rest {
-        let (id, unread) = items[i];
-        st.thumbnails.flashes.mark(id, unread, now, st.thumbnails.still);
-    }
-    if !rest.is_empty() {
-        let rect = square(in_sight.len());
-        if let Some(id) = more(ui, p, world, &items, &rest, rect) {
-            toggle(&ctx, world, st, panels, id, false);
+    // conversations out of the window keep their flash's timing
+    for (i, &(id, unread)) in items.iter().enumerate() {
+        if i < start || i >= start + count {
+            st.thumbnails.flashes.mark(id, unread, now, st.thumbnails.still);
         }
     }
     moving
+}
+
+/// One scroll arrow of the chiclet strip (LLChicletPanel).
+fn scroll_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, icon: &str, enabled: bool, tip: impl Into<String>) -> bool {
+    let resp = ui.interact(rect, egui::Id::unique(("conversation_thumbnails_scroll", icon)), Sense::click());
+    islands::slot_face(ui, p, rect, resp.hovered() && enabled, false);
+    if let Some(t) = icons.get(icon) {
+        let ink = if !enabled {
+            p.muted_dim
+        } else if resp.hovered() {
+            p.ink
+        } else {
+            p.muted
+        };
+        let size = (rect.width() * 0.7).min(rect.height() * 0.7);
+        let r = Rect::from_center_size(rect.center(), Vec2::splat(size));
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)), ink);
+    }
+    enabled && resp.on_hover_text(tip.into()).clicked()
 }
 
 /// One thumbnail at `rect`, its picture, flash and counter.
@@ -391,61 +465,6 @@ fn slot_inset(size: f32) -> f32 {
     (size * 0.1).round()
 }
 
-/// The "+N" slot at `rect`: the conversations left out (`rest`) and their
-/// unread messages; a click lists them. Returns the one picked.
-fn more(ui: &mut egui::Ui, p: &Palette, world: &World, items: &[(Uuid, usize)], rest: &[usize], rect: Rect) -> Option<Uuid> {
-    let resp = ui.interact(rect, egui::Id::unique("conversation_thumbnails_more"), Sense::click());
-    islands::slot_face(ui, p, rect, resp.hovered(), false);
-    let unread: usize = rest.iter().map(|&i| items[i].1).sum();
-    // under the counter of their unread messages, the number at the bottom
-    // left of the square
-    let (at, align) = if unread > 0 {
-        (rect.left_bottom() + Vec2::new(3.0, -2.0), Align2::LEFT_BOTTOM)
-    } else {
-        (rect.center(), Align2::CENTER_CENTER)
-    };
-    ui.painter().text(
-        at,
-        align,
-        format!("+{}", rest.len()),
-        egui::FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())),
-        if resp.hovered() { p.ink } else { p.muted },
-    );
-    if unread > 0 {
-        islands::count(ui, p, rect, unread, 1.0, false);
-    }
-    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-thumbnails-more", n = rest.len() as i64));
-    let mut picked = None;
-    // above the bottom bar, below the top right's island
-    let below = rect.center().y < ui.ctx().content_rect().center().y;
-    let opens = if below {
-        egui::RectAlign::BOTTOM_END
-    } else {
-        egui::RectAlign::TOP_END
-    };
-    crate::ui::menu::dropdown_placed(&resp, p, egui::PopupCloseBehavior::CloseOnClick, Some((opens, 8.0)), |ui| {
-        for &i in rest {
-            let (id, n) = items[i];
-            let kind = sidebar::kind(world, &id);
-            let name = sidebar::entry_name(world, &id, kind);
-            let icon = match kind {
-                sidebar::Kind::Private => "user-filled",
-                sidebar::Kind::Group => "users-group",
-                sidebar::Kind::Conference => "users",
-            };
-            let label = if n > 0 {
-                aurora_i18n::tr!("ui-bars-unread", value0 = name, unread = n.to_string()).to_string()
-            } else {
-                name
-            };
-            if crate::ui::menu::item(ui, p, icon, &label) {
-                picked = Some(id);
-            }
-        }
-    });
-    picked
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,16 +485,18 @@ mod tests {
         assert_eq!(row_width(1, 22.0, 0.0), 22.0);
     }
 
-    /// Everything fits: the list's order. Too many: the "+N" slot takes
-    /// the last square and the unread conversations stay in sight, still
-    /// in the list's order.
+    /// Everything fits: no arrows. Too many: scroll_fit squares from
+    /// `scroll` between the arrows (LLChicletPanel).
     #[test]
-    fn the_unread_conversations_stay_in_sight_when_the_row_is_full() {
-        assert_eq!(arrange(&items(&[0, 2, 0]), 3), (vec![0, 1, 2], vec![]));
-        assert_eq!(arrange(&items(&[0, 0, 0, 5, 1]), 3), (vec![3, 4], vec![0, 1, 2]));
-        assert_eq!(arrange(&items(&[0, 0, 0, 5]), 3), (vec![0, 3], vec![1, 2]));
-        // one square: the "+N" slot alone
-        assert_eq!(arrange(&items(&[1, 1]), 1), (vec![], vec![0, 1]));
+    fn the_row_scrolls_in_list_order_when_full() {
+        assert_eq!(window(3, 3, 1, 0), (0, 3, false));
+        assert_eq!(window(5, 3, 1, 0), (0, 1, true));
+        assert_eq!(window(5, 3, 1, 2), (2, 1, true));
+        assert_eq!(window(5, 3, 1, 99), (4, 1, true));
+        assert_eq!(window(5, 4, 2, 1), (1, 2, true));
+        // too narrow for arrows and a square: show what fits, no arrows
+        assert_eq!(window(4, 1, 0, 2), (2, 1, false));
+        assert!(scroll_capacity(row_width(3, 22.0, 0.0), 22.0, 0.0) >= 1);
     }
 
     #[test]
@@ -487,8 +508,10 @@ mod tests {
         assert_eq!(t.bar_width(22.0, 0.0, 500.0), 0.0);
         t.items = items(&[0, 1]);
         assert_eq!(t.bar_width(22.0, 0.0, 500.0), row_width(2, 22.0, 0.0));
-        // room for one square: it becomes the "+N" slot
-        assert_eq!(t.bar_width(22.0, 0.0, 30.0), 22.0);
+        // one square of room with many conversations: fill the room for arrows
+        t.items = items(&[0; 5]);
+        let room = row_width(3, 22.0, 0.0);
+        assert_eq!(t.bar_width(22.0, 0.0, room), room);
         assert_eq!(t.bar_width(22.0, 0.0, 10.0), 0.0);
         t.place = ChatThumbnails::TopRight;
         assert_eq!(t.bar_width(22.0, 0.0, 500.0), 0.0);
