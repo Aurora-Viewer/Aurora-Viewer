@@ -894,7 +894,13 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
         let key = cell << 16 | part.min(0xffff);
         let faces = match before.binary_search_by_key(&key, |c| c.key) {
             Ok(n) if before[n].version == version => before[n].faces.clone(),
-            _ => Arc::new(small[start..end].iter().map(|s| s.face).collect()),
+            _ => {
+                // the opaque ones first: the level's first geometry
+                // ([`cell_geometries`])
+                let mut faces: Vec<Posed> = small[start..end].iter().map(|s| s.face).collect();
+                faces.sort_by_key(|f| !f.opaque);
+                Arc::new(faces)
+            }
         };
         cells.push(Cell {
             key,
@@ -910,6 +916,38 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
         start = end;
     }
     cells
+}
+
+/// The geometries of a merged cell's bottom level, its `faces` being the
+/// opaque ones then the alpha-masked ones ([`cells_of`]): the posed
+/// vertices of each kind it has, and whether opaque. Two at most, not one
+/// a face: making a level costs the render thread about a microsecond a
+/// geometry, and building it as much again (a region's arrival made 6,000
+/// a frame). The traversal still commits the opaque ones' hits itself.
+fn cell_geometries(faces: &[Posed]) -> impl Iterator<Item = (u32, bool)> {
+    let split = faces.partition_point(|f| f.opaque);
+    let vertices = |faces: &[Posed]| faces.iter().map(|f| f.index_count).sum::<u32>();
+    [(vertices(&faces[..split]), true), (vertices(&faces[split..]), false)]
+        .into_iter()
+        .filter(|&(vertices, _)| vertices > 0)
+}
+
+/// What finds the face of a hit in a merged cell's level, whose geometries
+/// are not its faces ([`cell_geometries`]): the number of its opaque faces
+/// and of its masked ones, then for each face, in their order, its first
+/// triangle in its geometry and its record (rt_common.wgsl `hit_of`).
+fn cell_table(faces: &[Posed]) -> Vec<u32> {
+    let split = faces.partition_point(|f| f.opaque);
+    let mut table = Vec::with_capacity(2 + 2 * faces.len());
+    table.extend([split as u32, (faces.len() - split) as u32]);
+    for kind in [&faces[..split], &faces[split..]] {
+        let mut triangle = 0;
+        for f in kind {
+            table.extend([triangle, f.record]);
+            triangle += f.index_count / 3;
+        }
+    }
+    table
 }
 
 /// A placed face's place in one number.
@@ -1289,7 +1327,7 @@ pub(crate) fn gather(
         tracker.set += 1;
     }
     // a top level's custom index holds 24 bits, one of them the merged
-    // cells' (rt_common.wgsl `hit_record`)
+    // cells' (rt_common.wgsl `hit_of`)
     let faces = records.faces.len().min(1 << 23);
     tracker.placed.begin(faces);
     let world = World {
@@ -1547,7 +1585,7 @@ fn build_room(levels: usize, triangles: u64, more: u64) -> bool {
 /// level of an earlier set, or wait for theirs.
 const MERGED_VERTICES: u64 = 3 << 17;
 /// The bit of a top level's custom index that says a merged cell's level:
-/// the rest is where its faces' records start (rt_common.wgsl `hit_record`).
+/// the rest is where its table starts ([`cell_table`], rt_common.wgsl `hit_of`).
 const MERGED: u32 = 1 << 23;
 /// Frames a bottom level no face used is kept.
 const KEEP_FRAMES: u64 = 600;
@@ -1682,12 +1720,13 @@ struct Slowest {
     moving: usize,
 }
 
-/// A merged cell's bottom level: a geometry per face, in world space.
+/// A merged cell's bottom level, in world space ([`cell_geometries`]).
 struct Merged {
     blas: wgpu::Blas,
     /// The version of the cell it was made for (`Cell::version`).
     version: u64,
-    records: Vec<u32>,
+    /// Its faces by their triangles ([`cell_table`]).
+    table: Vec<u32>,
     /// A cell of the still set uses it; else the frame the last one did.
     held: bool,
     used: u64,
@@ -3047,14 +3086,14 @@ impl RtShadows {
                 )
             })
             .collect();
-        // the levels of the cells posed this frame, a geometry per face
-        let most = device.limits().max_blas_geometry_count as usize;
+        // the levels of the cells posed this frame
         let baked: Vec<(usize, u32, Vec<wgpu::BlasTriangleGeometrySizeDescriptor>, wgpu::Blas)> = bake
             .iter()
             .zip(&self.poser.baked)
-            .filter(|&(&n, _)| cells[n].faces.len() <= most)
             .map(|(&n, &offset)| {
-                let sizes: Vec<_> = cells[n].faces.iter().map(|f| posed_size(f.index_count, f.opaque)).collect();
+                let sizes: Vec<_> = cell_geometries(&cells[n].faces)
+                    .map(|(vertices, opaque)| posed_size(vertices, opaque))
+                    .collect();
                 let blas = device.create_blas(
                     &wgpu::CreateBlasDescriptor {
                         label: Some("rt shadows cell"),
@@ -3110,12 +3149,13 @@ impl RtShadows {
             // earlier set left
             let placed_faces = placed;
             self.merged_list.clear();
+            self.merged_faces = 0;
             let made: HashMap<usize, &wgpu::Blas> = baked.iter().map(|(n, _, _, blas)| (*n, blas)).collect();
             for (n, cell) in cells.iter().enumerate() {
-                let (blas, records) = match made.get(&n) {
+                let (blas, table) = match made.get(&n) {
                     Some(&blas) => (blas, None),
                     None => match self.merged.get(&cell.key) {
-                        Some(m) => (&m.blas, Some(&m.records)),
+                        Some(m) => (&m.blas, Some(&m.table)),
                         None => continue,
                     },
                 };
@@ -3123,10 +3163,12 @@ impl RtShadows {
                 if first >= MERGED {
                     break;
                 }
-                match records {
-                    Some(records) => self.merged_list.extend_from_slice(records),
-                    None => self.merged_list.extend(cell.faces.iter().map(|f| f.record)),
+                let from = self.merged_list.len();
+                match table {
+                    Some(table) => self.merged_list.extend_from_slice(table),
+                    None => self.merged_list.extend(cell_table(&cell.faces)),
                 }
+                self.merged_faces += (self.merged_list.len() - from).saturating_sub(2) / 2;
                 slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, 0xFF));
                 placed += 1;
             }
@@ -3141,7 +3183,6 @@ impl RtShadows {
             self.built_at = frame;
             self.stale = !self.queue.is_empty();
             self.scene_instances = placed_faces;
-            self.merged_faces = self.merged_list.len();
             self.scene_builds += 1;
         }
         let entries: Vec<wgpu::BlasBuildEntry<'_>> = new
@@ -3198,7 +3239,7 @@ impl RtShadows {
                 Merged {
                     blas,
                     version: cell.version,
-                    records: cell.faces.iter().map(|f| f.record).collect(),
+                    table: cell_table(&cell.faces),
                     held: true,
                     used: frame,
                 },
@@ -4741,6 +4782,74 @@ mod tests {
         moved[3] = far(3, 999);
         frame(&mut t, &mut n, &moved);
         assert!(t.emits(3, true));
+    }
+
+    /// rt_common.wgsl `hit_of`, for a merged cell whose table starts at
+    /// `head`: the record of the face of triangle `primitive` of
+    /// `geometry`, and the triangle's number in that face.
+    fn table_hit(list: &[u32], head: usize, geometry: u32, primitive: u32) -> (u32, u32) {
+        let opaque = list[head];
+        let masked = geometry == 1 || opaque == 0;
+        let base = head + 2 + if masked { 2 * opaque as usize } else { 0 };
+        let (mut lo, mut hi) = (0, if masked { list[head + 1] } else { opaque } as usize);
+        while hi > lo + 1 {
+            let mid = (lo + hi) / 2;
+            if list[base + 2 * mid] <= primitive {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        (list[base + 2 * lo + 1], primitive - list[base + 2 * lo])
+    }
+
+    #[test]
+    fn rt_shadows_a_cell_s_level_has_two_geometries_and_finds_its_faces() {
+        let face = |record: u32, triangles: u32, opaque: bool| Posed {
+            record,
+            base_vertex: 0,
+            first_index: 0,
+            index_count: triangles * 3,
+            opaque,
+        };
+        // the cells' faces come opaque first, in their records' order
+        let mut smalls: Vec<Small> = [(7, 2, false), (3, 5, true), (9, 1, true), (4, 4, false), (8, 3, true)]
+            .into_iter()
+            .map(|(record, triangles, opaque)| Small {
+                cell: 1,
+                mark: record as u64,
+                face: face(record, triangles, opaque),
+            })
+            .collect();
+        let cells = cells_of(&mut smalls, &[]);
+        let faces = &cells[0].faces;
+        assert_eq!(faces.iter().map(|f| f.record).collect::<Vec<_>>(), [3, 8, 9, 4, 7]);
+        // the opaque ones' geometry, then the masked ones'
+        assert_eq!(cell_geometries(faces).collect::<Vec<_>>(), [(27, true), (18, false)]);
+        let table = cell_table(faces);
+        assert_eq!(table, [3, 2, 0, 3, 5, 8, 8, 9, 0, 4, 4, 7]);
+        // every triangle finds its face, behind another cell's table
+        let mut list = vec![1, 0, 0, 99];
+        let head = list.len();
+        list.extend(&table);
+        let mut found = Vec::new();
+        for (geometry, triangles) in [(0, 9), (1, 6)] {
+            for primitive in 0..triangles {
+                found.push(table_hit(&list, head, geometry, primitive));
+            }
+        }
+        let expected: Vec<(u32, u32)> = faces.iter().flat_map(|f| (0..f.index_count / 3).map(|t| (f.record, t))).collect();
+        assert_eq!(found, expected);
+        assert_eq!(table_hit(&list, 0, 0, 0), (99, 0));
+        // a cell of masked faces alone has one geometry, and of opaque
+        // faces alone
+        let masked = [face(5, 2, false), face(6, 1, false)];
+        assert_eq!(cell_geometries(&masked).collect::<Vec<_>>(), [(9, false)]);
+        let table = cell_table(&masked);
+        assert_eq!((table_hit(&table, 0, 0, 1), table_hit(&table, 0, 0, 2)), ((5, 1), (6, 0)));
+        let opaque = [face(5, 2, true), face(6, 1, true)];
+        assert_eq!(cell_geometries(&opaque).collect::<Vec<_>>(), [(9, true)]);
+        assert_eq!(table_hit(&cell_table(&opaque), 0, 0, 2), (6, 0));
     }
 
     #[test]

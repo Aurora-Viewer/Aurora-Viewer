@@ -52,8 +52,9 @@ struct CullFace {
 // The records of the posed top level's faces: an instance's custom index
 // is where its skeleton's start, its geometries are its faces in order.
 @group(1) @binding(7) var<storage, read> posed_records: array<u32>;
-// The records of the scene's merged cells' faces (rt_shadows.rs `Cell`):
-// the small still faces of a cell share one level, in world space.
+// The tables of the scene's merged cells (rt_shadows.rs `Cell`,
+// `cell_table`; `hit_of` below): the small still faces of a cell share one
+// level, in world space.
 @group(1) @binding(8) var<storage, read> merged_records: array<u32>;
 // The bit of the scene's custom index that says a merged cell.
 const MERGED: u32 = 0x800000u;
@@ -173,17 +174,45 @@ fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> S
     return s;
 }
 
-// The record of a hit: a placed face's instance carries its record, a
-// posed skeleton's or a merged cell's instance where its faces' records
-// start (its geometries are its faces in order).
-fn hit_record(posed: bool, custom: u32, geometry: u32) -> u32 {
+// The face of a hit, and the hit's triangle in that face.
+struct Hit {
+    record: u32,
+    primitive: u32,
+};
+
+// The face of triangle `primitive` of an instance's geometry `geometry`. A
+// placed face's instance carries its record. A posed skeleton's carries
+// where its faces' records start, its geometries being its faces in order.
+// A merged cell's carries where its table starts in `merged_records`: the
+// number of its opaque faces and of its alpha-masked ones, then for each
+// face, in that order, its first triangle in its geometry and its record
+// (rt_shadows.rs `cell_table`). The cell's geometries are its opaque faces
+// together, then its masked ones (one alone when it has one kind): the
+// face is the last that starts at or before the triangle. A cell part has
+// 4,096 faces at most (`PART_FACES`): twelve steps.
+fn hit_of(posed: bool, custom: u32, geometry: u32, primitive: u32) -> Hit {
     if (posed) {
-        return posed_records[custom + geometry];
+        return Hit(posed_records[custom + geometry], primitive);
     }
-    if ((custom & MERGED) != 0u) {
-        return merged_records[(custom & (MERGED - 1u)) + geometry];
+    if ((custom & MERGED) == 0u) {
+        return Hit(custom, primitive);
     }
-    return custom;
+    let head = custom & (MERGED - 1u);
+    let opaque = merged_records[head];
+    let masked = geometry == 1u || opaque == 0u;
+    let base = head + 2u + select(0u, 2u * opaque, masked);
+    var lo = 0u;
+    var hi = select(opaque, merged_records[head + 1u], masked);
+    for (var step = 0u; step < 16u && hi > lo + 1u; step++) {
+        let mid = (lo + hi) / 2u;
+        if (merged_records[base + 2u * mid] <= primitive) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let at = base + 2u * lo;
+    return Hit(merged_records[at + 1u], primitive - merged_records[at]);
 }
 
 fn texture_page_index(loc: u32) -> u32 {
@@ -262,9 +291,9 @@ fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
     if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
         return false;
     }
-    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
-    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
-    return !masked_out(record, s.uv);
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
+    return !masked_out(h.record, s.uv);
 }
 
 // How far from a pixel of the view its own curved surface may still be met
@@ -286,12 +315,12 @@ fn shadows(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool) -> boo
     if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
         return false;
     }
-    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
-    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
     if (curved && s.back && c.t < OWN_REACH) {
         return false;
     }
-    return !masked_out(record, s.uv);
+    return !masked_out(h.record, s.uv);
 }
 
 // A hash of `v` (PCG), for the passes' random numbers.
