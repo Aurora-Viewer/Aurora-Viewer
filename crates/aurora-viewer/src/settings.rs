@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod autotune;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
@@ -709,6 +710,13 @@ pub struct Settings {
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
+    /// Autotune, the Performance window's target frame rate
+    /// (settings/autotune.rs; off).
+    pub autotune: autotune::Config,
+    /// The user's draw distance and avatars in full while Autotune holds the
+    /// live ones: never saved, they are what is written in their place.
+    #[serde(skip)]
+    pub autotune_hold: Option<autotune::Hold>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -2343,6 +2351,8 @@ impl Default for Settings {
             draw_distance_stepping: false,
             draw_distance_stepping_interval: 20,
             draw_stepping: None,
+            autotune: Default::default(),
+            autotune_hold: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -3473,6 +3483,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.autotune.sanitize();
         self.local_light_count = self.local_light_count.min(crate::scene::lights::MAX_LIGHTS as u32);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
@@ -3730,6 +3741,11 @@ impl Settings {
         // the draw distance being stepped: the user's
         if let Some(steps) = copy.draw_stepping.take() {
             copy.draw_distance = steps.user;
+        }
+        // the values Autotune holds: the user's (after the two above, whose
+        // own values the hold leaves alone)
+        if let Some(hold) = copy.autotune_hold.take() {
+            hold.restore(&mut copy);
         }
         if !copy.remember_username {
             copy.username.clear();
