@@ -1239,9 +1239,21 @@ impl Imports {
                                 entry.model = None;
                                 entry.player = Default::default();
                                 entry.empty_alpha = updated.empty_alpha;
+                                let seen = entry.watch.take().map(|watch| watch.stamp);
                                 entry.watch = updated.watch.take();
+                                if let (Some(watch), Some(seen)) = (&mut entry.watch, &seen) {
+                                    watch.reloaded(seen);
+                                }
                             }
                             Ok(_) => entry.status = Status::Error(aurora_i18n::tr!("import-reload-material-count").into()),
+                            // A file still being written fails to read or
+                            // decode: the local preview keeps its last good
+                            // version and tries again at the next check
+                            // (LLLocalBitmap::updateSelf), and only shows the
+                            // error once the retries are spent.
+                            Err(_) if entry.source.is_some() && entry.watch.as_mut().is_some_and(local::Watch::failed) => {
+                                entry.status = Status::Ready;
+                            }
                             Err(error) => entry.status = Status::Error(error),
                         }
                     }
@@ -1348,10 +1360,20 @@ impl Imports {
                     {
                         watch.pending = false;
                         changed = stamp != watch.stamp;
-                        watch.stamp = stamp;
                     }
-                    if changed {
-                        self.reload(id, jobs, ctx);
+                    // A change whose reload cannot start now (one already
+                    // running) stays unseen and is noticed again at the next
+                    // check, instead of being lost.
+                    if changed
+                        && self.reload(id, jobs, ctx)
+                        && let Some(watch) = self.entries.iter_mut().find(|e| e.id == id).and_then(|e| e.watch.as_mut())
+                    {
+                        // An empty stamp is a retry of a failed reload; any
+                        // other is a new change, with its own retries.
+                        if !watch.stamp.is_empty() {
+                            watch.failures = 0;
+                        }
+                        watch.stamp = stamp;
                     }
                 }
                 Worker::Remote(asset, image) => self.cached_map(asset, image),
