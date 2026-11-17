@@ -10137,6 +10137,7 @@ script-search-query = Rechercher
 script-search-replacement = Remplacer
 script-search-insensitive = Insensible à la casse
 script-search-up = Remonter
+script-search-whole-words = Mots entiers uniquement
 script-search-find = Rechercher
 script-search-replace = Remplacer
 script-search-replace-all = Tout remplacer

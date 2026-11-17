@@ -15758,3 +15758,5 @@ game-control-action-escape = ESC
 
 picker-local-newest = 追加順（新しい順）
 picker-local-name = 名前順
+
+script-search-whole-words = 単語全体のみ

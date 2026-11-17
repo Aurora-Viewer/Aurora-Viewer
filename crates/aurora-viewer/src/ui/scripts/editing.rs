@@ -461,6 +461,22 @@ pub(crate) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Rang
         .collect()
 }
 
+/// Optional whole-word filtering shared by script and notecard Find / Replace.
+/// Character offsets, not UTF-8 byte offsets, match TextEdit's cursor model.
+/// Underscores, punctuation and whitespace delimit words for Find / Replace.
+pub(crate) fn matches_filtered(source: &str, needle: &str, insensitive: bool, whole_words: bool) -> Vec<Range<usize>> {
+    let found = matches(source, needle, insensitive);
+    if !whole_words {
+        return found;
+    }
+    let chars: Vec<char> = source.chars().collect();
+    let word_char = |c: char| c.is_alphanumeric();
+    found
+        .into_iter()
+        .filter(|r| (r.start == 0 || !word_char(chars[r.start - 1])) && (r.end == chars.len() || !word_char(chars[r.end])))
+        .collect()
+}
+
 pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
     if up {
         ranges
@@ -481,6 +497,21 @@ pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_words_exclude_substrings_but_accept_punctuation_delimiters() {
+        let text = "This hi high hi_there hi-there (hi) \u{E9}hi hi\u{E9}";
+        let found = matches_filtered(text, "hi", true, true);
+        let substrings: Vec<String> = found
+            .iter()
+            .map(|range| text.chars().skip(range.start).take(range.len()).collect())
+            .collect();
+        assert_eq!(substrings, vec!["hi", "hi", "hi", "hi"]);
+        // The original partial-word search still includes "hi" inside "This".
+        assert!(matches_filtered(text, "hi", true, false).len() > found.len());
+        assert_eq!(matches_filtered("HI hi Hi", "hi", false, true), vec![3..5]);
+        assert_eq!(matches_filtered("HI hi Hi", "hi", true, true), vec![0..2, 3..5, 6..8]);
+    }
 
     #[test]
     fn multiline_indent_keeps_backward_selection_and_excludes_the_final_line_at_column_zero() {

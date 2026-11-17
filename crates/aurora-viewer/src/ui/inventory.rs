@@ -665,6 +665,8 @@ pub struct InventoryUi {
     pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
     /// Seeded from the shared preference on first display, then kept per window.
     pub notecard_view: Option<NotecardView>,
+    /// Focus the source on first open, or the window surface when read-only.
+    notecard_focus_pending: bool,
     notecard_markdown: markdown::Cache,
     /// The find bar of the notecard (Ctrl+F), with its last text.
     notecard_find: find::Find,
