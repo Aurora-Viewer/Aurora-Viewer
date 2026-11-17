@@ -1008,6 +1008,14 @@ pub fn target_by(
         });
     }
     let mut found = classify(name, asset_type, flags);
+    // (a store's own bracketed name never decides the category: `[Moon
+    // Hair] Ada Dress` is a dress; the rest of the name first, the whole
+    // name when the rest says nothing)
+    if let Some(rest) = after_enclosed_tag(name)
+        && let Some(category) = classify(rest, asset_type, flags).category
+    {
+        found.category = Some(category);
+    }
     let by_creator = creator.and_then(|c| hints.iter().find(|h| h.creator == Some(c)));
     let mut shop = (stores || !hints.is_empty()).then(|| store(name)).flatten();
     if let Some(hint) = by_creator {
@@ -1157,6 +1165,18 @@ fn without_number(name: &str) -> &str {
         return name;
     }
     marked
+}
+
+/// The rest of a name that opens with an enclosed tag (`[Store] rest`,
+/// `{Store} rest`): what the item is, the store's own name aside.
+fn after_enclosed_tag(name: &str) -> Option<&str> {
+    let text = name.trim_start();
+    let first = text.chars().next()?;
+    let (_, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
+    let inner = &text[first.len_utf8()..];
+    let end = inner.find(*close)?;
+    let rest = inner[end + close.len_utf8()..].trim_start();
+    (!rest.is_empty()).then_some(rest)
 }
 
 /// A bracketed tag says more than a status and what the item is: `[Moon

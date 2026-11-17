@@ -4025,3 +4025,36 @@ fn bare_pins_are_no_jewelry() {
     assert_eq!(classify("Kira Bobby Pins", 6, 0).category, Some(Category::Accessories));
     assert_eq!(classify("Kira Enamel Pin", 6, 0).category, Some(Category::Jewelry));
 }
+
+/// Audit 78: a store's own bracketed name never decides the category.
+#[test]
+fn a_stores_bracketed_name_never_decides_the_category() {
+    let path = |name: &str| destination(name, 6, 0, &[]).map(|p| p.join("/")).unwrap_or_default();
+    assert!(
+        path("[Moon Hair] Ada Dress").contains(Category::Dresses.folder()),
+        "{}",
+        path("[Moon Hair] Ada Dress")
+    );
+    assert!(
+        path("[Lazy Eye] Mom Jeans").contains(Category::Pants.folder()),
+        "{}",
+        path("[Lazy Eye] Mom Jeans")
+    );
+    assert!(
+        path("{Skin Deep} Bikini").contains(Category::Swimwear.folder()),
+        "{}",
+        path("{Skin Deep} Bikini")
+    );
+    // the rest says nothing: the whole name
+    assert!(
+        path("[Moon Hair] Ada").contains(Category::Hair.folder()),
+        "{}",
+        path("[Moon Hair] Ada")
+    );
+    // a body tag keeps its body
+    assert!(
+        path("[REBORN] Kitty Dress").starts_with("Reborn"),
+        "{}",
+        path("[REBORN] Kitty Dress")
+    );
+}
