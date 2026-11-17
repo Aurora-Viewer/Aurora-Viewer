@@ -205,6 +205,14 @@ pub enum LoginError {
     Server(u16),
     #[error("{0}")]
     XmlRpc(#[from] xmlrpc::XmlRpcError),
+    /// The address answered (HTTP 200), but not with an XML-RPC login reply:
+    /// most often a web page, when the grid's web site address was given as
+    /// its login URI (#3884). The Legacy Viewer shows its catch-all
+    /// "server_is_down" text there (StatusXMLRPCError with no message,
+    /// LLXMLRPCTransaction::Impl::setStatus, indra/newview/llxmlrpctransaction.cpp),
+    /// never the parser's words; the parser's error goes to the log.
+    #[error("{}", aurora_i18n::tr!("login-not-a-login-server"))]
+    NotALoginServer,
     #[error("login refused ({reason}): {message}")]
     Refused {
         reason: String,
@@ -589,7 +597,15 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
         if !status.is_success() {
             return Err(LoginError::Server(status.as_u16()));
         }
-        let v = xmlrpc::parse_response(&bytes)?;
+        let v = match xmlrpc::parse_response(&bytes) {
+            Ok(v) => v,
+            // a fault is the login server's own answer
+            Err(fault @ xmlrpc::XmlRpcError::Fault { .. }) => return Err(fault.into()),
+            Err(e) => {
+                log::warn!("the login address did not send a login reply ({e}; {} bytes)", bytes.len());
+                return Err(LoginError::NotALoginServer);
+            }
+        };
         match v["login"].to_string_value().as_str() {
             "true" => return parse_success(v),
             "indeterminate" => {
@@ -1005,6 +1021,38 @@ mod tests {
             "{asked:?}"
         );
         assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// #3884: a grid's web site given as its login URI answers 200 with a
+    /// page, and the login error was the XML parser's ("mismatched end tag").
+    #[tokio::test]
+    async fn a_web_page_instead_of_a_login_reply_is_told_as_a_wrong_address() {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
+        let page = "<!DOCTYPE html><html><head><title>A grid</title></head><body><p>Welcome<br></body></html>";
+        let not_a_reply = "<?xml version=\"1.0\"?><rss><channel/></rss>";
+        for body in [page, not_a_reply, ""] {
+            let (grid, _) = login_server(vec![("200 OK", String::new(), body.to_owned())]).await;
+            let failed = login(&http, &synthetic_request(&grid, &[])).await;
+            assert!(matches!(failed, Err(LoginError::NotALoginServer)), "{body:?}: {failed:?}");
+            let text = failed.expect_err("an error").to_string();
+            assert_eq!(text, aurora_i18n::tr!("login-not-a-login-server").to_string());
+            assert!(!text.contains("xml") && !text.contains("byte"), "{text}");
+        }
+        // a fault stays the login server's own answer
+        let fault = "<?xml version=\"1.0\"?><methodResponse><fault><value><struct>\
+            <member><name>faultCode</name><value><int>4</int></value></member>\
+            <member><name>faultString</name><value><string>Too many parameters.</string></value></member>\
+            </struct></value></fault></methodResponse>";
+        let (grid, _) = login_server(vec![("200 OK", String::new(), fault.to_owned())]).await;
+        let failed = login(&http, &synthetic_request(&grid, &[])).await;
+        assert!(
+            matches!(failed, Err(LoginError::XmlRpc(xmlrpc::XmlRpcError::Fault { code: 4, .. }))),
+            "{failed:?}"
+        );
     }
 
     #[tokio::test]

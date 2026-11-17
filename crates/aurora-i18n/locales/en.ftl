@@ -8374,6 +8374,7 @@ ui-options-theme-json-layout-json-icons-reloaded-automatically = theme.json · l
 login-too-many-redirects = Too many redirects
 login-next-server-refused = The login server asked to continue your login without encryption or at an invalid address: the login was stopped.
 login-server-error = The login server could not complete the login (HTTP { $status }). This is usually a problem on the grid's side: please try again in a few minutes, and check the grid's status page for a known problem. If it keeps happening, check your network and firewall setup.
+login-not-a-login-server = This address answered, but not as a login server: it sent a web page or something else instead of a login reply. Check the grid's login URI (it is often different from the address of the grid's web site), then try again.
 build-ui-floaters-transfer = transfer
 fetch-transport-error = Transport error
 ui-debug-overlay-too-small = too small
