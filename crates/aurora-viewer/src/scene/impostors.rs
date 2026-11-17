@@ -83,6 +83,26 @@ pub struct Far {
     pub silhouette: bool,
 }
 
+/// The avatars drawn in full, by slot (`len` slots): the `max` nearest of
+/// `ranked` (sorted by distance, ours first), and, while Autotune holds
+/// `max` under the user's limit `keep_within`, the avatars of `keep` (set to
+/// always render fully, friends when friends are always shown fully) among
+/// the `keep_within` nearest: Autotune never makes them impostors, as the
+/// Legacy Viewer's Autotune spares them (LLVOAvatar::updateTooSlow). Their
+/// silhouette rules (complexity, RLVa, "never render") still apply after.
+pub fn in_full(ranked: &[(f32, usize)], len: usize, max: usize, keep: &HashSet<usize>, keep_within: usize) -> Vec<bool> {
+    let max = max.max(1);
+    let mut full = vec![false; len];
+    for (rank, (_, i)) in ranked.iter().enumerate().take(keep_within.max(max)) {
+        if (rank < max || keep.contains(i))
+            && let Some(f) = full.get_mut(*i)
+        {
+            *f = true;
+        }
+    }
+    full
+}
+
 /// Pixels an object of radius `radius` (m) covers in the picture of its
 /// avatar: its textures are of no use finer than that.
 pub fn picture_pixels(radius: f32) -> f32 {
@@ -300,6 +320,28 @@ pub fn add_draw(capture: &mut ImpostorCapture, cmd: DrawCmd, blend: bool) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn autotune_spares_the_avatars_kept_in_full_within_the_users_limit() {
+        // ours (slot 0) first, then slots 1..=9 by distance
+        let ranked: Vec<(f32, usize)> = std::iter::once((-1.0, 0)).chain((1..10).map(|i| (i as f32, i))).collect();
+        let none = HashSet::new();
+        // no Autotune: the nearest `max`, ours included
+        let full = in_full(&ranked, 10, 4, &none, 0);
+        assert_eq!(full.iter().filter(|f| **f).count(), 4);
+        assert!(full[0] && full[3] && !full[4]);
+        // Autotune at 3 of the user's 8: a kept avatar at rank 6 stays in
+        // full, one at rank 9 (beyond the user's own limit) does not
+        let keep: HashSet<usize> = [6, 9].into_iter().collect();
+        let full = in_full(&ranked, 10, 3, &keep, 8);
+        assert!(full[0] && full[1] && full[2], "ours and the two nearest");
+        assert!(full[6], "kept in full");
+        assert!(!full[9], "beyond the user's own limit: as without Autotune");
+        assert!(!full[4] && !full[5], "the others become impostors");
+        // at least ours, whatever the limit; a slot out of range is ignored
+        let full = in_full(&[(-1.0, 0), (1.0, 7)], 3, 0, &none, 0);
+        assert_eq!(full, vec![true, false, false]);
+    }
 
     fn far(idx: usize, silhouette: bool) -> Far {
         Far {

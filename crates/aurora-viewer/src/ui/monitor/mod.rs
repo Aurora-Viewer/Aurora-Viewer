@@ -1,12 +1,14 @@
 //! Resource monitor: the Performance window's full view, a task manager
 //! for power users. What the viewer consumes, over the last minute, in
-//! eight sections down a rail: an overview, the subsystems (what each part
+//! nine sections down a rail: an overview, the subsystems (what each part
 //! of the viewer costs in processor, frame time, GPU, memory, video memory,
 //! network and disk), the threads, the memory, the network, the disk, the
-//! costliest avatars and objects around, and the region's simulator. The
+//! costliest avatars and objects around, the region's simulator, and the
+//! target frame rate (Autotune, `autotune.rs`). The
 //! app gathers a snapshot every half second while the view is open
 //! (`app/monitor.rs`); the model attributes the costs (`model.rs`).
 
+pub mod autotune;
 mod disk;
 mod draw;
 mod fmt;
@@ -40,10 +42,11 @@ pub enum Tab {
     Disk,
     Scene,
     Region,
+    Autotune,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 9] = [
         Tab::Overview,
         Tab::Subsystems,
         Tab::Threads,
@@ -52,6 +55,7 @@ impl Tab {
         Tab::Disk,
         Tab::Scene,
         Tab::Region,
+        Tab::Autotune,
     ];
 
     fn icon(self) -> &'static str {
@@ -64,6 +68,7 @@ impl Tab {
             Tab::Disk => "database-filled",
             Tab::Scene => "cube",
             Tab::Region => "world-filled",
+            Tab::Autotune => "bolt-filled",
         }
     }
 
@@ -77,6 +82,7 @@ impl Tab {
             Tab::Disk => aurora_i18n::tr!("monitor-tab-disk"),
             Tab::Scene => aurora_i18n::tr!("monitor-tab-scene"),
             Tab::Region => aurora_i18n::tr!("monitor-tab-region"),
+            Tab::Autotune => aurora_i18n::tr!("monitor-tab-autotune"),
         }
     }
 
@@ -91,6 +97,7 @@ impl Tab {
             "disk" => Tab::Disk,
             "scene" => Tab::Scene,
             "region" => Tab::Region,
+            "autotune" => Tab::Autotune,
             _ => return None,
         })
     }
@@ -132,6 +139,8 @@ pub enum Action {
     TopScripts,
     OpenCacheFolder,
     ClearCache,
+    /// The target frame rate's Start, Stop, Keep and choices.
+    Autotune(autotune::Request),
 }
 
 /// What the scene section lists: the avatars or the objects around, or
@@ -165,6 +174,8 @@ pub struct Monitor {
     pub exported: Option<String>,
     /// The report being written by its save thread: its file name once done.
     pub export: Option<std::sync::mpsc::Receiver<String>>,
+    /// Autotune's state, filled by the app each frame.
+    pub autotune: autotune::View,
 }
 
 impl Default for Monitor {
@@ -182,6 +193,7 @@ impl Default for Monitor {
             scene_sort: 1,
             exported: None,
             export: None,
+            autotune: Default::default(),
         }
     }
 }
@@ -281,6 +293,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
                 Tab::Disk => disk::show(ui, p, m, &s, out),
                 Tab::Scene => scene::show(ui, p, m, &s, out),
                 Tab::Region => region::show(ui, p, m, &s, out),
+                Tab::Autotune => autotune::show(ui, p, m, out),
             },
         }
     }
@@ -447,6 +460,7 @@ fn rail_sub(tab: Tab, m: &Monitor, s: &Snapshot) -> String {
             avatars = s.scene.avatar_count as i64,
             objects = fmt::count(s.scene.object_count)
         ),
+        Tab::Autotune => autotune::status_text(m.autotune.status).to_owned(),
         Tab::Region => match s.region.as_ref().and_then(|r| r.dilation) {
             Some(d) => tr!("monitor-rail-region", dilation = aurora_i18n::number(f64::from(d), 2)),
             None => tr!("monitor-no-region-stats").to_owned(),

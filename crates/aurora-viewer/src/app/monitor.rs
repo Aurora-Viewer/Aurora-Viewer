@@ -722,6 +722,7 @@ impl App {
                     ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                     self.options_ui.open(ui::options::Page::Network, 0);
                 }
+                Action::Autotune(request) => self.autotune_request(request),
             }
         }
     }

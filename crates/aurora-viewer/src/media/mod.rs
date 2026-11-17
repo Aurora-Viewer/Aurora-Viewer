@@ -559,7 +559,7 @@ pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
-/// language, the viewer's user agent and JavaScript.
+/// language, the viewer's user agent, JavaScript and the web proxy.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &MediaSettings) -> BrowserSettings {
     BrowserSettings {
         // the system's own separator, as the plugin appends `cef_cache`
@@ -573,7 +573,31 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &Med
         cookies_enabled: true,
         javascript_enabled: media.javascript,
         zoom_factor: 1.0,
+        // the Legacy Viewer gives CEF its HTTP web proxy only
+        // (BrowserProxyEnabled); a SOCKS 5 proxy does not reach it
+        proxy: aurora_proxy::rule()
+            .browser
+            .as_ref()
+            .map(|endpoint| (endpoint.host().to_string(), endpoint.port())),
+        browser_refused: proxy_refusal(aurora_proxy::rule().browser_allowed()),
+        video_refused: proxy_refusal(aurora_proxy::rule().video_allowed()),
     }
+}
+
+/// Why a media plugin may not start behind the proxy. Stricter than the
+/// Legacy Viewer, whose browser (without its HTTP proxy) and video plugin
+/// connect directly and show the real address: off while a proxy is on,
+/// unless the user turns direct media on (Preferences › Network › Proxy), and
+/// always while the proxy settings cannot be used.
+fn proxy_refusal(allowed: bool) -> Option<String> {
+    use aurora_i18n::tr;
+    (!allowed).then(|| {
+        if aurora_proxy::rule().problem.is_some() {
+            tr!("media-off-proxy-invalid").to_string()
+        } else {
+            tr!("media-off-proxy").to_string()
+        }
+    })
 }
 
 /// The profiles of the earlier builds on Linux and macOS: their cache path

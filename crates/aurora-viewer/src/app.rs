@@ -91,6 +91,7 @@ mod gpu_stall;
 mod parcel_music;
 mod photo_gaze;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
+mod autotune;
 mod avatar_align;
 mod debug_settings;
 mod draw_stepping;
@@ -839,6 +840,8 @@ pub struct App {
     screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
     focused: bool,
+    /// Autotune while it runs or holds its values (app/autotune.rs).
+    autotune: autotune::State,
     /// Loading / teleport screen background (last view, blurred).
     backdrop: ui::backdrop::Backdrop,
     /// Capture the 3D view on the next frame; a capture is on its way.
@@ -2040,6 +2043,7 @@ impl App {
             named_teleport: Default::default(),
             screen_rate: Default::default(),
             focused: true,
+            autotune: Default::default(),
             backdrop,
             want_scene_capture: false,
             scene_capture_pending: false,
@@ -3451,6 +3455,8 @@ impl App {
         if let Some(steps) = self.settings.draw_stepping.take() {
             self.settings.draw_distance = steps.user;
         }
+        // Autotune ends with the session too, the user's values back
+        self.autotune_stop();
         // the login screen and Preferences say "L$" again, not the last grid's money
         aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
@@ -4490,6 +4496,7 @@ impl App {
                     self.draw_stepping_arrived();
                 } else {
                     self.start_draw_stepping("login");
+                    self.autotune_login();
                     // llstartup.cpp STATE_STARTED: "look for parcels we
                     // own", which tells World › My Linden Home its page
                     self.world.group_money.request_owned_land();
@@ -13688,17 +13695,29 @@ impl App {
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
         // the wait is done between the frames, on another thread)
+        // Autotune's frame time: the frame's work and the GPU's, without the
+        // frame limiter's wait (llperfstats.cpp subtracts RENDER_FPSLIMIT);
+        // none while Windows holds the window
+        let mut work = None;
         if !crate::window_hold::paces(target) {
             // frame pacing (aurora-render pacing.rs): when the GPU sets the
             // pace, the next frame reads its input once the GPU has finished
             // the frame before this one, instead of waiting behind it with
             // stale input; then the frame limiter
             gfx.renderer.wait_for_gpu();
+            work = Some(self.frame_start.elapsed());
             if let Some(target) = target {
                 wait_until(self.frame_start + target);
             }
         }
         self.frame_profile.lap(Lap::Limiter);
+        // the rate the loop is held to: the cap, and the screen's with vsync
+        let held_to = match (gfx.renderer.vsync(), cap >= 1.0) {
+            (true, true) => cap.min(monitor_hz),
+            (true, false) => monitor_hz,
+            (false, _) => cap,
+        };
+        self.autotune_frame(work, held_to);
         // the graph's frame time: from one end of the limiter to the next,
         // the pace the frames really leave at. `dt` starts after the input
         // events: a click or a mouse move handled before one frame and not
@@ -20771,6 +20790,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
                 let mut open = self.panels.perf;
+                self.monitor.autotune = self.autotune_view();
                 let view = ui::perf::PerfView {
                     data: &self.perf,
                     gpu: &renderer.info,
@@ -21603,6 +21623,10 @@ impl ApplicationHandler for App {
                     ui::perf::set_full(&self.egui_ctx, v != "compact");
                 }
             }
+            // AURORA_DEMO_AUTOTUNE=1|slow|once: the target frame rate
+            // running, on a simulated heavy scene with slow and once
+            // (app/autotune.rs)
+            self.autotune_demo();
             // AURORA_DEMO_NIGHT_SKY: the chosen stars, at midnight
             if let Some((mode, _)) = crate::demo::night_sky::scenario() {
                 self.settings.night_sky = mode;

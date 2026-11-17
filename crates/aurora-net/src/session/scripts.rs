@@ -331,7 +331,7 @@ mod tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
