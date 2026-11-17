@@ -254,7 +254,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
         },
     );
-    let has_alpha = diffuse.and_then(|id| env.scene.textures.has_alpha(&id)).unwrap_or(false);
+    let has_alpha = diffuse.and_then(|id| env.scene.textures.has_alpha_channel(&id)).unwrap_or(false);
     let opaque = sel.iter().all(|x| x.te.color[3] >= 1.0);
     let default = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
     let (mode, mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.diffuse_alpha_mode).unwrap_or(default)));
@@ -403,6 +403,7 @@ pub(super) fn pbr_surface(
     mat: &aurora_assets::material::PbrMaterial,
     asset: Option<Uuid>,
     mixed: bool,
+    maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
 ) {
@@ -433,7 +434,7 @@ pub(super) fn pbr_surface(
             world,
             env,
             id.filter(|_| editable),
-            false,
+            editable && maps_mixed[channel],
             caption,
             PickTarget::PbrMap(channel),
             editable,

@@ -16,6 +16,7 @@ mod dialogs;
 mod editing;
 mod experiences;
 mod files;
+pub(crate) use files::live_folder;
 mod focus;
 mod folding;
 mod indent;
@@ -184,7 +185,33 @@ pub struct Editors {
     /// `None` keeps none.
     pub backup_dir: Option<std::path::PathBuf>,
     pub backups: backup::Book,
+    /// The saves of scripts sent to the external editor, for the editor
+    /// sync (`crate::editor_sync`), taken once a frame.
+    compiled: Vec<Compiled>,
 }
+
+/// A script sent to the external editor (or on its way there), which the
+/// editor sync may let an editor follow.
+pub struct Synced<'a> {
+    pub target: ScriptTarget,
+    pub name: &'a str,
+    pub lua: bool,
+    pub can_edit: bool,
+}
+
+/// A save's result (LLScriptEdContainer::sendCompileResults).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Compiled {
+    pub target: ScriptTarget,
+    pub compiled: bool,
+    /// An object's script runs; false in the inventory.
+    pub running: bool,
+    pub errors: Vec<String>,
+    pub lua: bool,
+}
+
+/// Saves kept for the editor sync between two frames.
+const MAX_COMPILED: usize = 32;
 
 struct PendingInclude {
     owner: ScriptTarget,
@@ -226,6 +253,24 @@ impl Editors {
         backup::run(jobs);
     }
 
+    /// The scripts sent to the external editor.
+    pub fn synced(&self) -> impl Iterator<Item = Synced<'_>> {
+        self.documents
+            .iter()
+            .filter(|e| !e.closed && (e.tools.external.is_some() || e.tools.external_starting))
+            .map(|e| Synced {
+                target: e.target,
+                name: &e.name,
+                lua: e.lua(),
+                can_edit: e.can_edit,
+            })
+    }
+
+    /// The saves since the last call.
+    pub fn take_compiled(&mut self) -> Vec<Compiled> {
+        std::mem::take(&mut self.compiled)
+    }
+
     pub fn disconnected(&mut self) {
         // the latest text is copied, and the copies stay for the next login
         // whatever the editors do now (LLScriptEdContainer's destructor
@@ -241,6 +286,7 @@ impl Editors {
             e.saving = None;
             e.processing = None;
             e.tools.external = None;
+            e.tools.external_starting = false;
             e.can_read = false;
             e.can_edit = false;
             e.can_reset = false;
@@ -267,6 +313,14 @@ impl Editors {
         let e = self.documents.iter_mut().find(|e| e.target == target)?;
         e.source = source;
         if save { e.save() } else { None }
+    }
+
+    /// AURORA_DEMO_EDITOR_SYNC: the script counts as sent to the external
+    /// editor without launching one (the demo's editor is a socket client).
+    pub fn demo_external(&mut self, target: ScriptTarget) {
+        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target && e.can_edit) {
+            e.tools.external_starting = true;
+        }
     }
 
     pub fn demo_experience(&mut self, target: ScriptTarget, experience: Uuid) -> Option<Action> {
@@ -605,6 +659,27 @@ impl Editors {
             return false;
         };
         let Some(pending) = e.saving.take() else { return false };
+        // finishedLSLUpload / failedLSLUpload: the result goes to the
+        // editor that follows the script
+        if (e.tools.external.is_some() || e.tools.external_starting) && self.compiled.len() < MAX_COMPILED {
+            let lua = pending.compile == CompileTarget::Luau;
+            self.compiled.push(match result {
+                Ok(saved) => Compiled {
+                    target,
+                    compiled: saved.compiled,
+                    running: !target.object.is_nil() && pending.running,
+                    errors: saved.errors.clone(),
+                    lua,
+                },
+                Err(reason) => Compiled {
+                    target,
+                    compiled: false,
+                    running: false,
+                    errors: vec![aurora_i18n::tr!("script-sync-upload-failed", reason = reason.as_str())],
+                    lua,
+                },
+            });
+        }
         match result {
             Ok(saved) => {
                 e.baseline = pending.source;

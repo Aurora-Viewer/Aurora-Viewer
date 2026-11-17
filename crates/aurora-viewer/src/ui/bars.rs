@@ -88,6 +88,10 @@ pub enum BarAction {
     PhotoToDisk,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
+    /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
+    /// 360capture): the photo window in its 360° format, or closed when it
+    /// is already open in it.
+    Photo360,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -2630,6 +2634,11 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
             panels.people_tab = 1;
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
+        "inventory_dual" => {
+            panels.inventory = true;
+            panels.inventory_dual = !panels.inventory_dual;
+            super::inventory::resize_for_dual(ctx, panels.inventory_dual);
+        }
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
@@ -2665,6 +2674,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.ToggleOrBringToFront 360capture
+        "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
@@ -2755,6 +2766,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "regioninfo" => panels.region_estate,
         "myenvironments" => panels.environment,
         "inventory" => panels.inventory,
+        "inventory_dual" => panels.inventory_dual,
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
@@ -2764,6 +2776,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
+        "360capture" => panels.snapshot && panels.snapshot_pano,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
@@ -4416,6 +4429,21 @@ mod tests {
     }
 
     #[test]
+    fn dual_inventory_toolbar_button_opens_inventory_and_toggles_its_layout() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.inventory = false;
+        assert!(!command_active("inventory_dual", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "inventory_dual", &mut panels), BarAction::None));
+        assert!(panels.inventory);
+        assert!(panels.inventory_dual);
+        assert!(command_active("inventory_dual", &panels, false, false, false));
+        run_command(&ctx, "inventory_dual", &mut panels);
+        assert!(panels.inventory, "switching back to the single layout keeps the inventory open");
+        assert!(!panels.inventory_dual);
+    }
+
+    #[test]
     fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
         let ctx = egui::Context::default();
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
@@ -4441,6 +4469,26 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
+    }
+
+    /// The 360° button opens the photo window in its 360° format and is lit
+    /// while it is open in it; it does not toggle a window of its own.
+    #[test]
+    fn the_360_button_is_the_photo_window_in_360() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("360capture"));
+        assert!(matches!(run_command(&ctx, "360capture", &mut panels), BarAction::Photo360));
+        assert!(!command_active("360capture", &panels, false, false, false));
+        panels.snapshot = true;
+        assert!(
+            !command_active("360capture", &panels, false, false, false),
+            "open in the ordinary format"
+        );
+        panels.snapshot_pano = true;
+        assert!(command_active("360capture", &panels, false, false, false));
+        panels.snapshot = false;
+        assert!(!command_active("360capture", &panels, false, false, false));
     }
 
     #[test]

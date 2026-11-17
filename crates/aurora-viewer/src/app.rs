@@ -51,6 +51,7 @@ mod blender_shape;
 mod buy_currency;
 mod buy_land;
 mod camera_presets;
+mod capture_360;
 mod chat_commands;
 mod chat_import;
 mod click_pick;
@@ -88,7 +89,9 @@ mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
 mod parcel_music;
+mod photo_gaze;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
+mod autotune;
 mod avatar_align;
 mod debug_settings;
 mod draw_stepping;
@@ -161,6 +164,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod ui_image_cache;
 mod uninstall;
 mod update_notice;
 mod viewer_stats;
@@ -645,6 +649,9 @@ pub struct App {
     /// The yaw the avatar turns to, facing what it selected
     /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
     selection_turn: Option<f32>,
+    /// The photo window's "Look at camera" held our look-at last frame
+    /// (`photo_gaze`).
+    photo_gaze: bool,
     /// The stock stand variants of a standing avatar without an AO
     /// (LLAgent::fidget, app/stand_fidget.rs).
     stand_fidget: stand_fidget::Fidget,
@@ -833,6 +840,8 @@ pub struct App {
     screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
     focused: bool,
+    /// Autotune while it runs or holds its values (app/autotune.rs).
+    autotune: autotune::State,
     /// Loading / teleport screen background (last view, blurred).
     backdrop: ui::backdrop::Backdrop,
     /// Capture the 3D view on the next frame; a capture is on its way.
@@ -912,6 +921,8 @@ pub struct App {
     dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
+    /// The 360° snapshot window and its capture (`app/capture_360.rs`).
+    capture_360: capture_360::Capture360,
     inspect_ui: ui::inspect::InspectUi,
     area_search_ui: ui::area_search::AreaSearchUi,
     sound_explorer_ui: ui::sound_explorer::SoundExplorer,
@@ -1109,6 +1120,8 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Which of these and of the pictures go when they are too many.
+    ui_image_cache: ui_image_cache::UiImageCache,
     inventory_hover_images: inventory_hover::Images,
     ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
     rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
@@ -1187,12 +1200,18 @@ pub struct App {
     env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    /// Independent browsing and selection state for the dual-panel inventory.
+    dual_inventory_ui: ui::inventory::InventoryUi,
+    /// Pane whose inventory mutation currently owns local completion feedback.
+    inventory_mutation_editor: Option<uuid::Uuid>,
     texture_library: ui::texture_library::LibraryUi,
     library_drag: texture_library::DragState,
     library_demo_seeded: bool,
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
+    /// The external script editor sync's server (editor_sync.rs).
+    editor_sync: crate::editor_sync::EditorSync,
     task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
     /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
     contents_copies: contents_copy::ContentsCopies,
@@ -1262,6 +1281,10 @@ pub struct App {
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
+    /// The camera of a sky scenario (AURORA_DEMO_CLOUDS, _SKY_OPTICS,
+    /// _NIGHT_SKY) in an automated capture, held until its last frame
+    /// (`hold_demo_sky_view`): eye and target.
+    demo_sky_view: Option<(Vec3, Vec3)>,
 }
 
 /// The bandwidth setting, or AURORA_BANDWIDTH_KBPS for this launch: a value
@@ -1478,6 +1501,17 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
     settings.interface_colors.clone()
 }
 
+/// Volumetric clouds for a launch: `AURORA_CLOUDS=aurora|legacy` chooses,
+/// else the demo's `AURORA_DEMO_CLOUDS` scenario turns them on, else the
+/// setting stands.
+fn clouds_choice(mode: Option<&str>, demo_scenario: bool, setting: bool) -> bool {
+    match mode.map(str::trim) {
+        Some("aurora") => true,
+        Some("legacy") => false,
+        _ => demo_scenario || setting,
+    }
+}
+
 /// The see-through windows and bars: the preferences', or in demo mode
 /// `AURORA_DEMO_OPACITY` over them (a capture's, never saved).
 fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
@@ -1503,6 +1537,11 @@ fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
 fn apply_test_overrides(settings: &mut Settings) {
+    settings.volumetric_clouds = clouds_choice(
+        std::env::var("AURORA_CLOUDS").ok().as_deref(),
+        crate::demo::clouds::scenario().is_some(),
+        settings.volumetric_clouds,
+    );
     if std::env::var_os("AURORA_DEMO").is_some() && ui::bars::demo::get().graphics_profiles {
         crate::graphics_presets::saved::demo(settings);
     }
@@ -1913,6 +1952,7 @@ impl App {
             double_press: false,
             autopilot: None,
             selection_turn: None,
+            photo_gaze: false,
             stand_fidget: Default::default(),
             autopilot_flags: 0,
             autopilot_stop_pending: false,
@@ -2005,6 +2045,7 @@ impl App {
             named_teleport: Default::default(),
             screen_rate: Default::default(),
             focused: true,
+            autotune: Default::default(),
             backdrop,
             want_scene_capture: false,
             scene_capture_pending: false,
@@ -2060,6 +2101,7 @@ impl App {
             report_abuse: Default::default(),
             dof_focus: Default::default(),
             snapshots: Default::default(),
+            capture_360: Default::default(),
             inspect_ui: Default::default(),
             sound_explorer_ui: Default::default(),
             animation_explorer_ui: Default::default(),
@@ -2178,6 +2220,7 @@ impl App {
             login_portrait_source: None,
             ui_coarse: Default::default(),
             ui_images: Default::default(),
+            ui_image_cache: Default::default(),
             inventory_hover_images: Default::default(),
             ui_image_masks: Default::default(),
             rlva_overlay_slots: Default::default(),
@@ -2225,12 +2268,15 @@ impl App {
             env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
+            dual_inventory_ui: ui::inventory::InventoryUi::dual_pane(),
+            inventory_mutation_editor: None,
             texture_library: Default::default(),
             library_demo_seeded: false,
             library_drag: Default::default(),
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
+            editor_sync: Default::default(),
             task_transfer: Default::default(),
             contents_copies: Default::default(),
             world_edits: Default::default(),
@@ -2280,6 +2326,7 @@ impl App {
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
+            demo_sky_view: None,
         }))
     }
 
@@ -3411,6 +3458,8 @@ impl App {
         if let Some(steps) = self.settings.draw_stepping.take() {
             self.settings.draw_distance = steps.user;
         }
+        // Autotune ends with the session too, the user's values back
+        self.autotune_stop();
         // the login screen and Preferences say "L$" again, not the last grid's money
         aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
@@ -3480,6 +3529,8 @@ impl App {
         self.places_ui.forget_question();
         self.url_confirm = None;
         self.inventory_ui = Default::default();
+        self.dual_inventory_ui = ui::inventory::InventoryUi::dual_pane();
+        self.inventory_mutation_editor = None;
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account
         // must not save them into its sets
@@ -3511,6 +3562,8 @@ impl App {
         self.demo_slm = None;
         self.task_notecards.clear();
         self.script_editors.disconnected();
+        // the editor sync's server ends with the session
+        self.editor_sync.stop();
         self.demo_script_sources.clear();
         self.hud_drag = None;
         self.media.clear();
@@ -4448,6 +4501,7 @@ impl App {
                     self.draw_stepping_arrived();
                 } else {
                     self.start_draw_stepping("login");
+                    self.autotune_login();
                     // llstartup.cpp STATE_STARTED: "look for parcels we
                     // own", which tells World › My Linden Home its page
                     self.world.group_money.request_owned_land();
@@ -5935,6 +5989,7 @@ impl App {
             lookat::cursor_look(prefs.aim, self.look_hover_target(now), me, dir)
         };
         self.set_look_at(kind, object, offset);
+        self.update_photo_gaze();
         let own = &mut self.world.look_at.own;
         own.update(now);
         if own.needs_send {
@@ -7160,6 +7215,7 @@ impl App {
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up_before_exit();
+        self.editor_sync.stop();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
@@ -7909,6 +7965,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_editor_sync_steps();
         self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
@@ -9574,6 +9631,14 @@ impl App {
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
+        let portrait = self.appearance_ui.wanted_outfit_portrait.take();
+        self.scene.textures.show_outfit_portrait(portrait);
+        if let Some(image) = portrait
+            && !self.ui_coarse.contains_key(&image)
+            && !self.scene.textures.is_unavailable(&image)
+        {
+            self.note_ui_copy(image);
+        }
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -9583,6 +9648,8 @@ impl App {
             // the picture its profile names now (saved by us, or the profile
             // read again: LLAvatarIconIDCache follows each reply)
             if self.avatar_pic_sources.get(&agent) == Some(&image) {
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             if image.is_nil() {
@@ -9596,6 +9663,8 @@ impl App {
             if let Some(t) = self.avatar_pic_images.get(&image) {
                 self.avatar_pics.insert(agent, t.clone());
                 self.avatar_pic_sources.insert(agent, image);
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             // (a changed picture shows the old one until the new is decoded)
@@ -9605,6 +9674,7 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                self.ui_image_cache.note(image, t.id(), w, h, Instant::now());
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
                 self.avatar_pic_sources.insert(agent, image);
@@ -9665,6 +9735,8 @@ impl App {
         }
         for image in images {
             if self.ui_images.contains_key(&image) {
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
@@ -9676,11 +9748,45 @@ impl App {
                     self.ui_image_masks.insert(image, mask);
                 }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
+                self.ui_image_cache.note(image, t.id(), w, h, Instant::now());
                 self.ui_images.insert(image, t);
                 self.note_ui_copy(image);
             }
         }
         self.update_inventory_hover_images(renderer);
+    }
+
+    /// Every few frames: what the frame draws is in use (ours always, for
+    /// the login portrait), and the interface images idle for a while go
+    /// when they are too many. Whatever shows one again asks for it.
+    fn evict_ui_images(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        let now = Instant::now();
+        if !self.ui_image_cache.look(self.frame_count, shapes, now) {
+            return;
+        }
+        if let Some(own) = self.world.profiles.get(&self.world.agent_id) {
+            self.ui_image_cache.used(&own.sl_image, now);
+        }
+        let gone = self.ui_image_cache.evict(self.scene.textures.stats.pressure > 0, now);
+        if gone.is_empty() {
+            return;
+        }
+        for image in &gone {
+            self.ui_images.remove(image);
+            self.ui_image_masks.remove(image);
+            self.avatar_pic_images.remove(image);
+            self.profile_ui.banners.remove(image);
+            self.scene.textures.release_ui_image(image);
+        }
+        let gone: HashSet<uuid::Uuid> = gone.into_iter().collect();
+        let pics = &mut self.avatar_pics;
+        self.avatar_pic_sources.retain(|agent, image| {
+            let keep = !gone.contains(image);
+            if !keep {
+                pics.remove(agent);
+            }
+            keep
+        });
     }
 
     /// What a profile picture's pixels give besides its texture: the Aurora
@@ -9867,6 +9973,7 @@ impl App {
                         && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
                     {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        self.ui_image_cache.note(image, t.id(), w, h, now);
                         if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
                             self.ui_image_masks.insert(image, mask);
                         }
@@ -9876,6 +9983,7 @@ impl App {
                         && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
                     {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        self.ui_image_cache.note(image, t.id(), w, h, now);
                         picture_updated = true;
                     }
                     if picture_updated {
@@ -10159,6 +10267,8 @@ impl App {
         if let Some(c) = self.world.follow_lsl_syntax() {
             self.send(c);
         }
+        // the external script editor sync
+        self.update_editor_sync();
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
@@ -10552,6 +10662,7 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            self.capture_360.shift(shift);
             self.director.d.track.shift(shift);
             if let Some(session) = &mut self.studio_photo_session {
                 session.camera.shift(shift);
@@ -10869,9 +10980,12 @@ impl App {
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
+        // a 360° snapshot's face this frame: its camera swapped in, the
+        // square photo frame asked (app/capture_360.rs)
+        self.capture_360_frame(&mut gfx.renderer);
         self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
-        self.photo_update(&gfx.renderer);
+        self.photo_update(&mut gfx.renderer);
         self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.director_frame(dt);
@@ -10886,6 +11000,8 @@ impl App {
         let photo_context = photo.as_ref().map_or(aurora_render::PhotoContext::None, |f| f.context);
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
+            // (a 360° snapshot's face: 90° high and wide, whatever the window)
+            Some(f) if f.cube_face => camera.proj(1.0),
             Some(f) => photo_tile * camera.photo_proj(f.aspect, window_aspect),
             None => camera.proj(aspect),
         };
@@ -10897,6 +11013,7 @@ impl App {
             self.world.agent.yaw = self.vr_rig_yaw;
         }
         self.update_move_input(typing, dt);
+        self.hold_demo_sky_view();
         if self.vr_camera.is_some() {
             self.vr_locomotion(vr_body_yaw, dt);
         }
@@ -11295,7 +11412,7 @@ impl App {
                 self.start.elapsed().as_secs_f32(),
             )
         {
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         // the order of the blended faces: the user's, the exact one only
         // where the renderer draws it (not under MSAA, scene/blend_order.rs)
@@ -11307,7 +11424,7 @@ impl App {
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
@@ -11343,9 +11460,17 @@ impl App {
         };
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
+        // the photo window in 360°: every direction counts as in view for the
+        // textures, so that the faces behind the camera are as sharp as the
+        // one it looks at (within the same texture budget)
+        let texture_aspect = if self.pano_open() && self.in_world() {
+            capture_360::OMNI_TEXTURE_ASPECT
+        } else {
+            aspect
+        };
         let mut cull = CullView::new(vp, render_eye, lod_height as f32, render_fov).with_texture_camera(
             studio_view.map_or_else(|| self.camera.forward(), |v| (v.target - v.eye).normalize()),
-            aspect,
+            texture_aspect,
             camera_fast,
         );
         // The experimental XR worker can look in any direction after these
@@ -11620,8 +11745,8 @@ impl App {
                 mods,
             );
             self.build.refresh_link_geometry(&self.world, &self.scene);
-            // (nor while the Director's track plays: the world alone)
-            let bare = self.photo_full_frame() || self.director_playing();
+            // (nor while the Director's track plays or it films: the world alone)
+            let bare = self.photo_full_frame() || self.director_playing() || self.director_filming();
             let mut selection_wire = if bare {
                 Default::default()
             } else {
@@ -11646,10 +11771,23 @@ impl App {
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
-            let mut selected_faces = if self.imports.local_status.revealing() {
+            let revealing = self.imports.local_status.revealing();
+            // (TE mode's faces show the face-select pattern, and the halo
+            // with "Show highlight": the picks are gathered once)
+            let pattern = if revealing {
+                Default::default()
+            } else {
+                self.build.face_picks(&self.world)
+            };
+            let build_faces = if revealing {
+                Default::default()
+            } else {
+                crate::build::BuildTool::halo_faces(|| pattern.clone(), &self.settings.build)
+            };
+            let mut selected_faces = if revealing {
                 self.imports.appearance_status(&self.world.objects).faces
             } else {
-                self.build.face_selection(&self.world, &self.settings.build)
+                build_faces
             };
             if let Some((object, face)) = ui::texture_picker::pipette::highlighted(&self.egui_ctx)
                 && face < 64
@@ -11663,6 +11801,7 @@ impl App {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
+            self.scene.set_face_pattern(&mut self.world, &pattern);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
             }
@@ -11728,7 +11867,7 @@ impl App {
                 render_fov = self.camera.fov_y;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
                     self.camera.forward(),
-                    aspect,
+                    texture_aspect,
                     camera_fast,
                 );
                 if self.settings.debug.freeze_culling {
@@ -12332,9 +12471,9 @@ impl App {
                 frustum: CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y),
                 range: self.settings.draw_distance,
                 dt,
-                projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+                projector_shadows: self.settings.projector_shadows && self.photo_shadow_quality() > 0,
                 projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
-                    self.settings.shadow_params().0,
+                    Settings::shadow_params_of(self.photo_shadow_quality()).0,
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
@@ -12495,6 +12634,10 @@ impl App {
                     .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
+            face_select_texture: {
+                let wanted = self.build.face_mode() || !self.scene.pattern_faces.is_empty();
+                self.scene.face_select_texture(&mut gfx.renderer, wanted)
+            },
             vr_origin: self.world.main_region,
             vr_revision: self.vr_revision,
             view,
@@ -12541,8 +12684,8 @@ impl App {
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
-            shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
-            shadow_distance: self.settings.shadow_params().1,
+            shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
+            shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
@@ -12606,6 +12749,16 @@ impl App {
             },
             hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
+            clouds: crate::world::env::clouds_frame(
+                self.settings.volumetric_clouds,
+                self.world.main_region,
+                Some(env.sky.cloud_texture)
+                    .filter(|slot| *slot != 0)
+                    .and_then(|slot| gfx.renderer.textures.size_of(slot)),
+                Some(env.sky.cloud_texture)
+                    .and_then(|slot| gfx.renderer.textures.revision_of(slot))
+                    .unwrap_or(0),
+            ),
         };
         if let Some(view) = studio_view {
             self.studio_render(&mut gfx.renderer, &mut fp, view);
@@ -13238,6 +13391,7 @@ impl App {
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
+        self.evict_ui_images(&full.shapes);
         let mut textures = std::mem::take(&mut full.textures_delta);
         if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);
@@ -13295,7 +13449,7 @@ impl App {
             crate::link_trust::configure(&self.settings.trusted_sites);
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
@@ -13477,6 +13631,7 @@ impl App {
             gfx.renderer.render(fp, lists, Some(egui_frame))
         };
         self.photo_gpu_time(&stats);
+        self.capture_360_drawn(&mut gfx.renderer);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         self.busy_pause_frame(gfx.renderer.vr_engaged());
@@ -13549,17 +13704,29 @@ impl App {
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
         // the wait is done between the frames, on another thread)
+        // Autotune's frame time: the frame's work and the GPU's, without the
+        // frame limiter's wait (llperfstats.cpp subtracts RENDER_FPSLIMIT);
+        // none while Windows holds the window
+        let mut work = None;
         if !crate::window_hold::paces(target) {
             // frame pacing (aurora-render pacing.rs): when the GPU sets the
             // pace, the next frame reads its input once the GPU has finished
             // the frame before this one, instead of waiting behind it with
             // stale input; then the frame limiter
             gfx.renderer.wait_for_gpu();
+            work = Some(self.frame_start.elapsed());
             if let Some(target) = target {
                 wait_until(self.frame_start + target);
             }
         }
         self.frame_profile.lap(Lap::Limiter);
+        // the rate the loop is held to: the cap, and the screen's with vsync
+        let held_to = match (gfx.renderer.vsync(), cap >= 1.0) {
+            (true, true) => cap.min(monitor_hz),
+            (true, false) => monitor_hz,
+            (false, _) => cap,
+        };
+        self.autotune_frame(work, held_to);
         // the graph's frame time: from one end of the limiter to the next,
         // the pace the frames really leave at. `dt` starts after the input
         // events: a click or a mouse move handled before one frame and not
@@ -14144,6 +14311,9 @@ impl App {
                 self.world.apply(event);
             }
             for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::clouds::events(self.frame_count) {
                 self.world.apply(event);
             }
             if let Some(step) = crate::demo::env::step(self.frame_count) {
@@ -14854,6 +15024,9 @@ impl App {
             self.demo_money_tracker();
             self.demo_payment();
         }
+        if self.demo {
+            self.demo_photo_gaze();
+        }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
         // =own: the crosshairs shown, ours too, the real cursor; =own,x,y:
@@ -15320,6 +15493,11 @@ impl App {
                                 .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
                         }
                     }
+                    crate::build::demo::Step::TexGenToggle => {
+                        // TEM_TEX_GEN_MASK / TEX_GEN_PLANAR (LLTextureEntry)
+                        self.build.edit_faces(&mut self.world, |f, _, _| f.media_flags ^= 0x02);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::CloseView => {
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
                             && let Some((point, _, _)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
@@ -15347,6 +15525,7 @@ impl App {
                             self.build.toggle_place(&self.world);
                         }
                     }
+                    crate::build::demo::Step::Highlight(on) => self.settings.build.show_highlight = on,
                     crate::build::demo::Step::Linked(on) => {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
@@ -16223,6 +16402,16 @@ impl App {
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
+            BarAction::Photo360 => {
+                if self.pano_open() {
+                    self.panels.snapshot = false;
+                } else {
+                    self.panels.snapshot = true;
+                    if self.snapshots.ui.set_pano(true) {
+                        self.photo_release_freeze();
+                    }
+                }
+            }
             // LLLocationInputCtrl::onAddLandmarkButtonClicked: nothing under @showloc
             BarAction::LandmarkStar(_) if self.world.rlva.has("showloc") => {}
             BarAction::LandmarkStar(star) => self.landmark_star(star),
@@ -17587,6 +17776,15 @@ impl App {
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
+        if res.reset_windows {
+            ui::widgets::reset_windows(ctx);
+            ui::layout::save(ctx);
+        }
+        if let Some(layout) = res.restore_layout
+            && let Err(e) = ui::layout::apply(ctx, &layout)
+        {
+            log::warn!("window layout not put back: {e}");
+        }
         if let Some(page) = res.reset_section {
             self.settings.save();
             self.world
@@ -17925,6 +18123,11 @@ impl App {
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
                 let held = self.photo_held(&ctx, &p);
+                // a film of the Director keeps the world alone, as its playback does:
+                // no tag, mark nor guide (they are drawn before the film's frame is
+                // taken, `Capture::Scene`)
+                let filming = self.director_filming();
+                let bare = held || filming;
                 // what belongs to the world first: the HUD attachments, the bars and
                 // every window cover the name tags, the floating texts and the beacon
                 let voice_levels = if self.demo {
@@ -17955,9 +18158,9 @@ impl App {
                     Instant::now(),
                 );
                 // the look-at crosshairs under the name tags (none, nor the
-                // walk mark, over a held photo or with the interface hidden,
-                // like the Legacy Viewer's UI layer)
-                if !held && !self.interface.clears_view() {
+                // walk mark, over a held photo, in a Director film or with the
+                // interface hidden, like the Legacy Viewer's UI layer)
+                if !bare && !self.interface.clears_view() {
                     ui::lookat_targets::draw(
                         &ctx,
                         &p,
@@ -17988,7 +18191,7 @@ impl App {
                 self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
                 let chat_bubbles = self.chat_bubbles();
-                self.name_tags = if held {
+                self.name_tags = if bare {
                     self.name_tag_visibility.clear();
                     Vec::new()
                 } else {
@@ -18050,10 +18253,10 @@ impl App {
                     &self.name_tags,
                     &mut self.contact_markers,
                     self.settings.contact_marker_anchor,
-                    self.settings.contact_markers && !held && (!self.interface.immersive || self.settings.immersive_name_tags),
+                    self.settings.contact_markers && !bare && (!self.interface.immersive || self.settings.immersive_name_tags),
                 );
                 // RenderTrackerBeacon (LLTracker::render3D, renderBeacon)
-                if !self.camera.mouselook() && !held && self.settings.tracker_beacon {
+                if !self.camera.mouselook() && !bare && self.settings.tracker_beacon {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 } else {
                     self.beacon_hit = None;
@@ -18062,7 +18265,7 @@ impl App {
                 // turns it on for the run)
                 let combat =
                     self.settings.camera.mouselook_combat || (self.demo && std::env::var_os("AURORA_DEMO_MOUSELOOK_COMBAT").is_some());
-                if self.camera.mouselook() && !held && combat {
+                if self.camera.mouselook() && !bare && combat {
                     let mut camera = self.settings.camera.clone();
                     camera.mouselook_iff |= self.demo && std::env::var_os("AURORA_DEMO_MOUSELOOK_COMBAT").is_some();
                     ui::mouselook_combat::draw(
@@ -18077,21 +18280,23 @@ impl App {
                 }
                 // the hover tips of what the pointer rested on (none in
                 // mouselook nor over a held photo)
-                if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !held) {
+                if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !bare) {
                     a.ctx_action = Some(action);
                 }
-                ui::sky_beacons::draw(
-                    &ctx,
-                    &p,
-                    &self.world,
-                    projector,
-                    [self.settings.sun_beacon, self.settings.moon_beacon],
-                );
-                ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
-                ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
-                ui::portals::labels(&ctx, &p, &self.world, projector);
-                self.director_world(&ctx, &p, projector);
-                if !held {
+                if !filming {
+                    ui::sky_beacons::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        projector,
+                        [self.settings.sun_beacon, self.settings.moon_beacon],
+                    );
+                    ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
+                    ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
+                    ui::portals::labels(&ctx, &p, &self.world, projector);
+                    self.director_world(&ctx, &p, projector);
+                }
+                if !bare {
                     self.build.draw_world_guides(
                         &ctx,
                         &p,
@@ -19546,6 +19751,9 @@ impl App {
                 let inventory_preferences = self.settings.inventory.clone();
                 let import_preferences = self.settings.imports.clone();
                 let mut open = self.panels.inventory;
+                if !self.panels.inventory_dual {
+                    self.inventory_ui.windows.append(&mut self.dual_inventory_ui.windows);
+                }
                 if !self.inventory_ui.merchant_requested {
                     self.inventory_ui.merchant_requested = true;
                     self.send(NetCommand::RequestInventoryMerchant);
@@ -19557,6 +19765,7 @@ impl App {
                     &self.skin.icons,
                     &mut self.world,
                     &mut self.inventory_ui,
+                    self.panels.inventory_dual.then_some(&mut self.dual_inventory_ui),
                     &mut self.settings.inventory,
                     &mut open,
                     self.appearance_ui.pending.is_some(),
@@ -19574,6 +19783,10 @@ impl App {
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::inventory::InvAction::Panel { editor, action } => match *action {
+                            ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                            other => self.apply_inventory_action_from(editor, other),
+                        },
                         other => self.apply_inventory_action(other),
                     }
                 }
@@ -19588,6 +19801,8 @@ impl App {
                 ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
+                // the dual-panel layout, from the toolbar or the window's button
+                self.settings.inventory.dual_panel = self.panels.inventory_dual;
                 self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
                 self.inventory_ui.preferences_dirty |= self.settings.imports != import_preferences;
                 if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
@@ -20589,6 +20804,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
                 let mut open = self.panels.perf;
+                self.monitor.autotune = self.autotune_view();
                 let view = ui::perf::PerfView {
                     data: &self.perf,
                     gpu: &renderer.info,
@@ -21021,7 +21237,7 @@ impl ApplicationHandler for App {
             apply_test_overrides(&mut self.settings);
             self.settings.save();
         }
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
@@ -21421,6 +21637,10 @@ impl ApplicationHandler for App {
                     ui::perf::set_full(&self.egui_ctx, v != "compact");
                 }
             }
+            // AURORA_DEMO_AUTOTUNE=1|slow|once: the target frame rate
+            // running, on a simulated heavy scene with slow and once
+            // (app/autotune.rs)
+            self.autotune_demo();
             // AURORA_DEMO_NIGHT_SKY: the chosen stars, at midnight
             if let Some((mode, _)) = crate::demo::night_sky::scenario() {
                 self.settings.night_sky = mode;
@@ -21436,6 +21656,10 @@ impl ApplicationHandler for App {
                     self.settings.night_sky_milky_way = milky_way;
                 }
                 self.settings.sync_night_sky();
+            }
+            // AURORA_DEMO_CLOUDS: the region's fixed sky, not a time of day
+            if crate::demo::clouds::scenario().is_some() {
+                self.panels.time_of_day = 0;
             }
             // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude
             if let Some(longitude) = crate::demo::night_sky::clock_longitude() {
@@ -22498,8 +22722,12 @@ impl ApplicationHandler for App {
                     || physics
                     || invisible_manipulation
                     || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let mapping =
+                    std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-mapping,") || v.starts_with("faces-texgen,"));
                 let mut events = if complex {
                     crate::demo::complex_face_selection_events()
+                } else if mapping {
+                    crate::demo::face_mapping_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
@@ -22510,6 +22738,24 @@ impl ApplicationHandler for App {
                                 if let Some(te) = object.texture_entry.as_mut() {
                                     for face in &mut std::sync::Arc::make_mut(te).faces {
                                         face.color[3] = 0.0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // faces-picker-multiple: the linkset is the agent's (its copy-only
+                // textures may be confirmed), the second prim wears another texture
+                if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-picker-multiple,")) {
+                    for event in &mut events {
+                        if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
+                            for object in objects.iter_mut().filter(|object| matches!(object.local_id, 99620 | 99621)) {
+                                object.update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+                            }
+                            for object in objects.iter_mut().filter(|object| object.local_id == 99621) {
+                                if let Some(te) = object.texture_entry.as_mut() {
+                                    for face in &mut std::sync::Arc::make_mut(te).faces {
+                                        face.texture = crate::demo::TEX_TILES;
                                     }
                                 }
                             }
@@ -22662,6 +22908,7 @@ impl ApplicationHandler for App {
                 let eye = self.world.agent.position + Vec3::new(0.0, 0.0, 2.5) - Vec3::new(dir.x, dir.y, 0.0) * 3.0;
                 self.camera
                     .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
+                self.demo_sky_view = Some((eye, eye + dir * 30.0));
             }
             // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
             if let Some(dir) = crate::demo::sky::view_direction()
@@ -22670,6 +22917,21 @@ impl ApplicationHandler for App {
                 let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
                 self.camera
                     .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
+                self.demo_sky_view = Some((eye, eye + dir * 30.0));
+            }
+            // AURORA_DEMO_CLOUDS: from behind the avatar, at the horizon
+            if let Some(dir) = crate::demo::clouds::view_direction()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
+                self.demo_sky_view = Some((eye, eye + dir * 30.0));
+            }
+            // (held only in an automated capture: a window left open is the
+            // user's to move)
+            if self.capture.is_none() {
+                self.demo_sky_view = None;
             }
             if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);
@@ -22733,7 +22995,10 @@ impl ApplicationHandler for App {
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 // showcase: the gallery's showcase with folders, pictures and favorites
-                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode" || view.starts_with("batch");
+                let showcase = matches!(view.as_str(), "showcase" | "showcase-hd")
+                    || view.starts_with("portrait")
+                    || view == "photo-mode"
+                    || view.starts_with("batch");
                 if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
@@ -22759,6 +23024,9 @@ impl ApplicationHandler for App {
                 if showcase {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     ui::appearance::demo_showcase(&mut self.world.inventory, &mut self.appearance_ui);
+                    if view == "showcase-hd" {
+                        self.demo_cached_outfit_portrait();
+                    }
                 }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
@@ -24164,7 +24432,11 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(s) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
                 if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
-                    g.renderer.apply_settings(self.settings.render_settings());
+                    g.renderer.apply_settings(crate::snapshot::light::render_settings(
+                        &self.settings,
+                        &self.snapshots.ui.light,
+                        self.panels.snapshot,
+                    ));
                 }
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
@@ -24175,7 +24447,11 @@ impl ApplicationHandler for App {
                 // the automatic world resolution before the Resized event that
                 // winit sends next.
                 if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
-                    g.renderer.apply_settings(self.settings.render_settings());
+                    g.renderer.apply_settings(crate::snapshot::light::render_settings(
+                        &self.settings,
+                        &self.snapshots.ui.light,
+                        self.panels.snapshot,
+                    ));
                 }
             }
             WindowEvent::Moved(_) => {
@@ -24828,6 +25104,36 @@ fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static
     mode.map_or("unknown", aurora_render::present::name)
 }
 
+/// Whether the camera has left a held view (eye and target): turned by more
+/// than about 2.5°. A movement reset swings it down to the avatar; the few
+/// millimetres the camera follows the avatar settling at arrival do not count.
+fn left_view(forward: Vec3, (eye, target): (Vec3, Vec3)) -> bool {
+    forward.dot((target - eye).normalize_or(Vec3::X)) < 0.999
+}
+
+impl App {
+    /// #3964: a sky scenario's capture keeps its camera until its last frame.
+    /// Movement input brings the camera back behind the avatar (resetView),
+    /// and keys reaching the window from elsewhere (another automation, a
+    /// stray press) did so in some runs, which then captured the avatar
+    /// instead of the sky.
+    fn hold_demo_sky_view(&mut self) {
+        let Some(view) = self.demo_sky_view else { return };
+        if self.capture.as_ref().is_none_or(|(frames, _)| frames.is_empty()) {
+            self.demo_sky_view = None;
+            return;
+        }
+        // (until the camera has computed a view, its direction is not one)
+        if self.camera.initialized() && left_view(self.camera.forward(), view) {
+            log::info!("demo sky view: the camera was moved before the capture; put back");
+            self.camera.set_view(view.0, view.1, &mut self.world.agent, &self.settings.camera);
+            // at once: the reset's own animation would otherwise pull it
+            // back over the next frames
+            self.camera.snap();
+        }
+    }
+}
+
 /// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
 /// separated, default 240), in frame order; with several frames each file is
 /// named `<name>-<frame>.<ext>`.
@@ -24890,6 +25196,18 @@ mod tests {
     use crate::keybinds::Mods;
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_clouds_stay_legacy_unless_asked() {
+        use super::clouds_choice;
+        assert!(!Settings::default().volumetric_clouds, "the Legacy layer is the default");
+        assert!(!clouds_choice(None, false, false));
+        assert!(clouds_choice(None, false, true), "the setting stands");
+        assert!(clouds_choice(None, true, false), "the demo scenario turns them on");
+        assert!(clouds_choice(Some("aurora"), false, false));
+        assert!(!clouds_choice(Some("legacy"), true, true), "before / after on the same sky");
+        assert!(clouds_choice(Some("other"), true, false), "an unknown value changes nothing");
+    }
 
     #[test]
     fn the_quit_prompt_answers_enter_and_escape_including_the_keypad() {
@@ -25434,6 +25752,21 @@ mod tests {
             }
         }
         assert_eq!(frame_cap(&capped, true, false, true, 144.0, false, Some(30)), 30.0);
+    }
+
+    #[test]
+    fn a_held_view_is_left_only_when_the_camera_turns() {
+        use glam::Vec3;
+        let view = (Vec3::new(129.0, 126.0, 35.0), Vec3::new(159.0, 126.0, 41.0));
+        let forward = (view.1 - view.0).normalize();
+        assert!(!super::left_view(forward, view));
+        // the reset behind the avatar after a key press (#3964): 12° up to
+        // 12° down
+        assert!(super::left_view(Vec3::new(0.97, 0.0, -0.22).normalize(), view));
+        assert!(super::left_view(Vec3::Y, view));
+        // a degree off is still the scenario's view
+        let one_degree = glam::Quat::from_rotation_z(1f32.to_radians()) * forward;
+        assert!(!super::left_view(one_degree, view));
     }
 
     #[test]

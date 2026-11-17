@@ -78,6 +78,7 @@ fn legacy_build_tabs_reuse_native_panels_and_ignore_hidden_aurora_sections() {
     for label in [
         aurora_i18n::tr!("rez-under-land-group"),
         aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        aurora_i18n::tr!("build-wheel-on-hover"),
     ] {
         assert!(
             texts.iter().any(|(text, _)| text == label),
@@ -141,6 +142,31 @@ fn legacy_build_radios_and_tool_buttons_follow_native_transitions() {
         !inspector.settings.edit_linked,
         "Align must use the native whole-linkset transition"
     );
+}
+
+/// #3648: the block above the tabs grew with the window's width, so a wide
+/// window pushed the tabs down and left their panel 30 points.
+#[test]
+fn legacy_build_tabs_keep_their_place_and_height_when_the_window_widens() {
+    let mut inspector = legacy();
+    let label = aurora_i18n::tr!("build-compact-general");
+    let mut measure = |width: f32| {
+        let (window, texts) = resize_inspector(&mut inspector, vec2(width, 820.0));
+        let tab = texts.iter().find(|(text, _)| text == label).unwrap().1;
+        let collapse = inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("legacy-build-collapse")))
+            .unwrap();
+        (tab.top() - window.top(), collapse.top() - tab.bottom())
+    };
+    let (narrow_top, narrow_body) = measure(400.0);
+    let (wide_top, wide_body) = measure(700.0);
+    let (wider_top, wider_body) = measure(1100.0);
+    assert!((wide_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wide_top}");
+    assert!((wide_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wide_body}");
+    assert!((wider_top - narrow_top).abs() <= 1.0, "tabs at {narrow_top} then {wider_top}");
+    assert!((wider_body - narrow_body).abs() <= 1.0, "body {narrow_body} then {wider_body}");
+    assert!(narrow_body > 300.0, "the tabs keep their room: {narrow_body}");
 }
 
 #[test]

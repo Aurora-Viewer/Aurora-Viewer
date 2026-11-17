@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod autotune;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
@@ -709,6 +710,13 @@ pub struct Settings {
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
+    /// Autotune, the Performance window's target frame rate
+    /// (settings/autotune.rs; off).
+    pub autotune: autotune::Config,
+    /// The user's draw distance and avatars in full while Autotune holds the
+    /// live ones: never saved, they are what is written in their place.
+    #[serde(skip)]
+    pub autotune_hold: Option<autotune::Hold>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -1689,6 +1697,11 @@ pub struct Settings {
     /// colour either way and only take the 0.7 curve, a little brighter. An
     /// experimental setting, off by default.
     pub colored_sky_ambient: bool,
+    /// Volumetric clouds (aurora-render `clouds.rs`) in the place of the
+    /// Legacy Viewer's flat cloud layer: Aurora (true) or Legacy. Off by
+    /// default until tried on modest GPUs, and left alone by the two buttons
+    /// of Preferences › Aurora, as the water effects once were.
+    pub volumetric_clouds: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1839,6 +1852,11 @@ pub struct Settings {
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
     pub no_neighbour_regions: bool,
+    /// Preferences › Network and cache › Proxy (the Legacy Viewer's
+    /// floater_preferences_proxy.xml): read at startup (`proxy.rs`), applied
+    /// at the next start. The SOCKS 5 user name and password are in the
+    /// credential store (`credentials::store_proxy`), never here.
+    pub proxy: aurora_proxy::ProxySettings,
     pub parcel_visibility: crate::world::parcel_visibility::Settings,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
@@ -1933,7 +1951,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 41;
+const SETTINGS_VERSION: u32 = 42;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2333,6 +2351,8 @@ impl Default for Settings {
             draw_distance_stepping: false,
             draw_distance_stepping_interval: 20,
             draw_stepping: None,
+            autotune: Default::default(),
+            autotune_hold: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -2685,6 +2705,7 @@ impl Default for Settings {
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
             colored_sky_ambient: false,
+            volumetric_clouds: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -2741,6 +2762,7 @@ impl Default for Settings {
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
+            proxy: Default::default(),
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
@@ -3436,6 +3458,13 @@ impl Settings {
         {
             self.chat_bar = if autohide { ChatBar::WhenTyping } else { ChatBar::Always };
         }
+        if self.settings_version < 42 {
+            // the Instant movement is still experimental, and "All in Aurora
+            // version" turned it on with the rest: every earlier file goes
+            // back once to the simulator's movement (Legacy), its row in
+            // Preferences › Aurora keeps Instant as a choice
+            self.predict_own_motion = false;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3454,6 +3483,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.autotune.sanitize();
         self.local_light_count = self.local_light_count.min(crate::scene::lights::MAX_LIGHTS as u32);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
@@ -3642,6 +3672,7 @@ impl Settings {
         }
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
+            changed |= toolbar.migrate_director_button();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
@@ -3710,6 +3741,11 @@ impl Settings {
         // the draw distance being stepped: the user's
         if let Some(steps) = copy.draw_stepping.take() {
             copy.draw_distance = steps.user;
+        }
+        // the values Autotune holds: the user's (after the two above, whose
+        // own values the hold leaves alone)
+        if let Some(hold) = copy.autotune_hold.take() {
+            hold.restore(&mut copy);
         }
         if !copy.remember_username {
             copy.username.clear();
@@ -4966,6 +5002,25 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    /// The Instant movement goes back to the simulator's once, on every
+    /// earlier file; chosen again afterwards, it stays.
+    #[test]
+    fn instant_movement_goes_back_to_legacy_once() {
+        for version in [9, 41] {
+            let file = serde_json::json!({ "settings_version": version, "predict_own_motion": true });
+            let migrated = serde_json::from_value::<Settings>(file).expect("load settings").sanitized();
+            assert!(!migrated.predict_own_motion, "version {version}");
+            assert_eq!(migrated.settings_version, SETTINGS_VERSION);
+        }
+        let chosen = Settings {
+            predict_own_motion: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&chosen).expect("save settings");
+        let reloaded = serde_json::from_str::<Settings>(&json).expect("reload settings").sanitized();
+        assert!(reloaded.predict_own_motion, "a choice made after the update stays");
     }
 
     #[test]

@@ -39,6 +39,7 @@ mod dev_toolbox;
 mod director;
 mod disk_io;
 mod dof;
+mod editor_sync;
 mod external_url;
 mod fast_hash;
 mod frame_par;
@@ -88,6 +89,7 @@ mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod pose_stand;
+mod proxy;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
@@ -162,6 +164,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     cli::get();
+    // the stochastic transparency's measurement switches that weaken it
+    // (AURORA_ST_GUARDS) are read by development builds alone
+    aurora_render::oit_stochastic::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
     // without a window: before the crash watcher, the logs and the link
     // hand-off
     if cli::get().uninstall {
@@ -191,6 +196,9 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // Preferences › Network › Proxy: before the first connection of the
+    // viewer (LLStartUp::startLLProxy, at startup)
+    proxy::install(&settings::Settings::load().proxy);
     splash::settings();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers

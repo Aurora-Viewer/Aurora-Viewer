@@ -476,6 +476,9 @@ pub struct World {
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
+    /// Objects' Debug and OwnerSay lines for the editor sync's run-time
+    /// events (`crate::editor_sync`).
+    pub editor_sync_chat: crate::editor_sync::ChatTap,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
     /// Session-only UI readback of the active avatar follow.
@@ -974,6 +977,7 @@ impl World {
             import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
+            editor_sync_chat: Default::default(),
             sun: None,
             agent: AgentState::default(),
             following_avatar: None,
@@ -4819,6 +4823,9 @@ impl World {
         if !self.omnifilter_chat(&mut c) {
             return;
         }
+        // forwardChatToIDE, where processChat sends it: after the filters,
+        // before the debug window takes its lines
+        self.editor_sync_chat.offer(&c);
         if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
@@ -5912,7 +5919,8 @@ impl World {
                     let from = self.social.name_of(&id);
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
-                self.system_notice(n, notice_topics::Topic::People);
+                // the name is a link to the resident (social::online_chat_line)
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
             }
         }
     }

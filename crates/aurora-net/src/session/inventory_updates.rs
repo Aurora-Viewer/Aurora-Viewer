@@ -373,7 +373,7 @@ mod tests {
         let mut session = Session {
             asset_imports: Default::default(),
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(address, sim)].into(),
             main: Some(address),
@@ -395,6 +395,7 @@ mod tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,

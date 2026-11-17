@@ -102,6 +102,7 @@ pub mod object_actions;
 pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
+pub mod panorama;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -178,6 +179,9 @@ pub struct Panels {
     pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -193,6 +197,9 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    /// Inventory's dual-panel layout (`InventoryPreferences::dual_panel`,
+    /// saved by the app when it changes).
+    pub inventory_dual: bool,
     pub texture_library: bool,
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
@@ -280,6 +287,7 @@ impl Panels {
             group_titles: false,
             wearable_favorites: false,
             snapshot: false,
+            snapshot_pano: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
@@ -291,6 +299,7 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            inventory_dual: settings.inventory.dual_panel,
             texture_library: false,
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,

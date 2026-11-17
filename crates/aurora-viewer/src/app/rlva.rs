@@ -323,6 +323,17 @@ impl App {
                     "both" => "@setcam_avdistmax:7=n,setcam_origindistmin:7.2=n".to_owned(),
                     _ => "@setcam_origindistmin:6=n".to_owned(),
                 }
+            } else if matches!(scenario, "offset-zoom" | "no-mouselook" | "avatar-zoom") {
+                // the avatar's own view, with nothing over it
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                match scenario {
+                    // 1.5 times a 6.08 m offset: 9.12 m behind the avatar
+                    "offset-zoom" => "@setcam_eyeoffset:-6/0/1=n,setcam_eyeoffsetscale:1.5=n".to_owned(),
+                    "no-mouselook" => "@camdistmin:1=n".to_owned(),
+                    _ => "@camdistmax:5=n".to_owned(),
+                }
             } else if let Some(run) = scenario.strip_prefix("run-") {
                 self.panels.settings = false;
                 match run {
@@ -546,6 +557,42 @@ impl App {
                     self.camera.zoom_fraction()
                 );
             }
+        }
+        if mode == "offset-zoom" {
+            // four wheel clicks out, then four back in, through the window's
+            // own wheel path (#3372)
+            match self.frame_count {
+                n @ 740..=776 if n % 12 == 8 => self.camera_wheel(1.0),
+                n @ 800..=836 if n % 12 == 8 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if mode == "no-mouselook" {
+            // the M key, then the wheel all the way in (#3357)
+            match self.frame_count {
+                740 => self.toggle_mouselook(),
+                n @ 752..=860 if n % 6 == 2 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if mode == "avatar-zoom" {
+            // four wheel clicks out, two of them past the limit, then one
+            // back in (#3356)
+            match self.frame_count {
+                n @ 740..=776 if n % 12 == 8 => self.camera_wheel(1.0),
+                800 => self.camera_wheel(-1.0),
+                _ => {}
+            }
+        }
+        if matches!(mode.as_str(), "offset-zoom" | "no-mouselook" | "avatar-zoom") && matches!(self.frame_count, 730 | 741 | 790 | 880) {
+            log::info!(
+                "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to avatar {:.3} m, mouselook={}, cursor held={}",
+                self.frame_count,
+                self.camera.position.distance(self.camera.target),
+                self.camera.position.distance(self.world.agent.position),
+                self.camera.mouselook(),
+                self.cursor_hold.held()
+            );
         }
         if mode.starts_with("run-") {
             // A double tap through the real input path, held until frame 750;
@@ -984,19 +1031,18 @@ impl App {
                 continue;
             }
             match c.behaviour.as_str() {
-                "setcam_mode" => match c.option.as_str() {
-                    "mouselook"
-                        if self.world.rlva.camera_value("setcam_mouselook").is_none()
-                            && self.world.rlva.camera_limit("setcam_avdistmin", 0.0, true) <= 0.0 =>
-                    {
-                        self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true)
+                "setcam_mode" => {
+                    self.camera.read_rlva(&self.world.rlva);
+                    match c.option.as_str() {
+                        // (refused by the camera where RLVa forbids mouselook)
+                        "mouselook" => self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true),
+                        "thirdperson" | "thirdview" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
+                        "reset" | "" => self
+                            .camera
+                            .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
+                        _ => {}
                     }
-                    "thirdperson" | "thirdview" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
-                    "reset" | "" => self
-                        .camera
-                        .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
-                    _ => {}
-                },
+                }
                 "setcam_focus" => {
                     let Some(request) = FocusRequest::parse(&c.option) else {
                         continue;
