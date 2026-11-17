@@ -3480,3 +3480,58 @@ fn gift_and_holiday_shelves_of_deliveries_open() {
         assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
     }
 }
+
+/// Audit 47: an occasion beside a kind names one product, its colours its
+/// versions.
+#[test]
+fn an_occasion_product_keeps_its_colour_versions() {
+    let none = HashSet::new();
+    for (name, subs) in [
+        ("Christmas Sweater", ["Christmas Sweater Black", "Christmas Sweater Red"]),
+        ("Winter Boots", ["Winter Boots Black", "Winter Boots Brown"]),
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, sub, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(
+            ![901, 902, 950, 951].iter().any(|n| moved.contains(&id(*n))),
+            "{name} is never opened"
+        );
+    }
+}
+
+/// Audit 47: a product repeating its whole name, or its shelf word first,
+/// in each part keeps them whole.
+#[test]
+fn products_repeating_their_name_or_shelf_word_stay_whole() {
+    let none = HashSet::new();
+    let layouts: [(&str, [&str; 2]); 5] = [
+        ("Christmas Sweater", ["Christmas Sweater Reindeer Top", "Christmas Sweater HUD"]),
+        (
+            "Halloween Costume",
+            ["Halloween Costume Witch Hat", "Halloween Costume Witch Dress"],
+        ),
+        ("Gift Starlight Outfit", ["Gift Starlight Top", "Gift Starlight Witch Hat"]),
+        ("Easter Bunny Ears", ["Easter Bunny Ears HUD", "Easter Bunny Ears Rigged"]),
+        ("Xmas Pajamas", ["Xmas Pajamas Maitreya", "Xmas Pajamas HUD"]),
+    ];
+    for (name, subs) in layouts {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, sub, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(
+            ![901, 902, 950, 951].iter().any(|n| moved.contains(&id(*n))),
+            "{name} is never opened"
+        );
+    }
+}

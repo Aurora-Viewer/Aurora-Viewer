@@ -1771,7 +1771,7 @@ fn brand_first(inv: &Inventory, f: &super::Folder, name: &str) -> bool {
 
 /// Kinds sold as one product though written as many (`Winter Boots`): an
 /// occasion beside them still names a product.
-const SOLD_AS_MANY: [&str; 14] = [
+const SOLD_AS_MANY: [&str; 16] = [
     "shoes",
     "boots",
     "heels",
@@ -1786,6 +1786,8 @@ const SOLD_AS_MANY: [&str; 14] = [
     "leggings",
     "gloves",
     "earrings",
+    "ears",
+    "pajamas",
 ];
 
 /// Kinds with no plural (`Hair`, `Makeup`): never one thing named.
@@ -2132,11 +2134,23 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
     // subfolder starting with one counts: `Group Gifts` holding `Kira
     // GROUP GIFT Boots`, `Christmas` holding `Kira Christmas Dress` are
     // shelves of other stores' deliveries)
+    // (an occasion stays one beside a kind: `Christmas Sweater` holding
+    // `Christmas Sweater Black` is one product)
+    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
+    let kind_named = words(name)
+        .iter()
+        .any(|w| VOCABULARY.categories.iter().any(|(_, keys)| keys.iter().any(|k| k == w)));
     let own: Vec<String> = product_words(name)
         .into_iter()
-        .filter(|w| !OCCASION_WORDS.contains(&w.as_str()))
+        .filter(|w| !(OCCASION_WORDS.contains(&w.as_str()) && (shelf_named || !kind_named)))
         .collect();
-    let shelf_named = words(name).iter().any(|w| SHELF_WORDS.contains(&w.as_str()));
+    // (a subfolder repeating the whole name, `Christmas Sweater HUD`, is a
+    // version even when an occasion is the name's only word of its own)
+    let name_words = words(name);
+    let whole_name = name_words.len() >= 2
+        && name_words
+            .iter()
+            .any(|w| !OCCASION_WORDS.contains(&w.as_str()) && !SHELF_WORDS.contains(&w.as_str()) && !w.chars().all(|c| c.is_ascii_digit()));
     let mut versions = false;
     // the subfolders named only for a kind: one thing each (`Top`, `Head`,
     // `Shape`) are a delivery's parts; all of them plural (`Heads`,
@@ -2149,11 +2163,16 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
+        // (beside a shelf word, the subfolder's first word past shelf and
+        // occasion words: `Gift Starlight Top` under `Gift Starlight Outfit`)
+        let lead = sub_words
+            .iter()
+            .find(|w| !SHELF_WORDS.contains(&w.as_str()) && !OCCASION_WORDS.contains(&w.as_str()));
         let named_again = if shelf_named {
-            sub_words.first().is_some_and(|w| own.contains(w))
+            lead.is_some_and(|w| own.contains(w))
         } else {
             sub_words.iter().any(|w| own.contains(w))
-        };
+        } || whole_name && sub_words.starts_with(&name_words);
         // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
         // (a skin's tones too: `Light`, `Tan`, `Dark`)
         let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
