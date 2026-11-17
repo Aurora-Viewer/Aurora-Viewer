@@ -203,6 +203,28 @@ mod bus {
             log::warn!("startup links: name not released ({e})");
         }
     }
+
+    // TEMPORARY (reproduction of the CI failures, removed before the merge):
+    // the old way (`lazy`, `object_server().at` on a built connection) and
+    // the new one (the builder's `serve_at`), without the OWNER static.
+    #[cfg(test)]
+    pub(super) fn listen_repro(name: &str, lazy: bool) -> Option<(Receiver<String>, Connection)> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let bus = if lazy {
+            let bus = Connection::session().ok()?;
+            bus.object_server().at(PATH, Links(tx)).ok()?;
+            bus
+        } else {
+            zbus::blocking::connection::Builder::session()
+                .and_then(|b| b.serve_at(PATH, Links(tx)))
+                .and_then(|b| b.build())
+                .ok()?
+        };
+        match bus.request_name_with_flags(name, RequestNameFlags::DoNotQueue.into()) {
+            Ok(RequestNameReply::PrimaryOwner) => Some((rx, bus)),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -247,5 +269,37 @@ mod tests {
         assert!(!hand_off(&name));
         assert!(listen_as(name).is_some(), "the name is free again");
         release();
+    }
+
+    /// TEMPORARY (reproduction, removed before the merge): `REPRO_MODE`
+    /// lazy or builder, `REPRO_ITER` rounds of listen + one hand-over.
+    #[test]
+    #[ignore]
+    fn repro_handoff_loop() {
+        use super::bus::{hand_off_to, listen_repro, name_for};
+        let lazy = std::env::var("REPRO_MODE").as_deref() == Ok("lazy");
+        let iter: u32 = std::env::var("REPRO_ITER").ok().and_then(|n| n.parse().ok()).unwrap_or(100);
+        let url = "secondlife://Test%20Region/128/128/20";
+        let (mut fail, mut slowest) = (0u32, std::time::Duration::ZERO);
+        for i in 0..iter {
+            let name = name_for(false, Some(&format!("repro-{}-{i}", std::process::id())));
+            let Some((rx, bus)) = listen_repro(&name, lazy) else {
+                panic!("listen failed at round {i}");
+            };
+            let start = std::time::Instant::now();
+            let ok = hand_off_to(&name, url, std::time::Duration::from_secs(5)) && rx.try_recv().as_deref() == Ok(url);
+            if ok {
+                slowest = slowest.max(start.elapsed());
+            } else {
+                fail += 1;
+                eprintln!("REPRO round {i} failed after {:?}", start.elapsed());
+            }
+            drop(bus);
+        }
+        println!(
+            "REPRO mode={} iter={iter} fail={fail} slowest_ok_ms={}",
+            if lazy { "lazy" } else { "builder" },
+            slowest.as_millis()
+        );
     }
 }
