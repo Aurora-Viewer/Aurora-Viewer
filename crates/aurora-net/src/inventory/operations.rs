@@ -795,8 +795,6 @@ where
             // a read the server did not answer (busy, throttled): the next
             // attempt waits longer, never hammering it
             let refused = !read_items.failed.is_empty() || read_folders.len() < moved.len();
-            // an entry deleted meanwhile has nothing left to confirm
-            let gone: std::collections::HashSet<Uuid> = read_items.missing.iter().copied().collect();
             for it in read_items.items {
                 item_records.insert(it.id, it);
             }
@@ -807,7 +805,7 @@ where
                 *omitted.entry(*id).or_default() += 1;
             }
             // only what is not placed yet is read again
-            items.retain(|id| !gone.contains(id) && item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));
+            items.retain(|id| item_records.get(id).is_none_or(|it| Some(&it.parent) != wanted.get(id)));
             moved.retain(|id| folder_records.get(id).is_none_or(|f| Some(&f.parent) != wanted.get(id)));
             given_up.extend(items.iter().copied().filter(|id| omitted.get(id).is_some_and(|n| *n >= 2)));
             items.retain(|id| omitted.get(id).is_none_or(|n| *n < 2));
