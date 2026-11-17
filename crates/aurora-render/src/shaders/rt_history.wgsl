@@ -54,3 +54,18 @@ fn back_of(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> Back {
     }
     return b;
 }
+
+// The denoiser's guide of a pixel (rt_denoise.wgsl): its normal in two
+// numbers (octahedral, `unpack_normal` there), its distance from the eye,
+// and the second moment of its luminance.
+fn pack_normal(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    if (n.z >= 0.0) {
+        return p;
+    }
+    return (vec2<f32>(1.0) - abs(p.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+}
+
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
