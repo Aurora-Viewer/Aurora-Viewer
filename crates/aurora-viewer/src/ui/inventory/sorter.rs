@@ -641,6 +641,9 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
         job.failed = sorter::purge::entries_below(inv, job.folder);
         st.sorter.status = if job.refused_in_row >= PURGE_REFUSALS {
             aurora_i18n::tr!("inventory-purge-refused", count = job.done, failed = job.failed)
+        } else if job.stopping {
+            // (stopped by the user, or its window closed while paused)
+            aurora_i18n::tr!("inventory-purge-stopped", count = job.done, failed = job.failed)
         } else {
             aurora_i18n::tr!("inventory-purge-done", count = job.done, failed = job.failed)
         };
@@ -676,7 +679,10 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
                     // since may have moved or changed it)
                     .filter(|id| {
                         // (the folder being emptied excepted: one over the
-                        // server's limit gives up what is known of it)
+                        // server's limit gives up what is known of it, which
+                        // is current: its cached contents are used only when
+                        // its version is the server's at login, so an item
+                        // taken out of it elsewhere is never listed there)
                         inv.items
                             .get(id)
                             .is_some_and(|it| it.parent == root || !sorter::purge::blind(inv, it.parent))

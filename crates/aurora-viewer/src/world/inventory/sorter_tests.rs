@@ -4094,6 +4094,8 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         ("[Ink Tattoo] Ada Choker", Category::Tattoos),
         ("[Moon Hair] Top Knot", Category::Hair),
         ("[Moon Hair] Ada - Henna", Category::Hair),
+        ("Christmas Tree Poses", Category::Animations),
+        ("Flag HUD", Category::Huds),
     ] {
         assert!(path(name).contains(category.folder()), "{name}: {}", path(name));
     }

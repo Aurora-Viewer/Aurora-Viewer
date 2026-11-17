@@ -14463,6 +14463,7 @@ inventory-purge-progress = 完全に削除中：{ $done } / { $total }
 inventory-purge-done = { $count } 個を完全に削除、{ $failed } 個が残っています（拒否された、または読み込めなかったフォルダ内）。
 inventory-purge-unreadable = { $folder } を読み込めませんでした。後でもう一度お試しください
 inventory-purge-refused = サーバーが20回続けて拒否したため停止しました（{ $count } 個を完全に削除、{ $failed } 個が残っています）。後でもう一度お試しください。
+inventory-purge-stopped = 停止しました：{ $count } 個を完全に削除、{ $failed } 個が残っています。
 inventory-purge-worn = { $folder } に着用中のアイテムがあります。先に外してください。
 inventory-cleanup-locked = ロックされた既定フォルダ（服、身体部位など）の { $count } 個のアイテムは確認されません。
 inventory-cleanup-locked-options = オプションで解除

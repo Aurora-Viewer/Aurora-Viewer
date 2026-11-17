@@ -761,6 +761,14 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     // Costume`, `Flag Outfit`, is an outfit; a name that says decor stays)
     let category = match category {
         Some(Category::Decor) if !has(&words, "decor") && (has(&words, "costume") || has(&words, "outfit")) => Some(Category::Outfits),
+        // (poses or a HUD named for a decor thing, `Christmas Tree Poses`,
+        // `Flag HUD`, are poses or a HUD; a name that says decor stays)
+        Some(Category::Decor) if !has(&words, "decor") => VOCABULARY
+            .categories
+            .iter()
+            .find(|(c, keys)| matches!(c, Category::Animations | Category::Huds) && keys.iter().any(|k| has(&words, k)))
+            .map(|(c, _)| *c)
+            .or(category),
         other => other,
     };
     // (a head's skin: `Ruellia Lel Evo X Tone Rose`, `Mavis / Ghost / No
