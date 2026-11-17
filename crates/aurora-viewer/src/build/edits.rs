@@ -429,7 +429,12 @@ impl BuildTool {
 
     /// Physics shape type and material values of every selected prim you
     /// can modify (selectionSetPhysicsType etc.: ObjectFlagUpdate with
-    /// ExtraPhysics, the flags unchanged).
+    /// ExtraPhysics, the flags unchanged). Physical, temporary and phantom
+    /// belong to the whole object, and the simulator applies the message's
+    /// flags to the whole linkset: they are read from the root, which
+    /// `set_flags` keeps up to date. A child's own copy can be stale (the
+    /// Legacy Viewer sets the flag on every selected prim), and sending it
+    /// turned Physics off for the linkset.
     pub fn set_physics(&mut self, world: &World, change: impl Fn(&mut PhysicsParams)) {
         for idx in self.sel_prims(world) {
             if !self.can_modify(world, idx) {
@@ -442,7 +447,12 @@ impl BuildTool {
             change(p);
             p.shape_type = physics_shape_for(is_root, shape, p.shape_type);
             let params = *p;
-            let f = o.update_flags;
+            let root = if is_root {
+                o
+            } else {
+                world.objects.get(super::root_of(world, idx)).unwrap_or(o)
+            };
+            let f = root.update_flags;
             self.send(BuildCmd::SetPhysicsParams {
                 handle: o.key.region,
                 local_id: o.key.local_id,
@@ -806,6 +816,34 @@ mod tests {
         tool.set_click_action(&mut world, CLICK_ACTION_SIT);
         assert!(tool.out.is_empty(), "pending General edits must recheck revoked rights");
         assert!(!tool.can_modify(&world, usize::MAX));
+    }
+
+    #[test]
+    fn a_child_physics_shape_keeps_the_linkset_physical() {
+        let (mut world, mut tool, prims) = color_world();
+        let (root, child) = (prims[0], prims[1]);
+        let parent = world.objects.get(root).unwrap().key.local_id;
+        world.objects.get_mut(child).unwrap().parent_id = parent;
+        tool.selection = vec![world.objects.get(root).unwrap().key];
+        tool.set_flags(&mut world, Some(true), None, Some(true));
+        // the child's own copy has not caught up with the root yet
+        let child_flags = world.objects.get(child).unwrap().update_flags;
+        assert_eq!(child_flags & (FLAGS_USE_PHYSICS | FLAGS_PHANTOM), 0);
+        tool.selection = vec![world.objects.get(child).unwrap().key];
+        tool.selection_linked = true;
+        tool.out.clear();
+        tool.set_physics(&world, |x| x.shape_type = PHYSICS_SHAPE_NONE);
+        let sent: Vec<_> = tool
+            .out
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::Build(BuildCmd::SetPhysicsParams {
+                    physics, phantom, params, ..
+                }) => Some((*physics, *phantom, params.shape_type)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, [(true, true, PHYSICS_SHAPE_NONE)], "the root's flags, the child's shape");
     }
 
     #[test]
