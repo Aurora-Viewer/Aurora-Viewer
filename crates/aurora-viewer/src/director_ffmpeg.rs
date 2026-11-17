@@ -12,7 +12,6 @@
 
 use aurora_updater::ffmpeg_pack::{self, Published};
 use aurora_updater::{Cancel, Failure, Progress, feed::Source};
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// `%NAME%` replaced by the variable's value (as Windows writes the
@@ -101,7 +100,7 @@ fn system_paths() -> Vec<PathBuf> {
         .flatten()
         .flat_map(|path| {
             let path = expand(&path, |name| std::env::var(name).ok());
-            std::env::split_paths(&OsString::from(path)).collect::<Vec<_>>()
+            std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>()
         })
         .collect()
 }
