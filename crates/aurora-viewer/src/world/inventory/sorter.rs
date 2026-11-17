@@ -1683,6 +1683,37 @@ fn delivery_mark(name: &str) -> Option<Mark> {
     if version_tag(name) {
         return Some(Mark::Strong);
     }
+    // a hunt's numbered prize (`THF14 025 of 110 Brindle`), or one gift or
+    // prize beside a name of its own (`Gift from Brindle`, `Brindle March
+    // Group Gift`, `Easter Basket (hunt item)`): one creator's delivery;
+    // `Gifts`, `Hunt Prizes` stay the user's shelves
+    let numbered = name_words.windows(3).any(|w| {
+        w[1] == "of"
+            && [&w[0], &w[2]]
+                .iter()
+                .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    if numbered {
+        return Some(Mark::Strong);
+    }
+    const ONE_GIFT: [&str; 4] = ["gift", "prize", "reward", "item"];
+    const MANY_GIFTS: [&str; 4] = ["gifts", "prizes", "rewards", "items"];
+    let one_gift =
+        name_words.iter().any(|w| ONE_GIFT[..3].contains(&w.as_str())) || name_words.windows(2).any(|w| w[0] == "hunt" && w[1] == "item");
+    if one_gift
+        && !name_words.iter().any(|w| MANY_GIFTS.contains(&w.as_str()))
+        && name_words.iter().any(|w| {
+            w.chars().count() >= 3
+                && !w.chars().all(|c| c.is_ascii_digit())
+                && !ONE_GIFT.contains(&w.as_str())
+                && !SHELF_WORDS.contains(&w.as_str())
+                && !SHELF_MARKERS.contains(&w.as_str())
+                && !OCCASION_WORDS.contains(&w.as_str())
+                && !matches!(w.as_str(), "from" | "for" | "the" | "group" | "free")
+        })
+    {
+        return Some(Mark::Strong);
+    }
     // (`Brindle Old Milk Cans Unboxed`: the unpacker's own word after a
     // product's name; `Unboxed Items`, `Unpacked Stuff` stay piles)
     if let Some((last, rest)) = name_words.split_last()

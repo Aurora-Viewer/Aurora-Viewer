@@ -3606,3 +3606,21 @@ fn colour_shelves_demo_piles_and_display_pieces() {
     assert_eq!(classify("Shoe Rack", 6, 0).category, Some(Category::Furniture));
     assert_eq!(classify("Tattoo Chair", 6, 0).category, Some(Category::Furniture));
 }
+
+/// A real inventory of hunt prizes and gifts: a numbered hunt prize, a gift
+/// from a store and a store's group gift are deliveries; shelves of gifts
+/// and prizes stay shelves.
+#[test]
+fn hunt_prizes_and_gifts_from_a_store_stay_whole() {
+    for name in [
+        "THF14 025 of 110 Brindle Designs",
+        "Gift from Zephyr Works",
+        "Quillon March 2025 Group Gift",
+        "Easter Basket (hunt item)",
+    ] {
+        assert_eq!(delivery_mark(name), Some(Mark::Strong), "{name}");
+    }
+    for name in ["Gifts", "Hunt Prizes", "Group Gifts 2024", "Hunt Gift", "Free Gift"] {
+        assert_ne!(delivery_mark(name), Some(Mark::Strong), "{name}");
+    }
+}
