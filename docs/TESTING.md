@@ -6434,6 +6434,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
+| `AURORA_DEMO_PHOTOTOOLS=env\|general` | Opens the Phototools window (toolbar `phototools`) on a tab |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6891,6 +6892,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
+- **`AURORA_DEMO_PHOTOTOOLS=env|general`**: opens Phototools at the first
+  frame, as the toolbar's button does, on the Environment tab (`env`, also the
+  default) or the General one. Environment, as sections that fold: Environment
+  settings (the Sky, Water and Day/Night lists, Personal lighting, Pause
+  clouds, greyed while the photo window is closed), Quick environments (four
+  times of day, the shared environment), Environment presets (three "New"
+  buttons), Reflections (SSR, mirrors, probes, probe range). General: General
+  render settings (draw distance to exposure), Render options, Quality
+  (anti-aliasing to avatar display). Each row is the Preferences row: a change
+  in one shows in the other, and a modified row has its dot. Compare with
+  Preferences › Graphics for ranges and help.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
