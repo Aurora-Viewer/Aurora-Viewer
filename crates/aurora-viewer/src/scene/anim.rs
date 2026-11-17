@@ -700,6 +700,8 @@ struct Procedural {
     eyes: Fade,
     torso: Quat,
     last_head: Quat,
+    /// `natural_reach`, eased (REACH_BACK / REACH_AWAY_HALF_LIFE).
+    reach: f32,
     jitter_at: Option<Instant>,
     jitter_time: f32,
     jitter_yaw: f32,
@@ -723,6 +725,7 @@ impl Default for Procedural {
             eyes: Fade::default(),
             torso: Quat::IDENTITY,
             last_head: Quat::IDENTITY,
+            reach: 1.0,
             jitter_at: None,
             jitter_time: 0.0,
             jitter_yaw: 0.0,
@@ -810,7 +813,6 @@ fn interpolant(dt: f32, half_life: f32) -> f32 {
     (1.0 - 2f32.powf(-dt / half_life)).clamp(0.0, 1.0)
 }
 
-/// LLQuaternion::constrain: limit a rotation to `angle`.
 /// How far a look-at target, as a rotation from the chest (`rel`), is
 /// within a natural turn of the neck: 1 up to `NATURAL_REACH.0` off the
 /// chest's front, 0 from `NATURAL_REACH.1` on, smooth between. Aurora's own,
@@ -827,7 +829,16 @@ fn natural_reach(rel: Quat) -> f32 {
 /// Degrees off the chest's front where the look over the animations starts
 /// to give up, and where it has (`natural_reach`).
 const NATURAL_REACH: (f32, f32) = (70.0, 110.0);
+/// Over the animations, how fast the head takes the target back as it
+/// comes into reach and gives it up as it leaves (half-lives, s): a body
+/// that turns quickly would otherwise snap the head round with it.
+const REACH_BACK_HALF_LIFE: f32 = 0.35;
+const REACH_AWAY_HALF_LIFE: f32 = 0.15;
+/// Over the animations, the head's lag behind its target (half-life, s):
+/// a deliberate look at the lens, gentler than HEAD_LOOKAT_LAG_HALF_LIFE.
+const OVER_HEAD_LAG_HALF_LIFE: f32 = 0.3;
 
+/// LLQuaternion::constrain: limit a rotation to `angle`.
 fn constrain(q: Quat, angle: f32) -> Quat {
     let q = if q.w < 0.0 { -q } else { q };
     let c = (angle * 0.5).cos();
@@ -1106,14 +1117,29 @@ impl Controller {
             let head_local = match chest_rot {
                 Some(chest) => {
                     let rel = chest.inverse() * target;
-                    reach = natural_reach(rel);
+                    let wanted = natural_reach(rel);
+                    let half_life = if wanted > pr.reach {
+                        REACH_BACK_HALF_LIFE
+                    } else {
+                        REACH_AWAY_HALF_LIFE
+                    };
+                    pr.reach += (wanted - pr.reach) * interpolant(dt, half_life);
+                    reach = pr.reach;
                     chest * constrain(rel, HEAD_ROTATION_CONSTRAINT)
                 }
-                None => constrain(target, HEAD_ROTATION_CONSTRAINT),
+                None => {
+                    pr.reach = 1.0;
+                    constrain(target, HEAD_ROTATION_CONSTRAINT)
+                }
             };
             let torso_target = nlerp(TORSO_LAG, Quat::IDENTITY, head_local);
             pr.torso = nlerp(interpolant(dt, TORSO_LOOKAT_LAG_HALF_LIFE), pr.torso, torso_target);
-            pr.last_head = nlerp(interpolant(dt, HEAD_LOOKAT_LAG_HALF_LIFE), pr.last_head, head_local);
+            let lag = if chest_rot.is_some() {
+                OVER_HEAD_LAG_HALF_LIFE
+            } else {
+                HEAD_LOOKAT_LAG_HALF_LIFE
+            };
+            pr.last_head = nlerp(interpolant(dt, lag), pr.last_head, head_local);
             if let Some(t) = j.torso {
                 out.push((t, MEDIUM_PRIORITY, head_w, pr.torso, false));
             }
