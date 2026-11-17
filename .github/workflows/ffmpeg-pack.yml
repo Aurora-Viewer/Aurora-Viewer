@@ -1,0 +1,222 @@
+name: FFmpeg pack
+
+# Builds the ffmpeg pack the Director records its films with, one archive
+# per system, from the pinned sources of scripts/ffmpeg-pack.sh: ffmpeg
+# under the GPL version 3 with x264, libvpx and libopus, linked statically
+# (no nonfree code). Each archive is checked on its own system (every
+# encoder the Director asks for, a short film in each format, read back).
+# - Windows x64: cross-built with MinGW-w64 on Linux, checked on Windows;
+# - Linux x64: a static executable;
+# - macOS universal: built on an Apple and an Intel Mac, joined by lipo,
+#   signed ad hoc.
+# Runs on a pull request that changes the pack (built and checked, nothing
+# published), or by hand. With "publish", from main, the archives and the
+# corresponding source go to the release ffmpeg-<PACK_VERSION>, whose size
+# and SHA-256 the viewer then pins per system (aurora-updater
+# ffmpeg_pack.rs, PACK). A pack is never replaced: viewers pin its archive.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the archives as the release ffmpeg-<PACK_VERSION>
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/ffmpeg-pack.yml
+      - scripts/ffmpeg-pack.sh
+
+permissions:
+  contents: read
+
+env:
+  PACK_VERSION: '1'
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm zlib1g-dev cmake pkg-config zip
+      - name: Sources
+        run: bash scripts/ffmpeg-pack.sh fetch src
+      - name: Build
+        run: bash scripts/ffmpeg-pack.sh build linux-x64 src work
+      - name: Static
+        run: |
+          file work/prefix/bin/ffmpeg
+          if ldd work/prefix/bin/ffmpeg 2>/dev/null | grep -q '=>'; then echo 'ffmpeg links shared libraries'; exit 1; fi
+      - name: Check
+        run: bash scripts/ffmpeg-pack.sh verify work/prefix/bin/ffmpeg check
+      - name: Package
+        run: |
+          bash scripts/ffmpeg-pack.sh package linux-x64 work/prefix/bin/ffmpeg src out "$PACK_VERSION"
+          bash scripts/ffmpeg-pack.sh source src out "$PACK_VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-linux
+          path: |
+            out/*.zip
+            out/*.zip.sha256
+            out/*-source.tar.gz
+          compression-level: 0
+
+  windows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm mingw-w64 libz-mingw-w64-dev cmake pkg-config zip
+      - name: Sources
+        run: bash scripts/ffmpeg-pack.sh fetch src
+      - name: Build
+        run: bash scripts/ffmpeg-pack.sh build windows-x64 src work
+      - name: Package
+        run: bash scripts/ffmpeg-pack.sh package windows-x64 work/prefix/bin/ffmpeg.exe src out "$PACK_VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-windows
+          path: |
+            out/*.zip
+            out/*.zip.sha256
+          compression-level: 0
+
+  # the Windows archive as a viewer gets it: unpacked and run on Windows
+  windows-check:
+    needs: windows
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-windows
+          path: out
+      - name: Unpack
+        shell: pwsh
+        run: Expand-Archive -LiteralPath "out/Aurora-FFmpeg-$env:PACK_VERSION-windows-x64.zip" -DestinationPath unpacked
+      # no DLL of MinGW beside it: everything it needs is in Windows
+      - name: Check
+        shell: bash
+        run: |
+          exe="unpacked/Aurora-FFmpeg-$PACK_VERSION-windows-x64/bin/ffmpeg.exe"
+          bash scripts/ffmpeg-pack.sh verify "$exe" check
+          "$exe" -hide_banner -encoders | grep -E ' h264_mf ' || echo 'no Media Foundation H.264 encoder'
+
+  macos:
+    strategy:
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+          - target: macos-x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tools
+        run: brew install bash nasm pkgconf
+      - name: Sources
+        run: $(brew --prefix)/bin/bash scripts/ffmpeg-pack.sh fetch src
+      - name: Build
+        run: $(brew --prefix)/bin/bash scripts/ffmpeg-pack.sh build ${{ matrix.target }} src work
+      # only the system's libraries and frameworks
+      - name: Links
+        run: |
+          otool -L work/prefix/bin/ffmpeg
+          if otool -L work/prefix/bin/ffmpeg | tail -n +2 | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
+            echo 'ffmpeg links a library outside the system'; exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-${{ matrix.target }}
+          path: work/prefix/bin/ffmpeg
+
+  macos-universal:
+    needs: macos
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ffmpeg-macos-*
+      - name: Tools
+        run: brew install bash
+      # the licence files come from the same pinned sources
+      - name: Sources
+        run: $(brew --prefix)/bin/bash scripts/ffmpeg-pack.sh fetch src
+      - name: Join and sign
+        run: |
+          lipo -create ffmpeg-macos-arm64/ffmpeg ffmpeg-macos-x64/ffmpeg -output ffmpeg
+          lipo -verify_arch ffmpeg arm64 x86_64
+          codesign --force --sign - ffmpeg
+          codesign --verify ffmpeg
+          chmod 755 ffmpeg
+      - name: Check
+        run: $(brew --prefix)/bin/bash scripts/ffmpeg-pack.sh verify ./ffmpeg check
+      - name: Package
+        run: $(brew --prefix)/bin/bash scripts/ffmpeg-pack.sh package macos-universal ./ffmpeg src out "$PACK_VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-macos
+          path: |
+            out/*.zip
+            out/*.zip.sha256
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: [linux, windows-check, macos-universal]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ffmpeg-{linux,windows,macos}
+          merge-multiple: true
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "ffmpeg-$env:PACK_VERSION"
+          gh release view $tag --repo "${{ github.repository }}" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "$tag is already published: raise PACK_VERSION" }
+          $global:LASTEXITCODE = 0
+          $files = @()
+          $lines = @()
+          foreach ($system in 'windows-x64', 'linux-x64', 'macos-universal') {
+              $zip = "Aurora-FFmpeg-$env:PACK_VERSION-$system.zip"
+              $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+              $recorded = ((Get-Content -LiteralPath "$zip.sha256" -Raw) -split '\s+')[0]
+              if ($hash -ne $recorded) { throw "$zip changed on its way: $hash, $recorded recorded" }
+              $files += $zip, "$zip.sha256"
+              $lines += "| $system | ``$zip`` | $((Get-Item -LiteralPath $zip).Length) | ``$hash`` |"
+          }
+          $source = "Aurora-FFmpeg-$env:PACK_VERSION-source.tar.gz"
+          $files += $source
+          $notes = @(
+              "The ffmpeg the Director of Aurora Viewer records its films with, pack $env:PACK_VERSION. The viewer downloads the archive of its system only when the user asks for it, checks its size and SHA-256 and installs it in the user's data folder."
+              ''
+              '| System | Archive | Bytes | SHA-256 |'
+              '|---|---|---|---|'
+          ) + $lines + @(
+              ''
+              "- ffmpeg, built with x264, libvpx and libopus linked statically: the versions and commits are in each archive's README.txt and in scripts/ffmpeg-pack.sh at ${{ github.sha }}."
+              "- License: GPL version 3 for this build of ffmpeg (x264 is GPL 2 or later), BSD for libvpx and libopus; the texts are in LICENSES/ in each archive. No nonfree code."
+              "- Corresponding source: $source (the four source trees and the build script)."
+              ''
+              'This is not a viewer release: the viewer is in the releases tagged vX.Y.Z.'
+          )
+          $notes -join "`n" | Set-Content -LiteralPath notes.md -Encoding utf8NoBOM
+          gh release create $tag @files --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "FFmpeg pack $env:PACK_VERSION" --notes-file notes.md --latest=false

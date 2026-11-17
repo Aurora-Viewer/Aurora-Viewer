@@ -35,10 +35,12 @@ pub struct FfmpegPack {
 }
 
 // ---------------------------------------------------------------------------
-// TO FILL IN BY THE HUMAN once the pack is published (see the Director's
-// TASKS.md line): until then every field is empty, and the Director offers
-// no download (`published` is `None`). The archive is published under the
-// release tag `ffmpeg-<version>` of this repository, as
+// TO FILL IN once the pack is published (see the Director's TASKS.md
+// line): until then every field is empty, and the Director offers no
+// download (`published` is `None`). The "FFmpeg pack" workflow
+// (.github/workflows/ffmpeg-pack.yml, scripts/ffmpeg-pack.sh) builds the
+// archives and publishes them under the release tag `ffmpeg-<version>` of
+// this repository, with their sizes and SHA-256 in its notes, as
 // `Aurora-FFmpeg-<version>-<system>.zip` (system: windows-x64, linux-x64,
 // macos-universal), holding one folder of that name with
 // `aurora-ffmpeg.json` (`{"schema": 1, "version": "<version>"}`), the
