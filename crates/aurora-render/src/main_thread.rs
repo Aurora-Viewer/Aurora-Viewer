@@ -1609,7 +1609,7 @@ impl Renderer {
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
             rt: self.device.features().contains(crate::rt_shadows::FEATURES).then(|| {
-                let mut faces = Vec::new();
+                let mut faces = crate::rt_shadows::Faces::default();
                 crate::rt_shadows::gather(&self.records, &self.cull, &mut faces);
                 std::sync::Arc::new(faces)
             }),

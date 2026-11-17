@@ -20,7 +20,7 @@ struct Params {
     // width, height, 1 / width, 1 / height
     screen: vec4<f32>,
     // x: the ray flags, y: 1 when the contact mask is read, z: the rays'
-    // reach (m), w: unused.
+    // reach (m), w: 1 when the avatars' top level is traced.
     mode: vec4<f32>,
 };
 
@@ -29,6 +29,8 @@ struct Params {
 @group(0) @binding(2) var contact_tex: texture_2d<f32>;
 @group(0) @binding(3) var scene_tlas: acceleration_structure;
 @group(0) @binding(4) var out_tex: texture_storage_2d<rgba8unorm, write>;
+// The avatars and what they wear, posed this frame (rt_pose.wgsl).
+@group(0) @binding(5) var posed_tlas: acceleration_structure;
 
 fn unproject(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     let ndc = (vec2<f32>(pixel) + vec2<f32>(0.5)) * params.screen.zw * vec2<f32>(2.0, -2.0)
@@ -91,18 +93,21 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let off = normalize(n + normalize(params.camera.xyz - world));
     let origin = world + off * (0.01 + 0.002 * dist);
     let dir = params.light.xyz;
+    let ray = RayDesc(u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, params.mode.z, origin, dir);
     var shadow = 0.0;
     var rq: ray_query;
-    rayQueryInitialize(
-        &rq,
-        scene_tlas,
-        RayDesc(u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, params.mode.z, origin, dir),
-    );
+    rayQueryInitialize(&rq, scene_tlas, ray);
     // every geometry is opaque: the traversal commits its hits itself
     while (rayQueryProceed(&rq)) {}
-    let hit = rayQueryGetCommittedIntersection(&rq);
-    if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+    if (rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE) {
         shadow = 1.0;
+    } else if (params.mode.w > 0.5) {
+        var rp: ray_query;
+        rayQueryInitialize(&rp, posed_tlas, ray);
+        while (rayQueryProceed(&rp)) {}
+        if (rayQueryGetCommittedIntersection(&rp).kind != RAY_QUERY_INTERSECTION_NONE) {
+            shadow = 1.0;
+        }
     }
     textureStore(out_tex, pixel, vec4<f32>(max(shadow, contact), shadow, 0.0, 0.0));
 }

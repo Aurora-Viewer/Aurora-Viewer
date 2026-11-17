@@ -229,11 +229,12 @@ impl GeometryArena {
         try_buffer(device, &Self::desc(label, size, Self::traced(device, usage)))
     }
 
-    /// The ray-traced shadows build their bottom levels from the arena
-    /// (rt_shadows.rs): the buffers say so when the device traces.
+    /// The ray-traced shadows build their bottom levels from the arena and
+    /// pose the avatars from it in a compute pass (rt_shadows.rs): the
+    /// buffers say so when the device traces.
     fn traced(device: &wgpu::Device, usage: wgpu::BufferUsages) -> wgpu::BufferUsages {
         if device.features().contains(crate::rt_shadows::FEATURES) {
-            usage | wgpu::BufferUsages::BLAS_INPUT
+            usage | wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE
         } else {
             usage
         }
