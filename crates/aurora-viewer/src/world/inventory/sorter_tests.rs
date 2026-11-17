@@ -3760,27 +3760,25 @@ fn duplicates_of(inv: &Inventory, no_copy: bool) -> CleanupPlan {
     plan_duplicates(inv, &Preferences::default(), &cleanup, inv.root, &none, &none)
 }
 
-/// The duplicate finder lists every copy but one: the one already filed,
-/// else the oldest; never an item whose asset id is unknown, a no-copy
-/// item unless asked, a link, nor two items that only share a name.
+/// The duplicate finder lists every loose copy but one: the one already
+/// filed, else the oldest; never an item whose asset id is unknown, a
+/// no-copy item unless asked, nor two items that only share a name.
 #[test]
 fn the_duplicate_finder_keeps_one_copy_and_never_merges_unknown_items() {
     let mut inv = fixture(&[]);
-    add_folder(&mut inv, 80, 1, "Stuff");
-    add_folder(&mut inv, 81, 1, "Old Boxes");
-    // three copies of one lamp: the oldest stays
-    add_copy(&mut inv, 200, 80, "Brindle Lamp", 900, 300, true);
-    add_copy(&mut inv, 201, 81, "Brindle  lamp", 900, 100, true);
-    add_copy(&mut inv, 202, 81, "Brindle Lamp", 900, 200, true);
+    // three loose copies of one lamp (My Inventory and Objects): the oldest stays
+    add_copy(&mut inv, 200, 1, "Brindle Lamp", 900, 300, true);
+    add_copy(&mut inv, 201, OBJECTS, "Brindle  lamp", 900, 100, true);
+    add_copy(&mut inv, 202, OBJECTS, "Brindle Lamp", 900, 200, true);
     // same name, other asset: two different items
-    add_copy(&mut inv, 203, 80, "Kira Chair", 901, 100, true);
-    add_copy(&mut inv, 204, 81, "Kira Chair", 902, 100, true);
+    add_copy(&mut inv, 203, 1, "Kira Chair", 901, 100, true);
+    add_copy(&mut inv, 204, OBJECTS, "Kira Chair", 902, 100, true);
     // no asset id given: never merged, even with the same name
-    add_copy(&mut inv, 205, 80, "Zorin Rug", 0, 100, true);
-    add_copy(&mut inv, 206, 81, "Zorin Rug", 0, 100, true);
+    add_copy(&mut inv, 205, 1, "Zorin Rug", 0, 100, true);
+    add_copy(&mut inv, 206, OBJECTS, "Zorin Rug", 0, 100, true);
     // no-copy gacha doubles
-    add_copy(&mut inv, 207, 80, "Velmora Gacha Plush RARE", 903, 100, false);
-    add_copy(&mut inv, 208, 81, "Velmora Gacha Plush RARE", 903, 200, false);
+    add_copy(&mut inv, 207, 1, "Velmora Gacha Plush RARE", 903, 100, false);
+    add_copy(&mut inv, 208, OBJECTS, "Velmora Gacha Plush RARE", 903, 200, false);
     let plan = duplicates_of(&inv, false);
     let listed: HashSet<Uuid> = plan.rows.iter().map(|r| r.id).collect();
     assert_eq!(
@@ -3801,14 +3799,44 @@ fn the_duplicate_finder_keeps_one_copy_and_never_merges_unknown_items() {
     assert!(!plan.rows.iter().any(|r| r.id == id(207)));
     // a copy already in the sort folder is the one kept
     let mut inv = fixture(&[]);
-    add_folder(&mut inv, 80, 1, "Stuff");
     add_folder(&mut inv, 82, 1, "Sorted");
     add_folder(&mut inv, 83, 82, "Decor");
-    add_copy(&mut inv, 200, 80, "Brindle Lamp", 900, 100, true);
+    add_copy(&mut inv, 200, OBJECTS, "Brindle Lamp", 900, 100, true);
     add_copy(&mut inv, 201, 83, "Brindle Lamp", 900, 300, true);
     let plan = duplicates_of(&inv, false);
     let listed: Vec<Uuid> = plan.rows.iter().map(|r| r.id).collect();
     assert_eq!(listed, [id(200)], "the filed copy stays, the loose one goes");
+}
+
+/// A store's boilerplate in every delivery (its notecard, landmark,
+/// unpacker, redelivery HUD) is never a duplicate: a delivery is never
+/// opened. Only a second identical delivery goes, whole.
+#[test]
+fn store_boilerplate_inside_deliveries_is_never_a_duplicate() {
+    let mut inv = fixture(&[]);
+    for (n, product) in ["Velmora - Hex Dress", "Velmora - Ryu Jeans", "Velmora - Lace Top"]
+        .iter()
+        .enumerate()
+    {
+        let at = 300 + n as u128 * 10;
+        add_folder(&mut inv, at, OBJECTS, product);
+        add_copy(&mut inv, at + 1, at, &format!("{product} Maitreya"), 950 + n as u128, 100, true);
+        // the same in every delivery
+        add_copy(&mut inv, at + 2, at, "Velmora Unpacker", 990, 100, true);
+        add_copy(&mut inv, at + 3, at, "Redelivery HUD", 991, 100, true);
+        add_copy(&mut inv, at + 4, at, "Thank you <3", 992, 100, true);
+    }
+    // the very same delivery twice, the newer goes whole
+    add_folder(&mut inv, 400, OBJECTS, "Velmora - Hex Dress");
+    add_copy(&mut inv, 401, 400, "Velmora - Hex Dress Maitreya", 950, 500, true);
+    add_copy(&mut inv, 402, 400, "Velmora Unpacker", 990, 500, true);
+    add_copy(&mut inv, 403, 400, "Redelivery HUD", 991, 500, true);
+    add_copy(&mut inv, 404, 400, "Thank you <3", 992, 500, true);
+    let plan = duplicates_of(&inv, false);
+    let listed: Vec<Uuid> = plan.rows.iter().map(|r| r.id).collect();
+    assert_eq!(listed, [id(400)], "only the second identical delivery, whole");
+    assert!(plan.rows[0].folder);
+    assert_eq!(plan.whole_deliveries, 1);
 }
 
 /// Real use: a head's skin is a skin, never the head's add-on or makeup;
@@ -3833,4 +3861,45 @@ fn a_heads_skin_is_a_skin() {
         Some(Category::Makeup)
     );
     assert_eq!(classify("Kira Fangs Genus Addon", 6, 0).category, Some(Category::Heads));
+}
+
+/// Real use: a store's numbered series of deliveries is one store.
+#[test]
+fn a_numbered_series_is_one_store() {
+    let plain = store("Brindle&Co - Tea Set").expect("store");
+    for name in [
+        "2. Brindle&Co",
+        "16. Brindle&Co",
+        "#4 Brindle&Co",
+        "(3) Brindle&Co",
+        "04 - Brindle&Co",
+    ] {
+        let found = store(name);
+        assert!(found.as_deref().is_some_and(|s| same_store(s, &plain)), "{name}: {found:?}");
+    }
+    assert_eq!(without_number("3D Ears"), "3D Ears");
+    assert_eq!(without_number("2nd Life Hat"), "2nd Life Hat");
+    assert_eq!(without_number("12"), "12");
+}
+
+/// Clean up says how many items the locked default folders hold.
+#[test]
+fn clean_up_counts_what_the_locked_default_folders_hold() {
+    let mut inv = fixture(&[]);
+    inv.folders.insert(id(60), folder(id(60), id(1), "Clothing", 5));
+    inv.folders.get_mut(&id(1)).expect("root").children.push(id(60));
+    add_item(&mut inv, 600, 60, "Velmora Dress", 100);
+    add_item(&mut inv, 601, 60, "Kira Skirt", 100);
+    let none = HashSet::new();
+    let plan = plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &Cleanup::default(),
+        inv.root,
+        2_000_000_000,
+        &none,
+        &none,
+    );
+    assert_eq!(plan.locked_items, 2);
+    assert!(!plan.rows.iter().any(|r| r.id == id(600)), "never read while locked");
 }

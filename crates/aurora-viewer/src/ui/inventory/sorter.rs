@@ -3414,6 +3414,27 @@ fn cleanup_tab(
                     aurora_i18n::tr!("inventory-cleanup-duplicates-no-copy"),
                 )
             });
+            ui.push_id("inventory_cleanup_landmark_duplicates", |ui| {
+                switch_labeled(
+                    ui,
+                    p,
+                    &mut cleanup.landmark_duplicates,
+                    aurora_i18n::tr!("inventory-cleanup-duplicates-landmarks"),
+                )
+            });
+            ui.push_id("inventory_cleanup_notecard_duplicates", |ui| {
+                switch_labeled(
+                    ui,
+                    p,
+                    &mut cleanup.notecard_duplicates,
+                    aurora_i18n::tr!("inventory-cleanup-duplicates-notecards"),
+                )
+            });
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-cleanup-duplicates-whole-hint"))
+                    .small()
+                    .color(p.muted),
+            );
         } else {
             ui.push_id("inventory_cleanup_empty_folders", |ui| {
                 switch_labeled(
@@ -3431,9 +3452,25 @@ fn cleanup_tab(
         cleanup: list,
         skipped,
         cleanup_action,
+        tab,
         ..
     } = state;
     let Some((.., plan)) = list.as_ref() else { return };
+    // (the default folders still locked are never looked at: said, with
+    // the way to Options, so a short list is never taken for the whole)
+    if plan.locked_items > 0 {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("inventory-cleanup-locked", count = plan.locked_items))
+                    .small()
+                    .color(p.muted),
+            );
+            if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-locked-options")).clicked() {
+                *tab = OPTIONS;
+            }
+        });
+        ui.add_space(4.0);
+    }
     if !plan.unfetched.is_empty() {
         ui.label(
             RichText::new(aurora_i18n::tr!("inventory-cleanup-loading", count = plan.unfetched.len()))
@@ -3457,7 +3494,7 @@ fn cleanup_tab(
     let going_count = plan.rows.len() - kept.len();
     let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
     let summary = if duplicates {
-        aurora_i18n::tr!("inventory-cleanup-duplicates-summary", count = items, items = plan.duplicated)
+        aurora_i18n::tr!("inventory-cleanup-duplicates-summary", count = going_count, items = plan.duplicated)
     } else {
         aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())
     };

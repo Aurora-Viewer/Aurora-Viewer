@@ -14603,10 +14603,18 @@ inventory-sorter-hint-store = Nom de la boutique
 inventory-sorter-hint-remove = Retirer cet indice
 inventory-sorter-hint-add = Ajouter un indice de boutique
 inventory-cleanup-empty-folders = Inclure les dossiers vides
+inventory-cleanup-locked = { $count ->
+    [one] 1 objet des dossiers par défaut verrouillés (Habits, Parties du corps…) n’est pas examiné.
+   *[other] { $count } objets des dossiers par défaut verrouillés (Habits, Parties du corps…) ne sont pas examinés.
+}
+inventory-cleanup-locked-options = Déverrouiller dans Options
 inventory-cleanup-find-old = Objets anciens
 inventory-cleanup-find-duplicates = Doublons
 inventory-cleanup-duplicates-intro = Trouvez les objets que vous avez en plusieurs exemplaires. Un exemplaire de chacun reste à sa place (d’abord un déjà rangé dans vos dossiers triés ou vos propres dossiers, sinon le plus ancien) ; les autres vont dans la Pré-corbeille pour que vous les examiniez. Rien n’est supprimé.
 inventory-cleanup-duplicates-no-copy = Inclure les objets non copiables (les doubles de gacha gardés pour l’échange sont laissés par défaut)
+inventory-cleanup-duplicates-landmarks = Inclure les repères isolés (jamais ceux d’une livraison)
+inventory-cleanup-duplicates-notecards = Inclure les notes isolées (jamais celles d’une livraison)
+inventory-cleanup-duplicates-whole-hint = Une livraison n’est jamais ouverte : seule une deuxième livraison identique part, entière. Recherchés : objets, habits, parties du corps, gestes et animations.
 inventory-cleanup-duplicates-nothing = Aucun objet de ces types n’est en plusieurs exemplaires.
 inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 exemplaire en trop de { $items } objets

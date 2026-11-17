@@ -1044,7 +1044,9 @@ const WAIFUS: &str = "Waifus";
 /// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
 /// phrase before a dash, which is a product name.
 pub fn store<'a>(name: &'a str) -> Option<String> {
-    let text = name.trim();
+    // (a numbered series of one store's deliveries, `12. Snug&Co`, `#4
+    // Snug&Co`, `(3) Snug&Co`, `04 - Snug&Co`: the number is the delivery's)
+    let text = without_number(name.trim());
     let first = text.chars().next()?;
     // `hey-you: Thigh Socks`, `THISTLE: The Body`: a store and a colon
     let tags = &VOCABULARY.store_tags;
@@ -1073,6 +1075,29 @@ pub fn store<'a>(name: &'a str) -> Option<String> {
     .into_iter()
     .flatten()
     .find_map(|(tag, enclosed)| store_tag(tag, enclosed))
+    // (a numbered series named only for its store, `12. Snug&Co`: the
+    // rest of the name is the store, so the series meets in one folder)
+    .or_else(|| (text != name.trim()).then(|| store_tag(text, false)).flatten())
+}
+
+/// A name less a leading number of a series: `12. `, `#4 `, `(3) `, `04 - `,
+/// `1) `; never a name that is only a number, nor one that goes on with a
+/// unit or a word glued to it (`3D Ears`, `2nd Life`).
+fn without_number(name: &str) -> &str {
+    let rest = name.strip_prefix('#').or_else(|| name.strip_prefix('(')).unwrap_or(name);
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 || digits > 3 {
+        return name;
+    }
+    let after = &rest[digits..];
+    let after = after.strip_prefix(')').unwrap_or(after);
+    let marked = after.strip_prefix(['.', '-', ':', ')']).unwrap_or(after);
+    let marked = marked.trim_start_matches([' ', '-', '.']);
+    // (a space or a mark must end the number)
+    if after.chars().next().is_none_or(|c| c.is_alphanumeric()) || marked.is_empty() {
+        return name;
+    }
+    marked
 }
 
 /// A bracketed tag says more than a status and what the item is: `[Moon
@@ -2902,6 +2927,16 @@ fn in_trash(inv: &Inventory, id: Uuid) -> bool {
 /// Lost and Found, semi-protected: closed unless its switch is on.
 const LOST_AND_FOUND: i32 = 16;
 
+/// The items, at any depth, of the default folders still locked: what a
+/// whole-inventory Clean up or sort never looks at until Options unlocks it.
+pub fn locked_items(inv: &Inventory) -> usize {
+    unlockable_folders(inv)
+        .into_iter()
+        .filter(|id| !folder_open(inv, *id))
+        .map(|id| folder_items(inv, id).0)
+        .sum()
+}
+
 /// The default folders of My Inventory's root the user may unlock.
 pub fn unlockable_folders(inv: &Inventory) -> Vec<Uuid> {
     inv.folders
@@ -3530,6 +3565,12 @@ pub struct Cleanup {
     /// The duplicate finder takes no-copy items too (gacha doubles, kept
     /// to trade, are left by default).
     pub no_copy_duplicates: bool,
+    /// The duplicate finder takes loose landmarks too (never one inside a
+    /// delivery).
+    pub landmark_duplicates: bool,
+    /// The duplicate finder takes loose notecards too (never one inside a
+    /// delivery).
+    pub notecard_duplicates: bool,
 }
 
 /// What Clean up looks for.
@@ -3554,6 +3595,8 @@ impl Default for Cleanup {
             empty_folders: false,
             find: Find::Old,
             no_copy_duplicates: false,
+            landmark_duplicates: false,
+            notecard_duplicates: false,
         }
     }
 }
@@ -3615,6 +3658,13 @@ pub struct CleanupPlan {
     /// The duplicate finder's items held more than once (each keeps one
     /// copy; the rows are the others).
     pub duplicated: usize,
+    /// The items of the default folders still locked (Options unlocks
+    /// them), never looked at: told on screen, so that a short list is not
+    /// taken for the whole inventory.
+    pub locked_items: usize,
+    /// The duplicate finder's whole deliveries held twice (rows that are
+    /// folders).
+    pub whole_deliveries: usize,
 }
 
 impl CleanupRow {
@@ -3798,6 +3848,9 @@ pub fn plan_cleanup(
     }
     plan.unfetched.sort_unstable();
     plan.unfetched.dedup();
+    if source == inv.root {
+        plan.locked_items = locked_items(inv);
+    }
     // by group (the list's order, so each group is one slice, never
     // filtered again per frame), then oldest first
     plan.rows.sort_by(|a, b| {

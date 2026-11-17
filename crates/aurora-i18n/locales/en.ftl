@@ -14598,10 +14598,18 @@ inventory-sorter-hint-store = Store name
 inventory-sorter-hint-remove = Remove this hint
 inventory-sorter-hint-add = Add a store hint
 inventory-cleanup-empty-folders = Include empty folders
+inventory-cleanup-locked = { $count ->
+    [one] 1 item in locked default folders (Clothing, Body Parts…) is not looked at.
+   *[other] { $count } items in locked default folders (Clothing, Body Parts…) are not looked at.
+}
+inventory-cleanup-locked-options = Unlock in Options
 inventory-cleanup-find-old = Old items
 inventory-cleanup-find-duplicates = Duplicates
 inventory-cleanup-duplicates-intro = Find the items you hold more than once. One copy of each stays where it is (one already in your sorted or own folders first, else the oldest); the others go to Pre-Trash for you to look at. Nothing is deleted.
 inventory-cleanup-duplicates-no-copy = Include no-copy items (gacha doubles kept to trade are left by default)
+inventory-cleanup-duplicates-landmarks = Include loose landmarks (never those inside a delivery)
+inventory-cleanup-duplicates-notecards = Include loose notecards (never those inside a delivery)
+inventory-cleanup-duplicates-whole-hint = A delivery is never opened: only a second identical delivery goes, whole. Looked for: objects, clothing, body parts, gestures and animations.
 inventory-cleanup-duplicates-nothing = No item of these types is held more than once.
 inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 extra copy of { $items } items
