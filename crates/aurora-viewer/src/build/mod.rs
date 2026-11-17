@@ -2754,6 +2754,8 @@ impl BuildTool {
     }
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
+    /// (The frame gathers the picks once and calls `halo_faces` itself.)
+    #[cfg(test)]
     pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
         Self::halo_faces(|| self.face_picks(world), s)
     }
