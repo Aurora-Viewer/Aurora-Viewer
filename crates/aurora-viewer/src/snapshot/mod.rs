@@ -224,6 +224,9 @@ pub struct Settings {
     /// The interface drawn on the photo (only with the window's proportions).
     pub interface: bool,
     pub huds: bool,
+    /// "Look at camera": while the photo window is open, our avatar's head
+    /// and eyes follow the camera (`app::photo_gaze`). Aurora's own, off.
+    pub look_at_camera: bool,
     /// The preview follows the camera.
     pub auto_refresh: bool,
     /// Date and time in the file name.
@@ -283,6 +286,7 @@ impl Default for Settings {
             jpeg_quality: 75,
             interface: false,
             huds: false,
+            look_at_camera: false,
             auto_refresh: false,
             timestamp_names: true,
             folder: None,

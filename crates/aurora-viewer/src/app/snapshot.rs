@@ -1954,6 +1954,7 @@ impl App {
                     self.snapshots.preview_wanted = true;
                 }
             }
+            Action::TurnToCamera => self.photo_turn_to_camera(),
             Action::Changed => {
                 self.snapshots.preview_wanted = true;
                 self.settings.save();

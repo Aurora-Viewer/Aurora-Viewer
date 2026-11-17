@@ -2518,6 +2518,19 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         }),
     ));
     v.push((
+        aurora_i18n::tr!("photo-look-at-camera"),
+        yes_no(s.look_at_camera),
+        Box::new(|s, _| {
+            s.look_at_camera = !s.look_at_camera;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-turn-to-camera"),
+        aurora_i18n::tr!("photo-turn-now").to_owned(),
+        Box::new(|_, _| Some(Out::Panel(Action::TurnToCamera))),
+    ));
+    v.push((
         aurora_i18n::tr!("photo-freeze"),
         yes_no(panel.freeze),
         Box::new(|_, panel| {
