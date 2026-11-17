@@ -636,8 +636,8 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
         return;
     }
     if job.pieces.is_empty() {
-        // (what is left is what the folder still holds: never an entry
-        // counted twice, refused in its piece and deleted with its folder)
+        // (what is left is what the folder still holds, a folder never read
+        // and what holds it included: never an entry counted twice)
         job.failed = sorter::purge::entries_below(inv, job.folder);
         st.sorter.status = if job.refused_in_row >= PURGE_REFUSALS {
             aurora_i18n::tr!("inventory-purge-refused", count = job.done, failed = job.failed)
@@ -2158,8 +2158,14 @@ pub(super) fn show(
                 if !readable {
                     ask_for(inv, [folder]);
                 }
-                let count = sorter::purge::entries_below(inv, folder);
-                state.purge_seen.insert(folder, (inv.generation, Instant::now(), loaded, count));
+                // (what it would delete: never what a folder never read keeps)
+                let count = if loaded { sorter::purge::deletable(inv, folder) } else { 0 };
+                // (a folder whose own read failed says so, never "loading")
+                let failed = root == Some(FetchState::Failed) && !inv.too_big.contains(&folder);
+                state.purge_seen.insert(
+                    folder,
+                    (inv.generation, Instant::now(), loaded, if failed { usize::MAX } else { count }),
+                );
             }
         }
     }
@@ -3004,10 +3010,13 @@ fn purge_buttons(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut St
             let Some(&(_, _, loaded, count)) = state.purge_seen.get(&folder) else {
                 continue;
             };
-            if count == 0 {
+            // (nothing it could delete: no button)
+            if loaded && count == 0 {
                 continue;
             }
-            let label = if loaded {
+            let label = if count == usize::MAX {
+                aurora_i18n::tr!("inventory-purge-unreadable", folder = name.as_str())
+            } else if loaded {
                 aurora_i18n::tr!("inventory-purge-steps", folder = name.as_str(), count = count)
             } else {
                 aurora_i18n::tr!("inventory-purge-loading", folder = name.as_str())
@@ -3292,7 +3301,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 return;
             }
             let pieces: VecDeque<_> = sorter::purge::purge_pieces(inv, folder).into();
-            let total = sorter::purge::entries_below(inv, folder);
+            let total = pieces.iter().map(|p| p.entries(inv)).sum();
             // one run at a time per account, like a sort or a Trash run
             st.sorter.journal.claim(st.sorter.window);
             st.sorter.purge = Some(PurgeJob {

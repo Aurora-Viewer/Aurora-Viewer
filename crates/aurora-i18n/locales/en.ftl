@@ -14609,7 +14609,8 @@ inventory-purge-text = { $count ->
 }
 inventory-purge-go = Delete for good
 inventory-purge-progress = Deleting for good: { $done } / { $total }
-inventory-purge-done = { $count } deleted for good, { $failed } refused.
+inventory-purge-done = { $count } deleted for good, { $failed } left (refused, or in folders that could not be read).
+inventory-purge-unreadable = { $folder } could not be read: try again later
 inventory-purge-refused = The server refused 20 pieces in a row: stopped after { $count } deleted for good, { $failed } left. Try again later.
 inventory-purge-worn = { $folder } holds a worn item: take it off first.
 inventory-cleanup-locked = { $count ->

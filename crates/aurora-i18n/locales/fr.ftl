@@ -14614,7 +14614,8 @@ inventory-purge-text = { $count ->
 }
 inventory-purge-go = Supprimer définitivement
 inventory-purge-progress = Suppression définitive : { $done } / { $total }
-inventory-purge-done = { $count } supprimés définitivement, { $failed } refusés.
+inventory-purge-done = { $count } supprimés définitivement, { $failed } restants (refusés, ou dans des dossiers illisibles).
+inventory-purge-unreadable = { $folder } n’a pas pu être lu : réessayez plus tard
 inventory-purge-refused = Le serveur a refusé 20 morceaux d’affilée : arrêt après { $count } supprimés définitivement, { $failed } restants. Réessayez plus tard.
 inventory-purge-worn = { $folder } contient un élément porté : enlevez-le d’abord.
 inventory-cleanup-locked = { $count ->

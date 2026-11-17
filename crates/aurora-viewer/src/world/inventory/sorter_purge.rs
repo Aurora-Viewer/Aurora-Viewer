@@ -91,6 +91,12 @@ pub fn holds_blind(inv: &Inventory, folder: Uuid) -> bool {
     false
 }
 
+/// The entries a purge of `folder` would delete: what its pieces hold,
+/// never what a folder never read keeps in place.
+pub fn deletable(inv: &Inventory, folder: Uuid) -> usize {
+    purge_pieces(inv, folder).iter().map(|p| p.entries(inv)).sum()
+}
+
 /// The pieces that empty `folder` (Pre-Trash or the Trash), never the
 /// folder itself: its subfolders deepest first, then its own items.
 pub fn purge_pieces(inv: &Inventory, folder: Uuid) -> Vec<Piece> {
