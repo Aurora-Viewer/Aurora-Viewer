@@ -63,6 +63,11 @@ impl Detector {
             self.words = (settings.words.clone(), water_volume::words(&settings.words));
             self.next_sweep = None;
         }
+        // no word, nothing can match: no sweep, no name asked
+        if self.words.1.is_empty() {
+            self.matched.clear();
+            return Vec::new();
+        }
         if self.next_sweep.is_some_and(|at| now < at) {
             return Vec::new();
         }
@@ -147,15 +152,22 @@ impl Detector {
                 .filter_map(|idx| scene.water_volume(world, idx)),
         );
         let volumes = &self.near;
-        let Some(top) = volumes.iter().filter(|v| v.over(position)).map(Volume::top).max_by(f32::total_cmp) else {
+        let Some(highest) = volumes
+            .iter()
+            .filter(|v| v.over(position))
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+        else {
             self.floor = None;
             return None;
         };
+        let top = highest.top();
         let stale = self
             .floor
             .is_none_or(|(at, when, _)| at.distance(position) > FLOOR_MOVE || now.duration_since(when) > FLOOR_AGE);
         if stale {
-            let origin = position.with_z(position.z.min(top - 0.01));
+            // a plane's water reaches the first floor under it, not one under
+            // a room the avatar walks in below it
+            let origin = position.with_z(if highest.thin() { top - 0.01 } else { position.z.min(top - 0.01) });
             let floor = [scene.water_floor(world, origin, FLOOR_DEPTH), world.ground_height(position)]
                 .into_iter()
                 .flatten()
@@ -163,7 +175,7 @@ impl Detector {
                 .max_by(f32::total_cmp);
             self.floor = Some((position, now, floor));
         }
-        water_volume::water_at(&volumes, position, height, self.floor.and_then(|f| f.2))
+        water_volume::water_at(volumes, position, height, self.floor.and_then(|f| f.2))
     }
 }
 

@@ -251,10 +251,14 @@ impl App {
         for request in requests {
             self.send(request);
         }
-        let volume = self.water_volumes.water(&self.world, &self.scene, position, height, now);
-        let water = volume
-            .map(|v| v.surface)
-            .or_else(|| self.world.main().and_then(|r| r.info.as_ref()).map(|i| i.water_height));
+        let region_water = self.world.main().and_then(|r| r.info.as_ref()).map(|i| i.water_height);
+        // a volume under the region's water (a box on a pier, the sea above
+        // its top) is the sea's
+        let volume = self
+            .water_volumes
+            .water(&self.world, &self.scene, position, height, now)
+            .filter(|v| region_water.is_none_or(|r| v.surface > r));
+        let water = volume.map(|v| v.surface).or(region_water);
         self.movement_water = water;
         let near_water = water.is_some_and(|w| (w - position.z).abs() < height * 0.5 + 0.9);
         if prefs.swimming

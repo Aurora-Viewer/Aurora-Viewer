@@ -62,9 +62,11 @@ impl Effects {
     /// The water at `p`: a prim volume's (its surface and bottom), else the
     /// region's (its height, no bottom: the ground grid's).
     fn water(&self, world: &World, p: Vec3) -> Option<(f32, Option<f32>)> {
-        match crate::movement::water_volume::surface_at(&self.volumes, p) {
+        let region = water_at(world, p);
+        // a volume under the region's water is the sea's (as for movement)
+        match crate::movement::water_volume::surface_at(&self.volumes, p).filter(|(top, _)| region.is_none_or(|r| *top > r)) {
             Some((top, bottom)) => Some((top, Some(bottom))),
-            None => water_at(world, p).map(|w| (w, None)),
+            None => region.map(|w| (w, None)),
         }
     }
 
@@ -202,6 +204,8 @@ impl Effects {
         if self.region != world.main_region || settings.flags() == 0 {
             *self = Self {
                 region: world.main_region,
+                // (set for this frame just before: `Scene::set_water_volumes`)
+                volumes: std::mem::take(&mut self.volumes),
                 ..Default::default()
             };
         }
@@ -397,7 +401,9 @@ impl Effects {
             }
         }
         for impact in std::mem::take(&mut self.impacts) {
-            let in_volume = crate::movement::water_volume::surface_at(&self.volumes, impact.position).is_some();
+            // not the region water's level: a volume's (the leading hand may
+            // be past its sides, where the avatar's centre is not)
+            let in_volume = water_at(world, impact.position).is_none_or(|w| (w - impact.position.z).abs() > 0.5);
             self.emit_impact(impact, time, if in_volume { Self::particles_only(settings) } else { settings });
         }
         self.history.retain(|_, contact| time - contact.time < 1.0);

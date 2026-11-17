@@ -10,6 +10,9 @@ pub const DEFAULT_WORDS: &str = "AuroraWater";
 pub const MIN_WIDTH: f32 = 1.0;
 /// Thinner volumes are water planes: their water reaches the floor beneath.
 pub const THIN: f32 = 0.5;
+/// How deep a plane's water is taken for the water effects (m), which do
+/// not probe its floor.
+const PLANE_DEPTH: f32 = 3.0;
 /// About 8°: a tilted box is a ramp or a wave, not a pool.
 const UPRIGHT: f32 = 0.99;
 
@@ -126,16 +129,17 @@ pub fn water_at(volumes: &[Volume], position: Vec3, height: f32, floor: Option<f
 
 /// The water a point is in or just above, for the water effects (bubbles,
 /// splashes, sprays): the highest volume over it, its surface and the
-/// bottom its depth is measured to (a plane's: 20 m below, its floor not
-/// known here). From under the water to 3 m above its top, where a leaping
-/// limb still splashes on the way down.
+/// bottom its depth is measured to (a plane's: 3 m below, a pool's depth,
+/// its floor not known here; a room further down stays dry). From under the
+/// water to 3 m above its top, where a leaping limb still splashes on the
+/// way down.
 pub fn surface_at(volumes: &[Volume], point: Vec3) -> Option<(f32, f32)> {
     volumes
         .iter()
         .filter(|v| v.over(point))
         .filter_map(|v| {
             let top = v.top();
-            let bottom = if v.thin() { top - 20.0 } else { v.bottom() };
+            let bottom = if v.thin() { top - PLANE_DEPTH } else { v.bottom() };
             (bottom - 0.5..=top + 3.0).contains(&point.z).then_some((top, bottom))
         })
         .max_by(|a, b| a.0.total_cmp(&b.0))
@@ -238,9 +242,10 @@ mod tests {
         assert_eq!(surface_at(&v, Vec3::new(1.0, 1.0, 66.0)), None, "high above");
         assert_eq!(surface_at(&v, Vec3::new(1.0, 1.0, 58.0)), None, "under the pool");
         assert_eq!(surface_at(&v, Vec3::new(5.0, 1.0, 61.0)), None, "beside it");
-        // a water plane: the bottom is taken 20 m down
+        // a water plane: taken 3 m deep, a room further down stays dry
         let plane = [pool(Vec3::new(0.0, 0.0, 62.375), Vec3::new(8.0, 8.0, 0.05))];
-        assert_eq!(surface_at(&plane, Vec3::new(0.0, 0.0, 61.0)), Some((62.4, 42.4)));
+        assert_eq!(surface_at(&plane, Vec3::new(0.0, 0.0, 61.0)), Some((62.4, 59.4)));
+        assert_eq!(surface_at(&plane, Vec3::new(0.0, 0.0, 55.0)), None, "a room under it");
     }
 
     #[test]

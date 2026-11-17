@@ -1710,7 +1710,11 @@ struct WaterParticleOut {
 };
 fn particle_water_level(p:vec2<f32>,level:f32)->f32 {
     if(!water_fx_on(1u)){return level;}
-    return level+water_swell(p,water_fx.clock.x,water_fx.counts.w).offset.z*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+    let bed=water_fx_bed(p);
+    // the swell is the region water's: a prim water volume's level (#2008),
+    // away from it, stays flat
+    let region=1.0-smoothstep(0.25,0.5,abs(level-bed.y));
+    return level+water_swell(p,water_fx.clock.x,water_fx.counts.w).offset.z*smoothstep(0.08,2.4,level-bed.x)*region;
 }
 @vertex
 fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index) instance: u32) -> WaterParticleOut {
