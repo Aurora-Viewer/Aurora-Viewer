@@ -265,6 +265,9 @@ impl NetClient {
                     NetCommand::Login(req) => {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
+                    // Session-scoped offers cannot be submitted offline. Drop the receipt
+                    // without exposing a login session or inventory bucket in diagnostics.
+                    NetCommand::OfferInventory { .. } | NetCommand::CheckInventoryOffer { .. } => {}
                     // (the offline demo moves its agent every frame)
                     NetCommand::AgentControls(_) | NetCommand::ForceAgentUpdate => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),

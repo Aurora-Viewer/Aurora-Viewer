@@ -395,7 +395,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::ContactSet(..) => "ContactSet",
         CtxAction::NewContactSet(..) => "NewContactSet",
         CtxAction::MarkAvatars(..) => "MarkAvatars",
-        CtxAction::MarkCustom(..) => "MarkCustom",
+        CtxAction::MarkCustom { .. } => "MarkCustom",
         CtxAction::ClearMarks(..) => "ClearMarks",
         CtxAction::ClearAllMarks => "ClearAllMarks",
     };

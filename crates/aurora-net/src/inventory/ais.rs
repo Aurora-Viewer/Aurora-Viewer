@@ -136,7 +136,7 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 /// A stalled reply becomes a retriable error instead of hanging the walk.
 /// The Legacy Viewer's default request timeout is 30 s; a large inventory
 /// reply can be slower, so this stays generous.
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

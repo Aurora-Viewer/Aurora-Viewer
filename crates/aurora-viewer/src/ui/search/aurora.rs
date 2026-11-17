@@ -170,6 +170,7 @@ impl Aurora {
 /// clock's zone: SLT like the event dates of the directory, or local time
 /// with its zone ("Today · 04:00 CET", #1754).
 fn event_when(unix: i64, now: i64, zone: ClockZone) -> String {
+    let now = crate::ui::bars::clock::clock_timestamp(zone, now);
     let name = match zone {
         ClockZone::Slt => None,
         ClockZone::Local => Some(crate::ui::bars::clock::zone_name(zone, unix)),

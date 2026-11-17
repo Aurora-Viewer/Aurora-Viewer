@@ -100,11 +100,14 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
 /// llinventoryfunctions.cpp): nothing wearable is opened, so worn, from the
 /// listings, active or not. The Legacy Viewer checks it on "open" only, and
 /// a double-click there still wears the item: here neither does.
-fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
+pub(super) fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
     let wearable = rules::original(inv, id)
         .and_then(|original| inv.items.get(&original))
-        .is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13));
-    if wearable && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, id, root)) {
+        .filter(|it| matches!(it.asset_type, 5 | 6 | 13));
+    if let Some(item) = wearable
+        && let Some(root) = crate::world::marketplace::root(inv)
+        && (rules::under(inv, id, root) || (item.id != id && rules::under(inv, item.id, root)))
+    {
         st.message = aurora_i18n::tr!("marketplace-alert-cannot-wear").into();
         return true;
     }
@@ -123,7 +126,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     }
     // Resource windows are independent of document editors and their drafts.
     if let Some(item) = crate::ui::texture_library::catalogue::resource(inv, id) {
-        actions.push(InvAction::Preview(item.id));
+        actions.push(InvAction::Preview(item.id, Some(clipboard::focus_id(st))));
         return;
     }
     let Some(original) = rules::original(inv, id) else {
@@ -142,12 +145,12 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     } else if it.asset_type == 3 && !it.asset_id.is_nil() {
         actions.push(InvAction::TeleportLandmark(it.asset_id));
     } else if it.asset_type == 10 {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     } else if it.asset_type == 56 && crate::world::env_select::SettingsKind::from_flags(it.flags).is_some() {
         // LLSettingsBridgeAction: a sky, water or day cycle opens its editor
         actions.push(InvAction::EditEnvironment(original));
     } else {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     }
 }
 pub(super) fn new_menu(
@@ -411,7 +414,7 @@ mod tests {
             }]);
             let mut actions = Vec::new();
             open(&inv, id, &mut st, &mut actions);
-            assert!(matches!(actions.as_slice(), [InvAction::Preview(item)] if *item == id));
+            assert!(matches!(actions.as_slice(), [InvAction::Preview(item, _)] if *item == id));
             assert_eq!(st.preview, Some(document));
             assert!(st.preview_dirty);
             assert_eq!(st.preview_text, Some(Ok("unsaved draft".into())));
