@@ -577,6 +577,9 @@ impl Inventory {
             self.item_failures.remove(&id);
             if !self.confirmed_missing.contains(&id) {
                 self.missing_items.remove(&id);
+                // (a retry frees it from the views' list of reads already
+                // asked, so the outfit that needs it reads it again)
+                self.item_retries.insert(id);
             }
         }
         self.generation += 1;
