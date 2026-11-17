@@ -28,7 +28,7 @@ const GO_TO_FOCUS: f32 = 5.0;
 
 /// The ffmpeg the films are recorded with (`recorder.rs`).
 #[derive(Default)]
-enum Ffmpeg {
+pub(super) enum Ffmpeg {
     /// Not looked for yet.
     #[default]
     Unknown,
@@ -86,20 +86,23 @@ pub(super) struct DirectorState {
     lost: bool,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
-    ffmpeg: Ffmpeg,
+    pub(super) ffmpeg: Ffmpeg,
     /// The file dialog that chooses an ffmpeg, while it is open.
     choosing: Option<Receiver<Option<PathBuf>>>,
     /// The film being recorded, and whether it is the track's playback
     /// (it ends with it) or the live view (it ends when asked).
-    recording: Option<(Recording, bool)>,
+    pub(super) recording: Option<(Recording, bool)>,
     /// The film whose file the encoder is finishing.
     finishing: Option<Finishing>,
     /// Record was pressed: start, or stop, with the next frame.
     record_request: bool,
-    /// A frame of the film was asked of the renderer this frame.
-    record_pending: bool,
+    /// A frame of the film was asked of the renderer, not back yet.
+    pub(super) record_pending: bool,
     /// The last film: its file, or why it could not be written.
-    film: Option<Result<PathBuf, String>>,
+    pub(super) film: Option<Result<PathBuf, String>>,
+    /// The offline render, the film frames read back, the sound, the
+    /// title cards (app/director_render.rs).
+    pub(super) films: super::director_render::Films,
     /// The tracks saved for this account (their names), once listed, and
     /// the name typed to save this one under.
     tracks: Option<Vec<String>>,
@@ -142,13 +145,16 @@ impl App {
     /// world are drawn into that view (to be hidden behind what is nearer)
     /// and would be filmed with it.
     pub(super) fn director_filming(&self) -> bool {
-        self.director.recording.is_some()
+        self.director.recording.is_some() || self.director_rendering()
     }
 
     /// The film being recorded keeps the transparency of the isolation's
-    /// empty background (a format with alpha): the frames carry it.
+    /// empty background (a format with alpha, or a render's PNG images):
+    /// the frames carry it.
     pub(super) fn director_cutout_alpha(&self) -> bool {
-        self.director.recording.is_some() && self.settings.director_record.format.alpha() && self.world.photo_isolation.empty_background()
+        let options = &self.settings.director_record;
+        let alpha = options.format.alpha() || (self.director_rendering() && options.png);
+        self.director_filming() && alpha && self.world.photo_isolation.empty_background()
     }
 
     /// The ffmpeg chosen by hand, else the PATH's, else the project's pack,
@@ -220,7 +226,11 @@ impl App {
             self.director.filed = Some(Err(aurora_i18n::tr!("director-track-bad-name").to_owned()));
             return;
         };
-        let bytes = match serde_json::to_vec_pretty(&self.director.d.track.to_file(origin)) {
+        let saved = crate::director_titles::SavedTrack {
+            track: self.director.d.track.to_file(origin),
+            finish: self.director.d.finish.clone(),
+        };
+        let bytes = match serde_json::to_vec_pretty(&saved) {
             Ok(bytes) => bytes,
             Err(e) => {
                 self.director.filed = Some(Err(e.to_string()));
@@ -292,14 +302,17 @@ impl App {
             }
             Filed::Loaded(name, bytes) => {
                 let older = self.director.d.lock.aim();
-                let track = serde_json::from_slice::<crate::camera::track::TrackFile>(&bytes)
-                    .ok()
+                // (the fades and titles beside it, none in an older file)
+                let saved = serde_json::from_slice::<crate::director_titles::SavedTrack>(&bytes).ok();
+                let track = saved
+                    .as_ref()
                     .zip(self.world.main_origin())
-                    .and_then(|(file, origin)| crate::camera::track::Track::from_file(&file, origin, older));
+                    .and_then(|(saved, origin)| crate::camera::track::Track::from_file(&saved.track, origin, older));
                 self.director.filed = Some(match track {
                     Some(track) => {
                         log::info!("director: track {name} loaded, {} keyframes", track.len());
                         self.director.d.load(track);
+                        self.director.d.finish = saved.map(|saved| saved.finish.sanitized()).unwrap_or_default();
                         self.director.track_name = name.clone();
                         Ok(aurora_i18n::tr!("director-track-loaded", name = name.as_str()))
                     }
@@ -354,7 +367,7 @@ impl App {
                 Ok((file, frames)) => log::info!("director: film of {frames} frames written to {}", file.display()),
                 Err(why) => log::warn!("director: the film could not be written ({why})"),
             }
-            self.director.film = Some(done.map(|(file, _)| file));
+            self.director_film_done(done);
         }
     }
 
@@ -371,6 +384,8 @@ impl App {
             .then(|| std::env::var_os("AURORA_DEMO_DIRECTOR_FILM"))
             .flatten()
             .map(PathBuf::from);
+        // the sound's encoder and ffmpeg, when the film has sound (film_sound.rs)
+        let mut sound = None;
         let (sink, out) = match (raw, &self.director.ffmpeg) {
             (Some(raw), _) => (Sink::Raw(raw.clone()), raw),
             (None, Ffmpeg::Ready(tool)) => {
@@ -386,7 +401,14 @@ impl App {
                 let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
                 let out = recorder::free_path(&folder, &stamp, format);
                 let crop = recorder::picture(size, self.director.d.format.aspect(), format);
-                let args = recorder::arguments(encoder, format, options.quality, size, crop, fps, &out);
+                sound = super::director_render::sound_for(&options, tool, self.audio_engine.is_some()).map(|e| (e, tool.path.clone()));
+                // (with sound, the picture alone first; both in `out` at the end)
+                let picture = if sound.is_some() {
+                    crate::film_sound::picture_path(&out)
+                } else {
+                    out.clone()
+                };
+                let args = recorder::arguments(encoder, format, options.quality, size, crop, fps, &picture);
                 (Sink::Ffmpeg(tool.path.clone(), args), out)
             }
             _ => return,
@@ -407,11 +429,21 @@ impl App {
             if with_track { "the track" } else { "the live view" }
         );
         self.director.film = None;
-        self.director.recording = Some((Recording::start(sink, size, fps, out), with_track));
+        // a film with sound owes every frame: its picture lasts its sound
+        let film = if sound.is_some() {
+            Recording::start_with(sink, size, recorder::Pace::uncapped(fps), out.clone())
+        } else {
+            Recording::start(sink, size, fps, out.clone())
+        };
+        self.director.recording = Some((film, with_track));
+        if let Some((encoder, ffmpeg)) = sound {
+            self.director_sound_begin(encoder, ffmpeg, &out, fps);
+        }
     }
 
     /// End the film: the encoder finishes its file on its own thread.
-    fn director_record_stop(&mut self) {
+    pub(super) fn director_record_stop(&mut self) {
+        self.director_sound_end();
         if let Some((recording, _)) = self.director.recording.take() {
             if recording.skipped > 0 {
                 log::info!("director: {} frames repeated, the encoder was behind", recording.skipped);
@@ -429,10 +461,11 @@ impl App {
     /// else captures it: that frame of the film is then the next one's).
     pub(super) fn director_record_frame(&mut self, renderer: &mut Renderer) {
         self.director_thumbnails(renderer);
+        self.director_render_frame(renderer);
         if std::mem::take(&mut self.director.record_request) {
             if self.director.recording.is_some() {
                 self.director_record_stop();
-            } else if self.director.finishing.is_none() {
+            } else if self.director.finishing.is_none() && !self.director_films_finishing() && !self.director_rendering() {
                 self.director_record_start(renderer.size());
             }
             // the film's first frame is the next one: this frame was laid
@@ -451,31 +484,20 @@ impl App {
             && !renderer.capture_request
             && !self.scene_capture_pending
             && self.inventory_images.capturing.is_none();
-        if free && recording.wants_frame(Instant::now()) {
-            renderer.capture_scene = true;
-            self.director.record_pending = true;
+        // (one frame of the film on its way at a time: read back later,
+        // the frame loop does not wait for it)
+        if free && !self.director.record_pending && recording.wants_frame(Instant::now()) {
+            let huds = !self.director_hides_huds();
+            self.director_film_ask(renderer, huds);
         }
     }
 
-    /// After the frame is drawn: the view asked for the film goes to it. A
-    /// view of another size (the window was resized) ends the film: its
-    /// frames all have one size.
+    /// After the frame is sent: the views read back go to the film (at the
+    /// instant each was asked), and the render goes on
+    /// (`director_films_after`). A view of another size (the window was
+    /// resized) ends the film: its frames all have one size.
     pub(super) fn director_recorded(&mut self, renderer: &mut Renderer) {
-        if !std::mem::take(&mut self.director.record_pending) {
-            return;
-        }
-        let Some((width, height, pixels)) = renderer.captured.take() else {
-            return;
-        };
-        let kept = self
-            .director
-            .recording
-            .as_mut()
-            .is_none_or(|(recording, _)| recording.frame(Instant::now(), (width, height), pixels));
-        if !kept {
-            log::info!("director: the window changed size, the recording ends");
-            self.director_record_stop();
-        }
+        self.director_films_after(renderer);
     }
 
     /// The key color (linear RGB) the isolation's empty background shows
@@ -543,6 +565,7 @@ impl App {
         self.director.d.tick(dt);
         self.director_extra_frame(open);
         self.director_montage_tick(before, dt);
+        self.director_render_scrub(open);
         if matches!(was, Mode::Playing { .. }) && !self.director.d.playing() {
             log::info!("director: playback ended at {:.1} s", self.director.d.time);
         }
@@ -615,7 +638,7 @@ impl App {
     /// Escape ends a playback or a scrub, or the choosing in the scene the
     /// Director's isolation started; true when it did.
     pub(super) fn director_escape(&mut self) -> bool {
-        if self.director_extra_escape() {
+        if self.director_render_cancel() || self.director_extra_escape() {
             return true;
         }
         if self.director.d.mode != Mode::Editing {
@@ -718,6 +741,7 @@ impl App {
             Ffmpeg::Missing => (Some(None), [false; 5]),
             Ffmpeg::Unknown | Ffmpeg::Asking(_) => (None, [false; 5]),
         };
+        let (render, films_finishing) = (self.director_render_state(), self.director_films_finishing());
         let mut record_changed = false;
         let mut open = self.panels.director;
         let mut capture_out = Vec::new();
@@ -739,12 +763,13 @@ impl App {
                 ffmpeg,
                 formats,
                 recording: self.director.recording.as_ref().map(|(film, _)| film.elapsed(Instant::now())),
-                finishing: self.director.finishing.is_some(),
+                finishing: self.director.finishing.is_some() || films_finishing,
                 last: self
                     .director
                     .film
                     .as_ref()
                     .map(|film| film.as_ref().map(PathBuf::as_path).map_err(String::as_str)),
+                render,
             },
             ui::director::Tracks {
                 name: &mut self.director.track_name,
@@ -849,6 +874,10 @@ impl App {
                     self.director.ffmpeg = Ffmpeg::Unknown;
                 }
                 Action::FfmpegSite => ui::chat::open_web_link(&self.egui_ctx, recorder::DOWNLOAD_PAGE),
+                Action::Render => self.director_render_request(),
+                Action::CancelRender => {
+                    self.director_render_cancel();
+                }
                 Action::RevealFilm => {
                     if let Some(Ok(file)) = &self.director.film {
                         crate::snapshot::gallery::reveal(&recorder::default_folder(), Some(file));
@@ -1054,6 +1083,7 @@ impl App {
             self.director.demo_record = true;
             log::info!("director demo: recording a second of the track");
         }
+        self.director_render_demo(&mode);
         if mode == "green" {
             let isolation = &mut self.world.photo_isolation;
             isolation.set_mode(crate::snapshot::isolate::Mode::Own);

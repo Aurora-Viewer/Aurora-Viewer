@@ -49,6 +49,8 @@ pub mod director_drag;
 pub mod director_key_rows;
 pub mod director_library;
 pub mod director_ruler;
+pub mod director_look;
+pub mod director_output;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;

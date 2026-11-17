@@ -44,6 +44,10 @@ pub(crate) enum Capture {
     Full,
     /// The whole frame, drawn offscreen at the photo's size.
     Snapshot(crate::SnapshotSpec),
+    /// A film's frame, read back without waiting (film_readback.rs): the 3D
+    /// view of the window's frame, or (`Some`) the frame drawn offscreen at
+    /// the film's size, as a photo is.
+    Film(u64, Option<crate::SnapshotSpec>),
 }
 
 /// Which capture a frame carries: the scene alone wins over the whole
@@ -175,6 +179,8 @@ pub(crate) struct FrameResult {
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     /// The small pictures made since the last result (`FramePacket::thumbnail`).
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// The film frames read back since the last result, in their order.
+    pub films: Vec<crate::film_readback::FilmFrame>,
     pub spent: Spent,
 }
 

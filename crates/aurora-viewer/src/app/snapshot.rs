@@ -504,6 +504,10 @@ impl App {
     /// The world frozen by the photo mode shows its instant throughout,
     /// the photo's parts included.
     pub(super) fn photo_hold(&mut self, now: Instant) -> Option<snapshot::Hold> {
+        // (the Director's offline render keeps a clock of its own)
+        if let Some(hold) = self.director_render_hold(now) {
+            return Some(hold);
+        }
         let clock = self.start.elapsed().as_secs_f32();
         let frozen = self.photo_freeze_world(now, clock);
         let Some(job) = self.snapshots.job.as_mut() else {
@@ -564,6 +568,9 @@ impl App {
 
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
+        if let Some(frame) = self.director_render_photo_frame(renderer) {
+            return Some(frame);
+        }
         let textures = &self.scene.textures;
         let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
         let occlusion = self.photo_ambient_occlusion() > 0;

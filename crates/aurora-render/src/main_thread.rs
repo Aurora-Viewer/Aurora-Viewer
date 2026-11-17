@@ -281,6 +281,16 @@ pub struct Renderer {
     pub capture_scene: bool,
     /// Last captured frame (width, height, RGBA8).
     pub captured: Option<(u32, u32, Vec<u8>)>,
+    /// A frame of a film for the next frame (film_readback.rs): not waited
+    /// for, its pixels come in `films` with a later frame. A photo asked
+    /// meanwhile goes first.
+    pub film_request: Option<crate::FilmRequest>,
+    /// The film frames read back, in the order they were asked: the
+    /// caller takes them.
+    pub films: Vec<crate::FilmFrame>,
+    /// Film frames sent and answered, for `films_in_flight`.
+    films_sent: u64,
+    films_answered: u64,
     /// A photo for the next frame: it is drawn offscreen at its own size
     /// (see `frame_size`), waited for, and its image put in `snapshot`. A
     /// face of a 360° capture (`SnapshotSpec::cube`) is not waited for: it is
@@ -799,6 +809,10 @@ impl Renderer {
             capture_request: false,
             capture_scene: false,
             captured: None,
+            film_request: None,
+            films: Vec::new(),
+            films_sent: 0,
+            films_answered: 0,
             snapshot_request: None,
             snapshot: None,
             equirect_request: None,
@@ -1341,11 +1355,19 @@ impl Renderer {
             self.capture_request = false;
             self.capture_scene = false;
         }
+        self.films_answered += r.films.len() as u64;
+        self.films.append(&mut r.films);
         self.last_stats = r.stats;
         self.fresh = true;
         if self.spare.len() < SPARE_PACKETS {
             self.spare.push(r.spent);
         }
+    }
+
+    /// Film frames asked (`film_request`) whose pixels have not come back:
+    /// a film asks for no more than a few at a time.
+    pub fn films_in_flight(&self) -> u64 {
+        self.films_sent.saturating_sub(self.films_answered) + u64::from(self.film_request.is_some())
     }
 
     fn fail(&mut self) {
@@ -1536,7 +1558,22 @@ impl Renderer {
                 Some(crate::packet::Capture::Snapshot(s))
             }
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
-            None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            // a film's frame next, sent and not waited for (film_readback.rs)
+            None => match self.film_request.take() {
+                Some(film) => {
+                    self.films_sent += 1;
+                    let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
+                        width,
+                        height,
+                        interface: false,
+                        huds: film.huds,
+                        photo: (width, height),
+                        cube: None,
+                    });
+                    Some(crate::packet::Capture::Film(film.tag, spec))
+                }
+                None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+            },
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
         self.last_view = params.view;
@@ -1588,7 +1625,9 @@ impl Renderer {
                     }
                     Err(_) => gone = true,
                 }
-                let cube_face = matches!(capture, Some(crate::packet::Capture::Snapshot(s)) if s.cube.is_some());
+                // (nor a film's frame: its pixels come back with a later frame)
+                let cube_face = matches!(capture, Some(crate::packet::Capture::Snapshot(s)) if s.cube.is_some())
+                    || matches!(capture, Some(crate::packet::Capture::Film(..)));
                 if capture.is_some() && !cube_face && !gone {
                     // the capture is read right after this call; a GPU that
                     // stops answering in it leaves it for a later frame

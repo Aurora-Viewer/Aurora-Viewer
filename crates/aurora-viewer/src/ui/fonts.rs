@@ -21,9 +21,9 @@ pub const OPEN_DYSLEXIC: &str = "OpenDyslexic";
 pub const DEFAULT: &str = INTER;
 
 static INTER_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
-static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
+pub(crate) static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
 static NOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf");
-static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
+pub(crate) static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
 static ROBOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
 // Roboto has no static SemiBold: Medium is its emphasis weight
 static ROBOTO_MEDIUM_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");

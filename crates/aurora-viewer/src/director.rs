@@ -290,6 +290,8 @@ pub struct Director {
     /// The distance (m) that lens is focused at when the view is not locked
     /// on a target (locked, it focuses on the target).
     pub focus: f32,
+    /// The fades and the title cards, saved with the track (director_titles.rs).
+    pub finish: crate::director_titles::Finish,
 }
 
 impl Default for Director {
@@ -311,6 +313,7 @@ impl Default for Director {
             shake: 0.0,
             dof: None,
             focus: DEFAULT_FOCUS,
+            finish: Default::default(),
         }
     }
 }
