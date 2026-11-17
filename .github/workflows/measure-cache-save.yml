@@ -1,0 +1,156 @@
+name: Measure cache save (temporary)
+
+# TEMPORARY, never merged: measures what the fixed drop of
+# .github/actions/rust-cache/save gains, on the pull request of
+# fix/cache-save-layout. Each job restores main's cache, builds what main's
+# push job builds, then drops the workspace's outputs and packs target/
+# before and after. Windows tests also save with the real action, under a
+# key of this pull request (deleted afterwards), and a second job restores
+# it and builds again: what a queue run does with the new cache. The final
+# commit of the branch removes this file and measure-cache-size.sh.
+on:
+  pull_request:
+
+concurrency:
+  group: measure-cache-save-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-tests:
+    name: m tests (Windows), build, drop, save
+    if: github.head_ref == 'fix/cache-save-layout'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Runner's processor
+        run: (Get-CimInstance Win32_Processor).Name
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
+      # what the former script read: a CR at the end of each name on Windows
+      - name: jq's line ends
+        shell: bash
+        run: cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[0].name' | od -c | head -2
+      - uses: ./.github/actions/rust-cache
+        with:
+          name: tests
+      - name: Build the tests (as main's push job)
+        run: cargo test --profile ci --workspace --locked --no-run
+      - name: Packed size before the drop
+        shell: bash
+        run: bash .github/measure-cache-size.sh before
+      - name: Save the Rust cache (the real action)
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: cargo-v1-measure-tests-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Packed size after the drop
+        shell: bash
+        run: bash .github/measure-cache-size.sh after
+      - name: Build the tests again (only the workspace's crates)
+        run: cargo test --profile ci --workspace --locked --no-run
+
+  windows-restore:
+    name: m tests (Windows), restore the new cache, build
+    needs: windows-tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Runner's processor
+        run: (Get-CimInstance Win32_Processor).Name
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
+      # the same paths as .github/actions/rust-cache
+      - name: Restore the cache the first job saved
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-v1-measure-tests-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+      - name: Build the tests (as a queue run)
+        run: cargo test --profile ci --workspace --locked --no-run
+
+  windows-lint:
+    name: m lint (Windows), clippy, drop
+    if: github.head_ref == 'fix/cache-save-layout'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Runner's processor
+        run: (Get-CimInstance Win32_Processor).Name
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Rust stable
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          rustup component add clippy
+      - uses: ./.github/actions/rust-cache
+        with:
+          name: lint
+      - name: Clippy (as main's push job)
+        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+      - name: Packed size before the drop
+        shell: bash
+        run: bash .github/measure-cache-size.sh before
+      - name: Drop the workspace's outputs
+        shell: bash
+        run: bash .github/actions/rust-cache/save/drop-workspace-outputs.sh
+      - name: Packed size after the drop
+        shell: bash
+        run: bash .github/measure-cache-size.sh after
+      - name: Clippy again (only the workspace's crates)
+        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+
+  linux:
+    name: m linux-tests, clippy, build, drop
+    if: github.head_ref == 'fix/cache-save-layout'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Runner's processor
+        run: grep -m1 'model name' /proc/cpuinfo
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+      - name: Rust stable
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          rustup component add clippy
+      - uses: ./.github/actions/rust-cache
+        with:
+          name: linux-tests
+      - name: Clippy and the tests' build (as main's push job)
+        run: |
+          cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
+          cargo test --profile ci --workspace --locked --no-run
+      - name: Packed size before the drop
+        run: bash .github/measure-cache-size.sh before
+      - name: Drop the workspace's outputs
+        run: bash .github/actions/rust-cache/save/drop-workspace-outputs.sh
+      - name: Packed size after the drop
+        run: bash .github/measure-cache-size.sh after
+      - name: Build the tests again (only the workspace's crates)
+        run: cargo test --profile ci --workspace --locked --no-run
