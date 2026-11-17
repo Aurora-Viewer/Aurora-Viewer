@@ -22,7 +22,7 @@ AllowSelfImpostor,Boolean,unreviewed,,,Allow own render time to impostor your av
 AllowTapTapHoldRun,Boolean,unreviewed,,,Tapping a direction key twice and holding it down makes avatar run
 AnalyzePerformance,Boolean,unreviewed,,,Request performance analysis for a particular viewer run
 AnimateTextures,Boolean,unreviewed,,,Enable texture animation (debug)
-AnimatedObjectsAllowLeftClick,Boolean,in-aurora,,clickable_animesh,Allow left-click interaction with animated objects. Uncertain how much performance impact this will have.
+AnimatedObjectsAllowLeftClick,Boolean,in-aurora,,rigged_click_animesh,Allow left-click interaction with animated objects. Uncertain how much performance impact this will have.
 AnimatedObjectsMaxLegalOffset,F32,unreviewed,,,Max visual offset between object position and rendered position
 AnimatedObjectsMaxLegalSize,F32,unreviewed,,,Max bounding box size for animated object's rendered position
 AppearanceCameraMovement,Boolean,unreviewed,,field `appearance_camera_movement`,"When entering appearance editing mode, camera zooms in on currently selected portion of avatar"

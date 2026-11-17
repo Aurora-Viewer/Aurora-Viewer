@@ -1887,13 +1887,15 @@ when unfocused") is ignored during a screenshot.
     (`OUTSIDE` would be a defect: the point read on the GPU is not within
     the bounds the CPU knows for the object). Then come `demo menu: …`
     (menu opened) or `demo click action: Touch, object=…`. A left click
-    passes through a rigged mesh by default (Preferences › Mouse and
-    keyboard, "Clickable animesh" and "Clickable rigged attachments", both
-    off): `150,rigged,left` writes `aimed at … : PASSED THROUGH` and the
-    object behind as the one picked, never a touch of the rigged mesh.
-    `150,rigged,clickable,left` clicks as with both preferences on, without
-    saving them: `aimed at … : OK` and the touch, except on the rigged mesh
-    our avatar wears, which a left click always passes through. With
+    acts on a scripted animesh and passes through a rigged attachment by
+    default (Preferences › Mouse and keyboard, "Left click on rigged
+    objects": "Animesh" on, "Rigged attachments you wear" and "Rigged
+    attachments of other avatars" off): `150,rigged,left` writes
+    `aimed at … : OK` and the touch for the animesh, and
+    `aimed at … : PASSED THROUGH` with the object behind as the one picked
+    for a rigged attachment, ours included.
+    `150,rigged,clickable,left` clicks as with the three preferences on,
+    without saving them: `aimed at … : OK` and the touch for each. With
     `3000,rigged,menu` and `AURORA_CAPTURE_FRAMES=1100,1460`, the
     screenshots show the menu of an object worn by another avatar then that
     of an object worn by us, the object surrounded by its outline.

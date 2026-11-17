@@ -40,17 +40,25 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-block-click-sit-help"),
             &field!(block_click_sit),
         );
-        // Off, as LLToolPie::handleMouseDown (`pick_rigged = false`): the
-        // left click passes through rigged meshes (scene/drawn.rs)
+    });
+    // The rigged meshes a plain left click acts on (scene/drawn.rs). Off, the
+    // click passes through them, as LLToolPie::handleMouseDown does for all
+    // of them (`pick_rigged = false`); animesh are on at the human's request.
+    cx.group(tr!("ui-options-rigged-clicks"), |cx| {
         cx.toggle(
-            tr!("ui-options-clickable-animesh"),
-            tr!("ui-options-clickable-animesh-help"),
-            &field!(clickable_animesh),
+            tr!("ui-options-rigged-click-animesh"),
+            tr!("ui-options-rigged-click-animesh-help"),
+            &field!(rigged_click_animesh),
         );
         cx.toggle(
-            tr!("ui-options-clickable-rigged-attachments"),
-            tr!("ui-options-clickable-rigged-attachments-help"),
-            &field!(clickable_rigged_attachments),
+            tr!("ui-options-rigged-click-own"),
+            tr!("ui-options-rigged-click-own-help"),
+            &field!(rigged_click_own),
+        );
+        cx.toggle(
+            tr!("ui-options-rigged-click-others"),
+            tr!("ui-options-rigged-click-others-help"),
+            &field!(rigged_click_others),
         );
     });
     cx.group(tr!("ui-options-keyboard"), |cx| {

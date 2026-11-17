@@ -1603,12 +1603,15 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
-    /// A left click acts on an animated object (animesh) with a touch script
-    /// or a click action, and on a rigged attachment with one: both off, the
-    /// click passes through them as in the Legacy Viewer (scene/drawn.rs;
-    /// Preferences › Mouse and keyboard).
-    pub clickable_animesh: bool,
-    pub clickable_rigged_attachments: bool,
+    /// The rigged meshes with a touch script or a click action that a left
+    /// click acts on: animated objects (animesh; on), rigged attachments we
+    /// wear (off) and those of other avatars (off). Off, the click passes
+    /// through them as in the Legacy Viewer, which has none of the three
+    /// (scene/drawn.rs; Preferences › Mouse and keyboard, "Left click on
+    /// rigged objects").
+    pub rigged_click_animesh: bool,
+    pub rigged_click_own: bool,
+    pub rigged_click_others: bool,
     /// RenderVolumeSAProtection: prims and sculpts with a very large surface
     /// stop being drawn past a total each frame (scene/surface_area.rs; off).
     pub large_surface_protection: bool,
@@ -2688,8 +2691,9 @@ impl Default for Settings {
             fly_override_warned: false,
             avatar_align_mini: false,
             block_click_sit: false,
-            clickable_animesh: false,
-            clickable_rigged_attachments: false,
+            rigged_click_animesh: true,
+            rigged_click_own: false,
+            rigged_click_others: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
             large_surface_sculpt_threshold: 150.0,
@@ -3844,8 +3848,9 @@ impl Settings {
     /// The rigged meshes a left click acts on (scene/drawn.rs).
     pub fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
         crate::scene::drawn::RiggedClicks {
-            animesh: self.clickable_animesh,
-            attachments: self.clickable_rigged_attachments,
+            animesh: self.rigged_click_animesh,
+            own: self.rigged_click_own,
+            others: self.rigged_click_others,
         }
     }
 
@@ -4599,17 +4604,21 @@ mod tests {
     }
 
     #[test]
-    fn rigged_meshes_are_not_clickable_by_default_and_the_choice_round_trips() {
+    fn only_animesh_take_a_left_click_by_default_and_each_choice_round_trips() {
+        use crate::scene::drawn::RiggedClicks;
         let missing: Settings = serde_json::from_str("{}").expect("old settings without the preferences");
-        assert_eq!(missing.rigged_clicks(), crate::scene::drawn::RiggedClicks::default());
-        assert!(!missing.clickable_animesh && !missing.clickable_rigged_attachments);
+        assert_eq!(missing.rigged_clicks(), RiggedClicks::default());
+        assert!(missing.rigged_click_animesh && !missing.rigged_click_own && !missing.rigged_click_others);
 
-        let mut changed = missing;
-        changed.clickable_animesh = true;
-        let saved = serde_json::to_value(&changed).expect("save the preferences");
-        let loaded: Settings = serde_json::from_value(saved).expect("reload the preferences");
-        let clicks = loaded.rigged_clicks();
-        assert!(clicks.animesh && !clicks.attachments, "each switch alone");
+        for (animesh, own, others) in [(false, false, false), (true, true, false), (true, false, true)] {
+            let mut changed = missing.clone();
+            changed.rigged_click_animesh = animesh;
+            changed.rigged_click_own = own;
+            changed.rigged_click_others = others;
+            let saved = serde_json::to_value(&changed).expect("save the preferences");
+            let loaded: Settings = serde_json::from_value(saved).expect("reload the preferences");
+            assert_eq!(loaded.rigged_clicks(), RiggedClicks { animesh, own, others }, "each switch alone");
+        }
     }
 
     #[test]

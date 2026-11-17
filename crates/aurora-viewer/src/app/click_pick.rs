@@ -276,7 +276,7 @@ impl ClickWait {
     }
 
     /// AURORA_DEMO_CLICKS=...,clickable: its left clicks act on every
-    /// scripted rigged mesh, whatever the preferences say.
+    /// scripted rigged mesh, ours included, whatever the preferences say.
     fn demo_clickable(&self) -> bool {
         self.demo.spec().is_some_and(|spec| spec.clickable)
     }
@@ -293,13 +293,19 @@ impl ClickWait {
 
 impl App {
     /// The rigged meshes a left click and the hover cursor act on
-    /// (scene/drawn.rs): the two preferences, off by default, for the plain
-    /// click only. With Alt, Ctrl or Shift held the click reaches every
-    /// scripted rigged mesh, as before the preferences; a demo script asks
-    /// for the same without touching the saved settings.
+    /// (scene/drawn.rs): the three preferences, for the plain click only.
+    /// With Alt, Ctrl or Shift held the click reaches what it reached
+    /// before them; a demo script asks for every kind without touching the
+    /// saved settings.
     pub(super) fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
-        let all = self.alt || self.ctrl || self.shift || self.clicks.demo_clickable();
-        self.settings.rigged_clicks().or_all(all)
+        use crate::scene::drawn::RiggedClicks;
+        if self.clicks.demo_clickable() {
+            RiggedClicks::ALL
+        } else if self.alt || self.ctrl || self.shift {
+            RiggedClicks::MODIFIER_CLICK
+        } else {
+            self.settings.rigged_clicks()
+        }
     }
 
     pub(super) fn ui_takes_pointer(&self) -> bool {
@@ -1025,7 +1031,7 @@ impl App {
 /// new place of the window each time, or with `rigged` at the rigged meshes
 /// on screen in turn (`demo drawn pick` in the log says what each click
 /// designated). `clickable`: the left clicks act on scripted rigged meshes,
-/// as with "Clickable animesh" and "Clickable rigged attachments" both on.
+/// as with the three "Left click on rigged objects" preferences on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DemoSpec {
     period: Duration,
