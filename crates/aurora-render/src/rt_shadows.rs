@@ -20,7 +20,7 @@
 //! blended faces. The shadow maps still shade those passes the mask does
 //! not cover (blended faces, reflections).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use bytemuck::{Pod, Zeroable};
@@ -1569,16 +1569,40 @@ const FACE_VERTICES: u64 = 1 << 16;
 /// Triangles of bottom levels built in one frame: the others wait (and their
 /// faces are not traced) until a later frame.
 const BUILD_TRIANGLES: u64 = 1 << 20;
-/// Bottom levels made in one frame, whatever their triangles: each costs
-/// the render thread about a microsecond to make, and the faces of a
-/// region that comes or goes are tens of thousands of small ones.
+/// Bottom levels a frame may make, whatever their triangles: the faces of
+/// a region that comes or goes are tens of thousands of small ones. How
+/// many of them it does make, [`BUILD_TIME`] says.
 const BUILD_LEVELS: usize = 512;
+/// The time a frame gives to making the bottom levels it chose: one costs
+/// the render thread 2 to 11 microseconds, and a hundred now and then (350
+/// of them took a frame 4 ms). Those it has no time for wait, as those
+/// past the other budgets do ([`unmade`]).
+const BUILD_TIME: std::time::Duration = std::time::Duration::from_micros(500);
 
 /// Whether a frame that already builds `levels` bottom levels of
 /// `triangles` in all has room for one more of `more` triangles (the first
 /// always has).
 fn build_room(levels: usize, triangles: u64, more: u64) -> bool {
     levels < BUILD_LEVELS && (triangles == 0 || triangles + more <= BUILD_TRIANGLES)
+}
+
+/// Takes back the bottom levels a frame chose (`new`: the key, its size,
+/// whether the still set holds it) and had no time to make, those after
+/// the `made` first: the still set's return to `queue` in their order (the
+/// next one last), the others are chosen again by their moving faces.
+/// Returns their triangles, and how many of them are moving faces' alone.
+fn unmade<S>(new: &mut Vec<(Key, S, bool)>, made: usize, queue: &mut Vec<Key>, index: &mut HashMap<Key, usize>) -> (u64, usize) {
+    let (mut triangles, mut moving) = (0, 0);
+    for (key, _, held) in new.drain(made..).rev() {
+        triangles += key.index_count as u64 / 3;
+        index.remove(&key);
+        if held {
+            queue.push(key);
+        } else {
+            moving += 1;
+        }
+    }
+    (triangles, moving)
 }
 /// Posed vertices of the merged cells whose levels are made in one frame,
 /// the nearest first (the nearest is always made): the others keep the
@@ -1591,6 +1615,15 @@ const MERGED: u32 = 1 << 23;
 const KEEP_FRAMES: u64 = 600;
 /// Frames between two sweeps of the bottom levels no face uses.
 const SWEEP_EVERY: u64 = 64;
+/// Frames a bottom level nothing uses any more is held before its release:
+/// the top levels and the frames still drawn let go of it first, so that
+/// it ends when the frame has the time ([`RELEASE_TIME`]) and not all at
+/// once inside a build or a submit.
+const RETIRE_FRAMES: u64 = 8;
+/// The time a frame gives to releasing retired bottom levels: one costs
+/// the render thread 1 to 4 microseconds, and a region left behind has
+/// thousands (their sweep took a frame 3 ms).
+const RELEASE_TIME: std::time::Duration = std::time::Duration::from_micros(250);
 /// Frames between two builds of the scene's top level while bottom levels
 /// of its faces still wait for the frames' budget: it is built once more
 /// when the last one is, and now and then on the way so that a region
@@ -1987,6 +2020,9 @@ pub(crate) struct RtShadows {
     buffer: wgpu::Buffer,
     cull: Cull,
     bottoms: HashMap<Key, Bottom>,
+    /// The bottom levels nothing uses any more, with the frame each was
+    /// retired on, the oldest first ([`RETIRE_FRAMES`]).
+    retired: VecDeque<(u64, wgpu::Blas)>,
     /// The arena buffers the bottom levels were built from: a new one
     /// (the arena grew) builds them all again.
     arena: Option<(wgpu::Buffer, wgpu::Buffer)>,
@@ -2264,6 +2300,7 @@ impl RtShadows {
             buffer,
             cull,
             bottoms: HashMap::new(),
+            retired: VecDeque::new(),
             arena: None,
             tlas: None,
             still: Arc::default(),
@@ -2994,7 +3031,7 @@ impl RtShadows {
         part(0);
         let same_arena = self.arena.as_ref().is_some_and(|(v, i)| v == vertices && i == indices);
         if !same_arena {
-            self.bottoms.clear();
+            self.retired.extend(self.bottoms.drain().map(|(_, b)| (frame, b.blas)));
             self.arena = Some((vertices.clone(), indices.clone()));
         }
         let arena_vertices = vertices.size() / VERTEX_BYTES;
@@ -3070,22 +3107,27 @@ impl RtShadows {
             }
             self.queue.pop();
         }
-        waiting += self.queue.len();
-        let created: Vec<wgpu::Blas> = new
-            .iter()
-            .map(|(_, size, _)| {
-                device.create_blas(
-                    &wgpu::CreateBlasDescriptor {
-                        label: Some("rt shadows face"),
-                        flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-                        update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-                    },
-                    wgpu::BlasGeometrySizeDescriptors::Triangles {
-                        descriptors: vec![size.clone()],
-                    },
-                )
-            })
-            .collect();
+        // made within the frame's time for it, the first always
+        let making = std::time::Instant::now();
+        let mut created: Vec<wgpu::Blas> = Vec::with_capacity(new.len());
+        for (_, size, _) in &new {
+            if !created.is_empty() && making.elapsed() >= BUILD_TIME {
+                break;
+            }
+            created.push(device.create_blas(
+                &wgpu::CreateBlasDescriptor {
+                    label: Some("rt shadows face"),
+                    flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+                    update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+                },
+                wgpu::BlasGeometrySizeDescriptors::Triangles {
+                    descriptors: vec![size.clone()],
+                },
+            ));
+        }
+        let (late, moving) = unmade(&mut new, created.len(), &mut self.queue, &mut index);
+        triangles -= late;
+        waiting += moving + self.queue.len();
         // the levels of the cells posed this frame
         let baked: Vec<(usize, u32, Vec<wgpu::BlasTriangleGeometrySizeDescriptor>, wgpu::Blas)> = bake
             .iter()
@@ -3234,7 +3276,7 @@ impl RtShadows {
         let cells_built = baked.len();
         for (n, _, _, blas) in baked {
             let cell = &cells[n];
-            self.merged.insert(
+            let before = self.merged.insert(
                 cell.key,
                 Merged {
                     blas,
@@ -3244,15 +3286,23 @@ impl RtShadows {
                     used: frame,
                 },
             );
+            self.retired.extend(before.map(|m| (frame, m.blas)));
         }
         let built = created.len();
         for ((key, _, held), blas) in new.into_iter().zip(created) {
             self.bottoms.insert(key, Bottom { blas, used: frame, held });
         }
-        // the levels no face used for a while go
+        // the levels no face used for a while are retired, and those
+        // retired a while ago released, within the frame's time for it
         if frame.is_multiple_of(SWEEP_EVERY) {
-            self.bottoms.retain(|_, b| b.held || frame - b.used <= KEEP_FRAMES);
-            self.merged.retain(|_, m| m.held || frame - m.used <= KEEP_FRAMES);
+            let old = self.bottoms.extract_if(|_, b| !b.held && frame - b.used > KEEP_FRAMES);
+            self.retired.extend(old.map(|(_, b)| (frame, b.blas)));
+            let old = self.merged.extract_if(|_, m| !m.held && frame - m.used > KEEP_FRAMES);
+            self.retired.extend(old.map(|(_, m)| (frame, m.blas)));
+        }
+        let releasing = std::time::Instant::now();
+        while self.retired.front().is_some_and(|&(at, _)| frame >= at + RETIRE_FRAMES) && releasing.elapsed() < RELEASE_TIME {
+            self.retired.pop_front();
         }
         part(2);
         // the moving faces, placed with the skeletons: after the bottom
@@ -4900,6 +4950,39 @@ mod tests {
         // and within the count, however small
         assert!(build_room(BUILD_LEVELS - 1, 1000, 12));
         assert!(!build_room(BUILD_LEVELS, 1000, 12));
+    }
+
+    #[test]
+    fn rt_shadows_the_levels_a_frame_had_no_time_for_wait_in_their_order() {
+        let key = |n: u32| Key {
+            base_vertex: 0,
+            first_index: n,
+            index_count: 3 * n,
+            opaque: true,
+        };
+        // two moving faces' levels, then three the still set's queue gave
+        // (5 was the next, 8 is now)
+        let mut queue = vec![key(9), key(8)];
+        let mut new = vec![
+            (key(1), (), false),
+            (key(2), (), false),
+            (key(5), (), true),
+            (key(6), (), true),
+            (key(7), (), true),
+        ];
+        let mut index: HashMap<Key, usize> = new.iter().enumerate().map(|(n, e)| (e.0, n)).collect();
+        // the time for three: the two others are the next again, in order
+        assert_eq!(unmade(&mut new, 3, &mut queue, &mut index), (13, 0));
+        assert_eq!(queue, [key(9), key(8), key(7), key(6)]);
+        assert_eq!(new.iter().map(|e| e.0).collect::<Vec<_>>(), [key(1), key(2), key(5)]);
+        assert!(index.len() == 3 && index[&key(5)] == 2);
+        // for one: a moving face's own waits for its face to ask again
+        assert_eq!(unmade(&mut new, 1, &mut queue, &mut index), (7, 1));
+        assert_eq!(queue, [key(9), key(8), key(7), key(6), key(5)]);
+        assert!(index.len() == 1 && index[&key(1)] == 0);
+        // for all: none
+        assert_eq!(unmade(&mut new, 1, &mut queue, &mut index), (0, 0));
+        assert_eq!((new.len(), queue.len()), (1, 5));
     }
 
     #[test]
