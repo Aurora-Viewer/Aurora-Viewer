@@ -59,29 +59,22 @@ impl History {
         true
     }
 
-    /// Before TextEdit and emoji navigation: take only Ctrl+Up/Down from
-    /// the focused field, including repeats, so egui does not move its
-    /// cursor first. Plain arrows and the other modifiers keep their uses.
+    /// Before TextEdit and emoji navigation: take only the Previous / Next
+    /// sent message keys (Ctrl+Up/Down by default, rebindable:
+    /// `shortcuts.rs`) from the focused field, including repeats, so egui
+    /// does not move its cursor first. Plain arrows and the other
+    /// modifiers keep their uses.
     pub(super) fn recall(&mut self, ui: &egui::Ui, field: egui::Id, text: &mut String) -> bool {
         if !ui.memory(|m| m.has_focus(field)) {
             return false;
         }
         let mut changed = false;
+        let keys = super::shortcuts::get(ui.ctx());
         ui.input_mut(|i| {
             i.events.retain(|event| {
-                if let egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } = event
-                    && modifiers.ctrl
-                    && !modifiers.shift
-                    && !modifiers.alt
-                    && !modifiers.mac_cmd
-                    && matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown)
-                {
-                    changed |= self.step(field, text, *key == egui::Key::ArrowUp);
+                let back = keys.pressed(crate::keybinds::Action::ChatHistoryPrevious, event);
+                if back || keys.pressed(crate::keybinds::Action::ChatHistoryNext, event) {
+                    changed |= self.step(field, text, back);
                     false
                 } else {
                     true

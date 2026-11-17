@@ -144,6 +144,7 @@ fn water_mode_toolbar_buttons_are_opt_in_and_preserve_saved_placements() {
     let layout = Layout::default();
     let mut toolbar = ToolbarSettings {
         vr_button_migrated: true,
+        director_button_migrated: true,
         ..Default::default()
     };
     let mut state = ToolbarUi::default();
@@ -214,9 +215,9 @@ fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accoun
     assert_eq!(
         common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
         if cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos")) {
-            vec!["inventory", "vr_view"]
+            vec!["inventory", "vr_view", "director"]
         } else {
-            vec!["inventory"]
+            vec!["inventory", "director"]
         }
     );
     assert!(common.locked);
@@ -895,12 +896,12 @@ fn toolbar_sanitize_skips_the_retired_howto_command() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 79);
-    assert_eq!(COMMANDS.len(), 79);
+    assert_eq!(all.len(), 80);
+    assert_eq!(COMMANDS.len(), 80);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 79, "each command once");
+    assert_eq!(ids.len(), 80, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -1051,4 +1052,62 @@ fn vr_toolbar_migration_preserves_customization_and_manual_removal() {
     };
     side.migrate_vr_button();
     assert_eq!(side.buttons.expect("custom toolbar").len(), 1);
+}
+
+#[test]
+fn director_button_is_added_next_to_the_photo_button_once() {
+    let commands = |bar: &[ToolButton]| bar.iter().map(|b| b.command.clone()).collect::<Vec<_>>();
+    // the default bar already has it, right after the photo button
+    let default = commands(&Layout::default().toolbar);
+    let photo = default.iter().position(|c| c == "snapshot").expect("photo button");
+    assert_eq!(default[photo + 1], "director");
+    // a bar that follows the skin is left as it is
+    let mut skin = ToolbarSettings::default();
+    assert!(skin.migrate_director_button());
+    assert!(skin.buttons.is_none());
+    // an arranged bottom bar: after the photo button, once
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![button("inventory"), button("snapshot"), button("preferences")]),
+        ..Default::default()
+    };
+    assert!(settings.migrate_director_button());
+    let bottom = settings.buttons.as_mut().expect("custom toolbar");
+    assert_eq!(commands(bottom), ["inventory", "snapshot", "director", "preferences"]);
+    bottom.retain(|b| b.command != "director");
+    assert!(!settings.migrate_director_button(), "a removed Director stays removed");
+    assert_eq!(
+        commands(settings.buttons.as_ref().expect("custom toolbar")),
+        ["inventory", "snapshot", "preferences"]
+    );
+    // the photo button on a side bar: the Director joins it there
+    let mut side = ToolbarSettings {
+        buttons: Some(vec![button("inventory")]),
+        right: vec![button("snapshot"), button("worldmap")],
+        ..Default::default()
+    };
+    side.migrate_director_button();
+    assert_eq!(commands(&side.right), ["snapshot", "director", "worldmap"]);
+    assert_eq!(commands(side.buttons.as_ref().expect("custom toolbar")), ["inventory"]);
+    // no photo button: at the end of the bottom bar
+    let mut none = ToolbarSettings {
+        buttons: Some(vec![button("inventory")]),
+        ..Default::default()
+    };
+    none.migrate_director_button();
+    assert_eq!(commands(none.buttons.as_ref().expect("custom toolbar")), ["inventory", "director"]);
+    // an emptied bottom bar and an already placed Director are left alone
+    let mut empty = ToolbarSettings {
+        buttons: Some(vec![]),
+        ..Default::default()
+    };
+    empty.migrate_director_button();
+    assert!(empty.buttons.expect("explicit empty toolbar").is_empty());
+    let mut placed = ToolbarSettings {
+        buttons: Some(vec![button("snapshot")]),
+        left: vec![button("director")],
+        ..Default::default()
+    };
+    placed.migrate_director_button();
+    assert_eq!(commands(placed.buttons.as_ref().expect("custom toolbar")), ["snapshot"]);
+    assert_eq!(commands(&placed.left), ["director"]);
 }

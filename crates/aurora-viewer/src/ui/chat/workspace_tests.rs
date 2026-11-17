@@ -836,36 +836,112 @@ fn a_drop_in_the_window_off_the_list_does_nothing() {
     );
 }
 
-/// While an entry is held over its new place, the entries move apart
-/// there; Escape closes the gap and moves nothing.
+/// A long name in the field's placeholder stays on one line and ends with
+/// "…", in the workspace's field and the Legacy style's (human report of
+/// 2026-11-15: "Write to Ødesså Drækåvik (OdessaDraekavik)" took two lines).
 #[test]
-fn the_entries_move_apart_where_the_dragged_one_lands() {
+fn a_long_name_in_the_placeholder_stays_on_one_line() {
+    let name = "Ødesså Drækåvik Ødesså Drækåvik (OdessaDraekavik.Resident)";
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(520.0, 420.0));
+        h.world.social.names.insert(JANE, name.into());
+        h.st.select_tab(Some(JANE));
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let long = painted(&texts, &hint);
+        assert!(long.cut && long.shown.ends_with('…'), "{style:?}: shown as {:?}", long.shown);
+        let long = long.rect;
+        // a short one is left whole, and the long one is as tall: one line
+        h.world.social.names.insert(JANE, "Jane".into());
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let short = painted(&texts, &hint);
+        assert!(!short.cut, "{style:?}");
+        assert!(
+            (long.height() - short.rect.height()).abs() < 0.5,
+            "{style:?}: {:?} vs {:?}",
+            long,
+            short.rect
+        );
+    }
+}
+
+/// While an entry is carried over its new place, the entries between slide
+/// out of its way (their places, which keep the pointer, stay); Escape
+/// slides them back and moves nothing. Let go, the entry glides from where
+/// it was dropped into its place, and the others from where they were
+/// drawn: nothing snaps (human report of 2026-11-15).
+#[test]
+fn the_entries_make_way_and_the_dropped_one_glides_into_place() {
     let mut h = Harness::new(ChatStyle::Aurora);
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(300.0, 40.0), egui::vec2(800.0, 560.0));
     h.settle();
     let jane = h.conversation_rect(JANE);
     let bob = h.conversation_rect(BOB);
+    let order = |h: &Harness| h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>();
     // Bob taken up above Jane, held there
-    h.drag_conversation(bob.center(), egui::pos2(jane.center().x, jane.top() + 6.0), Vec::new());
+    let to = egui::pos2(jane.center().x + 12.0, jane.top() + 6.0);
+    h.drag_conversation(bob.center(), to, Vec::new());
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    let moved = h.rect(entry_id(Pinned::Conversation(JANE)));
+    let slid = h.st.reorder.offset_of(JANE);
     assert!(
-        (moved.top() - bob.top()).abs() < 1.0,
-        "Jane moved down by a whole entry, to Bob's place: {moved:?} from {jane:?}"
+        (slid.y - (bob.top() - jane.top())).abs() < 1.0,
+        "Jane slid down by a whole entry, to Bob's place: {slid:?}"
     );
+    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))), jane, "her place keeps the pointer");
     h.frame(key(egui::Key::Escape, egui::Modifiers::NONE));
+    // Bob, carried, glides home from his card instead of snapping there
+    let home = h.st.reorder.offset_of(BOB);
+    assert!(home.y.abs() > 4.0, "Bob starts where his card was: {home:?}");
+    h.frame(Vec::new());
+    assert!(h.st.reorder.offset_of(BOB).y.abs() < home.y.abs(), "and eases home");
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))).top(), jane.top(), "the gap closed");
+    assert_eq!(h.st.reorder.offset_of(JANE), egui::Vec2::ZERO, "she slid back");
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "he is home");
     h.frame(Harness::drop_at(jane.center()));
     h.settle();
-    assert_eq!(
-        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-        [JANE, BOB]
+    assert_eq!(order(&h), [JANE, BOB]);
+    // the same carry, let go this time
+    h.drag_conversation(bob.center(), to, Vec::new());
+    for _ in 0..20 {
+        h.frame(Vec::new());
+    }
+    h.frame(Harness::drop_at(to));
+    h.frame(Vec::new());
+    assert_eq!(order(&h), [BOB, JANE]);
+    // laid out in the new order, Bob still stands where his card was let go
+    let card = to - (bob.center() - bob.min);
+    // (his new place is Jane's old one)
+    let place = jane;
+    let first = h.st.reorder.offset_of(BOB);
+    assert!(
+        ((place.min + first) - card).length() < 1.5,
+        "Bob starts at his card: {:?} vs {card:?}",
+        place.min + first
     );
+    assert!(first.length() > 5.0, "a real glide, not a snap");
+    assert!(h.st.reorder.offset_of(JANE).length() < 1.0, "Jane was already at her new place");
+    let mut last = first.length();
+    for _ in 0..40 {
+        h.frame(Vec::new());
+        let now = h.st.reorder.offset_of(BOB).length();
+        assert!(now <= last + 0.01, "it only moves toward its place");
+        last = now;
+    }
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "landed");
 }
 
 /// The nearby chat drags out of the window into its own (#910); the chat
@@ -2640,6 +2716,103 @@ fn the_latest_button_brings_the_end_back() {
     }
 }
 
+/// The Aurora box grows with its text up to thirty rows, its buttons level
+/// with the first line, while the messages keep their end in sight; past
+/// what the window has room for it scrolls, the messages keeping their
+/// least height (human request of 2026-11-15).
+#[test]
+fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
+    let field = egui::Id::unique(("conv_input", Some(JANE)));
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    for _ in 0..4 {
+        h.settle();
+    }
+    // one row: the button's height (nothing stored while it is the least)
+    let one = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
+    let field_text = |texts: &[crate::ui::widgets::elide_tests::Text]| {
+        texts
+            .iter()
+            .find(|t| t.source.starts_with("row 1\n"))
+            .map(|t| t.rect)
+            .expect("the field's text drawn")
+    };
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let twelve = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let text = field_text(&texts);
+    // every row in sight: the field as tall as its text, past four rows
+    assert!(
+        twelve >= text.height() && twelve > one * 4.0,
+        "{one} -> {twelve}, text {}",
+        text.height()
+    );
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    assert!(!has(&texts, aurora_i18n::tr!("ui-chat-latest")), "no button back to it");
+    // the emoji button level with the first row, not centred on the box
+    let emoji = h.rect(crate::ui::chat::sidebar::control_id("box-mood-smile-filled"));
+    assert!((emoji.center().y - text.top()).abs() < 16.0, "{emoji:?} {text:?}");
+    // far more than the window holds: it stops growing, the messages keep
+    // their least height and the last of them shows
+    *h.st.draft_mut(Some(JANE)) = (1..=80).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let tall = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let rows = field_text(&texts).height() / 80.0;
+    assert!(tall <= rows * 30.0 + 12.0, "{tall} for rows of {rows}");
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    // a draft already long when the conversation opens: the same
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    assert!(has(&texts, "old 59"), "opened with a long draft: the last message in sight");
+    assert!(
+        !has(&texts, aurora_i18n::tr!("ui-chat-latest")),
+        "opened with a long draft: no button"
+    );
+}
+
+/// With the button turned off (Preferences › Chat › Conversations), a
+/// conversation scrolled away from its end shows none, even when lines come
+/// in, and the reader stays where they are, in both windows.
+#[test]
+fn the_latest_button_can_be_turned_off() {
+    let jump = aurora_i18n::tr!("ui-chat-latest");
+    let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.hide_latest = true;
+        for k in 0..60 {
+            h.world
+                .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+        }
+        h.st.selected = Some(JANE);
+        h.settle();
+        h.st.demo_scroll = Some(JANE);
+        h.settle();
+        h.settle();
+        assert!(h.st.demo_scrolled, "{style:?}");
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert!(has(&texts, "old 0"), "{style:?}: at the top");
+        assert!(!has(&texts, jump), "{style:?}: far from the end, no button");
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: no count either");
+        assert!(has(&texts, "old 0"), "{style:?}: the reader stays at the top");
+    }
+}
+
 /// The column's entries say the last line with its links by their labels,
 /// as the thread shows them, never the raw `secondlife:///app` address
 /// (#947): the nearby chat's entry and a conversation's.
@@ -2675,4 +2848,224 @@ fn the_column_previews_show_link_labels() {
     );
     assert!(texts.iter().any(|t| t.source.ends_with("ask Lune Étoilée")), "Jane's entry");
     assert!(texts.iter().all(|t| !t.source.contains("secondlife:")), "no raw address anywhere");
+}
+
+/// Adding a resident to a conversation with one resident turns it into a
+/// conference, and the new conference's field takes the keyboard: FSFloaterIM::
+/// addP2PSessionParticipants → startConference → FSFloaterIM::show →
+/// setFocus(true) → focusFirstItem (indra/newview/fsfloaterim.cpp). The
+/// keyboard follows the conference to the server's session id.
+#[test]
+fn a_conference_made_from_a_p2p_chat_takes_the_keyboard() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.selected = Some(JANE);
+        h.st.conv_focus_request = true;
+        h.settle();
+        let field = |c: Uuid| egui::Id::unique(("conv_input", Some(c)));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(JANE))),
+            "{style:?}: the P2P field starts with the keyboard"
+        );
+        h.world.convert_to_conference(JANE, vec![BOB]);
+        let temp = h.world.social.focus_im.expect("the new conference is shown");
+        assert!(h.world.social.focus_im_to_type, "{style:?}: ready to type in");
+        h.settle();
+        assert_eq!(h.st.selected, Some(temp));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(temp))),
+            "{style:?}: the new conference takes the keyboard"
+        );
+        h.frame(vec![egui::Event::Text("hi".into())]);
+        assert_eq!(h.st.draft_mut(Some(temp)), "hi", "{style:?}");
+        // processSessionInitializedReply: the server's id replaces ours, and
+        // the conversation keeps the keyboard
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        h.settle();
+        assert_eq!(h.st.selected, Some(real));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(real))),
+            "{style:?}: the server's id keeps the keyboard"
+        );
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(
+            h.st.draft_mut(Some(real)),
+            "hi!",
+            "{style:?}: the draft and caret stay in the conference"
+        );
+        assert!(!h.st.drafts.contains_key(&Some(temp)), "the temporary editor is gone");
+        assert!(h.st.draft_mut(None).is_empty(), "{style:?}: not in the nearby chat");
+    }
+}
+
+/// The server may acknowledge a new conference after the user has started
+/// writing elsewhere. The server ID follows the draft, not the keyboard.
+#[test]
+fn a_voice_conference_takes_focus_once_and_keeps_its_draft_after_switching_chats() {
+    for detached in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.own_windows = detached;
+        h.world.calls.voice_enabled = true;
+        h.world.start_conference(vec![JANE, BOB]);
+        let temp = h.world.social.focus_im.expect("outgoing voice conference");
+        h.settle();
+        let field = |c| egui::Id::unique(("conv_input", Some(c)));
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(temp))));
+        h.frame(vec![egui::Event::Text("conference draft".into())]);
+        h.world.focus_conversation(JANE, true);
+        h.settle();
+        h.frame(vec![egui::Event::Text("to Jane".into())]);
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(JANE))));
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        assert!(h.world.social.focus_im.is_none(), "the reply does not open a conversation");
+        h.settle();
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(JANE))));
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(h.st.draft_mut(Some(JANE)), "to Jane!");
+        assert_eq!(h.st.draft_mut(Some(real)), "conference draft");
+        assert!(!h.st.popped.contains(Some(temp)));
+        assert_eq!(h.st.popped.contains(Some(real)), detached);
+        assert!(!h.st.drafts.contains_key(&Some(temp)));
+        assert!(h.st.draft_mut(None).is_empty());
+    }
+}
+
+#[test]
+fn conference_ack_keeps_the_picker_in_its_own_window() {
+    let ctx = egui::Context::default();
+    let unrelated = Uuid::from_u128(17);
+    for (before, after) in [
+        (None, None),
+        (Some(None), Some(None)),
+        (Some(Some(None)), Some(Some(None))),
+        (Some(Some(Some(unrelated))), Some(Some(Some(unrelated)))),
+        (Some(Some(Some(JANE))), Some(Some(Some(BOB)))),
+    ] {
+        let mut st = ChatUi {
+            picker_window: before,
+            ..Default::default()
+        };
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert_eq!(st.picker_window, after);
+    }
+}
+
+#[test]
+fn conference_ack_keeps_the_active_search_or_filter_editor() {
+    use super::super::find;
+
+    let (temp, real) = (Some(JANE), Some(BOB));
+    for field in [find::field_id, find::filter_id] {
+        let ctx = egui::Context::default();
+        let mut st = ChatUi::default();
+        ctx.memory_mut(|m| m.request_focus(field(temp)));
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert!(ctx.memory(|m| m.has_focus(field(real))));
+    }
+}
+
+#[test]
+fn enter_returns_to_the_last_editor_after_a_conference_ack_with_the_keyboard_in_world() {
+    let field = |id| egui::Id::unique(("conv_input", Some(id)));
+    for switch_first in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.enter_last_field = true;
+        h.world.start_text_conference(vec![JANE, BOB]);
+        let temp = h.world.social.focus_im.expect("outgoing conference");
+        h.settle();
+        h.frame(vec![egui::Event::Text("a draft".into())]);
+        let last = if switch_first {
+            h.world.focus_conversation(JANE, true);
+            h.settle();
+            h.frame(vec![egui::Event::Text("private".into())]);
+            JANE
+        } else {
+            temp
+        };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(last))));
+        h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
+        h.st.let_keyboard_go();
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        h.settle();
+        assert!(
+            h.frames.ctx.memory(|m| m.focused()).is_none(),
+            "the reply leaves the keyboard in the world"
+        );
+        let world = &h.world;
+        h.st.start_chat(&h.frames.ctx, h.open, |id| {
+            world.social.has_session(id) || world.groups.sessions.contains_key(id)
+        });
+        h.settle();
+        let expected = if switch_first { JANE } else { real };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(expected))));
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(h.st.draft_mut(Some(expected)), if switch_first { "private!" } else { "a draft!" });
+    }
+}
+
+/// Send IM and the column's "new conversation" ask for a conversation and
+/// its field takes the keyboard (LLAvatarActions::startIM → FSFloaterIM::show
+/// → setFocus).
+#[test]
+fn a_conversation_the_user_starts_takes_the_keyboard() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.world.start_text_conference(vec![BOB]);
+        h.settle();
+        assert_eq!(h.st.selected, Some(BOB));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
+            "{style:?}: Send IM takes the keyboard"
+        );
+    }
+}
+
+/// A new call opens the Conversations window (App::update_voice) but must
+/// not take the keyboard: its conversation is only shown, as a call opener
+/// leaves the caret where it was.
+#[test]
+fn an_outgoing_call_does_not_take_the_keyboard_when_it_opens_the_window() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.open = false;
+        // the call starts while the Conversations window is closed
+        h.world.focus_conversation(JANE, false);
+        h.frame(Vec::new());
+        // and the app opens the window for it
+        h.open = true;
+        h.settle();
+        assert_eq!(h.st.selected, Some(JANE), "{style:?}: the call's conversation is shown");
+        assert!(
+            h.frames.ctx.memory(|m| m.focused()).is_none(),
+            "{style:?}: a call must not focus its field"
+        );
+        // a conversation the user asks for, on the other hand, is ready to type
+        h.world.focus_conversation(BOB, true);
+        h.settle();
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
+            "{style:?}: a user request takes the keyboard"
+        );
+    }
 }

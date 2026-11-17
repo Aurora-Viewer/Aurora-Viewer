@@ -102,6 +102,7 @@ pub struct AppearanceUi {
     closed_groups: HashSet<Uuid>,
     closed_version: u64,
     pub wanted_images: HashSet<Uuid>,
+    pub wanted_outfit_portrait: Option<Uuid>,
     /// What `prepare` walked at the last inventory change.
     prepared: Option<Prepared>,
     /// The outfits shown, filtered and sorted, and what they came from.
@@ -420,8 +421,8 @@ impl AppearanceUi {
     pub fn begin_save_as(&mut self, inv: &crate::world::inventory::Inventory) {
         let name = model::base(inv)
             .and_then(|id| inv.folders.get(&id))
-            .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
-            .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
+            .map(|f| crate::text_validation::new_variant_name_in(aurora_i18n::language(), &f.info.name))
+            .unwrap_or_else(|| crate::text_validation::default_name("ui-appearance-new-outfit").into());
         self.save_as = Some(crate::text_validation::generated_name(&name, 63));
         self.select_name = true;
         // beside the outfit it comes from: a variant goes in the same group

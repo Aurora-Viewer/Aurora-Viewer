@@ -155,6 +155,19 @@ pub fn step_roll(roll: f32, dir: i32) -> f32 {
     (roll.round() + dir.signum() as f32).clamp(-ROLL_MAX, ROLL_MAX)
 }
 
+/// The tilt typed in its field: "12,5", "−3°", "+90" (the minus sign the
+/// field writes, or a hyphen), by tenths of a degree, within `ROLL_MAX`;
+/// None when it is not a number.
+pub fn parse_tilt(text: &str) -> Option<f64> {
+    let t = text
+        .trim()
+        .trim_end_matches(|c: char| c == '°' || c.is_whitespace())
+        .replace('−', "-");
+    let v = aurora_i18n::parse_number(t.strip_prefix('+').unwrap_or(&t))?;
+    v.is_finite()
+        .then(|| ((v * 10.0).round() / 10.0).clamp(-f64::from(ROLL_MAX), f64::from(ROLL_MAX)))
+}
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1004,6 +1017,19 @@ mod tests {
         assert_eq!(step_roll(0.0, 1), 1.0);
         assert_eq!(step_roll(-6.5, -1), -8.0);
         assert_eq!(step_roll(180.0, 1), 180.0);
+    }
+
+    #[test]
+    fn a_typed_tilt_reads_as_the_field_writes_it() {
+        assert_eq!(parse_tilt("12.5"), Some(12.5));
+        assert_eq!(parse_tilt(" +6° "), Some(6.0));
+        assert_eq!(parse_tilt("−2.5°"), Some(-2.5));
+        assert_eq!(parse_tilt("-3"), Some(-3.0));
+        assert_eq!(parse_tilt("12.34"), Some(12.3), "by tenths");
+        assert_eq!(parse_tilt("400"), Some(f64::from(ROLL_MAX)));
+        assert_eq!(parse_tilt("-400"), Some(-f64::from(ROLL_MAX)));
+        assert_eq!(parse_tilt("level"), None);
+        assert_eq!(parse_tilt(""), None);
     }
 
     #[test]

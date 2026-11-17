@@ -65,10 +65,20 @@ impl App {
             log::info!("viewfinder: depth of field on (first opening)");
         }
         match (self.viewfinder_on(), self.snapshots.fov_before) {
-            (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
+            (true, None) => {
+                self.snapshots.fov_before = Some(self.settings.camera.fov);
+                // the tilt it had when it closed, unless the camera controls
+                // tilted the view meanwhile (theirs is kept)
+                if self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
+                    self.camera.roll = self.snapshots.roll_kept;
+                    log::info!("viewfinder: tilt back to {:.1}°", self.camera.roll.to_degrees());
+                }
+            }
             (false, Some(fov)) => {
-                // Only closing the viewfinder resets its roll; ordinary camera
-                // controls also own roll while the viewfinder is closed.
+                // Only closing the viewfinder levels the view; ordinary camera
+                // controls also own roll while the viewfinder is closed. Its
+                // tilt is kept for the next opening.
+                self.snapshots.roll_kept = self.camera.roll;
                 self.camera.roll = 0.0;
                 self.snapshots.fov_before = None;
                 if (self.settings.camera.fov - fov).abs() > 1e-6 {

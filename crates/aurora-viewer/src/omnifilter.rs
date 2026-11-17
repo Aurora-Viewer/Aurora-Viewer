@@ -640,6 +640,8 @@ impl Engine {
         self.path = Some(path.clone());
         self.loading = Some(parking_lot::Mutex::new(rx));
         let spawned = std::thread::Builder::new().name("aurora-omnifilter".into()).spawn(move || {
+            // the last session's exit save may still be on its way (saves.rs)
+            crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
             let sets = match std::fs::read(&path) {
                 Ok(bytes) if bytes.is_empty() => {
                     log::warn!("omnifilter: {} is empty", path.display());
@@ -703,24 +705,47 @@ impl Engine {
 
     /// Writes what is left to save before the viewer closes or the account
     /// logs out (~OmnifilterEngine: a change made just before closing is
-    /// kept), and waits for the writes under way, a few seconds at most.
+    /// kept). A save thread (saves.rs) waits for the writes under way, a
+    /// few seconds at most, then writes the rules as they are now if they
+    /// were not saved yet or one of those writes failed: the frame does not
+    /// wait for the disk, and the exit waits for that save.
     pub fn save_before_exit(&mut self) {
-        self.save();
-        let deadline = Instant::now() + EXIT_WAIT;
-        while self.in_flight > 0 {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match self.saver.as_ref().map(|s| s.answers.recv_timeout(left)) {
-                Some(Ok(answer)) => self.answered(answer, Instant::now()),
-                _ => break,
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let unsaved = self.dirty_since.take().is_some();
+        let in_flight = std::mem::take(&mut self.in_flight);
+        if !unsaved && in_flight == 0 {
+            return;
+        }
+        let answers = self.saver.as_ref().map(|s| s.answers.clone());
+        let xml = to_xml(&self.sets);
+        self.backoff = Duration::ZERO;
+        self.retry_after = None;
+        crate::saves::change(path.clone(), move || {
+            let mut failed = false;
+            let deadline = Instant::now() + EXIT_WAIT;
+            for _ in 0..in_flight {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match answers.as_ref().map(|a| a.recv_timeout(left)) {
+                    Some(Ok(Ok(()))) => {}
+                    Some(Ok(Err(e))) => {
+                        log::warn!("omnifilter: not saved ({e}); tried once more");
+                        failed = true;
+                    }
+                    // gone or not answering: written again to be sure
+                    _ => {
+                        failed = true;
+                        break;
+                    }
+                }
             }
-        }
-        // a write that failed, or that was never queued, is tried once more
-        // here, on this thread
-        if let Some((path, xml)) = self.pending_save()
-            && let Err(e) = write(&path, &xml)
-        {
-            log::warn!("omnifilter: {}: {e}", path.display());
-        }
+            if (unsaved || failed)
+                && let Err(e) = write(&path, &xml)
+            {
+                log::warn!("omnifilter: {}: {e}", path.display());
+            }
+        });
     }
 
     fn queue(&mut self, path: std::path::PathBuf, xml: String) {
