@@ -287,6 +287,11 @@ pub(crate) fn request_from_window(
             },
         );
         confirm_or_run(inv, st, prefs, &facts, actions, ids.clone());
+        // "Detach and Delete" waits on the inventory window's frames
+        // (`finish_detach`): from another window, the plain confirmation
+        if matches!(st.dialog, Some(EditDialog::DetachDelete(_))) {
+            st.dialog = None;
+        }
         if actions.len() > before || st.dialog.is_some() || !st.message.is_empty() {
             return st.dialog.is_some();
         }
