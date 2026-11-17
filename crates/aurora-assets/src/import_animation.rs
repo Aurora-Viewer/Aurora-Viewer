@@ -1,5 +1,5 @@
 //! BVH import, based on LLBVHLoader::loadBVHFile / makeTranslation /
-//! serialize (Firestorm indra/llcharacter, originally LGPL 2.1), and the BVH
+//! serialize (indra/llcharacter/llbvhloader.cpp, originally LGPL 2.1), and the BVH
 //! export that writes back what the import reads. Bounds, parsing and writing
 //! are independent of the viewer and run on its background workers.
 
