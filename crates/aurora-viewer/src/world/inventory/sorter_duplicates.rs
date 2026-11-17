@@ -29,8 +29,13 @@ use super::{
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-/// PERM_COPY (indra/llinventory/llpermissionsflags.h).
-const PERM_COPY: u32 = 0x8000;
+/// Whether the agent holds no copy right on `it`: the shared rule
+/// (`actions::held`, LLViewerInventoryItem::getPermissionMask,
+/// indra/newview/llviewerinventory.cpp), so a group-owned or a Library
+/// item counts what the agent really holds, not its owner's mask.
+fn no_copy(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> bool {
+    actions::held(inv, it) & actions::COPY == 0
+}
 
 /// The kinds a loose double is looked for in; landmarks and notecards
 /// only when asked (a store's boilerplate, the same in every delivery).
@@ -107,7 +112,7 @@ fn delivery_wanted(inv: &Inventory, folder: Uuid, cleanup: &Cleanup) -> bool {
             continue;
         };
         for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
-            if !cleanup.no_copy_duplicates && it.owner_mask & PERM_COPY == 0 && !matches!(it.asset_type, 24 | 25) {
+            if !cleanup.no_copy_duplicates && no_copy(inv, it) && !matches!(it.asset_type, 24 | 25) {
                 return false;
             }
             wanted |= Kind::of(it.asset_type).is_some_and(|k| cleanup.kinds.contains(&k));
@@ -182,7 +187,7 @@ pub fn plan_duplicates(
                 // (a link is its original's, never a copy of it)
                 || matches!(it.asset_type, 24 | 25)
                 || !Kind::of(it.asset_type).is_some_and(|k| looked_for.contains(&k))
-                || !cleanup.no_copy_duplicates && it.owner_mask & PERM_COPY == 0
+                || !cleanup.no_copy_duplicates && no_copy(inv, it)
                 || !movable(inv, *item, protected, &holds_worn)
             {
                 continue;
@@ -283,4 +288,46 @@ pub fn plan_duplicates(
         .collect();
     plan.index = plan.rows.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
     plan
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::inventory::InvItem;
+
+    /// The "no-copy doubles" switch reads the rights the agent holds: the
+    /// owner's mask on the agent's own item, the everyone mask on a
+    /// group-owned item, someone else's and a Library item.
+    #[test]
+    fn no_copy_reads_the_rights_the_agent_holds() {
+        let agent = Uuid::from_u128(2);
+        let inv = Inventory {
+            owner: agent,
+            ..Default::default()
+        };
+        const ALL: u32 = 0x7fff_ffff;
+        let item = |owner: u128, group_owned: bool, owner_mask: u32, everyone_mask: u32| InvItem {
+            id: Uuid::from_u128(10),
+            asset_type: 6,
+            inv_type: 6,
+            owner: Uuid::from_u128(owner),
+            group_owned,
+            owner_mask,
+            everyone_mask,
+            ..Default::default()
+        };
+        // the agent's own item: full permissions, no copy, no transfer, no modify
+        assert!(!no_copy(&inv, &item(2, false, ALL, 0)), "full permissions");
+        assert!(no_copy(&inv, &item(2, false, ALL & !actions::COPY, 0)), "no copy");
+        assert!(!no_copy(&inv, &item(2, false, ALL & !actions::TRANSFER, 0)), "no transfer");
+        assert!(!no_copy(&inv, &item(2, false, ALL & !actions::MODIFY, 0)), "no modify");
+        // group-owned: the owner's copy right is the group's, not the agent's
+        assert!(no_copy(&inv, &item(9, true, ALL, 0)), "group-owned, everyone may not copy");
+        assert!(!no_copy(&inv, &item(9, true, ALL, actions::COPY)), "group-owned, everyone may copy");
+        // someone else's item and a Library item (owned by the Library's account)
+        assert!(no_copy(&inv, &item(7, false, ALL, 0)), "someone else's");
+        assert!(!no_copy(&inv, &item(7, false, ALL, actions::COPY)), "someone else's, copy for everyone");
+        assert!(no_copy(&inv, &item(8, false, ALL, actions::TRANSFER)), "Library, no copy for everyone");
+        assert!(!no_copy(&inv, &item(8, false, 0, actions::COPY | actions::TRANSFER)), "Library, copy for everyone");
+    }
 }
