@@ -6442,7 +6442,8 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        let raining = self.weather_now.rain() > 0.0;
+        // (and while thunder rolls: indoors it stays muffled to its end)
+        let raining = self.weather_now.rain() > 0.0 || self.thunder.rumbling();
         self.scene
             .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
         // rain prototype: its sound, leaning toward the open sky
@@ -6524,23 +6525,36 @@ impl App {
                 (seed, secs)
             }),
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
+            // the 3D sound for headphones, as the world sounds have it
+            binaural: crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
             audible: matches!(self.screen, Screen::World) && !demo_silent,
         };
-        // AURORA_THUNDER_AT=<s>: a strike a kilometre away that long after
-        // the start (demo captures of the flash)
-        static AT: std::sync::OnceLock<Option<(Instant, f32)>> = std::sync::OnceLock::new();
-        if let Some((start, s)) = *AT.get_or_init(|| {
-            std::env::var("AURORA_THUNDER_AT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .map(|s| (Instant::now(), s))
+        // AURORA_THUNDER_AT=<s>[:<m>]: a strike that far away (a kilometre
+        // by default) that long after the start (demo captures of the flash,
+        // the thunder heard near and far)
+        static AT: std::sync::OnceLock<Option<(Instant, f32, f32)>> = std::sync::OnceLock::new();
+        if let Some((start, s, m)) = *AT.get_or_init(|| {
+            let v = std::env::var("AURORA_THUNDER_AT").ok()?;
+            let (s, m) = v.split_once(':').unwrap_or((v.as_str(), "1000"));
+            let parsed = (s.trim().parse::<f32>().ok(), m.trim().parse::<f32>().ok());
+            match parsed {
+                (Some(s), Some(m)) if s.is_finite() && m.is_finite() => Some((
+                    Instant::now(),
+                    s,
+                    m.clamp(crate::scene::thunder::NEAREST, crate::scene::thunder::FARTHEST),
+                )),
+                _ => {
+                    log::warn!("AURORA_THUNDER_AT={v}: expected <seconds>[:<metres>]");
+                    None
+                }
+            }
         }) && start.elapsed().as_secs_f32() >= s
             && !self.thunder_demo_done
         {
             self.thunder_demo_done = true;
-            self.thunder.strike(Instant::now(), Some(1000.0));
+            self.thunder.strike(Instant::now(), Some(m));
         }
         self.thunder.update(self.audio_engine.as_ref(), &input, Instant::now());
     }
