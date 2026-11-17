@@ -1039,11 +1039,13 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
                 if let (Tab::People, Key::Id(id)) = (tab, row.key) {
                     // LLAvatarActions::showProfile on a double click;
                     // gFSAvatarSearchMenu on a right click
+                    // (FSFloaterSearch has no `@shownames` test: its results
+                    // name their residents, `NameScope::Roster`)
                     if resp.double_clicked() {
-                        super::profile::request_open(ui.ctx(), id);
+                        super::context::request(ui.ctx(), super::context::CtxAction::RosterProfile(id));
                     }
                     super::menu::context_menu(&resp, p, |ui| {
-                        super::context::avatar_list_menu(ui, p, c.world, id, super::context::AvatarList::Name)
+                        super::context::avatar_roster_menu(ui, p, c.world, id, super::context::AvatarList::Name)
                     });
                 }
             }

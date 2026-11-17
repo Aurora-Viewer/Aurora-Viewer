@@ -15,7 +15,9 @@
 //! also a cubic Bézier curve (`Track::handles`), which is what the world
 //! overlay draws.
 
+use crate::director::shots::{Ease, KeyShot};
 use crate::director::{Aim, Joint, KeyAim, Target};
+use crate::director_keys::{ExtraFile, KeyExtra};
 use crate::joystick::flycam::Flycam;
 use glam::{Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -163,6 +165,20 @@ pub struct KeyFile {
     pub locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aim: Option<AimFile>,
+    /// The shots' fields (`director::shots::KeyShot`), none of them in a
+    /// file written before them: the easing of the way to this keyframe,
+    /// its dolly zoom, and where its target was when it was laid to travel
+    /// with it (global metres).
+    #[serde(default, skip_serializing_if = "Ease::is_linear")]
+    pub ease: Ease,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dolly_zoom: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<[f64; 3]>,
+    /// Its animation, lens and time of day (`director_keys`); absent when
+    /// it sets none, and from older files.
+    #[serde(default, skip_serializing_if = "ExtraFile::is_empty")]
+    pub extra: ExtraFile,
 }
 
 /// What a keyframe looks at, as a track's file keeps it: the joint by its
@@ -260,6 +276,10 @@ pub struct Keyframe {
     /// What the view looks at here (`Director::key_aim`): between two
     /// keyframes it turns smoothly from what one looks at to the next's.
     pub aim: KeyAim,
+    /// Its easing, its dolly zoom, the target it travels with.
+    pub shot: KeyShot,
+    /// The animation it starts or stops, its own lens and time of day.
+    pub extra: KeyExtra,
 }
 
 /// How the camera goes from a keyframe to the next.
@@ -366,6 +386,10 @@ impl Track {
                     rest: key.rest,
                     locked: matches!(key.aim, KeyAim::On(_)),
                     aim: Some(AimFile::of(key.aim)),
+                    ease: key.shot.ease,
+                    dolly_zoom: key.shot.dolly_zoom,
+                    follow: key.shot.anchor.map(|anchor| super::presets::to_global(origin, anchor)),
+                    extra: ExtraFile::of(&key.extra),
                 })
                 .collect(),
         }
@@ -405,6 +429,15 @@ impl Track {
                     None if key.locked => KeyAim::On(older),
                     None => KeyAim::Lock,
                 },
+                shot: KeyShot {
+                    ease: key.ease,
+                    dolly_zoom: key.dolly_zoom,
+                    anchor: key
+                        .follow
+                        .filter(|anchor| anchor.iter().all(|v| v.is_finite()))
+                        .map(|anchor| super::presets::from_global(origin, anchor)),
+                },
+                extra: key.extra.read(),
             });
         }
         let mut track = Track {
@@ -439,6 +472,8 @@ impl Track {
             pose,
             rest: false,
             aim: KeyAim::Lock,
+            shot: KeyShot::default(),
+            extra: KeyExtra::default(),
         });
         self.tidy();
         if first {
@@ -459,6 +494,8 @@ impl Track {
             pose,
             rest: false,
             aim: KeyAim::Lock,
+            shot: KeyShot::default(),
+            extra: KeyExtra::default(),
         });
         self.tidy();
         Some(self.keys.len() - 1)
@@ -495,6 +532,43 @@ impl Track {
         }
     }
 
+    /// What keyframe `index` adds for the shots: its easing, its dolly zoom,
+    /// the target it travels with.
+    pub fn set_shot(&mut self, index: usize, shot: KeyShot) {
+        if let Some(key) = self.keys.get_mut(index) {
+            key.shot = shot;
+        }
+    }
+
+    /// The animation, lens and time of day of keyframe `index`.
+    pub fn set_extra(&mut self, index: usize, extra: KeyExtra) {
+        if let Some(key) = self.keys.get_mut(index) {
+            key.extra = extra;
+        }
+    }
+
+    /// Keyframes laid after the last one at the times they give (a path
+    /// taken by hand, `director_capture`): each at least `MIN_GAP` after the
+    /// one before and no later than `MAX_TIME`, as many as the track still
+    /// takes. How many were laid.
+    pub fn push_keys(&mut self, keys: impl IntoIterator<Item = Keyframe>) -> usize {
+        let mut laid = 0;
+        for mut key in keys {
+            let after = self.keys.last().map(|last| last.time + MIN_GAP);
+            key.time = match after {
+                Some(after) => key.time.max(after),
+                None => 0.0,
+            };
+            if self.is_full() || !key.time.is_finite() || key.time > MAX_TIME {
+                break;
+            }
+            self.keys.push(key);
+            laid += 1;
+        }
+        self.tidy();
+        laid
+    }
+
     /// The keyframes around `time` and how far the view has turned from what
     /// the first looks at to what the second does, from 0 to 1: smoothly,
     /// little near either keyframe. A track of one keyframe is that one;
@@ -527,6 +601,38 @@ impl Track {
         time
     }
 
+    /// Keyframes moved in time together, each from its time in `starts`
+    /// (the drag's start) by `by` seconds, as far as the keyframes that do
+    /// not move let them (`MIN_GAP` from them, the first keyframe staying at
+    /// 0, the last no later than `MAX_TIME`): the seconds they moved.
+    pub fn move_times(&mut self, starts: &[(usize, f32)], by: f32) -> f32 {
+        let moving = |index: usize| index > 0 && starts.iter().any(|(i, _)| *i == index);
+        let (mut low, mut high) = (f32::NEG_INFINITY, f32::INFINITY);
+        for &(index, start) in starts {
+            if !moving(index) || index >= self.keys.len() {
+                continue;
+            }
+            if !moving(index - 1) {
+                low = low.max(self.keys[index - 1].time + MIN_GAP - start);
+            }
+            match self.keys.get(index + 1) {
+                Some(next) if !moving(index + 1) => high = high.min(next.time - MIN_GAP - start),
+                None => high = high.min(MAX_TIME - start),
+                _ => {}
+            }
+        }
+        if !by.is_finite() || low > high {
+            return 0.0;
+        }
+        let by = by.clamp(low, high);
+        for &(index, start) in starts {
+            if moving(index) && index < self.keys.len() {
+                self.keys[index].time = start + by;
+            }
+        }
+        by
+    }
+
     /// The keyframe nearest to `time`, when it is within `within` seconds.
     pub fn nearest(&self, time: f32, within: f32) -> Option<usize> {
         let (index, key) = self
@@ -541,6 +647,9 @@ impl Track {
     pub fn shift(&mut self, delta: Vec3) {
         for key in &mut self.keys {
             key.pose.position += delta;
+            if let Some(anchor) = &mut key.shot.anchor {
+                *anchor += delta;
+            }
         }
     }
 
@@ -563,17 +672,33 @@ impl Track {
     }
 
     /// The span `time` falls in (index of its first keyframe) and how far
-    /// through it, 0 to 1. Needs two keyframes.
+    /// through it, 0 to 1, with the easing of the way to its second
+    /// keyframe (`Ease::apply`). Needs two keyframes.
     fn span(&self, time: f32) -> (usize, f32) {
         let last = self.keys.len() - 1;
         let time = time.clamp(0.0, self.keys[last].time);
         let i = self.keys.partition_point(|k| k.time <= time).saturating_sub(1).min(last - 1);
         let seconds = self.keys[i + 1].time - self.keys[i].time;
         let s = if seconds > 0.0 { (time - self.keys[i].time) / seconds } else { 0.0 };
-        (i, s.clamp(0.0, 1.0))
+        (i, self.keys[i + 1].shot.ease.apply(s.clamp(0.0, 1.0)))
     }
 
+    /// The view `s` of the way through the span after keyframe `i`; on the
+    /// way to a keyframe with a dolly zoom, the lens keeps the subject's
+    /// size (`shots::dolly_fov`).
     fn span_pose(&self, i: usize, s: f32) -> Pose {
+        let pose = self.span_curve(i, s);
+        if !self.keys[i + 1].shot.dolly_zoom {
+            return pose;
+        }
+        let (a, b) = (&self.keys[i].pose, &self.keys[i + 1].pose);
+        Pose {
+            fov: crate::director::shots::dolly_fov(a, b, pose.position, pose.fov),
+            ..pose
+        }
+    }
+
+    fn span_curve(&self, i: usize, s: f32) -> Pose {
         let (a, b) = (self.keys[i].pose, self.keys[i + 1].pose);
         if self.curve == Curve::Linear {
             return Pose {
@@ -798,6 +923,25 @@ mod tests {
         track.append(looking(Vec3::new(10.0, 0.0, 20.0), 0.5));
         track.append(looking(Vec3::new(10.0, 10.0, 25.0), 1.0));
         track
+    }
+
+    #[test]
+    fn keyframes_move_in_time_together_between_the_others() {
+        let mut track = three();
+        track.append(looking(Vec3::new(0.0, 10.0, 25.0), 1.0));
+        let times: Vec<f32> = track.keys().iter().map(|k| k.time).collect();
+        let starts = [(1, times[1]), (2, times[2])];
+        // later: as far as the fourth keyframe lets the third go
+        let moved = track.move_times(&starts, 100.0);
+        assert!((moved - (times[3] - MIN_GAP - times[2])).abs() < 1e-4, "{moved}");
+        assert!((track.keys()[2].time - track.keys()[1].time - (times[2] - times[1])).abs() < 1e-4);
+        // earlier, from the same start: as far as the first lets the second go
+        let moved = track.move_times(&starts, -100.0);
+        assert!((track.keys()[1].time - MIN_GAP).abs() < 1e-4 && moved < 0.0);
+        // the first keyframe stays at 0, the others selected still move
+        let moved = track.move_times(&[(0, 0.0), (3, times[3])], 1.0);
+        assert!((moved - 1.0).abs() < 1e-4 && track.keys()[0].time == 0.0);
+        assert!((track.keys()[3].time - times[3] - 1.0).abs() < 1e-4);
     }
 
     #[test]

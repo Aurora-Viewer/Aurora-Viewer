@@ -83,6 +83,7 @@ pub use view::InventoryPreferences;
 
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.
 const RECEIVED_TAB: usize = 1;
+const RECENT_TAB: usize = 2;
 
 /// Size of the window before the user resizes it: one folder tree, like
 /// Firestorm's (floater_my_inventory.xml, 333 x 570 with its smaller font).
@@ -563,6 +564,9 @@ pub struct InventoryUi {
     pub active_smart: Option<u64>,
     /// Find similar: the chip that undoes it restores `saved_filters`.
     similar: bool,
+    /// The Recent tab's filters last written to the preferences
+    /// (`remember_recent_filters`): only this window's own edits write.
+    recent_remembered: Option<view::Filters>,
     view: view::ViewCache,
     plain: rows::PlainTree,
     result_tree: view::TreeState,
@@ -1971,6 +1975,38 @@ fn set_tab(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: usize) {
     }
 }
 
+/// The Recent tab keeps its filters between sessions on its own, as the
+/// Legacy Viewer keeps its "Recent Items" filter in filters.xml
+/// (LLPanelMainInventory::postBuild and ~LLPanelMainInventory,
+/// indra/newview/llpanelmaininventory.cpp): the filters it shows become its
+/// saved defaults, which the next session starts from (`init_filters`). Its
+/// sort order and period are preferences already (`recent_sort`,
+/// `recent_hours`). The other tabs keep "Keep by default", as the Legacy
+/// Viewer's All Items filter does not persist.
+///
+/// A window writes only when its own Recent filters change, so two windows
+/// (dual pane, extra inventory windows) never overwrite each other every
+/// frame: the last one edited wins, like the last panel closed in the Legacy
+/// Viewer. A tab never shown has nothing to write.
+fn remember_recent_filters(st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+    let live = if st.tab == RECENT_TAB {
+        st.filters_initialized.then_some(&st.filters)
+    } else {
+        let tab = &st.tab_filters[RECENT_TAB];
+        tab.filters_initialized.then_some(&tab.filters)
+    };
+    let Some(live) = live else {
+        return;
+    };
+    if st.recent_remembered.as_ref() == Some(live) {
+        return;
+    }
+    if prefs.filters_for(RECENT_TAB) != live {
+        prefs.filters_for_mut(RECENT_TAB).clone_from(live);
+    }
+    st.recent_remembered = Some(live.clone());
+}
+
 /// The combined Received view has no writable background folder. Individual
 /// real folder rows still accept the ordinary inventory actions.
 fn list_destination(st: &InventoryUi, root: Uuid) -> Uuid {
@@ -2595,6 +2631,7 @@ pub fn show(
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
         dual.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+        remember_recent_filters(dual, prefs);
         context_notecards::show(ctx, p, &mut world.inventory, dual, prefs, &mut dual_actions);
         actions.extend(dual_actions.into_iter().map(|action| InvAction::Panel {
             editor: dual.ui_id,
@@ -2765,6 +2802,7 @@ pub fn show(
         if w.id != listings::PANEL {
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
+        remember_recent_filters(&mut w.state, prefs);
         spawned.append(&mut w.state.windows);
     }
     // Documents and confirmations outlive the inventory window which opened
@@ -2795,6 +2833,7 @@ pub fn show(
         }
     }
     st.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+    remember_recent_filters(st, prefs);
     context_notecards::show(ctx, p, &mut world.inventory, st, prefs, &mut actions);
     actions
 }
@@ -2854,6 +2893,78 @@ mod tests {
             set_tab(&mut second, &prefs, 2);
             assert_eq!(&second.filters, prefs.filters_for(2));
         }
+    }
+
+    #[test]
+    fn inventory_recent_filters_survive_a_new_session() {
+        let mut prefs = InventoryPreferences::default();
+        prefs.filters_for_mut(RECENT_TAB).hours = 48;
+        let saved = prefs.clone();
+        let mut st = InventoryUi::default();
+        controls::init_filters(&mut st, &prefs);
+        st.filters.permissions = rules::COPY;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs, saved, "a Recent tab never shown and the main tab's edits write nothing");
+
+        set_tab(&mut st, &prefs, RECENT_TAB);
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs, saved, "showing Recent writes nothing either");
+        st.filters.types = 1 << 6;
+        st.filters.age = view::Age::Newer;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB), &st.filters, "an edit on Recent is kept");
+        set_tab(&mut st, &prefs, 3);
+        st.filters.hours = 5;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB).types, 1 << 6, "from its slot while another tab shows");
+        assert_eq!(prefs.filters_for(3), saved.filters_for(3), "Worn keeps Keep by default");
+        assert_eq!(prefs.filter_defaults, saved.filter_defaults, "the main tab keeps Keep by default");
+
+        // Next session: the preferences come back from disk.
+        let json = serde_json::to_string(&prefs).expect("preferences serialize");
+        let restored: InventoryPreferences = serde_json::from_str(&json).expect("preferences deserialize");
+        let mut next = InventoryUi::default();
+        controls::init_filters(&mut next, &restored);
+        set_tab(&mut next, &restored, RECENT_TAB);
+        assert_eq!(next.filters.types, 1 << 6);
+        assert_eq!(next.filters.age, view::Age::Newer);
+        assert_eq!(next.filters.hours, 48);
+        assert_eq!(next.filters.permissions, 0, "the main tab's live edit stayed in its session");
+
+        // Reset on Recent is kept too.
+        next.filters = view::Filters::default();
+        let mut prefs = restored;
+        remember_recent_filters(&mut next, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB), &view::Filters::default());
+    }
+
+    #[test]
+    fn inventory_recent_filters_two_windows_never_overwrite_each_other() {
+        let mut prefs = InventoryPreferences::default();
+        let (mut a, mut b) = (InventoryUi::default(), InventoryUi::default());
+        set_tab(&mut a, &prefs, RECENT_TAB);
+        set_tab(&mut b, &prefs, RECENT_TAB);
+        remember_recent_filters(&mut a, &mut prefs);
+        remember_recent_filters(&mut b, &mut prefs);
+        a.filters.creator = view::Creator::Me;
+        for _ in 0..3 {
+            remember_recent_filters(&mut a, &mut prefs);
+            remember_recent_filters(&mut b, &mut prefs);
+            assert_eq!(
+                prefs.filters_for(RECENT_TAB).creator,
+                view::Creator::Me,
+                "b's untouched filters never win"
+            );
+        }
+        b.filters.links = view::Links::Exclude;
+        remember_recent_filters(&mut a, &mut prefs);
+        remember_recent_filters(&mut b, &mut prefs);
+        let kept = prefs.filters_for(RECENT_TAB);
+        assert_eq!(
+            (kept.creator, kept.links),
+            (view::Creator::All, view::Links::Exclude),
+            "the last edited wins"
+        );
     }
 
     #[test]

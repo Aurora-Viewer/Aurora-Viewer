@@ -896,12 +896,12 @@ fn toolbar_sanitize_skips_the_retired_howto_command() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 80);
-    assert_eq!(COMMANDS.len(), 80);
+    assert_eq!(all.len(), 81);
+    assert_eq!(COMMANDS.len(), 81);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 80, "each command once");
+    assert_eq!(ids.len(), 81, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));

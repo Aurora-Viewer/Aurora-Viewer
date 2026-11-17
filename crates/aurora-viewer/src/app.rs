@@ -34,6 +34,7 @@ mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
 mod busy_pause;
+mod gaming_mode;
 mod movelock;
 mod object_export;
 mod particle_editor;
@@ -75,6 +76,8 @@ mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod director;
+mod director_extra;
+mod director_render;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -1063,6 +1066,8 @@ pub struct App {
     gpu_stall: gpu_stall::GpuStall,
     /// The 3D paused behind on a busy card (app/busy_pause.rs).
     busy_pause: busy_pause::BusyPause,
+    /// The viewer stepped back for a game (app/gaming_mode.rs).
+    gaming_mode: gaming_mode::GamingMode,
     /// The other viewers on this PC (instances.rs).
     instances: crate::instances::Instances,
     /// The Down key's latch (FSCrouchToggle).
@@ -1210,6 +1215,8 @@ pub struct App {
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
+    /// The external script editor sync's server (editor_sync.rs).
+    editor_sync: crate::editor_sync::EditorSync,
     task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
     /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
     contents_copies: contents_copy::ContentsCopies,
@@ -2187,6 +2194,7 @@ impl App {
             occluded: false,
             gpu_stall: Default::default(),
             busy_pause: Default::default(),
+            gaming_mode: Default::default(),
             instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
             key_to_name: Vec::new(),
@@ -2274,6 +2282,7 @@ impl App {
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
+            editor_sync: Default::default(),
             task_transfer: Default::default(),
             contents_copies: Default::default(),
             world_edits: Default::default(),
@@ -3559,6 +3568,8 @@ impl App {
         self.demo_slm = None;
         self.task_notecards.clear();
         self.script_editors.disconnected();
+        // the editor sync's server ends with the session
+        self.editor_sync.stop();
         self.demo_script_sources.clear();
         self.hud_drag = None;
         self.media.clear();
@@ -5628,7 +5639,9 @@ impl App {
             return;
         }
         let alt = self.alt || self.object_view;
-        // a rigged mesh with nothing to do with the click lets it through
+        // (the modifiers of the press, which a click run again has restored)
+        self.scene.rigged_clicks = self.rigged_clicks();
+        // a rigged mesh the click has nothing to do with lets it through
         let depth = if alt || self.build.open {
             depth
         } else {
@@ -6382,6 +6395,15 @@ impl App {
                 w.ui_sounds.push(s);
             }
         }
+        let health_changes = std::mem::take(&mut w.health_changes);
+        if !health_changes.is_empty() {
+            let male = crate::physics_editor::male(w);
+            for (old, new) in health_changes {
+                if let Some(s) = ui.health_sound(old, new, male) {
+                    w.ui_sounds.push(s);
+                }
+            }
+        }
         // push to talk / microphone button (voice_follow_key, LLVoiceClient)
         if self.mic_on != self.mic_was {
             self.mic_was = self.mic_on;
@@ -7126,10 +7148,11 @@ impl App {
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
-            self.receive_event(ev, sent);
+            self.receive_event(ev, self.director_render_stamp(sent));
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
-            if now.duration_since(t_ev) > Duration::from_millis(8) {
+            // (more per frame in gaming mode's slow loop, app/gaming_mode.rs)
+            if now.duration_since(t_ev) > gaming_mode::event_budget(self.gaming_mode.on) {
                 break;
             }
         }
@@ -7210,6 +7233,7 @@ impl App {
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up_before_exit();
+        self.editor_sync.stop();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
@@ -7788,8 +7812,13 @@ impl App {
             self.volumes_save_at = None;
             self.world.calls.save_volumes();
         }
-        // each resident's voice volume (LLSpeakerVolumeStorage)
-        self.voice.apply_volumes(&self.world.calls.volumes);
+        // each resident's voice volume (LLSpeakerVolumeStorage); a private
+        // call's is also applied by the viewer (issue #2874)
+        let p2p_peer = self.world.calls.active.as_ref().and_then(|c| match c.kind {
+            crate::world::calls::CallKind::P2p { other } => Some(other),
+            _ => None,
+        });
+        self.voice.apply_volumes(&self.world.calls.volumes, p2p_peer);
         let report = if self.demo {
             let in_world = self.in_world();
             for ev in self.call_demo.scenario(&mut self.world, in_world) {
@@ -7959,6 +7988,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_editor_sync_steps();
         self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
@@ -10260,6 +10290,8 @@ impl App {
         if let Some(c) = self.world.follow_lsl_syntax() {
             self.send(c);
         }
+        // the external script editor sync
+        self.update_editor_sync();
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
@@ -10336,6 +10368,8 @@ impl App {
         let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
         let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
         self.scene.textures.set_window_state(focused, minimized);
+        // (gaming mode gives the textures back too, app/gaming_mode.rs)
+        self.scene.textures.set_stepped_back(self.gaming_mode_pauses());
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         // the busy card's switch, the same in every viewer (instances.rs)
@@ -10558,6 +10592,8 @@ impl App {
         } else {
             now.duration_since(self.last_frame).as_secs_f32().min(0.1)
         };
+        // (the Director's offline render: one frame of its film at a time)
+        let dt = self.director_render_dt().unwrap_or(dt);
         // the photo mode's frozen world: the camera and the interface keep
         // the frame's time, what moves in the world gets none
         let frozen = self.photo_world_frozen();
@@ -10655,6 +10691,7 @@ impl App {
             self.camera.shift(shift);
             self.capture_360.shift(shift);
             self.director.d.track.shift(shift);
+            self.director.extra.shift(shift);
             if let Some(session) = &mut self.studio_photo_session {
                 session.camera.shift(shift);
             }
@@ -10976,7 +11013,7 @@ impl App {
         self.capture_360_frame(&mut gfx.renderer);
         self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
-        self.photo_update(&gfx.renderer);
+        self.photo_update(&mut gfx.renderer);
         self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.director_frame(dt);
@@ -11403,7 +11440,7 @@ impl App {
                 self.start.elapsed().as_secs_f32(),
             )
         {
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         // the order of the blended faces: the user's, the exact one only
         // where the renderer draws it (not under MSAA, scene/blend_order.rs)
@@ -11415,7 +11452,7 @@ impl App {
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
@@ -11503,6 +11540,7 @@ impl App {
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.tree_lod_factor = self.settings.tree_lod_factor;
             self.scene.surface_protection = self.settings.surface_protection();
+            self.scene.rigged_clicks = self.rigged_clicks();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             self.scene.hidden_types = self.settings.debug.hidden_types;
@@ -11901,6 +11939,7 @@ impl App {
                     channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
                     window_focused: effective_window_state(self.focused, false, self.vr_camera.is_some()).0,
+                    gaming_mode: self.gaming_mode.on,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
                     language: aurora_i18n::language(),
@@ -12462,9 +12501,9 @@ impl App {
                 frustum: CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y),
                 range: self.settings.draw_distance,
                 dt,
-                projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+                projector_shadows: self.settings.projector_shadows && self.photo_shadow_quality() > 0,
                 projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
-                    self.settings.shadow_params().0,
+                    Settings::shadow_params_of(self.photo_shadow_quality()).0,
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
@@ -12675,8 +12714,8 @@ impl App {
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
-            shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
-            shadow_distance: self.settings.shadow_params().1,
+            shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
+            shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
@@ -12751,6 +12790,8 @@ impl App {
                     .unwrap_or(0),
             ),
         };
+        // the Director's fades and titles, drawn into the picture
+        fp.rlva_overlays.extend(self.director_finish_overlays((w, h)));
         if let Some(view) = studio_view {
             self.studio_render(&mut gfx.renderer, &mut fp, view);
         } else {
@@ -13440,7 +13481,7 @@ impl App {
             crate::link_trust::configure(&self.settings.trusted_sites);
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
@@ -13626,6 +13667,7 @@ impl App {
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         self.busy_pause_frame(gfx.renderer.vr_engaged());
+        self.gaming_mode_frame(gfx.renderer.vr_engaged());
         if stats.presented && !gfx.shown && !self.exit_windows_hidden {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
@@ -13691,6 +13733,10 @@ impl App {
             self.instances.peers().in_front(),
             timed || !self.settings.background_fps_cap,
         );
+        // gaming mode: the loop crawls, slower still out of sight; not
+        // while a photo is drawn (app/gaming_mode.rs)
+        let hidden = self.occluded || gfx.window.is_minimized().unwrap_or(false);
+        let cap = gaming_mode::cap(cap, self.gaming_mode_pauses() && !timed, hidden);
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
@@ -16434,6 +16480,7 @@ impl App {
                 }
             }
             BarAction::ToggleImmersive => self.toggle_immersive(),
+            BarAction::ToggleGamingMode => self.toggle_gaming_mode(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
                 let tips = &mut self.settings.hover_tips;
@@ -20075,9 +20122,13 @@ impl App {
                 let friend_allowed = prompt_allowed && region_shown.is_none();
                 if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, friend_allowed) {
                     self.notif_ui.wanted_pics.insert(from);
-                    let name = Some(self.world.social.display_name_of(&from))
+                    // an offer of friendship names who makes it whatever
+                    // `@shownames` (process_improved_im tests nothing for
+                    // IM_FRIENDSHIP_OFFERED, llimprocessing.cpp)
+                    let scope = crate::world::names::NameScope::Roster;
+                    let name = Some(self.world.social.display_name_in(scope, &from))
                         .filter(|n| n != "…")
-                        .or_else(|| self.world.avatar_name(&from));
+                        .or_else(|| self.world.person_name_in(scope, &from));
                     if name.is_none() {
                         self.world.social.want_name(from);
                     }
@@ -20148,7 +20199,9 @@ impl App {
                 }
                 match prompt_action {
                     Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
-                    Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    Some(ui::friend_prompt::PromptAction::Profile(id)) => {
+                        self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id)
+                    }
                     None => {}
                 }
                 match region_action {
@@ -20512,6 +20565,7 @@ impl App {
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
                 self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
+                self.toolbar_ui.gaming_mode_active = self.gaming_mode.on;
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
                     build: self.build.open,
@@ -21223,7 +21277,7 @@ impl ApplicationHandler for App {
             apply_test_overrides(&mut self.settings);
             self.settings.save();
         }
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
@@ -24418,7 +24472,11 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(s) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
                 if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
-                    g.renderer.apply_settings(self.settings.render_settings());
+                    g.renderer.apply_settings(crate::snapshot::light::render_settings(
+                        &self.settings,
+                        &self.snapshots.ui.light,
+                        self.panels.snapshot,
+                    ));
                 }
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
@@ -24429,7 +24487,11 @@ impl ApplicationHandler for App {
                 // the automatic world resolution before the Resized event that
                 // winit sends next.
                 if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
-                    g.renderer.apply_settings(self.settings.render_settings());
+                    g.renderer.apply_settings(crate::snapshot::light::render_settings(
+                        &self.settings,
+                        &self.snapshots.ui.light,
+                        self.panels.snapshot,
+                    ));
                 }
             }
             WindowEvent::Moved(_) => {
@@ -24453,6 +24515,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(true) => {
                 crate::slurl_handoff::focused();
                 self.focused = true;
+                self.gaming_mode_focused();
                 if !self.demo
                     && matches!(self.screen, Screen::Login)
                     && !self.login_form.editing
