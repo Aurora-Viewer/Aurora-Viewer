@@ -73,6 +73,7 @@ pub(super) struct OutfitHd {
     /// Moved once no other inventory change is under way.
     trash: Vec<Uuid>,
     pub batch: BatchTally,
+    demo_portrait: Option<crossbeam_channel::Receiver<Uuid>>,
 }
 
 impl OutfitHd {
@@ -172,9 +173,58 @@ impl App {
         });
     }
 
+    /// A synthetic paid portrait on disk, as on a new login. Insert the inventory
+    /// item only after the worker has finished, so the first cache read can succeed.
+    pub(super) fn demo_cached_outfit_portrait(&mut self) {
+        let asset = Uuid::from_u128(0x2271_0000_4000_8000_0000_0000_0001);
+        let path = crate::cache::path(self.scene.textures.cache_dir(), "tex", &asset, "j2c");
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.inventory_images.hd.demo_portrait = Some(rx);
+        self.scene.jobs.execute(move || {
+            let side = 1024;
+            let mut rgb = Vec::with_capacity(side * side * 3);
+            for y in 0..side {
+                for x in 0..side {
+                    let stripe = (x + y) / (1 << (x / 160)) % 2 == 0;
+                    rgb.extend_from_slice(if stripe { &[250, 211, 116] } else { &[38, 48, 79] });
+                }
+            }
+            match aurora_assets::j2k::encode_texture_j2k(side as u32, side as u32, 3, &rgb, true) {
+                Ok(bytes) => match crate::cache::write(path, &bytes) {
+                    Ok(()) => {
+                        let _ = tx.send(asset);
+                    }
+                    Err(error) => log::warn!("demo outfit portrait cache: {error}"),
+                },
+                Err(error) => log::warn!("demo outfit portrait encoding: {error}"),
+            }
+        });
+    }
+
     /// Every frame: the encoded picture is sent, the next one started; the
     /// older ones go to the Trash once the inventory is free.
     pub(super) fn poll_outfit_hd(&mut self) {
+        if let Some(rx) = &self.inventory_images.hd.demo_portrait {
+            match rx.try_recv() {
+                Ok(asset) => {
+                    let owner = self.world.agent_id;
+                    self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
+                        id: Uuid::from_u128(0x2271_0000_4000_8000_0000_0000_0002),
+                        parent: Uuid::from_u128(703),
+                        name: "Demo portrait".into(),
+                        desc: portrait::HD_PICTURE_DESC.into(),
+                        asset_id: asset,
+                        owner,
+                        creator: owner,
+                        owner_mask: crate::world::inventory::actions::FULL,
+                        ..Default::default()
+                    }]);
+                    self.inventory_images.hd.demo_portrait = None;
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => self.inventory_images.hd.demo_portrait = None,
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
+        }
         self.outfit_hd_send();
         self.outfit_hd_next();
         self.outfit_hd_trash();

@@ -9578,6 +9578,14 @@ impl App {
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
+        let portrait = self.appearance_ui.wanted_outfit_portrait.take();
+        self.scene.textures.show_outfit_portrait(portrait);
+        if let Some(image) = portrait
+            && !self.ui_coarse.contains_key(&image)
+            && !self.scene.textures.is_unavailable(&image)
+        {
+            self.note_ui_copy(image);
+        }
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -22776,7 +22784,10 @@ impl ApplicationHandler for App {
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 // showcase: the gallery's showcase with folders, pictures and favorites
-                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode" || view.starts_with("batch");
+                let showcase = matches!(view.as_str(), "showcase" | "showcase-hd")
+                    || view.starts_with("portrait")
+                    || view == "photo-mode"
+                    || view.starts_with("batch");
                 if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
@@ -22802,6 +22813,9 @@ impl ApplicationHandler for App {
                 if showcase {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     ui::appearance::demo_showcase(&mut self.world.inventory, &mut self.appearance_ui);
+                    if view == "showcase-hd" {
+                        self.demo_cached_outfit_portrait();
+                    }
                 }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {

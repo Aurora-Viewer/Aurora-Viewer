@@ -1205,6 +1205,8 @@ pub struct TextureStreamer {
     ui_permanent: std::collections::HashSet<Uuid>,
     /// When each of those was last asked for.
     ui_asked: HashMap<Uuid, Instant>,
+    /// Only the currently displayed large outfit portrait requests HD UI pixels.
+    outfit_portrait: Option<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
     ui_previews: super::texture_ui::Images,
     pub stats: TextureStats,
@@ -1446,6 +1448,10 @@ impl PreviewSource {
         (0, Some(level), self.size, self.procedural)
     }
     pub fn image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        self.image_at_size(id, 256)
+    }
+
+    pub(super) fn image_at_size(self, id: Uuid, side: u32) -> Option<Arc<aurora_render::preview::Image>> {
         if let Some(image) = self.local {
             return Some(image);
         }
@@ -1467,13 +1473,13 @@ impl PreviewSource {
             return Some(image(w, h, pixels));
         }
         let wanted = self.size.map(|(width, height)| {
-            let discard = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
+            let discard = texture_cache::discard_for_side(width, height, side).max(self.decoded.unwrap_or(0));
             texture_cache::discard_size(width, height, discard)
         });
         // (a coarser BC7 preview is kept for when the JPEG 2000 file gives
         // nothing: a cache-only load with a .part file that fails to decode)
         let mut coarse = None;
-        if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
+        if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks, side)
             && let Some((w, h, blocks)) = cached.levels.into_iter().next()
         {
             if wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((w, h), wanted))
@@ -1500,7 +1506,7 @@ impl PreviewSource {
             let info = aurora_assets::j2k_info(&bytes)?;
             // A progressive stream may only hold the coarser level already
             // visible in the world. Never ask these bytes for a finer decode.
-            let discard = texture_cache::preview_discard(info.width, info.height).max(decoded.unwrap_or(0));
+            let discard = texture_cache::discard_for_side(info.width, info.height, side).max(decoded.unwrap_or(0));
             let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
             Some(image(
                 pixels.width,
@@ -1589,6 +1595,7 @@ impl TextureStreamer {
             memory_waits: Default::default(),
             ui_permanent: Default::default(),
             ui_asked: HashMap::new(),
+            outfit_portrait: None,
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
             stats: TextureStats::default(),
@@ -2325,9 +2332,9 @@ impl TextureStreamer {
         }
         if !self.ui_ready.contains_key(&id) {
             let source = self.preview_source(&id);
-            self.ui_previews.request(id, source, jobs);
+            self.ui_previews.request(id, source, self.ui_side(&id), jobs);
         }
-        self.note_usage_fixed(&id, 256.0);
+        self.note_usage_fixed(&id, self.ui_side(&id) as f32);
     }
 
     /// The one streamer reference of the UI. True for an image that is not
@@ -2372,6 +2379,14 @@ impl TextureStreamer {
         self.ui_ready.remove(id)
     }
 
+    pub fn show_outfit_portrait(&mut self, image: Option<Uuid>) {
+        self.outfit_portrait = image;
+    }
+
+    fn ui_side(&self, id: &Uuid) -> u32 {
+        if self.outfit_portrait == Some(*id) { 1024 } else { 256 }
+    }
+
     /// Width of the finest UI copy of a texture (its full size halved until
     /// it fits 256 px), once its header is known.
     pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
@@ -2381,7 +2396,7 @@ impl TextureStreamer {
     /// Dimensions of the finest copy requested for an interface image.
     pub fn ui_image_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         let (width, height) = self.full_size(id)?;
-        let discard = texture_cache::preview_discard(width, height);
+        let discard = texture_cache::discard_for_side(width, height, self.ui_side(id));
         Some(texture_cache::discard_size(width, height, discard))
     }
 
@@ -2396,7 +2411,8 @@ impl TextureStreamer {
 
     pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
         self.hold_ui_image(&id);
-        self.note_usage_fixed(&id, 256.0);
+        let side = self.ui_side(&id);
+        self.note_usage_fixed(&id, side as f32);
         if self.ui_ready.contains_key(&id) {
             return;
         }
@@ -2406,13 +2422,13 @@ impl TextureStreamer {
             .and_then(full_size)
             .zip(self.entries.get(&id).and_then(|e| e.decoded))
             .is_some_and(|((width, height), decoded)| {
-                let discard = texture_cache::preview_discard(width, height).max(decoded);
+                let discard = texture_cache::discard_for_side(width, height, side).max(decoded);
                 let target = texture_cache::discard_size(width, height, discard);
                 target.0 > have.0 || target.1 > have.1
             });
         if finer {
             let source = self.preview_source(&id);
-            self.ui_previews.request(id, source, jobs);
+            self.ui_previews.request(id, source, side, jobs);
         }
     }
 
@@ -3534,9 +3550,9 @@ impl TextureStreamer {
             };
             e.gpu_size = level0.unwrap_or_default();
             if self.ui_wanted.contains(&u.id) {
-                // largest level that fits 256 px for the UI copy (taken
-                // from the upload, which is done with it)
-                let at = u.mips.iter().position(|m| m.0.max(m.1) <= 256).or(u.mips.len().checked_sub(1));
+                // Reuse the mip already decoded for the upload.
+                let side = if self.outfit_portrait == Some(u.id) { 1024 } else { 256 };
+                let at = u.mips.iter().position(|m| m.0.max(m.1) <= side).or(u.mips.len().checked_sub(1));
                 if let Some((w, h, d)) = at.and_then(|i| u.mips.get_mut(i))
                     && self.ui_ready.get(&u.id).is_none_or(|r| r.0 < *w)
                 {
