@@ -923,6 +923,11 @@ pub struct BuildTool {
     /// Materials actually received from the server, rather than defaults
     /// accompanying a GetObjectPhysicsData reply containing only shape type.
     pub physics_materials_known: HashSet<u32>,
+    /// Whether a mesh has a physics shape of its own, once known (mesh
+    /// assets never change), and the mesh whose collision blocks the
+    /// Features tab is fetching to find out.
+    pub mesh_physics: HashMap<Uuid, bool>,
+    pub mesh_physics_fetch: Option<Uuid>,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
@@ -1002,6 +1007,8 @@ impl Default for BuildTool {
             grid_objects: Vec::new(),
             physics: HashMap::new(),
             physics_materials_known: HashSet::new(),
+            mesh_physics: HashMap::new(),
+            mesh_physics_fetch: None,
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
             replacement: replace::Replacement::default(),
