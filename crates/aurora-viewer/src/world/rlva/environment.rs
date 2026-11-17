@@ -73,7 +73,7 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
             || COLORS.contains(&n)
             || TEXTURES.contains(&n)
             || matches!(n, "cloudscroll" | "daytime")
-            || (set && matches!(n, "asset" | "preset" | "daycycle"))
+            || (set && matches!(n, "asset" | "preset" | "daycycle" | "reset"))
             || component(n).is_some()
     })
 }
@@ -99,7 +99,7 @@ pub fn command_names(set: bool) -> Vec<String> {
         }
     }
     if set {
-        names.extend(["asset", "preset", "daycycle"].map(|name| format!("{prefix}{name}")));
+        names.extend(["asset", "preset", "daycycle", "reset"].map(|name| format!("{prefix}{name}")));
     }
     names
 }
@@ -304,14 +304,26 @@ impl World {
         if set && self.rlva.has_except("setenv", source) {
             return true;
         }
+        if set {
+            // a choice the user made just before this force comes first
+            self.rlva_yield_environment();
+        }
         if set && matches!(name, "asset" | "preset" | "daycycle") {
             self.rlva.environment_request = Some((source, command.clone()));
+            return true;
+        }
+        // `@setenv_reset=force` is not in the Legacy Viewer's RLVa: it comes
+        // from the RestrainedLove viewer, where it is a synonym of
+        // `@setenv_daytime:-1=force`. Supported here as the same reset.
+        if set && name == "reset" {
+            self.rlva_reset_environment(command.environment_locked);
             return true;
         }
         if name == "daytime" {
             if let Param::Reply(channel) = command.param {
                 self.rlva.reply(
                     channel,
+                    &command.behaviour,
                     if self.rlva.environment_day.is_some() || (self.rlva.environment.is_none() && !self.eep.has_fixed_sky()) {
                         "-1.000000"
                     } else {
@@ -321,7 +333,7 @@ impl World {
                 );
             } else if let Some(value) = number(&command.option) {
                 if value == -1.0 {
-                    self.rlva.clear_environment();
+                    self.rlva_reset_environment(command.environment_locked);
                 } else if (0.0..=1.0).contains(&value) {
                     let sky = self
                         .rlva
@@ -345,9 +357,34 @@ impl World {
                 self.rlva.environment_day = None;
             }
         } else if let Param::Reply(channel) = command.param {
-            self.rlva.reply(channel, result.unwrap_or_default());
+            self.rlva.reply(channel, &command.behaviour, result.unwrap_or_default());
         }
         true
+    }
+
+    /// RlvEnvironment's `daytime` -1: back to the shared environment, or
+    /// only RLVa's sky while `@setenv=n` is held (getTargetEnvironment).
+    fn rlva_reset_environment(&mut self, locked: bool) {
+        self.rlva.clear_environment();
+        if !locked {
+            // a later `@setenv=n` in the same message already locked it
+            let held = std::mem::replace(&mut self.eep.rlva_locked, false);
+            self.eep.clear_local();
+            self.eep.rlva_locked = held;
+            // RLVa's own reset is not a choice of the user's
+            self.eep.take_local_choice();
+        }
+    }
+
+    /// A sky forced while no `@setenv=n` is held gives way to the user's
+    /// next choice of environment, the shared one included: RlvEnvironment
+    /// writes such a force into the local environment (getTargetEnvironment:
+    /// ENV_LOCAL while canChangeEnvironment, rlvenvironment.cpp), which that
+    /// choice replaces. Under a lock nothing is chosen, and the sky stays.
+    pub fn rlva_yield_environment(&mut self) {
+        if self.eep.take_local_choice() && !self.rlva.has("setenv") {
+            self.rlva.clear_environment();
+        }
     }
 
     pub fn rlva_environment_frames(
@@ -391,6 +428,65 @@ impl super::Rlva {
 #[cfg(test)]
 mod conformance_tests {
     use super::*;
+
+    /// #3762: a sky forced while no `@setenv=n` is held gives way to the
+    /// user's next choice of environment, the shared one included; a force
+    /// that comes after the choice is kept; under the lock nothing is chosen
+    /// and the sky stays.
+    #[test]
+    fn rlva_unlocked_forced_sky_yields_to_the_next_environment_choice() {
+        use crate::world::eep_env::SourceRights;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        let say = |world: &mut World, text: &str| {
+            world.on_chat(aurora_net::ChatMessage {
+                from_name: "RLVa test object".to_owned(),
+                source_id: Uuid::from_u128(1),
+                owner_id: Uuid::from_u128(3),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: text.to_owned(),
+            });
+            world.rlva_pending();
+        };
+        let force = |world: &mut World| {
+            say(world, "@setenv_ambient:0.2/0.4/0.6=force");
+            assert!(world.rlva.environment.is_some());
+        };
+        // a sky of the user's own
+        force(&mut world);
+        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        world.rlva_yield_environment();
+        assert!(world.rlva.environment.is_none(), "a sky picked replaces the forced one");
+        // the shared environment, with no local one left to drop
+        world.eep.clear_local();
+        world.rlva_yield_environment();
+        assert!(!world.eep.has_local());
+        force(&mut world);
+        world.eep.clear_local();
+        world.rlva_yield_environment();
+        assert!(world.rlva.environment.is_none(), "so does the shared environment");
+        // a force that follows a choice is the newer of the two
+        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        force(&mut world);
+        world.rlva_yield_environment();
+        assert!(world.rlva.environment.is_some());
+        // RLVa's own reset is not a choice: the next force stays
+        say(&mut world, "@setenv_daytime:-1=force");
+        assert!(world.rlva.environment.is_none() && !world.eep.has_local());
+        say(&mut world, "@setenv_ambient:0.2/0.4/0.6=force");
+        world.rlva_yield_environment();
+        assert!(world.rlva.environment.is_some());
+        // under the lock the choice is refused, and the sky stays
+        say(&mut world, "@setenv=n");
+        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+        world.eep.clear_local();
+        world.rlva_yield_environment();
+        assert!(world.rlva.environment.is_some() && !world.eep.has_local());
+    }
+
     #[test]
     fn rlva_environment_angles_keep_native_positive_domains_and_legacy_axis_cases() {
         assert_eq!(angles(Vec3::NEG_X), (0.0, 0.0));

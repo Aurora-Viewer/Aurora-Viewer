@@ -2,7 +2,7 @@
 //! `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`.
 //!
 //! - mode: move | rotate | stretch | face | align | grab | focus | create |
-//!   land | select
+//!   land | select | select-join (a simulated multi-parcel selection)
 //!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
@@ -15,6 +15,14 @@
 //!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   faces-mapping: one face on each of three textured surfaces (repeats,
+//!   offset and rotation; planar mapping; a PBR base color transform), for
+//!   the face-select pattern.
+//!   `,no-highlight` after any faces-* name turns "Show highlight" off when
+//!   the Edit tool opens, at 600 (faces-mapping,object:99620,no-highlight).
+//!   faces-texgen: frames A closely, selects a side face at 625, then
+//!   switches its mapping Default <-> Planar at 655 with the Texture tab's
+//!   edit (capture at 650 and 690).
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -27,6 +35,7 @@
 //!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
 //!   "Place on surface" on and holds the cursor over the target's top
 //!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
+//!   multi-rename: select multiple roots and apply the same name to all of them.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -60,12 +69,21 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    LinkSetup(bool),
+    Link,
+    SelectMany(Vec<usize>),
+    RenameSelection(String),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
     /// Target channel, Local tab.
     TexturePicker(super::ui::PickTarget, bool),
     BomPicker(Option<usize>),
     CloseView,
+    /// "Show highlight" (RenderHighlightSelections) on or off.
+    Highlight(bool),
+    /// The selected faces' mapping switched Default <-> Planar, as the
+    /// Texture tab's Mapping control does.
+    TexGenToggle,
     CloseEditor,
     CreateAt(Vec3),
     CreationPreview(usize),
@@ -73,6 +91,8 @@ pub enum Step {
     Contents,
     ContentsProperties,
     ContentsSelection(bool),
+    /// "New notecard" then "New script" in the Contents tab.
+    ContentsNew,
     TakeTask(bool),
     /// Every item, selected and dropped together on the inventory root.
     TakeAll,
@@ -131,14 +151,9 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     let p = match part {
         Part::Arrow(i) => c + g.rotation * unit(i) * len * 0.9,
         Part::Plane(i) => {
-            let at_g = g.rotation.inverse() * cam.at;
-            let mut v = Vec3::ZERO;
-            for j in 0..3 {
-                if j != i {
-                    v[j] = at_g[j].signum() * super::manip::PLANE_OFFSET * len;
-                }
-            }
-            c + g.rotation * v
+            let q = super::manip::plane_handles(cam, &f)[i]?;
+            let p = q[0].lerp(q[2], 0.5);
+            return Some((p.x * cam.ppp, p.y * cam.ppp));
         }
         Part::Ring(i) => {
             let r = super::manip::ring_radius(cam, &f, c);
@@ -206,7 +221,7 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
-            "next-owner" => tool.ui.contents_show_next_owner = true,
+            "next-owner" => tool.ui.contents_rights = crate::ui::inventory::permissions::Rights::Both,
             _ => {}
         }
     }
@@ -227,6 +242,10 @@ pub fn apply_tab(tool: &mut BuildTool) {
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
+    // The scenario's tab, not the one its selection would open on.
+    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+        tool.keep_texture_tab();
+    }
     match sub.trim() {
         "bp-normal" => tool.ui.bp_channel = 1,
         "bp-specular" => tool.ui.bp_channel = 2,
@@ -353,7 +372,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         "focus" => (Tool::Focus, EditMode::Move, 6),
         "create" | "create-preview" => (Tool::Create, EditMode::Move, 6),
         "land" => (Tool::Land, EditMode::Move, 1),
-        "select" => (Tool::Land, EditMode::Move, 6),
+        "select" | "select-join" => (Tool::Land, EditMode::Move, 6),
         _ => (Tool::Edit, EditMode::Move, 6),
     };
     let h = if object.is_some() { 2 } else { 3 };
@@ -366,6 +385,37 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if parts[0] == "multi-rename" {
+        let objects: Vec<usize> = parts
+            .iter()
+            .skip(1)
+            .filter_map(|part| part.parse::<u32>().ok())
+            .filter_map(|local_id| {
+                world
+                    .objects
+                    .iter()
+                    .find_map(|(idx, object)| (object.key.local_id == local_id).then_some(idx))
+            })
+            .collect();
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 if objects.len() >= 2 => vec![Step::SelectMany(objects)],
+            227 => vec![Step::Focus(false)],
+            240 => vec![Step::RenameSelection("Shared edit".into())],
+            260 if !objects.is_empty() => vec![Step::SelectMany(vec![objects[0]])],
+            270 if objects.len() >= 2 => vec![Step::SelectMany(vec![objects[1]])],
+            _ => Vec::new(),
+        };
+    }
+    if matches!(parts[0], "link" | "link-ready" | "link-denied") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => vec![Step::LinkSetup(parts[0] == "link-denied")],
+            227 => vec![Step::Focus(true)],
+            250 if parts[0] != "link-ready" => vec![Step::Link],
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "pbr-bom" | "bp-bom") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
@@ -446,7 +496,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
-            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            260 if parts[0] == "contents-new" => vec![Step::ContentsNew],
+            260 if !matches!(parts[0], "contents-ready" | "contents-new") => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
     }
@@ -518,13 +569,31 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 .collect()
         };
         return match frame {
-            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
+            215 => {
+                let mut steps = vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)];
+                // `,no-highlight`: "Show highlight" off, the halo hidden
+                if parts.contains(&"no-highlight") {
+                    steps.push(Step::Highlight(false));
+                }
+                steps
+            }
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-complex" | "faces-texgen") || parts[0].starts_with("faces-picker") => {
+                vec![Step::CloseView]
+            }
+            240 if parts[0] == "faces-texgen" => pick(99620, u8::MAX, false),
+            270 if parts[0] == "faces-texgen" => vec![Step::TexGenToggle],
+            _ if parts[0] == "faces-texgen" => Vec::new(),
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
+            240 if parts[0] == "faces-mapping" => pick(99620, u8::MAX, false),
+            260 if parts[0] == "faces-mapping" => pick(99621, u8::MAX, true),
+            280 if parts[0] == "faces-mapping" => pick(99622, u8::MAX, true),
+            _ if parts[0] == "faces-mapping" => Vec::new(),
             240 => pick(99620, u8::MAX, false),
+            // a second face with another texture: the picker opens tentative
+            245 if parts[0].starts_with("faces-picker-multiple") => pick(99621, u8::MAX, true),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
                 if parts[0].starts_with("faces-picker-material") {
                     super::ui::PickTarget::PbrMaterial
@@ -638,9 +707,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             .unwrap_or_default(),
         260 | 270 if cycle => vec![Step::Wheel(-1.0)],
         280 if cycle => vec![Step::Wheel(1.0)],
-        235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
+        235 if matches!(parts[0], "select" | "select-join") => vec![Step::Cursor(x + dx, y + dy)],
         235 if parts[0].starts_with("invisible-") => vec![Step::CloseView],
-        240 if parts[0] == "select" => vec![Step::Release],
+        240 if matches!(parts[0], "select" | "select-join") => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
             Some((hx, hy)) => {
                 log::info!("demo build: grabbing {:?} at {hx:.0},{hy:.0}", handle);
@@ -648,6 +717,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             }
             None => Vec::new(),
         },
+        // what the drag left, for a restriction arriving during it
+        251 | 275 | 300 if handle.is_some() => {
+            log::info!(
+                "demo build: frame {frame} drag={} selection={} position={:?}",
+                tool.manip.drag.is_some(),
+                tool.selection.len(),
+                object.and_then(|idx| world.objects.get(idx)).map(|o| o.position),
+            );
+            if frame == 300 || tool.manip.drag.is_none() {
+                return Vec::new();
+            }
+            let k = (frame - 250) as f32 / 40.0;
+            vec![Step::Cursor(x_start(tool) + dx * k, y_start(tool) + dy * k)]
+        }
         251..=290 if handle.is_some() && tool.manip.drag.is_some() => {
             let k = (frame - 250) as f32 / 40.0;
             let (ex, ey) = edge.unwrap_or((x_start(tool) + dx, y_start(tool) + dy));
@@ -671,4 +754,37 @@ fn x_start(tool: &BuildTool) -> f32 {
 
 fn y_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.1).unwrap_or(0.0)
+}
+
+/// Two synthetic prims with different ObjectUpdate owner availability, as a
+/// rezzed mesh and new cubes can have. Selection properties supply both owners.
+pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, denied: bool) {
+    let Some(handle) = world.main_region else { return };
+    let mut objects = Vec::new();
+    for (local_id, offset, scale) in [
+        (99750, Vec3::new(5.0, 0.0, 1.5), Vec3::ONE),
+        (99751, Vec3::new(6.0, 0.0, 1.5), Vec3::new(0.25, 5.0, 3.0)),
+    ] {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.position = world.agent.position + offset;
+        update.scale = scale;
+        update.owner_id = if local_id == 99750 { uuid::Uuid::nil() } else { world.agent_id };
+        update.extra = Default::default();
+        update.update_flags = crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        if !denied || local_id == 99751 {
+            update.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        }
+        objects.push(update);
+    }
+    world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+    tool.deselect_all(world);
+    for id in [99750, 99751] {
+        if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
+            tool.click_select(world, settings, Some(index), id == 99751);
+        }
+    }
 }

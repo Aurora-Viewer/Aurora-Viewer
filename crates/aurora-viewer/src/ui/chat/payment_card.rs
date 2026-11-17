@@ -11,14 +11,19 @@ use super::invite_card::{card_frame, icon, notice};
 use super::{LineEnv, chat_text_marked};
 use crate::ui::fonts::chat_size;
 use crate::world::ChatLine;
+use crate::world::names::NameScope;
 use crate::world::payments::{self, Payment};
 use egui::RichText;
 
 /// The icon of paying, the same as the Pay menu items'.
 const ICON: &str = "coin-filled";
+/// The names a payment shows under `@shownames`, in the conversation that
+/// names the other resident too: those the world shows, like the payment's
+/// notice. Kept stricter than the conversation's lines on purpose.
+const NAMES: NameScope = NameScope::World;
 
 fn title(env: &LineEnv, line: &ChatLine, v: &Payment) -> String {
-    let name = env.world.person_name(&v.other).unwrap_or_else(|| line.from.clone());
+    let name = env.world.person_name_in(NAMES, &v.other).unwrap_or_else(|| line.from.clone());
     payments::title(name, v.sent, v.amount)
 }
 
@@ -43,6 +48,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
                 p,
                 env.emoji,
                 world,
+                NAMES,
                 env.want_names,
                 &v.message,
                 chat_size(ui.ctx(), 12.5),
@@ -69,6 +75,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
             p,
             env.emoji,
             world,
+            NAMES,
             env.want_names,
             &line.text,
             chat_size(ui.ctx(), 12.5),
@@ -134,6 +141,7 @@ mod tests {
                 emoji: &mut emoji,
                 pics: &pics,
                 world,
+                names: crate::world::names::NameScope::World,
                 want_names: &mut names,
                 wanted: &mut wanted,
                 own_name: "Aurora Demo",
@@ -143,6 +151,7 @@ mod tests {
                 menu: None,
                 bubbles: Some(false),
                 previews: None,
+                moderators: None,
             };
             if bubbles {
                 draw_card(ui, &mut env, line, payment, 0.0);

@@ -442,3 +442,106 @@ fn changing_formats_keeps_float_precision_and_mixed_white_can_be_applied() {
     t.frame(Vec::new());
     assert_eq!(t.click(Control::Slot(31)).0, Some(Event::Preview([1.0; 3])));
 }
+
+/// The picker's R/G/B, H/S/L and alpha fields are LLSpinCtrls
+/// (floater_color_picker.xml): the wheel steps them like a build spinner.
+#[test]
+fn number_fields_take_the_wheel_with_its_modifiers_and_clamp() {
+    let ctx = egui::Context::default();
+    let value = std::cell::Cell::new(100.0f32);
+    let field = std::cell::Cell::new(egui::Pos2::ZERO);
+    let run = |time: f64, events: Vec<Input>| {
+        let mut current = value.get();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0))),
+                time: Some(time),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |ui| {
+                let r = number(ui, &mut current, 255.0, 1.0, 0);
+                field.set(r.rect.center());
+            },
+        );
+        output.textures_delta.clear();
+        value.set(current);
+    };
+    let notch = |y: f32, modifiers: Modifiers| Input::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, y),
+        modifiers,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    run(0.0, vec![]);
+    let at = field.get();
+    run(0.1, vec![Input::PointerMoved(at), notch(1.0, Modifiers::NONE)]);
+    assert_eq!(value.get(), 101.0, "a notch up raises by one");
+    run(0.2, vec![Input::PointerMoved(at), notch(-1.0, Modifiers::NONE)]);
+    assert_eq!(value.get(), 100.0, "a notch down lowers by one");
+    run(0.3, vec![Input::PointerMoved(at), notch(1.0, Modifiers::ALT)]);
+    assert_eq!(value.get(), 110.0, "Alt steps ten");
+    value.set(250.0);
+    run(0.4, vec![Input::PointerMoved(at), notch(1.0, Modifiers::ALT)]);
+    assert_eq!(value.get(), 255.0, "clamped to the field's maximum");
+    // away from the field the wheel changes nothing
+    run(
+        0.5,
+        vec![Input::PointerMoved(egui::pos2(390.0, 390.0)), notch(1.0, Modifiers::NONE)],
+    );
+    assert_eq!(value.get(), 255.0);
+}
+
+/// LLSpinCtrl::onUpBtn rounds the step with clamp_precision: on a 0-decimal
+/// field (R/G/B in 0-255) Ctrl (×0.1) and Shift (×0.01) change nothing and
+/// report no change, instead of storing a fraction the field does not show.
+#[test]
+fn steps_finer_than_the_field_round_away() {
+    let ctx = egui::Context::default();
+    let value = std::cell::Cell::new(100.0f32);
+    let field = std::cell::Cell::new(egui::Pos2::ZERO);
+    let run = |time: f64, decimals: usize, events: Vec<Input>| -> bool {
+        let mut current = value.get();
+        let mut changed = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0))),
+                time: Some(time),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |ui| {
+                let r = number(ui, &mut current, 255.0, 1.0, decimals);
+                changed = r.changed();
+                field.set(r.rect.center());
+            },
+        );
+        output.textures_delta.clear();
+        value.set(current);
+        changed
+    };
+    let notch = |modifiers: Modifiers| Input::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        modifiers,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    };
+    run(0.0, 0, vec![]);
+    let at = field.get();
+    assert!(
+        !run(0.1, 0, vec![Input::PointerMoved(at), notch(Modifiers::CTRL)]),
+        "Ctrl reports no change"
+    );
+    assert_eq!(value.get(), 100.0, "Ctrl on a 0-decimal field leaves 100 at 100");
+    assert!(!run(0.2, 0, vec![Input::PointerMoved(at), notch(Modifiers::SHIFT)]));
+    assert_eq!(value.get(), 100.0, "Shift too");
+    // a field with one decimal shows Ctrl's tenth, and keeps it
+    assert!(run(0.3, 1, vec![Input::PointerMoved(at), notch(Modifiers::CTRL)]));
+    assert_eq!(value.get(), 100.1);
+    assert!(!run(0.4, 1, vec![Input::PointerMoved(at), notch(Modifiers::SHIFT)]));
+    assert_eq!(value.get(), 100.1, "Shift's hundredth is finer than one decimal");
+}

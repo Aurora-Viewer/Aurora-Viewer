@@ -121,6 +121,50 @@ impl ProbeSets {
     }
 }
 
+/// Side of the shadow map of the probe being captured, in texels: the tile
+/// of an atlas laid out like the main view's.
+pub const SHADOW_SIZE: u32 = 1024;
+/// How far around a probe the surfaces of its capture are shadowed (m):
+/// RenderReflectionProbeDrawDistance.
+pub const SHADOW_RANGE: f32 = 64.0;
+
+/// The sun's view of the place around a probe, for its capture
+/// (display_cube_face calls generateSunShadow for every cube face; the sun and
+/// the casters do not change between the faces of a capture, so one map is
+/// drawn per probe, and one is enough for an image of 256 x 256 that is then
+/// blurred).
+pub fn shadow_matrix(origin: Vec3, sun_dir: Vec3) -> Mat4 {
+    let light_dir = -sun_dir.normalize_or(Vec3::Z);
+    let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
+    let pad = crate::shadow_cull::CASCADE_DEPTH_PAD;
+    let eye = origin - light_dir * (SHADOW_RANGE + pad);
+    let view = glam::camera::rh::view::look_at_mat4(eye, origin, up);
+    let depth = SHADOW_RANGE * 2.0 + 2.0 * pad;
+    let proj = glam::camera::rh::proj::directx::orthographic(-SHADOW_RANGE, SHADOW_RANGE, -SHADOW_RANGE, SHADOW_RANGE, 0.1, depth);
+    proj * view
+}
+
+/// How the surfaces of a probe's capture are lit by the probes
+/// (LLReflectionMapManager::updateUniforms, `is_ambiance_pass`): the bits of
+/// `frame.light_mode.z`, PROBE_CAPTURE_LIT and PROBE_CAPTURE_AMBIANCE of
+/// common.wgsl. The sky-only default probe and classic skies, whose ambient
+/// does not come from the probes, keep what they had.
+pub(crate) mod capture_lighting {
+    pub const LIT: u32 = 0x20000;
+    pub const AMBIANCE: u32 = 0x40000;
+    /// Any capture, of any sky: PROBE_CAPTURE_DOME, the sea under the dome.
+    pub const DOME: u32 = 0x80000;
+
+    /// The bits of the radiance capture and of the irradiance capture.
+    pub fn bits(sky_only: bool, probe_ambient_sky: bool) -> (u32, u32) {
+        if sky_only || !probe_ambient_sky {
+            (0, 0)
+        } else {
+            (LIT, LIT | AMBIANCE)
+        }
+    }
+}
+
 /// How a fragment walks the probes (AURORA_PROBE_WALK; the image is the
 /// same).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -681,6 +725,17 @@ mod tests {
     /// A point straight ahead of each face lands at the image center, the
     /// s axis to the right and the t axis downward (Vulkan convention).
     #[test]
+    fn face_views_are_mirrored() {
+        // the cube convention is left-handed: a capture must count as a
+        // mirrored view (`misc.w` 2), or fs_reflect drops the surfaces that
+        // face the probe and shows the back of what is behind them
+        for face in 0..6 {
+            let view = face_view(glam::Vec3::new(10.0, 20.0, 30.0), face);
+            assert!(view.determinant() < 0.0, "face {face}");
+        }
+    }
+
+    #[test]
     fn face_views_follow_the_cube_convention() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
         let o = Vec3::new(10.0, 20.0, 30.0);
@@ -768,6 +823,34 @@ mod tests {
         // what is further than the plane the extents are cut by
         assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
         const { assert!(light_tiles::NEAREST < 0.01) };
+    }
+
+    #[test]
+    fn a_probes_shadow_map_is_centred_on_it_and_sees_the_roof_before_the_floor() {
+        let origin = Vec3::new(100.0, 50.0, 30.0);
+        let m = shadow_matrix(origin, Vec3::new(0.3, 0.2, 0.8));
+        let at = |p: Vec3| m.project_point3(p);
+        let centre = at(origin);
+        assert!(centre.x.abs() < 1e-3 && centre.y.abs() < 1e-3, "{centre}");
+        assert!(at(origin + Vec3::Z * 5.0).z < at(origin - Vec3::Z * 5.0).z);
+        assert!((0.0..=1.0).contains(&centre.z));
+        // reaches the range all around, the sun straight up included
+        let up = shadow_matrix(origin, Vec3::Z);
+        let edge = up.project_point3(origin + Vec3::X * (SHADOW_RANGE - 1.0));
+        assert!(edge.x.abs() < 1.0 && edge.y.abs() < 1.0, "{edge}");
+    }
+
+    #[test]
+    fn captures_are_lit_by_the_probes_only_where_they_light_the_scene() {
+        use capture_lighting::{AMBIANCE, DOME, LIT, bits};
+        // the dome bit stands apart: every capture sets it, whatever the lighting
+        assert_eq!(DOME & (LIT | AMBIANCE), 0);
+        assert_eq!(bits(false, true), (LIT, LIT | AMBIANCE));
+        assert_eq!(bits(true, true), (0, 0));
+        assert_eq!(bits(false, false), (0, 0));
+        let src = include_str!("shaders/common.wgsl");
+        assert!(src.contains(&format!("const PROBE_CAPTURE_LIT: u32 = {LIT:#x}u;")));
+        assert!(src.contains(&format!("const PROBE_CAPTURE_AMBIANCE: u32 = {AMBIANCE:#x}u;")));
     }
 
     /// The walks as the shaders name them.
@@ -954,7 +1037,7 @@ mod tests {
         let row = (res * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (row * res) as u64,
+            size: crate::readback::readback_size((row * res) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

@@ -18,6 +18,7 @@ mod sidebar;
 mod smart_bar;
 mod toolbar;
 
+pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
 
 use super::permissions::Rights;
@@ -109,12 +110,13 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
             | "aurora-keyboard-wide"
+            | "aurora-delete-confirm-wide"
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"
@@ -154,7 +156,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
 
 /// The count after the title: the number alone at the narrow width.
 pub fn item_count(inv: &Inventory, layout: Layout) -> String {
-    let count = inv.item_count();
+    let count = inv.total_count();
     let number = aurora_i18n::integer(count as i64);
     if layout == Layout::Compact {
         number
@@ -167,8 +169,11 @@ pub fn item_count(inv: &Inventory, layout: Layout) -> String {
 /// being fetched.
 pub fn sync_state(p: &Palette, inv: &Inventory, st: &InventoryUi) -> (egui::Color32, String) {
     let fetching = !inv.queue.is_empty() || st.fetch_all || inv.folders.values().any(|f| f.state == FetchState::Fetching);
+    let failed = inv.folders.values().any(|f| f.state == FetchState::Failed);
     if fetching {
         (p.muted_dim, aurora_i18n::tr!("inventory-syncing").to_owned())
+    } else if failed {
+        (p.amber, aurora_i18n::tr!("inventory-sync-incomplete").to_owned())
     } else {
         (p.teal, aurora_i18n::tr!("inventory-synced").to_owned())
     }
@@ -529,6 +534,39 @@ fn explorer_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_status_line_reports_folders_that_could_not_be_loaded() {
+        let mut h = Harness::new(800.0);
+        let p = crate::theme::Theme::default().palette();
+        let (_, text) = sync_state(&p, &h.inv, &h.st);
+        assert_eq!(text, aurora_i18n::tr!("inventory-synced"));
+        let root = h.inv.root;
+        h.inv.folders.get_mut(&root).expect("root").state = FetchState::Failed;
+        let (color, text) = sync_state(&p, &h.inv, &h.st);
+        assert_eq!(text, aurora_i18n::tr!("inventory-sync-incomplete"));
+        assert_eq!(color, p.amber, "an incomplete load is a warning, not a success");
+    }
+
+    #[test]
+    fn inventory_total_is_shared_by_every_title_width() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: inv.root,
+            ..Default::default()
+        }]);
+        let number = aurora_i18n::integer(1);
+        assert_eq!(item_count(&inv, Layout::Compact), number);
+        for layout in [Layout::Medium, Layout::Wide] {
+            assert_eq!(
+                item_count(&inv, layout),
+                aurora_i18n::tr!("inventory-items-count", count = 1, number = number.clone())
+            );
+        }
+    }
 
     #[test]
     fn the_window_widens_into_the_explorer_then_the_details() {
@@ -984,7 +1022,7 @@ mod tests {
             assert!(
                 h.actions
                     .iter()
-                    .any(|a| matches!(a, InvAction::Preview(id) if *id == Uuid::from_u128(8103))),
+                    .any(|a| matches!(a, InvAction::Preview(id, _) if *id == Uuid::from_u128(8103))),
                 "{width} px"
             );
             if width >= 800.0 {

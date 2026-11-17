@@ -3,10 +3,13 @@
 //! a separate process because Windows keeps the running executable mapped.
 
 pub mod feed;
+pub mod ffmpeg_pack;
 pub mod install;
 pub mod media_pack;
 pub mod package;
 mod user_data;
+
+pub use user_data::clear_deferred_cache;
 
 /// Effects resolved for the installed version, including skipped releases.
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -77,6 +80,9 @@ pub enum Failure {
     Filesystem,
     Package,
     Unsupported,
+    /// The viewer's folder sits at the root of a drive (`E:\Aurora Viewer`):
+    /// no folder above it to hold the update, the backup and the lock.
+    DriveRoot,
     Busy,
     Startup,
 }

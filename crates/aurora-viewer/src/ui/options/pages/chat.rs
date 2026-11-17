@@ -24,6 +24,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
                     "×",
                 );
+                // FSBeyondNearbyChatColorDiminishFactor (0.8, 0 to 1; on the
+                // Legacy Viewer's Colors › Chat page): the lines said beyond
+                // the say range, in every chat style
+                cx.slider(
+                    tr!("ui-options-chat-beyond-range"),
+                    tr!("ui-options-chat-beyond-range-hint"),
+                    &field!(colors.chat_beyond_range),
+                    0.0..=1.0,
+                    "",
+                );
                 // FSShowTimestampsNearbyChat (on): the lines and the cards
                 // over the world
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));
@@ -33,6 +43,31 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-chat-channel"),
                     tr!("ui-options-show-chat-channel-hint"),
                     &field!(show_chat_channel),
+                );
+                // the row of FSFloaterNearbyChat's recent emojis, a switch
+                // in place of its arrow: on, off with the Legacy chat style
+                // (its own switch, the one of the style in use shown)
+                let legacy = cx.s.chat_style == crate::settings::ChatStyle::Legacy;
+                cx.conditional(!legacy, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-show-recent-emojis"),
+                        tr!("ui-options-show-recent-emojis-hint"),
+                        &field!(show_recent_emojis),
+                    );
+                });
+                cx.conditional(legacy, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-show-recent-emojis-legacy"),
+                        tr!("ui-options-show-recent-emojis-legacy-hint"),
+                        &field!(show_recent_emojis_legacy),
+                    );
+                });
+                // an Aurora addition: favourites first in that row and a
+                // star tab in the picker, off
+                cx.toggle(
+                    tr!("ui-options-favorite-emojis"),
+                    tr!("ui-options-favorite-emojis-hint"),
+                    &field!(favorite_emojis),
                 );
                 // #475: objects' lines like the notices, off (not in the
                 // Legacy Viewer)
@@ -51,10 +86,39 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSShowMutedChatHistory (off: Hidden); Folded is Aurora's
+                // middle way
+                use crate::settings::BlockedChat;
+                cx.combo(
+                    tr!("ui-options-blocked-chat"),
+                    tr!("ui-options-blocked-chat-hint"),
+                    &field!(blocked_chat),
+                    &[
+                        (BlockedChat::Hidden, tr!("ui-options-blocked-chat-hidden")),
+                        (BlockedChat::Collapsed, tr!("ui-options-blocked-chat-collapsed")),
+                        (BlockedChat::Greyed, tr!("ui-options-blocked-chat-greyed")),
+                    ],
+                );
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
                     &field!(chat_keep_focus),
+                );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-toggles"),
+                    tr!("ui-options-chat-enter-toggles-hint"),
+                    &field!(chat_enter_toggles),
+                );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-last-field"),
+                    tr!("ui-options-chat-enter-last-field-hint"),
+                    &field!(chat_enter_last_field),
                 );
                 // #980: FSChatbarGestureAutoCompleteEnable (on),
                 // FSChatbarNamePrediction (on, the human's choice; off in the Legacy
@@ -76,16 +140,29 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colon-emote-hint"),
                     &field!(colon_emote),
                 );
+                // AutoCloseOOC (off)
+                cx.toggle(
+                    tr!("ui-options-auto-close-ooc"),
+                    tr!("ui-options-auto-close-ooc-hint"),
+                    &field!(auto_close_ooc),
+                );
                 cx.toggle(
                     tr!("ui-options-mention-autocomplete"),
                     tr!("ui-options-mention-autocomplete-hint"),
                     &field!(chat_mention_autocomplete),
                 );
-                // AutohideChatBar (Chat › Typing), off (#1009)
-                cx.toggle(
-                    tr!("ui-options-autohide-chat-bar"),
-                    tr!("ui-options-autohide-chat-bar-hint"),
-                    &field!(autohide_chat_bar),
+                // AutohideChatBar (Chat › Typing), off (#1009), and
+                // Aurora's Conversations window only (#2696)
+                use crate::settings::ChatBar;
+                cx.combo(
+                    tr!("ui-options-chat-bar"),
+                    tr!("ui-options-chat-bar-hint"),
+                    &field!(chat_bar),
+                    &[
+                        (ChatBar::Always, tr!("ui-options-chat-bar-always")),
+                        (ChatBar::WhenTyping, tr!("ui-options-chat-bar-typing")),
+                        (ChatBar::ConversationsOnly, tr!("ui-options-chat-bar-window")),
+                    ],
                 );
                 cx.slider(
                     tr!("ui-options-chat-bubble-duration"),
@@ -94,8 +171,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=60.0,
                     " s",
                 );
+                // ConsoleMaxLines (panel_preferences_chat.xml): count the
+                // wrapped text rows, as LLConsole::draw does.
+                cx.slider(
+                    tr!("ui-options-chat-console-max-lines"),
+                    tr!("ui-options-chat-console-max-lines-hint"),
+                    &field!(chat_console_max_lines),
+                    0..=50,
+                    "",
+                );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
-                // depends on it; ChatBubbleOpacity is in its Colors), #673
+                // depends on it; ChatBubbleOpacity is in Appearance › Skin,
+                // as it is in its Colors), #673
                 cx.toggle(
                     tr!("ui-options-chat-bubbles"),
                     tr!("ui-options-chat-bubbles-hint"),
@@ -112,13 +199,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         tr!("ui-options-typing-bubbles"),
                         tr!("ui-options-typing-bubbles-hint"),
                         &field!(typing_bubbles),
-                    );
-                    cx.slider(
-                        tr!("ui-options-chat-bubble-opacity"),
-                        "",
-                        &field!(chat_bubble_opacity),
-                        0.0..=1.0,
-                        "",
                     );
                 });
             });
@@ -145,17 +225,26 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-send-typing-hint"),
                     &field!(send_typing_state),
                 );
-                // a direct payment's card in the payer's conversation (#1198)
-                cx.toggle(
+                // whose direct payment opens a closed conversation on its
+                // card (#1198), one choice per direction (#2638); the Legacy
+                // Viewer never opens one (Never in both)
+                use crate::world::payments::Opens;
+                let opens = [
+                    (Opens::Never, tr!("ui-options-payment-opens-never")),
+                    (Opens::Friends, tr!("ui-options-payment-opens-friends")),
+                    (Opens::Anyone, tr!("ui-options-payment-opens-anyone")),
+                ];
+                cx.combo(
                     tr!("ui-options-payment-opens-conversation"),
                     tr!("ui-options-payment-opens-conversation-hint"),
-                    &field!(payment_opens_conversation),
+                    &field!(payment_received_opens),
+                    &opens,
                 );
-                // and our own payment's card in the payee's conversation
-                cx.toggle(
+                cx.combo(
                     tr!("ui-options-payment-sent-opens-conversation"),
                     tr!("ui-options-payment-sent-opens-conversation-hint"),
-                    &field!(payment_sent_opens_conversation),
+                    &field!(payment_sent_opens),
+                    &opens,
                 );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
@@ -163,6 +252,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-flash-unread"),
                     tr!("ui-options-flash-unread-hint"),
                     &field!(flash_unread_conversations),
+                );
+                // Aurora's button back to the latest messages (#558); the
+                // Legacy Viewer has none
+                cx.toggle(
+                    tr!("ui-options-chat-latest-button"),
+                    tr!("ui-options-chat-latest-button-hint"),
+                    &field!(chat_latest_button),
                 );
                 // "Flash chat toolbar button if a new IM arrives" (FSNotifyIMFlash)
                 cx.toggle(
@@ -215,6 +311,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(chat_thumbnails_flash),
                     );
                 });
+                conversation_rows(cx);
             });
             link_previews(cx);
             gifs(cx);
@@ -235,6 +332,21 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                 &field!(mute_groups_without_notices),
             );
+            // Legacy Viewer › Chat › Notifications (FSGroupNoticesToIMLog,
+            // FSBetterGroupNoticesToIMLog under it), both on
+            cx.toggle(
+                tr!("ui-options-group-notices-in-chat"),
+                tr!("ui-options-group-notices-in-chat-hint"),
+                &field!(group_notices_in_chat),
+            );
+            let off = !cx.s.group_notices_in_chat;
+            cx.subs(off, |cx| {
+                cx.toggle(
+                    tr!("ui-options-group-notice-subjects-in-chat"),
+                    tr!("ui-options-group-notice-subjects-in-chat-hint"),
+                    &field!(group_notice_subjects_in_chat),
+                );
+            });
             // GroupSnoozeTime and FSEnablePerGroupSnoozeDuration: the
             // snooze button of a group chat, in minutes (#945)
             cx.row(
@@ -291,6 +403,86 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
         }),
     }
+}
+
+/// The Legacy Viewer's conversation options of its Chat panel
+/// (panel_preferences_chat.xml), `ui/chat/conversation_options.rs`: the
+/// tabs' order and names, the moderators' lines, "(You)", the brackets.
+fn conversation_rows(cx: &mut Cx) {
+    use crate::ui::chat::conversation_options::{FontStyle, TabNames, TabOrder};
+    use aurora_i18n::tr;
+    // FSAutoOrderIMTabs, FSAutoOrderIMTabsPriorities, FSAutoOrderIMTabsAtTop
+    cx.toggle(
+        tr!("ui-options-im-tab-order"),
+        tr!("ui-options-im-tab-order-hint"),
+        &field!(conversation_options.auto_order),
+    );
+    let off = !cx.s.conversation_options.auto_order;
+    cx.subs(off, |cx| {
+        let orders = TabOrder::ALL.map(|o| (o, o.label()));
+        cx.combo(
+            tr!("ui-options-im-tab-order-kinds"),
+            "",
+            &field!(conversation_options.order),
+            &orders,
+        );
+        cx.toggle(
+            tr!("ui-options-im-tab-order-new-first"),
+            tr!("ui-options-im-tab-order-new-first-hint"),
+            &field!(conversation_options.new_first),
+        );
+    });
+    // FSIMTabNameFormat
+    cx.combo(
+        tr!("ui-options-im-tab-names"),
+        tr!("ui-options-im-tab-names-hint"),
+        &field!(conversation_options.tab_names),
+        &[
+            (TabNames::DisplayName, tr!("ui-options-im-tab-names-display")),
+            (TabNames::Username, tr!("ui-options-im-tab-names-username")),
+            (TabNames::DisplayAndUsername, tr!("ui-options-im-tab-names-display-username")),
+            (TabNames::UsernameAndDisplay, tr!("ui-options-im-tab-names-username-display")),
+        ],
+    );
+    // FSHighlightGroupMods, FSModNameStyle, FSModTextStyle
+    cx.toggle(
+        tr!("ui-options-highlight-moderators"),
+        tr!("ui-options-highlight-moderators-hint"),
+        &field!(conversation_options.highlight_moderators),
+    );
+    let off = !cx.s.conversation_options.highlight_moderators;
+    cx.subs(off, |cx| {
+        let styles = [
+            (FontStyle::Normal, tr!("ui-options-font-style-normal")),
+            (FontStyle::Bold, tr!("ui-options-font-style-bold")),
+            (FontStyle::Italic, tr!("ui-options-font-style-italic")),
+            (FontStyle::BoldItalic, tr!("ui-options-font-style-bold-italic")),
+        ];
+        cx.combo(
+            tr!("ui-options-moderator-name-style"),
+            "",
+            &field!(conversation_options.moderator_name),
+            &styles,
+        );
+        cx.combo(
+            tr!("ui-options-moderator-text-style"),
+            "",
+            &field!(conversation_options.moderator_text),
+            &styles,
+        );
+    });
+    // FSChatHistoryShowYou
+    cx.toggle(
+        tr!("ui-options-show-you"),
+        tr!("ui-options-show-you-hint"),
+        &field!(conversation_options.show_you),
+    );
+    // FSIMSystemMessageBrackets
+    cx.toggle(
+        tr!("ui-options-system-brackets"),
+        tr!("ui-options-system-brackets-hint"),
+        &field!(conversation_options.system_brackets),
+    );
 }
 
 /// Our objects' script errors (#1263): in the nearby chat
@@ -637,10 +829,27 @@ fn gifs(cx: &mut Cx) {
     });
 }
 
+/// The amount of a payment toast's limit, like the question's in
+/// Confirmations: greyed out while the limit is off.
+fn threshold(ui: &mut egui::Ui, on: bool, amount: &mut i32) -> bool {
+    ui.add_enabled_ui(on, |ui| {
+        ui.add(
+            egui::DragValue::new(amount)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0..=i32::MAX)
+                .speed(1.0)
+                .suffix(format!(" {}", aurora_i18n::currency())),
+        )
+        .changed()
+    })
+    .inner
+}
+
 /// The Legacy Viewer's Chat › Notifications (EnableIMChatPopups,
 /// EnableGroupChatPopups, ChatOnlineNotification), Notifications › People
 /// / Objects & Scripts (FSFlashOnMessage, FSFlashOnObjectIM,
-/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive).
+/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive),
+/// and User Interface › 2D Overlay (ScriptDialogLimitations).
 fn notifications(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-toasts"), |cx| {
@@ -678,7 +887,35 @@ fn notifications(cx: &mut Cx) {
                     changed
                 },
             );
+            // NotificationTipToastLifeTime (User Interface › 2D Overlay,
+            // "Tip Toast life"): the Legacy toasts only
+            let hint = if center {
+                tr!("ui-options-toast-friends-seconds-aurora")
+            } else {
+                tr!("ui-options-toast-friends-seconds-hint")
+            };
+            cx.row(
+                tr!("ui-options-toast-friends-seconds"),
+                hint,
+                &field!(tip_toast_seconds),
+                |ui, s| {
+                    ui.add_enabled_ui(!center, |ui| {
+                        super::super::slider_whole(ui, &mut s.tip_toast_seconds, 1.0..=30.0, " s")
+                    })
+                    .inner
+                },
+            );
         });
+        // ToastGap (User Interface › 2D Overlay, "Gap between Toasts"):
+        // every stack, the Legacy toasts and Aurora's cards and friends'
+        // toasts alike
+        cx.slider_whole(
+            tr!("ui-options-toast-gap"),
+            tr!("ui-options-toast-gap-hint"),
+            &field!(toast_gap),
+            0.0..=crate::settings::TOAST_GAP_MAX,
+            " px",
+        );
         // OnlineOfflinetoNearbyChat, beside its toast as in the Legacy
         // Viewer's "Notify me when my friends log in or out"
         cx.toggle(
@@ -686,6 +923,46 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friends-online-in-chat-hint"),
             &field!(friends_online_in_chat),
         );
+        // PaymentReceived's toast (NotifyMoneyReceived, #2675): a direct
+        // payment on by default, the others off, each with its limit
+        cx.toggle(
+            tr!("ui-options-notify-direct-payment"),
+            tr!("ui-options-notify-direct-payment-hint"),
+            &field!(notify_direct_payment),
+        );
+        let off = !cx.s.notify_direct_payment;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-notify-above"),
+                tr!("ui-options-notify-above-hint"),
+                &field!(notify_direct_above),
+            );
+            cx.row(
+                tr!("ui-options-notify-threshold"),
+                tr!("ui-options-notify-threshold-hint"),
+                &field!(notify_direct_threshold),
+                |ui, s| threshold(ui, s.notify_direct_above, &mut s.notify_direct_threshold),
+            );
+        });
+        cx.toggle(
+            tr!("ui-options-notify-money-received"),
+            tr!("ui-options-notify-money-received-hint"),
+            &field!(notify_money_received),
+        );
+        let off = !cx.s.notify_money_received;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-notify-above"),
+                tr!("ui-options-notify-above-hint"),
+                &field!(notify_money_above),
+            );
+            cx.row(
+                tr!("ui-options-notify-threshold"),
+                tr!("ui-options-notify-threshold-hint"),
+                &field!(notify_money_threshold),
+                |ui, s| threshold(ui, s.notify_money_above, &mut s.notify_money_threshold),
+            );
+        });
         // #465: an offer of friendship in the middle of the screen
         cx.toggle(
             tr!("ui-options-friend-request-prompt"),
@@ -710,6 +987,18 @@ fn notifications(cx: &mut Cx) {
             |ui, s| ui.add_enabled_ui(any, |ui| toggle(ui, &p, &mut s.ims_in_notification_center)).inner,
         );
         cx.slider(tr!("ui-options-toast-duration"), "", &field!(im_toast_seconds), 3.0..=60.0, " s");
+    });
+    // ScriptDialogLimitations, the Legacy Viewer's User Interface › 2D
+    // Overlay › "Script Dialogs per Object" (panel_preferences_UI.xml)
+    cx.group(tr!("ui-options-script-dialogs"), |cx| {
+        use crate::world::script_dialog_limit::Limit;
+        let choices = Limit::ALL.map(|limit| (limit, limit.label()));
+        cx.combo(
+            tr!("ui-options-script-dialog-limit"),
+            tr!("ui-options-script-dialog-limit-hint"),
+            &field!(script_dialog_limit),
+            &choices,
+        );
     });
     cx.group(tr!("ui-options-attention"), |cx| {
         cx.toggle(
@@ -840,6 +1129,13 @@ fn keyword_alerts(cx: &mut Cx) {
 fn history(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-recording"), |cx| {
+        // KeepConversationLogTranscripts > 0 (Legacy Viewer › Privacy, Save:
+        // Log only / Log and transcripts), apart from the transcripts here
+        cx.toggle(
+            tr!("ui-options-chat-logs-conversations"),
+            tr!("ui-options-chat-logs-conversations-help"),
+            &field!(log_conversations),
+        );
         cx.toggle(tr!("ui-options-chat-logs-im"), tr!("ui-options-chat-logs-im-help"), &field!(log_im));
         cx.toggle(
             tr!("ui-options-chat-logs-nearby"),
@@ -851,8 +1147,22 @@ fn history(cx: &mut Cx) {
             tr!("ui-options-chat-logs-show-help"),
             &field!(log_show_history),
         );
+        // FSIMChatHistoryFade, adapted (`conversation_options::faded`)
+        cx.slider(
+            tr!("ui-options-history-fade"),
+            tr!("ui-options-history-fade-hint"),
+            &field!(conversation_options.history_fade),
+            crate::ui::chat::conversation_options::FADE_MIN..=1.0,
+            "",
+        );
         // Legacy Viewer › Chat (FSRestoreOpenIMs)
         cx.toggle(tr!("ui-options-reopen-ims"), tr!("ui-options-reopen-ims-help"), &field!(reopen_ims));
+        // FSOpenIMContainerOnOfflineMessage, just above it in the Legacy panel
+        cx.toggle(
+            tr!("ui-options-open-on-offline"),
+            tr!("ui-options-open-on-offline-help"),
+            &field!(conversation_options.open_on_offline),
+        );
         cx.toggle(
             tr!("ui-options-chat-logs-dated"),
             tr!("ui-options-chat-logs-dated-help"),
@@ -915,6 +1225,7 @@ fn history(cx: &mut Cx) {
                         {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                         }
+                        // the Legacy Viewer's files too, in its layout
                         if action_button_if(
                             ui,
                             &p,
@@ -922,11 +1233,26 @@ fn history(cx: &mut Cx) {
                             tr!("ui-options-chat-logs-erase"),
                             ActionKind::FlatDanger,
                             size,
-                            idle,
+                            idle && !st.chat_log_shared,
                         )
                         .clicked()
                         {
                             st.confirm_erase_logs = true;
+                        }
+                        // Clear log… (Pref.ClearLog), enabled while the log
+                        // has entries
+                        if action_button_if(
+                            ui,
+                            &p,
+                            "trash-filled",
+                            tr!("ui-options-chat-logs-clear"),
+                            ActionKind::FlatDanger,
+                            size,
+                            st.conversation_log_entries > 0,
+                        )
+                        .clicked()
+                        {
+                            st.confirm_clear_conversation_log = true;
                         }
                     });
                     if crate::ui::widgets::action_button_if(
@@ -936,7 +1262,7 @@ fn history(cx: &mut Cx) {
                         tr!("ui-options-chat-logs-import"),
                         crate::ui::widgets::ActionKind::Flat,
                         Vec2::new(0.0, 24.0),
-                        st.chat_log_importing.is_none(),
+                        st.chat_log_importing.is_none() && !st.chat_log_shared,
                     )
                     .clicked()
                     {
@@ -960,6 +1286,13 @@ fn history(cx: &mut Cx) {
                 });
                 false
             },
+        );
+        // an Aurora addition: the folder of the Legacy Viewer's own layout,
+        // shared with it (`world::chat_log`, `shared`)
+        cx.toggle(
+            tr!("ui-options-chat-logs-legacy-layout"),
+            tr!("ui-options-chat-logs-legacy-layout-help"),
+            &field!(log_legacy_layout),
         );
     });
 }

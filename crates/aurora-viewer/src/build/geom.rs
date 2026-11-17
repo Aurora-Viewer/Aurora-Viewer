@@ -106,6 +106,15 @@ impl Cam {
         range * (px / self.height * self.fov_y).tan()
     }
 
+    /// World size of `points` interface points at `p`: the pixels of a
+    /// handle at 100 % display scale, grown with it. LLManipTranslate,
+    /// LLManipRotate, LLManipScale and QToolAlign multiply their pixel sizes
+    /// by LLUI::getScaleFactor() for the same reason: at 200 % scaling, a
+    /// 50 px arrow covers 100 window pixels.
+    pub fn meters_for_points(&self, p: Vec3, points: f32) -> f32 {
+        self.meters_for_pixels(p, points * self.ppp)
+    }
+
     /// Distance along the view direction (z depth).
     pub fn depth(&self, p: Vec3) -> f32 {
         (p - self.eye).dot(self.at)

@@ -276,7 +276,7 @@ mod tests {
         let body = report.body(Uuid::from_u128(3));
         // SendUserReport: the report alone
         let (url, task) = crate::outfits::tests::server(vec![(200, Llsd::new_map())]).await;
-        assert!(send(&reqwest::Client::new(), Some(&url), None, body.clone(), None).await.is_ok());
+        assert!(send(&crate::test_http_client(), Some(&url), None, body.clone(), None).await.is_ok());
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with("POST "));
         assert_eq!(requests[0].1["report-type"].as_i32(), 3);
@@ -285,7 +285,7 @@ mod tests {
         for answer in [llsd_map! { "state" => "complete" }, llsd_map! { "success" => true }] {
             let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
             assert!(
-                send(&reqwest::Client::new(), Some("unused"), Some(&url), body.clone(), Some(vec![1]))
+                send(&crate::test_http_client(), Some("unused"), Some(&url), body.clone(), Some(vec![1]))
                     .await
                     .is_ok()
             );
@@ -293,7 +293,7 @@ mod tests {
         }
         // a refusal is an error, without the capability in it
         let (url, task) = crate::outfits::tests::server(vec![(500, Llsd::new_map())]).await;
-        let error = send(&reqwest::Client::new(), Some(&url), None, body, None)
+        let error = send(&crate::test_http_client(), Some(&url), None, body, None)
             .await
             .expect_err("refused");
         assert!(!error.contains(&url));
@@ -312,9 +312,15 @@ mod tests {
         ])
         .await;
         assert!(
-            send(&reqwest::Client::new(), None, Some(&url), report.clone(), Some(screenshot.clone()))
-                .await
-                .is_ok()
+            send(
+                &crate::test_http_client(),
+                None,
+                Some(&url),
+                report.clone(),
+                Some(screenshot.clone())
+            )
+            .await
+            .is_ok()
         );
         for (request, body) in requests.await.expect("report requests") {
             assert!(request.starts_with("POST "));
@@ -347,7 +353,7 @@ mod tests {
         ] {
             let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
             let error = send(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 None,
                 Some(&url),
                 AbuseReport::default().body(Uuid::nil()),
@@ -370,7 +376,7 @@ mod tests {
         ] {
             let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
             let error = send(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 Some(&url),
                 None,
                 AbuseReport::default().body(Uuid::nil()),
@@ -391,7 +397,7 @@ mod tests {
         let stage_one = llsd_map! { "state" => "upload", "uploader" => uploader.as_str() };
         let (url, requests) = crate::outfits::tests::server(vec![(200, stage_one); 3]).await;
         let error = send(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             Some(&url),
             AbuseReport::default().body(Uuid::nil()),

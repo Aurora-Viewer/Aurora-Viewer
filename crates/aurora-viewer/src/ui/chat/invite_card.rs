@@ -16,6 +16,7 @@ use crate::ui::context::{CtxAction, request};
 use crate::ui::fonts::chat_size;
 use crate::ui::widgets;
 use crate::world::ChatLine;
+use crate::world::names::NameScope;
 use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating, rating_note};
 use egui::{RichText, Vec2};
 
@@ -39,23 +40,37 @@ struct Texts {
 }
 
 fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
-    let name = env.world.person_name(&v.from).unwrap_or_else(|| line.from.clone());
+    // a teleport offer or request names its sender whatever `@shownames`
+    // says (process_improved_im tests nothing for IM_LURE_USER and
+    // IM_TELEPORT_REQUEST, llimprocessing.cpp)
+    let name = env
+        .world
+        .person_name_in(NameScope::Roster, &v.from)
+        .unwrap_or_else(|| line.from.clone());
     match &v.kind {
-        InviteKind::Offer { place, .. } => Texts {
-            title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
-            place: place.as_ref().and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos))),
-            message: without_own_place(&v.message, place.as_ref()).to_owned(),
-            question: rating_note(v.rating),
-            buttons: (
-                if matches!(v.rating, Rating::Exceeded(_)) {
-                    aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+        InviteKind::Offer { place, .. } => {
+            let hidden = env.world.rlva.has("showloc");
+            let (_, url) = crate::world::teleport_invites::destination_presentation(hidden, place.as_ref());
+            Texts {
+                title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
+                place: url,
+                message: if hidden {
+                    aurora_i18n::tr!("rlva-hidden-generic").into()
                 } else {
-                    aurora_i18n::tr!("common-teleport-3")
-                }
-                .into(),
-                aurora_i18n::tr!("ui-notifications-decline").into(),
-            ),
-        },
+                    without_own_place(&v.message, place.as_ref()).to_owned()
+                },
+                question: rating_note(v.rating),
+                buttons: (
+                    if matches!(v.rating, Rating::Exceeded(_)) {
+                        aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+                    } else {
+                        aurora_i18n::tr!("common-teleport-3")
+                    }
+                    .into(),
+                    aurora_i18n::tr!("ui-notifications-decline").into(),
+                ),
+            }
+        }
         InviteKind::Request => Texts {
             title: aurora_i18n::tr!("world-teleport-invites-requests-a-teleport", from = name),
             place: None,
@@ -69,8 +84,9 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
 /// The sender's message without its last line when that line is the SLURL
 /// of the invitation's own place (send_lures adds where the sender stands):
 /// the card already shows the place at its head. A SLURL of another place
-/// stays; the transcript keeps the whole message. The lure destination can
-/// differ from send_lures' SLURL by a few metres (#899), beyond rounding.
+/// stays; the transcript keeps the whole message (censored on arrival under
+/// @showloc). The lure destination can differ from send_lures' SLURL by a
+/// few metres (#899), beyond rounding.
 fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
     let Some((place, region)) = place.and_then(|p| Some((p, p.region.as_deref()?))) else {
         return message;
@@ -152,6 +168,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                 p,
                 env.emoji,
                 world,
+                NameScope::Roster,
                 env.want_names,
                 place,
                 chat_size(ui.ctx(), 12.0),
@@ -167,6 +184,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                 p,
                 env.emoji,
                 world,
+                NameScope::Roster,
                 env.want_names,
                 &t.message,
                 chat_size(ui.ctx(), 12.5),
@@ -288,6 +306,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
             p,
             env.emoji,
             world,
+            NameScope::Roster,
             env.want_names,
             &text,
             chat_size(ui.ctx(), 12.5),
@@ -317,6 +336,7 @@ pub(super) fn notice(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine) {
         env.p,
         env.emoji,
         world,
+        NameScope::Roster,
         env.want_names,
         &line.text,
         chat_size(ui.ctx(), 12.5),

@@ -23,6 +23,7 @@ fn say(w: &mut World, from: Uuid, source_type: ChatSourceType, chat_type: ChatTy
         owner_id: from,
         source_type,
         chat_type,
+        region: None,
         position: Vec3::ZERO,
         message: text.into(),
     }));
@@ -65,6 +66,8 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
                 kind: ChatKind::Im,
                 source: JANE,
                 origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
             },
             true,
         );
@@ -72,6 +75,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
             kind,
             session,
             new_session: false,
+            mention: false,
         };
         assert!(w.message_flashes_conversations(&m), "{kind:?}");
         w.status.dnd = true;
@@ -88,6 +92,8 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
             kind: ChatKind::Object(ChatType::Normal),
             source: BOX,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         },
         true,
     );
@@ -95,6 +101,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
         kind: ImKind::Private,
         session: BOX,
         new_session: false,
+        mention: false,
     };
     assert!(!w.message_flashes_conversations(&m));
 }
