@@ -288,7 +288,7 @@ mod tests {
         for (k, t) in [&by_image, &by_painter, &by_mesh, &nested, &hidden].into_iter().enumerate() {
             cache.note(id(k as u128), t.id(), 4, 4, start);
         }
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.image(egui::load::SizedTexture::new(by_image.id(), [16.0, 16.0]));
             let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 16.0));
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -299,6 +299,8 @@ mod tests {
             mesh.texture_id = nested.id();
             ui.painter().add(Shape::Vec(vec![Shape::mesh(mesh)]));
         });
+        // This headless test inspects shapes without sending the texture updates to a renderer.
+        output.textures_delta.clear();
         let later = start + IDLE;
         assert!(!cache.look(1, &output.shapes, later), "only every few frames");
         assert!(cache.look(LOOK_EVERY, &output.shapes, later));
