@@ -1506,14 +1506,19 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         distort2=clamp(uv+n.xy*min(water_path*0.018,0.16)/max(dmod*0.5,1.0),vec2<f32>(0.0),vec2<f32>(0.999));
     }
     distort2 = mix(uv, distort2, min(1.0, fade * 10.0));
-    let d1 = scene_depth_at(distort2);
+    var d1 = scene_depth_at(distort2);
     var ref_pos = frame.camera_pos.xyz + view_vec * 1e5;
     if (d1 > 0.0) {
         ref_pos = world_from_depth(distort2, d1);
     }
     if (distance(ref_pos, frame.camera_pos.xyz) < surf_dist - 0.05) {
-        // the distorted sample is in front of the water: don't refract it
+        // the distorted sample is in front of the water: don't refract it.
+        // The depth goes back to the pixel's own with it: kept, the depth of
+        // what stands in front (a leaf, a cliff's edge) left the void behind
+        // deep water without its fog below, and the bare sky showed as white
+        // ripples along everything standing over the sea.
         distort2 = uv;
+        d1 = d0;
         ref_pos = frame.camera_pos.xyz + view_vec * refr_dist;
     }
     var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
