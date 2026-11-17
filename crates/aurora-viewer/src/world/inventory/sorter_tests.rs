@@ -4093,6 +4093,7 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         ("[Ink Tattoo] Henna Anklet", Category::Tattoos),
         ("[Ink Tattoo] Ada Choker", Category::Tattoos),
         ("[Moon Hair] Top Knot", Category::Hair),
+        ("[Moon Hair] Ada - Henna", Category::Hair),
     ] {
         assert!(path(name).contains(category.folder()), "{name}: {}", path(name));
     }

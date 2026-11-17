@@ -205,8 +205,15 @@ fn a_background_plan_matches_the_frames_and_follows_its_source() {
         (Plan::default(), crate::world::inventory::sorter::journal::Snapshot::default())
     }));
     st.sorter.source = Some(source.clone());
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let arrived = Planning::take(&mut st.sorter.planning).expect("arrived");
+    // (waited for, never a fixed sleep: a busy machine runs the thread late)
+    let start = std::time::Instant::now();
+    let arrived = loop {
+        if let Some(arrived) = Planning::take(&mut st.sorter.planning) {
+            break arrived;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(30), "the plan never arrived");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
     assert_ne!(arrived.0.source, source, "a plan for another source is not shown");
 }
 
