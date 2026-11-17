@@ -3986,3 +3986,14 @@ fn audit_55_misfires() {
     let plan = plan(&inv, id(80), &Preferences::default(), &none, &none);
     assert!(!plan.moves.iter().any(|m| m.id == id(81)), "the user's shelf stays");
 }
+
+/// Audit 66: common names a shorter word of another kind took.
+#[test]
+fn hats_bean_bags_fish_tanks_and_eye_masks() {
+    assert_eq!(classify("Brindle Top Hat", 6, 0).category, Some(Category::Accessories));
+    assert_eq!(classify("Brindle Bean Bag Chair", 6, 0).category, Some(Category::Furniture));
+    assert_eq!(classify("Kira Sleeping Bag", 6, 0).category, Some(Category::Furniture));
+    assert_eq!(classify("Zorin Fish Tank", 6, 0).category, Some(Category::Decor));
+    assert_eq!(classify("Kira Sleep Eye Mask", 6, 0).category, Some(Category::Accessories));
+    assert_eq!(classify("Velmora Lace Top", 6, 0).category, Some(Category::Tops));
+}

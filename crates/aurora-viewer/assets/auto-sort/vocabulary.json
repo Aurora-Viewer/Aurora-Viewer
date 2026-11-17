@@ -444,6 +444,10 @@
     {
       "category": "accessories",
       "words": [
+        "top hat",
+        "eye mask",
+        "sleep mask",
+        "sleeping mask",
         "hood",
         "apron",
         "bag",
@@ -524,6 +528,10 @@
     {
       "category": "furniture",
       "words": [
+        "bean bag",
+        "bean bag chair",
+        "beanbag",
+        "sleeping bag",
         "carpet",
         "carpets",
         "platform bed",
@@ -577,6 +585,8 @@
     {
       "category": "decor",
       "words": [
+        "fish tank",
+        "aquarium",
         "chalice",
         "goblet",
         "hair dryer",

@@ -1749,3 +1749,24 @@ fn an_item_on_its_way_is_never_read_twice() {
     inv.claim_item_reads(&mut dead, false, now + ITEM_READ_DEADLINE);
     assert!(dead.is_empty(), "a broken link is never read again");
 }
+
+/// A server busy for a while never marks a real item broken for the
+/// session: one only unreadable is read again after the pause; one the
+/// server answered missing never.
+#[test]
+fn an_unreadable_item_is_read_again_after_a_pause() {
+    let mut inv = Inventory::default();
+    let (busy, gone) = (Uuid::from_u128(77), Uuid::from_u128(78));
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[busy]);
+    }
+    inv.items_missing(vec![gone]);
+    let mut asked = vec![busy, gone];
+    inv.drop_broken(&mut asked);
+    assert!(asked.is_empty(), "both left out for now");
+    // past the pause
+    *inv.gave_up_at.get_mut(&busy).expect("given up") -= ITEM_GIVE_UP;
+    let mut asked = vec![busy, gone];
+    inv.drop_broken(&mut asked);
+    assert_eq!(asked, vec![busy], "only the unreadable one is read again");
+}

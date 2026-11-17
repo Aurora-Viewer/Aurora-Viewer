@@ -62,6 +62,11 @@ pub struct Inventory {
     /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
+    /// Of `missing_items`, those the server answered do not exist: never
+    /// read again this session. The others, only unreadable after their
+    /// attempts (a busy server), are read again after a pause, and when.
+    pub confirmed_missing: HashSet<Uuid>,
+    pub gave_up_at: HashMap<Uuid, std::time::Instant>,
     /// Folders the server refuses even at depth 0: over its per-folder reply
     /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
     /// items cannot be read; search and refresh do not ask again in a loop.
@@ -103,6 +108,9 @@ pub struct Inventory {
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
 /// An item read unanswered this long no longer stops another read of it.
 pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+/// An item unreadable after its attempts (never answered missing) is read
+/// again after this pause.
+pub const ITEM_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(600);
 
 // v3 could store a no-copy original as removed even when the offer never
 // reached a simulator. The folder version alone cannot distinguish that cache.
@@ -536,12 +544,28 @@ impl Inventory {
     }
 
     /// Leaves out of an item read the broken links' originals: confirmed
-    /// gone or unreadable after their attempts, never asked again this
-    /// session.
-    pub fn drop_broken(&self, items: &mut Vec<Uuid>) {
-        if !self.missing_items.is_empty() {
-            items.retain(|id| !self.broken(id));
+    /// gone (never asked again this session), or unreadable after their
+    /// attempts (asked again after [`ITEM_GIVE_UP`]: a server busy for a
+    /// while never marks a real item broken for the session).
+    pub fn drop_broken(&mut self, items: &mut Vec<Uuid>) {
+        if self.missing_items.is_empty() {
+            return;
         }
+        let now = std::time::Instant::now();
+        let expired: Vec<Uuid> = self
+            .gave_up_at
+            .iter()
+            .filter(|(_, at)| now.saturating_duration_since(**at) >= ITEM_GIVE_UP)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in expired {
+            self.gave_up_at.remove(&id);
+            self.item_failures.remove(&id);
+            if !self.confirmed_missing.contains(&id) {
+                self.missing_items.remove(&id);
+            }
+        }
+        items.retain(|id| !self.broken(id));
     }
 
     /// Leaves out of an item read the broken links' originals and the items
@@ -582,6 +606,7 @@ impl Inventory {
         self.generation += 1;
         for id in ids {
             self.item_answered(&id);
+            self.confirmed_missing.insert(id);
             self.item_failures.remove(&id);
             self.item_retries.remove(&id);
             self.missing_items.insert(id);
@@ -608,6 +633,7 @@ impl Inventory {
                 first.get_or_insert(*id);
                 self.item_retries.remove(id);
                 self.missing_items.insert(*id);
+                self.gave_up_at.insert(*id, std::time::Instant::now());
             } else {
                 self.item_retries.insert(*id);
             }
