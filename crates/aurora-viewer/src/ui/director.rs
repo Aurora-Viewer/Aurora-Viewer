@@ -241,10 +241,14 @@ pub(crate) fn clock(seconds: f32, tenths: bool) -> String {
     }
 }
 
-/// The window: the camera, the lock, the selected keyframe, the path, the
-/// playback, the picture and the environment, each a section that folds
-/// (the first four open at first), in a body that scrolls when the room
-/// the bars leave is too short for them all.
+/// The window, in five tabs (`Tab`) of sections that fold, in a body that
+/// scrolls when the room the bars leave is too short for them: the track
+/// (the selected keyframe, the path, the playback), the camera (the live
+/// camera, the lock, the shots, the path taken by hand), the look (the
+/// picture, the fades and titles, the isolation, the environment), the
+/// output (a live film or a render) and the library (the saved tracks, the
+/// montage). With all the Director does, one scroll of every section was a
+/// wall; a tab keeps one job in view.
 #[allow(clippy::too_many_arguments)]
 pub fn window(
     ctx: &egui::Context,
@@ -271,75 +275,132 @@ pub fn window(
         .show(ctx, p, open, |ui| {
             widgets::auto_height_body(room).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
-                    camera_section(ui, p, live, actions);
-                });
-                widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
-                    lock_section(ui, p, d, live, actions);
-                });
-                widgets::collapsing(ui, p, "director_shots", aurora_i18n::tr!("director-shots"), false, |ui| {
-                    shots::shots_section(ui, p, d, live)
-                widgets::collapsing(ui, p, "director_capture", aurora_i18n::tr!("director-capture"), false, |ui| {
-                    super::director_capture::capture_section(ui, p, d, capture);
-                });
-                let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
-                    Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
-                    None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
-                };
-                widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
-                    keyframe_section(ui, p, d, actions);
-                    super::director_key_rows::keyframe_rows(ui, p, d, &key_rows);
-                });
-                widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
-                    path_section(ui, p, d);
-                });
-                widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
-                    playback_section(ui, p, d);
-                });
-                widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
-                    picture_section(ui, p, d, live.target.is_some());
-                });
-                widgets::collapsing(ui, p, "director_fades", aurora_i18n::tr!("director-fades"), false, |ui| {
-                    super::director_look::fades_section(ui, p, &mut d.finish);
-                });
-                let duration = d.track.duration();
-                widgets::collapsing(ui, p, "director_titles", aurora_i18n::tr!("director-titles"), false, |ui| {
-                    super::director_look::titles_section(ui, p, &mut d.finish, duration);
-                });
-                widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
-                    super::director_output::output_section(ui, p, record, live, tracks.library, actions);
-                });
-                widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
-                    super::director_library::library_section(ui, p, &mut tracks, d.track.is_empty(), actions);
-                });
-                widgets::collapsing(ui, p, "director_montage", aurora_i18n::tr!("director-montage"), false, |ui| {
-                    super::director_library::montage_section(ui, p, tracks.saved, tracks.library, live.can_record, live.restricted);
-                });
-                widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
-                    isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
-                });
-                let Env {
-                    ui: lists,
-                    view,
-                    loading,
-                    time_of_day,
-                    lighting,
-                    out,
-                } = env;
-                widgets::collapsing(
-                    ui,
-                    p,
-                    "director_environment",
-                    aurora_i18n::tr!("director-environment"),
-                    false,
-                    |ui| {
-                        lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
-                    },
-                );
+                let mut tab = shown_tab(ui.ctx());
+                let labels = Tab::ALL.map(|tab| (tab.label(), true));
+                let mut index = tab as usize;
+                if widgets::tabs(ui, p, &mut index, &labels) {
+                    tab = Tab::ALL[index.min(Tab::ALL.len() - 1)];
+                    set_tab(ui.ctx(), tab);
+                }
+                match tab {
+                    Tab::Track => {
+                        let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
+                            Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
+                            None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
+                        };
+                        widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
+                            keyframe_section(ui, p, d, actions);
+                            super::director_key_rows::keyframe_rows(ui, p, d, &key_rows);
+                        });
+                        widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
+                            path_section(ui, p, d);
+                        });
+                        widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
+                            playback_section(ui, p, d);
+                        });
+                    }
+                    Tab::Camera => {
+                        widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
+                            camera_section(ui, p, live, actions);
+                        });
+                        widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
+                            lock_section(ui, p, d, live, actions);
+                        });
+                        widgets::collapsing(ui, p, "director_shots", aurora_i18n::tr!("director-shots"), true, |ui| {
+                            shots::shots_section(ui, p, d, live)
+                        });
+                        widgets::collapsing(ui, p, "director_capture", aurora_i18n::tr!("director-capture"), false, |ui| {
+                            super::director_capture::capture_section(ui, p, d, capture);
+                        });
+                    }
+                    Tab::Look => {
+                        widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), true, |ui| {
+                            picture_section(ui, p, d, live.target.is_some());
+                        });
+                        widgets::collapsing(ui, p, "director_fades", aurora_i18n::tr!("director-fades"), false, |ui| {
+                            super::director_look::fades_section(ui, p, &mut d.finish);
+                        });
+                        let duration = d.track.duration();
+                        widgets::collapsing(ui, p, "director_titles", aurora_i18n::tr!("director-titles"), false, |ui| {
+                            super::director_look::titles_section(ui, p, &mut d.finish, duration);
+                        });
+                        widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
+                            isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
+                        });
+                        let Env {
+                            ui: lists,
+                            view,
+                            loading,
+                            time_of_day,
+                            lighting,
+                            out,
+                        } = env;
+                        widgets::collapsing(
+                            ui,
+                            p,
+                            "director_environment",
+                            aurora_i18n::tr!("director-environment"),
+                            false,
+                            |ui| {
+                                lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
+                            },
+                        );
+                    }
+                    Tab::Output => {
+                        super::director_output::output_section(ui, p, record, live, tracks.library, actions);
+                    }
+                    Tab::Library => {
+                        widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), true, |ui| {
+                            super::director_library::library_section(ui, p, &mut tracks, d.track.is_empty(), actions);
+                        });
+                        widgets::collapsing(ui, p, "director_montage", aurora_i18n::tr!("director-montage"), true, |ui| {
+                            super::director_library::montage_section(ui, p, tracks.saved, tracks.library, live.can_record, live.restricted);
+                        });
+                    }
+                }
             });
         });
     clear_prompt(ctx, p, d);
     super::director_library::library_prompts(ctx, p, tracks.library);
+}
+
+/// The tabs of the Director's window, in their order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Tab {
+    #[default]
+    Track,
+    Camera,
+    Look,
+    Output,
+    Library,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 5] = [Tab::Track, Tab::Camera, Tab::Look, Tab::Output, Tab::Library];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Track => aurora_i18n::tr!("director-tab-track"),
+            Tab::Camera => aurora_i18n::tr!("director-tab-camera"),
+            Tab::Look => aurora_i18n::tr!("director-tab-look"),
+            Tab::Output => aurora_i18n::tr!("director-tab-output"),
+            Tab::Library => aurora_i18n::tr!("director-tab-library"),
+        }
+    }
+}
+
+fn tab_id() -> Id {
+    Id::unique("director_tab")
+}
+
+/// The tab the window shows (kept in egui's memory, so it comes back).
+pub fn shown_tab(ctx: &egui::Context) -> Tab {
+    ctx.data_mut(|data| data.get_persisted::<Tab>(tab_id())).unwrap_or_default()
+}
+
+/// Shows `tab` (a click on it, or a demo that opens on it).
+pub fn set_tab(ctx: &egui::Context, tab: Tab) {
+    ctx.data_mut(|data| data.insert_persisted(tab_id(), tab));
 }
 
 fn clear_asked_id() -> Id {

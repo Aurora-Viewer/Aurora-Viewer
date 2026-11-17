@@ -1095,6 +1095,15 @@ impl App {
             self.director_shots_demo();
         }
         self.director_extra_demo(&mode);
+        // the window opens on the tab that shows what the scenario sets
+        let tab = match mode.as_str() {
+            "lock" | "orbit" | "capture" => ui::director::Tab::Camera,
+            "green" | "titles" => ui::director::Tab::Look,
+            "record" | "record-alpha" | "render" => ui::director::Tab::Output,
+            "montage" => ui::director::Tab::Library,
+            _ => ui::director::Tab::Track,
+        };
+        ui::director::set_tab(&self.egui_ctx, tab);
     }
 
     /// The demo's film starts once there is something to write it with: the

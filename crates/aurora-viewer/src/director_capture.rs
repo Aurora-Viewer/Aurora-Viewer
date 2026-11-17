@@ -217,6 +217,7 @@ pub fn keyframes(take: &Take, tol: Tolerance, room: usize, start: f32, aim: KeyA
             pose: samples[k].pose,
             rest: false,
             aim,
+            shot: Default::default(),
             extra: KeyExtra::default(),
         })
         .collect()
