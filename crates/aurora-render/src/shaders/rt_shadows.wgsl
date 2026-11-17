@@ -71,19 +71,6 @@ fn normal_at(pixel: vec2<i32>, world: vec3<f32>, depth: f32) -> vec3<f32> {
     return n;
 }
 
-// Whether a candidate hit stops the ray: an opaque face always (the
-// traversal commits those itself), an alpha-masked one where its texture is
-// over its cutoff. (Naga takes no ray query as a function's argument, so
-// each trace runs its own loop around this.)
-fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
-    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
-        return false;
-    }
-    let record = hit_record(posed, c.instance_custom_data, c.geometry_index);
-    let s = surface_at(record, c.primitive_index, c.barycentrics, dir);
-    return !masked_out(record, s.uv);
-}
-
 @compute @workgroup_size(8, 8)
 fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel = vec2<i32>(id.xy);

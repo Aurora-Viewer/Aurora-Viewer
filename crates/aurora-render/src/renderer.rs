@@ -1144,6 +1144,9 @@ struct Pipelines {
     /// The visible part of the subject's faces (part_pick.rs).
     part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
+    /// SSR's composite of the traced reflections (rt_shadows.rs), when they
+    /// are on.
+    ssr_rt: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_portal: wgpu::RenderPipeline,
@@ -4142,9 +4145,11 @@ impl Backend {
                 float_tex(3),
             ],
         });
+        // the G-buffer, and the traced reflections ssr.wgsl's `fs_ssr_rt`
+        // reads (a black texture without them)
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gbuffer"),
-            entries: &[float_tex(0)],
+            entries: &[float_tex(0), float_tex(1)],
         });
 
         let mk_frame_buffer = |label| {
@@ -5661,7 +5666,7 @@ impl Backend {
             crate::part_pick::FORMAT,
             wgpu::ColorWrites::RED,
         ));
-        let ssr_pipe = ssr.then(|| {
+        let ssr_pipes = ssr.then(|| {
             let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
@@ -5672,20 +5677,29 @@ impl Backend {
                 bind_group_layouts: &[Some(frame_layout), None, None, Some(gbuf_layout)],
                 immediate_size: 0,
             });
-            make_pipeline(
-                device,
-                &m,
-                &pl,
-                PipeDesc {
-                    vb: Vb::None,
-                    cull: None,
-                    blend: Some(premultiplied()),
-                    depth_write: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    ..base("ssr", "vs_ssr", "fs_ssr")
-                },
-            )
+            let composite = |label: &'static str, fs: &'static str| {
+                make_pipeline(
+                    device,
+                    &m,
+                    &pl,
+                    PipeDesc {
+                        vb: Vb::None,
+                        cull: None,
+                        blend: Some(premultiplied()),
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        ..base(label, "vs_ssr", fs)
+                    },
+                )
+            };
+            let traced = (crate::rt_shadows::reflections() && device.features().contains(crate::rt_shadows::FEATURES))
+                .then(|| composite("ssr traced", "fs_ssr_rt"));
+            (composite("ssr", "fs_ssr"), traced)
         });
+        let (ssr_pipe, ssr_rt) = match ssr_pipes {
+            Some((a, b)) => (Some(a), b),
+            None => (None, None),
+        };
         // depth prepass (single sample)
         let pre = |label: &'static str, vs: &'static str, fs: Option<&'static str>, cull: Option<wgpu::Face>| {
             pipe(PipeDesc {
@@ -6096,6 +6110,7 @@ impl Backend {
             part_mask: part_mask.resolve(&mut done),
             part_pick: part_pick.resolve(&mut done),
             ssr: ssr_pipe.resolve(&mut done),
+            ssr_rt: ssr_rt.resolve(&mut done),
             pre_opaque: pre_opaque.resolve(&mut done),
             pre_opaque_2s: pre_opaque_2s.resolve(&mut done),
             pre_portal: pre_portal.resolve(&mut done),
@@ -6812,10 +6827,22 @@ impl Backend {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
                 layout: &self.gbuf_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(g),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(g),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(
+                            self.targets
+                                .rt
+                                .as_ref()
+                                .and_then(|t| t.reflect.as_ref())
+                                .unwrap_or(&self.dummies.black),
+                        ),
+                    },
+                ],
             })
         });
         self.ssao_groups = self.targets.ao.as_ref().map(|(raw, _, _, _)| {
@@ -9226,6 +9253,8 @@ impl Backend {
             main.features[3] = 1;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        let fu_sun_color = main.sun_color;
+        let fu_sky = [main.sky_zenith, main.sky_horizon, main.ground_color];
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
         // (asked in window pixels: a photo frame answers none of them)
@@ -9517,6 +9546,9 @@ impl Backend {
             self.contact
                 .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
         }
+        // what the traced reflections read after the scene copy
+        let rt_clip_from_world = fu.proj * fu.view;
+        let fu_camera = fu.camera_pos;
         if let (true, Some(rt), Some(t)) = (self.rt_now, &self.rt, &self.targets.rt) {
             rt.write(
                 &self.queue,
@@ -11356,6 +11388,37 @@ impl Backend {
             },
             size,
         );
+        // the traced reflections, in SSR's place: they read the copy where
+        // the view sees what they hit
+        let rt_reflect = self.settings.ssr && self.rt_now && self.pipelines.ssr_rt.is_some();
+        let rt_reflect = rt_reflect
+            && match (&mut self.rt, &self.targets.rt, &self.targets.gbuf) {
+                (Some(rt), Some(t), Some(gbuf)) if rt.reflects() => {
+                    let light = crate::rt_shadows::ReflectLight {
+                        clip_from_world: rt_clip_from_world,
+                        camera: fu_camera,
+                        sun_dir: f.sun_dir,
+                        sun_up: f.sun_visible > 0.0,
+                        sun_color: fu_sun_color,
+                        sky_zenith: fu_sky[0],
+                        sky_horizon: fu_sky[1],
+                        ground_color: fu_sky[2],
+                    };
+                    rt.encode_reflections(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &self.targets.depth_ss,
+                        gbuf,
+                        &self.targets.scene_copy,
+                        &scene,
+                    );
+                    true
+                }
+                _ => false,
+            };
 
         mark(&mut encoder, MARK_COPY_END);
 
@@ -11621,7 +11684,8 @@ impl Backend {
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
+            let ssr_pipe = if rt_reflect { &self.pipelines.ssr_rt } else { &self.pipelines.ssr };
+            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, ssr_pipe, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
                 pass.draw(0..3, 0..1);
