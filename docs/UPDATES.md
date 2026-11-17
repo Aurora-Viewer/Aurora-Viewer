@@ -154,13 +154,18 @@ is not that of the Aurora releases.
 Download, hash and extraction run in the background. Extraction refuses
 path traversals, links, Windows duplicates, reserved files and archives
 exceeding the size limits. The staging is done next to the installation, on
-the same volume. The installation refuses repositories, build trees, folder
-links and folders containing files foreign to the package.
+the same volume. Only the package's own entries are replaced (the viewer,
+`assets`, the notices, `aurora-install.json`): whatever else the folder
+holds, a shortcut or the user's notes, stays where it is. A folder without
+`aurora-install.json` (the viewer copied alone, onto the Desktop for
+example) has only `aurora-viewer.exe` replaced. Links among those entries,
+and a folder at the root of a drive, are refused. Development builds never
+update.
 
 After the agreement to restart, a copy of the viewer acts as a helper
 outside the installed folder. It waits for the end of the parent with a
-Windows handle, takes a lock, backs up the old folder and puts the new one
-in place. The arguments are kept. The new instance signals a presented
+Windows handle, takes a lock, moves the old package entries into the
+backup and puts the new ones in place. The arguments are kept. The new instance signals a presented
 frame; the backup is then deleted. If it exits or shows nothing for
 90 seconds, the old version is restored and restarted with a message. The
 errors offer the release page.

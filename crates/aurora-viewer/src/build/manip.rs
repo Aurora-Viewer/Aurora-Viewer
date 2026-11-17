@@ -741,6 +741,31 @@ impl Manip {
         }
     }
 
+    /// LLManipTranslate::render draws guidelines with depth testing before
+    /// its overlay handles. World guides belong in the world-label GPU pass.
+    pub(super) fn draw_world_guides(&self, p: &Painter3d, world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, mode: EditMode) {
+        let mode = self.drag.as_ref().filter(|d| d.started).map_or(mode, |d| d.mode);
+        if mode != EditMode::Move || !can_transform_selection(world, sel, linked, mode) {
+            return;
+        }
+        let Some(mut f) = frame(world, s, sel, linked, Instant::now(), self.grid_ref.as_ref()) else {
+            return;
+        };
+        if s.select_limit().is_some_and(|max| f.pivot.distance(p.cam.eye) > max + 64.0) {
+            return;
+        }
+        if let Some(d) = self.drag.as_ref().filter(|d| d.started) {
+            f.grid = d.grid;
+        }
+        for i in 0..3 {
+            let a = f.pivot - f.grid.rotation * unit(i) * 256.0;
+            let b = f.pivot + f.grid.rotation * unit(i) * 256.0;
+            aurora_render::world_line_at(p.painter.ctx(), a, b);
+            p.line(a, b, fade(axis_color(&p.pal, i), 0.33), 1.5);
+        }
+        aurora_render::world_label_at(p.painter.ctx(), None);
+    }
+
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
     /// with one positive arrow per axis and two-color plane handles outside
     /// their envelope. Hover keeps both axis colors and accents the outline.
@@ -752,9 +777,11 @@ impl Manip {
         let len = arrow_length(cam, f, piv);
         let k = f.size;
         // guidelines through the pivot (LLManip::renderGuidelines)
-        for i in 0..3 {
-            let a = g * unit(i);
-            p.line(piv - a * 256.0, piv + a * 256.0, fade(axis_color(&pal, i), 0.33), 1.5);
+        if cam.hud.is_some() {
+            for i in 0..3 {
+                let a = g * unit(i);
+                p.line(piv - a * 256.0, piv + a * 256.0, fade(axis_color(&pal, i), 0.33), 1.5);
+            }
         }
         let active = drag.map(|d| d.part);
         // snap ruler / plane grid while dragging

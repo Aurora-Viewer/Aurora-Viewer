@@ -26,6 +26,26 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-16 — Aurora 0.9.10: the Director, transparency in its true order, and weather that reaches farther
+The Director lets you film in the world: keep camera views as keyframes on a timeline, play them back as one smooth shot with the world alone, and record a video with your own ffmpeg. Glass, curtains and the layers of mesh hair now show in their true order at every pixel (Preferences › Graphics, Order of transparent surfaces); thanks to Anne Skydancer for the Stochastic choice. Aurora Weather reaches farther, with steadier snow. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)
+
+## 2026-11-16 — Chat, people and the world
+The Conversation log and the conversation options work like the Legacy Viewer. People › Contact sets is redesigned, with drag and drop and Quick sort. Nearby chat from beyond chat range is dimmed, and a blocked resident's chat can stay hidden, collapsed or greyed. Name tags can show the distance, radar marks take a colour of your choice, and beacons show light boxes, region corners and chat range spheres. Draw distance goes up to 1024 m.
+
+## 2026-11-16 — Building, avatars and more like the Legacy Viewer
+Save objects as Collada or OBJ, Select faces with this texture, a Build › Options sub-menu, and number fields that take the mouse wheel. The Animation Speed menu, Doppler on moving world sounds, MMO-style mouse buttons (off by default) and mouselook combat aids. An update no longer rolls back when the cache is busy. Thanks to anne-skydancer, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Memekiller, Nowalski, Odessa-Draekavik and RheaMercury.
+
+## 2026-11-13 — Aurora 0.9.9: Aurora Weather, Avatar Studio and Lua scripts
+Aurora Weather brings rain, snow, wind, thunder and northern lights, with puddles, lying snow and footprints: choose yours in the Environment window, or let regions set it (off by default). Avatar Studio is a calm space to dress, pose and photograph your avatar, with its own animation editor: keyframes, a timeline, ANIM and BVH import. SLua scripts get a real editor, with Lua colours, completion and help. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.9)
+
+## 2026-11-13 — Gamepad, VR, building and avatars
+With a gamepad, on the desktop or in VR, switch between First Person, Avatar Mode and Flycam. The camera can follow an animated body part. When others edit, grab or give something, their beam shows, and yours is seen. Drag an item out of Contents to rez it, save an object back into the contents it came from, and tick Animated Mesh on a whole linkset. Mesh heads no longer get black eyebrows on AMD cards or after a graphics card reset, and AO walks and runs loop again.
+
+## 2026-11-13 — More like the Legacy Viewer
+Opacity sliders for windows, bars and menus (Preferences › Appearance), the nearby media list under the media button, every don't-ask-again answer in Preferences › Confirmations, Maximum nearby lights, moderator options in group chats, a ban from all your groups, parcel music that fades between stations, and the sun and moon drawn like the Legacy Viewer. Thanks to AiAiCaptainn, circuskid, Gaalrauch, Izusl, KanikaBreed, lambskin, Memekiller, Nowalski, Odessa-Draekavik, RheaMercury and voidel.
+
 ## 2026-11-12 — Aurora 0.9.8: fixes for building, chat and AMD cards
 Select face picks the faces of what you wear again, and Derender with Edit linked parts hides only the selected part. The channel selector shows by every nearby chat input and keeps the channel you chose. On AMD cards, tree leaves are no longer drawn as squares and mesh hair has no more streaks, and blended eyelashes stay visible behind mesh hair. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)

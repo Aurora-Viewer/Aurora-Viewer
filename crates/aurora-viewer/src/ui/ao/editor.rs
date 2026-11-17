@@ -391,8 +391,13 @@ impl Editor<'_> {
                     }
                 }
                 if widgets::icon_button(ui, self.p, "trash-filled", aurora_i18n::tr!("common-remove"), !self.state.busy()) {
-                    if matches!(list, List::Main) {
+                    // FloaterAO::onClickTrash (indra/newview/ao.cpp) removes
+                    // an animation at once: it is only a link. A group or a
+                    // track is a folder that goes to the Trash with what it
+                    // holds, so it asks first (#3675).
+                    if self.inv.folders.contains_key(&id) {
                         self.state.remove = Some(id);
+                        widgets::bring_floater_front(ui.ctx(), "ao_remove");
                     } else {
                         push(self.out, self.state, inventory::remove(self.inv, id));
                     }

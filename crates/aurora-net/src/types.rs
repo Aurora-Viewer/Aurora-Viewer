@@ -305,6 +305,11 @@ pub struct ChatMessage {
     pub owner_id: Uuid,
     pub source_type: ChatSourceType,
     pub chat_type: ChatType,
+    /// The simulator circuit's region when the message arrived; None for
+    /// synthetic messages without a known origin. Never inferred from the
+    /// agent's current region, which may change before the event is consumed.
+    pub region: Option<RegionHandle>,
+    /// Region-local, as specified by ChatFromSimulator in message_template.msg.
     pub position: Vec3,
     pub message: String,
 }
@@ -376,6 +381,12 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "avatar-picker-url": the grid's Avatar Welcome Pack page
+    /// (LFSimFeatureHandler::avatarPickerURL). `None` when the region does
+    /// not name the key: only then does the login response's page count; a
+    /// key given empty means "no welcome pack" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub avatar_picker_url: Option<String>,
     /// "destination-guide-url": the grid's Destination Guide page
     /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
     /// does not name the key: only then does the login response's page
@@ -424,6 +435,9 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            avatar_picker_url: extras
+                .has("avatar-picker-url")
+                .then(|| extras["avatar-picker-url"].to_string_value().trim().to_owned()),
             destination_guide_url: extras
                 .has("destination-guide-url")
                 .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
@@ -445,6 +459,12 @@ pub enum NetEvent {
     RegionLinkLimit {
         handle: RegionHandle,
         max_children: Option<u32>,
+    },
+    /// OpenRegionInfo, whole: the Region / Estate window's "Region
+    /// settings" tab (Aurora-Sim based grids).
+    OpenRegionSettings {
+        handle: RegionHandle,
+        settings: Box<crate::open_region::OpenRegionSettings>,
     },
     /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
     /// empty on the server.
@@ -623,6 +643,18 @@ pub enum NetEvent {
         target: Uuid,
         animations: bool,
     },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -655,6 +687,8 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "LuaScriptsEnabled": the region runs SLua scripts.
+        lua_scripts: bool,
         /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
         /// grid's status feed and page (Help › Grid status); empty when
         /// not given, always on Second Life.
@@ -672,6 +706,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -777,6 +814,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
@@ -946,6 +986,17 @@ pub enum NetEvent {
         change: crate::experience::ExperiencePermissionChange,
         result: Result<crate::experience::ExperiencePermission, String>,
     },
+    /// IsExperienceAdmin, with the region's UpdateExperience capability:
+    /// the agent may edit the experience.
+    ExperienceAdmin {
+        experience: Uuid,
+        admin: bool,
+    },
+    /// UpdateExperience's answer.
+    ExperienceUpdated {
+        experience: Uuid,
+        result: Result<crate::experience::ExperienceUpdate, String>,
+    },
     /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
     /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
     SitResponse {
@@ -972,6 +1023,9 @@ pub enum NetEvent {
     LoadUrl {
         object_name: String,
         object_id: Uuid,
+        /// The object's owner, a resident or a group (OwnerIsGroup).
+        owner_id: Uuid,
+        owner_is_group: bool,
         message: String,
         url: String,
     },
@@ -1341,10 +1395,14 @@ pub enum NetEvent {
     /// brought, parents first, or why the read failed.
     InventoryTreeFetched {
         request: u64,
-        result: Result<Vec<crate::inventory::FolderContents>, String>,
+        result: Result<Vec<crate::inventory::FolderContents>, crate::inventory::ais::FetchError>,
     },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
+        /// The server refuses these folders even alone: over its reply limit.
+        too_big: bool,
+        /// The HTTP status the refusal carried, when one was read.
+        status: Option<u16>,
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),
@@ -1416,14 +1474,12 @@ pub enum NetEvent {
         serial: Option<i16>,
         result: Result<Vec<crate::build::TaskItem>, String>,
     },
-    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    /// ScriptRunningReply (and the event queue's VM flags when given).
     ScriptRunning {
         object_id: Uuid,
         item_id: Uuid,
         running: bool,
-        mono: Option<bool>,
-        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
-        luau: crate::scripts::Luau,
+        compile: Option<crate::scripts::CompileTarget>,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1499,6 +1555,26 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
+/// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
+/// view by default, everything while the 360° snapshot window is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterestListMode {
+    #[default]
+    Default,
+    Capture360,
+}
+
+impl InterestListMode {
+    /// The capability's `mode` (IL_MODE_DEFAULT, IL_MODE_360).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterestListMode::Default => "default",
+            InterestListMode::Capture360 => "360",
+        }
+    }
+}
+
 /// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchSurface {
@@ -1521,6 +1597,15 @@ impl Default for TouchSurface {
         }
     }
 }
+/// Progress of an outgoing inventory offer on its original reliable circuit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryOfferStatus {
+    /// The datagram was handed to the socket, possibly on a retry.
+    Transmitted,
+    /// The simulator acknowledged that datagram. Acceptance by the resident is separate.
+    Acknowledged,
+}
+
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
@@ -1726,10 +1811,20 @@ pub enum NetCommand {
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),
+    /// The interest list mode (LLAgent::changeInterestListMode): posted to
+    /// the InterestList capability of every region that has it, and again
+    /// to the agent's region when its capabilities arrive while the mode is
+    /// not the default (the 360° snapshot window).
+    SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
     AgentControls(AgentControls),
+    /// Send the controls of this frame now, even if nothing moved past the
+    /// thresholds (`send_agent_update(true, …)`, force_send): a turn the
+    /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
+    /// then send_agent_update in FSAvatarAlignBase::applyRotation).
+    ForceAgentUpdate,
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -1754,6 +1849,32 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
+    /// An inventory offer (IM_INVENTORY_OFFERED) scoped to this login. The
+    /// unbounded receipt channel closes on circuit loss or exhausted retries.
+    OfferInventory {
+        session: Uuid,
+        to: Uuid,
+        id: Uuid,
+        message: String,
+        bucket: Vec<u8>,
+        receipt: crossbeam_channel::Sender<InventoryOfferStatus>,
+    },
+    /// Check reserved originals in this login's inventory after an uncertain offer.
+    CheckInventoryOffer {
+        session: Uuid,
+        items: Vec<Uuid>,
+        reply: crossbeam_channel::Sender<crate::inventory::ais::ItemReads>,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -1820,6 +1941,14 @@ pub enum NetCommand {
     ExperiencePermission {
         experience: Uuid,
         change: crate::experience::ExperiencePermissionChange,
+    },
+    /// IsExperienceAdmin, answered by NetEvent::ExperienceAdmin.
+    ExperienceAdmin(Uuid),
+    /// UpdateExperience: the package `update_body` built, answered by
+    /// NetEvent::ExperienceUpdated.
+    UpdateExperience {
+        experience: Uuid,
+        body: aurora_llsd::Llsd,
     },
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {
@@ -2306,7 +2435,7 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
-        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// A script (asset type 10) written in Lua ([`crate::scripts::is_slua_item`]):
         /// compiled for "luau", never "mono".
         lua: bool,
         data: Vec<u8>,
@@ -2530,6 +2659,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("avatar-picker-url", " https://avatars.example/[GRID_LOWERCASE]/ "),
                 ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
@@ -2540,6 +2670,15 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(read.avatar_picker_url.as_deref(), Some("https://avatars.example/[GRID_LOWERCASE]/"));
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("avatar-picker-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).avatar_picker_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).avatar_picker_url, None);
         assert_eq!(
             read.destination_guide_url.as_deref(),
             Some("https://guide.example/[GRID_LOWERCASE]/")

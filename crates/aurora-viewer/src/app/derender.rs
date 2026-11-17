@@ -59,6 +59,14 @@ impl App {
             log::info!("derender {id} refused: our own attachment while RLVa is on");
             return;
         }
+        // derenderObject: under @unsit the object sat on stays in the world,
+        // or hiding it would be a way off the seat. Stricter for one prim of
+        // it alone ("Edit linked"), which the Legacy Viewer only keeps when
+        // it is the root.
+        if idx.is_some_and(|i| w.rlva_locked_seat(i)) {
+            log::info!("derender {id} refused: the seat held by @unsit");
+            return;
+        }
         let avatar = idx.and_then(|i| w.objects.get(i)).is_none_or(|o| o.is_avatar());
         let (target, entry) = if avatar {
             // FirstName / LastName of the avatar, or its user name

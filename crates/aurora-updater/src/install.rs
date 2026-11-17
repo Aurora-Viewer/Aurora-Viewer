@@ -1,5 +1,6 @@
-//! A helper outside the installation performs the directory swap. The old
-//! directory remains recoverable until the new process acknowledges a frame.
+//! A helper outside the installation swaps the package's own entries: the
+//! old ones stay recoverable until the new process acknowledges a frame, and
+//! whatever else the folder holds is never moved.
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,25 @@ use std::{
 
 const EXE: &str = "aurora-viewer.exe";
 const ACK_ENV: &str = "AURORA_UPDATE_ACK";
+/// Set on the previous viewer restored after a failed update: the
+/// transaction folder, whose `failure.txt` says why ([`failed_update`]).
+/// Older helpers set it to `1`.
+pub const ROLLBACK_ENV: &str = "AURORA_UPDATE_ROLLBACK";
+/// Why the update failed, written by the helper before the rollback.
+const FAILURE: &str = "failure.txt";
+/// Written by the helper just before it starts the new viewer: a failure
+/// without it happened while installing, before any start.
+const LAUNCHING: &str = "launching";
+
+/// A failed update, told by its helper to the viewer it restored.
+pub struct FailedUpdate {
+    /// The helper's own words (`failure.txt`).
+    pub reason: String,
+    /// The new viewer was being started: it failed to start or to show a
+    /// frame. Otherwise the installation itself failed and the previous
+    /// one was never stopped from starting.
+    pub launched: bool,
+}
 /// Written by the new viewer once its startup splash is on screen: the
 /// helper's own update window can then go without a gap.
 const SPLASH_SHOWN: &str = "splash-shown";
@@ -34,7 +54,8 @@ pub enum HelperStage {
     /// The new viewer shows its own splash or window: this one goes.
     Handed,
 }
-const ALLOWED: &[&str] = &[
+/// The entries of a package folder, the only ones an update moves there.
+const PACKAGE: &[&str] = &[
     EXE,
     "assets",
     "LICENSE",
@@ -43,6 +64,29 @@ const ALLOWED: &[&str] = &[
     "version.txt",
     "aurora-install.json",
 ];
+const MANIFEST: &str = "aurora-install.json";
+
+/// What an update replaces in the folder of the running viewer. Anything
+/// else there (a shortcut, notes, a whole Desktop) stays where it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    /// The folder of the release archive: the viewer, its `assets`, its
+    /// notices and the manifest only the archive has, so a repository's own
+    /// `assets` or `LICENSE` beside a copied viewer are never taken for it.
+    Package,
+    /// The viewer alone, copied out of its folder (it runs on its own): the
+    /// update replaces that file only.
+    Executable,
+}
+
+impl Layout {
+    fn entries(self) -> &'static [&'static str] {
+        match self {
+            Self::Package => PACKAGE,
+            Self::Executable => &[EXE],
+        }
+    }
+}
 
 pub struct Workspace {
     pub root: PathBuf,
@@ -89,28 +133,82 @@ pub fn at_drive_root(install: &Path) -> bool {
     install.parent().is_some_and(|p| p.parent().is_none())
 }
 
-fn validate_install(install: &Path) -> Result<()> {
+fn validate_install(install: &Path) -> Result<Layout> {
     ensure!(
         install.is_absolute() && install.parent().is_some_and(|p| p.parent().is_some()),
         "unsafe installation root: a drive root or a folder directly at a drive root"
     );
     plain_dir(install)?;
-    // Never rename a repository, build tree, or a directory with user files.
-    for entry in fs::read_dir(install)? {
+    let exe = fs::symlink_metadata(install.join(EXE)).context("no viewer in this folder")?;
+    ensure!(exe.is_file(), "the viewer is a link or not a file");
+    let layout = if install.join(MANIFEST).is_file() && install.join("assets").is_dir() && install.join("LICENSE").is_file() {
+        Layout::Package
+    } else {
+        Layout::Executable
+    };
+    // Only these entries are ever moved; a link among them, or a junction
+    // nested in the assets, must never be followed by the cleanup.
+    for name in layout.entries() {
+        let path = install.join(name);
+        if fs::symlink_metadata(&path).is_ok() {
+            plain_entry(&path)?;
+        }
+    }
+    Ok(layout)
+}
+
+/// The folder an update was extracted into: exactly a package, nothing else.
+fn validate_package(root: &Path) -> Result<()> {
+    plain_dir(root)?;
+    for entry in fs::read_dir(root)? {
         let entry = entry?;
         ensure!(
-            ALLOWED.iter().any(|n| entry.file_name().eq_ignore_ascii_case(n)),
-            "installation contains non-package files"
+            PACKAGE.iter().any(|n| entry.file_name().eq_ignore_ascii_case(n)),
+            "the update holds a file foreign to the package"
         );
-        ensure!(!entry.file_type()?.is_symlink(), "package entry is a link");
+        plain_entry(&entry.path())?;
     }
     ensure!(
-        install.join(EXE).is_file() && install.join("assets").is_dir() && install.join("LICENSE").is_file(),
-        "viewer is not installed as a portable package"
+        root.join(EXE).is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
+        "incomplete viewer package"
     );
-    // A directory junction nested in the assets must never be followed by cleanup.
-    validate_tree(&install.join("assets"))?;
     Ok(())
+}
+
+/// A file, or a folder whose whole tree holds no link.
+fn plain_entry(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(!metadata.file_type().is_symlink(), "package entry is a link");
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(metadata.file_attributes() & 0x400 == 0, "package entry is a reparse point");
+    }
+    if metadata.is_dir() {
+        validate_tree(path)?;
+    }
+    Ok(())
+}
+
+/// Moves those of `names` that `from` holds into `to`, all or none: after a
+/// failure the ones already moved go back. Returns the names moved.
+fn move_entries(names: &[&'static str], from: &Path, to: &Path) -> Result<Vec<&'static str>> {
+    fs::create_dir_all(to)?;
+    let mut moved = Vec::new();
+    for &name in names {
+        if fs::symlink_metadata(from.join(name)).is_err() {
+            continue;
+        }
+        if let Err(error) = fs::rename(from.join(name), to.join(name)) {
+            let error = anyhow::Error::from(error).context(format!("cannot move {name}"));
+            for &back in moved.iter().rev() {
+                fs::rename(to.join(back), from.join(back)).with_context(|| format!("{error:#}; and {back} could not be put back"))?;
+            }
+            return Err(error);
+        }
+        moved.push(name);
+    }
+    Ok(moved)
 }
 
 pub(crate) fn validate_tree(path: &Path) -> Result<()> {
@@ -134,12 +232,13 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
 impl Workspace {
     /// Whether the viewer may update itself in place, and why not.
     pub fn check_install(install: &Path) -> Result<()> {
-        validate_install(install)
+        validate_install(install).map(|_| ())
     }
     pub fn new(install: &Path) -> Result<Self> {
         validate_install(install)?;
         let install = install.canonicalize()?;
         let lock = lock(&install)?;
+        sweep_finished(&install);
         let token = uuid::Uuid::new_v4().to_string();
         let root = install
             .parent()
@@ -256,6 +355,86 @@ fn cleanup_work(work: &Path, install: &Path, token: &str) -> Result<()> {
     Ok(())
 }
 
+/// A finished transaction: failed (`failure.txt`) or committed. Its folder
+/// holds a whole copy of the viewer, the failed one included, and nothing
+/// resumes it. One whose `backup` is still there is never removed: the
+/// restoration failed and that backup is the previous installation.
+fn finished(work: &Path) -> bool {
+    (work.join(FAILURE).exists() || work.join("committed").exists()) && !work.join("backup").exists()
+}
+
+/// The folders earlier updates left beside the installation, removed under
+/// the installation lock the caller holds.
+fn sweep_finished(install: &Path) {
+    let Some(Ok(entries)) = install.parent().map(fs::read_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(token) = name.to_str().and_then(|n| n.strip_prefix(".aurora-update-")) else {
+            continue;
+        };
+        let work = entry.path();
+        if uuid::Uuid::parse_str(token).is_ok()
+            && finished(&work)
+            && let Err(e) = cleanup_work(&work, install, token)
+        {
+            log::warn!("update: an earlier update's folder is left ({e:#})");
+        }
+    }
+}
+
+/// Why the update that restored this viewer failed, when it did; its
+/// transaction folder is then removed in the background, once the helper
+/// that restored the viewer has exited. A helper of an older version only
+/// says that it failed (`None`).
+pub fn failed_update() -> Option<FailedUpdate> {
+    let work = PathBuf::from(std::env::var_os(ROLLBACK_ENV)?);
+    let result = (|| -> Result<(FailedUpdate, Plan)> {
+        let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
+        validate_work(&work, &plan)?;
+        ensure!(
+            std::env::current_exe()?.canonicalize()? == plan.install.join(EXE),
+            "rollback notice for another installation"
+        );
+        let reason = fs::read_to_string(work.join(FAILURE))?;
+        let failed = FailedUpdate {
+            reason: reason.trim().chars().take(400).collect(),
+            launched: work.join(LAUNCHING).exists(),
+        };
+        Ok((failed, plan))
+    })();
+    match result {
+        Ok((failed, plan)) => {
+            let when = if failed.launched { "at its start" } else { "while installing" };
+            log::warn!(
+                "update: the previous version was restored, the new one failed {when}: {}",
+                failed.reason
+            );
+            std::thread::spawn(move || {
+                for _ in 0..120 {
+                    if !finished(&work) {
+                        return;
+                    }
+                    if let Ok(_lock) = lock(&plan.install)
+                        && cleanup_work(&work, &plan.install, &plan.token).is_ok()
+                    {
+                        return;
+                    }
+                    // the helper's own executable is in it until it exits
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                log::warn!("update: the failed update's folder is left for the next update");
+            });
+            Some(failed)
+        }
+        Err(e) => {
+            log::warn!("update: the previous version was restored, reason unknown ({e:#})");
+            None
+        }
+    }
+}
+
 fn hidden(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -294,7 +473,7 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
         stage(HelperStage::Installing);
         let _lock = lock(&plan.install)?;
         validate_install(&plan.install)?;
-        validate_install(&work.join("prepared"))?;
+        validate_package(&work.join("prepared"))?;
         apply(&plan.install, &work, || {
             if plan.maintenance.clear_cache {
                 stage(HelperStage::ClearingCache);
@@ -302,8 +481,15 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
             let mut data = crate::user_data::Backup::prepare(&plan.install, &plan.token, plan.maintenance)?;
             stage(HelperStage::Launching);
             let mut command = Command::new(plan.install.join(EXE));
-            command.args(&plan.args).env(ACK_ENV, &work).current_dir(&plan.install);
+            // a viewer restored by an earlier failure passes its notice on:
+            // the new one would open with "the update did not complete"
+            command
+                .args(&plan.args)
+                .env(ACK_ENV, &work)
+                .env_remove(ROLLBACK_ENV)
+                .current_dir(&plan.install);
             hidden(&mut command);
+            fs::write(work.join(LAUNCHING), b"")?;
             let mut child = command.spawn()?;
             let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
                 stage(HelperStage::Handed)
@@ -323,14 +509,14 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
     // the new viewer shows, or the old one comes back with its notice
     stage(HelperStage::Handed);
     if let Err(error) = result {
-        fs::write(work.join("failure.txt"), format!("{error:#}"))?;
+        fs::write(work.join(FAILURE), format!("{error:#}"))?;
         // `apply` restored the directory; launch the old viewer with a visible
         // localized rollback notice. Backups are retained if restoration failed.
         if plan.install.join(EXE).is_file() && !work.join("backup").exists() {
             let mut command = Command::new(plan.install.join(EXE));
             command
                 .args(&plan.args)
-                .env("AURORA_UPDATE_ROLLBACK", "1")
+                .env(ROLLBACK_ENV, &work)
                 .env_remove(ACK_ENV)
                 .current_dir(&plan.install);
             hidden(&mut command);
@@ -362,14 +548,21 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
             maintenance: Default::default(),
         },
     )?;
-    validate_install(install)?;
-    validate_install(&work.join("prepared"))?;
+    let entries = validate_install(install)?.entries();
+    let prepared = work.join("prepared");
+    validate_package(&prepared)?;
     let backup = work.join("backup");
     ensure!(!backup.exists(), "backup already exists");
-    fs::rename(install, &backup).context("cannot move old viewer; close other instances")?;
-    if let Err(error) = fs::rename(work.join("prepared"), install) {
-        fs::rename(&backup, install).context("cannot restore old viewer")?;
-        return Err(error.into());
+    // `backup` left behind means the previous viewer is in it: only an
+    // empty one goes (`remove_dir`), once everything is back in place
+    if let Err(error) = move_entries(entries, install, &backup) {
+        let _ = fs::remove_dir(&backup);
+        return Err(error.context("cannot move old viewer; close other instances"));
+    }
+    if let Err(error) = move_entries(entries, &prepared, install) {
+        move_entries(entries, &backup, install).context("cannot restore old viewer")?;
+        let _ = fs::remove_dir(&backup);
+        return Err(error);
     }
     match launch() {
         Ok(()) => {
@@ -384,8 +577,11 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
             Ok(())
         }
         Err(error) => {
-            fs::rename(install, work.join("failed")).context("cannot move failed update")?;
-            fs::rename(&backup, install).context("cannot restore backup")?;
+            move_entries(entries, install, &work.join("failed")).context("cannot move failed update")?;
+            move_entries(entries, &backup, install).context("cannot restore backup")?;
+            if let Err(e) = fs::remove_dir(&backup) {
+                log::warn!("update: the emptied backup folder is left ({e})");
+            }
             Err(error)
         }
     }
@@ -522,6 +718,36 @@ mod tests {
             assert!(at_drive_root(Path::new(r"E:\Aurora Viewer")));
             assert!(!at_drive_root(Path::new(r"E:\Games\Aurora Viewer")));
         }
+    }
+
+    #[test]
+    fn only_finished_updates_without_a_backup_are_swept() {
+        let root = std::env::temp_dir().join(format!("aurora-sweep-test-{}", uuid::Uuid::new_v4()));
+        let install = root.join("Aurora Viewer");
+        fs::create_dir_all(&install).expect("install");
+        let work = |marker: &[&str]| {
+            let dir = root.join(format!(".aurora-update-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(dir.join("failed")).expect("work");
+            fs::write(dir.join("failed").join(EXE), b"new").expect("copy");
+            for name in marker {
+                if *name == "backup" {
+                    fs::create_dir(dir.join(name)).expect("backup");
+                } else {
+                    fs::write(dir.join(name), b"x").expect("marker");
+                }
+            }
+            dir
+        };
+        let failed = work(&[FAILURE]);
+        let committed = work(&["committed"]);
+        let unrestored = work(&[FAILURE, "backup"]);
+        let running = work(&["plan.json"]);
+        let canonical = install.canonicalize().expect("canonical");
+        sweep_finished(&canonical);
+        assert!(!failed.exists() && !committed.exists());
+        assert!(unrestored.join("backup").exists(), "the previous installation stays");
+        assert!(running.exists(), "a transaction in progress stays");
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]

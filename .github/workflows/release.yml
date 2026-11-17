@@ -54,7 +54,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
@@ -179,7 +179,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
@@ -270,7 +270,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Rust stable
-        run: rustup update stable
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # (see the Linux job: the tag's version, no debug info in the binary)
       - name: Build

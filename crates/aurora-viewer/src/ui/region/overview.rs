@@ -999,7 +999,8 @@ mod tests {
         };
         let sunday = schedule_text(&s);
         assert!(sunday.contains("06:00"), "{sunday}");
-        assert!(sunday.chars().next().is_some_and(char::is_uppercase), "{sunday}");
+        // a capital where the language has cases (Japanese has none)
+        assert!(sunday.chars().next().is_some_and(|c| !c.is_lowercase()), "{sunday}");
         s.days = [true; 7];
         assert!(schedule_text(&s).starts_with(aurora_i18n::tr!("region-schedule-every-day")));
     }

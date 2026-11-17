@@ -8,6 +8,7 @@ use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
 use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
+use crate::world::beams::Style as BeamStyle;
 use crate::world::lookat::{Aim, Style};
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Vec2};
@@ -24,11 +25,14 @@ pub enum Look {
 /// the avatar plates' own settings and the filing of received items are
 /// left as they are, and so is a gaze on the point under the cursor: the
 /// Aurora look does not choose to show others what the cursor is over.
+/// Nor does it turn on the Instant movement, still experimental: only its
+/// own row does; the Legacy look turns it off.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
+    s.beams.style = if aurora { BeamStyle::Aurora } else { BeamStyle::Legacy };
     if !aurora {
         s.lookat.aim = Aim::Direction;
     }
@@ -65,7 +69,9 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_chat_lines = !aurora;
     s.classic_rez_effect = !aurora;
     s.classic_hover_tips = !aurora;
-    s.predict_own_motion = aurora;
+    if !aurora {
+        s.predict_own_motion = false;
+    }
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
     s.colored_sky_ambient = aurora;
@@ -371,6 +377,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         (Style::Legacy, tr!("ui-options-aurora-crosshair"), false),
                     ],
                 );
+                cx.wide().choice(
+                    tr!("ui-options-aurora-beams"),
+                    tr!("ui-options-aurora-beams-help"),
+                    &field!(beams.style),
+                    &[
+                        (BeamStyle::Aurora, tr!("ui-options-aurora-beams-thread"), true),
+                        (BeamStyle::Legacy, tr!("ui-options-aurora-beams-particles"), false),
+                    ],
+                );
                 look(
                     cx,
                     tr!("ui-options-aurora-rez-effect"),
@@ -393,6 +408,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colored-sky-ambient-help"),
                     &field!(colored_sky_ambient),
                     &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
+                // the Legacy Viewer's flat layer until tried on modest GPUs;
+                // the two buttons leave it alone
+                let help = warned(tr!("ui-options-aurora-clouds-help"), tr!("ui-options-aurora-clouds-experimental"));
+                cx.wide().experimental().choice(
+                    tr!("ui-options-aurora-clouds"),
+                    &help,
+                    &field!(volumetric_clouds),
+                    &[
+                        (true, tr!("ui-options-aurora-clouds-volumetric"), true),
+                        (false, tr!("ui-options-aurora-clouds-flat"), false),
+                    ],
                 );
             });
             cx.group(tr!("common-interface"), |cx| {
@@ -527,6 +554,19 @@ mod tests {
     }
 
     #[test]
+    fn the_two_buttons_leave_the_volumetric_clouds_as_set() {
+        let mut s = Settings::default();
+        assert!(!s.volumetric_clouds, "the Legacy Viewer's layer by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(!s.volumetric_clouds, "never switched on by the Aurora button");
+        s.volumetric_clouds = true;
+        set_all(&mut s, Look::Legacy);
+        assert!(s.volumetric_clouds, "nor off by the Legacy one");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.volumetric_clouds);
+    }
+
+    #[test]
     fn the_aurora_button_keeps_the_gaze_choice() {
         let mut s = Settings::default();
         set_all(&mut s, Look::Aurora);
@@ -618,8 +658,11 @@ mod tests {
         assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
         assert!(!s.classic_rez_effect && !fresh.classic_rez_effect, "the rez effect is the default");
         assert!(!s.classic_hover_tips && !fresh.classic_hover_tips, "Aurora's tips are the default");
-        assert!(s.predict_own_motion, "Aurora's movement");
+        assert!(!s.predict_own_motion, "the experimental movement is never a bulk choice");
         assert!(!fresh.predict_own_motion, "the Legacy movement until tried on the grid");
+        s.predict_own_motion = true;
+        set_all(&mut s, Look::Aurora);
+        assert!(s.predict_own_motion, "a movement chosen on its own row stays");
         assert!(s.synchronize_animations, "the Aurora bulk choice enables receipt clocks");
         assert!(s.water_effects.enabled, "the explicit Aurora bulk choice enables water effects");
         assert!(!fresh.water_effects.enabled, "enhanced water is disabled by default");

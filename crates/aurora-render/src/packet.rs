@@ -127,11 +127,18 @@ pub(crate) struct FramePacket {
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
     pub capture: Option<Capture>,
+    /// The panorama to project from the cube of the six faces, before the
+    /// frame is drawn (equirect.rs); answered by a later result.
+    pub equirect: Option<Box<crate::EquirectJob>>,
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
+    /// How far every position moved since the last frame (m, x and y): a
+    /// border crossing made them relative to another region
+    /// (`Renderer::shift_world`). The weather's memories move with them.
+    pub world_shift: [f32; 2],
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,
@@ -158,6 +165,9 @@ pub(crate) struct FrameResult {
     /// The frame was a photo (`Capture::Snapshot`): `captured` is its image,
     /// None when it could not be drawn.
     pub snapshot: bool,
+    /// The oldest panorama asked whose readback is over (width, height,
+    /// RGBA8); Some(None) when it could not be made.
+    pub equirect: Option<crate::equirect::Answer>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     pub spent: Spent,
