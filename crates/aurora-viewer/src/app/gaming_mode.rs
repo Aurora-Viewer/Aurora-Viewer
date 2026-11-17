@@ -31,6 +31,21 @@ pub(super) struct GamingMode {
     pub(super) on: bool,
     /// AURORA_DEMO_GAMING_MODE: the scenario turned it on once.
     demo_done: bool,
+    /// When the focus coming back ended it (`gaming_mode_leave_on_focus`).
+    left_on_focus: Option<Instant>,
+}
+
+/// A press of the button this soon after the focus came back is the click
+/// that brought the window to front: the focus already ended gaming mode,
+/// and the press must not turn it on again. Seen in demo: off then on 17 ms
+/// later, a second click needed. The press reaches the toolbar at the next
+/// frame, up to 500 ms away at `HIDDEN_FPS`.
+const FOCUS_CLICK: Duration = Duration::from_secs(1);
+
+/// Whether a press of the button at `now` is the click that brought the
+/// window to front, gaming mode ended by the focus at `left`.
+fn focus_click(left: Option<Instant>, now: Instant) -> bool {
+    left.is_some_and(|left| now.saturating_duration_since(left) < FOCUS_CLICK)
 }
 
 /// The frame limiter's cap (0 = none) under gaming mode: `hidden` the
@@ -59,6 +74,10 @@ fn demo_from() -> Option<u64> {
 impl App {
     /// The toolbar's Gaming mode button.
     pub(super) fn toggle_gaming_mode(&mut self) {
+        let left = self.gaming_mode.left_on_focus.take();
+        if !self.gaming_mode.on && focus_click(left, Instant::now()) {
+            return;
+        }
         self.set_gaming_mode(!self.gaming_mode.on);
     }
 
@@ -72,8 +91,9 @@ impl App {
 
     /// The window has the focus again.
     pub(super) fn gaming_mode_focused(&mut self) {
-        if self.settings.gaming_mode_leave_on_focus {
+        if self.settings.gaming_mode_leave_on_focus && self.gaming_mode.on {
             self.set_gaming_mode(false);
+            self.gaming_mode.left_on_focus = Some(Instant::now());
         }
     }
 
@@ -123,6 +143,15 @@ mod tests {
         assert_eq!(cap(120.0, true, false), VISIBLE_FPS);
         assert_eq!(cap(120.0, true, true), HIDDEN_FPS);
         assert_eq!(cap(1.0, true, false), 1.0, "a lower cap of the user stays");
+    }
+
+    #[test]
+    fn the_click_that_brings_the_window_back_does_not_turn_it_on_again() {
+        let left = Instant::now();
+        assert!(focus_click(Some(left), left + Duration::from_millis(17)));
+        assert!(focus_click(Some(left), left + Duration::from_millis(500)), "next frame at 2 fps");
+        assert!(!focus_click(Some(left), left + FOCUS_CLICK), "a later press is the user's");
+        assert!(!focus_click(None, left), "not ended by the focus");
     }
 
     #[test]
