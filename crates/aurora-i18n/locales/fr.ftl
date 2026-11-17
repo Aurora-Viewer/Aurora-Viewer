@@ -14603,6 +14603,15 @@ inventory-sorter-hint-store = Nom de la boutique
 inventory-sorter-hint-remove = Retirer cet indice
 inventory-sorter-hint-add = Ajouter un indice de boutique
 inventory-cleanup-empty-folders = Inclure les dossiers vides
+inventory-cleanup-find-old = Objets anciens
+inventory-cleanup-find-duplicates = Doublons
+inventory-cleanup-duplicates-intro = Trouvez les objets que vous avez en plusieurs exemplaires. Un exemplaire de chacun reste à sa place (d’abord un déjà rangé dans vos dossiers triés ou vos propres dossiers, sinon le plus ancien) ; les autres vont dans la Pré-corbeille pour que vous les examiniez. Rien n’est supprimé.
+inventory-cleanup-duplicates-no-copy = Inclure les objets non copiables (les doubles de gacha gardés pour l’échange sont laissés par défaut)
+inventory-cleanup-duplicates-nothing = Aucun objet de ces types n’est en plusieurs exemplaires.
+inventory-cleanup-duplicates-summary = { $count ->
+    [one] 1 exemplaire en trop de { $items } objets
+   *[other] { $count } exemplaires en trop de { $items } objets
+}
 inventory-cleanup-empty-group = Dossiers vides
 inventory-share-section = Partager mes réglages
 inventory-share-section-hint = Donnez vos règles, indices de boutique et options à quelqu'un sous forme de texte, pour une note ou un chat.

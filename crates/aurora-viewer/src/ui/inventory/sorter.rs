@@ -12,7 +12,7 @@
 //! through the ordinary delete path.
 
 use super::*;
-use crate::world::inventory::sorter::{self, Age, CleanupPlan, Kind, Match, Move, Plan, Rule, Step};
+use crate::world::inventory::sorter::{self, Age, CleanupPlan, Find, Kind, Match, Move, Plan, Rule, Step};
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -1878,7 +1878,10 @@ pub(super) fn show(
             state.cleaned_at = Some(instant);
             let make = {
                 let (options, protected, worn) = (prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
-                move |inv: &Inventory| sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn)
+                move |inv: &Inventory| match options.cleanup.find {
+                    Find::Old => sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn),
+                    Find::Duplicates => sorter::plan_duplicates(inv, &options, &options.cleanup, cleanup_source, &protected, &worn),
+                }
             };
             if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
                 let about = Some((prefs.sorter.cleanup.clone(), cleanup_source, day));
@@ -3042,27 +3045,33 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     state.job = Some(job);
 }
 
+/// A folder path that fits the width left: whole, else its first folder,
+/// `…` and its last (`My Inventory / … / Velmora Hex Dress`); the label
+/// shortens the end of what still does not fit.
+fn fit_path(ui: &egui::Ui, p_ink: egui::Color32, path: &str) -> String {
+    let width = ui.available_width();
+    let wide = |text: &str| {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        ui.painter().layout_no_wrap(text.to_owned(), font, p_ink).size().x
+    };
+    if wide(path) <= width {
+        return path.to_owned();
+    }
+    let parts: Vec<&str> = path.split(" / ").collect();
+    match parts.as_slice() {
+        [first, .., last] if parts.len() > 2 => format!("{first} / … / {last}"),
+        _ => path.to_owned(),
+    }
+}
+
 /// What is sorted: a folder (with Change…) or the selected entries.
 fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, source: &Source, busy: bool) {
     crate::ui::widgets::surface(ui, p, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             crate::ui::widgets::glyph(ui, "folder-filled", p.violet_light, 16.0);
-            ui.vertical(|ui| {
-                ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-source")).small().color(p.muted));
-                let text = match source {
-                    Source::Folder(id) => sorter::folder_path(inv, *id),
-                    Source::Entries(ids) => aurora_i18n::tr!("inventory-sorter-selection", count = ids.len()),
-                    Source::Whole => aurora_i18n::tr!("inventory-sorter-whole").to_owned(),
-                    Source::Saved(_, Restoring::Undo) => aurora_i18n::tr!("inventory-sorter-undo-source").to_owned(),
-                    Source::Saved(_, Restoring::Resume) => aurora_i18n::tr!("inventory-sorter-resume-source").to_owned(),
-                    Source::Saved(_, Restoring::Snapshot(at)) => {
-                        let date = snapshot_date(*at);
-                        aurora_i18n::tr!("inventory-sorter-snapshot-source", date = date.as_str())
-                    }
-                };
-                ui.label(RichText::new(text).strong());
-            });
+            // (the buttons first, on the right: a long path takes what is
+            // left and is shortened, never runs under them)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-change")).clicked() {
@@ -3075,6 +3084,27 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
                     {
                         state.set_source(Source::Whole);
                     }
+                });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-source")).small().color(p.muted));
+                        let text = match source {
+                            Source::Folder(id) => sorter::folder_path(inv, *id),
+                            Source::Entries(ids) => aurora_i18n::tr!("inventory-sorter-selection", count = ids.len()),
+                            Source::Whole => aurora_i18n::tr!("inventory-sorter-whole").to_owned(),
+                            Source::Saved(_, Restoring::Undo) => aurora_i18n::tr!("inventory-sorter-undo-source").to_owned(),
+                            Source::Saved(_, Restoring::Resume) => aurora_i18n::tr!("inventory-sorter-resume-source").to_owned(),
+                            Source::Saved(_, Restoring::Snapshot(at)) => {
+                                let date = snapshot_date(*at);
+                                aurora_i18n::tr!("inventory-sorter-snapshot-source", date = date.as_str())
+                            }
+                        };
+                        let shown = fit_path(ui, p.ink, &text);
+                        let label = ui.add(egui::Label::new(RichText::new(shown.as_str()).strong()).truncate());
+                        if shown != text {
+                            label.on_hover_text(text);
+                        }
+                    });
                 });
             });
         });
@@ -3273,53 +3303,78 @@ fn cleanup_tab(
     use crate::ui::widgets::{ActionKind, action_button, checkbox, collapsing, section_header, segmented, switch_labeled};
     let base = options.base_name();
     let cleanup = &mut options.cleanup;
-    ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-intro")).small().color(p.muted));
+    ui.add_enabled_ui(!busy, |ui| {
+        let mut find = usize::from(cleanup.find == Find::Duplicates);
+        let changed = ui.push_id("inventory_cleanup_find", |ui| {
+            segmented(
+                ui,
+                p,
+                &mut find,
+                &[
+                    (aurora_i18n::tr!("inventory-cleanup-find-old"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-find-duplicates"), true),
+                ],
+            )
+        });
+        if changed.inner {
+            cleanup.find = if find == 1 { Find::Duplicates } else { Find::Old };
+        }
+    });
+    let duplicates = cleanup.find == Find::Duplicates;
+    let intro = if duplicates {
+        aurora_i18n::tr!("inventory-cleanup-duplicates-intro")
+    } else {
+        aurora_i18n::tr!("inventory-cleanup-intro")
+    };
+    ui.label(RichText::new(intro).small().color(p.muted));
     ui.add_space(6.0);
     ui.add_enabled_ui(!busy, |ui| {
-        section_header(ui, p, "calendar-filled", aurora_i18n::tr!("inventory-cleanup-when"));
-        const AGES: [Age; 5] = [Age::OneYear, Age::TwoYears, Age::ThreeYears, Age::FiveYears, Age::Custom];
-        let mut age = AGES.iter().position(|a| *a == cleanup.age).unwrap_or(0);
-        if segmented(
-            ui,
-            p,
-            &mut age,
-            &[
-                (aurora_i18n::tr!("inventory-cleanup-age-1"), true),
-                (aurora_i18n::tr!("inventory-cleanup-age-2"), true),
-                (aurora_i18n::tr!("inventory-cleanup-age-3"), true),
-                (aurora_i18n::tr!("inventory-cleanup-age-5"), true),
-                (aurora_i18n::tr!("inventory-cleanup-age-custom"), true),
-            ],
-        ) {
-            cleanup.age = AGES[age.min(AGES.len() - 1)];
+        if !duplicates {
+            section_header(ui, p, "calendar-filled", aurora_i18n::tr!("inventory-cleanup-when"));
+            const AGES: [Age; 5] = [Age::OneYear, Age::TwoYears, Age::ThreeYears, Age::FiveYears, Age::Custom];
+            let mut age = AGES.iter().position(|a| *a == cleanup.age).unwrap_or(0);
+            if segmented(
+                ui,
+                p,
+                &mut age,
+                &[
+                    (aurora_i18n::tr!("inventory-cleanup-age-1"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-age-2"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-age-3"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-age-5"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-age-custom"), true),
+                ],
+            ) {
+                cleanup.age = AGES[age.min(AGES.len() - 1)];
+            }
+            let now = chrono::Utc::now();
+            if cleanup.age == Age::Custom {
+                use chrono::Datelike;
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("inventory_cleanup_month")
+                        .selected_text(month_name(cleanup.month))
+                        .show_ui(ui, |ui| {
+                            for month in 1..=12 {
+                                ui.selectable_value(&mut cleanup.month, month, month_name(month));
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("inventory_cleanup_year")
+                        .selected_text(cleanup.year.to_string())
+                        .show_ui(ui, |ui| {
+                            for year in (2003..=now.year()).rev() {
+                                ui.selectable_value(&mut cleanup.year, year, year.to_string());
+                            }
+                        });
+                });
+            }
+            if let Some(cutoff) = cleanup.cutoff(now.timestamp()) {
+                ui.add_space(2.0);
+                let date = date_text(cutoff);
+                ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-before", date = date.as_str())).strong());
+            }
+            ui.add_space(8.0);
         }
-        let now = chrono::Utc::now();
-        if cleanup.age == Age::Custom {
-            use chrono::Datelike;
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("inventory_cleanup_month")
-                    .selected_text(month_name(cleanup.month))
-                    .show_ui(ui, |ui| {
-                        for month in 1..=12 {
-                            ui.selectable_value(&mut cleanup.month, month, month_name(month));
-                        }
-                    });
-                egui::ComboBox::from_id_salt("inventory_cleanup_year")
-                    .selected_text(cleanup.year.to_string())
-                    .show_ui(ui, |ui| {
-                        for year in (2003..=now.year()).rev() {
-                            ui.selectable_value(&mut cleanup.year, year, year.to_string());
-                        }
-                    });
-            });
-        }
-        if let Some(cutoff) = cleanup.cutoff(now.timestamp()) {
-            ui.add_space(2.0);
-            let date = date_text(cutoff);
-            ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-before", date = date.as_str())).strong());
-        }
-        ui.add_space(8.0);
         section_header(ui, p, "filter-filled", aurora_i18n::tr!("inventory-cleanup-types"));
         kinds_grid(ui, p, "inventory_cleanup_kinds", &mut cleanup.kinds);
         ui.add_space(8.0);
@@ -3350,14 +3405,25 @@ fn cleanup_tab(
                 aurora_i18n::tr!("inventory-cleanup-include-sorted", folder = base.as_str()),
             )
         });
-        ui.push_id("inventory_cleanup_empty_folders", |ui| {
-            switch_labeled(
-                ui,
-                p,
-                &mut cleanup.empty_folders,
-                aurora_i18n::tr!("inventory-cleanup-empty-folders"),
-            )
-        });
+        if duplicates {
+            ui.push_id("inventory_cleanup_no_copy_duplicates", |ui| {
+                switch_labeled(
+                    ui,
+                    p,
+                    &mut cleanup.no_copy_duplicates,
+                    aurora_i18n::tr!("inventory-cleanup-duplicates-no-copy"),
+                )
+            });
+        } else {
+            ui.push_id("inventory_cleanup_empty_folders", |ui| {
+                switch_labeled(
+                    ui,
+                    p,
+                    &mut cleanup.empty_folders,
+                    aurora_i18n::tr!("inventory-cleanup-empty-folders"),
+                )
+            });
+        }
         ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-never")).small().color(p.muted));
     });
     crate::ui::widgets::divider(ui, p);
@@ -3377,7 +3443,12 @@ fn cleanup_tab(
     }
     let date = date_text(plan.cutoff);
     if plan.rows.is_empty() {
-        ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-nothing", date = date.as_str())).color(p.muted));
+        let nothing = if duplicates {
+            aurora_i18n::tr!("inventory-cleanup-duplicates-nothing").to_string()
+        } else {
+            aurora_i18n::tr!("inventory-cleanup-nothing", date = date.as_str()).to_string()
+        };
+        ui.label(RichText::new(nothing).color(p.muted));
         return;
     }
     // what goes: all rows but the few unticked (never a pass over every row
@@ -3385,7 +3456,12 @@ fn cleanup_tab(
     let kept: Vec<&sorter::CleanupRow> = plan.rows_of(skipped).collect();
     let going_count = plan.rows.len() - kept.len();
     let items: usize = plan.items - kept.iter().map(|r| r.items).sum::<usize>();
-    ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())).strong());
+    let summary = if duplicates {
+        aurora_i18n::tr!("inventory-cleanup-duplicates-summary", count = items, items = plan.duplicated)
+    } else {
+        aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())
+    };
+    ui.label(RichText::new(summary).strong());
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let size = Vec2::new(0.0, 26.0);
@@ -3400,11 +3476,14 @@ fn cleanup_tab(
         {
             *cleanup_action = Some(CleanupAction::PreTrash);
         }
+        // (copies go to Pre-Trash only, to be looked at: never straight
+        // to the Trash)
         let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going_count);
-        if ui
-            .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
-            .inner
-            .clicked()
+        if !duplicates
+            && ui
+                .add_enabled_ui(enabled, |ui| action_button(ui, p, "trash-filled", &label, ActionKind::Danger, size))
+                .inner
+                .clicked()
         {
             *cleanup_action = Some(CleanupAction::Trash);
         }

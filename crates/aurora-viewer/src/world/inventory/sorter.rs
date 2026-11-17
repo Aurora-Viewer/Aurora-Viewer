@@ -738,8 +738,29 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     let head_named = ["lelutka", "catwa", "genus", "evox", "evo x", "akeruka"]
         .iter()
         .any(|h| has(&words, h));
+    // (a head's skin: `Ruellia Lel Evo X Tone Rose`, `Mavis / Ghost / No
+    // Brows / Evo X`, `Body+EVOX Overlay`: a tone, a no-brows version or an
+    // overlay beside a head's name is a skin, not the head's add-on nor its
+    // makeup, unless a makeup word of its own says so, `Tone Blush`)
+    let skin_signs =
+        has(&words, "tone") || has(&words, "no brows") || has(&words, "overlay") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
+    const MAKEUP_OWN: [&str; 11] = [
+        "blush",
+        "highlighter",
+        "lipstick",
+        "lipgloss",
+        "lip gloss",
+        "eyeshadow",
+        "eyeliner",
+        "liner",
+        "contour",
+        "makeup",
+        "lip stain",
+    ];
     let category = match category {
         Some(Category::BodyAddons) if head_named => Some(Category::Heads),
+        Some(Category::Heads) if head_named && skin_signs => Some(Category::Skins),
+        Some(Category::Makeup) if head_named && skin_signs && !MAKEUP_OWN.iter().any(|m| has(&words, m)) => Some(Category::Skins),
         other => other,
     };
     // (makeup and a head's own content are never a body's; beside a head's
@@ -3503,6 +3524,22 @@ pub struct Cleanup {
     pub include_sorted: bool,
     /// Take the user's empty folders too (nothing in them at any depth).
     pub empty_folders: bool,
+    /// What Clean up looks for: old entries, or the extra copies of items
+    /// held more than once.
+    pub find: Find,
+    /// The duplicate finder takes no-copy items too (gacha doubles, kept
+    /// to trade, are left by default).
+    pub no_copy_duplicates: bool,
+}
+
+/// What Clean up looks for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Find {
+    /// Everything acquired before a date.
+    #[default]
+    Old,
+    /// The extra copies of an item held more than once ([`plan_duplicates`]).
+    Duplicates,
 }
 
 impl Default for Cleanup {
@@ -3515,6 +3552,8 @@ impl Default for Cleanup {
             whole: true,
             include_sorted: true,
             empty_folders: false,
+            find: Find::Old,
+            no_copy_duplicates: false,
         }
     }
 }
@@ -3573,6 +3612,9 @@ pub struct CleanupPlan {
     pub ends: Vec<usize>,
     /// Each row's place in `rows`, by id.
     pub index: HashMap<Uuid, usize>,
+    /// The duplicate finder's items held more than once (each keeps one
+    /// copy; the rows are the others).
+    pub duplicated: usize,
 }
 
 impl CleanupRow {
@@ -4329,6 +4371,10 @@ pub mod vocab;
 
 #[path = "sorter_journal.rs"]
 pub mod journal;
+
+#[path = "sorter_duplicates.rs"]
+mod duplicates;
+pub use duplicates::plan_duplicates;
 
 #[cfg(test)]
 #[path = "sorter_tests.rs"]

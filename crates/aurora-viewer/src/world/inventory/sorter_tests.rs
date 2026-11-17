@@ -3730,3 +3730,107 @@ fn a_spaced_store_hint_matches_however_it_is_typed() {
         assert!(sorted.contains(Category::Makeup.folder()), "{typed}: {sorted}");
     }
 }
+
+/// A copy for the duplicate finder: `asset` 0 is an asset id the server
+/// did not give.
+fn add_copy(inv: &mut Inventory, at: u128, parent: u128, name: &str, asset: u128, created: i64, copy: bool) {
+    inv.add_items(vec![InvItem {
+        id: id(at),
+        parent: id(parent),
+        name: name.into(),
+        asset_type: 6,
+        inv_type: 6,
+        asset_id: if asset == 0 { Uuid::nil() } else { id(asset) },
+        creator: id(5),
+        owner: id(AGENT),
+        owner_mask: if copy { 0x7fff_ffff } else { 0x7fff_ffff & !0x8000 },
+        next_owner_mask: 0x0008_2000,
+        created_at: created,
+        ..Default::default()
+    }]);
+}
+
+fn duplicates_of(inv: &Inventory, no_copy: bool) -> CleanupPlan {
+    let cleanup = Cleanup {
+        find: Find::Duplicates,
+        no_copy_duplicates: no_copy,
+        ..Default::default()
+    };
+    let none = HashSet::new();
+    plan_duplicates(inv, &Preferences::default(), &cleanup, inv.root, &none, &none)
+}
+
+/// The duplicate finder lists every copy but one: the one already filed,
+/// else the oldest; never an item whose asset id is unknown, a no-copy
+/// item unless asked, a link, nor two items that only share a name.
+#[test]
+fn the_duplicate_finder_keeps_one_copy_and_never_merges_unknown_items() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Stuff");
+    add_folder(&mut inv, 81, 1, "Old Boxes");
+    // three copies of one lamp: the oldest stays
+    add_copy(&mut inv, 200, 80, "Brindle Lamp", 900, 300, true);
+    add_copy(&mut inv, 201, 81, "Brindle  lamp", 900, 100, true);
+    add_copy(&mut inv, 202, 81, "Brindle Lamp", 900, 200, true);
+    // same name, other asset: two different items
+    add_copy(&mut inv, 203, 80, "Kira Chair", 901, 100, true);
+    add_copy(&mut inv, 204, 81, "Kira Chair", 902, 100, true);
+    // no asset id given: never merged, even with the same name
+    add_copy(&mut inv, 205, 80, "Zorin Rug", 0, 100, true);
+    add_copy(&mut inv, 206, 81, "Zorin Rug", 0, 100, true);
+    // no-copy gacha doubles
+    add_copy(&mut inv, 207, 80, "Velmora Gacha Plush RARE", 903, 100, false);
+    add_copy(&mut inv, 208, 81, "Velmora Gacha Plush RARE", 903, 200, false);
+    let plan = duplicates_of(&inv, false);
+    let listed: HashSet<Uuid> = plan.rows.iter().map(|r| r.id).collect();
+    assert_eq!(
+        listed,
+        [id(200), id(202)].into_iter().collect::<HashSet<Uuid>>(),
+        "all copies of the lamp but the oldest"
+    );
+    assert_eq!(plan.duplicated, 1);
+    assert!(
+        plan.moves(&HashSet::new()).iter().all(|m| matches!(m.to, Dest::PreTrash)),
+        "to Pre-Trash, never deleted"
+    );
+    let plan = duplicates_of(&inv, true);
+    assert!(
+        plan.rows.iter().any(|r| r.id == id(208)),
+        "no-copy doubles when asked, the oldest kept"
+    );
+    assert!(!plan.rows.iter().any(|r| r.id == id(207)));
+    // a copy already in the sort folder is the one kept
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "Stuff");
+    add_folder(&mut inv, 82, 1, "Sorted");
+    add_folder(&mut inv, 83, 82, "Decor");
+    add_copy(&mut inv, 200, 80, "Brindle Lamp", 900, 100, true);
+    add_copy(&mut inv, 201, 83, "Brindle Lamp", 900, 300, true);
+    let plan = duplicates_of(&inv, false);
+    let listed: Vec<Uuid> = plan.rows.iter().map(|r| r.id).collect();
+    assert_eq!(listed, [id(200)], "the filed copy stays, the loose one goes");
+}
+
+/// Real use: a head's skin is a skin, never the head's add-on or makeup;
+/// its makeup layers stay makeup.
+#[test]
+fn a_heads_skin_is_a_skin() {
+    for name in [
+        "{ Zorina } Ruellia Lel Evo X Tone Rose {Wear Me}",
+        "[kira] mavis / ghost / no brows / evo X",
+        "BRINDLE > Neremire Body+EVOX Overlay - 09",
+        "Velmora Honey Lel Evo X",
+    ] {
+        let read = classify(name, 6, 0);
+        assert_eq!(read.category, Some(Category::Skins), "{name}");
+    }
+    assert_eq!(
+        classify("{ Zorina } Ruellia Lel Evo X Tone Blush", 6, 0).category,
+        Some(Category::Makeup)
+    );
+    assert_eq!(
+        classify("[kira] beauty glaze / highlighter pink / evo X", 6, 0).category,
+        Some(Category::Makeup)
+    );
+    assert_eq!(classify("Kira Fangs Genus Addon", 6, 0).category, Some(Category::Heads));
+}

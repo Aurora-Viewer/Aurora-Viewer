@@ -14598,6 +14598,15 @@ inventory-sorter-hint-store = Store name
 inventory-sorter-hint-remove = Remove this hint
 inventory-sorter-hint-add = Add a store hint
 inventory-cleanup-empty-folders = Include empty folders
+inventory-cleanup-find-old = Old items
+inventory-cleanup-find-duplicates = Duplicates
+inventory-cleanup-duplicates-intro = Find the items you hold more than once. One copy of each stays where it is (one already in your sorted or own folders first, else the oldest); the others go to Pre-Trash for you to look at. Nothing is deleted.
+inventory-cleanup-duplicates-no-copy = Include no-copy items (gacha doubles kept to trade are left by default)
+inventory-cleanup-duplicates-nothing = No item of these types is held more than once.
+inventory-cleanup-duplicates-summary = { $count ->
+    [one] 1 extra copy of { $items } items
+   *[other] { $count } extra copies of { $items } items
+}
 inventory-cleanup-empty-group = Empty folders
 inventory-share-section = Share my settings
 inventory-share-section-hint = Hand your rules, store hints and options to someone else as text, for a notecard or a chat.
