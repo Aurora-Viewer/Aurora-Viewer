@@ -363,7 +363,7 @@ pub fn missing_targets(inv: &Inventory, folder: Uuid) -> impl Iterator<Item = Uu
         .filter_map(|id| inv.items.get(id))
         .filter(move |it| it.parent == folder && it.asset_type == 24 && !it.asset_id.is_nil())
         .map(|it| it.asset_id)
-        .filter(|target| !inv.items.contains_key(target) && !inv.confirmed_missing.contains(target))
+        .filter(|target| !inv.items.contains_key(target) && !inv.missing_items.contains(target))
 }
 
 /// One FetchInventory2 request for these items, none when there are none.

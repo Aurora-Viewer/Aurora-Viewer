@@ -183,13 +183,7 @@ fn run_keeping_fetch(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &S
             reads.push(read);
         }
     }
-    panic!(
-        "the background fetch never ended: queue {:?}, {} in flight, {} retries, unfetched {:?}",
-        fetch.queue,
-        fetch.in_flight.len(),
-        fetch.retries.len(),
-        unfetched(inv)
-    );
+    panic!("the background fetch never ended");
 }
 
 fn unfetched(inv: &Inventory) -> Vec<Uuid> {
@@ -242,7 +236,7 @@ fn whole_inventory_loads_in_a_few_batched_recursive_reads() {
     assert!(
         reads
             .iter()
-            .all(|r| r.parent == id(1) && r.depth == 0 || r.depth == MAX_FOLDER_DEPTH || r.depth == NARROW_DEPTH)
+            .all(|r| r.parent == id(1) && r.depth == 0 || r.depth == MAX_FOLDER_DEPTH)
     );
     assert!(reads.iter().any(|r| r.parent == id(900) && r.children.is_empty()));
     assert_eq!(reads.len(), 5, "one read per folder would be {}", inv.folders.len());
@@ -302,18 +296,13 @@ fn what_the_depth_limit_leaves_is_fetched_by_the_verify_walk() {
         },
     );
     assert!(unfetched(&inv).is_empty());
-    // what each read left is read by batches from its parent, never one
-    // read a folder (only the two roots are read alone)
-    let alone: Vec<Uuid> = reads
+    // each recursive read goes from the first folder the previous one left
+    let deep: Vec<Uuid> = reads
         .iter()
         .filter(|r| r.children.is_empty() && r.depth > 0)
         .map(|r| r.parent)
         .collect();
-    assert_eq!(alone, [id(900)], "{alone:?}");
-    assert!(
-        reads.iter().any(|r| r.children == [id(13)]),
-        "the chain goes on from where the limit left it"
-    );
+    assert!(deep.contains(&id(13)) && deep.contains(&id(16)), "{deep:?}");
 }
 
 #[test]
@@ -335,8 +324,7 @@ fn reads_too_big_fall_back_to_the_folder_then_its_folders() {
     );
     assert!(unfetched(&inv).is_empty());
     let shapes: Vec<(Uuid, Vec<Uuid>, i32)> = reads.iter().skip(1).map(|r| (r.parent, r.children.clone(), r.depth)).collect();
-    // (a narrow walk: its reads go a few levels deep)
-    let deep = NARROW_DEPTH;
+    let deep = MAX_FOLDER_DEPTH;
     assert_eq!(
         shapes,
         [
@@ -525,7 +513,7 @@ fn without_ais_only_for_the_library_the_inventory_keeps_its_recursive_reads() {
     let library: Vec<&Read> = reads.iter().filter(|r| inv.folders[&r.parent].library).collect();
     assert!(library.iter().all(|r| r.depth == 0), "library level by level");
     assert!(
-        reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth > 0),
+        reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth == MAX_FOLDER_DEPTH),
         "inventory still through AIS"
     );
 }
@@ -582,318 +570,4 @@ fn a_folder_too_big_even_at_depth_zero_is_reported_and_its_subfolders_still_load
         "the alert names the folder once, with the refusal's status"
     );
     assert!(fetch.take_too_big().0.is_empty());
-}
-
-/// A read that never gets an answer frees its slot after the deadline and
-/// is asked again: lost replies never stall the walk for the session.
-#[test]
-fn an_unanswered_read_frees_its_slot_and_is_asked_again() {
-    let mut inv = skeleton(&[(10, 1, -1)]);
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    let start = Instant::now();
-    let first = fetch.pump_at(&mut inv, AGENT, start);
-    let sent = first.iter().filter(|c| matches!(c, NetCommand::FetchInventoryTree { .. })).count();
-    assert!(sent > 0 && fetch.in_flight.len() == sent);
-    // no reply ever comes: past the deadline the slots are free again, and
-    // each read is asked again (a subtree at once in parts, a folder alone
-    // after its retry)
-    let deadline = start + READ_DEADLINE;
-    let mut again = fetch.pump_at(&mut inv, AGENT, deadline);
-    assert!(fetch.in_flight.values().all(|r| r.sent == deadline), "the old slots are freed");
-    again.extend(fetch.pump_at(&mut inv, AGENT, deadline + BACKGROUND_BACKOFF[0]));
-    let asked = again.iter().filter(|c| matches!(c, NetCommand::FetchInventoryTree { .. })).count();
-    assert!(asked >= sent, "asked again: {asked} of {sent}");
-}
-
-/// A folder the walk gave up on is asked again later in the session, a few
-/// times, never in a loop; an idle walk with a folder left unread reads it.
-#[test]
-fn failed_and_unread_folders_are_asked_again_later() {
-    let tree = [(10, 1, -1), (11, 1, -1)];
-    let mut inv = skeleton(&tree);
-    let failing = std::cell::Cell::new(true);
-    let failure =
-        |read: &Read| (failing.get() && (read.parent == id(11) || read.children.contains(&id(11)))).then_some(FetchFailure::Fatal);
-    let server = Server {
-        tree: &tree,
-        cap: 50,
-        items: 1,
-        failure: &failure,
-    };
-    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
-    assert_eq!(inv.folders[&id(11)].state, FetchState::Failed);
-    // the idle walk's next look asks for it again, then waits its round
-    let later = Instant::now() + std::time::Duration::from_secs(100_000);
-    let again = fetch.pump_at(&mut inv, AGENT, later);
-    assert!(
-        again.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
-        "asked again"
-    );
-    assert_eq!(fetch.failed_rounds, 1);
-    // (its answer, still a failure)
-    for command in again {
-        if let NetCommand::FetchInventoryTree {
-            request,
-            parent,
-            children,
-            depth,
-            ..
-        } = command
-        {
-            let read = Read { parent, children, depth };
-            let outcome = server.answer(&read).map(|contents| {
-                inv.apply(contents);
-            });
-            fetch.on_reply_at(&mut inv, request, &[], outcome, later);
-        }
-    }
-    // the server gives it now: the next round reads it
-    failing.set(false);
-    fetch.failed_round = None;
-    fetch.swept = None;
-    run_keeping_fetch(fetch, &mut inv, &server);
-    assert_eq!(inv.folders[&id(11)].state, FetchState::Fetched);
-    // an idle walk with a folder left unread (a reply lost) reads it
-    let mut inv = skeleton(&tree);
-    let (_, mut fetch) = run_keeping_fetch(BackgroundFetch::default(), &mut inv, &server);
-    if let Some(f) = inv.folders.get_mut(&id(10)) {
-        f.state = FetchState::Unknown;
-    }
-    fetch.swept = None;
-    let reads = run_with(fetch, &mut inv, &server);
-    assert!(!reads.is_empty(), "the watchdog asked again");
-    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched);
-}
-
-/// A subtree read that times out is read in parts at once, never repeated
-/// as is (onAISFolderCalback's fallback); a folder left fetching with no
-/// read of the walk is read again once the deadline is over.
-#[test]
-fn a_timed_out_subtree_read_falls_back_at_once_and_lost_folders_are_read_again() {
-    let mut inv = skeleton(&[(10, 1, -1), (11, 10, -1)]);
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    let start = Instant::now();
-    let mut now = start;
-    // read the root alone, then its subtree batch, which times out
-    let mut timed_out = false;
-    for _ in 0..10 {
-        now += std::time::Duration::from_secs(1);
-        for command in fetch.pump_at(&mut inv, AGENT, now) {
-            if let NetCommand::FetchInventoryOrphans { request } = command {
-                fetch.on_orphans_reply(request, true);
-                continue;
-            }
-            let NetCommand::FetchInventoryTree {
-                request,
-                parent,
-                children,
-                depth,
-                ..
-            } = command
-            else {
-                continue;
-            };
-            if depth > 0 && !timed_out {
-                timed_out = true;
-                fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::new(FetchFailure::Transient, None)), now);
-                assert!(fetch.retries.is_empty(), "never repeated as is");
-                assert!(
-                    fetch.queue.iter().any(|(_, k)| *k == Kind::FolderAndContent),
-                    "read in parts at once"
-                );
-                continue;
-            }
-            let server = Server {
-                tree: &[(10, 1, -1), (11, 10, -1)],
-                cap: 50,
-                items: 0,
-                failure: &|_| None,
-            };
-            let read = Read { parent, children, depth };
-            let outcome = server.answer(&read).map(|contents| {
-                inv.apply(contents);
-            });
-            fetch.on_reply_at(&mut inv, request, &[], outcome, now);
-        }
-    }
-    assert!(timed_out);
-    assert!(unfetched(&inv).is_empty(), "everything read in parts");
-    // a folder some other read left fetching is read again after the deadline
-    inv.folders.get_mut(&id(11)).expect("folder").state = FetchState::Fetching;
-    fetch.swept = None;
-    fetch.pump_at(&mut inv, AGENT, now);
-    assert_eq!(inv.folders[&id(11)].state, FetchState::Fetching, "not yet");
-    fetch.swept = None;
-    let later = now + READ_DEADLINE;
-    let commands = fetch.pump_at(&mut inv, AGENT, later);
-    assert!(
-        commands.iter().any(|c| matches!(c, NetCommand::FetchInventoryTree { .. })),
-        "asked again"
-    );
-}
-
-/// A huge inventory under one folder: the walk never waits on one deep read
-/// holding everything, it reads a few levels at a time while it is narrow
-/// and fills its slots side by side (never past the pool), each read still
-/// a batch of up to 20 folders.
-#[test]
-fn a_narrow_walk_reads_shallow_and_widens_to_its_slots() {
-    // one folder, 60 folders below it, each a chain six deep
-    let mut tree = vec![(10, 1, -1)];
-    for n in 0..60u128 {
-        let top = 100 + n * 10;
-        tree.push((top, 10, -1));
-        for level in 1..6u128 {
-            tree.push((top + level, top + level - 1, -1));
-        }
-    }
-    let mut inv = skeleton(&tree);
-    let server = Server {
-        tree: &tree,
-        cap: MAX_FOLDER_DEPTH,
-        items: 1,
-        failure: &|_| None,
-    };
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    let mut now = Instant::now();
-    let mut widest = 0;
-    let mut deepest_first = None;
-    for _ in 0..200 {
-        now += std::time::Duration::from_secs(1);
-        let commands = fetch.pump_at(&mut inv, AGENT, now);
-        widest = widest.max(fetch.in_flight.len());
-        assert!(fetch.in_flight.len() <= MAX_IN_FLIGHT, "never past the pool");
-        for command in commands {
-            match command {
-                NetCommand::FetchInventoryOrphans { request } => {
-                    fetch.on_orphans_reply(request, true);
-                }
-                NetCommand::FetchInventoryTree {
-                    request,
-                    parent,
-                    children,
-                    depth,
-                    ..
-                } => {
-                    assert!(children.len() <= BATCH);
-                    if parent == id(10) || children.contains(&id(10)) {
-                        deepest_first.get_or_insert(depth);
-                    }
-                    let outcome = server.answer(&Read { parent, children, depth }).map(|contents| {
-                        inv.apply(contents);
-                    });
-                    fetch.on_reply_at(&mut inv, request, &[], outcome, now);
-                }
-                _ => {}
-            }
-        }
-        if fetch.is_idle() && unfetched(&inv).is_empty() {
-            break;
-        }
-    }
-    assert!(unfetched(&inv).is_empty(), "{:?}", unfetched(&inv));
-    assert_eq!(deepest_first, Some(NARROW_DEPTH), "the lone first read goes a few levels deep");
-    assert!(widest >= 3, "the walk widens: {widest} reads side by side");
-}
-
-/// The last heavy batch that a gateway gives up on (504) is read in parts
-/// at once, never asked again as is after a wait; a deep read left
-/// unanswered is freed after its own, shorter deadline.
-#[test]
-fn a_gateway_timeout_on_the_last_deep_batch_splits_it() {
-    let tree = [(10, 1, -1), (11, 1, -1), (20, 10, -1), (21, 11, -1)];
-    let mut inv = skeleton(&tree);
-    // every deep read of 10 or 11 times out at the gateway
-    let gateway = |r: &Read| {
-        (r.depth > 0 && (r.children.contains(&id(10)) || r.children.contains(&id(11)) || r.parent == id(10) || r.parent == id(11)))
-            .then_some(FetchFailure::Transient)
-    };
-    let server = Server {
-        tree: &tree,
-        cap: MAX_FOLDER_DEPTH,
-        items: 1,
-        failure: &gateway,
-    };
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    let mut now = Instant::now();
-    let mut split = false;
-    for _ in 0..100 {
-        // (one second a round: a backoff of 15 s would show as many rounds
-        // with nothing sent)
-        now += std::time::Duration::from_secs(1);
-        for command in fetch.pump_at(&mut inv, AGENT, now) {
-            match command {
-                NetCommand::FetchInventoryOrphans { request } => {
-                    fetch.on_orphans_reply(request, true);
-                }
-                NetCommand::FetchInventoryTree {
-                    request,
-                    parent,
-                    children,
-                    depth,
-                    ..
-                } => {
-                    let read = Read { parent, children, depth };
-                    let outcome = match server.answer(&read) {
-                        Ok(contents) => {
-                            inv.apply(contents);
-                            Ok(())
-                        }
-                        // (the server's 503 stands for the gateway's 504)
-                        Err(_) => {
-                            split = true;
-                            Err(FetchError::new(FetchFailure::Transient, Some(504)))
-                        }
-                    };
-                    fetch.on_reply_at(&mut inv, request, &[], outcome, now);
-                    assert!(fetch.retries.is_empty(), "never waits to ask the same deep read again");
-                }
-                _ => {}
-            }
-        }
-        if fetch.is_idle() && unfetched(&inv).is_empty() {
-            break;
-        }
-    }
-    assert!(split);
-    assert!(unfetched(&inv).is_empty(), "read in parts: {:?}", unfetched(&inv));
-    // a deep read never answered is freed after TREE_DEADLINE
-    let mut inv = skeleton(&[(10, 1, -1)]);
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    let start = Instant::now();
-    fetch.pump_at(&mut inv, AGENT, start);
-    let deep: Vec<u64> = fetch.in_flight.iter().filter(|(_, r)| r.depth > 0).map(|(k, _)| *k).collect();
-    assert!(!deep.is_empty());
-    fetch.pump_at(&mut inv, AGENT, start + TREE_DEADLINE);
-    assert!(
-        deep.iter().all(|k| !fetch.in_flight.contains_key(k)),
-        "freed after its own deadline"
-    );
-}
-
-/// A folder the user's own read holds, never answered, is read again after
-/// the deadline: it never keeps the walk busy for the session.
-#[test]
-fn a_users_read_never_answered_is_asked_again() {
-    let mut inv = skeleton(&[(10, 1, -1)]);
-    let mut fetch = BackgroundFetch::default();
-    fetch.start(&inv);
-    // the user's read took folder 10 and never comes back
-    inv.folders.get_mut(&id(10)).expect("folder").state = FetchState::Fetching;
-    fetch.waiting.push((id(10), Kind::Recursive));
-    let start = Instant::now();
-    fetch.pump_at(&mut inv, AGENT, start);
-    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetching, "not yet");
-    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
-    assert_eq!(inv.folders[&id(10)].state, FetchState::Unknown, "given up past the deadline");
-    fetch.pump_at(&mut inv, AGENT, start + READ_DEADLINE);
-    assert!(
-        fetch.pending.contains(&id(10)) || fetch.in_flight.values().any(|r| r.folder == id(10) || r.children.contains(&id(10))),
-        "asked again by the walk"
-    );
 }

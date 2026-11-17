@@ -1694,18 +1694,9 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
-        // (items a busy server would not give are asked again after their
-        // pause, whether or not another read comes)
-        self.inventory.expire_given_up(std::time::Instant::now());
         let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
         self.inventory.walk_busy = !self.inventory_background.is_idle();
         commands
-    }
-
-    /// The background inventory walk's state (Dev Toolbox N4).
-    pub fn inventory_loading_report(&self) -> String {
-        self.inventory_background
-            .report(&self.inventory, self.inventory.missing_items.len(), std::time::Instant::now())
     }
 
     /// Read these folders with all they hold through the background walk
@@ -4588,16 +4579,10 @@ impl World {
                 None
             }
             NetEvent::InventoryItems(items) => {
-                for item in &items {
-                    self.inventory.items_reading.remove(&(item.id, false));
-                }
                 self.inventory.add_items(items);
                 None
             }
             NetEvent::AttachmentInventoryItems(items) => {
-                for item in &items {
-                    self.inventory.items_reading.remove(&(item.id, true));
-                }
                 self.inventory.add_attachment_items(items);
                 None
             }

@@ -326,8 +326,17 @@ mod tests {
         assert!(!no_copy(&inv, &item(9, true, ALL, actions::COPY)), "group-owned, everyone may copy");
         // someone else's item and a Library item (owned by the Library's account)
         assert!(no_copy(&inv, &item(7, false, ALL, 0)), "someone else's");
-        assert!(!no_copy(&inv, &item(7, false, ALL, actions::COPY)), "someone else's, copy for everyone");
-        assert!(no_copy(&inv, &item(8, false, ALL, actions::TRANSFER)), "Library, no copy for everyone");
-        assert!(!no_copy(&inv, &item(8, false, 0, actions::COPY | actions::TRANSFER)), "Library, copy for everyone");
+        assert!(
+            !no_copy(&inv, &item(7, false, ALL, actions::COPY)),
+            "someone else's, copy for everyone"
+        );
+        assert!(
+            no_copy(&inv, &item(8, false, ALL, actions::TRANSFER)),
+            "Library, no copy for everyone"
+        );
+        assert!(
+            !no_copy(&inv, &item(8, false, 0, actions::COPY | actions::TRANSFER)),
+            "Library, copy for everyone"
+        );
     }
 }

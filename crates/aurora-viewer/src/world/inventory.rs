@@ -62,11 +62,6 @@ pub struct Inventory {
     /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
     /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
     pub missing_items: HashSet<Uuid>,
-    /// Of `missing_items`, those the server answered do not exist: never
-    /// read again this session. The others, only unreadable after their
-    /// attempts (a busy server), are read again after a pause, and when.
-    pub confirmed_missing: HashSet<Uuid>,
-    pub gave_up_at: HashMap<Uuid, std::time::Instant>,
     /// Folders the server refuses even at depth 0: over its per-folder reply
     /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
     /// items cannot be read; search and refresh do not ask again in a loop.
@@ -79,11 +74,6 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
-    /// Items with a read on its way, and since when (`claim_item_reads`):
-    /// one read an item at a time, so a failure counts once. Keyed with
-    /// whether it is a worn attachment's read, whose answer is filed
-    /// differently (`AttachmentInventoryItems`).
-    pub items_reading: HashMap<(Uuid, bool), std::time::Instant>,
     /// The listing folders the Marketplace data holds in place, set by the
     /// listings every frame (`marketplace::Holds`).
     pub listing_holds: super::marketplace::Holds,
@@ -106,11 +96,6 @@ pub struct Inventory {
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
-/// An item read unanswered this long no longer stops another read of it.
-pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
-/// An item unreadable after its attempts (never answered missing) is read
-/// again after this pause.
-pub const ITEM_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(600);
 
 // v3 could store a no-copy original as removed even when the offer never
 // reached a simulator. The folder version alone cannot distinguish that cache.
@@ -543,76 +528,6 @@ impl Inventory {
         }
     }
 
-    /// Leaves out of an item read the broken links' originals: confirmed
-    /// gone (never asked again this session), or unreadable after their
-    /// attempts (asked again after [`ITEM_GIVE_UP`]: a server busy for a
-    /// while never marks a real item broken for the session).
-    pub fn drop_broken(&mut self, items: &mut Vec<Uuid>) {
-        if self.missing_items.is_empty() {
-            return;
-        }
-        self.expire_given_up(std::time::Instant::now());
-        items.retain(|id| !self.broken(id));
-    }
-
-    /// The items given up past [`ITEM_GIVE_UP`] are no longer broken links:
-    /// the outfits and attachments that need them ask again (the
-    /// generation changes, so their views look again). Called every frame
-    /// by the inventory's pump; nothing to do most of the time.
-    pub fn expire_given_up(&mut self, now: std::time::Instant) {
-        if self.gave_up_at.is_empty() {
-            return;
-        }
-        let expired: Vec<Uuid> = self
-            .gave_up_at
-            .iter()
-            .filter(|(_, at)| now.saturating_duration_since(**at) >= ITEM_GIVE_UP)
-            .map(|(id, _)| *id)
-            .collect();
-        if expired.is_empty() {
-            return;
-        }
-        for id in expired {
-            self.gave_up_at.remove(&id);
-            self.item_failures.remove(&id);
-            if !self.confirmed_missing.contains(&id) {
-                self.missing_items.remove(&id);
-                // (a retry frees it from the views' list of reads already
-                // asked, so the outfit that needs it reads it again)
-                self.item_retries.insert(id);
-            }
-        }
-        self.generation += 1;
-    }
-
-    /// Leaves out of an item read the broken links' originals and the items
-    /// already on their way (asked again by another window or the outfit
-    /// code before the first answer came: on a huge inventory the same dead
-    /// link was read twenty times at once, each failure counted as an
-    /// attempt), and marks the rest as on their way. A read never answered
-    /// frees its item after [`ITEM_READ_DEADLINE`].
-    pub fn claim_item_reads(&mut self, items: &mut Vec<Uuid>, attachment: bool, now: std::time::Instant) {
-        self.drop_broken(items);
-        let mut seen = HashSet::new();
-        items.retain(|id| seen.insert(*id) && !self.item_reading(*id, attachment, now));
-        for id in items.iter() {
-            self.items_reading.insert((*id, attachment), now);
-        }
-    }
-
-    /// A read of this item is on its way (and not past its deadline).
-    pub fn item_reading(&self, id: Uuid, attachment: bool, now: std::time::Instant) -> bool {
-        self.items_reading
-            .get(&(id, attachment))
-            .is_some_and(|since| now.saturating_duration_since(*since) < ITEM_READ_DEADLINE)
-    }
-
-    /// An item's reads answered (or failed): it may be asked again.
-    pub fn item_answered(&mut self, id: &Uuid) {
-        self.items_reading.remove(&(*id, false));
-        self.items_reading.remove(&(*id, true));
-    }
-
     /// A broken link's original: confirmed gone, and not received since.
     pub fn broken(&self, id: &Uuid) -> bool {
         self.missing_items.contains(id) && !self.items.contains_key(id)
@@ -622,8 +537,6 @@ impl Inventory {
     pub fn items_missing(&mut self, ids: Vec<Uuid>) {
         self.generation += 1;
         for id in ids {
-            self.item_answered(&id);
-            self.confirmed_missing.insert(id);
             self.item_failures.remove(&id);
             self.item_retries.remove(&id);
             self.missing_items.insert(id);
@@ -633,33 +546,16 @@ impl Inventory {
     /// These item reads failed: asked again, up to `ITEM_FETCH_ATTEMPTS`.
     pub fn items_failed(&mut self, ids: &[Uuid]) {
         self.generation += 1;
-        // (one line a batch, never one a link: hundreds of dead links pushed
-        // everything else out of the last warnings)
-        let mut broken = 0;
-        let mut first = None;
         for id in ids {
-            self.item_answered(id);
-            // (already a broken link: a late copy of its read counts nothing)
-            if self.missing_items.contains(id) {
-                continue;
-            }
             let attempts = self.item_failures.entry(*id).or_insert(0);
             *attempts += 1;
             if *attempts >= ITEM_FETCH_ATTEMPTS {
-                broken += 1;
-                first.get_or_insert(*id);
+                log::warn!("inventory item {id} still unreadable after {attempts} attempts: treated as a broken link");
                 self.item_retries.remove(id);
                 self.missing_items.insert(*id);
-                self.gave_up_at.insert(*id, std::time::Instant::now());
             } else {
                 self.item_retries.insert(*id);
             }
-        }
-        if let Some(first) = first {
-            log::warn!(
-                "{broken} inventory items still unreadable after {ITEM_FETCH_ATTEMPTS} attempts: treated as broken links ({} in all; first {first})",
-                self.missing_items.len()
-            );
         }
     }
 
