@@ -20,6 +20,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 use winit::keyboard::{Key, KeyCode};
 
+mod library;
+
 /// "Go to" with the avatar's camera: how far ahead of the keyframe the
 /// alt-camera's focus is put, metres.
 const GO_TO_FOCUS: f32 = 5.0;
@@ -116,6 +118,9 @@ pub(super) struct DirectorState {
     demo_record: bool,
     /// The path taken by hand, the keyframes' animations and their list.
     pub(super) extra: super::director_extra::DirectorExtra,
+    /// The saved tracks' library, the montage, the thumbnails and the
+    /// ffmpeg pack (`library.rs`).
+    library: library::DirectorLibrary,
 }
 
 impl App {
@@ -146,21 +151,28 @@ impl App {
         self.director.recording.is_some() && self.settings.director_record.format.alpha() && self.world.photo_isolation.empty_background()
     }
 
-    /// The ffmpeg chosen by hand, else the PATH's, asked on a thread what it
-    /// encodes (it is a program to run: never on the frame's thread).
+    /// The ffmpeg chosen by hand, else the PATH's, else the project's pack,
+    /// asked on a thread what it encodes (it is a program to run: never on
+    /// the frame's thread). The PATH is read afresh, the system's and the
+    /// user's as they are now (`director_ffmpeg::search_folders`): an ffmpeg
+    /// installed while the viewer runs is found by "Look again", without a
+    /// restart.
     fn director_find_ffmpeg(&mut self) {
         let chosen = self.settings.director_record.ffmpeg.clone();
-        let path = chosen.or_else(|| std::env::var_os("PATH").and_then(|path| recorder::find_on_path(&path)));
-        self.director.ffmpeg = match path {
-            None => Ffmpeg::Missing,
-            Some(path) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let _ = tx.send(Tool::probe(&path));
-                });
-                Ffmpeg::Asking(rx)
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let folders = crate::director_ffmpeg::search_folders();
+            let found = crate::director_ffmpeg::candidates(chosen, &folders, crate::director_ffmpeg::pack_program());
+            let mut answer = Err("no ffmpeg found".to_owned());
+            for path in found {
+                answer = Tool::probe(&path);
+                if answer.is_ok() {
+                    break;
+                }
             }
-        };
+            let _ = tx.send(answer);
+        });
+        self.director.ffmpeg = Ffmpeg::Asking(rx);
     }
 
     /// The Director's lens while its window is open with its depth of
@@ -265,7 +277,11 @@ impl App {
             }
         };
         match answer {
-            Filed::Listed(names) => self.director.tracks = Some(names),
+            Filed::Listed(names) => {
+                self.director.tracks = Some(names);
+                // each track read again for the library (a save changes one)
+                self.director.library.stale = true;
+            }
             Filed::Saved(name) => {
                 log::info!("director: track saved as {name}");
                 self.director.filed = Some(Ok(aurora_i18n::tr!("director-track-saved", name = name.as_str())));
@@ -304,12 +320,17 @@ impl App {
                 Ok(Ok(tool)) => {
                     log::info!("director: ffmpeg at {}", tool.path.display());
                     self.director.ffmpeg = Ffmpeg::Ready(tool);
+                    self.director.library.ui.look.answered(true);
                 }
                 Ok(Err(why)) => {
                     log::warn!("director: ffmpeg did not answer ({why})");
                     self.director.ffmpeg = Ffmpeg::Missing;
+                    self.director.library.ui.look.answered(false);
                 }
-                Err(TryRecvError::Disconnected) => self.director.ffmpeg = Ffmpeg::Missing,
+                Err(TryRecvError::Disconnected) => {
+                    self.director.ffmpeg = Ffmpeg::Missing;
+                    self.director.library.ui.look.answered(false);
+                }
                 Err(TryRecvError::Empty) => {}
             }
         }
@@ -407,6 +428,7 @@ impl App {
     /// due, this frame's view is asked of the renderer (unless something
     /// else captures it: that frame of the film is then the next one's).
     pub(super) fn director_record_frame(&mut self, renderer: &mut Renderer) {
+        self.director_thumbnails(renderer);
         if std::mem::take(&mut self.director.record_request) {
             if self.director.recording.is_some() {
                 self.director_record_stop();
@@ -489,7 +511,10 @@ impl App {
         // what the last frame changed in the track is a step to undo, a
         // whole drag one step
         let at_rest = !self.egui_ctx.input(|i| i.pointer.any_down());
-        self.director.history.observe(&self.director.d, at_rest);
+        // (a montage puts its shots in the track's place: not a change)
+        if !self.director_montage_on() {
+            self.director.history.observe(&self.director.d, at_rest);
+        }
         let open = self.panels.director && self.in_world();
         match (open, self.director.before) {
             (true, None) => self.director.before = Some((self.settings.camera.fov, self.camera.roll)),
@@ -509,12 +534,15 @@ impl App {
         }
         self.director_record_poll(open);
         self.director_tracks_poll(open);
+        self.director_library_frame(open);
         let was = self.director.d.mode;
         if !open || self.world.teleporting || self.director_restricted() {
             self.director.d.stop();
         }
+        let before = self.director.d.time;
         self.director.d.tick(dt);
         self.director_extra_frame(open);
+        self.director_montage_tick(before, dt);
         if matches!(was, Mode::Playing { .. }) && !self.director.d.playing() {
             log::info!("director: playback ended at {:.1} s", self.director.d.time);
         }
@@ -537,6 +565,9 @@ impl App {
         let view = self.director.d.view(|aim| found.get(&aim).copied());
         self.director.aims = found;
         self.camera.set_track_view(view);
+        if open {
+            self.director_thumbnail_refresh();
+        }
     }
 
     /// Where a target is now: the joint of the avatar as it was last drawn
@@ -605,7 +636,7 @@ impl App {
     /// are the layout's (Z is not where a QWERTY keyboard has it everywhere).
     /// True when the key was the Director's.
     pub(super) fn director_key(&mut self, code: KeyCode, logical: &Key, pressed: bool, mods: Mods) -> bool {
-        if !self.panels.director || !self.director.keys || self.director.d.playing() {
+        if !self.panels.director || !self.director.keys || self.director.d.playing() || self.director_montage_on() {
             return false;
         }
         let letter = |wanted: &str| matches!(logical, Key::Character(text) if text.eq_ignore_ascii_case(wanted));
@@ -723,6 +754,7 @@ impl App {
                     .filed
                     .as_ref()
                     .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str)),
+                library: &mut self.director.library.ui,
             },
             ui::director::Env {
                 ui: &mut self.env_ui,
@@ -742,6 +774,7 @@ impl App {
             self.settings.save();
         }
         self.director_actions(actions);
+        self.director_library_actions();
         for choice in isolate {
             self.photo_isolate_out(choice, ctx.pixels_per_point());
         }
@@ -761,13 +794,18 @@ impl App {
                 Action::AddKey => {
                     let pose = self.director_pose();
                     match self.director.d.add_key(pose) {
-                        Some(index) => log::info!(
-                            "director: keyframe {} at {:.1} s, {:.1?}, {:.0}°",
-                            index + 1,
-                            self.director.d.time,
-                            pose.position,
-                            pose.fov.to_degrees()
-                        ),
+                        Some(index) => {
+                            log::info!(
+                                "director: keyframe {} at {:.1} s, {:.1?}, {:.0}°",
+                                index + 1,
+                                self.director.d.time,
+                                pose.position,
+                                pose.fov.to_degrees()
+                            );
+                            if let Some(key) = self.director.d.track.keys().get(index).copied() {
+                                self.director_thumbnail(&key.pose);
+                            }
+                        }
                         None => log::info!("director: the track is full"),
                     }
                 }
@@ -775,9 +813,17 @@ impl App {
                     let pose = self.director_pose();
                     self.director.d.track.set_pose(index, pose);
                     self.director_key_laid_again(index);
+                    if let Some(key) = self.director.d.track.keys().get(index).copied() {
+                        self.director_thumbnail(&key.pose);
+                    }
                 }
                 Action::KeyTravel(index, on) => self.director_key_travel(index, on),
-                Action::GoTo(index) => self.director_go_to(index),
+                Action::GoTo(index) => {
+                    self.director_go_to(index);
+                    if let Some(key) = self.director.d.track.keys().get(index).copied() {
+                        self.director_thumbnail_go_to(&key.pose);
+                    }
+                }
                 Action::Play => self.director_play(),
                 Action::Lens(fov) => self.director_lens(fov),
                 Action::Roll(roll) => self.camera.roll = roll,
@@ -798,7 +844,10 @@ impl App {
                         self.director.choosing = Some(rx);
                     }
                 }
-                Action::FindFfmpeg => self.director.ffmpeg = Ffmpeg::Unknown,
+                Action::FindFfmpeg => {
+                    self.director.library.ui.look.pressed();
+                    self.director.ffmpeg = Ffmpeg::Unknown;
+                }
                 Action::FfmpegSite => ui::chat::open_web_link(&self.egui_ctx, recorder::DOWNLOAD_PAGE),
                 Action::RevealFilm => {
                     if let Some(Ok(file)) = &self.director.film {
@@ -927,7 +976,9 @@ impl App {
     /// third on the head (targets of their own, kept when the lock goes
     /// off), the fourth's target cleared, in a 2.39:1 frame with the rule
     /// of thirds; `green` shows our avatar alone on a green screen; `orbit`
-    /// replaces the track by a shot (`app/director/shots.rs`).
+    /// replaces the track by a shot (`app/director/shots.rs`);
+    /// `montage` plays the track then the same track backwards, as a
+    /// montage of two shots cut one to the other.
     fn director_demo(&mut self) {
         if !self.demo {
             return;
@@ -962,6 +1013,9 @@ impl App {
             self.director.d.track.duration(),
             self.director.d.track.length()
         );
+        if mode == "montage" {
+            self.director_demo_montage();
+        }
         if mode == "play" {
             self.director.d.start_delay = 0.0;
             self.director.d.time = 0.0;

@@ -133,6 +133,9 @@ pub(crate) struct FramePacket {
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// A small picture of this frame's 3D view, tagged (thumbnail.rs;
+    /// answered a few frames later, never waited for).
+    pub thumbnail: Option<u64>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
     /// How far every position moved since the last frame (m, x and y): a
@@ -170,6 +173,8 @@ pub(crate) struct FrameResult {
     pub equirect: Option<crate::equirect::Answer>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// The small pictures made since the last result (`FramePacket::thumbnail`).
+    pub thumbnails: Vec<crate::Thumbnail>,
     pub spent: Spent,
 }
 

@@ -307,6 +307,12 @@ pub struct Renderer {
     pub histogram_request: Option<f32>,
     /// The last histogram counted, from black to white.
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// A small picture of the next frame's 3D view without the interface,
+    /// tagged by the caller; it comes in `thumbnails` a few frames later
+    /// (thumbnail.rs), or never when it could not be made.
+    pub thumbnail_request: Option<u64>,
+    /// The small pictures made, until the caller takes them.
+    pub thumbnails: Vec<crate::Thumbnail>,
     /// Set by the device-lost callback (device_lost.rs).
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
@@ -801,6 +807,8 @@ impl Renderer {
             snapshot_dropped: false,
             histogram_request: None,
             histogram: None,
+            thumbnail_request: None,
+            thumbnails: Vec::new(),
             lost,
             // one of the list for each renderer of the run (a recovery's
             // counts its frames from 0 again)
@@ -1312,6 +1320,11 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
+        // (a caller that stopped taking them keeps the last few only)
+        self.thumbnails.append(&mut r.thumbnails);
+        if self.thumbnails.len() > KEPT {
+            self.thumbnails.drain(..self.thumbnails.len() - KEPT);
+        }
         if let Some(e) = r.equirect.take() {
             self.equirect = Some(e);
         }
@@ -1549,6 +1562,7 @@ impl Renderer {
             capture,
             equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
+            thumbnail: self.thumbnail_request.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),

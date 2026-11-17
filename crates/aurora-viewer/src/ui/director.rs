@@ -125,6 +125,9 @@ pub struct Tracks<'a> {
     pub saved: &'a [String],
     /// What the last save or load did, or why it failed.
     pub note: Option<Result<&'a str, &'a str>>,
+    /// The library: rows, montage, imports and exports, the ffmpeg help
+    /// (`ui/director_library.rs`).
+    pub library: &'a mut super::director_library::LibraryUi,
 }
 
 /// The live camera and what restricts it, as the app gives them.
@@ -247,7 +250,7 @@ pub fn window(
     live: &Live,
     isolate: IsolateView<'_>,
     record: Record<'_>,
-    tracks: Tracks<'_>,
+    mut tracks: Tracks<'_>,
     env: Env<'_>,
     capture: super::director_capture::CaptureView<'_>,
     key_rows: super::director_key_rows::KeyRows<'_>,
@@ -293,10 +296,13 @@ pub fn window(
                     picture_section(ui, p, d, live.target.is_some());
                 });
                 widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
-                    record_section(ui, p, record, live, actions);
+                    record_section(ui, p, record, live, tracks.library, actions);
                 });
                 widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
-                    tracks_section(ui, p, tracks, d.track.is_empty(), actions);
+                    super::director_library::library_section(ui, p, &mut tracks, d.track.is_empty(), actions);
+                });
+                widgets::collapsing(ui, p, "director_montage", aurora_i18n::tr!("director-montage"), false, |ui| {
+                    super::director_library::montage_section(ui, p, tracks.saved, tracks.library, live.can_record, live.restricted);
                 });
                 widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
                     isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
@@ -322,6 +328,7 @@ pub fn window(
             });
         });
     clear_prompt(ctx, p, d);
+    super::director_library::library_prompts(ctx, p, tracks.library);
 }
 
 fn clear_asked_id() -> Id {
@@ -589,54 +596,6 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, locked: boo
     }
 }
 
-/// The saved tracks: a name to save this one under, and those saved
-/// before, each loaded by its button (the track being edited is replaced:
-/// Ctrl+Z brings it back).
-fn tracks_section(ui: &mut egui::Ui, p: &Palette, tracks: Tracks<'_>, empty: bool, actions: &mut Vec<Action>) {
-    let Tracks { name, saved, note } = tracks;
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(name)
-                .hint_text(aurora_i18n::tr!("director-track-name"))
-                .desired_width(170.0),
-        );
-        let valid = track::file_stem(name).is_some() && !empty;
-        if widgets::action_button_if(
-            ui,
-            p,
-            "device-floppy-filled",
-            aurora_i18n::tr!("director-track-save"),
-            ActionKind::Flat,
-            Vec2::new(0.0, 26.0),
-            valid,
-        )
-        .clicked()
-        {
-            actions.push(Action::SaveTrack);
-        }
-    });
-    if saved.is_empty() {
-        ui.label(RichText::new(aurora_i18n::tr!("director-track-none")).size(12.0).color(p.muted));
-    }
-    for (index, saved_name) in saved.iter().enumerate() {
-        ui.horizontal(|ui| {
-            if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("director-track-load"), true) {
-                actions.push(Action::LoadTrack(index));
-            }
-            ui.add(egui::Label::new(RichText::new(saved_name).size(12.5).color(p.ink)).truncate());
-        });
-    }
-    match note {
-        Some(Ok(text)) => {
-            ui.label(RichText::new(text).size(12.0).color(p.success));
-        }
-        Some(Err(text)) => {
-            ui.label(RichText::new(text).size(12.0).color(p.warn));
-        }
-        None => {}
-    }
-}
-
 fn film_format(format: recorder::Format) -> &'static str {
     match format {
         recorder::Format::Mp4 => aurora_i18n::tr!("director-record-format-mp4"),
@@ -649,7 +608,14 @@ fn film_format(format: recorder::Format) -> &'static str {
 
 /// The recording: the ffmpeg it goes through (or how to get one), the
 /// film's format, rate and quality, the button, and the last film.
-fn record_section(ui: &mut egui::Ui, p: &Palette, record: Record<'_>, live: &Live, actions: &mut Vec<Action>) {
+fn record_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    record: Record<'_>,
+    live: &Live,
+    library: &mut super::director_library::LibraryUi,
+    actions: &mut Vec<Action>,
+) {
     let Record {
         options,
         changed,
@@ -666,23 +632,9 @@ fn record_section(ui: &mut egui::Ui, p: &Palette, record: Record<'_>, live: &Liv
     match ffmpeg {
         None => note(ui, aurora_i18n::tr!("director-record-looking"), p.muted),
         Some(None) => {
-            note(ui, aurora_i18n::tr!("director-record-missing"), p.warn);
-            note(ui, aurora_i18n::tr!("director-record-missing-hint"), p.muted);
-            ui.horizontal_wrapped(|ui| {
-                for (icon, label, action) in [
-                    ("external-link", aurora_i18n::tr!("director-record-site"), Action::FfmpegSite),
-                    (
-                        "folder-open-filled",
-                        aurora_i18n::tr!("director-record-choose"),
-                        Action::ChooseFfmpeg,
-                    ),
-                    ("refresh", aurora_i18n::tr!("director-record-again"), Action::FindFfmpeg),
-                ] {
-                    if widgets::action_button(ui, p, icon, label, ActionKind::Flat, size).clicked() {
-                        actions.push(action);
-                    }
-                }
-            });
+            // no ffmpeg: the help takes the controls' place (Output)
+            super::director_library::ffmpeg_section(ui, p, library, actions);
+            return;
         }
         Some(Some(path)) => {
             ui.horizontal(|ui| {
@@ -1221,8 +1173,9 @@ pub fn timeline(ctx: &egui::Context, p: &Palette, d: &mut Director, bottom_top: 
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     strip_buttons(ui, p, d, live, actions);
-                    let ruler_w = (ui.available_width() - CLOCK_W - 6.0).max(80.0);
+                    let ruler_w = (ui.available_width() - CLOCK_W - super::director_ruler::BUTTONS_W - 12.0).max(80.0);
                     ruler(ui, p, d, ruler_w, live.restricted, actions);
+                    super::director_ruler::zoom_buttons(ui, p, ruler_span(d.track.duration()), d.time);
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(CLOCK_W, RULER_H), Sense::hover());
                     let text = format!("{} / {}", clock(d.time, true), clock(d.track.duration(), true));
                     ui.painter()
@@ -1373,20 +1326,32 @@ pub fn keys(ctx: &egui::Context, had: bool, keyframes: usize) -> bool {
 
 /// The ruler: the seconds, the keyframes on their lane and the playhead.
 fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricted: bool, actions: &mut Vec<Action>) {
-    let (rect, background) = ui.allocate_exact_size(Vec2::new(width, RULER_H), Sense::click_and_drag());
+    // the keyframes' thumbnails in a row above the ruler (director_ruler.rs)
+    let thumbs = if d.track.is_empty() {
+        0.0
+    } else {
+        super::director_ruler::THUMB_ROW
+    };
+    let (rect, background) = ui.allocate_exact_size(Vec2::new(width, RULER_H + thumbs), Sense::click_and_drag());
     let lane = Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - LANE_H), rect.max);
     let end = d.track.duration();
     // while a keyframe is dragged the ruler keeps the seconds it showed
     // when the drag began: a track that grows under the pointer would move
     // the very marks the pointer aims at
     let held_span = ui.scope_id().with("director_ruler_span");
-    let span = ui.data(|data| data.get_temp::<f32>(held_span)).unwrap_or_else(|| ruler_span(end));
+    let held = ui.data(|data| data.get_temp::<f32>(held_span));
+    let full = held.unwrap_or_else(|| ruler_span(end));
     let mut dragging = false;
     let left = rect.left() + RULER_PAD;
+    let lane_w = (rect.width() - 2.0 * RULER_PAD).max(1.0);
+    // the seconds shown: all of them, or those the zoom keeps
+    let pressed = held.is_some() || background.is_pointer_button_down_on();
+    let view = super::director_ruler::view(ui, rect, left, lane_w, full, d.time, pressed);
+    let span = view.span;
     // points a second
-    let scale = (rect.width() - 2.0 * RULER_PAD).max(1.0) / span;
-    let x_of = |time: f32| left + time.min(span) * scale;
-    let time_at = |x: f32| ((x - left) / scale).clamp(0.0, span);
+    let scale = view.scale(lane_w);
+    let x_of = |time: f32| view.x_of(time, left, lane_w);
+    let time_at = |x: f32| view.time_at(x, left, lane_w);
     let painter = ui.painter_at(rect);
     painter.rect_filled(lane, ui.visuals().widgets.inactive.corner_radius, p.field);
     if end > 0.0 {
@@ -1395,7 +1360,8 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
         painter.rect_filled(played, 0.0, p.violet.gamma_multiply(0.22));
     }
     let step = tick_step(scale);
-    for n in 0..=(span / step).floor() as usize {
+    let first = (view.start / step).ceil() as usize;
+    for n in first..=((view.start + span) / step).floor() as usize {
         let time = n as f32 * step;
         let x = x_of(time);
         painter.line_segment(
@@ -1432,8 +1398,21 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
             );
         }
     }
+    if thumbs > 0.0 {
+        let band = Rect::from_min_size(rect.min, Vec2::new(rect.width(), thumbs));
+        let (clicked, double) = super::director_ruler::thumbnails(ui, p, band, &keys, d.selected, |time| view.contains(time), x_of);
+        if let Some(index) = double {
+            actions.push(Action::GoTo(index));
+        } else if let Some(index) = clicked {
+            d.select(index);
+        }
+    }
     let ripple = ui.input(|i| i.modifiers.shift);
     for (index, key) in keys.iter().enumerate() {
+        // (a keyframe out of the zoomed view is neither drawn nor clicked)
+        if !view.contains(key.time) {
+            continue;
+        }
         let center = egui::pos2(x_of(key.time), lane.center().y);
         let hit = Rect::from_center_size(center, Vec2::new(KEY_HALF * 2.0 + 4.0, LANE_H + 6.0));
         let response = ui.interact(hit, ui.scope_id().with(("director_key", index)), Sense::click_and_drag());
@@ -1483,6 +1462,9 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
         }
     });
     let x = x_of(d.time);
+    if !view.contains(d.time) {
+        return;
+    }
     painter.line_segment(
         [egui::pos2(x, rect.top() + 2.0), egui::pos2(x, rect.bottom())],
         Stroke::new(2.0, p.teal),
