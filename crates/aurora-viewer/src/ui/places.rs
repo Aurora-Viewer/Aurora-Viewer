@@ -1759,28 +1759,36 @@ mod tests {
         let inv = inventory();
         let root = system_folder(&inv, FOLDER_LANDMARKS).expect("landmarks folder");
         let none = HashSet::new();
-        // folders first by name, then the newest landmark first
+        // folders first by name, then the newest landmark first; the
+        // Shopping folder's name is the catalogue's, so the two folders'
+        // order is derived from their names (ショッピング sorts after Vide)
+        let shopping = aurora_i18n::tr!("common-shopping");
+        let shopping_first = crate::natural_order::key(shopping) < crate::natural_order::key("Vide");
+        let folders = |shops: &[&'static str]| -> Vec<&'static str> {
+            let (mut first, mut second) = (shops.to_vec(), vec!["Vide"]);
+            if !shopping_first {
+                std::mem::swap(&mut first, &mut second);
+            }
+            first.into_iter().chain(second).collect()
+        };
         let rows = landmark_rows(&inv, root, "", true, &none, true);
-        assert_eq!(
-            names(&rows),
-            [aurora_i18n::tr!("common-shopping"), "Vide", "Plage", "Musée", "Arbre"]
-        );
-        assert_eq!(rows[0].folder, Some(false));
+        let expected: Vec<&str> = folders(&[shopping]).into_iter().chain(["Plage", "Musée", "Arbre"]).collect();
+        assert_eq!(names(&rows), expected);
+        let shops_row = rows.iter().position(|r| r.name == shopping).expect("the Shopping folder");
+        assert_eq!(rows[shops_row].folder, Some(false));
         // by name, and an opened folder shows its landmarks one level down
         let open: HashSet<Uuid> = [Uuid::from_u128(20)].into();
         let rows = landmark_rows(&inv, root, "", false, &open, true);
-        assert_eq!(
-            names(&rows),
-            [
-                aurora_i18n::tr!("common-shopping"),
-                "Boutique du Loup",
-                "Vide",
-                "Arbre",
-                "Musée",
-                "Plage"
-            ]
-        );
-        assert_eq!(rows[1].depth, 1);
+        let expected: Vec<&str> = folders(&[shopping, "Boutique du Loup"])
+            .into_iter()
+            .chain(["Arbre", "Musée", "Plage"])
+            .collect();
+        assert_eq!(names(&rows), expected);
+        let shop = rows
+            .iter()
+            .position(|r| r.name == "Boutique du Loup")
+            .expect("the opened folder's landmark");
+        assert_eq!(rows[shop].depth, 1);
         // Favorites-style: empty folders are not shown
         let rows = landmark_rows(&inv, root, "", true, &none, false);
         assert_eq!(names(&rows), [aurora_i18n::tr!("common-shopping"), "Plage", "Musée", "Arbre"]);

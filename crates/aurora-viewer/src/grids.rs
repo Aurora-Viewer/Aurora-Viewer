@@ -197,11 +197,11 @@ pub fn parse_info(address: &str, bytes: &[u8]) -> Result<Grid, Error> {
 
 pub async fn discover(address: &str) -> Result<Grid, Error> {
     let grid = Grid::manual(address)?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(aurora_version::user_agent())
-        .build()
-        .map_err(|_| Error::Network)?;
+    let client = aurora_proxy::http_client(|b| {
+        b.timeout(std::time::Duration::from_secs(15))
+            .user_agent(aurora_version::user_agent())
+    })
+    .map_err(|_| Error::Network)?;
     let mut response = client
         .get(format!("{}/get_grid_info", grid.service))
         .send()

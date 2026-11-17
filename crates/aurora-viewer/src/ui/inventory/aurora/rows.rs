@@ -706,10 +706,10 @@ pub(super) mod tests {
     fn a_date_of_this_year_has_no_year() {
         // 2026-10-14 and 2025-09-03, read on 2026-10-19
         let now = 1_792_368_000;
-        let october = short_date(1_791_936_000, now);
-        assert!(october.starts_with("14 ") && !october.contains("2026"), "{october}");
-        let last_year = short_date(1_756_857_600, now);
-        assert!(last_year.starts_with("3 ") && last_year.ends_with("2025"), "{last_year}");
+        // the day and month in the language's order
+        let date = crate::ui::land::day_month;
+        assert_eq!(short_date(1_791_936_000, now), date(None, 10, 14));
+        assert_eq!(short_date(1_756_857_600, now), date(Some(2025), 9, 3));
         assert_eq!(short_date(0, now), "");
     }
 

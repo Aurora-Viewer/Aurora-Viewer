@@ -751,6 +751,7 @@ mod tests {
                             &Icons::default(),
                             &mut world,
                             &mut st,
+                            None,
                             &mut InventoryPreferences::default(),
                             &mut false,
                             false,

@@ -227,7 +227,7 @@ mod tests {
                 object: Uuid::from_u128(20),
                 item: Uuid::from_u128(21),
             };
-            let http = reqwest::Client::new();
+            let http = crate::test_http_client();
             let result = load(
                 &http,
                 target,

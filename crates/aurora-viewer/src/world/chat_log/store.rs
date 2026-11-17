@@ -231,11 +231,100 @@ impl Worker {
     }
 }
 
+/// The whole files whose publication was refused, the latest per file,
+/// kept by the thread until one goes through: the conversation log of a
+/// session that ended (a logout, the exit) no longer reads the answer of its
+/// last publication, so the thread tries it again itself, waiting longer
+/// each time (`save_retry`), before an exit's `flush` and when the queue
+/// closes. Until then a read of that file answers with these bytes, so the
+/// next session of the account starts from them.
+#[derive(Default)]
+struct Owed {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    backoff: crate::save_retry::Backoff,
+}
+
+impl Owed {
+    /// The answer of a publication: a refused one is kept, a written one
+    /// replaces what was owed for that file.
+    fn published(&mut self, path: &Path, bytes: Vec<u8>, written: &std::io::Result<()>) {
+        self.files.retain(|(p, _)| p != path);
+        match written {
+            Ok(()) => {
+                if self.files.is_empty() {
+                    self.backoff.succeeded();
+                }
+            }
+            Err(_) => {
+                self.files.push((path.to_owned(), bytes));
+                if self.backoff.due(std::time::Instant::now()) {
+                    self.backoff.failed(std::time::Instant::now());
+                }
+            }
+        }
+    }
+
+    fn read(&self, path: &Path) -> Option<Vec<u8>> {
+        self.files.iter().find(|(p, _)| p == path).map(|(_, b)| b.clone())
+    }
+
+    /// Every owed file tried again; the next try waits longer if one is
+    /// still refused.
+    fn retry(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        let mut refused = None;
+        self.files.retain(|(path, bytes)| match publish(path, bytes) {
+            Ok(()) => false,
+            Err(e) => {
+                refused.get_or_insert(e);
+                true
+            }
+        });
+        match refused {
+            None => {
+                log::info!("conversation log: saved on a later try");
+                self.backoff.succeeded();
+            }
+            Some(e) => {
+                let wait = self.backoff.failed(std::time::Instant::now());
+                log::warn!("conversation log: still not saved ({e}); tried again in {} s", wait.as_secs());
+            }
+        }
+    }
+
+    /// The next job; while files are owed, they are tried again when the
+    /// wait is over, and once more when the queue closes.
+    fn next(&mut self, jobs: &Receiver<Job>) -> Option<Job> {
+        loop {
+            if self.files.is_empty() {
+                return jobs.recv().ok();
+            }
+            match jobs.recv_timeout(self.backoff.left(std::time::Instant::now())) {
+                Ok(job) => return Some(job),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => self.retry(),
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    self.retry();
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    path.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| crate::atomic_file::write(path, bytes))
+}
+
 fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
     // a failure is said once per run, without the file name (it is the name
     // of a resident or a group, and the viewer's log may be shared)
     let mut failed = false;
-    let mut next = jobs.recv().ok();
+    let mut owed = Owed::default();
+    let mut next = owed.next(&jobs);
     while let Some(job) = next.take() {
         match job {
             Job::Append { path, mut text } => {
@@ -280,30 +369,34 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
                 let _ = done.send(erase(&dir));
             }
             Job::Move { from, to, done } => {
+                // the session publishes its log again in the new folder: a
+                // copy owed in the old one would bring the folder back
+                owed.files.retain(|(p, _)| !p.starts_with(&from));
                 let _ = done.send(relocate(&from, &to));
             }
             Job::Merge { source, target, done } => {
                 let _ = done.send(super::import::merge_file(&source, &target));
             }
             Job::Read { path, done } => {
-                let read = match std::fs::read(&path) {
-                    Ok(bytes) => {
-                        crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
-                        Ok(Some(bytes))
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                    Err(e) => Err(e),
+                let read = match owed.read(&path) {
+                    Some(bytes) => Ok(Some(bytes)),
+                    None => match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+                            Ok(Some(bytes))
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                        Err(e) => Err(e),
+                    },
                 };
                 let _ = done.send(read);
             }
             Job::Publish { path, bytes, done } => {
-                let written = path
-                    .parent()
-                    .map_or(Ok(()), std::fs::create_dir_all)
-                    .and_then(|()| crate::atomic_file::write(&path, &bytes));
+                let written = publish(&path, &bytes);
                 if let Err(e) = &written {
                     log::warn!("conversation log: not saved ({e}); it will be tried again");
                 }
+                owed.published(&path, bytes, &written);
                 let _ = done.send(written);
             }
             Job::RemoveBackups { dir } => {
@@ -314,11 +407,13 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
                 }
             }
             Job::Sync(done) => {
+                // the exit's flush: what is owed is tried once more first
+                owed.retry();
                 let _ = done.send(());
             }
         }
         if next.is_none() {
-            next = jobs.recv().ok();
+            next = owed.next(&jobs);
         }
     }
 }
@@ -579,6 +674,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aurora-chatlog-store-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The session that published is gone (a logout reads no answer): the
+    /// refused log is read back from memory by the next session and written
+    /// by the exit's flush once the folder takes writes.
+    #[test]
+    fn a_refused_publication_is_kept_read_back_and_written_at_the_flush() {
+        let root = temp();
+        let dir = root.join("account");
+        std::fs::write(&dir, b"in the way").unwrap();
+        let path = dir.join("conversation.log");
+        let worker = Worker::start().expect("thread");
+        let answer = worker.publish(path.clone(), b"session log".to_vec());
+        assert!(answer.recv_timeout(Duration::from_secs(10)).expect("answer").is_err());
+        let read = worker.read(path.clone()).recv_timeout(Duration::from_secs(10)).expect("answer");
+        assert_eq!(read.unwrap().as_deref(), Some(&b"session log"[..]), "read from memory");
+        std::fs::remove_file(&dir).unwrap();
+        assert!(worker.flush(Duration::from_secs(10)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"session log");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

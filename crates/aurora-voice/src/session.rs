@@ -200,6 +200,8 @@ fn free_udp_port() -> Option<u16> {
     let start = (clock_nanos() % u32::from(span)) as u16;
     (0..span)
         .map(|i| UDP_PORT_MIN + (start + i) % span)
+        // proxy-guard: a local bind probe, nothing sent; voice itself waits for
+        // aurora_proxy::Rule::voice_allowed (the viewer's voice.rs)
         .find(|&port| UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok())
 }
 
