@@ -2365,6 +2365,19 @@ pub(super) fn show(
     }
     state.open = open;
     if !open {
+        // (a paused run never outlives its window: a sort or an Undo goes
+        // on to its end, journaled for Undo, and a purge stops; neither
+        // holds the account for every other window)
+        if let Some(job) = state.job.as_mut() {
+            job.paused = false;
+        }
+        if let Some(purge) = state.purge.as_mut()
+            && purge.paused
+        {
+            purge.paused = false;
+            purge.stopping = true;
+            purge.pieces.clear();
+        }
         state.picker = None;
         state.confirm = None;
         state.share = None;
