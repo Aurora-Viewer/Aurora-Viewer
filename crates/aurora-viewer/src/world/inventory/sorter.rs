@@ -1211,6 +1211,22 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
     if whole == Some(Category::Heads) && classify(tag, -1, 0).category != Some(Category::Heads) {
         return whole;
     }
+    // (a rest naming only a set's piece, `[Summer Bikini] Top`, is the
+    // bracket's set: the tag was its name, not a store's; `{Skin Deep}
+    // Bikini` is still a bikini)
+    let set = matches!(
+        classify(tag, -1, 0).category,
+        Some(Category::Lingerie | Category::Swimwear | Category::Sleepwear | Category::Outfits)
+    );
+    let named = rest.split(|c: char| !c.is_alphanumeric()).any(|w| {
+        let w = w.to_lowercase();
+        w.chars().any(char::is_alphabetic)
+            && !VOCABULARY.store_stopwords.contains(&w)
+            && !VOCABULARY.categories.iter().any(|(_, keys)| keys.contains(&w))
+    });
+    if set && !named {
+        return whole;
+    }
     // (the rest by its words only: a wearable's layer would always answer)
     classify(rest, -1, 0).category.or(whole)
 }

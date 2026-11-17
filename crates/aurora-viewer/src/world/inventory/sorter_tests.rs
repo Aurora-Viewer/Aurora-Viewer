@@ -4080,6 +4080,17 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         "{}",
         path("[Willow Tree] Ada Poses")
     );
+    // a rest naming only a set's piece is the bracket's set
+    assert!(
+        path("[Lace Lingerie] Top").contains(Category::Lingerie.folder()),
+        "{}",
+        path("[Lace Lingerie] Top")
+    );
+    assert!(
+        path("[Summer Bikini] Top").contains(Category::Swimwear.folder()),
+        "{}",
+        path("[Summer Bikini] Top")
+    );
     assert!(
         path("(3) [Moon Hair] Ada Dress").contains(Category::Dresses.folder()),
         "{}",
