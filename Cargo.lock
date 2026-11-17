@@ -563,6 +563,21 @@ name = "aurora-build-gate"
 version = "0.1.0"
 
 [[package]]
+name = "aurora-editor-sync"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "getrandom 0.3.4",
+ "log",
+ "md5",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "aurora-i18n"
 version = "0.1.0"
 dependencies = [
@@ -718,6 +733,7 @@ dependencies = [
  "arboard",
  "aurora-assets",
  "aurora-audio",
+ "aurora-editor-sync",
  "aurora-i18n",
  "aurora-llsd",
  "aurora-media",
@@ -5223,7 +5239,7 @@ dependencies = [
  "md-5",
  "rand",
  "ring",
- "sha1",
+ "sha1 0.10.7",
  "subtle",
  "thiserror 2.0.21",
  "zeroize",
@@ -5771,6 +5787,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -6572,6 +6599,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6737,6 +6776,22 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand",
+ "sha1 0.11.0",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "type-map"

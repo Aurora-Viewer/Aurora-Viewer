@@ -39,6 +39,9 @@ pub(super) struct Tools {
     pub file_job: Option<files::Job>,
     pub file_snapshot: String,
     pub external: Option<files::Watch>,
+    /// The external editor is being launched: the script stays followed
+    /// by the editor sync while its watch is replaced.
+    pub external_starting: bool,
     pub external_snapshot: String,
     pub incoming: Option<String>,
     incoming_external: bool,
@@ -158,8 +161,13 @@ fn run(
         Command::Preferences => prefs.preferences.open = true,
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
+            // the script takes the same file again: the watch of the last
+            // launch ends now, not once the new one has written it
+            e.tools.external = None;
+            e.tools.external_starting = true;
             e.tools.file_job = Some(files::external(
                 e.name.clone(),
+                aurora_editor_sync::subscriptions::script_id(e.target.object, e.target.item),
                 e.source.clone(),
                 settings.external_editor.clone(),
                 settings.convert_tabs,
@@ -976,6 +984,7 @@ pub(super) fn search(
 fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSettings, actions: &mut Vec<Action>) {
     if let Some(done) = e.tools.file_job.as_ref().and_then(|j| j.0.try_recv().ok()) {
         e.tools.file_job = None;
+        e.tools.external_starting = false;
         match done {
             files::Done::Opened(source) if e.can_edit && e.loaded && e.saving.is_none() && e.source == e.tools.file_snapshot => {
                 let end = e.source.chars().count();

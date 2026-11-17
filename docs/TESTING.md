@@ -1940,6 +1940,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
+| `AURORA_DEMO_EDITOR_SYNC=1\|<port>` | External script editor sync with a local demo editor |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
@@ -2882,6 +2883,20 @@ frame 280 and types in it at frame 320 without saving: within ten seconds
 the log says `script backup: unsaved changes copied`, and a run killed then
 started again with `edit` offers that text (`1` replaces it with its own). The copies are in the
 demo's account folder, `script-backups`, sealed with the cache key.
+
+**`AURORA_DEMO_EDITOR_SYNC=1|<port>`**: the external script editor sync
+(WebSocket, `crate::editor_sync`) turned on for the run, on its port (9020)
+or the one given (1024 or above). At frame 280 the demo inventory script
+opens; at frame 300 it counts as sent to the external editor, without
+launching a program, and the tip "External editor server started on port
+9020." shows. A local demo editor (`aurora_editor_sync::demo_client`) then
+connects to 127.0.0.1, answers the challenge with the challenge file, lists
+the scripts and follows the first one ("Demo editor: following the
+script."); the demo saves the script with a syntax error, and the editor
+gets the compile result ("Demo editor: compile result received, 1 error,
+line 6."; the demo compiler says `(5, 9)`, counted from 0). The log says `demo editor sync:` for each step. Nothing leaves
+the computer. A port already in use shows "Failed to start external editor
+server on port …" instead.
 
 **`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland][:avatars]`** — the
 world tooltips on for the session in that form (the Legacy Viewer's text
@@ -14928,7 +14943,8 @@ animations (`object`), texture entries, extra parameters and particle
 systems (`prim`), prim shapes from their quantized parameters (`volume`),
 sculpt maps of any size (`sculpt`), terrain and wind patches (`terrain`),
 sounds (`sound`), notecards, task inventories, gestures, wearables and
-avatar base meshes (`misc`). A reader must return an error for any input:
+avatar base meshes (`misc`), and what a local editor sends to the external
+script editor sync and the chat of the scripts it follows (`editor`). A reader must return an error for any input:
 a panic, an input that runs for more than 10 s or an allocation of more
 than 1 GB is a bug. The seeds are valid inputs made by our own encoders (or
 shipped assets), never content of the grid cache.

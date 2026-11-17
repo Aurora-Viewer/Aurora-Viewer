@@ -1210,6 +1210,8 @@ pub struct App {
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
+    /// The external script editor sync's server (editor_sync.rs).
+    editor_sync: crate::editor_sync::EditorSync,
     task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
     /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
     contents_copies: contents_copy::ContentsCopies,
@@ -2274,6 +2276,7 @@ impl App {
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
+            editor_sync: Default::default(),
             task_transfer: Default::default(),
             contents_copies: Default::default(),
             world_edits: Default::default(),
@@ -3559,6 +3562,8 @@ impl App {
         self.demo_slm = None;
         self.task_notecards.clear();
         self.script_editors.disconnected();
+        // the editor sync's server ends with the session
+        self.editor_sync.stop();
         self.demo_script_sources.clear();
         self.hud_drag = None;
         self.media.clear();
@@ -7210,6 +7215,7 @@ impl App {
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up_before_exit();
+        self.editor_sync.stop();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
@@ -7959,6 +7965,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_editor_sync_steps();
         self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
@@ -10260,6 +10267,8 @@ impl App {
         if let Some(c) = self.world.follow_lsl_syntax() {
             self.send(c);
         }
+        // the external script editor sync
+        self.update_editor_sync();
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
