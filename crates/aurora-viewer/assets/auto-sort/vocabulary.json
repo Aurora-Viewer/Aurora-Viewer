@@ -416,8 +416,8 @@
     {
       "category": "jewelry",
       "words": [
-        "pin",
-        "pins",
+        "enamel pin",
+        "pin badge",
         "brooch",
         "brooches",
         "lapel pin",
@@ -450,6 +450,8 @@
     {
       "category": "accessories",
       "words": [
+        "bobby pin",
+        "bobby pins",
         "top hat",
         "eye mask",
         "sleep mask",

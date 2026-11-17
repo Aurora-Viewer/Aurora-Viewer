@@ -140,6 +140,8 @@ fn pieces_of(inv: &Inventory, id: Uuid, out: &mut Vec<Piece>) {
 /// smaller (one item, an empty folder): it is counted as failed.
 pub fn split_piece(inv: &Inventory, piece: &Piece) -> Option<Vec<Piece>> {
     match piece {
+        // (a folder not read now is never split into its cached items)
+        Piece::Folder(id) if blind(inv, *id) => None,
         Piece::Folder(id) => {
             let f = inv.folders.get(id)?;
             if f.children.is_empty() && f.items.is_empty() {

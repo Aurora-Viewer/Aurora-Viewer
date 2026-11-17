@@ -672,7 +672,11 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
             sorter::purge::Piece::Items(ids) => {
                 let ids: Vec<Uuid> = ids
                     .into_iter()
-                    .filter(|id| inv.items.contains_key(id) && inside(*id) && !worn.contains(id))
+                    // (never an item of a folder not read now: a refresh
+                    // since may have moved or changed it)
+                    .filter(|id| {
+                        inv.items.get(id).is_some_and(|it| !sorter::purge::blind(inv, it.parent)) && inside(*id) && !worn.contains(id)
+                    })
                     .collect();
                 if ids.is_empty() {
                     continue;

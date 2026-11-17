@@ -4016,3 +4016,12 @@ fn costumes_and_pins() {
     assert_eq!(classify("Brindle Christmas Tree Decor", 6, 0).category, Some(Category::Decor));
     assert_eq!(classify("Brindle Tree Top Star", 6, 0).category, Some(Category::Decor));
 }
+
+/// Audit 73: a bare pin is no jewelry; bobby pins are accessories.
+#[test]
+fn bare_pins_are_no_jewelry() {
+    assert_ne!(classify("Brindle Rolling Pin", 6, 0).category, Some(Category::Jewelry));
+    assert_ne!(classify("Brindle Bowling Pins", 6, 0).category, Some(Category::Jewelry));
+    assert_eq!(classify("Kira Bobby Pins", 6, 0).category, Some(Category::Accessories));
+    assert_eq!(classify("Kira Enamel Pin", 6, 0).category, Some(Category::Jewelry));
+}
