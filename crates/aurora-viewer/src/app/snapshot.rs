@@ -2853,10 +2853,14 @@ LUT_3D_SIZE {n}
             fast: self.shift,
             slow: self.ctrl,
         };
-        cam.turn(-look.x * free::LOOK_RATE * dt, look.y * free::LOOK_RATE * dt);
+        let precision = crate::camera::precision_scale(self.settings.camera.precision);
+        cam.turn(
+            -look.x * free::LOOK_RATE * dt * precision,
+            look.y * free::LOOK_RATE * dt * precision,
+        );
         let flight = self.snapshots.ui.free;
         if !m.is_still() {
-            let delta = cam.step(m, flight.speed, dt);
+            let delta = cam.step(m, flight.speed, dt) * precision;
             cam.position += if flight.no_collisions {
                 delta
             } else {

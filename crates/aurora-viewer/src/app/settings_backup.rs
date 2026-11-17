@@ -33,12 +33,16 @@ impl App {
         }
         self.options_ui.backup_status.clear();
         let mut backup = Backup::new(&self.settings, ui::layout::text(ctx));
+        let camera_saved = self.camera_slots.barrier();
         let date = crate::snapshot::local_stamp();
         let name = format!("aurora-settings-{}.json", date.get(..10).unwrap_or(&date));
         self.settings_backup.0 = Some(spawn(move || {
             let Some(path) = file_dialog().set_file_name(name).save_file() else {
                 return Outcome::Cancelled;
             };
+            if camera_saved.recv_timeout(std::time::Duration::from_secs(5)).is_err() {
+                return Outcome::Failed;
+            }
             backup.read_files(&crate::settings::config_dir());
             match backup
                 .to_bytes()
@@ -133,6 +137,8 @@ impl App {
             }
         }
         self.settings.save();
+        self.refresh_camera_shots();
+        self.controls_ui.reset_quick_names();
         // the account logged in saves its own files over them
         let skip = self.world.login.as_ref().map(|l| l.agent_id);
         let (tx, rx) = std::sync::mpsc::channel();

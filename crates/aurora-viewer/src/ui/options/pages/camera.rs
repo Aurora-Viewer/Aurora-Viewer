@@ -82,6 +82,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
             });
             cx.group(tr!("common-camera-movement"), |cx| {
+                cx.toggle(tr!("camera-precision"), tr!("camera-precision-tip"), &field!(camera.precision));
                 let p = cx.p;
                 cx.row(
                     tr!("ui-options-camera-viewing-angle"),
