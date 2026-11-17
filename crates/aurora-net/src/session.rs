@@ -22,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod proxy;
 mod render_info_net;
 mod scripts;
 mod sim_requests;
@@ -51,6 +52,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+
+use crate::circuit_socket::CircuitSocket;
+use proxy::login_failed;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -299,7 +303,7 @@ async fn post_appearance_request(http: &reqwest::Client, request: appearance_que
 
 struct Session<'a> {
     sh: &'a Shared,
-    sock: Arc<UdpSocket>,
+    sock: Arc<CircuitSocket>,
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
@@ -453,6 +457,15 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
+    // The proxy first (LLStartUp::startLLProxy, before the login): a proxy
+    // that cannot be used stops here, before any request leaves.
+    let mut association = match proxy::start(sh).await {
+        Ok(association) => association,
+        Err(error) => {
+            emit(sh, login_failed(error));
+            return;
+        }
+    };
     let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
@@ -497,10 +510,21 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         },
     );
 
-    let sock = match UdpSocket::bind("0.0.0.0:0").await {
+    // the relay's family: an IPv6 proxy needs an IPv6 socket
+    let bind = match association.as_ref().map(|a| a.relay()) {
+        Some(relay) if relay.is_ipv6() => "[::]:0",
+        _ => "0.0.0.0:0",
+    };
+    // proxy-guard: the circuits' socket; through the SOCKS 5 relay when the
+    // proxy is on (CircuitSocket wraps every datagram)
+    let sock = match UdpSocket::bind(bind).await {
         Ok(s) => {
             size_socket_buffers(&s);
-            Arc::new(s)
+            let s = Arc::new(s);
+            Arc::new(match association.as_ref() {
+                Some(a) => CircuitSocket::relayed(s, a.relay()),
+                None => CircuitSocket::direct(s),
+            })
         }
         Err(e) => {
             emit(
@@ -606,7 +630,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             r = sock.recv_from(&mut buf) => {
                 woke = Instant::now();
                 match r {
-                    Ok((n, from)) => s.on_datagram(&buf[..n], from),
+                    Ok(Some((range, from))) => s.on_datagram(&buf[range], from),
+                    Ok(None) => {}
                     Err(e) => {
                         // Windows reports ICMP port unreachable as recv errors.
                         log::debug!("udp recv error: {e}");
@@ -616,6 +641,20 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             _ = tick.tick() => {
                 woke = Instant::now();
                 s.tick();
+            }
+            _ = proxy::closed(&mut association) => {
+                // the proxy ended the relay: the circuits are gone with it,
+                // and nothing may go direct instead
+                woke = Instant::now();
+                log::warn!("SOCKS 5 control channel closed: session ended");
+                emit(
+                    s.sh,
+                    NetEvent::Disconnected {
+                        reason: aurora_i18n::tr!("proxy-socks-lost").into(),
+                        lost: true,
+                    },
+                );
+                s.finished = true;
             }
             c = cmd_rx.recv() => {
                 woke = Instant::now();
@@ -6983,7 +7022,7 @@ mod event_queue_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
@@ -7338,7 +7377,7 @@ mod script_dialog_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login: test_login(main.port()),
             sims,
             main: Some(main),

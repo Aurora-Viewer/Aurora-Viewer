@@ -373,7 +373,7 @@ mod tests {
         let mut session = Session {
             asset_imports: Default::default(),
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(address, sim)].into(),
             main: Some(address),

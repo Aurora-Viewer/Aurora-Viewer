@@ -1,7 +1,7 @@
 //! Preferences › Network and cache: the bandwidth, the download
 //! connections and the neighbouring regions, the disk cache (its size, its
 //! folder: the Legacy Viewer's Network & Files › CacheLocation, applied at
-//! the next start), the logs and the Dev Toolbox.
+//! the next start), the proxies (`proxy.rs`), the logs and the Dev Toolbox.
 
 use super::super::cx::{Cx, Nothing, field, fields};
 use super::super::{Folder, FolderChoice, SLIDER_W, format_bytes, path_label};
@@ -62,6 +62,7 @@ pub fn page(cx: &mut Cx) {
             &field!(no_neighbour_regions),
         );
     });
+    super::proxy::group(cx);
     cx.group(tr!("ui-options-disk-cache"), |cx| {
         cx.row(
             tr!("ui-options-maximum-size"),

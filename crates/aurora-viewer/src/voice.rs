@@ -104,6 +104,15 @@ impl Voice {
         if !v.enabled {
             return Err(aurora_i18n::tr!("common-voice-disabled").into());
         }
+        // Voice (WebRTC) cannot go through the proxy of Preferences › Network
+        // › Proxy and shows the real address to the voice servers and the
+        // other speakers: off while a proxy is on, unless the user allowed
+        // direct voice after its warning. Stricter than the Legacy Viewer,
+        // whose voice always connects directly (llvoicewebrtc.cpp has no
+        // proxy).
+        if !aurora_proxy::rule().voice_allowed() {
+            return Err(aurora_i18n::tr!("voice-off-proxy").into());
+        }
         if !v.in_world {
             return Err(String::new());
         }

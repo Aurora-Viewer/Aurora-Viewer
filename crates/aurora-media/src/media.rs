@@ -231,6 +231,9 @@ pub struct BrowserSettings {
     pub cookies_enabled: bool,
     pub javascript_enabled: bool,
     pub zoom_factor: f64,
+    /// The web proxy of Preferences › Network › Proxy (host, port), or
+    /// `None` for a direct browser (BrowserProxyEnabled).
+    pub proxy: Option<(String, u16)>,
 }
 
 impl Default for BrowserSettings {
@@ -244,6 +247,7 @@ impl Default for BrowserSettings {
             cookies_enabled: true,
             javascript_enabled: true,
             zoom_factor: 1.0,
+            proxy: None,
         }
     }
 }
@@ -432,11 +436,19 @@ impl MediaPlugin {
         if !browser.user_agent.is_empty() {
             m.send(PluginMessage::new(CLASS_MEDIA_BROWSER, "set_user_agent").with("user_agent", browser.user_agent.as_str()));
         }
+        // LLViewerMediaImpl::initializePlugin (indra/newview/llviewermedia.cpp):
+        // the plugin writes `host:port` itself, so an IPv6 host goes in
+        // brackets
+        let (host, port) = match &browser.proxy {
+            Some((host, port)) if host.contains(':') => (format!("[{host}]"), *port),
+            Some((host, port)) => (host.clone(), *port),
+            None => (String::new(), 0),
+        };
         m.send(
             PluginMessage::new(CLASS_MEDIA_BROWSER, "proxy_setup")
-                .with("enable", false)
-                .with("host", "")
-                .with("port", 0),
+                .with("enable", browser.proxy.is_some())
+                .with("host", host.as_str())
+                .with("port", i32::from(port)),
         );
         m.send(
             PluginMessage::new(CLASS_MEDIA, "init")

@@ -559,7 +559,7 @@ pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
-/// language, the viewer's user agent and JavaScript.
+/// language, the viewer's user agent, JavaScript and the web proxy.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &MediaSettings) -> BrowserSettings {
     BrowserSettings {
         // the system's own separator, as the plugin appends `cef_cache`
@@ -573,6 +573,12 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str, media: &Med
         cookies_enabled: true,
         javascript_enabled: media.javascript,
         zoom_factor: 1.0,
+        // the Legacy Viewer gives CEF its HTTP web proxy only
+        // (BrowserProxyEnabled); a SOCKS 5 proxy does not reach it
+        proxy: aurora_proxy::rule()
+            .browser
+            .as_ref()
+            .map(|endpoint| (endpoint.host().to_string(), endpoint.port())),
     }
 }
 
