@@ -819,7 +819,7 @@ mod tests {
 
             // An override on one face makes them differ again; removing a map too.
             let key = world.objects.get(prims[1]).unwrap().key;
-            for over in [maps[1], aurora_assets::material::OVERRIDE_NULL_UUID] {
+            for (n, over) in [maps[1], aurora_assets::material::OVERRIDE_NULL_UUID].into_iter().enumerate() {
                 world.gltf_overrides.insert(
                     key,
                     Arc::from(vec![(
@@ -831,7 +831,8 @@ mod tests {
                     )]),
                 );
                 assert_eq!(pbr_maps_mixed(shown(world, env)), [true, false, false, false]);
-                assert!(tentative(tool, world, env, 20.0));
+                // each frame later than the last one: egui's input history asserts it
+                assert!(tentative(tool, world, env, 20.0 + 5.0 * n as f64));
             }
             world.gltf_overrides.remove(&key);
 
