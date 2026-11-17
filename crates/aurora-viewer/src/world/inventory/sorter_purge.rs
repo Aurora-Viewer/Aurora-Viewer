@@ -35,7 +35,9 @@ impl Piece {
     /// The entries it removes, as the inventory holds them now.
     pub fn entries(&self, inv: &Inventory) -> usize {
         match self {
-            Piece::Folder(id) | Piece::Emptied(id) => 1 + entries_below(inv, *id),
+            Piece::Folder(id) => 1 + entries_below(inv, *id),
+            // (its contents went, and were counted, piece by piece)
+            Piece::Emptied(_) => 1,
             Piece::Items(ids) => ids.len(),
         }
     }

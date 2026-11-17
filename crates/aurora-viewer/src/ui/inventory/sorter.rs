@@ -626,12 +626,14 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
         }
         if job.refused_in_row >= PURGE_REFUSALS {
             job.stopping = true;
-            job.failed += job.pieces.iter().map(|p| p.entries(inv)).sum::<usize>();
             job.pieces.clear();
         }
         return;
     }
     if job.pieces.is_empty() {
+        // (what is left is what the folder still holds: never an entry
+        // counted twice, refused in its piece and deleted with its folder)
+        job.failed = sorter::purge::entries_below(inv, job.folder);
         st.sorter.status = if job.refused_in_row >= PURGE_REFUSALS {
             aurora_i18n::tr!("inventory-purge-refused", count = job.done, failed = job.failed)
         } else {
@@ -1610,7 +1612,7 @@ pub(super) fn show(
     if st.sorter.window.is_nil() {
         st.sorter.window = Uuid::new_v4();
     }
-    if st.sorter.job.is_some() || st.sorter.trash.is_some() {
+    if st.sorter.job.is_some() || st.sorter.trash.is_some() || st.sorter.purge.is_some() {
         st.sorter.journal.claim(st.sorter.window);
     } else {
         st.sorter.journal.release(st.sorter.window);
