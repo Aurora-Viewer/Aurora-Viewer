@@ -218,14 +218,16 @@ fn export_modal(ctx: &egui::Context, p: &Palette, s: &Settings, st: &mut Options
     let mut close = false;
     let modal = widgets::Modal::new(egui::Id::unique("options_share_export")).show(ctx, |ui| {
         use widgets::{ActionKind, action_button, checkbox, primary_button_sized};
-        ui.set_width(460.0);
+        ui.set_width(560.0);
         title(ui, p, tr!("ui-options-share-title"));
         muted(ui, p, tr!("ui-options-share-intro"));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let size = Vec2::new(0.0, 24.0);
             if action_button(ui, p, "palette-filled", tr!("ui-options-share-looks"), ActionKind::Flat, size).clicked() {
-                ex.pages = LOOKS.iter().copied().collect();
+                // the looks the user changed: a page left at its defaults
+                // has nothing to say
+                ex.pages = LOOKS.iter().copied().filter(|p| ex.counts.contains_key(p)).collect();
                 ex.dirty = true;
             }
             if action_button(
@@ -247,29 +249,28 @@ fn export_modal(ctx: &egui::Context, p: &Palette, s: &Settings, st: &mut Options
             }
         });
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
-            .id_salt("options_share_pages")
-            .max_height(200.0)
+        // three columns: every page in sight, without a scroll
+        egui::Grid::new("options_share_pages_grid")
+            .num_columns(3)
+            .spacing(Vec2::new(14.0, 4.0))
             .show(ui, |ui| {
-                egui::Grid::new("options_share_pages_grid").num_columns(2).show(ui, |ui| {
-                    for (i, page) in SHARED_PAGES.iter().enumerate() {
-                        let count = ex.counts.get(page).copied().unwrap_or(0);
-                        let mut on = ex.pages.contains(page);
-                        let label = tr!("ui-options-share-page", page = page_name(page), count = count);
-                        let text = RichText::new(label).color(if count == 0 { p.muted } else { p.ink });
-                        if checkbox(ui, p, &mut on, text).changed() {
-                            if on {
-                                ex.pages.insert(page);
-                            } else {
-                                ex.pages.remove(page);
-                            }
-                            ex.dirty = true;
+                for (i, page) in SHARED_PAGES.iter().enumerate() {
+                    let count = ex.counts.get(page).copied().unwrap_or(0);
+                    let mut on = ex.pages.contains(page);
+                    let label = tr!("ui-options-share-page", page = page_name(page), count = count);
+                    let text = RichText::new(label).color(if count == 0 { p.muted } else { p.ink });
+                    if checkbox(ui, p, &mut on, text).changed() {
+                        if on {
+                            ex.pages.insert(page);
+                        } else {
+                            ex.pages.remove(page);
                         }
-                        if i % 2 == 1 {
-                            ui.end_row();
-                        }
+                        ex.dirty = true;
                     }
-                });
+                    if i % 3 == 2 {
+                        ui.end_row();
+                    }
+                }
             });
         ui.add_space(6.0);
         let name = ui.add(

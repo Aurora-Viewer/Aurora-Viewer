@@ -1244,7 +1244,8 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
 }
 
 /// The page of each setting a row of Preferences edits (`Page::key`), its
-/// path and the row's label, in the interface's language: what a share
+/// path and the row's label after its group's title, in the interface's
+/// language: what a share
 /// code may carry (`settings/share.rs`). A setting a page only keeps in
 /// step (`Cx::track`) has its path for a label.
 pub fn setting_pages() -> Vec<(&'static str, String, String)> {
@@ -1260,9 +1261,17 @@ pub fn setting_pages() -> Vec<(&'static str, String, String)> {
         for page in Page::ALL {
             run_page(&mut cx, page, None);
         }
+        let groups: HashMap<&'static str, String> = std::mem::take(&mut cx.grouped).into_iter().collect();
+        // a label alone ("Direct") may need its group ("Chat colours")
         let labels: HashMap<String, String> = std::mem::take(&mut cx.described)
             .into_iter()
-            .map(|(path, label, _)| (path.replace(' ', ""), label))
+            .map(|(path, label, _)| {
+                let label = match groups.get(path) {
+                    Some(group) if !group.is_empty() && !label.contains(group.as_str()) => format!("{group} › {label}"),
+                    _ => label,
+                };
+                (path.replace(' ', ""), label)
+            })
             .collect();
         out = std::mem::take(&mut cx.collected)
             .into_iter()
