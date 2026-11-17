@@ -203,7 +203,7 @@ fn person_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut Peopl
         data,
         st,
         id,
-        NameScope::World,
+        NameScope::Roster,
         false,
         !c.contact_sheet_on_click,
         c.actions,

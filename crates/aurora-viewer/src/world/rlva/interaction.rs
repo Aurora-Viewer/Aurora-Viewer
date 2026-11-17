@@ -7,19 +7,35 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
-    /// RlvActions::canInteract (indra/newview/rlvactions.cpp): @interact
-    /// leaves the HUDs alone, and @fartouch limits every other object to
-    /// its distance, our own worn objects included (canTouch exempts them,
-    /// this rule does not). `position` is the point under the cursor in the
+    /// LLViewerWindow::cursorIntersect (indra/newview/llviewerwindow.cpp):
+    /// under @interact every pick is dropped, a HUD's as much as the
+    /// world's. Only our own avatar stays under the pie tool, and the
+    /// camera and drag-and-drop tools keep their picks (`rlva_can_rez`).
+    /// A touch that needs no pick is another rule: `rlva_can_touch_at`
+    /// (RlvActions::canTouch, the Touch entry of a worn object).
+    pub fn rlva_drops_picks(&self) -> bool {
+        self.rlva.enabled() && self.rlva.has("interact")
+    }
+
+    /// Whether a click or the pointer may act on object `index`: the pick
+    /// first (`rlva_drops_picks`; RlvActions::canInteract exempts the HUDs
+    /// from @interact, but it is only asked about a pick that was kept),
+    /// then RlvActions::canInteract (indra/newview/rlvactions.cpp):
+    /// @fartouch leaves the HUDs alone and limits every other object to its
+    /// distance, our own worn objects included (canTouch exempts them, this
+    /// rule does not). `position` is the point under the cursor in the
     /// viewer's region-relative world, like `rlva_can_touch_at`; without one
     /// the object's own position is measured.
     pub fn rlva_can_interact_at(&self, index: usize, position: Option<Vec3>) -> bool {
         let r = &self.rlva;
-        if !r.enabled() || self.hud_root(index).is_some() {
+        if !r.enabled() {
             return true;
         }
-        if r.has("interact") {
+        if self.rlva_drops_picks() {
             return false;
+        }
+        if self.hud_root(index).is_some() {
+            return true;
         }
         let max = r.distance_limit("fartouch", 1.5, Uuid::nil());
         // an object whose place is unknown is out of reach, never in reach
@@ -31,24 +47,25 @@ impl World {
     }
 
     /// Whether a right click on object `index` may open its menu
-    /// (LLToolPie::handleRightClickPick). @interact keeps only our own avatar
-    /// and the HUDs, as `rlva_can_interact_at` does; @fartouch keeps what
+    /// (LLToolPie::handleRightClickPick). @interact keeps only our own
+    /// avatar (`rlva_drops_picks`); @fartouch keeps the HUDs and what
     /// LLToolSelect::handleObjectSelection selects: an object within its
     /// distance, what we wear, or one whose clicked `surface` is within
     /// 1.5 m, whatever the @fartouch distance is.
     pub fn rlva_can_designate(&self, index: usize, surface: Option<Vec3>) -> bool {
-        let r = &self.rlva;
-        if !r.enabled() || self.hud_root(index).is_some() || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
+        if !self.rlva.enabled() || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
             return true;
         }
-        !r.has("interact")
-            && (self.rlva_within_fartouch(index) || surface.is_some_and(|p| p.is_finite() && p.distance(self.agent.position) <= 1.5))
+        !self.rlva_drops_picks()
+            && (self.hud_root(index).is_some()
+                || self.rlva_within_fartouch(index)
+                || surface.is_some_and(|p| p.is_finite() && p.distance(self.agent.position) <= 1.5))
     }
 
     /// Whether a right click on the land may open its menu: @interact drops
     /// the pick (LLViewerWindow::cursorIntersect).
     pub fn rlva_can_designate_land(&self) -> bool {
-        !self.rlva.enabled() || !self.rlva.has("interact")
+        !self.rlva_drops_picks()
     }
 }
 
@@ -104,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn rlva_interact_leaves_only_the_huds() {
+    fn rlva_interact_drops_every_pick_a_hud_included() {
         let (mut w, prim, hud) = world();
         assert!(w.hud_root(hud).is_some(), "the fixture's second prim is worn on a HUD point");
         assert!(w.rlva_can_interact_at(prim, None) && w.rlva_can_interact_at(hud, None));
@@ -114,10 +131,21 @@ mod tests {
             !w.rlva_can_interact_at(prim, Some(w.agent.position)),
             "a near point changes nothing"
         );
-        assert!(w.rlva_can_interact_at(hud, None));
+        // LLViewerWindow::cursorIntersect drops a HUD's pick like any other
+        assert!(w.rlva_drops_picks());
+        assert!(!w.rlva_can_interact_at(hud, None), "a HUD answers no click either");
+        // its touch from the worn object's Touch entry needs no pick
+        // (handle_attachment_touch asks RlvActions::canTouch alone)
+        let o = w.objects.get(hud).expect("hud");
+        assert!(w.rlva_can_touch(o.key.region, o.key.local_id));
+        restrict(&mut w, "interact=y");
+        assert!(!w.rlva_drops_picks());
+        assert!(w.rlva_can_interact_at(prim, None) && w.rlva_can_interact_at(hud, None));
         // the preference off: no rule at all
+        restrict(&mut w, "interact=n");
         w.rlva.configure(false);
-        assert!(w.rlva_can_interact_at(prim, None));
+        assert!(!w.rlva_drops_picks());
+        assert!(w.rlva_can_interact_at(prim, None) && w.rlva_can_interact_at(hud, None));
     }
 
     #[test]
@@ -185,9 +213,9 @@ mod tests {
         assert!(!w.rlva_can_designate(prim, Some(near)), "at any distance");
         assert!(!w.rlva_can_designate_land());
         assert!(w.rlva_can_designate(me, None), "our own avatar keeps its menu");
-        assert!(w.rlva_can_designate(hud, None), "a HUD keeps its menu");
+        assert!(!w.rlva_can_designate(hud, None), "a HUD has no menu either");
         assert!(!crate::build::rlva_selectable(&w, prim), "a world object leaves the selection");
-        assert!(crate::build::rlva_selectable(&w, hud), "a HUD stays selected");
+        assert!(crate::build::rlva_selectable(&w, hud), "a HUD already selected stays selected");
         assert!(
             w.rlva_can_place_at(far),
             "@interact refuses the Create tool elsewhere (rlva_can_rez)"

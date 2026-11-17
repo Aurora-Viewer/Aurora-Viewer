@@ -230,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_capability_is_posted_and_its_answers_and_errors_read() {
-        let http = reqwest::Client::new();
+        let http = crate::test_http_client();
         let kept = llsd_map! {
             "success" => true,
             "HomeLocation" => llsd_map! { "LocationPos" => llsd_map! { "X" => 128, "Y" => 64, "Z" => 25 } },

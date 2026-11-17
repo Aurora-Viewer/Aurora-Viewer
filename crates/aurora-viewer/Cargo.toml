@@ -27,10 +27,12 @@ iana-time-zone = "0.1.65"
 chrono-tz = "0.10.4"
 aurora-assets = { version = "0.1.0", path = "../aurora-assets" }
 aurora-audio = { version = "0.1.0", path = "../aurora-audio" }
+aurora-editor-sync = { version = "0.1.0", path = "../aurora-editor-sync" }
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 aurora-media = { version = "0.1.0", path = "../aurora-media" }
 aurora-net = { version = "0.1.0", path = "../aurora-net" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-render = { version = "0.1.0", path = "../aurora-render" }
 aurora-voice = { version = "0.1.0", path = "../aurora-voice" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }

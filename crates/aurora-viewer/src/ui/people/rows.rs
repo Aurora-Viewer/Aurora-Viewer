@@ -40,14 +40,15 @@ pub(super) fn allocate(ui: &mut egui::Ui, id: Uuid, size: Vec2) -> (Rect, egui::
     (rect, response)
 }
 
-/// The name a row shows: the display name as the name preferences make it
-/// (a contact set nickname included), as Near you's rows do.
-pub(super) fn display_name(world: &World, id: &Uuid) -> String {
+/// The name a row of a list shown in `scope` gives: the display name as the
+/// name preferences make it (a contact set nickname included), as Near
+/// you's rows do.
+pub(super) fn display_name(world: &World, scope: NameScope, id: &Uuid) -> String {
     let names = &world.social.avatar_names;
     names
-        .get(id)
+        .get_in(scope, id)
         .map(|n| n.display(&names.options))
-        .unwrap_or_else(|| world.social.name_of(id))
+        .unwrap_or_else(|| world.social.name_in(scope, id))
 }
 
 /// A semi-bold text format (the mock-up's weight 600).
@@ -542,23 +543,25 @@ pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>) {
 
 /// The right-click menu of a resident's row: the menu of several when the
 /// row is part of a selection of several (menu_fs_radar_multiselect.xml),
-/// else the resident's own.
-pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid) {
+/// else the resident's own, as the list shown in `scope` names them.
+pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, scope: NameScope, sel: &[Uuid], id: Uuid) {
     let kind = if world.social.is_friend(&id) {
         AvatarList::Friend
     } else {
         AvatarList::Nearby
     };
-    list_menu(resp, p, world, sel, id, kind);
+    list_menu(resp, p, world, scope, sel, id, kind);
 }
 
 /// Also called for clipped rows: an open popup stays at its original click
 /// while its resident moves out of the visible part of the list.
-pub(super) fn list_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid, kind: AvatarList) {
+pub(super) fn list_menu(resp: &egui::Response, p: &Palette, world: &World, scope: NameScope, sel: &[Uuid], id: Uuid, kind: AvatarList) {
     let several = sel.len() > 1 && sel.contains(&id);
     menu::context_menu(resp, p, |ui| {
         if several {
             context::avatars_menu(ui, p, world, sel);
+        } else if scope == NameScope::Roster {
+            context::avatar_roster_menu(ui, p, world, id, kind);
         } else {
             context::avatar_list_menu(ui, p, world, id, kind);
         }
@@ -626,7 +629,7 @@ mod tests {
                     let (rect, resp) = allocate(ui, id, Vec2::new(300.0, RICH_H));
                     self.rects.insert(id, rect);
                     self.popups.insert(id, egui::Popup::default_response_id(&resp));
-                    person_menu(&resp, &p, &self.world, &[], id);
+                    person_menu(&resp, &p, &self.world, NameScope::World, &[], id);
                 }
             });
         }

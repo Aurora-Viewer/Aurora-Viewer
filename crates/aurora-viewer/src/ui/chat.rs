@@ -34,6 +34,7 @@ mod payment_card;
 mod popout;
 pub mod previews;
 mod reorder;
+pub(crate) mod shortcuts;
 pub use reorder::Demo as ReorderDemo;
 pub(crate) mod select;
 pub(crate) mod sidebar;
@@ -62,6 +63,7 @@ use super::context::CtxAction;
 use super::presence;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
+use crate::world::names::NameScope;
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
@@ -92,6 +94,9 @@ pub struct ChatUi {
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
     pub keep_focus: bool,
+    /// No button back to the latest messages (Preferences › Chat ›
+    /// Conversations, `Settings::chat_latest_button` off): `latest.rs`.
+    pub hide_latest: bool,
     /// Enter on an empty field gives the keyboard back in every
     /// conversation, not only the nearby chat (Preferences › Chat, Aurora's).
     pub enter_toggles: bool,
@@ -100,13 +105,17 @@ pub struct ChatUi {
     pub enter_last_field: bool,
     /// The chat field a message was last sent from.
     last_field: ChatField,
-    /// The chat bar shows only while it is used (Preferences › Chat; the
-    /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
-    pub autohide: bool,
+    /// When the chat bar shows (Preferences › Chat, given every frame by
+    /// the app): always, only while it is used (the Legacy Viewer's
+    /// AutohideChatBar, #1009), or never (#2696): `bar_shown`,
+    /// `follow_bar_mode`.
+    pub bar_mode: crate::settings::ChatBar,
     /// The toolbar's Chat bar put the bar away for this session (the Legacy
     /// Viewer's MainChatbarVisible off, not saved): `toggle_bar`. Enter or
     /// a letter key brings it back with the keyboard.
     pub bar_hidden: bool,
+    /// A draft put away in WhenTyping stays in the editor for the next Enter.
+    typing_dismissed: bool,
     /// The bar was shown before the pointer went down (`note_frame`): a
     /// press on the toolbar takes the keyboard from an autohidden bar, which
     /// then hides before the click lands on the Chat bar button.
@@ -472,6 +481,55 @@ impl ChatUi {
         self.popped.remove(Some(conversation));
     }
 
+    /// Keep the editor, its selection and its window when the simulator gives
+    /// the conference its permanent ID (processSessionInitializedReply).
+    fn rekey_conference(&mut self, ctx: &egui::Context, from: uuid::Uuid, to: uuid::Uuid) {
+        let (old, new) = (Some(from), Some(to));
+        if self.last_field == ChatField::Conversation(old) {
+            self.last_field = ChatField::Conversation(new);
+        }
+        if self.selected == old {
+            self.selected = new;
+        }
+        if self.reveal == old {
+            self.reveal = new;
+        }
+        if self.selection.0 == old {
+            self.selection.0 = new;
+        }
+        if self.picker_window == Some(Some(old)) {
+            self.picker_window = Some(Some(new));
+        }
+        self.popped.rekey(from, to);
+        if let Some(draft) = self.drafts.remove(&old) {
+            self.drafts.insert(new, draft);
+        }
+        if let Some(history) = self.input_history.remove(&old) {
+            self.input_history.insert(new, history);
+        }
+        if let Some(search) = self.searches.remove(&old) {
+            self.searches.insert(new, search);
+        }
+        if let Some(view) = self.views.remove(&old) {
+            self.views.insert(new, view);
+        }
+        let input = |conversation: Option<uuid::Uuid>| egui::Id::unique(("conv_input", conversation));
+        for (before, after) in [
+            (input(old), input(new)),
+            (find::field_id(old), find::field_id(new)),
+            (find::filter_id(old), find::filter_id(new)),
+        ] {
+            if let Some(state) = egui::TextEdit::load_state(ctx, before) {
+                state.store(ctx, after);
+            }
+            ctx.memory_mut(|m| {
+                if m.has_focus(before) {
+                    m.request_focus(after);
+                }
+            });
+        }
+    }
+
     /// "Detach": `conversation` in its own window, its field taking the
     /// keyboard, from the next frame (the Conversations window drew it in
     /// this one).
@@ -498,24 +556,42 @@ impl ChatUi {
         self.show_channel.then_some(self.chat_channel)
     }
 
-    /// The chat bar is drawn this frame: always, or with `autohide` while it
-    /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
+    /// The chat bar is drawn this frame: always, never with "Conversations
+    /// window only", or with "Shown when typing" while it is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
     /// key brings it with the keyboard, and Escape or a message sent with
-    /// "Keep the chat bar active" off puts it away; a click elsewhere on an
-    /// empty bar puts it away too, where the Legacy Viewer waited for
-    /// Escape. A draft keeps it.
+    /// "Keep the chat bar active" off puts it away. The editor keeps its draft.
     pub fn bar_shown(&self) -> bool {
-        if self.bar_hidden {
+        use crate::settings::ChatBar;
+        if self.bar_mode == ChatBar::ConversationsOnly {
+            return false;
+        }
+        if self.bar_hidden || (self.bar_mode == ChatBar::WhenTyping && self.typing_dismissed) {
             return self.focus_request;
         }
-        !self.autohide
+        self.bar_mode == ChatBar::Always
             || self.has_focus
             || self.focus_request
             || !self.input.trim().is_empty()
             || self.bar_emoji_open
             || self.bar_channel_open
             || self.bar_hovered
+    }
+
+    /// FSNearbyChatControl::autohide(false) leaves unsent text in the editor.
+    /// An open picker or modal gets to dismiss itself first.
+    pub(crate) fn dismiss_typing_bar(&mut self, ctx: &egui::Context) {
+        if self.bar_mode == crate::settings::ChatBar::WhenTyping
+            && !self.bar_emoji_open
+            && !self.bar_channel_open
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+        {
+            self.typing_dismissed = true;
+            self.has_focus = false;
+            self.focus_request = false;
+            self.shown_before_click = false;
+        }
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -547,7 +623,10 @@ impl ChatUi {
     /// the interface hidden: a draft put away with the Chat bar button does
     /// not count, a keyboard request does.
     pub fn in_use(&self) -> bool {
-        self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
+        if self.bar_mode == crate::settings::ChatBar::ConversationsOnly {
+            return false;
+        }
+        self.focus_request || (self.bar_shown() && (self.has_focus || !self.input.trim().is_empty()))
     }
 
     /// Enter from the world (start_chat, indra/newview/llviewerinput.cpp):
@@ -579,6 +658,45 @@ impl ChatUi {
         self.focus_request = true;
     }
 
+    /// "Conversations window only" (#2696), once a frame before the bars
+    /// are drawn: what asked the chat bar for the keyboard (Enter, a letter
+    /// key, the gesture key, the toolbar's Chat bar) gets the nearby chat's
+    /// field instead, with what was typed for the bar. That field is the
+    /// nearby chat's own window when it is torn off (#910), else the Nearby
+    /// tab of the Conversations window: opened if closed (where it was
+    /// left), expanded if minimized, brought to the front.
+    pub fn follow_bar_mode(&mut self, ctx: &egui::Context, conversations_open: &mut bool) {
+        if self.bar_mode != crate::settings::ChatBar::ConversationsOnly {
+            return;
+        }
+        self.has_focus = false;
+        self.bar_emoji_open = false;
+        self.bar_channel_open = false;
+        if !std::mem::take(&mut self.focus_request) {
+            return;
+        }
+        self.gesture_keep_cursor = false;
+        let typed = std::mem::take(&mut self.input);
+        self.draft_mut(None).push_str(&typed);
+        if self.popped.raise(None, true) {
+            return;
+        }
+        self.selected = None;
+        self.contacts = false;
+        self.show_profile = false;
+        self.conv_focus_request = true;
+        super::notifications::open_conversations(ctx, conversations_open);
+        super::widgets::bring_floater_front(ctx, "conversations");
+    }
+
+    /// Enter on an empty conversation field gives the keyboard back
+    /// (`compose::returns_to_world`): "Enter toggles typing in
+    /// conversations", and the nearby chat's field with "Conversations
+    /// window only", which takes the chat bar's place and so its rule.
+    fn enter_toggles_in(&self, local: bool) -> bool {
+        self.enter_toggles || (local && self.bar_mode == crate::settings::ChatBar::ConversationsOnly)
+    }
+
     /// A conversation's field (`None`: nearby chat) was used: clicked or
     /// focused, or a message sent from it.
     pub(crate) fn used_conversation(&mut self, to: Option<uuid::Uuid>) {
@@ -598,6 +716,12 @@ impl ChatUi {
     /// button shows and hides that window.
     pub fn nearby_apart(&self) -> bool {
         self.popped.contains(None)
+    }
+
+    /// `conversation` is in a window of its own (`popout.rs`): showing it
+    /// does not need the Conversations window.
+    pub fn in_own_window(&self, conversation: uuid::Uuid) -> bool {
+        self.popped.contains(Some(conversation))
     }
 
     /// The nearby chat's own window is on screen, expanded.
@@ -654,6 +778,12 @@ impl ChatUi {
             }
             NearbyChatShortcut::CloseDocked => *conversations_open = false,
         }
+    }
+
+    /// `AURORA_DEMO_BARS=window…`: the nearby chat back in the
+    /// Conversations window, whatever the profile saved.
+    pub fn demo_dock_nearby(&mut self) {
+        self.popped.remove(None);
     }
 
     /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
@@ -803,14 +933,20 @@ impl SendKey {
     }
 }
 
-/// Classify the Enter event once: releasing a modifier later in the same
+/// Classify the send key once: releasing a modifier later in the same
 /// frame must change neither permission to send, OOC wrapping nor volume.
 /// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
-/// the event's mask; Alt alone is OOC, other Alt chords stay unclaimed.
-fn send_enter(i: &egui::InputState) -> Option<SendKey> {
+/// the event's mask. The ((OOC)), shout and whisper keys are the user's
+/// (`shortcuts.rs`: Alt+Enter, then none by default); Enter
+/// otherwise sends at the selected volume, an Alt chord left unclaimed
+/// (AltGr). The New line key never comes here: `input::prepare` made it
+/// a line break.
+fn send_enter(i: &egui::InputState, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
+    use crate::keybinds::Action;
     i.events.iter().find_map(|event| {
         let egui::Event::Key {
-            key: egui::Key::Enter,
+            key,
+            physical_key,
             pressed: true,
             modifiers,
             ..
@@ -818,21 +954,19 @@ fn send_enter(i: &egui::InputState) -> Option<SendKey> {
         else {
             return None;
         };
-        if modifiers.alt {
-            ooc_key(modifiers).then_some(SendKey::Ooc)
-        } else if modifiers.ctrl {
+        let hit = |a| keys.hit(a, *key, *physical_key, *modifiers);
+        if hit(Action::ChatOoc) {
+            Some(SendKey::Ooc)
+        } else if hit(Action::ChatShout) {
             Some(SendKey::Shout)
-        } else if modifiers.shift {
+        } else if hit(Action::ChatWhisper) {
             Some(SendKey::Whisper)
-        } else {
+        } else if *key == egui::Key::Enter && !modifiers.alt {
             Some(SendKey::Normal)
+        } else {
+            None
         }
     })
-}
-
-/// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
-fn ooc_key(m: &egui::Modifiers) -> bool {
-    m.alt && !m.ctrl && !m.shift && !m.mac_cmd
 }
 
 /// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
@@ -1194,6 +1328,7 @@ pub(crate) fn text_with_links(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
+    scope: NameScope,
     text: &str,
     names: &[crate::world::notifications::NameLink],
     size: f32,
@@ -1222,7 +1357,7 @@ pub(crate) fn text_with_links(
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, false.into()),
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size, false.into()),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size, false.into()),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, scope, id, &label, size, false.into()),
                     Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
                     _ => plain(ui, &label),
                 },
@@ -1233,7 +1368,7 @@ pub(crate) fn text_with_links(
                 // a dialog has no mention highlight: the name, as a link
                 Seg::Agent(id) | Seg::Mention(id) => {
                     wanted.insert(id);
-                    agent_link(ui, p, world, id, &world.social.name_of(&id), size, false.into());
+                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, false.into());
                 }
             }
         }
@@ -1322,11 +1457,13 @@ fn line_job(
     times: bool,
     look: JobLook<'_>,
 ) -> BubbleJob {
+    // the on-screen chat has no conversation: the line's kind tells its names
+    let scope = line_names(&line.kind);
     let filtered;
     let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
         let mut copy = line.clone();
-        copy.text = world.rlva_filter_text(&copy.text).into_owned();
-        copy.from = sender_name(world, &world.own_name(), &copy);
+        copy.text = world.rlva_filter_text_in(scope, &copy.text).into_owned();
+        copy.from = sender_name(world, scope, &world.own_name(), &copy);
         filtered = copy;
         &filtered
     } else {
@@ -1434,7 +1571,7 @@ fn line_job(
     let name_of = |s: &Seg| match s {
         Seg::Agent(id) | Seg::Mention(id) => {
             want_names.insert(*id);
-            world.social.name_of(id)
+            world.social.name_in(scope, id)
         }
         Seg::App(u, link) => app_links::label(world, want_names, u, link),
         _ => String::new(),
@@ -1450,11 +1587,11 @@ fn line_job(
     let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
         let piece = if let Some(Link::Agent(id)) = &link
-            && !world.rlva_can_name(*id)
+            && !world.rlva_shows_name(scope, *id)
         {
-            world.social.name_of(id)
+            world.social.name_in(scope, id)
         } else {
-            world.rlva_filter_text(&piece).into_owned()
+            world.rlva_filter_text_in(scope, &piece).into_owned()
         };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
@@ -1695,12 +1832,17 @@ pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) 
 /// its middle, as the Legacy Viewer's toasts show the labels of their text
 /// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it.
 pub(crate) fn resolved_text(world: &World, text: &str) -> String {
+    resolved_text_in(world, NameScope::World, text)
+}
+
+/// `resolved_text` for a text shown in `scope` (`conversation_names`).
+pub(crate) fn resolved_text_in(world: &World, scope: NameScope, text: &str) -> String {
     let name = |id: &uuid::Uuid| {
         app_links::want_agents([*id]);
-        Some(world.social.name_of(id))
+        Some(world.social.name_in(scope, id))
     };
     let text = plain_text(text, name, |u, link| app_label(world, u, link));
-    world.rlva_filter_text(&text).into_owned()
+    world.rlva_filter_text_in(scope, &text).into_owned()
 }
 
 /// The schemes of the links of a text, with or without their own text.
@@ -2153,7 +2295,7 @@ pub(crate) fn chat_text(
     color: Color32,
     italics: bool,
 ) {
-    chat_text_marked(ui, p, emoji, world, want_names, text, size, color, italics, None);
+    chat_text_marked(ui, p, emoji, world, NameScope::World, want_names, text, size, color, italics, None);
 }
 
 /// A text searched for in the lines, and the wash its matches are drawn on.
@@ -2187,13 +2329,15 @@ fn marked_run(
     emoji.inline(ui, &text[at..], size, color, emphasis);
 }
 
-/// `chat_text` with the matches of a searched text highlighted.
+/// `chat_text` with the matches of a searched text highlighted, for a text
+/// shown in `scope` (`conversation_names`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chat_text_marked(
     ui: &mut egui::Ui,
     p: &Palette,
     emoji: &mut super::emoji::Emoji,
     world: &World,
+    scope: NameScope,
     want_names: &mut HashSet<uuid::Uuid>,
     text: &str,
     size: f32,
@@ -2202,7 +2346,7 @@ pub(crate) fn chat_text_marked(
     mark: Option<Mark>,
 ) {
     let emphasis = emphasis.into();
-    let filtered = world.rlva_filter_text(text);
+    let filtered = world.rlva_filter_text_in(scope, text);
     let text = filtered.as_ref();
     let segs = segments(text);
     // only a text that has a match is cut into runs
@@ -2222,7 +2366,7 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size, emphasis),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size, emphasis),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, scope, id, &label, size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
                             ui,
@@ -2242,7 +2386,7 @@ pub(crate) fn chat_text_marked(
                     want_names.insert(id);
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
-                    let label = format!(" @{} ", world.social.name_of(&id));
+                    let label = format!(" @{} ", world.social.name_in(scope, &id));
                     let r = action_marker::link(
                         ui,
                         action_marker::Action::Profile,
@@ -2259,7 +2403,7 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
-                    agent_link(ui, p, world, id, &world.social.name_of(&id), size, emphasis);
+                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, emphasis);
                 }
             }
         }
@@ -2284,14 +2428,23 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32, em
     }
 }
 
-/// An avatar link of a text (its name, or the text it was written with):
-/// opens the profile, the name menu on a right click.
+/// An avatar link of a text shown in `scope` (its name, or the text it was
+/// written with): opens the profile, the name menu on a right click.
 #[allow(clippy::too_many_arguments)]
-fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32, emphasis: super::fonts::TextEmphasis) {
-    let projected = if world.rlva_can_name(id) {
-        world.rlva_filter_text(text).into_owned()
+fn agent_link(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    scope: NameScope,
+    id: uuid::Uuid,
+    text: &str,
+    size: f32,
+    emphasis: super::fonts::TextEmphasis,
+) {
+    let projected = if world.rlva_shows_name(scope, id) {
+        world.rlva_filter_text_in(scope, text).into_owned()
     } else {
-        world.social.name_of(&id)
+        world.social.name_in(scope, &id)
     };
     let text = projected.as_str();
     let k = super::colors::get();
@@ -2414,11 +2567,35 @@ fn header_names(
     r
 }
 
-/// The name a line shows for its sender (FSChatHistoryHeader): the display
-/// name looked up, mine, else the name the line came with; history lines are
-/// looked up for nothing.
-pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_can_name(line.source) {
+/// The names a conversation shows under `@shownames`: the nearby chat hides
+/// those of the residents around, an IM session, a group's or a
+/// conference's hides none (FSFloaterIM and its transcript test no
+/// restriction, fsfloaterim.cpp; FSChatHistory::appendMessage anonymises a
+/// line only when it `is_local`, fschathistory.cpp).
+pub(crate) fn conversation_names(session: Option<&uuid::Uuid>) -> NameScope {
+    match session {
+        None => NameScope::World,
+        Some(_) => NameScope::Roster,
+    }
+}
+
+/// `conversation_names` for a line shown outside its conversation (the
+/// on-screen chat): an instant message and a teleport offer or request
+/// name their sender (process_improved_im tests nothing for them,
+/// llimprocessing.cpp), every other line follows the nearby chat.
+pub(crate) fn line_names(kind: &ChatKind) -> NameScope {
+    match kind {
+        ChatKind::Im | ChatKind::Invite(_) => NameScope::Roster,
+        _ => NameScope::World,
+    }
+}
+
+/// The name a line of a conversation shown in `scope` gives its sender
+/// (FSChatHistoryHeader): the display name looked up, mine, else the name
+/// the line came with; history lines are looked up for nothing.
+pub(crate) fn sender_name(world: &World, scope: NameScope, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_shows_name(scope, line.source)
+    {
         return world.rlva_anonymous(line.source).display_name.clone();
     }
     let logged = line.origin != Origin::Live;
@@ -2428,12 +2605,12 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     let cached = if object || logged {
         None
     } else {
-        names.get(if own { &world.agent_id } else { &line.source })
+        names.get_in(scope, if own { &world.agent_id } else { &line.source })
     };
     match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => own_name.to_owned(),
-        None => world.rlva_filter_text(&line.from).into_owned(),
+        None => world.rlva_filter_text_in(scope, &line.from).into_owned(),
     }
 }
 
@@ -2455,7 +2632,7 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 
 /// The text a line shows, as a copy of it gives it: links as written,
 /// places, names and mentions as shown.
-fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
+fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, name: &str) -> String {
     let body = match line.kind {
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => line.text.clone(),
         _ => line_body(line, name).0,
@@ -2466,12 +2643,12 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
             Seg::Labelled(label, _) => label.into_owned(),
             Seg::Place(_, place) => place.label,
-            Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
-            Seg::Agent(id) => world.social.name_of(&id),
+            Seg::Mention(id) => format!(" @{} ", world.social.name_in(scope, &id)),
+            Seg::Agent(id) => world.social.name_in(scope, &id),
             Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
         .collect();
-    world.rlva_filter_text(&text).into_owned()
+    world.rlva_filter_text_in(scope, &text).into_owned()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -2506,6 +2683,8 @@ struct Copied<'a> {
     lines: &'a std::collections::VecDeque<crate::world::ChatLine>,
     first: u64,
     world: &'a World,
+    /// The names the conversation shows (`conversation_names`).
+    names: NameScope,
     own_name: &'a str,
 }
 
@@ -2516,8 +2695,8 @@ impl Copied<'_> {
             let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
                 return (String::new(), String::new());
             };
-            let name = sender_name(self.world, self.own_name, line);
-            (copy_prefix(line, &name), shown_text(self.world, line, &name))
+            let name = sender_name(self.world, self.names, self.own_name, line);
+            (copy_prefix(line, &name), shown_text(self.world, self.names, line, &name))
         })
     }
 
@@ -2742,6 +2921,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         emoji,
         pics,
         world: w,
+        names: conversation_names(st.selected.as_ref()),
         want_names: &mut st.wanted_names,
         wanted: &mut st.wanted_pics,
         own_name,
@@ -2863,6 +3043,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 lines,
                 first: clock.first,
                 world: w,
+                names: conversation_names(st.selected.as_ref()),
                 own_name,
             };
             if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
@@ -2894,7 +3075,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -2919,6 +3100,9 @@ pub(crate) struct LineEnv<'a> {
     pub emoji: &'a mut super::emoji::Emoji,
     pub pics: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
     pub world: &'a World,
+    /// The names the conversation shows under `@shownames`
+    /// (`conversation_names`).
+    pub names: NameScope,
     /// Names to resolve (mentions, agent links).
     pub want_names: &'a mut HashSet<uuid::Uuid>,
     /// Profile pictures to load.
@@ -3004,6 +3188,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
+                    env.names,
                     env.want_names,
                     &system_text(&line.text),
                     super::fonts::chat_size(ui.ctx(), 12.5),
@@ -3022,7 +3207,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let cached = if object || logged {
         None
     } else {
-        names.get(if own { &world.agent_id } else { &line.source })
+        names.get_in(env.names, if own { &world.agent_id } else { &line.source })
     };
     let name = match cached {
         Some(n) => n.display(&names.options),
@@ -3105,6 +3290,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
+                    env.names,
                     env.want_names,
                     &visible,
                     super::fonts::chat_size(ui.ctx(), 13.5),
@@ -3190,6 +3376,9 @@ fn list_entry(
     // it drags out of the window (the nearby chat's, #910); a closable
     // entry drags anyway, to its place too
     drags: bool,
+    // drawn this far from its place, which keeps the pointer: it slides
+    // while another is dragged and glides in once dropped (`reorder.rs`)
+    offset: egui::Vec2,
 ) -> ListEntry {
     // narrower beside the list's scroll bar, when it shows
     let width = ENTRY_W.min(ui.available_width());
@@ -3198,10 +3387,11 @@ fn list_entry(
     } else {
         egui::Sense::click()
     };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), sense);
+    let (place, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), sense);
     // the close button stands over the entry and takes its hover: the entry
     // keeps its hovered face while the pointer is on the button
-    let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));
+    let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(place));
+    let rect = place.translate(offset);
     let fill = if sel {
         p.violet.gamma_multiply(0.22)
     } else if over {
@@ -3323,7 +3513,19 @@ fn list_ghost(
         // the list's colour under it, which the entry's own face washes
         let face = egui::Rect::from_min_size(ui.cursor().min, g.size);
         ui.painter().rect_filled(face, 0.0, p.bar);
-        let entry = list_entry(ui, p, label, pic.map(|t| (t, label)), status, true, 0, None, 0.0, false);
+        let entry = list_entry(
+            ui,
+            p,
+            label,
+            pic.map(|t| (t, label)),
+            status,
+            true,
+            0,
+            None,
+            0.0,
+            false,
+            egui::Vec2::ZERO,
+        );
         if g.out {
             popout::paint_mark(ui, p, trailing_slot(entry.resp.rect));
         }
@@ -3378,19 +3580,35 @@ pub fn show(
     let mut actions = std::mem::take(&mut st.thumbnails.actions);
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
+    for (from, to) in world.social.conference_rekeys.drain(..) {
+        st.rekey_conference(ctx, from, to);
+    }
     let opening_conversation = world.social.focus_im.is_some();
-    if let Some(f) = world.social.focus_im.take() {
+    if let Some(f) = world.social.focus_im {
         let conversation = (!f.is_nil()).then_some(f);
-        if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
-            // the keyboard asked of the Conversations window goes to its own
-            let focus = std::mem::take(&mut st.conv_focus_request);
-            st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
-            // and the Conversations window, opened for it, stays closed
-            if !st.main_open {
-                *open = false;
+        let own_window = popout::opens_in_own_window(&st.popped, conversation, st.own_windows);
+        // a request for the Conversations window waits while it is closed:
+        // the app may open it next (a new call opens it), and consuming the
+        // request now would let the "window opened" rule below take the
+        // keyboard for a conversation a call only asked to show
+        if own_window || *open {
+            // a conversation the user opened asks for the keyboard too
+            // (World::focus_conversation; FSFloaterIM::show → setFocus(true)
+            // → focusFirstItem); a call shows it alone
+            let take_keyboard = std::mem::take(&mut world.social.focus_im_to_type);
+            world.social.focus_im = None;
+            if own_window {
+                // the keyboard asked of the Conversations window goes to its own
+                let focus = std::mem::take(&mut st.conv_focus_request) || take_keyboard;
+                st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
+                // and the Conversations window, opened for it, stays closed
+                if !st.main_open {
+                    *open = false;
+                }
+            } else {
+                st.open(f);
+                st.conv_focus_request |= take_keyboard;
             }
-        } else {
-            st.open(f);
         }
     }
     let docked = !contacts_settings.torn_off;
@@ -3526,6 +3744,7 @@ pub fn show(
                         None,
                         0.0,
                         false,
+                        egui::Vec2::ZERO,
                     )
                     .resp
                     .clicked()
@@ -3545,6 +3764,7 @@ pub fn show(
                         None,
                         0.0,
                         true,
+                        egui::Vec2::ZERO,
                     )
                     .resp;
                     conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
@@ -3589,23 +3809,28 @@ pub fn show(
                         // their display name alone, so that it shows in a
                         // narrow tab; "> " first with FSTypingChevronPrefix
                         let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
-                            .then(|| typing::text(&[world.social.display_name_of(&other)]))
+                            .then(|| typing::text(&[world.social.display_name_in(NameScope::Roster, &other)]))
                             .flatten()
                             .map(|t| if st.typing_chevron { format!("> {t}") } else { t });
-                        st.reorder.space_before(ui, other);
                         let status = (!world.is_group_session(&other)).then(|| presence::of(world, &other));
-                        let entry = list_entry(
-                            ui,
-                            p,
-                            typing.as_deref().unwrap_or(&name),
-                            Some((pics.get(&other), &name)),
-                            status,
-                            shown,
-                            unread,
-                            Some(close_tip(world, &other)),
-                            flash,
-                            true,
-                        );
+                        let offset = st.reorder.slide(ui, other);
+                        let entry = st.reorder.draw(ui, p, other, offset, None, |ui| {
+                            let entry = list_entry(
+                                ui,
+                                p,
+                                typing.as_deref().unwrap_or(&name),
+                                Some((pics.get(&other), &name)),
+                                status,
+                                shown,
+                                unread,
+                                Some(close_tip(world, &other)),
+                                flash,
+                                true,
+                                offset,
+                            );
+                            let place = entry.resp.rect;
+                            (entry, place)
+                        });
                         if reveal == Some(other) {
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
@@ -3613,7 +3838,6 @@ pub fn show(
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         st.reorder.row(world, other, &entry.resp);
-                        st.reorder.space_after(ui, other);
                         if st.reorder.dragging(Some(other))
                             && let Some(g) = st.reorder.ghost(ui.ctx())
                         {
@@ -3757,7 +3981,7 @@ fn classic_pane(
                     .iter()
                     .map(|id| {
                         st.wanted_names.insert(*id);
-                        (*id, world.social.name_of(id), info.moderators.contains(id))
+                        (*id, world.social.name_in(NameScope::Roster, id), info.moderators.contains(id))
                     })
                     .collect();
                 names.sort_by_key(|(_, n, _)| crate::natural_order::key(n));
@@ -3869,7 +4093,7 @@ fn classic_pane(
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
                 .floor()
                 .max(40.0);
-            let hint = input::hint(ui, hint, field_w);
+            let hint = input::hint(ui, conv_input, hint, field_w, true);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3894,12 +4118,15 @@ fn classic_pane(
             }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
+            let local = st.selected.is_none();
             let field = output.response.response;
             // the hint of the keys hides the last line while typing (#3211)
             if !draft.is_empty() && field.has_focus() {
                 field
             } else {
-                field.on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+                field.on_hover_ui(|ui| {
+                    ui.label(shortcuts::tip(&shortcuts::get(ui.ctx()), local, false));
+                })
             }
         })
         .inner;
@@ -3965,7 +4192,8 @@ fn classic_pane(
     let send = if send_clicked {
         Some(SendKey::Normal)
     } else if !focusing && (resp.has_focus() || resp.lost_focus()) {
-        ui.input(send_enter)
+        let keys = shortcuts::get(ui.ctx());
+        ui.input(|i| send_enter(i, &keys))
     } else {
         None
     };
@@ -3992,7 +4220,7 @@ fn classic_pane(
         }
         draft.clear();
         let local = st.selected.is_none();
-        if compose::returns_to_world(local, st.enter_toggles, st.keep_focus, sent, send_clicked) {
+        if compose::returns_to_world(local, st.enter_toggles_in(local), st.keep_focus, sent, send_clicked) {
             resp.surrender_focus();
         } else {
             resp.request_focus();
@@ -4730,7 +4958,8 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 }
 
 /// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
-/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
+/// Enter says, the Shout and Whisper keys (`shortcuts.rs`, none by
+/// default) shout and whisper, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
 /// its own frame (`build` dresses the field) and shows emoji pictures.
@@ -4778,10 +5007,9 @@ pub(crate) fn bar_input(
             output
         })
         .inner;
-    let resp = output
-        .response
-        .response
-        .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
+    let resp = output.response.response.on_hover_ui(|ui| {
+        ui.label(shortcuts::tip(&shortcuts::get(ui.ctx()), true, true));
+    });
     // the Enter that asked for the keyboard (start_chat) is not one typed
     // in the field: taken as Enter on an empty bar, it handed the keyboard
     // straight back to the world
@@ -4789,6 +5017,7 @@ pub(crate) fn bar_input(
     if focusing {
         // Enter or a letter key shows a bar put away (showDefaultChatBar(true))
         st.bar_hidden = false;
+        st.typing_dismissed = false;
         resp.request_focus();
         // FSNearbyChat::showDefaultChatBar only moves the caret after
         // inserting `/` into an empty field; a draft keeps its position.
@@ -4797,12 +5026,25 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
+    // Completion lists have already handled their own Escape and restored focus.
+    if resp.lost_focus()
+        && ui.input(|i| {
+            i.events.iter().any(
+                |event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if modifiers.is_none()),
+            )
+        })
+    {
+        st.dismiss_typing_bar(ui.ctx());
+    }
     if resp.gained_focus() {
         st.last_field = ChatField::Bar;
     }
     // The editor leaves ordinary Enter to this send path.
     let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
-        ui.input(send_enter)
+        {
+            let keys = shortcuts::get(ui.ctx());
+            ui.input(|i| send_enter(i, &keys))
+        }
     } else {
         None
     };
@@ -4843,11 +5085,30 @@ pub(crate) fn bar_input(
 mod tests {
     #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
+        let send_with = |keys: &super::shortcuts::ChatKeys, modifiers: egui::Modifiers| {
+            let mut input = egui::InputState::default();
+            input.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            });
+            super::send_enter(&input, keys)
+        };
+        let keys = super::shortcuts::ChatKeys::of(&crate::keybinds::KeyBindings::default());
+        let send = |modifiers| send_with(&keys, modifiers);
         let alt = egui::Modifiers::ALT;
-        assert!(super::ooc_key(&alt));
+        assert_eq!(send(alt), Some(super::SendKey::Ooc));
         // AltGr (Ctrl+Alt) and other Alt chords stay unclaimed
-        assert!(!super::ooc_key(&(alt | egui::Modifiers::CTRL)));
-        assert!(!super::ooc_key(&(alt | egui::Modifiers::SHIFT)));
+        assert_eq!(send(alt | egui::Modifiers::CTRL), None);
+        assert_eq!(send(alt | egui::Modifiers::SHIFT), None);
+        // no Shout key by default: Ctrl+Enter sends at the volume chosen
+        assert_eq!(send(egui::Modifiers::CTRL), Some(super::SendKey::Normal));
+        let shout = super::shortcuts::ChatKeys::of(&super::shortcuts::ctrl_enter_shout());
+        assert_eq!(send_with(&shout, egui::Modifiers::CTRL), Some(super::SendKey::Shout));
+        assert_eq!(send_with(&shout, alt), Some(super::SendKey::Ooc));
+        assert_eq!(send(egui::Modifiers::NONE), Some(super::SendKey::Normal));
         assert_eq!(super::ooc("brb"), "(( brb ))");
         assert_eq!(super::ooc(""), "");
         // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
@@ -4962,9 +5223,11 @@ mod tests {
 
     #[test]
     fn the_chat_bar_button_puts_the_bar_away_and_brings_it_back_with_the_keyboard() {
-        for autohide in [false, true] {
+        use crate::settings::ChatBar;
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
+            let autohide = bar_mode.hides();
             let mut st = ChatUi {
-                autohide,
+                bar_mode,
                 ..Default::default()
             };
             st.input = "draft".into();
@@ -4982,10 +5245,181 @@ mod tests {
         }
     }
 
+    /// "Conversations window only" (#2696): the bar never shows, whatever
+    /// asks for it, and the bars kept in mouselook do not count it in use.
+    #[test]
+    fn the_chat_bar_never_shows_in_conversations_window_only() {
+        let mut st = ChatUi {
+            bar_mode: crate::settings::ChatBar::ConversationsOnly,
+            ..Default::default()
+        };
+        st.input = "draft".into();
+        st.has_focus = true;
+        st.focus_request = true;
+        st.bar_hovered = true;
+        st.bar_emoji_open = true;
+        assert!(!st.bar_shown() && !st.in_use());
+        st.toggle_bar();
+        assert!(!st.bar_shown());
+    }
+
+    /// "Conversations window only": Enter, a letter key, the gesture key
+    /// and the toolbar's Chat bar ask for the bar, and the nearby chat's
+    /// field answers: the Conversations window opened (closed), expanded
+    /// (minimized) or brought forward on the Nearby tab, or the nearby
+    /// chat's own window when torn off. The other modes leave the request
+    /// to the bar.
+    #[test]
+    fn enter_opens_the_nearby_tab_of_the_conversations_window_in_conversations_window_only() {
+        use crate::settings::ChatBar;
+        let group = uuid::Uuid::from_u128(7);
+        let exists = |id: &uuid::Uuid| *id == group;
+        let window_only = || ChatUi {
+            bar_mode: ChatBar::ConversationsOnly,
+            ..ChatUi::default()
+        };
+        let on_nearby = |st: &ChatUi, what: &str| {
+            assert!(!st.focus_request, "{what}: not the bar");
+            assert!(
+                st.conv_focus_request && st.selected.is_none() && !st.contacts && !st.show_profile,
+                "{what}"
+            );
+        };
+        // closed, on another tab: opened on Nearby
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.selected = Some(group);
+        st.contacts = true;
+        st.show_profile = true;
+        let mut open = false;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert!(open, "closed: opened");
+        on_nearby(&st, "closed");
+        // minimized: expanded
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        let mut open = true;
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        let expand = egui::Id::unique("conversations").with(super::super::widgets::EXPAND);
+        assert!(
+            open && ctx.data(|d| d.get_temp::<bool>(expand)) == Some(true),
+            "minimized: expanded"
+        );
+        on_nearby(&st, "minimized");
+        // a letter key and the gesture key: what was typed goes along
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.draft_mut(None).push_str("Hi ");
+        st.input.push('t');
+        st.focus_request = true;
+        let mut open = true;
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.draft_mut(None).as_str(), "Hi t");
+        assert!(st.input.is_empty());
+        on_nearby(&st, "letter key");
+        let mut st = window_only();
+        let mods = crate::keybinds::Mods::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let code = winit::keyboard::KeyCode::Slash;
+        assert!(st.gesture_key(&ctx, &slash, code, true, mods));
+        assert!(st.gesture_key(&ctx, &slash, code, false, mods));
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.draft_mut(None).as_str(), "/");
+        on_nearby(&st, "gesture key");
+        // the toolbar's Chat bar
+        let mut st = window_only();
+        st.toggle_bar();
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "Chat bar button");
+        // the nearby chat torn off: its own window, the Conversations
+        // window left closed
+        let mut st = window_only();
+        st.popped.pop_out(None, false, false, false);
+        st.popped.set_hidden(None, true);
+        let mut open = false;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert!(!open && !st.focus_request && st.popped.shown(None), "torn off: its window");
+        // "Enter returns to the last chat field used" still goes to the group
+        let mut st = window_only();
+        st.enter_last_field = true;
+        st.last_field = ChatField::Conversation(Some(group));
+        let mut open = true;
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        assert_eq!(st.selected, Some(group), "the last field used");
+        // ... but not in a minimized Conversations window (#2436's rule):
+        // the window expands on Nearby chat
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.enter_last_field = true;
+        st.last_field = ChatField::Conversation(Some(group));
+        st.selected = Some(group);
+        let mut open = true;
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, window minimized");
+
+        // A detached, minimized IM also leaves Enter to Nearby chat.
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        let mut open = false;
+        st.enter_last_field = true;
+        st.selected = Some(group);
+        st.popped.pop_out(Some(group), false, false, false);
+        st.last_field = ChatField::Conversation(Some(group));
+        let minimized = egui::Id::unique((popout::floater_id(Some(group)), "minimized"));
+        ctx.data_mut(|d| d.insert_persisted(minimized, true));
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, detached IM minimized");
+        assert!(ctx.data_mut(|d| d.get_persisted::<bool>(minimized)).unwrap_or(false));
+        // the other modes: the bar takes it
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
+            let mut st = ChatUi {
+                bar_mode,
+                ..ChatUi::default()
+            };
+            let mut open = false;
+            st.start_chat(&ctx, open, exists);
+            st.input.push('t');
+            st.follow_bar_mode(&ctx, &mut open);
+            assert!(
+                st.focus_request && st.bar_shown() && !open && !st.conv_focus_request,
+                "{bar_mode:?}"
+            );
+            assert_eq!(st.input, "t");
+        }
+    }
+
+    /// An empty Enter gives the keyboard back in the nearby field with
+    /// "Conversations window only", which takes the chat bar's place;
+    /// elsewhere "Enter toggles typing in conversations" decides.
+    #[test]
+    fn the_nearby_field_toggles_like_the_chat_bar_in_conversations_window_only() {
+        use crate::settings::ChatBar;
+        for bar_mode in [ChatBar::Always, ChatBar::WhenTyping, ChatBar::ConversationsOnly] {
+            for enter_toggles in [false, true] {
+                let st = ChatUi {
+                    bar_mode,
+                    enter_toggles,
+                    ..ChatUi::default()
+                };
+                let window_only = bar_mode == ChatBar::ConversationsOnly;
+                assert_eq!(st.enter_toggles_in(true), enter_toggles || window_only, "{bar_mode:?} nearby");
+                assert_eq!(st.enter_toggles_in(false), enter_toggles, "{bar_mode:?} IM");
+            }
+        }
+    }
+
     #[test]
     fn a_click_on_the_chat_bar_button_hides_an_autohidden_bar_that_lost_the_keyboard_to_it() {
         let mut st = ChatUi {
-            autohide: true,
+            bar_mode: crate::settings::ChatBar::WhenTyping,
             ..Default::default()
         };
         st.has_focus = true;
@@ -5270,7 +5704,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World, text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
@@ -5330,7 +5764,7 @@ mod tests {
                                 if chat {
                                     chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false);
                                 } else {
-                                    text_with_links(ui, &p, &world, &text, &[], size, p.ink);
+                                    text_with_links(ui, &p, &world, NameScope::World, &text, &[], size, p.ink);
                                 }
                             },
                         );
@@ -5395,7 +5829,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, &text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World, &text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         let mut shown = String::new();
@@ -6279,14 +6713,13 @@ mod tests {
         };
         let field = |c: uuid::Uuid| egui::Id::unique(("conv_input", Some(c)));
         // opened by a call: shown, the keyboard stays nowhere
-        world.social.focus_im = Some(a);
+        world.focus_conversation(a, false);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(a));
         assert!(ctx.memory(|m| m.focused()).is_none());
         // opened by the user: shown and ready to type in
-        world.social.focus_im = Some(b);
-        st.conv_focus_request = true;
+        world.focus_conversation(b, true);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(b));
@@ -6297,8 +6730,7 @@ mod tests {
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert!(crate::ui::widgets::floater_minimized(&ctx, "conversations"));
-        world.social.focus_im = Some(a);
-        st.conv_focus_request = true;
+        world.focus_conversation(a, true);
         crate::ui::notifications::open_conversations(&ctx, &mut open);
         for _ in 0..4 {
             frame(&mut st, &mut world, &mut open);
@@ -6546,7 +6978,19 @@ mod tests {
     fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize, closable: bool) -> ListEntry {
         let p = crate::theme::Theme::default().palette();
         let close = closable.then_some(CLOSE_TIP);
-        list_entry(ui, &p, label, pic.then_some((None, label)), None, sel, unread, close, 0.0, false)
+        list_entry(
+            ui,
+            &p,
+            label,
+            pic.then_some((None, label)),
+            None,
+            sel,
+            unread,
+            close,
+            0.0,
+            false,
+            egui::Vec2::ZERO,
+        )
     }
 
     #[test]
@@ -6888,6 +7332,7 @@ mod tests {
                         emoji: &mut emoji,
                         pics: &pics,
                         world: &world,
+                        names: NameScope::World,
                         want_names: &mut names,
                         wanted: &mut wanted,
                         own_name: "Self",

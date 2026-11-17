@@ -595,9 +595,12 @@ fn face_highlights_replace_whole_object_outlines_only_in_face_mode() {
     assert!(tool.silhouette_selection(&world, &settings).is_empty());
     settings.show_highlight = false;
     assert!(tool.face_selection(&world, &settings).is_empty());
+    // the face-select pattern is not gated by Show highlight
+    assert_eq!(tool.face_picks(&world)[&idx], (1 << 1) | (1 << 3));
     settings.show_highlight = true;
     tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
     assert!(tool.face_selection(&world, &settings).is_empty());
+    assert!(tool.face_picks(&world).is_empty());
     assert!(tool.faces.is_empty());
 }
 

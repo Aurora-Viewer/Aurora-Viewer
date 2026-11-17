@@ -60,7 +60,7 @@ impl Channel {
     }
 
     /// Bus index (everything except `Master`, which is not a bus).
-    fn bus(self) -> Option<usize> {
+    pub(crate) fn bus(self) -> Option<usize> {
         match self {
             Channel::Master => None,
             other => Some(other.index() - 1),
@@ -69,8 +69,8 @@ impl Channel {
 }
 
 /// Number of mixing buses (every channel except master).
-const NUM_BUSES: usize = 6;
-const BUS_CHANNELS: [Channel; NUM_BUSES] = [
+pub(crate) const NUM_BUSES: usize = 6;
+pub(crate) const BUS_CHANNELS: [Channel; NUM_BUSES] = [
     Channel::Ui,
     Channel::Ambient,
     Channel::Sfx,
@@ -211,7 +211,7 @@ impl GainSmoother {
         self.current
     }
 
-    #[cfg(test)]
+    /// The gain now (the film's sound takes the reverb at it, record.rs).
     pub(crate) fn value(&self) -> f32 {
         self.current
     }
@@ -923,6 +923,9 @@ pub(crate) enum Command {
     Reverb(Option<ReverbParams>),
     /// Fade a world voice out and drop it.
     StopWorld(u64),
+    /// The Director's film takes the mix of these channels (record.rs),
+    /// or no longer.
+    Record(Option<Box<crate::record::RecordSink>>),
 }
 
 /// Upper bound on simultaneous world voices (extra requests are dropped).
@@ -957,6 +960,10 @@ pub(crate) struct Mixer {
     /// and output (master), so that muting the master silences its tail
     /// at once.
     reverb_gains: [GainSmoother; 3],
+    /// The film's own mix, while one records (record.rs).
+    record: Option<Box<crate::record::RecordSink>>,
+    /// That mix's dry part of a buffer, with the reverb.
+    rec_buf: Vec<f32>,
 }
 
 /// Buses whose world voices feed the reverb.
@@ -990,6 +997,8 @@ impl Mixer {
             send: Vec::with_capacity(4096),
             wet: Vec::with_capacity(4096),
             reverb_gains,
+            record: None,
+            rec_buf: Vec::with_capacity(4096),
         }
     }
 
@@ -1046,6 +1055,7 @@ impl Mixer {
                     }
                 }
                 Ok(Command::Reverb(params)) => self.reverb.set(params),
+                Ok(Command::Record(sink)) => self.record = sink,
                 Ok(Command::StopWorld(id)) => {
                     for w in self.world.iter_mut().filter(|w| w.id == id) {
                         w.stopping = true;
@@ -1093,16 +1103,26 @@ impl Mixer {
         let targets: [f32; NUM_BUSES] = std::array::from_fn(|i| self.params.bus_target(BUS_CHANNELS[i]));
 
         if !reverb {
+            let mut record = self.record.as_deref_mut();
             for (f, frame) in out[..len].as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
                 let mut l = 0.0f32;
                 let mut r = 0.0f32;
-                for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets) {
+                // (the film's mix: the channels it takes, at the same gains)
+                let (mut rl, mut rr) = (0.0f32, 0.0f32);
+                for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets).enumerate() {
                     let g = smoother.next(target);
                     l += bus[2 * f] * g;
                     r += bus[2 * f + 1] * g;
+                    if record.as_ref().is_some_and(|sink| sink.takes(i)) {
+                        rl += bus[2 * f] * g;
+                        rr += bus[2 * f + 1] * g;
+                    }
                 }
                 frame[0] = l.clamp(-1.0, 1.0);
                 frame[1] = r.clamp(-1.0, 1.0);
+                if let Some(sink) = record.as_deref_mut() {
+                    sink.push(rl, rr);
+                }
             }
         } else {
             self.mix_with_reverb(&mut out[..len], &targets);
@@ -1122,13 +1142,23 @@ impl Mixer {
         let reverb_buses = REVERB_BUSES.map(|c| c.bus().unwrap_or(0));
         self.send.clear();
         self.send.resize(frames, 0.0);
+        // the film's mix, dry here, its reverb added below (record.rs)
+        let recording = self.record.is_some();
+        self.rec_buf.clear();
+        if recording {
+            self.rec_buf.resize(out.len(), 0.0);
+        }
         for (f, frame) in out.as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
             let mut l = 0.0f32;
             let mut r = 0.0f32;
-            for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(targets) {
+            for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(targets).enumerate() {
                 let g = smoother.next(target);
                 l += bus[2 * f] * g;
                 r += bus[2 * f + 1] * g;
+                if self.record.as_ref().is_some_and(|sink| sink.takes(i)) {
+                    self.rec_buf[2 * f] += bus[2 * f] * g;
+                    self.rec_buf[2 * f + 1] += bus[2 * f + 1] * g;
+                }
             }
             frame[0] = l;
             frame[1] = r;
@@ -1149,6 +1179,19 @@ impl Mixer {
             let g = master.next(reverb_targets[0]);
             frame[0] = (frame[0] + wet[0] * g).clamp(-1.0, 1.0);
             frame[1] = (frame[1] + wet[1] * g).clamp(-1.0, 1.0);
+        }
+        if let Some(sink) = self.record.as_deref_mut() {
+            let master = self.reverb_gains[0].value();
+            for (dry, wet) in self
+                .rec_buf
+                .as_chunks::<ENGINE_CHANNELS>()
+                .0
+                .iter()
+                .zip(self.wet.as_chunks::<ENGINE_CHANNELS>().0)
+            {
+                let g = if sink.wet { master } else { 0.0 };
+                sink.push(dry[0] + wet[0] * g, dry[1] + wet[1] * g);
+            }
         }
     }
 

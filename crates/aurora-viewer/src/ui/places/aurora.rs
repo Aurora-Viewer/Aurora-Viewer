@@ -1571,25 +1571,30 @@ impl PlacesUi {
         ui.add_space(8.0);
         // the folders of the Landmarks tab, in chips
         if current == Source::All {
-            egui::ScrollArea::horizontal()
-                .id_salt("places-chips")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), self.aurora.source == Source::All)
-                            .clicked()
-                        {
-                            self.set_source(Source::All);
-                        }
-                        for f in model::folders(&world.inventory) {
-                            let on = self.aurora.source == Source::Folder(f.id);
-                            if widgets::pills::filter_pill(ui, p, "", &f.name, on).clicked() {
-                                self.set_source(Source::Folder(f.id));
-                            }
-                        }
-                    });
-                });
+            // the wheel moves the row, and the chosen folder comes into view (#3872)
+            widgets::chip_row(ui, "places-chips", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mut chosen = None;
+                let all = self.aurora.source == Source::All;
+                let chip = widgets::pills::filter_pill(ui, p, "", aurora_i18n::tr!("ui-places-chip-all"), all);
+                if all {
+                    chosen = Some((egui::Id::unique("all"), chip.rect));
+                }
+                if chip.clicked() {
+                    self.set_source(Source::All);
+                }
+                for f in model::folders(&world.inventory) {
+                    let on = self.aurora.source == Source::Folder(f.id);
+                    let chip = widgets::pills::filter_pill(ui, p, "", &f.name, on);
+                    if on {
+                        chosen = Some((egui::Id::unique(f.id), chip.rect));
+                    }
+                    if chip.clicked() {
+                        self.set_source(Source::Folder(f.id));
+                    }
+                }
+                chosen
+            });
             ui.add_space(8.0);
         }
         // the narrow list keeps the landmarks of the Landmarks tab only
