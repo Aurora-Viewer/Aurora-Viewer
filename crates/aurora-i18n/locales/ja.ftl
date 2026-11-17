@@ -8826,6 +8826,7 @@ build-ui-tools-stretch-ctrl-shift = 引き延ばす (Ctrl＋Shift)
 build-ui-tools-stretch-both-sides = 両側を引き伸ばす
 build-ui-tools-stretch-textures = テクスチャを引き延ばす
 build-ui-tools-follow-edit-object = 編集中はオブジェクトを追う
+build-wheel-on-hover = ポインター下の値をホイールで変更
 ui-worldmap-events = イベント
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects = この区画でグループ「{ $value0 }{ "」と共有されているすべてのオブジェクトを、以前の所有者のインベントリに返却してもよろしいですか？\u000A\u000A*警告* グループに譲渡された譲渡不可のオブジェクトは削除されます！\u000A\u000Aオブジェクト：" }{ $value1 }
 ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-2 = { "この区画にある、あなたが所有していないすべてのオブジェクトを所有者のインベントリに返却してもよろしいですか？グループに譲渡された譲渡可能なオブジェクトは以前の所有者に返却されます。\u000A\u000A*警告* グループに譲渡された譲渡不可のオブジェクトはすべて削除されます！\u000A\u000Aオブジェクト：" }{ $value0 }
