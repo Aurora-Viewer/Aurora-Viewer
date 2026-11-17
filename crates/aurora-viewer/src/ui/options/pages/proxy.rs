@@ -86,6 +86,9 @@ impl Direct {
 /// The longest host the rule takes (`Endpoint::new`).
 const HOST_CHARS: usize = 253;
 
+/// The width of a direct row's switch and warning.
+const DIRECT_W: f32 = 260.0;
+
 pub fn group(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
@@ -238,8 +241,16 @@ fn direct_row(cx: &mut Cx, direct: Direct, [label, hint, warning]: [&str; 3], f:
     cx.wide().row_with(label, hint, f, |ui, s, st, _| {
         let mut on = *direct.get(s);
         let mut changed = false;
+        // one width for both rows, the switch at its right end: the two
+        // switches line up with each other and with the page's other ones
         ui.vertical(|ui| {
-            if widgets::switch(ui, &p, &mut on).changed() {
+            ui.set_width(DIRECT_W);
+            let switched = ui
+                .with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    widgets::switch(ui, &p, &mut on).changed()
+                })
+                .inner;
+            if switched {
                 if on {
                     st.proxy.confirm = Some(direct);
                 } else {
