@@ -201,10 +201,15 @@ pub struct DrawnObject {
     pub hit: DrawnFace,
 }
 
+/// The object and the face of the blended face of an answer, then of its
+/// opaque one ([`Scene::drawn_objects`]).
+pub type DrawnObjects = [Option<(usize, Option<usize>)>; 2];
+
 impl Scene {
     /// Cursor feedback follows the same surface and designation as a left
     /// press, including the bounded search under a wearer's body. The
     /// caller caches this asynchronous answer; HUD picking stays separate.
+    #[cfg(test)]
     pub fn drawn_hover(
         &self,
         world: &World,
@@ -213,9 +218,24 @@ impl Scene {
         depth: Option<Vec3>,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        let adjusted = self.touch_depth(world, drawn, Some(ray), depth, far);
+        self.drawn_hover_of(world, drawn, &self.drawn_objects(drawn), ray, depth, far)
+    }
+
+    /// [`Self::drawn_hover`] with the objects of the answer's faces
+    /// (`objects`, [`Self::drawn_objects`]): the hover asks ten times a
+    /// second, and scans the objects once per answer.
+    pub fn drawn_hover_of(
+        &self,
+        world: &World,
+        drawn: &Drawn,
+        objects: &DrawnObjects,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let adjusted = self.touch_depth_of(world, drawn, objects, Some(ray), depth, far);
         let point = self.action_point(world, Some(ray), adjusted, false, far);
-        if let Some(shown) = self.designated(world, Gesture::Touch, drawn, Some(ray), point, depth, false) {
+        if let Some(shown) = self.designated_of(world, Gesture::Touch, drawn, objects, Some(ray), point, depth, false) {
             return (Some(shown.hit.point), Some(shown.idx));
         }
         (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
@@ -273,20 +293,26 @@ impl Scene {
     /// over its skin, where "Rigged attachments of other avatars" is on. A
     /// blended face the click passes through is as if it were not there.
     /// None when the object is one the CPU finds by itself, and speaks for.
+    #[cfg(test)]
     pub fn drawn_hover_under(&self, world: &World, drawn: &Drawn, ray: (Vec3, Vec3)) -> Option<(usize, f32)> {
-        let posed = |face: DrawnFace| {
-            let (idx, _) = self.record_object(face.record)?;
+        self.drawn_hover_under_of(world, drawn, &self.drawn_objects(drawn), ray)
+    }
+
+    /// [`Self::drawn_hover_under`] with the objects of the answer's faces.
+    pub fn drawn_hover_under_of(&self, world: &World, drawn: &Drawn, objects: &DrawnObjects, ray: (Vec3, Vec3)) -> Option<(usize, f32)> {
+        let posed = |face: DrawnFace, object: Option<(usize, Option<usize>)>| {
+            let (idx, _) = object?;
             self.drawn_status(world, idx)
                 .posed_by_gpu
                 .then_some((idx, (face.point - ray.0).dot(ray.1)))
         };
         if let Some(face) = drawn.blend {
-            let over = posed(face)?;
+            let over = posed(face, objects[0])?;
             if self.takes(world, Gesture::Touch, over.0, false) {
                 return Some(over);
             }
         }
-        posed(drawn.opaque?)
+        posed(drawn.opaque?, objects[1])
     }
 
     /// [`Self::drawn_hover`] between two answers of the GPU, for the mesh
@@ -355,13 +381,48 @@ impl Scene {
     pub fn record_object(&self, record: u32) -> Option<(usize, Option<usize>)> {
         self.gpu.iter().enumerate().find_map(|(idx, g)| {
             let draw = g.faces.iter().find(|f| f.record == record)?;
-            let face = g.geom.and_then(|key| self.geom_ready(&key)).and_then(|geom| {
-                geom.faces
-                    .iter()
-                    .position(|a| a.as_ref().is_some_and(|a| a.index_offset == draw.cmd.first_index))
-            });
-            Some((idx, face))
+            Some((idx, self.draw_face(g, draw)))
         })
+    }
+
+    /// The face of the object (texture entry index) a draw belongs to.
+    fn draw_face(&self, g: &ObjGpu, draw: &FaceDraw) -> Option<usize> {
+        g.geom.and_then(|key| self.geom_ready(&key)).and_then(|geom| {
+            geom.faces
+                .iter()
+                .position(|a| a.as_ref().is_some_and(|a| a.index_offset == draw.cmd.first_index))
+        })
+    }
+
+    /// [`Self::record_object`] for the two faces of an answer, blended then
+    /// opaque, in one scan of the objects' faces. The hover turns an answer
+    /// into a target ten times a second, and each step of it looked its
+    /// record up again: up to five scans an answer, 1.4 ms on average in a
+    /// crowded region (`hover trace cost`, AURORA_HOVER_TRACE).
+    pub fn drawn_objects(&self, drawn: &Drawn) -> DrawnObjects {
+        let wanted = [drawn.blend.map(|f| f.record), drawn.opaque.map(|f| f.record)];
+        let mut found: [Option<(usize, &ObjGpu, &FaceDraw)>; 2] = [None; 2];
+        let mut left = wanted.iter().flatten().count();
+        'objects: for (idx, g) in self.gpu.iter().enumerate() {
+            if left == 0 {
+                break;
+            }
+            for draw in &g.faces {
+                if Some(draw.record) != wanted[0] && Some(draw.record) != wanted[1] {
+                    continue;
+                }
+                for (slot, want) in found.iter_mut().zip(wanted) {
+                    if slot.is_none() && want == Some(draw.record) {
+                        *slot = Some((idx, g, draw));
+                        left -= 1;
+                    }
+                }
+                if left == 0 {
+                    break 'objects;
+                }
+            }
+        }
+        found.map(|slot| slot.map(|(idx, g, draw)| (idx, self.draw_face(g, draw))))
     }
 
     pub fn drawn_status(&self, world: &World, idx: usize) -> Status {
@@ -411,10 +472,24 @@ impl Scene {
     /// under the clothing, not through the body to what is worn on the other
     /// side); nothing there: the GPU's depth, the click is the avatar's.
     pub fn touch_depth(&self, world: &World, drawn: &Drawn, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> Option<Vec3> {
-        let (Some(face), Some(ray)) = (drawn.opaque, ray) else {
+        let (Some(face), Some(_)) = (drawn.opaque, ray) else {
             return depth;
         };
-        let Some((idx, _)) = self.record_object(face.record) else {
+        let objects = [None, self.record_object(face.record)];
+        self.touch_depth_of(world, drawn, &objects, ray, depth, far)
+    }
+
+    /// [`Self::touch_depth`] with the objects of the answer's faces.
+    fn touch_depth_of(
+        &self,
+        world: &World,
+        drawn: &Drawn,
+        objects: &DrawnObjects,
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        far: f32,
+    ) -> Option<Vec3> {
+        let (Some(face), Some(ray), Some((idx, _))) = (drawn.opaque, ray, objects[1]) else {
             return depth;
         };
         self.touch_depth_under(world, idx, (face.point - ray.0).dot(ray.1), ray, depth, far, None)
@@ -481,15 +556,31 @@ impl Scene {
         depth: Option<Vec3>,
         build_open: bool,
     ) -> Option<DrawnObject> {
+        self.designated_of(world, gesture, drawn, &self.drawn_objects(drawn), ray, found, depth, build_open)
+    }
+
+    /// [`Self::designated`] with the objects of the answer's faces.
+    #[allow(clippy::too_many_arguments)] // designated's inputs plus the objects.
+    fn designated_of(
+        &self,
+        world: &World,
+        gesture: Gesture,
+        drawn: &Drawn,
+        objects: &DrawnObjects,
+        ray: Option<(Vec3, Vec3)>,
+        found: Option<Vec3>,
+        depth: Option<Vec3>,
+        build_open: bool,
+    ) -> Option<DrawnObject> {
         // Only a surface actually found by the CPU can bound the newer
         // GPU pick. An animated attachment can move more than 5 cm between
         // the two frames (#416); its own older depth must not reject it.
         // Opaque occlusion is already resolved in the drawn-face pass.
         let along = |p: Vec3| ray.map_or(0.0, |(o, d)| (p - o).dot(d));
         let limit = found.filter(|p| Some(*p) != depth).map_or(f32::INFINITY, |p| along(p) + SAME);
-        for (hit, blend) in [(drawn.blend, true), (drawn.opaque, false)] {
+        for (hit, object, blend) in [(drawn.blend, objects[0], true), (drawn.opaque, objects[1], false)] {
             let Some(hit) = hit else { continue };
-            let Some((idx, face)) = self.record_object(hit.record) else {
+            let Some((idx, face)) = object else {
                 continue;
             };
             if world
@@ -1194,6 +1285,28 @@ mod tests {
         assert_eq!(scene.drawn_hover_under(&world, &layered, ray), None);
         // nothing posed
         assert_eq!(scene.drawn_hover_under(&world, &Drawn::default(), ray), None);
+
+        // one scan gives what a scan per record gives, whichever is missing
+        let unknown = face(77, 9.0);
+        for drawn in [
+            layered,
+            bare,
+            Drawn { opaque: None, ..layered },
+            Drawn { blend: unknown, ..layered },
+            Drawn {
+                opaque: unknown,
+                ..layered
+            },
+            Drawn {
+                blend: face(1, 2.5),
+                ..layered
+            },
+            Drawn::default(),
+        ] {
+            let each = [drawn.blend, drawn.opaque].map(|f| f.and_then(|f| scene.record_object(f.record)));
+            assert_eq!(scene.drawn_objects(&drawn), each, "{drawn:?}");
+        }
+        assert_eq!(scene.drawn_objects(&layered), [Some((layer, Some(0))), Some((skin, Some(0)))]);
     }
 
     /// A scripted animesh rezzed in front of a scripted prim: with

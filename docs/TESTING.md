@@ -1866,7 +1866,8 @@ when unfocused") is ignored during a screenshot.
   hovering, a `hover trace cost` line gives the time the hover took on the
   CPU over those frames, as calls, mean, longest and sum: the CPU search
   (each frame), what the answers of the GPU are turned into (ten a second
-  at most), and the search for the last answer's object while the pointer
+  at most; `of which the scan`: the search for the objects of the answer's
+  draw records), and the search for the last answer's object while the pointer
   moves (`between two answers`, with how many ended `followed`, `between`
   or with neither). Compare the sums with the frames' time (5 s).
 - **`AURORA_DEMO_LAND_BESIDE=1`**: a 4 m square frame (a box prim hollowed

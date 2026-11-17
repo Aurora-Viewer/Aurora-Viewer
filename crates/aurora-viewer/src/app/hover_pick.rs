@@ -162,6 +162,8 @@ struct Cost {
     cpu: Span,
     /// What an answer of the GPU is turned into, when one comes in.
     answer: Span,
+    /// Of which the scan for the objects of its draw records.
+    scan: Span,
     /// The last answer's object looked for under a pointer that moved
     /// (`Scene::drawn_hover_on`, `Scene::drawn_hover_between`).
     between: Span,
@@ -180,11 +182,12 @@ impl Cost {
             return;
         }
         log::info!(
-            "hover trace cost: {} frames in {:.1} s; CPU search: {}; answers: {}; between two answers: {} (followed {}, between {}, neither {})",
+            "hover trace cost: {} frames in {:.1} s; CPU search: {}; answers: {}; of which the scan: {}; between two answers: {} (followed {}, between {}, neither {})",
             self.frames,
             over.as_secs_f32(),
             self.cpu,
             self.answer,
+            self.scan,
             self.between,
             self.ends[0],
             self.ends[1],
@@ -298,17 +301,21 @@ impl HoverDrawn {
                     // too: it tells what is drawn around it (`between`).
                     let here = asked.same_ray(&question);
                     let started = timed.then(Instant::now);
+                    let objects = scene.drawn_objects(&drawn);
+                    if let Some(started) = started {
+                        self.cost.scan.add(started.elapsed());
+                    }
                     let hit = if here {
-                        scene.drawn_hover(world, &drawn, ray, depth, far)
+                        scene.drawn_hover_of(world, &drawn, &objects, ray, depth, far)
                     } else {
-                        scene.drawn_hover(world, &drawn, asked.ray, asked.depth, asked.far)
+                        scene.drawn_hover_of(world, &drawn, &objects, asked.ray, asked.depth, asked.far)
                     };
                     let question = if here { question } else { asked };
                     self.kept = Some(Kept {
                         question,
                         hit,
                         at: now,
-                        under: scene.drawn_hover_under(world, &drawn, asked.ray),
+                        under: scene.drawn_hover_under_of(world, &drawn, &objects, asked.ray),
                         behind: behind(hit, &question),
                     });
                     if let Some(started) = started {
