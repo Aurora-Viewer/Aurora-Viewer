@@ -75,6 +75,13 @@ pub fn reflections() -> bool {
     *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_REFLECTIONS").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
 }
 
+/// Whether the traced indirect light is on too (`AURORA_RT_GI`, with
+/// `AURORA_RT_SHADOWS`): it takes the screen-space indirect light's place.
+pub fn gi() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_GI").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
+}
+
 /// Whether to ask a device for [`FEATURES`]: the experiment is on and the
 /// adapter has them.
 pub fn wanted(adapter: wgpu::Features) -> bool {
@@ -493,6 +500,54 @@ pub(crate) struct Targets {
     size: (u32, u32),
     pub result: wgpu::TextureView,
     pub reflect: Option<wgpu::TextureView>,
+    pub gi: Option<GiTargets>,
+}
+
+/// The traced indirect light's history, at half resolution (two of each:
+/// one read while the other is written), and its full resolution result.
+pub(crate) struct GiTargets {
+    half: (u32, u32),
+    color: [wgpu::TextureView; 2],
+    dist: [wgpu::TextureView; 2],
+    pub result: wgpu::TextureView,
+}
+
+const GI_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GI_DIST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// How far an indirect ray goes (m): the light bounced from further off
+/// is faint, and shorter rays are quicker.
+const GI_REACH: f32 = 64.0;
+
+/// The GI pass's constants (must match `Params` in rt_gi.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GiU {
+    clip_from_world: [[f32; 4]; 4],
+    world_from_clip: [[f32; 4]; 4],
+    prev_clip_from_world: [[f32; 4]; 4],
+    camera: [f32; 4],
+    prev_camera: [f32; 4],
+    lit: [[f32; 4]; 5],
+    screen: [f32; 4],
+    half: [f32; 4],
+    mode: [f32; 4],
+}
+
+/// The traced indirect light's passes (shaders/rt_gi.wgsl).
+struct Gi {
+    trace_layout: wgpu::BindGroupLayout,
+    filter_layout: wgpu::BindGroupLayout,
+    trace: wgpu::ComputePipeline,
+    filter: wgpu::ComputePipeline,
+    buffer: wgpu::Buffer,
+    timer: Option<Timer>,
+    /// The history written last frame (`GiTargets::color` and `dist`).
+    last: usize,
+    /// The size the history was written at, None before the first frame.
+    history_for: Option<(u32, u32)>,
+    prev_clip_from_world: glam::Mat4,
+    prev_camera: glam::Vec3,
+    frame: u32,
 }
 
 const REFLECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -504,17 +559,14 @@ struct ReflectU {
     clip_from_world: [[f32; 4]; 4],
     world_from_clip: [[f32; 4]; 4],
     camera: [f32; 4],
-    light: [f32; 4],
-    sun_color: [f32; 4],
-    sky_zenith: [f32; 4],
-    sky_horizon: [f32; 4],
-    ground_color: [f32; 4],
+    lit: [[f32; 4]; 5],
     screen: [f32; 4],
     mode: [f32; 4],
 }
 
-/// The frame's light as the reflections shade what the view does not see.
-pub(crate) struct ReflectLight {
+/// The frame's view and light, as the reflections and the GI shade what
+/// the view does not see.
+pub(crate) struct TraceLight {
     pub clip_from_world: glam::Mat4,
     pub camera: glam::Vec3,
     pub sun_dir: glam::Vec3,
@@ -523,6 +575,22 @@ pub(crate) struct ReflectLight {
     pub sky_zenith: [f32; 4],
     pub sky_horizon: [f32; 4],
     pub ground_color: [f32; 4],
+}
+
+impl TraceLight {
+    /// rt_light.wgsl's `HitLight`.
+    fn lit(&self) -> [[f32; 4]; 5] {
+        [
+            self.sun_dir
+                .normalize_or(glam::Vec3::Z)
+                .extend(if self.sun_up { 1.0 } else { 0.0 })
+                .to_array(),
+            self.sun_color,
+            self.sky_zenith,
+            self.sky_horizon,
+            self.ground_color,
+        ]
+    }
 }
 
 /// The traced reflections' pass (shaders/rt_reflect.wgsl).
@@ -570,6 +638,7 @@ pub(crate) struct RtShadows {
     timer: Option<Timer>,
     poser: Poser,
     reflect: Option<Reflect>,
+    gi: Option<Gi>,
     /// The posed top level holds a skeleton this frame.
     posed_live: bool,
 }
@@ -712,7 +781,7 @@ impl RtShadows {
         }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt shadows"),
-            source: wgpu::ShaderSource::Wgsl(source(include_str!("shaders/rt_shadows.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")]).into()),
         });
         let scene_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..8).map(|b| storage_entry(b, true)).collect();
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -810,6 +879,7 @@ impl RtShadows {
             timer: Timer::new(device, queue, 4),
             poser: Poser::new(device, &scene_layout),
             reflect: reflections().then(|| Reflect::new(device, queue, &scene_layout, textures)),
+            gi: gi().then(|| Gi::new(device, queue, &scene_layout, textures)),
             posed_live: false,
             scene_layout,
             warned: false,
@@ -821,7 +891,7 @@ impl Poser {
     fn new(device: &wgpu::Device, scene_layout: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt shadows pose"),
-            source: wgpu::ShaderSource::Wgsl(source(include_str!("shaders/rt_pose.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(source(&[include_str!("shaders/rt_pose.wgsl")]).into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rt shadows pose"),
@@ -1125,12 +1195,22 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 
 /// A ray-traced shader's source: ray queries enabled, then what the passes
 /// share (shaders/rt_common.wgsl), then its own.
-fn source(own: &str) -> String {
-    format!(
-        "enable wgpu_ray_query;\nenable wgpu_binding_array;\n{}\n{own}",
+/// A ray-traced shader's source: the enables, rt_common.wgsl, then `parts`
+/// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
+fn source(parts: &[&str]) -> String {
+    let mut src = format!(
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\n{}\n",
         include_str!("shaders/rt_common.wgsl")
-    )
+    );
+    for part in parts {
+        src.push_str(part);
+        src.push('\n');
+    }
+    src
 }
+
+const RT_VIEW: &str = include_str!("shaders/rt_view.wgsl");
+const RT_LIGHT: &str = include_str!("shaders/rt_light.wgsl");
 
 /// A posed face's geometry: `vertices` unindexed, three a triangle; an
 /// alpha-masked face is tested at its hits.
@@ -1193,7 +1273,38 @@ impl Targets {
                 })
                 .create_view(&wgpu::TextureViewDescriptor::default())
         });
-        Some(Targets { size, result, reflect })
+        let gi = gi().then(|| {
+            let half = (size.0.div_ceil(2), size.1.div_ceil(2));
+            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+            let view = |label: &'static str, (width, height): (u32, u32), format: wgpu::TextureFormat| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            GiTargets {
+                half,
+                color: [view("rt gi history", half, GI_FORMAT), view("rt gi history", half, GI_FORMAT)],
+                dist: [
+                    view("rt gi distance", half, GI_DIST_FORMAT),
+                    view("rt gi distance", half, GI_DIST_FORMAT),
+                ],
+                result: view("rt gi", size, GI_FORMAT),
+            }
+        });
+        Some(Targets { size, result, reflect, gi })
     }
 }
 
@@ -1546,7 +1657,7 @@ impl Reflect {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt reflections"),
-            source: wgpu::ShaderSource::Wgsl(source(include_str!("shaders/rt_reflect.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")]).into()),
         });
         let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1608,6 +1719,247 @@ impl Reflect {
     }
 }
 
+fn storage_texture_entry(binding: u32, format: wgpu::TextureFormat) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        count: None,
+    }
+}
+
+fn uniform_entry<T>() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<T>() as u64),
+        },
+        count: None,
+    }
+}
+
+fn view(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: wgpu::BindingResource::TextureView(v),
+    }
+}
+
+impl Gi {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rt gi"),
+            source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_gi.wgsl")]).into()),
+        });
+        let unfiltered = wgpu::TextureSampleType::Float { filterable: false };
+        let trace_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt gi trace"),
+            entries: &[
+                uniform_entry::<GiU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(2, unfiltered),
+                texture_entry(3, unfiltered),
+                tlas_entry(4),
+                tlas_entry(5),
+                storage_texture_entry(6, GI_FORMAT),
+                storage_texture_entry(7, GI_DIST_FORMAT),
+                texture_entry(8, unfiltered),
+            ],
+        });
+        let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rt gi filter"),
+            entries: &[
+                uniform_entry::<GiU>(),
+                texture_entry(1, wgpu::TextureSampleType::Depth),
+                texture_entry(9, unfiltered),
+                texture_entry(10, unfiltered),
+                storage_texture_entry(11, GI_FORMAT),
+            ],
+        });
+        let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let trace = pipeline("rt gi trace", &[Some(&trace_layout), Some(scene_layout), Some(textures)], "cs_gi");
+        let filter = pipeline("rt gi filter", &[Some(&filter_layout)], "cs_gi_filter");
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rt gi"),
+            size: std::mem::size_of::<GiU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        log::info!("AURORA_RT_GI: ray-traced indirect light on, in the screen-space indirect light's place");
+        Gi {
+            trace_layout,
+            filter_layout,
+            trace,
+            filter,
+            buffer,
+            timer: Timer::new(device, queue, 3),
+            last: 0,
+            history_for: None,
+            prev_clip_from_world: glam::Mat4::IDENTITY,
+            prev_camera: glam::Vec3::ZERO,
+            frame: 0,
+        }
+    }
+}
+
+impl RtShadows {
+    /// Whether the traced indirect light is on: the shading reads it this
+    /// frame when the frame traces.
+    pub(crate) fn lights_indirectly(&self) -> bool {
+        self.gi.is_some()
+    }
+
+    /// Traces this frame's indirect light into the targets' GI result,
+    /// after the shadows' pass built this frame's levels and before the
+    /// scene is lit; the view's hits read `scene_copy`, last frame's.
+    /// `intensity` scales it as it scales GTAO's (Indirect light intensity).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_gi(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &Targets,
+        light: &TraceLight,
+        intensity: f32,
+        depth: &wgpu::TextureView,
+        scene_copy: &wgpu::TextureView,
+        scene: &crate::packet::SceneGpu,
+    ) {
+        let scene_group = self.scene_group(device, scene);
+        let (Some(g), Some(tlas), Some(gt)) = (self.gi.as_mut(), self.tlas.as_ref(), t.gi.as_ref()) else {
+            return;
+        };
+        if let Some(timer) = &mut g.timer
+            && let Some((ms, frames)) = timer.harvest()
+        {
+            log::info!(
+                "AURORA_RT_GI: trace {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
+                ms[0],
+                ms[1],
+                gt.half.0,
+                gt.half.1
+            );
+        }
+        let (read, write) = (g.last, 1 - g.last);
+        let valid = g.history_for == Some(t.size);
+        let (w, h) = (t.size.0 as f32, t.size.1 as f32);
+        let u = GiU {
+            clip_from_world: light.clip_from_world.to_cols_array_2d(),
+            world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
+            prev_clip_from_world: g.prev_clip_from_world.to_cols_array_2d(),
+            camera: light.camera.extend(1.0).to_array(),
+            prev_camera: g.prev_camera.extend(1.0).to_array(),
+            lit: light.lit(),
+            screen: [w, h, 1.0 / w, 1.0 / h],
+            half: [gt.half.0 as f32, gt.half.1 as f32, intensity, 0.0],
+            mode: [
+                GI_REACH,
+                if self.posed_live { 1.0 } else { 0.0 },
+                (g.frame % (1 << 20)) as f32,
+                if valid { 1.0 } else { 0.0 },
+            ],
+        };
+        queue.write_buffer(&g.buffer, 0, bytemuck::bytes_of(&u));
+        let trace_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt gi trace"),
+            layout: &g.trace_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: g.buffer.as_entire_binding(),
+                },
+                view(1, depth),
+                view(2, &gt.color[read]),
+                view(3, &gt.dist[read]),
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::AccelerationStructure(tlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    // without posed faces the scene's stands in, unread
+                    resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
+                view(6, &gt.color[write]),
+                view(7, &gt.dist[write]),
+                view(8, scene_copy),
+            ],
+        });
+        let filter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rt gi filter"),
+            layout: &g.filter_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: g.buffer.as_entire_binding(),
+                },
+                view(1, depth),
+                view(9, &gt.color[write]),
+                view(10, &gt.dist[write]),
+                view(11, &gt.result),
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt gi trace"),
+                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: None,
+                }),
+            });
+            pass.set_pipeline(&g.trace);
+            pass.set_bind_group(0, &trace_group, &[]);
+            pass.set_bind_group(1, &scene_group, &[]);
+            pass.set_bind_group(2, &scene.textures, &[]);
+            pass.dispatch_workgroups(gt.half.0.div_ceil(8), gt.half.1.div_ceil(8), 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rt gi filter"),
+                timestamp_writes: g.timer.as_ref().map(|timer| wgpu::ComputePassTimestampWrites {
+                    query_set: &timer.queries,
+                    beginning_of_pass_write_index: Some(1),
+                    end_of_pass_write_index: Some(2),
+                }),
+            });
+            pass.set_pipeline(&g.filter);
+            pass.set_bind_group(0, &filter_group, &[]);
+            pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        }
+        if let Some(timer) = &mut g.timer {
+            timer.resolve(encoder);
+        }
+        g.last = write;
+        g.history_for = Some(t.size);
+        g.prev_clip_from_world = light.clip_from_world;
+        g.prev_camera = light.camera;
+        g.frame = g.frame.wrapping_add(1);
+    }
+}
+
 impl RtShadows {
     /// Whether the traced reflections can take SSR's place this frame:
     /// they are on and the frame traced.
@@ -1625,7 +1977,7 @@ impl RtShadows {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         t: &Targets,
-        light: &ReflectLight,
+        light: &TraceLight,
         depth: &wgpu::TextureView,
         gbuf: &wgpu::TextureView,
         scene_copy: &wgpu::TextureView,
@@ -1645,15 +1997,7 @@ impl RtShadows {
             clip_from_world: light.clip_from_world.to_cols_array_2d(),
             world_from_clip: light.clip_from_world.inverse().to_cols_array_2d(),
             camera: light.camera.extend(1.0).to_array(),
-            light: light
-                .sun_dir
-                .normalize_or(glam::Vec3::Z)
-                .extend(if light.sun_up { 1.0 } else { 0.0 })
-                .to_array(),
-            sun_color: light.sun_color,
-            sky_zenith: light.sky_zenith,
-            sky_horizon: light.sky_horizon,
-            ground_color: light.ground_color,
+            lit: light.lit(),
             screen: [w, h, 1.0 / w, 1.0 / h],
             mode: [REACH, if self.posed_live { 1.0 } else { 0.0 }, 0.0, 0.0],
         };
@@ -1764,12 +2108,13 @@ mod tests {
 
     #[test]
     fn rt_shadows_shaders_are_valid() {
-        for (name, own) in [
-            ("rt_shadows", include_str!("shaders/rt_shadows.wgsl")),
-            ("rt_pose", include_str!("shaders/rt_pose.wgsl")),
-            ("rt_reflect", include_str!("shaders/rt_reflect.wgsl")),
+        for (name, parts) in [
+            ("rt_shadows", &[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")][..]),
+            ("rt_pose", &[include_str!("shaders/rt_pose.wgsl")][..]),
+            ("rt_reflect", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_reflect.wgsl")][..]),
+            ("rt_gi", &[RT_VIEW, RT_LIGHT, include_str!("shaders/rt_gi.wgsl")][..]),
         ] {
-            let src = source(own);
+            let src = source(parts);
             let module = match naga::front::wgsl::parse_str(&src) {
                 Ok(m) => m,
                 Err(e) => panic!("{name}: {}", e.emit_to_string(&src)),
