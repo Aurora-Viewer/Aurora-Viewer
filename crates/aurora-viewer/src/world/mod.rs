@@ -476,6 +476,9 @@ pub struct World {
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
+    /// Objects' Debug and OwnerSay lines for the editor sync's run-time
+    /// events (`crate::editor_sync`).
+    pub editor_sync_chat: crate::editor_sync::ChatTap,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
     /// Session-only UI readback of the active avatar follow.
@@ -882,15 +885,20 @@ impl World {
         self.save_tracked_regions();
     }
 
+    /// Written by a save thread (saves.rs), from a copy of the list.
     fn save_tracked_regions(&self) {
-        if let Some(path) = &self.region_tracker_path
-            && let Err(error) = self.region_tracker.save(path)
-        {
-            log::warn!(
-                "region tracker: could not save {} ({error}); kept, tried again later",
-                path.display()
-            );
-        }
+        let Some(path) = self.region_tracker_path.clone() else {
+            return;
+        };
+        let list = self.region_tracker.clone();
+        crate::saves::replace(path.clone(), move || {
+            if let Err(error) = list.save(&path) {
+                log::warn!(
+                    "region tracker: could not save {} ({error}); kept, tried again later",
+                    path.display()
+                );
+            }
+        });
     }
 
     /// ALFloaterRegionTracker::refresh, while its window is open: every
@@ -969,6 +977,7 @@ impl World {
             import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
+            editor_sync_chat: Default::default(),
             sun: None,
             agent: AgentState::default(),
             following_avatar: None,
@@ -1684,7 +1693,7 @@ impl World {
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
         // not applied yet: the file holds more than the inventory in memory
-        if self.inventory_cache.is_some() {
+        if self.inventory_cache.is_some() && !self.inventory.outgoing.has_originals() {
             return;
         }
         if let Some(path) = self.inventory_cache_path() {
@@ -4814,6 +4823,9 @@ impl World {
         if !self.omnifilter_chat(&mut c) {
             return;
         }
+        // forwardChatToIDE, where processChat sends it: after the filters,
+        // before the debug window takes its lines
+        self.editor_sync_chat.offer(&c);
         if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
@@ -5595,6 +5607,13 @@ impl World {
             caution: Some(prompt),
             ..
         }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
         {
             let place = self.caution_place(task);
             let granted = matches!(r, notifications::Response::Accept);
@@ -5900,7 +5919,8 @@ impl World {
                     let from = self.social.name_of(&id);
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
-                self.system_notice(n, notice_topics::Topic::People);
+                // the name is a link to the resident (social::online_chat_line)
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
             }
         }
     }
@@ -8330,6 +8350,25 @@ mod motion_tests {
             world.experiences.permissions.get(&xp),
             Some(&aurora_net::experience::ExperiencePermission::Allowed)
         );
+    }
+
+    #[test]
+    fn closing_an_experience_question_keeps_its_permission_unchanged() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE2E2);
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        world.apply(experience_question(xp, 1 << 12));
+        let id = world.notifications.list.last().expect("experience question").id;
+        world.experiences.take_commands();
+        let lines = world.chat.len();
+        let (cmds, url) = world.respond_notification(id, notifications::Response::Dismiss);
+        assert!(cmds.is_empty() && url.is_none());
+        assert_eq!(world.chat.len(), lines);
+        assert!(!world.notifications.list.iter().any(|n| n.id == id));
+        assert!(!world.experiences.permissions.contains_key(&xp));
+        assert!(world.experiences.take_commands().is_empty() && world.experiences.profile.is_none());
     }
 
     #[test]

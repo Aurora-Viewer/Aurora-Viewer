@@ -197,6 +197,7 @@ impl Derender {
             path: Some(path.clone()),
             ..Derender::default()
         };
+        crate::saves::wait_for(&path, crate::saves::BEFORE_READ);
         // a list whose last write was refused is read from memory
         let bytes = match OWED.owed(&path).map_or_else(|| std::fs::read(&path), Ok) {
             Ok(bytes) => bytes,
@@ -272,9 +273,15 @@ impl Derender {
             data.insert("asset_permanent".into(), Llsd::from(true));
             map.insert(mask(*id).to_string(), Llsd::Map(data));
         }
-        if let Err(e) = OWED.write(path, aurora_llsd::to_xml(&Llsd::Map(map))) {
-            log::warn!("asset blacklist not saved ({e}); kept, tried again later");
-        }
+        // written by a save thread (saves.rs): an edit no longer waits for
+        // the disk on the frame
+        let xml = aurora_llsd::to_xml(&Llsd::Map(map));
+        let path = path.clone();
+        crate::saves::replace(path.clone(), move || {
+            if let Err(e) = OWED.write(&path, xml) {
+                log::warn!("asset blacklist not saved ({e}); kept, tried again later");
+            }
+        });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -850,6 +857,8 @@ mod tests {
         let anim = Uuid::from_u128(404);
         let mut list = Derender::load(path.clone());
         list.add(anim, entry(Kind::Animation, true));
+        // written by a save thread (saves.rs)
+        assert!(crate::saves::wait_for(&path, std::time::Duration::from_secs(10)));
         let saved = aurora_llsd::from_xml(&std::fs::read(&path).expect("saved")).expect("llsd");
         assert_eq!(saved.get(&mask(anim).to_string()).get("asset_type").as_i32(), AT_ANIMATION);
         let mut list = Derender::load(path.clone());

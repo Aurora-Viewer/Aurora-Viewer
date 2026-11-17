@@ -1354,14 +1354,7 @@ impl Scene {
         if tf.planar() {
             let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.visual_scale_at(now);
             let n = model.transpose().transform_vector3(hit.normal).normalize_or_zero();
-            let b = if n.x.abs() >= 0.5 {
-                Vec3::new(0.0, if n.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
-            } else if n.y > 0.0 {
-                -Vec3::X
-            } else {
-                Vec3::X
-            };
-            st = Vec2::new(0.5 + 2.0 * b.dot(p), 0.5 - 2.0 * b.cross(n).dot(p));
+            st = planar_st(p, n);
         }
         let material = o.visual_material(hit.face);
         let pbr = material.is_some();
@@ -2085,6 +2078,24 @@ impl Scene {
     }
 }
 
+/// Planar texture generation of a face point: port of planarProjection
+/// (indra/newview/llface.cpp, originally LGPL 2.1), the same as
+/// `planar_st` in object.wgsl. `p`: the point in object space times the
+/// prim's scale (metres), `n`: its object-space normal. Two repeats per
+/// metre: on a 0.5 m box (the default prim) it gives back the default
+/// mapping of every side, so switching Default <-> Planar changes nothing
+/// visible there, in the Legacy Viewer as here.
+pub(crate) fn planar_st(p: Vec3, n: Vec3) -> Vec2 {
+    let b = if n.x.abs() >= 0.5 {
+        Vec3::new(0.0, if n.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
+    } else if n.y > 0.0 {
+        -Vec3::X
+    } else {
+        Vec3::X
+    };
+    Vec2::new(0.5 + 2.0 * b.dot(p), 0.5 - 2.0 * b.cross(n).dot(p))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2095,6 +2106,32 @@ pub(crate) mod tests {
 
     /// LimitSelectDistance on, at the Legacy Viewer's default distance.
     const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
+
+    /// Default <-> Planar on a box: identical on the default 0.5 m prim,
+    /// different on a larger one (the report of #2505's grid test).
+    #[test]
+    fn planar_mapping_matches_default_on_a_half_metre_box_only() {
+        let params = crate::build::shapes::shapes()[0].params();
+        let mesh = aurora_prim::volume::generate_volume(&params, 1.0);
+        let worst = |scale: f32| {
+            mesh.faces
+                .iter()
+                // the four side faces of the box (faces 1 to 4: the top and
+                // bottom caps differ); the WGSL copy of the planar mapping
+                // is checked by the demo only
+                .take(5)
+                .skip(1)
+                .flat_map(|f| f.positions.iter().zip(&f.normals).zip(&f.uvs))
+                .map(|((p, n), uv)| {
+                    let st = planar_st(Vec3::from_array(*p) * scale, Vec3::from_array(*n));
+                    (st - Vec2::from_array(*uv)).abs().max_element()
+                })
+                .fold(0.0f32, f32::max)
+        };
+        assert!(worst(0.5) < 1e-4, "0.5 m box: planar = default ({})", worst(0.5));
+        assert!(worst(2.0) > 0.5, "2 m box: planar remaps ({})", worst(2.0));
+    }
+
     #[test]
     fn world_click_posed_attachment_cannot_intercept_with_its_bind_pose() {
         use aurora_render::{Drawn, DrawnFace};

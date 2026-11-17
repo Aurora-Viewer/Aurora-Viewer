@@ -12,6 +12,7 @@ aurora-i18n = { version = "0.1.0", path = "../aurora-i18n" }
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 aurora-msg = { version = "0.1.0", path = "../aurora-msg" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 base64 = "0.23.1"
 crossbeam-channel = "0.5.17"

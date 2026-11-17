@@ -168,11 +168,13 @@ impl Source {
     }
 
     async fn fetch(&self, language: &str) -> anyhow::Result<Vec<NewsItem>> {
-        let builder = reqwest::Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .https_only(!self.loopback)
-            .timeout(Duration::from_secs(8));
-        let http = if self.loopback { builder.no_proxy() } else { builder }.build()?;
+        // a loopback feed stays on this computer: the rule never proxies it
+        let loopback = self.loopback;
+        let http = aurora_proxy::http_client(|b| {
+            b.user_agent(aurora_version::user_agent())
+                .https_only(!loopback)
+                .timeout(Duration::from_secs(8))
+        })?;
         for code in candidates(language) {
             if let Some(text) = download(&http, &format!("{}{code}.md", self.base)).await? {
                 let news = markdown::parse(&text);

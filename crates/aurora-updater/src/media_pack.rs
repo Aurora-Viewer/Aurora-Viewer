@@ -35,11 +35,15 @@ pub const PACK: Pack = Pack {
     size: 252_643_186,
     sha256: "eb2c9c70bcf87df6d987ad38efca83e38a6f2d934fdbc1d00fceb1d20ea1c93e",
 };
+// Pack 3, not pack 2: pack 2 was built on a branch and published by hand.
+// Pack 3's Linux archive holds the same files (only its manifest's version
+// differs) and the workflow published it from main, so its origin can be
+// checked.
 #[cfg(target_os = "linux")]
 pub const PACK: Pack = Pack {
-    version: "2",
+    version: "3",
     size: 206_114_621,
-    sha256: "11a41a1e6c6250bbc9875b3fdf2d3609f1dd1740707d9ee805eb245803bea687",
+    sha256: "cdab4b09c1489f3d4e1b0b13f247be14f9692810d5087ca529c8a91ae06b6b13",
 };
 #[cfg(target_os = "macos")]
 pub const PACK: Pack = Pack {

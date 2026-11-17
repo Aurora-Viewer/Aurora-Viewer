@@ -172,6 +172,11 @@ pub struct BuildSettings {
     pub scale_stretch_textures: bool,
     /// Keep the camera attached to the focused object while editing it.
     pub follow_edit_object: bool,
+    /// Aurora: the wheel steps a number field while the pointer is over it,
+    /// as LLSpinCtrl::handleScrollWheel does. Off by default: the wheel
+    /// steps only the field being typed in, and scrolls the panel over the
+    /// others, so scrolling down the window edits nothing by accident.
+    pub wheel_on_hover: bool,
     /// RenderHighlightSelections.
     pub show_highlight: bool,
     /// RenderHiddenSelections (off): the outline edges on the far side of
@@ -742,6 +747,7 @@ impl Default for BuildSettings {
             scale_uniform: false,
             scale_stretch_textures: true,
             follow_edit_object: false,
+            wheel_on_hover: false,
             show_highlight: true,
             show_hidden_selection: false,
             show_light_radius: false,
@@ -2763,13 +2769,34 @@ impl BuildTool {
         }
     }
 
-    fn face_mode(&self) -> bool {
+    /// The Edit tool in Select face mode (LLSelectMgr::getTEMode).
+    pub fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
+    /// (The frame gathers the picks once and calls `halo_faces` itself.)
+    #[cfg(test)]
     pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
-        if !self.face_mode() || !s.show_highlight {
+        Self::halo_faces(|| self.face_picks(world), s)
+    }
+
+    /// The faces of `picks` (`face_picks`) that get the selection halo:
+    /// none while "Show highlight" is off. `picks` is called only when
+    /// needed, so a caller that already has the picks can clone them.
+    pub fn halo_faces(picks: impl FnOnce() -> HashMap<usize, u64>, s: &BuildSettings) -> HashMap<usize, u64> {
+        if !s.show_highlight {
+            return HashMap::new();
+        }
+        picks()
+    }
+
+    /// The faces picked in Select face mode, whatever "Show highlight" says:
+    /// the face-select pattern is drawn for them anyway
+    /// (LLPipeline::renderHighlights draws renderSelectedFaces in TE mode;
+    /// RenderHighlightSelections gates only the silhouettes, llselectmgr.cpp).
+    pub fn face_picks(&self, world: &World) -> HashMap<usize, u64> {
+        if !self.face_mode() {
             return HashMap::new();
         }
         self.sel_prims(world)

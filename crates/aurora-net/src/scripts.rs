@@ -233,7 +233,7 @@ mod tests {
         };
         let source = "default\n{ // éèあ\n    state_entry() { llSay(0, \"Bonjour !\"); }\n}\n";
         let result = save(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             target,
             ScriptOptions {

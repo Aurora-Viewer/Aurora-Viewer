@@ -3,6 +3,8 @@
 //! hashes remain in the OS credential store. Merge changes under an OS lock.
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LastPlace {
@@ -88,6 +90,8 @@ fn read(path: &Path) -> std::io::Result<(Vec<Account>, bool)> {
 /// a write.
 pub fn load() -> Vec<Account> {
     let catalogue = catalogue();
+    // the login screen's changes still on their way reach the disk first
+    crate::saves::wait_for(&catalogue.path, crate::saves::BEFORE_READ);
     match read(&catalogue.path) {
         Ok((mut accounts, _)) => {
             catalogue.owed.lock().iter().for_each(|c| c.apply(&mut accounts));
@@ -292,20 +296,65 @@ pub fn save_before_exit() {
     RETRY.finish();
 }
 
-pub fn save(account: Account) -> Vec<Account> {
-    replace(&account.key(), account)
+/// The catalogue's file: the key of its saves' queue (saves.rs).
+pub(crate) fn catalogue_path() -> std::path::PathBuf {
+    catalogue().path.clone()
+}
+
+/// The changes asked from the login screen: each is made at once on the
+/// list it shows, and in the catalogue by a save thread (saves.rs), in
+/// their order: the frame no longer waits for the disk. A refused write
+/// keeps the change owed ([`Catalogue::change`]). `ISSUED` numbers them,
+/// and `ANSWER` keeps what the last one left in the catalogue (with what
+/// another viewer changed meanwhile), for [`answer`].
+static ISSUED: AtomicU64 = AtomicU64::new(0);
+static ANSWER: Mutex<Option<(u64, Answer)>> = Mutex::new(None);
+
+/// What the catalogue said of the login screen's last change.
+#[derive(Debug)]
+pub enum Answer {
+    /// The catalogue as it is now, the changes still owed included.
+    Saved(Vec<Account>),
+    /// Dropped, the catalogue cannot be rewritten (logged); `reorder` when
+    /// it was a move of the order.
+    Failed { reorder: bool },
+}
+
+/// `edit` made on `accounts` now, and in the catalogue by its save thread.
+fn queue(what: &'static str, accounts: &mut Vec<Account>, edit: Change) {
+    edit.apply(accounts);
+    let reorder = matches!(edit, Change::Move { .. });
+    let number = ISSUED.fetch_add(1, Ordering::Relaxed) + 1;
+    crate::saves::change(catalogue_path(), move || {
+        let answer = match change(edit) {
+            Ok(accounts) => Answer::Saved(accounts),
+            Err(error) => {
+                log::warn!("{what}: {error}");
+                Answer::Failed { reorder }
+            }
+        };
+        *ANSWER.lock().unwrap_or_else(PoisonError::into_inner) = Some((number, answer));
+    });
+}
+
+/// The catalogue's answer to the last change asked, once it is made; none
+/// while a later change is still on its way (its own answer follows).
+pub fn answer() -> Option<Answer> {
+    let mut answer = ANSWER.lock().unwrap_or_else(PoisonError::into_inner);
+    match answer.take() {
+        Some((number, answer)) if number == ISSUED.load(Ordering::Relaxed) => Some(answer),
+        _ => None,
+    }
+}
+
+pub fn save(accounts: &mut Vec<Account>, account: Account) {
+    replace(accounts, &account.key(), account);
 }
 
 /// A card can switch grids without deleting credentials for its previous grid.
-pub fn replace(previous: &(String, String), account: Account) -> Vec<Account> {
-    change(Change::Upsert {
-        previous: previous.clone(),
-        account,
-    })
-    .unwrap_or_else(|error| {
-        log::warn!("account catalogue not saved: {error}");
-        load()
-    })
+pub fn replace(accounts: &mut Vec<Account>, previous: &(String, String), account: Account) {
+    let previous = previous.clone();
+    queue("account catalogue not saved", accounts, Change::Upsert { previous, account });
 }
 
 fn upsert(accounts: &mut Vec<Account>, previous: &(String, String), mut account: Account) {
@@ -337,22 +386,15 @@ pub fn remember_place(account: &Account, place: LastPlace) -> bool {
     })
 }
 
-pub fn remove(account: &Account) -> Vec<Account> {
-    change(Change::Remove(account.key())).unwrap_or_else(|error| {
-        log::warn!("account not removed: {error}");
-        load()
-    })
+pub fn remove(accounts: &mut Vec<Account>, account: &Account) {
+    queue("account not removed", accounts, Change::Remove(account.key()));
 }
 
 /// Move identities in the latest catalogue without replacing any profile
-/// data. An error only when the catalogue cannot be rewritten: a refused
-/// write keeps the new order and tries again.
-pub fn move_relative(from: &(String, String), target: &(String, String), after: bool) -> std::io::Result<Vec<Account>> {
-    change(Change::Move {
-        from: from.clone(),
-        target: target.clone(),
-        after,
-    })
+/// data. A refused write keeps the new order and tries again.
+pub fn move_relative(accounts: &mut Vec<Account>, from: &(String, String), target: &(String, String), after: bool) {
+    let (from, target) = (from.clone(), target.clone());
+    queue("account order not saved", accounts, Change::Move { from, target, after });
 }
 
 pub fn move_in(accounts: &mut Vec<Account>, from: &(String, String), target: &(String, String), after: bool) -> bool {
@@ -375,11 +417,12 @@ pub fn move_in(accounts: &mut Vec<Account>, from: &(String, String), target: &(S
 }
 
 /// Update only the chosen preference in the latest catalogue, under its lock.
-pub fn forget_preference(account: &Account, mfa: bool) -> Vec<Account> {
-    change(Change::Forget { key: account.key(), mfa }).unwrap_or_else(|error| {
-        log::warn!("account preference not forgotten: {error}");
-        load()
-    })
+pub fn forget_preference(accounts: &mut Vec<Account>, account: &Account, mfa: bool) {
+    queue(
+        "account preference not forgotten",
+        accounts,
+        Change::Forget { key: account.key(), mfa },
+    );
 }
 
 #[cfg(test)]

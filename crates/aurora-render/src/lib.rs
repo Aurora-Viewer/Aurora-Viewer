@@ -16,6 +16,8 @@ mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
+mod clouds;
+pub mod clouds_noise;
 mod contact_shadows;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
@@ -25,6 +27,7 @@ mod device_lost;
 pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
+mod equirect;
 mod exposure;
 pub mod frame_priority;
 mod fsr;
@@ -44,6 +47,7 @@ mod occlusion;
 pub mod oit_stochastic;
 pub mod pacing;
 mod packet;
+pub mod panorama;
 mod part_pick;
 mod pick;
 pub mod pipeline_cache;
@@ -114,9 +118,11 @@ pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
 pub use bloom::tile_reach as bloom_tile_reach;
+pub use clouds::type_of_shadow as clouds_type_of_shadow;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
+pub use equirect::{Answer as EquirectAnswer, CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;

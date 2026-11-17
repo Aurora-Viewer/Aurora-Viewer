@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 14, 10), "blender": (2, 93, 0),
+    "version": (0, 15, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -584,6 +584,8 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "The requested source is no longer in this scene's live list": "L’objet demandé ne figure plus dans la liste live de cette scène",
     "Waiting for Aurora: Update Aurora Viewer to use live PBR materials":
         "Mettez à jour Aurora Viewer pour utiliser les matériaux PBR live",
+    "Waiting for Aurora: Enable preview in Aurora's LiveMesh window":
+        "En attente d’Aurora : activez l’aperçu dans la fenêtre LiveMesh d’Aurora",
     "Live materials use the mesh's active UV map": "Les matériaux live utilisent la carte UV active du maillage",
     "Use UV coordinates for live image textures": "Utilisez les coordonnées UV pour les textures image live",
     "Live UV mapping supports Z rotation only": "Le mapping UV live accepte uniquement la rotation autour de Z",
