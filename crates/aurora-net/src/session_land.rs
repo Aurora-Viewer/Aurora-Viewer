@@ -1139,7 +1139,7 @@ mod parcel_update_writer_tests {
             bodies
         });
 
-        let client = reqwest::Client::new();
+        let client = crate::test_http_client();
         let writers = Arc::new(Mutex::new(HashMap::new()));
         let queue = |writers: &Arc<Mutex<HashMap<(RegionHandle, i32), watch::Sender<ParcelHttpUpdate>>>>, update: land::ParcelUpdate| {
             let body = aurora_llsd::to_xml(&update.to_llsd());
@@ -1156,11 +1156,19 @@ mod parcel_update_writer_tests {
         };
 
         queue(&writers, snapshot("Name A", 1));
-        started_rx.await.expect("first request reached the server");
+        // bounded: a request that never arrives fails the test, it does not hang it
+        let wait = std::time::Duration::from_secs(10);
+        tokio::time::timeout(wait, started_rx)
+            .await
+            .expect("first request within 10 s")
+            .expect("first request reached the server");
         queue(&writers, snapshot("Name B", 1));
         queue(&writers, snapshot("Name B", 2));
 
-        let bodies = server.await.expect("server task");
+        let bodies = tokio::time::timeout(wait, server)
+            .await
+            .expect("both requests within 10 s")
+            .expect("server task");
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             while !writers.lock().is_empty() {
                 tokio::task::yield_now().await;

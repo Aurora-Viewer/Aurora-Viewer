@@ -15,6 +15,13 @@ fn triangle() -> serde_json::Value {
         "faces":[{"color":[0.3,0.2,0.8,1.0],"vertices":vertices,"indices":[0,1,2]}]
     }]})
 }
+/// The key of the test servers, sent after the magic by `greeting`.
+const TEST_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn greeting() -> Vec<u8> {
+    [b"AURBLD2\n".as_slice(), TEST_KEY.as_bytes()].concat()
+}
+
 fn supported() -> HashSet<String> {
     HashSet::from(["mPelvis".into()])
 }
@@ -1069,11 +1076,14 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let ctx = egui::Context::default();
     let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("free port");
     let port = probe.local_addr().expect("address").port();
-    let shared = transport::start_listener(probe, supported(), Default::default(), ctx, None).expect("start");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(probe, TEST_KEY.to_owned(), supported(), Default::default(), ctx, None).expect("start");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("magic");
+    stream.write_all(&greeting()).expect("magic");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
@@ -1109,11 +1119,22 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
 fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separately() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("hello");
+    stream.write_all(&greeting()).expect("hello");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
@@ -1169,11 +1190,22 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
 fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
     let port = listener.local_addr().expect("address").port();
-    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
-    let owner = Server { shared: shared.clone() };
+    let shared = transport::start_listener(
+        listener,
+        TEST_KEY.to_owned(),
+        supported(),
+        Default::default(),
+        egui::Context::default(),
+        None,
+    )
+    .expect("server");
+    let owner = Server {
+        shared: shared.clone(),
+        _token: None,
+    };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-    stream.write_all(b"AURBLD1\n").expect("hello");
+    stream.write_all(&greeting()).expect("hello");
     let mut reader = BufReader::new(stream.try_clone().expect("reader"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");

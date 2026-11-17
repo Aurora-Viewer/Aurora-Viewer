@@ -421,6 +421,7 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         w.web.focused = false;
     }
     // the bar of the edits not saved stays at the bottom
+    w.pick_wait_notice(ui, env.p, env.world, env.actions);
     let closing = w.confirm_close;
     let bar = closing || (own && has_unsaved(w));
     let bar_h = if bar { 46.0 } else { 0.0 };
@@ -944,7 +945,13 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        Act::Done => ("check", aurora_i18n::tr!("ui-profile-aurora-done"), ActionKind::Primary, true, None),
+        Act::Done => (
+            "check",
+            aurora_i18n::tr!("ui-profile-aurora-done"),
+            ActionKind::Primary,
+            !w.pick_save_waits(),
+            None,
+        ),
     };
     // the block button and "…" are icons in the large header too
     let alone = look != Look::Labelled || matches!(act, Act::Block | Act::More);
@@ -984,10 +991,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
-        Act::Done => {
-            save_all(w, env.actions);
-            w.editing = false;
-        }
+        Act::Done => w.editing = !save_all(w, env.actions),
         Act::More => {}
     }
 }
@@ -1800,7 +1804,7 @@ fn picks_card(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     }
     if let Some(pick) = open {
         w.tab = TAB_PICKS;
-        if pick.is_some() {
+        if pick.is_some() && !w.pick_save_waits() {
             w.pick_sel = pick;
             w.pick_edit = None;
         }
@@ -2112,29 +2116,29 @@ fn unsaved_bar(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, closing: bool) 
                 ui.label(RichText::new(text).font(semibold(ui, 12.5)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 26.0);
-                    if widgets::action_button(
+                    if widgets::action_button_if(
                         ui,
                         p,
                         "device-floppy-filled",
                         aurora_i18n::tr!("common-save"),
                         ActionKind::Primary,
                         size,
+                        !w.pick_save_waits(),
                     )
                     .clicked()
                     {
-                        save_all(w, env.actions);
                         if closing {
-                            w.open = false;
+                            w.answer_close(super::CloseChoice::Save, env.actions);
+                        } else {
+                            save_all(w, env.actions);
                         }
-                        w.confirm_close = false;
                     }
                     if closing && widgets::action_button(ui, p, "", aurora_i18n::tr!("common-ignore"), ActionKind::Flat, size).clicked() {
-                        revert(w);
-                        w.open = false;
+                        w.answer_close(super::CloseChoice::Ignore, env.actions);
                     }
                     if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                         if closing {
-                            w.confirm_close = false;
+                            w.answer_close(super::CloseChoice::Cancel, env.actions);
                         } else {
                             revert(w);
                         }

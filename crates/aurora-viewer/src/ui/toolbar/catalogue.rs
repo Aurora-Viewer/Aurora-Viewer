@@ -37,6 +37,7 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "inventory_dual", "columns-2-filled", "inventory-dual-panel", true;
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
@@ -104,7 +105,7 @@ pub const COMMANDS: &[Command] = commands![
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
-    "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
+    "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
@@ -113,7 +114,7 @@ pub const COMMANDS: &[Command] = commands![
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", true;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
-    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
+    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", true;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
 ];
 

@@ -727,7 +727,7 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
     // (floater_color_picker.xml), so they take the wheel like the build
     // spinners; not while the number is typed or dragged.
     let protect = response.has_focus() || response.dragged() || response.drag_stopped();
-    let wheel = widgets::spin_wheel(ui, row_rect, response.id, !protect);
+    let wheel = widgets::spin_wheel(ui, row_rect, response.id, true, !protect);
     if step != 0 || wheel.scaled != 0.0 {
         // clamp_precision, as LLSpinCtrl::onUpBtn: on a 0-decimal field
         // (R/G/B in 0-255) Ctrl and Shift round to no change.

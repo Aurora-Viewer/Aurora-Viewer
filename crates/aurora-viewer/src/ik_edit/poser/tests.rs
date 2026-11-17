@@ -345,6 +345,104 @@ fn poser_static_layer_keeps_fk_ancestors_scales_and_world_locks() {
             .abs_diff_eq(scaled.scales[chest], 1e-5)
     );
 }
+
+#[test]
+fn poser_shape_changes_rebase_pose_and_undo_onto_the_new_rest() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let head = rig.names["mHead"];
+    let chest = rig.names["CHEST"];
+    let hip = rig.pelvis;
+    let initial_rest = Arc::new(crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    });
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().rebase(initial_rest.clone());
+    let frame = Frame::new(&world).unwrap();
+    editor.select(head, &rig, &frame);
+    let head_position = editor.poser.sessions[&world.agent_id].pose.positions[head];
+    editor.poser_transform(&rig, &frame, head_position, Quat::from_rotation_z(0.4), true);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.checkpoint();
+    let posed_head = session.pose.rotations[head];
+    let old_hip = session.pose.positions[hip];
+    let old_hip_world = session.pose.matrices(&rig, frame.model)[hip].w_axis.z;
+    let mut changed_rest = (*initial_rest).clone();
+    changed_rest.scale[chest] *= 1.3;
+    changed_rest.local_pos[hip].z += 0.12;
+    session.rebase(Arc::new(changed_rest));
+
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    assert!(session.edited(head));
+    assert!(!session.edited(chest));
+    let matrices = session.pose.matrices(&rig, frame.model);
+    assert!((matrices[hip].w_axis.z - old_hip_world - 0.12).abs() < 1e-4);
+
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.history(false);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (rig.local_pos[hip] + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+
+    // A redo entry follows the rest too: undo, return to the first shape, redo.
+    session.history(false);
+    session.rebase(initial_rest);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
+    assert!((session.pose.positions[hip] - old_hip).length() < 1e-5);
+}
+
+#[test]
+fn poser_rebase_from_a_flat_rest_axis_takes_the_new_rest_scale() {
+    // Shape sliders can drive a joint's rest scale to zero on one axis
+    // (#1249); the pose's ratio to it must not blow the joint up.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(rest));
+    assert!(session.pose.scales[chest].is_finite());
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
+}
+
+#[test]
+fn poser_a_rest_axis_still_flat_after_another_shape_change_keeps_the_pose_valid() {
+    // Pose, a slider flattens the chest's X (#1249), then another slider
+    // changes the rest while that axis stays flat: the pose and its undo
+    // steps must stay usable, not be dropped for a zero scale.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let neck = rig.names["NECK"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let mut flat_taller = flat.clone();
+    flat_taller.scale[neck] *= 1.2;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(flat_taller));
+    let scale = session.pose.scales[chest];
+    assert!(super::data::scale_valid(scale), "chest scale {scale} is out of the poser's bounds");
+    assert!(session.pose.scales.iter().all(|s| super::data::scale_valid(*s)));
+}
 fn assert_attached(rig: &Rig, pose: &SubjectPose, reference: &SubjectPose, model: Mat4) {
     let matrices = pose.matrices(rig, model);
     for (bone, parent) in rig.parent.iter().enumerate() {
