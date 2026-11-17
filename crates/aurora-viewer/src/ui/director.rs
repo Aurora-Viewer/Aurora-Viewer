@@ -275,6 +275,11 @@ pub fn window(
         .show(ctx, p, open, |ui| {
             widgets::auto_height_body(room).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                // the body keeps the window's width: a long text (a target's
+                // name, a translation) wraps instead of widening the window
+                // past its title bar
+                ui.set_max_width(ui.available_width());
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 let mut tab = shown_tab(ui.ctx());
                 let labels = Tab::ALL.map(|tab| (tab.label(), true));
                 let mut index = tab as usize;
@@ -558,7 +563,7 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
         };
         ui.label(RichText::new(name).size(12.5).color(p.ink));
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let size = Vec2::new(0.0, 26.0);
         if widgets::action_button(
             ui,
@@ -844,7 +849,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     // what it looks at when it plays: the lock's target while the lock is
     // on, a target of its own, or where its camera was laid
     row(ui, p, aurora_i18n::tr!("director-key-aim"), |ui| {
-        ui.label(RichText::new(key_aim_label(d, key.aim)).size(12.5).color(p.ink))
+        ui.add(egui::Label::new(RichText::new(key_aim_label(d, key.aim)).size(12.5).color(p.ink)).wrap())
             .on_hover_text(aurora_i18n::tr!("director-key-aim-tip"));
     });
     ui.horizontal_wrapped(|ui| {
@@ -880,7 +885,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let size = Vec2::new(0.0, 26.0);
         if widgets::action_button(
             ui,
@@ -984,7 +989,7 @@ fn path_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             d.time = share * d.track.duration();
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let mut curve = usize::from(d.track.curve == Curve::Linear);
         let options = [
             (aurora_i18n::tr!("director-curve-smooth"), true),
@@ -1258,6 +1263,26 @@ fn strip_edits(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, ac
         {
             actions.push(action);
         }
+    }
+    // the selected keyframe takes the live view, as its section's Update
+    // does, without opening the window's Track tab
+    let selected = d.selected.filter(|index| *index < d.track.len());
+    let tip = aurora_i18n::tr!("director-update-tip");
+    if widgets::action_button_if(
+        ui,
+        p,
+        "refresh",
+        aurora_i18n::tr!("director-update"),
+        ActionKind::Flat,
+        Vec2::new(0.0, STRIP_BUTTON.y),
+        selected.is_some() && !d.playing(),
+    )
+    .on_hover_text(tip)
+    .on_disabled_hover_text(tip)
+    .clicked()
+        && let Some(index) = selected
+    {
+        actions.push(Action::Update(index));
     }
 }
 

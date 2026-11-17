@@ -725,7 +725,7 @@ pub fn library_prompts(ctx: &egui::Context, p: &Palette, library: &mut LibraryUi
             ui.add_space(8.0);
             ui.label(text);
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if widgets::action_button(
                     ui,
                     p,
@@ -768,7 +768,7 @@ pub fn library_prompts(ctx: &egui::Context, p: &Palette, library: &mut LibraryUi
             ui.add_space(8.0);
             ui.label(aurora_i18n::tr!("director-ffmpeg-pack-confirm-text", size = megabytes(size)));
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if widgets::action_button(
                     ui,
                     p,
