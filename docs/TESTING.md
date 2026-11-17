@@ -1130,7 +1130,8 @@ when unfocused") is ignored during a screenshot.
   in the log). The window opens on the tab that shows what the scenario
   sets: Camera for `lock`, `orbit` and `capture`, Look for `green` and
   `titles`, Output for `record`, `record-alpha` and `render`, Library for
-  `montage`, Track otherwise. Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  `montage`, Track otherwise (the Filters tab, the photo mode's looks, has
+  no scenario of its own: `AURORA_DEMO_SNAPSHOT` sets the looks it shows). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
   thousand frames a second and frame 700 is still under the loading fade.
   With `1` and a capture at frame 900: the window on the right (Camera,
   Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,

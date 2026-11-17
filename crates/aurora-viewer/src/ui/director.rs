@@ -118,6 +118,19 @@ pub enum Action {
     KeyTravel(usize, bool),
     /// A keyframe's camera dragged in the world to this view.
     MoveKey(usize, Pose),
+    /// The photo mode's Freeze the world, on or off.
+    FreezeWorld(bool),
+}
+
+/// The Photo window's looks and LUTs, in the Director's Filters tab: the
+/// same stack, so a film is drawn with the photos' filters.
+pub struct Looks<'a> {
+    pub ui: &'a mut super::looks_editor::LooksUi,
+    pub settings: &'a mut crate::snapshot::Settings,
+    /// The user's LUTs, by file name.
+    pub luts: &'a [String],
+    /// What the editor asks of the app (import, remove, open the folder).
+    pub out: &'a mut Vec<super::snapshot::Action>,
 }
 
 /// The saved tracks as the window shows them.
@@ -161,6 +174,8 @@ pub struct Live {
     pub recording: bool,
     /// Where a shot starts from (`director::shots`).
     pub shots: director::shots::Here,
+    /// The photo mode's Freeze the world is on.
+    pub frozen: bool,
 }
 
 /// The recording as the window shows it (`recorder.rs`).
@@ -265,6 +280,7 @@ pub fn window(
     env: Env<'_>,
     capture: super::director_capture::CaptureView<'_>,
     key_rows: super::director_key_rows::KeyRows<'_>,
+    looks: Looks<'_>,
     actions: &mut Vec<Action>,
 ) {
     if !*open {
@@ -369,6 +385,18 @@ pub fn window(
                     Tab::Output => {
                         super::director_output::output_section(ui, p, record, live, tracks.library, actions);
                     }
+                    Tab::Filters => {
+                        // the Photo window's own looks and LUTs: one stack,
+                        // the photos' and the films'
+                        ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("director-filters-note")).size(12.0).color(p.muted)).wrap());
+                        let opts = super::looks_editor::Options {
+                            list_height: 260.0,
+                            compare: false,
+                            luts: looks.luts,
+                            pano: false,
+                        };
+                        looks.ui.show(ui, p, looks.settings, opts, looks.out);
+                    }
                     Tab::Library => {
                         widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), true, |ui| {
                             super::director_library::library_section(ui, p, &mut tracks, d.track.is_empty(), actions);
@@ -391,12 +419,13 @@ pub enum Tab {
     Track,
     Camera,
     Look,
+    Filters,
     Output,
     Library,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Track, Tab::Camera, Tab::Look, Tab::Output, Tab::Library];
+    pub const ALL: [Tab; 6] = [Tab::Track, Tab::Camera, Tab::Look, Tab::Filters, Tab::Output, Tab::Library];
 
     fn label(self) -> &'static str {
         match self {
@@ -404,6 +433,7 @@ impl Tab {
             Tab::Camera => aurora_i18n::tr!("director-tab-camera"),
             Tab::Look => aurora_i18n::tr!("director-tab-look"),
             Tab::Output => aurora_i18n::tr!("director-tab-output"),
+            Tab::Filters => aurora_i18n::tr!("director-tab-filters"),
             Tab::Library => aurora_i18n::tr!("director-tab-library"),
         }
     }
@@ -496,6 +526,15 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
             actions.push(Action::Roll(0.0));
         }
     });
+    // the photo mode's: what moves holds still, the camera flies on (and a
+    // track played through a frozen world is a bullet time)
+    let mut frozen = live.frozen;
+    if widgets::switch_labeled(ui, p, &mut frozen, aurora_i18n::tr!("photo-freeze-world"))
+        .on_hover_text(aurora_i18n::tr!("director-freeze-world-tip"))
+        .changed()
+    {
+        actions.push(Action::FreezeWorld(frozen));
+    }
     let mut free = live.free;
     if widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
         .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
@@ -1803,6 +1842,7 @@ mod tests {
             can_record: false,
             recording: false,
             shots: Default::default(),
+            frozen: false,
         }
     }
 

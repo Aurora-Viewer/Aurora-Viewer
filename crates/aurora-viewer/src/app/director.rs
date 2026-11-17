@@ -86,6 +86,9 @@ pub(super) struct DirectorState {
     lost: bool,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
+    /// The filters were changed in the Filters tab, not saved yet (saved
+    /// once no mouse button is held: a slider's drag is one save).
+    looks_unsaved: bool,
     /// The move and turn handles of the selected keyframes' cameras
     /// (`ui::director_drag::key_gizmo`).
     pub(super) gizmo: crate::ik_edit::gizmo::Gizmo,
@@ -704,6 +707,7 @@ impl App {
                 || (self.demo && std::env::var_os("AURORA_DEMO_DIRECTOR_FILM").is_some()),
             recording: self.director.recording.is_some(),
             shots: self.director_shots_here(),
+            frozen: self.snapshots.ui.freeze_world,
         }
     }
 
@@ -761,6 +765,8 @@ impl App {
         let mut open = self.panels.director;
         let mut capture_out = Vec::new();
         let (capture, key_rows) = self.director.extra.views(&self.world.inventory, live.restricted, &mut capture_out);
+        let looks_before = (self.settings.snapshot.looks.clone(), self.settings.snapshot.look_settings.clone());
+        let mut looks_out = Vec::new();
         ui::director::window(
             ctx,
             p,
@@ -806,9 +812,16 @@ impl App {
             },
             capture,
             key_rows,
+            ui::director::Looks {
+                ui: &mut self.snapshots.ui.looks,
+                settings: &mut self.settings.snapshot,
+                luts: &self.snapshots.ui.lut_names,
+                out: &mut looks_out,
+            },
             &mut actions,
         );
         self.panels.director = open;
+        self.director_looks_after(looks_before, looks_out, ctx);
         self.director_capture_actions(capture_out);
         if record_changed {
             self.settings.save();
@@ -820,6 +833,27 @@ impl App {
         }
         self.director.keys = open && ui::director::keys(ctx, self.director.keys, self.director.d.track.len());
         env
+    }
+
+    /// After the window: the Filters tab's changes saved once no mouse
+    /// button is held, and what its editor asked (the LUTs' import, removal
+    /// and folder), as the Photo window does it.
+    fn director_looks_after(
+        &mut self,
+        before: (Vec<crate::snapshot::looks::Layer>, std::collections::BTreeMap<String, Vec<f32>>),
+        out: Vec<ui::snapshot::Action>,
+        ctx: &egui::Context,
+    ) {
+        if before.0 != self.settings.snapshot.looks || before.1 != self.settings.snapshot.look_settings {
+            self.director.looks_unsaved = true;
+        }
+        if self.director.looks_unsaved && !ctx.input(|i| i.pointer.any_down()) {
+            self.director.looks_unsaved = false;
+            self.settings.save();
+        }
+        for action in out {
+            self.photo_lut_action(action);
+        }
     }
 
     /// While the track plays: the countdown of its start delay, nothing else.
@@ -905,6 +939,7 @@ impl App {
                     self.director.history.redo(&mut self.director.d);
                 }
                 Action::MoveKey(index, pose) => self.director_move_key(index, pose),
+                Action::FreezeWorld(on) => self.snapshots.ui.freeze_world = on,
             }
         }
     }

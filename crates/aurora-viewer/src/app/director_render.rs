@@ -157,7 +157,8 @@ impl App {
             return None;
         }
         let tag = job.asked(n);
-        let (width, height) = job.size;
+        let size = job.size;
+        let (width, height) = size;
         renderer.film_request = Some(FilmRequest {
             tag,
             size: Some(job.size),
@@ -176,7 +177,8 @@ impl App {
             tile: glam::Mat4::IDENTITY,
             height,
             scale: crate::snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent),
-            look: None,
+            // the Filters tab's looks, on the whole frame
+            look: self.director_render_look(size),
             context: aurora_render::PhotoContext::None,
             cube_face: false,
         })
