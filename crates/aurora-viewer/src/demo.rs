@@ -460,6 +460,20 @@ fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
     Some((n, alpha, spacing))
 }
 
+/// `AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]`: the part of the view one
+/// translucent pane covers (10 % by default, from 1 to 100) and its opacity
+/// (0.5 by default, from 0.02 to 1), or `None` without the variable: the
+/// transparency a stochastic resolve has to run over only in part.
+fn glass_patch_spec(value: Option<&str>) -> Option<(f32, f32)> {
+    let value = value?;
+    let mut parts = value.split(',').map(str::trim);
+    // (`nan` and `inf` parse as numbers: only finite values count)
+    let number = |s: &str| s.parse::<f32>().ok().filter(|v| v.is_finite());
+    let percent = parts.next().and_then(number).unwrap_or(10.0).clamp(1.0, 100.0);
+    let alpha = parts.next().and_then(number).unwrap_or(0.5).clamp(0.02, 1.0);
+    Some((percent, alpha))
+}
+
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
     let mut t = TextureEntry::default();
     for f in t.faces.iter_mut() {
@@ -6092,6 +6106,38 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_GLASS_PATCH=<percent>[,<alpha>]: one translucent pane 3 m
+    // ahead of the start position, facing the camera, covering that part of
+    // the view (the area of the pane that fills it, scaled): the rest of
+    // the view holds no blended face, so what the order-independent
+    // transparency spends on the empty part shows (aurora-render
+    // oit_stochastic.rs).
+    if let Some((percent, alpha)) = glass_patch_spec(std::env::var("AURORA_DEMO_GLASS_PATCH").ok().as_deref()) {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        let (dx, dy) = (0.894_427_2, 0.447_213_6);
+        // (a pane of 8.8 x 4.4 m fills the view at 3 m, as the first of
+        // AURORA_DEMO_ALPHA_PLANES)
+        let k = (percent / 100.0).sqrt();
+        let d = 3.0;
+        let (px, py) = (sx + dx * d, sy + dy * d);
+        add(prim(
+            id,
+            Vec3::new(px, py, g(px, py) + 1.5 + 0.3 * d),
+            Quat::from_rotation_z(dy.atan2(dx)),
+            Vec3::new(0.05, 8.8 * k, 4.4 * k),
+            boxp,
+            te([0.6, 0.8, 1.0, alpha], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_BLEND_AO: a face ahead of the start position, its left
     // and right halves alike but one blended (alpha 0.99, opaque to the
     // eye), with a nose across the middle, under a wide hat brim and
@@ -8770,6 +8816,18 @@ mod sun_tests {
         // fully transparent, at most 2 m apart
         assert_eq!(alpha_planes_spec(Some("on")), Some((8, 0.3, 0.25)));
         assert_eq!(alpha_planes_spec(Some("500,0,9")), Some((64, 0.02, 2.0)));
+    }
+
+    #[test]
+    fn the_glass_patch_reads_its_share_and_opacity() {
+        assert_eq!(glass_patch_spec(None), None);
+        assert_eq!(glass_patch_spec(Some("25")), Some((25.0, 0.5)));
+        assert_eq!(glass_patch_spec(Some("5, 0.3")), Some((5.0, 0.3)));
+        // not a number: the defaults; kept within 1 to 100 %, never fully
+        // transparent
+        assert_eq!(glass_patch_spec(Some("on")), Some((10.0, 0.5)));
+        assert_eq!(glass_patch_spec(Some("500,0")), Some((100.0, 0.02)));
+        assert_eq!(glass_patch_spec(Some("nan,inf")), Some((10.0, 0.5)));
     }
 }
 
