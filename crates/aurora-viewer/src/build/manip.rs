@@ -1617,21 +1617,45 @@ fn drag_update(
         // Shift-drag leaves a copy behind (LLManipTranslate::handleHover, selectDuplicate)
         if d.mode == EditMode::Move && mods.shift && !mods.ctrl && cam.hud.is_none() {
             if d.linked {
-                // Firestorm refuses to copy individual parts
+                // Firestorm refuses to copy individual parts, once a drag
+                // (mWarningNoDragCopy): UISndInvalidOp
+                world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
+            } else if d
+                .movers
+                .iter()
+                .any(|m| super::select_type(world, m.idx) != super::SelectType::World)
+            {
+                // LLSelectMgr::selectDuplicate: no copy of an attachment,
+                // UISndInvalidOp
+                world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
                 for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
-                for (handle, ids) in by_region {
-                    world.objects.expect_local_duplicates(handle, &ids, Vec3::ZERO, false, None);
-                    out.push(BuildCmd::Duplicate {
+                let group_id = world.group_for_rez(s.rez_under_land_group);
+                let copies: Vec<BuildCmd> = by_region
+                    .into_iter()
+                    .map(|(handle, local_ids)| BuildCmd::Duplicate {
                         handle,
-                        local_ids: ids,
+                        local_ids,
                         offset: Vec3::ZERO,
                         flags: 0,
-                        group_id: world.group_for_rez(s.rez_under_land_group),
-                    });
+                        group_id,
+                    })
+                    .collect();
+                // selectDuplicate under rlvCanDeleteOrReturn: refused before
+                // anything is sent (the send boundary's rule), UISndInvalidOp;
+                // the move itself goes on, as in the Legacy Viewer
+                if copies.iter().all(|c| world.rlva_allows_build(c)) {
+                    for c in copies {
+                        if let BuildCmd::Duplicate { handle, local_ids, .. } = &c {
+                            world.objects.expect_local_duplicates(*handle, local_ids, Vec3::ZERO, false, None);
+                        }
+                        out.push(c);
+                    }
+                } else {
+                    world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
                 }
             }
         }

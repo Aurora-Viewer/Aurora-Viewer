@@ -126,10 +126,14 @@ impl App {
             return;
         };
         // LLToolPie::handleRightClickPick shows no menu on what @interact or
-        // @fartouch keeps out of the selection
+        // @fartouch keeps out of the selection, with UISndInvalidOp on an
+        // avatar or an object (not on the land)
         if !picked.map_or(self.world.rlva_can_designate_land(), |idx| {
             self.world.rlva_can_designate(idx, Some(point))
         }) {
+            if picked.is_some() {
+                self.world.ui_sounds.push(UiSound::InvalidOp);
+            }
             return;
         }
         if let Some(source) = picked

@@ -89,7 +89,7 @@ fn typing_names(world: &World, st: &ChatUi) -> Vec<String> {
     match st.selected {
         None => st.nearby_typing_names(world),
         Some(id) if sidebar::kind(world, &id) == sidebar::Kind::Private && world.social.is_typing(&id) => {
-            vec![world.social.display_name_of(&id)]
+            vec![world.social.display_name_in(crate::world::names::NameScope::Roster, &id)]
         }
         Some(_) => Vec::new(),
     }
