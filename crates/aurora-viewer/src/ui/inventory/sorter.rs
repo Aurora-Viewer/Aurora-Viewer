@@ -62,6 +62,9 @@ enum Confirm {
     /// Allow Auto-sort into a default folder (its id and name), or Lost
     /// and Found's switch (None).
     Unlock(Option<Uuid>, String),
+    /// Empty Pre-Trash or the Trash for good in small steps: the folder,
+    /// its name and the entries it holds.
+    Purge(Uuid, String, usize),
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
@@ -138,6 +141,8 @@ pub(super) struct State {
     skipped: HashSet<Uuid>,
     /// Clean up's entries on their way to the Trash, a batch at a time.
     trash: Option<TrashJob>,
+    /// Pre-Trash or the Trash emptied for good in small steps.
+    purge: Option<PurgeJob>,
     /// A Clean up button pressed this frame.
     cleanup_action: Option<CleanupAction>,
     /// The Share window and what is ticked in it.
@@ -534,6 +539,116 @@ struct ImportWindow {
 enum CleanupAction {
     PreTrash,
     Trash,
+}
+
+/// Empty in small steps: the pieces left, the one on its way and its
+/// answer. Paced, one request at a time; a refused piece is split smaller.
+struct PurgeJob {
+    folder: Uuid,
+    pieces: VecDeque<sorter::purge::Piece>,
+    total: usize,
+    done: usize,
+    failed: usize,
+    /// The piece on its way, the entries it held, frames since it was
+    /// pushed, and since when the app took it.
+    in_flight: Option<(sorter::purge::Piece, usize, u32, Option<Instant>)>,
+    request: Option<Uuid>,
+    /// Its answer: accepted or refused.
+    answered: Option<bool>,
+    paused: bool,
+    next_at: Option<Instant>,
+}
+
+/// A pause between two pieces: the server is never asked faster.
+const PURGE_GAP: std::time::Duration = std::time::Duration::from_millis(400);
+/// A piece taken and never answered is given up after this.
+const PURGE_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The next piece of a purge, or the answer of the one on its way.
+fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>, free: bool) {
+    use aurora_net::inventory::operations::{Mutation, Operation};
+    let free = free
+        && st.pending.is_none()
+        && !actions
+            .iter()
+            .any(|a| matches!(a, InvAction::Edit(_) | InvAction::Delete(_) | InvAction::Drop(_)));
+    let now = Instant::now();
+    let Some(job) = st.sorter.purge.as_mut() else { return };
+    if let Some((piece, count, frames, taken)) = job.in_flight.as_mut() {
+        *frames += 1;
+        if job.request.is_some() {
+            taken.get_or_insert(now);
+        }
+        let answer = match job.answered {
+            Some(answer) => Some(answer),
+            // never taken (another change went first): asked again
+            None if job.request.is_none() && *frames > 120 => {
+                let piece = piece.clone();
+                job.pieces.push_front(piece);
+                job.in_flight = None;
+                return;
+            }
+            // taken and never answered: refused
+            None if taken.is_some_and(|at| now.duration_since(at) > PURGE_LIMIT) => Some(false),
+            None => None,
+        };
+        let Some(accepted) = answer else { return };
+        let (piece, count) = (piece.clone(), *count);
+        job.in_flight = None;
+        job.request = None;
+        job.answered = None;
+        job.next_at = Some(now + PURGE_GAP);
+        if accepted {
+            job.done += count;
+        } else if let Some(parts) = sorter::purge::split_piece(inv, &piece) {
+            // refused (a 403 for too large a piece): smaller, at once
+            for part in parts.into_iter().rev() {
+                job.pieces.push_front(part);
+            }
+        } else {
+            job.failed += count;
+        }
+        return;
+    }
+    if job.pieces.is_empty() {
+        st.sorter.status = aurora_i18n::tr!("inventory-purge-done", count = job.done, failed = job.failed);
+        st.sorter.purge = None;
+        return;
+    }
+    if job.paused || !free || job.next_at.is_some_and(|at| now < at) {
+        return;
+    }
+    // what is gone already is skipped
+    let piece = loop {
+        let Some(piece) = job.pieces.pop_front() else { return };
+        let piece = match piece {
+            sorter::purge::Piece::Folder(id) if inv.folders.contains_key(&id) => sorter::purge::Piece::Folder(id),
+            sorter::purge::Piece::Items(ids) => {
+                let ids: Vec<Uuid> = ids.into_iter().filter(|id| inv.items.contains_key(id)).collect();
+                if ids.is_empty() {
+                    continue;
+                }
+                sorter::purge::Piece::Items(ids)
+            }
+            sorter::purge::Piece::Folder(_) => continue,
+        };
+        break piece;
+    };
+    let (operations, removed): (Vec<Operation>, Vec<Uuid>) = match &piece {
+        sorter::purge::Piece::Folder(id) => (vec![Operation::Delete { id: *id, folder: true }], vec![*id]),
+        sorter::purge::Piece::Items(ids) => (
+            ids.iter().map(|id| Operation::Delete { id: *id, folder: false }).collect(),
+            ids.clone(),
+        ),
+    };
+    let count = piece.entries(inv);
+    actions.push(InvAction::Edit(Mutation {
+        operations,
+        refresh: vec![job.folder],
+        removed,
+        ..Default::default()
+    }));
+    job.in_flight = Some((piece, count, 0, None));
 }
 
 struct TrashJob {
@@ -1333,7 +1448,26 @@ impl InventoryUi {
             }
             ours
         }
-        claim(&mut self.sorter, request, change)
+        // an Empty in small steps piece, matched by its first entry
+        fn claim_purge(state: &mut State, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
+            let Some(job) = state.purge.as_mut() else { return false };
+            let Some(first) = job.in_flight.as_ref().and_then(|(piece, ..)| piece.first()) else {
+                return false;
+            };
+            let ours = job.request.is_none()
+                && change
+                    .operations
+                    .iter()
+                    .any(|op| matches!(op, aurora_net::inventory::operations::Operation::Delete { id, .. } if *id == first));
+            if ours {
+                job.request = Some(request);
+                job.answered = None;
+            }
+            ours
+        }
+        claim_purge(&mut self.sorter, request, change)
+            || self.windows.iter_mut().any(|w| claim_purge(&mut w.state.sorter, request, change))
+            || claim(&mut self.sorter, request, change)
             || self.windows.iter_mut().any(|w| claim(&mut w.state.sorter, request, change))
             || claim_trash(&mut self.sorter, request, change)
             || self.windows.iter_mut().any(|w| claim_trash(&mut w.state.sorter, request, change))
@@ -1344,6 +1478,9 @@ impl InventoryUi {
     /// give; None (a failed request) is the whole batch.
     pub(crate) fn finish_sorter(&mut self, request: Uuid, error: Option<&str>, unread: Option<&[Uuid]>) {
         for state in std::iter::once(&mut self.sorter).chain(self.windows.iter_mut().map(|w| &mut w.state.sorter)) {
+            if let Some(job) = state.purge.as_mut().filter(|j| j.request == Some(request)) {
+                job.answered = Some(error.is_none());
+            }
             if let Some(trash) = state.trash.as_mut().filter(|t| t.request == Some(request)) {
                 trash.answered = true;
                 // (refused, or not confirmed: shown back where they were, the
@@ -1701,6 +1838,7 @@ pub(super) fn show(
         }
     }
     send_trash_batch(inv, st, prefs, worn, actions, free && !hold);
+    send_purge_piece(inv, st, actions, free && !hold);
     let state = &mut st.sorter;
     if !state.open {
         return;
@@ -1983,7 +2121,16 @@ pub(super) fn show(
                         .inner
                 }
                 OPTIONS => ui.add_enabled_ui(!busy, |ui| options(ui, p, inv, state, &mut prefs.sorter)).inner,
-                CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
+                CLEANUP => cleanup_tab(
+                    ui,
+                    p,
+                    inv,
+                    state,
+                    &mut prefs.sorter,
+                    matches!(source, Source::Folder(_)),
+                    busy,
+                    free_now,
+                ),
                 _ => {
                     if !waiting.is_empty() {
                         pre_trash_card(ui, p, inv, state, (&waiting, waiting_in), busy, !pre_trash_loaded);
@@ -2077,6 +2224,15 @@ pub(super) fn show(
         let unsure: HashSet<Uuid> = job.unsure.iter().map(|(m, _, _)| m.id).collect();
         job.skipped += job.queue.iter().filter(|m| !unsure.contains(&m.id)).count();
         job.queue.clear();
+    }
+    if let Some(job) = state.purge.as_mut() {
+        if pause {
+            job.paused = !job.paused;
+        }
+        if stop {
+            // the piece on its way finishes; nothing after it is sent
+            job.pieces.clear();
+        }
     }
     if stop && let Some(trash) = state.trash.as_mut() {
         // what Stop leaves is told in the summary
@@ -2733,6 +2889,41 @@ fn pre_trash_card(
                 folders_first(inv, waiting.iter().map(|id| (*id, folder)).collect()).into(),
             ));
         }
+        purge_buttons(ui, p, inv, state, busy || loading);
+    });
+}
+
+/// Empty in small steps, for Pre-Trash and the Trash: for a folder too
+/// large to be emptied at once (the server refuses a huge Trash's purge).
+fn purge_buttons(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, busy: bool) {
+    let folders = [
+        (sorter::pre_trash(inv), sorter::pre_trash_name()),
+        (rules::system(inv, 14), aurora_i18n::tr!("inventory-purge-trash-name").to_owned()),
+    ];
+    ui.add_space(4.0);
+    ui.label(RichText::new(aurora_i18n::tr!("inventory-purge-hint")).small().color(p.muted));
+    ui.horizontal_wrapped(|ui| {
+        for (folder, name) in folders {
+            let Some(folder) = folder else { continue };
+            let count = sorter::purge::entries_below(inv, folder);
+            if count == 0 {
+                continue;
+            }
+            let label = aurora_i18n::tr!("inventory-purge-steps", folder = name.as_str(), count = count);
+            let go = ui.add_enabled_ui(!busy && state.purge.is_none() && state.trash.is_none(), |ui| {
+                crate::ui::widgets::action_button(
+                    ui,
+                    p,
+                    "trash-x-filled",
+                    &label,
+                    crate::ui::widgets::ActionKind::Danger,
+                    Vec2::new(0.0, 26.0),
+                )
+            });
+            if go.inner.clicked() {
+                state.confirm = Some(Confirm::Purge(folder, name, count));
+            }
+        }
     });
 }
 
@@ -2865,6 +3056,34 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                     }
                 });
             }
+            Confirm::Purge(_, name, count) => {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-purge-title", folder = name.as_str()))
+                        .size(15.0)
+                        .strong()
+                        .color(p.ink),
+                );
+                ui.add_space(8.0);
+                ui.label(aurora_i18n::tr!("inventory-purge-text", folder = name.as_str(), count = *count));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if action_button(
+                        ui,
+                        p,
+                        "trash-x-filled",
+                        aurora_i18n::tr!("inventory-purge-go"),
+                        ActionKind::Danger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        answer = Some(true);
+                    }
+                    if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            }
             Confirm::Unlock(_, name) => {
                 ui.label(
                     RichText::new(aurora_i18n::tr!("inventory-sorter-unlock-title", folder = name.as_str()))
@@ -2957,6 +3176,33 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
             }
             st.sorter.journal.claim(st.sorter.window);
             st.sorter.trash = Some(TrashJob::new(ids.to_vec()));
+        }
+        Confirm::Purge(folder, name, _) => {
+            st.sorter.status.clear();
+            if busy_elsewhere(&mut st.sorter) {
+                return;
+            }
+            // (never a worn item: take it off first, as the Legacy Viewer's
+            // Empty Trash asks)
+            let worn_inside = st.sorter.worn_now.iter().any(|w| rules::under(inv, *w, folder));
+            if worn_inside {
+                st.sorter.status = aurora_i18n::tr!("inventory-purge-worn", folder = name.as_str());
+                return;
+            }
+            let pieces: VecDeque<_> = sorter::purge::purge_pieces(inv, folder).into();
+            let total = sorter::purge::entries_below(inv, folder);
+            st.sorter.purge = Some(PurgeJob {
+                folder,
+                pieces,
+                total,
+                done: 0,
+                failed: 0,
+                in_flight: None,
+                request: None,
+                answered: None,
+                paused: false,
+                next_at: None,
+            });
         }
         Confirm::PreTrash(ids) => {
             // the same batches as Clean up's Trash: at most 200 per delete
@@ -3119,6 +3365,45 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
 
 fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: bool, go: &mut bool, stop: &mut bool, pause: &mut bool) {
     ui.add_space(4.0);
+    if let Some(job) = &state.purge {
+        let fraction = if job.total == 0 { 1.0 } else { job.done as f32 / job.total as f32 };
+        let text = aurora_i18n::tr!("inventory-purge-progress", done = job.done, total = job.total);
+        ui.horizontal(|ui| {
+            crate::ui::widgets::progress(
+                ui,
+                p,
+                "inventory_purge",
+                fraction,
+                (ui.available_width() - 210.0).max(60.0),
+                &text,
+                None,
+            );
+            let label = if job.paused {
+                aurora_i18n::tr!("inventory-sorter-resume")
+            } else {
+                aurora_i18n::tr!("inventory-sorter-pause")
+            };
+            *pause = crate::ui::widgets::action_button(
+                ui,
+                p,
+                if job.paused { "player-play-filled" } else { "player-pause-filled" },
+                label,
+                crate::ui::widgets::ActionKind::Flat,
+                Vec2::new(96.0, 26.0),
+            )
+            .clicked();
+            *stop = crate::ui::widgets::action_button(
+                ui,
+                p,
+                "player-stop-filled",
+                aurora_i18n::tr!("common-stop"),
+                crate::ui::widgets::ActionKind::Flat,
+                Vec2::new(96.0, 26.0),
+            )
+            .clicked();
+        });
+        return;
+    }
     if let Some(trash) = &state.trash {
         let fraction = if trash.total == 0 {
             1.0
@@ -3291,9 +3576,11 @@ const CLEANUP_ROWS: usize = 300;
 /// The Clean up tab: how old (chips, or a month and a year), which kinds,
 /// where, then the list by kind with a box per row (unchecked rows stay) and
 /// the two ways out: Pre-Trash, or the Trash after a confirmation.
+#[allow(clippy::too_many_arguments)]
 fn cleanup_tab(
     ui: &mut egui::Ui,
     p: &Palette,
+    inv: &Inventory,
     state: &mut State,
     options: &mut sorter::Preferences,
     has_folder: bool,
@@ -3447,6 +3734,7 @@ fn cleanup_tab(
         }
         ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-never")).small().color(p.muted));
     });
+    purge_buttons(ui, p, inv, state, busy);
     crate::ui::widgets::divider(ui, p);
     let State {
         cleanup: list,

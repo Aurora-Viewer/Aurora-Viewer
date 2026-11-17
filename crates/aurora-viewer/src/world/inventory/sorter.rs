@@ -4465,6 +4465,9 @@ pub mod journal;
 mod duplicates;
 pub use duplicates::plan_duplicates;
 
+#[path = "sorter_purge.rs"]
+pub mod purge;
+
 #[cfg(test)]
 #[path = "sorter_tests.rs"]
 mod tests;

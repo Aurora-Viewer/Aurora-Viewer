@@ -14598,6 +14598,18 @@ inventory-sorter-hint-store = Store name
 inventory-sorter-hint-remove = Remove this hint
 inventory-sorter-hint-add = Add a store hint
 inventory-cleanup-empty-folders = Include empty folders
+inventory-purge-hint = For a folder too large to empty at once (the server refuses it): deleted for good a few entries at a time, paced, with Pause and Stop.
+inventory-purge-trash-name = Trash
+inventory-purge-steps = Empty { $folder } in small steps ({ $count })
+inventory-purge-title = Delete everything in { $folder } for good?
+inventory-purge-text = { $count ->
+    [one] 1 entry in { $folder } will be deleted permanently. This cannot be undone.
+   *[other] { $count } entries in { $folder } will be deleted permanently, a few at a time. This cannot be undone.
+}
+inventory-purge-go = Delete for good
+inventory-purge-progress = Deleting for good: { $done } / { $total }
+inventory-purge-done = { $count } deleted for good, { $failed } refused.
+inventory-purge-worn = { $folder } holds a worn item: take it off first.
 inventory-cleanup-locked = { $count ->
     [one] 1 item in locked default folders (Clothing, Body Parts…) is not looked at.
    *[other] { $count } items in locked default folders (Clothing, Body Parts…) are not looked at.

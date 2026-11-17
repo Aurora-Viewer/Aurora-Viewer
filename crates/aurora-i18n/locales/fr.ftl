@@ -14603,6 +14603,18 @@ inventory-sorter-hint-store = Nom de la boutique
 inventory-sorter-hint-remove = Retirer cet indice
 inventory-sorter-hint-add = Ajouter un indice de boutique
 inventory-cleanup-empty-folders = Inclure les dossiers vides
+inventory-purge-hint = Pour un dossier trop grand pour être vidé d’un coup (le serveur refuse) : supprimé définitivement quelques entrées à la fois, à un rythme mesuré, avec Pause et Arrêter.
+inventory-purge-trash-name = Corbeille
+inventory-purge-steps = Vider { $folder } petit à petit ({ $count })
+inventory-purge-title = Supprimer définitivement tout le contenu de { $folder } ?
+inventory-purge-text = { $count ->
+    [one] 1 élément de { $folder } sera supprimé définitivement. Impossible d’annuler.
+   *[other] { $count } éléments de { $folder } seront supprimés définitivement, quelques-uns à la fois. Impossible d’annuler.
+}
+inventory-purge-go = Supprimer définitivement
+inventory-purge-progress = Suppression définitive : { $done } / { $total }
+inventory-purge-done = { $count } supprimés définitivement, { $failed } refusés.
+inventory-purge-worn = { $folder } contient un élément porté : enlevez-le d’abord.
 inventory-cleanup-locked = { $count ->
     [one] 1 objet des dossiers par défaut verrouillés (Habits, Parties du corps…) n’est pas examiné.
    *[other] { $count } objets des dossiers par défaut verrouillés (Habits, Parties du corps…) ne sont pas examinés.
