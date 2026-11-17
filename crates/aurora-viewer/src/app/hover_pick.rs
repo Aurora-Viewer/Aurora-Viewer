@@ -3,6 +3,12 @@
 //! rigged geometry present, or near a wearer, one query at most per 100 ms
 //! supplies the same attachment/body policy as a press, without waiting
 //! for the GPU. HUDs retain their separate pick and cursor policy.
+//!
+//! An answer speaks for its pixel. While the pointer moves, the last one
+//! still tells which posed object is drawn around it, and the CPU works out
+//! the rest at each frame (`Scene::drawn_hover_between`): the cursor used
+//! to fall back on the CPU's answer until the pointer stopped, and
+//! flickered over a clicker worn under a mesh body. No query is added.
 
 use aurora_render::{DrawnMode, Renderer};
 use glam::Vec3;
@@ -10,6 +16,9 @@ use std::time::{Duration, Instant};
 
 const REFRESH: Duration = crate::scene::hover::REFRESH;
 const TIMEOUT: Duration = Duration::from_millis(500);
+/// How far (m) the depth under the pointer may be from the face the last
+/// answer saw and still be taken for the same object's.
+const SAME_SURFACE: f32 = 0.3;
 type Hit = (Option<Vec3>, Option<usize>);
 
 #[derive(Clone, Copy)]
@@ -44,10 +53,48 @@ fn foreground(cpu: Hit, kept: Hit, ray: (Vec3, Vec3)) -> bool {
     }
 }
 
+/// The last answer.
+#[derive(Clone, Copy)]
+struct Kept {
+    question: Question,
+    hit: Hit,
+    at: Instant,
+    /// The posed object of its nearest opaque face and how far along the
+    /// asked ray, when no blended face lay in front of it.
+    under: Option<(usize, f32)>,
+}
+
+impl Kept {
+    /// The object to take for the one under the pointer, and the depth
+    /// there, when `question` is asked from another pixel than the answer:
+    /// the surface under the pointer is about where the answer's was.
+    fn between(&self, question: &Question) -> Option<(usize, Vec3)> {
+        let (under, at) = self.under?;
+        let depth = question.depth?;
+        let now_at = (depth - question.ray.0).dot(question.ray.1);
+        (self.question.far == question.far && (now_at - at).abs() <= SAME_SURFACE).then_some((under, depth))
+    }
+}
+
+/// What `Kept::under` keeps of an answer.
+fn under(scene: &crate::scene::Scene, drawn: &aurora_render::Drawn, ray: (Vec3, Vec3)) -> Option<(usize, f32)> {
+    if drawn.blend.is_some() {
+        return None;
+    }
+    let face = drawn.opaque?;
+    let (idx, _) = scene.record_object(face.record)?;
+    // what the CPU cannot find where it is shown, and what holds it
+    scene
+        .gpu
+        .get(idx)
+        .filter(|g| !g.hud && (g.rigged || g.owner_avatar.is_some() || g.is_avatar))?;
+    Some((idx, (face.point - ray.0).dot(ray.1)))
+}
+
 #[derive(Default)]
 pub(super) struct HoverDrawn {
     pending: Option<(u64, Question, Instant)>,
-    kept: Option<(Question, Hit, Instant)>,
+    kept: Option<Kept>,
     last_request: Option<Instant>,
 }
 
@@ -88,13 +135,26 @@ impl HoverDrawn {
         };
         let now = Instant::now();
         if let Some((ticket, asked, started)) = self.pending {
+            let late = now.duration_since(started) >= TIMEOUT;
             if let Some(drawn) = renderer.take_drawn(ticket) {
                 self.pending = None;
-                if asked.same_ray(&question) && now.duration_since(started) < TIMEOUT {
-                    let hit = scene.drawn_hover(world, &drawn, ray, depth, far);
-                    self.kept = Some((question, hit, now));
+                if !late {
+                    // The answer for a pixel the pointer has left is kept
+                    // too: it tells what is drawn around it (`between`).
+                    let here = asked.same_ray(&question);
+                    let hit = if here {
+                        scene.drawn_hover(world, &drawn, ray, depth, far)
+                    } else {
+                        scene.drawn_hover(world, &drawn, asked.ray, asked.depth, asked.far)
+                    };
+                    self.kept = Some(Kept {
+                        question: if here { question } else { asked },
+                        hit,
+                        at: now,
+                        under: under(scene, &drawn, asked.ray),
+                    });
                 }
-            } else if !asked.same_ray(&question) || now.duration_since(started) >= TIMEOUT {
+            } else if late {
                 self.cancel(renderer);
             }
         }
@@ -104,18 +164,25 @@ impl HoverDrawn {
             self.pending = Some((ticket, question, now));
             self.last_request = Some(now);
         }
-        self.kept
-            .filter(|(asked, hit, at)| {
-                // An animated opaque attachment changes the depth at every
-                // frame. Keep its cursor between queries, just as a Blend
-                // attachment over static depth, until the next posed answer.
-                let posed = hit
-                    .1
-                    .and_then(|i| scene.gpu.get(i))
-                    .is_some_and(|g| g.rigged || g.owner_avatar.is_some());
-                asked.same(&question, posed) && now.duration_since(*at) < REFRESH * 2 && !foreground(cpu, *hit, ray)
-            })
-            .map_or(cpu, |(_, hit, _)| hit)
+        let Some(kept) = self.kept.filter(|kept| now.duration_since(kept.at) < REFRESH * 2) else {
+            return cpu;
+        };
+        // An animated opaque attachment changes the depth at every
+        // frame. Keep its cursor between queries, just as a Blend
+        // attachment over static depth, until the next posed answer.
+        let posed = kept
+            .hit
+            .1
+            .and_then(|i| scene.gpu.get(i))
+            .is_some_and(|g| g.rigged || g.owner_avatar.is_some());
+        let hit = if kept.question.same(&question, posed) {
+            kept.hit
+        } else if let Some((under, depth)) = kept.between(&question) {
+            scene.drawn_hover_between(world, under, ray, depth, far)
+        } else {
+            return cpu;
+        };
+        if foreground(cpu, hit, ray) { cpu } else { hit }
     }
 }
 
@@ -180,5 +247,45 @@ mod tests {
         assert!(!foreground((Some(Vec3::X * 6.0), Some(1)), kept, q.ray));
         assert!(!foreground((Some(Vec3::X * 4.0), Some(2)), kept, q.ray));
         assert!(!foreground((Some(Vec3::X * 4.0), None), kept, q.ray));
+    }
+
+    #[test]
+    fn the_last_answer_speaks_for_the_pixels_around_it_on_the_same_surface() {
+        let q = Question {
+            ray: (Vec3::ZERO, Vec3::X),
+            depth: Some(Vec3::X * 5.0),
+            far: 128.0,
+        };
+        let kept = Kept {
+            question: q,
+            hit: (Some(Vec3::X * 5.1), Some(3)),
+            at: Instant::now(),
+            under: Some((2, 5.0)),
+        };
+        // the pointer moved over the same body: its surface is a little
+        // nearer or farther there
+        let moved = |depth: Option<Vec3>| Question {
+            ray: (Vec3::ZERO, (Vec3::X + Vec3::Y * 0.01).normalize()),
+            depth,
+            ..q
+        };
+        let on_body = Vec3::new(5.1, 0.051, 0.0);
+        assert!(!q.same(&moved(Some(on_body)), true), "another pixel");
+        assert_eq!(kept.between(&moved(Some(on_body))), Some((2, on_body)));
+        // it left the body: the wall behind, the sky, or another draw distance
+        assert_eq!(kept.between(&moved(Some(Vec3::new(8.0, 0.08, 0.0)))), None);
+        assert_eq!(kept.between(&moved(Some(Vec3::new(4.0, 0.04, 0.0)))), None);
+        assert_eq!(kept.between(&moved(None)), None);
+        assert_eq!(
+            kept.between(&Question {
+                far: 64.0,
+                ..moved(Some(on_body))
+            }),
+            None
+        );
+        // an answer with a blended face in front, or of an object the CPU
+        // finds by itself, speaks for its pixel alone
+        let alone = Kept { under: None, ..kept };
+        assert_eq!(alone.between(&moved(Some(on_body))), None);
     }
 }

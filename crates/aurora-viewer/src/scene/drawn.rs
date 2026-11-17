@@ -145,6 +145,10 @@ pub fn passes_through(s: Status, clicks: RiggedClicks) -> bool {
     s.posed_by_gpu && !s.avatar && (!s.actionable || kept_out)
 }
 
+/// A surface the CPU finds this far (m) in front of a drawn face keeps the
+/// click: under it, the two are the same surface, a frame apart.
+const SAME: f32 = 0.05;
+
 /// What a gesture needs to know of the object of a drawn face.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -213,6 +217,39 @@ impl Scene {
         let point = self.action_point(world, Some(ray), adjusted, false, far);
         if let Some(shown) = self.designated(world, Gesture::Touch, drawn, Some(ray), point, depth, false) {
             return (Some(shown.hit.point), Some(shown.idx));
+        }
+        (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
+    }
+
+    /// [`Self::drawn_hover`] between two answers of the GPU, for a pointer
+    /// that moved since the last one was asked. An answer speaks for its
+    /// pixel alone, and the next one comes [`super::hover::REFRESH`] later:
+    /// until then the cursor showed what the CPU finds, nothing under a
+    /// rigged mesh, and flickered over a clicker worn under a mesh body
+    /// whenever the pointer moved. Here `under`, the object whose opaque
+    /// face the last answer saw nearest, is taken to be the one under the
+    /// pointer still, at the `depth` read now, and the searches of the CPU
+    /// run from there as they do for an answer. No query of the GPU; a
+    /// wrong guess (the pointer left the object) lasts until the next
+    /// answer.
+    pub fn drawn_hover_between(
+        &self,
+        world: &World,
+        under: usize,
+        ray: (Vec3, Vec3),
+        depth: Vec3,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let at = (depth - ray.0).dot(ray.1);
+        // (each frame the pointer moves: only the objects the ray can meet)
+        let mut near = Vec::new();
+        self.pick.ray_candidates(ray, &mut near);
+        let adjusted = self.touch_depth_under(world, under, at, ray, Some(depth), far, Some(&near));
+        let point = self.action_point(world, Some(ray), adjusted, false, far);
+        // as `designated` for an opaque face of `under` at the depth
+        let before = point.filter(|p| *p != depth).is_some_and(|p| (p - ray.0).dot(ray.1) + SAME < at);
+        if !before && self.takes(world, Gesture::Touch, under, false) {
+            return (Some(depth), Some(under));
         }
         (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
     }
@@ -311,22 +348,37 @@ impl Scene {
     /// under the clothing, not through the body to what is worn on the other
     /// side); nothing there: the GPU's depth, the click is the avatar's.
     pub fn touch_depth(&self, world: &World, drawn: &Drawn, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> Option<Vec3> {
-        /// How far under a worn mesh's surface the click goes on.
-        const UNDER_WORN: f32 = 0.25;
         let (Some(face), Some(ray)) = (drawn.opaque, ray) else {
             return depth;
         };
         let Some((idx, _)) = self.record_object(face.record) else {
             return depth;
         };
-        let at = (face.point - ray.0).dot(ray.1);
+        self.touch_depth_under(world, idx, (face.point - ray.0).dot(ray.1), ray, depth, far, None)
+    }
+
+    /// [`Self::touch_depth`] once the nearest opaque face drawn under the
+    /// click is known: `idx`'s, `at` along `ray`. `among`: the objects the
+    /// searches behind it may meet (None: all).
+    fn touch_depth_under(
+        &self,
+        world: &World,
+        idx: usize,
+        at: f32,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
+        /// How far under a worn mesh's surface the click goes on.
+        const UNDER_WORN: f32 = 0.25;
         if self.gpu.get(idx).is_some_and(|g| g.is_avatar && !g.hud) {
             // LLPipeline::lineSegmentIntersectInWorld (indra/newview/pipeline.cpp,
             // LGPL 2.1): ATTACHMENT_OVERRIDE_DIST lets an attachment up to
             // 10 cm inside the avatar win. Use the displayed body surface,
             // so standing and seated poses share the same bounded policy.
             return self
-                .point_behind_rigged(world, ray, at, (at + 0.1).next_up(), Some(idx))
+                .point_behind_rigged(world, ray, at, (at + 0.1).next_up(), Some(idx), among)
                 .filter(|point| {
                     self.interaction_at_ray(world, *point, ray, true)
                         .and_then(|i| self.gpu.get(i))
@@ -340,7 +392,14 @@ impl Scene {
         let wearer = self.gpu.get(idx).and_then(|g| g.owner_avatar);
         let limit = if wearer.is_some() { at + UNDER_WORN } else { far };
         // (the drawn face is a frame younger than the CPU's poses)
-        self.point_behind_rigged(world, ray, at - 0.05, limit, wearer).or(depth)
+        self.point_behind_rigged(world, ray, at - 0.05, limit, wearer, among).or(depth)
+    }
+
+    /// Whether a face of `idx` drawn under the pixel gives it `gesture`
+    /// ([`reaches`]): not a mesh the left click passes through.
+    fn takes(&self, world: &World, gesture: Gesture, idx: usize, build_open: bool) -> bool {
+        let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);
+        !through && reaches(gesture, self.drawn_status(world, idx), build_open)
     }
 
     /// The object `gesture` designates among the faces drawn under its
@@ -363,7 +422,6 @@ impl Scene {
         // GPU pick. An animated attachment can move more than 5 cm between
         // the two frames (#416); its own older depth must not reject it.
         // Opaque occlusion is already resolved in the drawn-face pass.
-        const SAME: f32 = 0.05;
         let along = |p: Vec3| ray.map_or(0.0, |(o, d)| (p - o).dot(d));
         let limit = found.filter(|p| Some(*p) != depth).map_or(f32::INFINITY, |p| along(p) + SAME);
         for (hit, blend) in [(drawn.blend, true), (drawn.opaque, false)] {
@@ -378,11 +436,10 @@ impl Scene {
             {
                 continue;
             }
-            let status = self.drawn_status(world, idx);
-            let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);
-            if along(hit.point) <= limit && reaches(gesture, status, build_open) && !through {
+            if along(hit.point) <= limit && self.takes(world, gesture, idx, build_open) {
                 return Some(DrawnObject { idx, face, blend, hit });
             }
+            let status = self.drawn_status(world, idx);
             // a worn Blend prim with nothing to do still stops the press
             // (picking.rs, `blend_hit`): the search on the CPU speaks for it
             if blend && gesture == Gesture::Touch && status.worn && !status.posed_by_gpu && !status.ignored {
@@ -892,6 +949,47 @@ mod tests {
         scene.rigged_clicks.others = true;
         assert_eq!(touched(&scene), Some(body));
         assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0).1, Some(body));
+    }
+
+    /// The pointer moves over a mesh body between two answers of the GPU:
+    /// the cursor keeps the clicker worn under the body, or the body when
+    /// its preference gives it the click, without a new answer; beside the
+    /// clicker it is the avatar's again.
+    #[test]
+    fn the_hover_follows_the_pointer_between_two_answers() {
+        let (mut world, mut scene, body, prim) = super::super::picking::tests::indexed_scene_with_two_objects();
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
+        // the body's face at x = 2.5, the prim's 10 cm behind it
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
+        for idx in [body, prim] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        }
+        scene.gpu[body].rigged = true;
+        scene.gpu[body].owner_avatar = wearer;
+        scene.gpu[prim].owner_avatar = wearer;
+        scene.pick.changed(prim);
+        // the answer was asked along y = 0; the pointer is 2 cm to the side
+        let moved = (Vec3::new(0.0, 0.02, 50.0), Vec3::X);
+        let on_body = Vec3::new(2.5, 0.02, 50.0);
+        let between = |scene: &Scene, ray: (Vec3, Vec3), depth: Vec3| scene.drawn_hover_between(&world, body, ray, depth, 100.0);
+        let (point, object) = between(&scene, moved, on_body);
+        assert_eq!(object, Some(prim));
+        assert!((point.unwrap().x - 2.6).abs() < 1e-3, "on the prim: {point:?}");
+        // beside the prim: nothing under the body there
+        let beside = (Vec3::new(0.0, 2.0, 50.0), Vec3::X);
+        assert_eq!(between(&scene, beside, Vec3::new(2.5, 2.0, 50.0)).1, None);
+
+        // "Rigged attachments of other avatars": the body, where the
+        // pointer is now
+        scene.rigged_clicks.others = true;
+        assert_eq!(between(&scene, moved, on_body), (Some(on_body), Some(body)));
+        assert_eq!(between(&scene, beside, Vec3::new(2.5, 2.0, 50.0)).1, Some(body));
     }
 
     /// A scripted animesh rezzed in front of a scripted prim: with
