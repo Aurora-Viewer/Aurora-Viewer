@@ -271,6 +271,9 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
+    /// The shadow quality and ambient occlusion last given to the renderer
+    /// (`photo_render_settings`).
+    pub(super) quality_drawn: Option<(u8, u8)>,
     /// The viewfinder's tilt (radians) when it last closed: the view is
     /// levelled meanwhile, the next opening takes it back (feedback 585:
     /// leaving the photo mode to change a setting lost the angle).
@@ -484,6 +487,7 @@ impl Default for Snapshots {
             vf_tick_slot: None,
             vf_free_up: 0.0,
             fov_before: None,
+            quality_drawn: None,
             roll_kept: 0.0,
             reel: Default::default(),
             isolate_picks: Vec::new(),
@@ -562,7 +566,7 @@ impl App {
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
         let textures = &self.scene.textures;
         let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
-        let occlusion = self.settings.ssao > 0;
+        let occlusion = self.photo_ambient_occlusion() > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
         // a 360° snapshot's face first: the photo's own parts wait for it
@@ -1191,7 +1195,7 @@ impl App {
         // HUDs or the photo's looks, whatever the Photo window has chosen
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
-        let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
+        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0);
         // (the outfit's photo mode keeps the viewfinder's looks: the
         // square shows them)
         let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
@@ -1638,7 +1642,7 @@ impl App {
     }
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
-    pub(super) fn photo_update(&mut self, renderer: &Renderer) {
+    pub(super) fn photo_update(&mut self, renderer: &mut Renderer) {
         if std::mem::take(&mut self.snapshots.to_disk) {
             self.snapshots.quiet = !self.panels.snapshot;
             self.photo_take(renderer, None);
@@ -1648,6 +1652,13 @@ impl App {
         self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
+        // the photo's shadows and occlusion reach the renderer when they
+        // change (the window opening and closing included), not every frame
+        let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
+        if self.snapshots.quality_drawn != Some(drawn) {
+            self.snapshots.quality_drawn = Some(drawn);
+            renderer.apply_settings(self.photo_render_settings());
+        }
         self.photo_free_camera();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
@@ -2339,6 +2350,9 @@ LUT_3D_SIZE {n}
                 profile_posted: self.snapshots.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
+                quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
@@ -2423,6 +2437,9 @@ LUT_3D_SIZE {n}
                 profile_posted: s.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
+                quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
@@ -2691,6 +2708,21 @@ LUT_3D_SIZE {n}
             self.env_ui.scan_left = usize::MAX;
         }
         self.env_ui.refresh(ctx, &self.world.inventory);
+    }
+
+    /// The shadow quality the world is drawn with (`snapshot::light`).
+    pub(super) fn photo_shadow_quality(&self) -> u8 {
+        snapshot::light::drawn_levels(&self.settings, &self.snapshots.ui.light, self.panels.snapshot).0
+    }
+
+    /// The ambient occlusion the world is drawn with (`snapshot::light`).
+    pub(super) fn photo_ambient_occlusion(&self) -> u8 {
+        snapshot::light::drawn_levels(&self.settings, &self.snapshots.ui.light, self.panels.snapshot).1
+    }
+
+    /// The render settings with the photo's levels (`snapshot::light::render_settings`).
+    pub(super) fn photo_render_settings(&self) -> aurora_render::RenderSettings {
+        snapshot::light::render_settings(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
     }
 
     /// The exposure the frame is drawn with: the photo's, else Preferences'.
