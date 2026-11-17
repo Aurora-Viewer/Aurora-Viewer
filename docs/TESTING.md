@@ -2709,6 +2709,13 @@ must be listed in Local. These files appear without
 having been applied to an object beforehand. The import window closes when
 the picker opens to clear the view.
 
+`faces-picker-multiple,object:99620` adds a face of the mesh with Shift at 630,
+before the picker opens: its preview says "Multiple" and OK stays greyed out
+until something is chosen in the picker. The linkset is the agent's here, so
+the copy-only textures of the demo inventory can be confirmed (no live preview:
+the note under the UUID says so); Blank, Default and Transparent preview live.
+Same in both build window styles.
+
 In the build picker, a click on a copyable texture, a material, "Default",
 "Blank", "Transparent" or "Apply" for the UUID applies the choice
 immediately to the selected faces. "OK" keeps this preview without sending

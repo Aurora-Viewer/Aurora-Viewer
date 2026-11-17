@@ -592,6 +592,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             280 if parts[0] == "faces-mapping" => pick(99622, u8::MAX, true),
             _ if parts[0] == "faces-mapping" => Vec::new(),
             240 => pick(99620, u8::MAX, false),
+            // a second face with another texture: the picker opens tentative
+            245 if parts[0].starts_with("faces-picker-multiple") => pick(99621, u8::MAX, true),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
                 if parts[0].starts_with("faces-picker-material") {
                     super::ui::PickTarget::PbrMaterial

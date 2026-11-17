@@ -403,6 +403,7 @@ pub(super) fn pbr_surface(
     mat: &aurora_assets::material::PbrMaterial,
     asset: Option<Uuid>,
     mixed: bool,
+    maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
 ) {
@@ -433,7 +434,7 @@ pub(super) fn pbr_surface(
             world,
             env,
             id.filter(|_| editable),
-            false,
+            editable && maps_mixed[channel],
             caption,
             PickTarget::PbrMap(channel),
             editable,

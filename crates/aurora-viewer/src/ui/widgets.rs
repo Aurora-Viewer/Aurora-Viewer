@@ -1913,6 +1913,18 @@ pub const PICTURE_TINT: Color32 = Color32::WHITE;
 /// Tint of a picture whose control is disabled.
 pub const PICTURE_TINT_DISABLED: Color32 = Color32::from_gray(120);
 
+/// A state written over a picture ("Multiple"), on a backing of its own:
+/// the picture under it may be as light as the text.
+pub(crate) fn picture_label(ui: &egui::Ui, p: &Palette, rect: egui::Rect, text: &str, size: f32) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), p.ink);
+    let at = egui::Rect::from_center_size(rect.center(), galley.size());
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    painter.rect_filled(at.expand2(egui::vec2(5.0, 2.0)), inner_radius(ui.visuals()), p.bar);
+    painter.galley(at.min, galley, p.ink);
+}
+
 /// Corners of a small mark inside a control or a line (the knob of a switch,
 /// a key cap, a status square, a letter badge): one pixel tighter than the
 /// windows', so that a mark of a few pixels stays a square.
