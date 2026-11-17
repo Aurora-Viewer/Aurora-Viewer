@@ -651,8 +651,9 @@ frame on your own PC.
   PBR and legacy materials, shadows, GTAO ambient occlusion with specular
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
-  screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets; headset viewing
+  screen-space indirect light, GPU occlusion, enhanced water effects and
+  ray-traced shadows, indirect light and reflections (all experimental),
+  graphics presets and per-section resets; headset viewing
   through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
