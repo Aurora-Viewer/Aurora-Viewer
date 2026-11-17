@@ -1807,8 +1807,12 @@ mod tests {
         assert!(strip.bottom() <= BOTTOM_TOP && (strip.top() - top).abs() <= 1.0);
         assert!((strip.center().x - SCREEN.x / 2.0).abs() <= 1.0, "centred");
         assert!(actions.is_empty());
-        // the fifth button, after back to the start, play, record and loop
-        let keyframe = egui::pos2(strip.left() + 10.0 + 4.0 * (STRIP_BUTTON.x + 6.0) + 20.0, strip.center().y);
+        // the fifth button of the first row, after back to the start, play,
+        // record and loop (the track's edits are on the row under it)
+        let keyframe = egui::pos2(
+            strip.left() + 10.0 + 4.0 * (STRIP_BUTTON.x + 6.0) + 20.0,
+            strip.top() + 8.0 + STRIP_BUTTON.y / 2.0,
+        );
         for events in [
             vec![egui::Event::PointerMoved(keyframe)],
             vec![Bench::button(keyframe, true)],
