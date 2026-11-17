@@ -2,7 +2,7 @@
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
 use crate::gpu_alloc::{Backoff, fallback_capacities, try_buffer};
-use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
+use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable, Touched};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
 use crate::writes::GpuWrites;
@@ -615,6 +615,8 @@ pub struct RecordStore {
     mirror: Blocks<DrawRecord>,
     free: Vec<u32>,
     dirty: DirtyChunks,
+    /// The records that changed, for `take_changed`.
+    touched: Touched,
     live: u32,
     /// Set when the buffer was reallocated (bind group must be rebuilt).
     pub generation: u64,
@@ -635,6 +637,7 @@ impl RecordStore {
             mirror: Blocks::new(),
             free: Vec::new(),
             dirty: DirtyChunks::default(),
+            touched: Touched::default(),
             live: 0,
             generation: 0,
             uploaded: 0,
@@ -718,6 +721,20 @@ impl RecordStore {
 
     fn mark(&mut self, idx: usize) {
         self.dirty.mark(idx);
+        self.touched.mark(idx);
+    }
+
+    /// Follows the records and the faces that change, for `take_changed`:
+    /// whether it already did.
+    pub(crate) fn watch_changes(&mut self) -> bool {
+        self.touched.watch() & self.faces.watch(|a, b| a != b)
+    }
+
+    /// Adds to `into` the records that changed since the last call, or
+    /// whose face did (one that did both is there twice).
+    pub(crate) fn take_changed(&mut self, into: &mut Vec<u32>) {
+        self.touched.take(into);
+        self.faces.take_touched(into);
     }
 
     pub fn set(&mut self, id: u32, rec: DrawRecord) {

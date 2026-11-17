@@ -20,13 +20,13 @@
 //! blended faces. The shadow maps still shade those passes the mask does
 //! not cover (blended faces, reflections).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, OnceLock};
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::arena::RecordStore;
-use crate::gpu_cull::{CullFace, CullObject, CullTables, NO_OBJECT, object_flags, pass};
+use crate::gpu_cull::{CullFace, CullObject, CullTables, GpuTable, NO_OBJECT, object_flags, pass};
 use crate::pipeline_cache::CachedPipelines;
 use crate::types::{DrawRecord, flags};
 
@@ -170,9 +170,9 @@ pub struct Faces {
     /// the gone ones by cause: their slot freed, no geometry, no longer
     /// traced, now a skeleton's.
     pub why: [u64; 10],
-    /// What the main thread spent on this, added up since the start (µs):
-    /// in all, and on making the sets.
-    pub spent: [u64; 2],
+    /// What the main thread spent on this, added up since the start: µs in
+    /// all, µs on making the sets, and the faces it looked at.
+    pub spent: [u64; 3],
     /// The placed faces that moved lately, or wait for the next still set:
     /// placed anew each frame, in the top level of the posed faces.
     pub moving: Vec<Instance>,
@@ -208,6 +208,11 @@ const QUICK: u64 = 8;
 /// Faces whose change waits for a still set that make one as soon as
 /// [`STILL_EVERY`] allows (a region that loads, an arrival by teleport).
 const MANY: usize = 256;
+/// Frames after the world's origin changed in which a face's first change
+/// of place is the scene writing it relative to the new origin, not a move
+/// ([`StillTracker::rebase`]): the scene does so within its frames' budget,
+/// the nearest first, a few seconds for a busy region.
+const REBASE_FRAMES: u64 = 600;
 /// Frames a few changes wait for a still set: [`SOON`] when the set shows
 /// something wrong meanwhile (a far face where it no longer is, or with
 /// the shape of another level of detail), [`LATER`] when it only lacks
@@ -245,27 +250,40 @@ const CELL: f32 = 16.0;
 const PART_FACES: usize = 4096;
 const PART_VERTICES: u32 = 1 << 19;
 
-/// Frames between two full looks at a face that keeps its place and its
-/// geometry (whether it is one to trace, how far and how large): in
-/// between, only those are compared. A face that the eye left behind, or
-/// that was hidden, is noticed this late at most.
-const RECHECK: u64 = 8;
+/// Frames a look at every face takes, each in its turn, whatever changed:
+/// what the changes followed by [`gather`] would miss is noticed this late
+/// at most.
+const SWEEP: usize = 256;
+/// How far the eye moves (m) before every placed face is weighed again
+/// (how far and how large it looks: [`FAR_MARGIN`], [`SMALL`], [`NEAR`]),
+/// and the frames that takes.
+const EYE_STEP: f32 = 0.25;
+const WEIGH_FRAMES: usize = 8;
 
-/// A placed face as the main thread last saw it.
+/// A face as the main thread last looked at it.
 #[derive(Clone, Copy, Default)]
 struct Track {
-    /// The frame it was last seen (0: never).
+    /// The frame of the last look (0: never).
     seen: u64,
+    /// The frame from which it has kept its place long enough to count as
+    /// still.
+    rests_at: u64,
     /// Its place, and its geometry, hashed (`place_of`, `shape_of`).
     place: u64,
+    /// A placed face's cell ([`cell_of`]).
+    cell: u64,
     shape: u32,
-    /// Frames it kept its place.
-    still: u16,
-    /// What the last full look found it to be.
+    /// A skeleton's face: its skeleton (its palette's first entry).
+    skeleton: u32,
+    /// What the last look found it to be.
     kind: u8,
     /// Times it moved out of a still set: each doubles the frames it must
     /// keep its place before the next one takes it back.
     relapses: u8,
+    /// What it adds to the tally ([`Tally::count`]), to take it back.
+    counted: u8,
+    /// It has a record and a geometry.
+    present: bool,
     /// Near and large enough to trace.
     kept: bool,
     /// Its move or leaving would show at once ([`NEAR`]).
@@ -279,8 +297,16 @@ struct Track {
     /// The set holds it with a geometry it no longer has (another level of
     /// detail): it stays so until the next set.
     stale: bool,
-    /// The set holds it and a frame did not find it (counted once).
+    /// The set holds it and a look did not find it (counted once).
     missed: bool,
+    /// It is in the list of the moving faces ([`StillTracker::moving`]).
+    listed: bool,
+    /// A face not traced yet: neither a set nor a frame's moving faces
+    /// had it ([`StillTracker::emits`]).
+    new: bool,
+    /// It was there when the world's origin changed
+    /// ([`StillTracker::rebase`]): its place may still be the one before.
+    rebase: bool,
 }
 
 /// A face's kinds ([`Track::kind`]): not traced, a placed face (opaque or
@@ -292,19 +318,27 @@ const POSED: u8 = 3;
 
 impl Track {
     /// Whether it kept its place long enough to count as still.
-    fn rests(&self) -> bool {
-        self.still as u32 >= (STILL_FRAMES as u32) << self.relapses.min(RELAPSES_MAX)
+    fn rests(&self, frame: u64) -> bool {
+        frame >= self.rests_at
     }
 
     fn placed(&self) -> bool {
         matches!(self.kind, PLACED_OPAQUE | PLACED_MASKED)
     }
+
+    /// Whether it is traced with the moving faces: the still set does not
+    /// hold it, or not where it is.
+    fn moves(&self) -> bool {
+        self.present && self.placed() && self.kept && (!self.in_still || self.left)
+    }
 }
 
-/// What a frame's faces add up to, for [`StillTracker::decide`].
+/// What the faces add up to, for [`StillTracker::decide`]: each placed
+/// face is counted as its last look left it, and taken back before the
+/// next one changes it, so that a frame only touches the faces that changed.
 #[derive(Default)]
 struct Tally {
-    /// Faces of the still set this frame saw, and the near ones of them.
+    /// Faces of the still set that are there, and the near ones of them.
     found: usize,
     found_near: usize,
     /// Faces the set holds where they no longer are, and with a geometry
@@ -314,25 +348,59 @@ struct Tally {
     /// Faces the set should hold and does not, and holds and should not.
     arrivals: usize,
     leavers: usize,
-    /// A near face of the set moved.
+    /// A near face of the set moved this frame.
     urgent: bool,
 }
 
+/// [`Track::counted`]: it is counted, and as what.
+const COUNTED: u8 = 1;
+const AS_LEFT: u8 = 2;
+const AS_STALE: u8 = 4;
+const AS_ARRIVAL: u8 = 8;
+const AS_LEAVER: u8 = 16;
+
 impl Tally {
-    /// Counts placed face `t`, seen this frame: whether it is among the
-    /// frame's moving faces (unless the frame's set takes it).
-    fn count(&mut self, t: &Track) -> bool {
+    fn class(&mut self, counted: u8) -> Option<&mut usize> {
+        match counted & !COUNTED {
+            AS_LEFT => Some(&mut self.left),
+            AS_STALE => Some(&mut self.stale),
+            AS_ARRIVAL => Some(&mut self.arrivals),
+            AS_LEAVER => Some(&mut self.leavers),
+            _ => None,
+        }
+    }
+
+    /// Counts placed face `t`, which is there: whether it is among the
+    /// moving faces.
+    fn count(&mut self, t: &mut Track, frame: u64) -> bool {
         self.found += t.in_still as usize;
         self.found_near += t.set_near as usize;
-        let would = t.kept && t.rests();
-        if t.left {
-            self.left += 1;
-        } else if t.stale {
-            self.stale += 1;
-        } else if would != t.in_still {
-            *if would { &mut self.arrivals } else { &mut self.leavers } += 1;
+        let would = t.kept && t.rests(frame);
+        t.counted = COUNTED
+            | match (t.left, t.stale, would == t.in_still, would) {
+                (true, ..) => AS_LEFT,
+                (_, true, ..) => AS_STALE,
+                (_, _, true, _) => 0,
+                (.., true) => AS_ARRIVAL,
+                _ => AS_LEAVER,
+            };
+        if let Some(n) = self.class(t.counted) {
+            *n += 1;
         }
-        t.kept && (!t.in_still || t.left)
+        t.moves()
+    }
+
+    /// Takes `t` back, before it changes.
+    fn uncount(&mut self, t: &mut Track) {
+        if t.counted == 0 {
+            return;
+        }
+        self.found -= t.in_still as usize;
+        self.found_near -= t.set_near as usize;
+        if let Some(n) = self.class(t.counted) {
+            *n -= 1;
+        }
+        t.counted = 0;
     }
 }
 
@@ -349,13 +417,26 @@ impl Tally {
 /// [`QUICK`]. The other changes are gathered ([`MANY`], [`SOON`],
 /// [`LATER`]): a face that
 /// arrives or comes to rest is among the moving ones meanwhile, so that
-/// none is ever in neither; a far one that moved is in both, a far one
-/// that went still in the level; one whose level of detail changed keeps
-/// the level's geometry.
+/// none is ever in neither (but the small ones of a crowd of arrivals,
+/// which wait a few frames for their set: [`StillTracker::emits`]); a far
+/// one that moved is in both, a far one that went still in the level; one
+/// whose level of detail changed keeps the level's geometry.
+///
+/// A face that a set had to drop because it was gone, and that comes back
+/// as it was (an object a script shows and hides, a geometry that loads
+/// again), must keep its place as long as one that moved before a set
+/// takes it back ([`Track::relapses`]): it is traced with the moving ones
+/// meanwhile, and its blinking makes no set. One that is back before any
+/// set was made without it never left.
+///
+/// A face is looked at when it changes ([`gather`]), not each frame: what
+/// its last look found stands until the next.
 #[derive(Default)]
 pub(crate) struct StillTracker {
     tracks: Vec<Track>,
     tally: Tally,
+    /// The faces traced with the moving ones ([`Track::listed`]).
+    moving: Vec<u32>,
     /// Faces of the last still set, and the near ones of them.
     held: usize,
     held_near: usize,
@@ -363,57 +444,71 @@ pub(crate) struct StillTracker {
     /// since with a change that waits for the next (0: none).
     set_at: u64,
     changed_at: u64,
+    /// The frame the world's origin last changed ([`StillTracker::rebase`]).
+    rebased_at: u64,
     /// Why the sets were made, added up since the start ([`Faces::why`]).
     why: [u64; 10],
 }
 
-/// Why a frame did not find a face ([`Faces::why`], after the first six).
+/// Why a look did not find a face ([`Faces::why`], after the first six).
 const SLOT_FREED: usize = 6;
 const NO_GEOMETRY: usize = 7;
 const NOT_TRACED_NOW: usize = 8;
 const POSED_NOW: usize = 9;
 
 impl StillTracker {
-    /// Forgets every face: after the world's origin moved, they all stand
-    /// elsewhere at once and none of them moved.
-    fn reset(&mut self) {
+    /// Forgets every face on `frame`: the world's origin changed (a border
+    /// crossing, a teleport), they all stand elsewhere and none of them
+    /// moved. The scene writes them at their new places over the next
+    /// frames: a face's first change of place is then an arrival, which the
+    /// next set takes, and not a move, which would trace it on its own for
+    /// seconds (a region's faces, tens of thousands, each with a bottom
+    /// level to build and a place in the level built each frame).
+    fn rebase(&mut self, frame: u64) {
         *self = Self {
             why: self.why,
+            rebased_at: frame,
             ..Self::default()
         };
     }
 
+    /// A frame begins, with `faces` face slots.
     fn begin(&mut self, faces: usize) {
         if self.tracks.len() < faces {
             self.tracks.resize(faces, Track::default());
         }
-        self.tally = Tally::default();
+        self.tally.urgent = false;
     }
 
-    /// Whether face `id` was traced last frame (for [`KEEP`]).
-    fn kept(&self, id: usize, frame: u64) -> bool {
-        self.tracks.get(id).is_some_and(|t| t.kept && t.seen + 1 == frame)
+    /// Whether `frame` already looked at face `id` (or has no such face).
+    fn seen(&self, id: usize, frame: u64) -> bool {
+        self.tracks.get(id).is_none_or(|t| t.seen == frame)
     }
 
-    /// Face `id` on `frame` when it is as the last frame left it (at
-    /// `place` and of `shape` still, and no skeleton's), with no full
-    /// look: whether it is among this frame's moving faces. None when it
-    /// has to be looked at.
-    fn same(&mut self, id: usize, frame: u64, place: u64, shape: u32) -> Option<bool> {
-        let t = self.tracks.get_mut(id)?;
-        if t.seen == 0 || t.seen + 1 != frame || t.place != place || t.shape != shape || t.kind == POSED {
-            return None;
-        }
-        t.seen = frame;
-        if t.kind == NOT_TRACED {
-            return Some(false);
-        }
-        t.still = t.still.saturating_add(1);
-        Some(self.tally.count(t))
+    /// The skeleton the last look found face `id` in.
+    fn skeleton(&self, id: usize) -> Option<u32> {
+        self.tracks.get(id).filter(|t| t.present && t.kind == POSED).map(|t| t.skeleton)
     }
 
-    /// Counts face `id`, which this frame did not find for the reason
-    /// `why`, if the still set holds it (for the log).
+    /// Whether the last look found face `id` at `place` and of `shape`.
+    fn is(&self, id: usize, place: u64, shape: u32) -> bool {
+        self.tracks
+            .get(id)
+            .is_some_and(|t| t.present && t.place == place && t.shape == shape)
+    }
+
+    /// Whether face `id` is traced (for [`KEEP`]).
+    fn kept(&self, id: usize) -> bool {
+        self.tracks.get(id).is_some_and(|t| t.present && t.kept)
+    }
+
+    /// Placed face `id`'s cell, its triangles being weighed there.
+    fn cell(&self, id: usize) -> Option<u64> {
+        self.tracks.get(id).filter(|t| t.present && t.placed()).map(|t| t.cell)
+    }
+
+    /// Counts face `id`, which a look did not find for the reason `why`,
+    /// if the still set holds it (for the log).
     fn missing(&mut self, id: usize, why: usize) {
         if let Some(t) = self.tracks.get_mut(id)
             && t.in_still
@@ -423,52 +518,104 @@ impl StillTracker {
         }
     }
 
+    /// Notes that face `id` has no record or no geometry on `frame`, for
+    /// the reason `why`. One the still set holds stays so until the set
+    /// made for its leaving ([`StillTracker::decide`]).
+    fn absent(&mut self, id: usize, frame: u64, why: usize) {
+        self.missing(id, why);
+        if let Some(t) = self.tracks.get_mut(id) {
+            self.tally.uncount(t);
+            t.present = false;
+            t.seen = frame;
+        }
+    }
+
     /// Notes face `id` on `frame` as one that is not a placed face to
-    /// trace (`kind`: not traced, or a skeleton's).
-    fn other(&mut self, id: usize, frame: u64, place: u64, shape: u32, kind: u8) {
+    /// trace (`kind`: not traced, or a face of `skeleton`).
+    fn other(&mut self, id: usize, frame: u64, place: u64, shape: u32, kind: u8, skeleton: u32) {
         self.missing(id, if kind == POSED { POSED_NOW } else { NOT_TRACED_NOW });
         if let Some(t) = self.tracks.get_mut(id) {
+            self.tally.uncount(t);
             // one the still set holds stays so until the set made for its
-            // leaving (`decide`: this frame did not find it)
+            // leaving (`decide`: it is no longer found). A placed face that
+            // is no longer traced keeps the place and the geometry it had,
+            // to be known if it comes back (`visit`).
+            let keeps = kind == NOT_TRACED && t.seen != 0 && t.kind != POSED;
+            let (place, shape, relapses) = if keeps { (t.place, t.shape, t.relapses) } else { (place, shape, 0) };
             *t = Track {
                 seen: frame,
                 place,
                 shape,
                 kind,
+                skeleton,
+                relapses,
+                present: true,
                 in_still: t.in_still,
                 set_near: t.set_near,
                 missed: t.missed,
+                listed: t.listed,
                 ..Track::default()
             };
         }
     }
 
-    /// Notes placed face `id` on `frame`, at `place` and of `shape`,
-    /// opaque or not, traced or not (`kept`), near or not: whether it is
-    /// among this frame's moving faces (unless the frame's set takes it).
+    /// Notes placed face `id` on `frame`, at `place` (in `cell`) and of
+    /// `shape`, opaque or not, traced or not (`kept`), near or not.
     #[allow(clippy::too_many_arguments)]
-    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, kept: bool, near: bool, opaque: bool) -> bool {
+    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, cell: u64, kept: bool, near: bool, opaque: bool) {
         let Some(t) = self.tracks.get_mut(id) else {
-            return false;
+            return;
         };
+        self.tally.uncount(t);
         let kind = if opaque { PLACED_OPAQUE } else { PLACED_MASKED };
-        if t.seen == 0 || t.seen + 1 != frame || !t.placed() {
-            // a new face (or a slot handed out again): still from the
-            // start. What the set held in its slot is gone: this frame
-            // does not find it (`decide`).
+        let rebased = t.rebase && t.place != place && frame < self.rebased_at + REBASE_FRAMES;
+        if rebased && t.present && t.placed() {
+            // written relative to the new origin: it arrives there
             *t = Track {
+                rests_at: frame,
                 place,
                 shape,
-                still: STILL_FRAMES,
                 kind,
+                present: true,
+                listed: t.listed,
+                new: true,
                 ..Track::default()
             };
+        } else if !t.present || !t.placed() {
+            // the face that was in this slot, back as it was?
+            let back = t.seen != 0 && t.place == place && t.shape == shape;
+            if back && t.in_still && !t.left && t.kind == kind {
+                // before a set was made without it: it never left
+                t.present = true;
+            } else {
+                // a new face (or a slot handed out again): still from the
+                // start, unless it is one a set had to drop. What the set
+                // held in its slot is gone: no longer found (`decide`).
+                let relapses = if back { t.relapses } else { 0 };
+                let wait = if relapses > 0 {
+                    (STILL_FRAMES as u64) << relapses.min(RELAPSES_MAX)
+                } else {
+                    0
+                };
+                *t = Track {
+                    rests_at: frame + wait,
+                    place,
+                    shape,
+                    kind,
+                    relapses,
+                    present: true,
+                    listed: t.listed,
+                    new: true,
+                    rebase: frame == self.rebased_at,
+                    ..Track::default()
+                };
+            }
         } else if t.place != place {
             // it moved
+            t.rebase = false;
             t.place = place;
             t.shape = shape;
             t.kind = kind;
-            t.still = 0;
             if t.in_still {
                 if !t.left {
                     t.relapses = t.relapses.saturating_add(1);
@@ -477,24 +624,55 @@ impl StillTracker {
                 t.stale = false;
                 self.tally.urgent |= t.near || near;
             }
+            t.rests_at = frame + ((STILL_FRAMES as u64) << t.relapses.min(RELAPSES_MAX));
         } else if t.shape != shape || t.kind != kind {
             // another geometry at the same place: a level of detail
             t.shape = shape;
             t.kind = kind;
             t.stale = t.in_still && !t.left;
-            t.still = t.still.saturating_add(1);
-        } else {
-            t.still = t.still.saturating_add(1);
         }
         t.seen = frame;
+        t.cell = cell;
         t.kept = kept;
         t.near = near;
-        self.tally.count(t)
+        if self.tally.count(t, frame) && !std::mem::replace(&mut t.listed, true) {
+            self.moving.push(id as u32);
+        }
     }
 
-    /// Whether this frame makes a new still set, after every face was
-    /// visited; the tracks then say which faces it holds.
+    /// Weighs placed face `id` again, the eye having moved: traced or not,
+    /// near or not.
+    fn weigh(&mut self, id: usize, frame: u64, kept: bool, near: bool) {
+        let Some(t) = self.tracks.get_mut(id) else {
+            return;
+        };
+        if !t.present || !t.placed() || (t.kept == kept && t.near == near) {
+            return;
+        }
+        self.tally.uncount(t);
+        t.kept = kept;
+        t.near = near;
+        if self.tally.count(t, frame) && !std::mem::replace(&mut t.listed, true) {
+            self.moving.push(id as u32);
+        }
+    }
+
+    /// Whether this frame makes a new still set, after the frame's looks;
+    /// the tracks then say which faces it holds.
     fn decide(&mut self, frame: u64) -> bool {
+        // the faces among the moving ones come to rest with no look at
+        // them: counted again each frame
+        let (tracks, tally) = (&mut self.tracks, &mut self.tally);
+        self.moving.retain(|&id| {
+            let t = &mut tracks[id as usize];
+            if !t.moves() {
+                t.listed = false;
+                return false;
+            }
+            tally.uncount(t);
+            tally.count(t, frame);
+            true
+        });
         let tally = &self.tally;
         let gone = self.held - tally.found.min(self.held);
         let urgent = tally.urgent;
@@ -527,35 +705,125 @@ impl StillTracker {
         self.held = 0;
         self.held_near = 0;
         for t in &mut self.tracks {
-            t.in_still = t.seen == frame && t.kept && t.rests() && t.placed();
+            let placed = t.present && t.placed();
+            if t.in_still && !placed {
+                // this set drops it because it is gone
+                t.relapses = t.relapses.saturating_add(1);
+            }
+            t.in_still = placed && t.kept && t.rests(frame);
+            t.new &= !t.in_still;
             t.set_near = t.in_still && t.near;
             t.left = false;
             t.stale = false;
             t.missed = false;
+            // (as the set holds what it should, nothing waits for the next)
+            t.counted = if placed { COUNTED } else { 0 };
             self.held += t.in_still as usize;
             self.held_near += t.set_near as usize;
         }
+        self.tally = Tally {
+            found: self.held,
+            found_near: self.held_near,
+            ..Tally::default()
+        };
+        let tracks = &mut self.tracks;
+        self.moving.retain(|&id| {
+            let t = &mut tracks[id as usize];
+            t.listed = t.moves();
+            t.listed
+        });
         self.set_at = frame;
         self.changed_at = 0;
         true
     }
 
-    /// Whether the still set holds face `id`, and where it still is.
+    /// The faces traced with the moving ones, after [`StillTracker::decide`].
+    #[cfg(test)]
+    fn moving(&self) -> &[u32] {
+        &self.moving
+    }
+
+    /// Whether face `id` of the moving ones is traced this frame; `small`
+    /// says a set would merge it with its cell's others. A new small face
+    /// is not while [`MANY`] wait for a set, which then comes within
+    /// [`STILL_EVERY`]: traced meanwhile, each would have a bottom level of
+    /// its own built, for those few frames (an arrival by teleport: tens of
+    /// thousands of them, and as many instances in the level built each
+    /// frame).
+    fn emits(&mut self, id: u32, small: bool) -> bool {
+        let t = &mut self.tracks[id as usize];
+        if t.new && small && t.counted & AS_ARRIVAL != 0 && self.tally.arrivals >= MANY {
+            return false;
+        }
+        t.new = false;
+        true
+    }
+
+    /// Face `id` of the still set: its cell, its place and geometry in one
+    /// number (for its cell's version), and whether it is opaque.
+    fn held(&self, id: usize) -> Option<(u64, u64, bool)> {
+        self.tracks
+            .get(id)
+            .filter(|t| t.in_still)
+            .map(|t| (t.cell, t.place ^ ((t.shape as u64) << 32 | t.kind as u64), t.kind == PLACED_OPAQUE))
+    }
+
+    #[cfg(test)]
     fn in_still(&self, id: usize) -> bool {
         self.tracks.get(id).is_some_and(|t| t.in_still)
     }
+}
 
-    /// Whether face `id` is traced with the moving ones on a frame it was
-    /// noted as one: the still set does not hold it, or not where it is.
-    fn moving(&self, id: usize) -> bool {
-        self.tracks.get(id).is_some_and(|t| !t.in_still || t.left)
+/// The faces of each object, in a chain, so that an object's change (it is
+/// hidden or shown, worn or put down, its sphere moves) finds them.
+#[derive(Default)]
+struct ByObject {
+    /// Each object's first face ([`NO_OBJECT`]: none).
+    first: Vec<u32>,
+    /// Each face's object, and the faces before and after it in the
+    /// object's chain.
+    links: Vec<[u32; 3]>,
+}
+
+impl ByObject {
+    /// Face `face` is `object`'s ([`NO_OBJECT`]: no one's).
+    fn set(&mut self, face: usize, object: u32) {
+        if self.links.len() <= face {
+            self.links.resize(face + 1, [NO_OBJECT; 3]);
+        }
+        let [old, before, after] = self.links[face];
+        if old == object {
+            return;
+        }
+        if old != NO_OBJECT {
+            match before {
+                NO_OBJECT => self.first[old as usize] = after,
+                before => self.links[before as usize][2] = after,
+            }
+            if after != NO_OBJECT {
+                self.links[after as usize][1] = before;
+            }
+        }
+        let mut next = NO_OBJECT;
+        if object != NO_OBJECT {
+            if self.first.len() <= object as usize {
+                self.first.resize(object as usize + 1, NO_OBJECT);
+            }
+            next = std::mem::replace(&mut self.first[object as usize], face as u32);
+            if next != NO_OBJECT {
+                self.links[next as usize][1] = face as u32;
+            }
+        }
+        self.links[face] = [object, NO_OBJECT, next];
     }
 
-    /// Face `id`'s place and geometry in one number, for its cell's version.
-    fn mark(&self, id: usize) -> u64 {
-        self.tracks
-            .get(id)
-            .map_or(0, |t| t.place ^ ((t.shape as u64) << 32 | t.kind as u64))
+    fn faces(&self, object: u32) -> impl Iterator<Item = usize> + '_ {
+        let mut at = self.first.get(object as usize).copied().unwrap_or(NO_OBJECT);
+        std::iter::from_fn(move || {
+            let face = (at != NO_OBJECT).then_some(at as usize)?;
+            at = self.links[face][2];
+            Some(face)
+        })
     }
 }
 
@@ -672,41 +940,109 @@ fn shape_of(face: &CullFace) -> u32 {
     h
 }
 
-/// What the main thread remembers of each skeleton's last built pose, so a
-/// skeleton whose vertices moved less than a shadow ray's start can tell
-/// keeps its bottom level (wgpu has no refit: a level is only built again
-/// from scratch): the nearest skeletons first, within a frame's budget.
+/// What the main thread remembers of the faces it traces, so that a frame
+/// only looks at those that changed: the placed ones, still or moving
+/// ([`StillTracker`]), and each skeleton's with its last built pose
+/// ([`Skeleton`]).
 #[derive(Default)]
 pub(crate) struct PoseTracker {
-    seen: HashMap<u32, Seen>,
     frame: u64,
-    scratch: Vec<Candidate>,
-    /// The placed faces, still or moving, and the last still set with its
-    /// number.
     placed: StillTracker,
+    by_object: ByObject,
+    skeletons: BTreeMap<u32, Skeleton>,
+    /// The last still set, with its number.
     still: Arc<Vec<Instance>>,
     cells: Arc<Vec<Cell>>,
     small: Vec<Small>,
     set: u64,
+    /// The records and the objects that changed since the last frame.
+    changed: Vec<u32>,
+    objects: Vec<u32>,
+    scratch: Vec<usize>,
+    /// Where the turns of [`SWEEP`] and of the weighing are, the faces
+    /// still to weigh, and the eye and the reach they are weighed for.
+    sweep: usize,
+    cursor: usize,
+    owed: usize,
+    weighed_at: glam::Vec3,
+    far: f32,
     /// `Faces::spent`.
-    spent: [u64; 2],
+    spent: [u64; 3],
 }
 
-struct Seen {
-    faces: u64,
+/// A skeleton's faces, and the pose its bottom level was last built in: a
+/// skeleton whose vertices moved less than a shadow ray's start can tell
+/// keeps its level (wgpu has no refit: a level is only built again from
+/// scratch), the nearest skeletons first within a frame's budget.
+#[derive(Default)]
+struct Skeleton {
+    /// Its faces' records, in order.
+    ids: Vec<u32>,
+    /// One of them came, went or changed since [`Skeleton::read`].
+    dirty: bool,
+    /// The faces as last read, with their models, the first one's record
+    /// flags (how it is placed), their hash and their vertices.
+    faces: Vec<Posed>,
+    models: Vec<[[f32; 4]; 4]>,
+    first: u32,
+    hash: u64,
+    vertices: u32,
     /// A level was built for these faces (one left waiting by the budget
-    /// has none yet).
+    /// has none yet), with these joints and models.
     built: bool,
     joints: Vec<[[f32; 4]; 4]>,
-    models: Vec<[[f32; 4]; 4]>,
-    last: u64,
+    built_models: Vec<[[f32; 4]; 4]>,
+    /// The most a face's own model moved it since, and the most a joint
+    /// did, as each was last written (infinite: past what a shadow shows).
+    moved: f32,
+    drifted: f32,
 }
 
-struct Candidate {
-    key: u32,
-    face: Posed,
-    model: [[f32; 4]; 4],
-    origin: [f32; 3],
+impl Skeleton {
+    /// Reads its faces again: each with its model and its record's flags.
+    fn read(&mut self, faces: impl Iterator<Item = (Posed, [[f32; 4]; 4], u32)>) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.faces.clear();
+        self.models.clear();
+        self.vertices = 0;
+        for (face, model, rf) in faces {
+            if self.faces.is_empty() {
+                self.first = rf;
+            }
+            (face.record, face.base_vertex, face.first_index, face.index_count, face.opaque).hash(&mut hasher);
+            self.vertices += face.index_count;
+            self.faces.push(face);
+            self.models.push(model);
+        }
+        let hash = hasher.finish();
+        if hash != self.hash {
+            // another face set: its level is made again
+            self.hash = hash;
+            self.built = false;
+        }
+        self.moved = if self.built_models.len() == self.models.len() {
+            self.built_models.iter().zip(&self.models).fold(0.0, |d, (a, b)| d.max(drift(a, b)))
+        } else {
+            f32::INFINITY
+        };
+        self.dirty = false;
+    }
+
+    /// Where it stands, as rt_pose.wgsl places its first face.
+    fn origin(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> glam::Vec3 {
+        let Some(model) = self.models.first() else {
+            return glam::Vec3::ZERO;
+        };
+        let palette = |i: u32| palettes.get(i as usize);
+        let at = match (self.first & flags::SKINNED != 0, self.first & flags::ANCHORED != 0) {
+            (true, true) => palette(key + crate::types::SKELETON_ANCHOR).map(|m| m[3]),
+            (false, true) => palette(key).map(|m| mul(m, model)[3]),
+            _ => None,
+        }
+        .unwrap_or(model[3]);
+        glam::Vec3::new(at[0], at[1], at[2])
+    }
 }
 
 /// How far a vertex can have moved between two placements of its joint.
@@ -721,6 +1057,20 @@ fn drift(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> f32 {
         d = d.max((a[3][r] - b[3][r]).abs());
     }
     d
+}
+
+/// The most a vertex can have moved between the joints `built` and `now`:
+/// infinite past `allowed` (a skeleton that moves is past it at its first
+/// joints: most are not read).
+fn joint_drift(built: &[[[f32; 4]; 4]], now: &[[[f32; 4]; 4]], allowed: f32) -> f32 {
+    let mut most = 0.0f32;
+    for (a, b) in built.iter().zip(now) {
+        most = most.max(drift(a, b));
+        if most > allowed {
+            return f32::INFINITY;
+        }
+    }
+    most
 }
 
 /// The drift a skeleton at `distance` may have before its shadow shows it:
@@ -748,79 +1098,90 @@ fn instance_of(id: usize, face: &CullFace, record: &DrawRecord) -> Instance {
 /// Whether a face is a skeleton's (an avatar's, what it wears, an animated
 /// object's): its world positions exist only once posed.
 fn is_posed(object: &CullObject, rf: u32) -> bool {
-    let worn_or_posed = object_flags::AVATAR | object_flags::RIGGED | object_flags::POSED;
-    object.flags & worn_or_posed != 0 || object.anchor != 0 || rf & (flags::SKINNED | flags::ANCHORED | flags::LIP_SYNC) != 0
+    object_posed(object) || rf & (flags::SKINNED | flags::ANCHORED | flags::LIP_SYNC) != 0
 }
 
-/// The faces to trace this frame, from the records and the culling tables
-/// the main thread keeps: the opaque and alpha-masked faces (blended ones
-/// are not traced yet) of the terrain and of the objects that are no HUD;
-/// those of a skeleton are posed, the others placed by their record.
-/// `palettes` is what the GPU's joint palettes hold, `camera` the eye, `far`
-/// the distance the shadows cover: a placed face further than that (by
-/// [`FAR_MARGIN`]) or too small to cast a shadow that shows ([`SMALL`]) is
-/// left out. `shifted` says the world's origin moved since the last frame.
-///
-/// Every frame compares each face's place and geometry with the last
-/// frame's; the rest is looked at when they changed, and every
-/// [`RECHECK`] frames (a region has a hundred thousand faces, and this runs
-/// on the main thread).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn gather(
-    records: &RecordStore,
-    cull: &CullTables,
-    palettes: &[[[f32; 4]; 4]],
+fn object_posed(object: &CullObject) -> bool {
+    object.flags & (object_flags::AVATAR | object_flags::RIGGED | object_flags::POSED) != 0 || object.anchor != 0
+}
+
+/// Whether an object changed in a way the tracing of its faces follows
+/// ([`PoseTracker::look`]): it is there or not, a HUD's, hidden, posed, or
+/// its sphere moved while it is placed (a posed one's moves each frame, and
+/// is not read).
+fn object_differs(a: &CullObject, b: &CullObject) -> bool {
+    let read = object_flags::ACTIVE | object_flags::HUD | object_flags::HIDDEN;
+    (a.flags ^ b.flags) & read != 0 || object_posed(a) != object_posed(b) || (a.sphere != b.sphere && !object_posed(b))
+}
+
+/// Whether a placed face of `triangles` triangles in `cell` is traced, and
+/// whether its move would show at once, by its object's sphere (the
+/// terrain: always). `kept` says it is traced now.
+fn weigh(object: Option<&CullObject>, triangles: u32, cell: u64, camera: glam::Vec3, far: f32, kept: bool) -> (bool, bool) {
+    let Some(o) = object else {
+        return (true, true);
+    };
+    let ease = if kept { KEEP } else { 1.0 };
+    let distance = glam::Vec3::new(o.sphere[0], o.sphere[1], o.sphere[2]).distance(camera);
+    let radius = o.sphere[3];
+    let weighed = if triangles <= MERGED_TRIANGLES {
+        // (from the cell's nearest corner: no further than the face)
+        size_step(cell_centre(cell).distance(camera) - CELL * 0.87)
+    } else {
+        distance
+    };
+    (
+        distance - radius < far * ease && radius * ease >= SMALL * weighed,
+        distance - radius < NEAR || radius >= NEAR_SIZE * distance,
+    )
+}
+
+/// What a look at a face reads.
+struct World<'a> {
+    records: &'a RecordStore,
+    objects: &'a GpuTable<CullObject>,
     camera: glam::Vec3,
     far: f32,
-    shifted: bool,
-    tracker: &mut PoseTracker,
-    out: &mut Faces,
-) {
-    let started = std::time::Instant::now();
-    out.moving.clear();
-    out.posed.clear();
-    out.groups.clear();
-    tracker.frame += 1;
-    tracker.scratch.clear();
-    let frame = tracker.frame;
-    let far = far.max(16.0) * FAR_MARGIN;
-    if shifted {
-        tracker.placed.reset();
-        tracker.still = Arc::default();
-        tracker.cells = Arc::default();
-        tracker.set += 1;
-    }
-    // a top level's custom index holds 24 bits, one of them the merged
-    // cells' (rt_common.wgsl `hit_record`)
-    let faces = records.faces.len().min(1 << 23);
-    tracker.placed.begin(faces);
-    for id in 0..faces {
-        let Some(face) = records.faces.get(id) else {
-            tracker.placed.missing(id, SLOT_FREED);
-            continue;
-        };
-        if face.index_count < 3 || face.base_vertex < 0 {
-            tracker.placed.missing(id, NO_GEOMETRY);
-            continue;
-        }
-        let Some(record) = records.get(id as u32) else {
-            tracker.placed.missing(id, SLOT_FREED);
-            continue;
-        };
-        let (place, shape) = (place_of(&record.model), shape_of(face));
-        if !(id as u64 + frame).is_multiple_of(RECHECK)
-            && let Some(moving) = tracker.placed.same(id, frame, place, shape)
-        {
-            if moving {
-                out.moving.push(instance_of(id, face, record));
-            }
-            continue;
-        }
-        let rf = record.flags[0];
-        let object = match face.object {
+    frame: u64,
+}
+
+impl World<'_> {
+    fn object(&self, face: &CullFace) -> Option<&CullObject> {
+        match face.object {
             NO_OBJECT => None,
-            object => cull.objects.get(object as usize),
+            object => self.objects.get(object as usize),
+        }
+    }
+}
+
+impl PoseTracker {
+    /// Looks at face `id`: whether it is one to trace (the opaque and
+    /// alpha-masked faces of the terrain and of the objects that are no
+    /// HUD and not hidden; blended ones are not traced yet), a skeleton's
+    /// or a placed one, and where.
+    fn look(&mut self, id: usize, w: &World) {
+        if self.placed.seen(id, w.frame) {
+            return;
+        }
+        self.spent[2] += 1;
+        let was = self.placed.skeleton(id);
+        let found = match (w.records.faces.get(id), w.records.get(id as u32)) {
+            (Some(face), Some(record)) if face.index_count >= 3 && face.base_vertex >= 0 => Ok((face, record)),
+            (Some(_), Some(_)) => Err(NO_GEOMETRY),
+            _ => Err(SLOT_FREED),
         };
+        let (face, record) = match found {
+            Ok(found) => found,
+            Err(why) => {
+                self.leave(was, id);
+                self.by_object.set(id, NO_OBJECT);
+                self.placed.absent(id, w.frame, why);
+                return;
+            }
+        };
+        self.by_object.set(id, face.object);
+        let rf = record.flags[0];
+        let object = w.object(face);
         let traced = match object {
             None => face.object == NO_OBJECT && rf & flags::TERRAIN != 0,
             Some(object) => {
@@ -830,83 +1191,176 @@ pub(crate) fn gather(
                     && rf & flags::ALPHA_BLEND == 0
             }
         };
+        let (place, shape) = (place_of(&record.model), shape_of(face));
         if !traced {
-            tracker.placed.other(id, frame, place, shape, NOT_TRACED);
-            continue;
+            self.leave(was, id);
+            self.placed.other(id, w.frame, place, shape, NOT_TRACED, 0);
+            return;
         }
         if object.is_some_and(|o| is_posed(o, rf)) {
-            tracker.placed.other(id, frame, place, shape, POSED);
             let key = record.flags[1];
-            let palette = |i: u32| palettes.get(i as usize);
-            // where the face stands, as rt_pose.wgsl places it
-            let origin = match (rf & flags::SKINNED != 0, rf & flags::ANCHORED != 0) {
-                (true, true) => palette(key + crate::types::SKELETON_ANCHOR).map(|m| m[3]),
-                (false, true) => palette(key).map(|m| mul(m, &record.model)[3]),
-                _ => Some(record.model[3]),
+            // (how it is posed and tested is part of what it is)
+            let shape = shape ^ (rf & (flags::ALPHA_MASK | flags::SKINNED | flags::ANCHORED)).wrapping_mul(0x9e37_79b1);
+            let same = was == Some(key) && self.placed.is(id, place, shape);
+            self.placed.other(id, w.frame, place, shape, POSED, key);
+            if was != Some(key) {
+                self.leave(was, id);
+                let ids = &mut self.skeletons.entry(key).or_default().ids;
+                if let Err(at) = ids.binary_search(&(id as u32)) {
+                    ids.insert(at, id as u32);
+                }
             }
-            .unwrap_or(record.model[3]);
-            tracker.scratch.push(Candidate {
-                key,
-                face: Posed {
-                    record: id as u32,
-                    base_vertex: face.base_vertex as u32,
-                    first_index: face.first_index,
-                    index_count: face.index_count - face.index_count % 3,
-                    opaque: rf & flags::ALPHA_MASK == 0,
-                },
-                model: record.model,
-                origin: [origin[0], origin[1], origin[2]],
-            });
-            continue;
+            if !same && let Some(s) = self.skeletons.get_mut(&key) {
+                s.dirty = true;
+            }
+            return;
         }
-        // a placed face: the terrain always, an object's by its sphere
-        let (kept, near) = object.map_or((true, true), |o| {
-            let ease = if tracker.placed.kept(id, frame) { KEEP } else { 1.0 };
-            let distance = glam::Vec3::new(o.sphere[0], o.sphere[1], o.sphere[2]).distance(camera);
-            let radius = o.sphere[3];
-            let weighed = if face.index_count / 3 <= MERGED_TRIANGLES {
-                // (from the cell's nearest corner: no further than the face)
-                size_step(cell_centre(cell_of(&record.model)).distance(camera) - CELL * 0.87)
-            } else {
-                distance
-            };
-            (
-                distance - radius < far * ease && radius * ease >= SMALL * weighed,
-                distance - radius < NEAR || radius >= NEAR_SIZE * distance,
-            )
-        });
-        if tracker
-            .placed
-            .visit(id, frame, place, shape, kept, near, rf & flags::ALPHA_MASK == 0)
-        {
-            out.moving.push(instance_of(id, face, record));
+        self.leave(was, id);
+        let cell = cell_of(&record.model);
+        let (kept, near) = weigh(object, face.index_count / 3, cell, w.camera, w.far, self.placed.kept(id));
+        self.placed
+            .visit(id, w.frame, place, shape, cell, kept, near, rf & flags::ALPHA_MASK == 0);
+    }
+
+    /// Face `id` is no longer `skeleton`'s.
+    fn leave(&mut self, skeleton: Option<u32>, id: usize) {
+        if let Some(s) = skeleton.and_then(|key| self.skeletons.get_mut(&key)) {
+            if let Ok(at) = s.ids.binary_search(&(id as u32)) {
+                s.ids.remove(at);
+            }
+            s.dirty = true;
         }
     }
-    // the still set, on the frames it changes; the faces it holds are then
-    // no longer among the moving ones
+
+    /// Weighs placed face `id` again, for where the eye is now.
+    fn weigh(&mut self, id: usize, w: &World) {
+        let (Some(cell), Some(face)) = (self.placed.cell(id), w.records.faces.get(id)) else {
+            return;
+        };
+        let (kept, near) = weigh(w.object(face), face.index_count / 3, cell, w.camera, w.far, self.placed.kept(id));
+        self.placed.weigh(id, w.frame, kept, near);
+    }
+}
+
+/// The faces to trace this frame, from the records and the culling tables
+/// the main thread keeps: the placed ones by their record, the skeletons'
+/// posed. `palettes` is what the GPU's joint palettes hold and `written`
+/// the entries written since the last frame (taken), `camera` the eye,
+/// `far` the distance the shadows cover: a placed face further than
+/// that (by [`FAR_MARGIN`]) or too small to cast a shadow that shows
+/// ([`SMALL`]) is left out. `shifted` says the world's origin moved since
+/// the last frame.
+///
+/// A region has a hundred thousand faces and this runs on the main thread:
+/// a frame looks at the faces whose record, geometry or object changed
+/// since the last one (the tables tell: `RecordStore::take_changed`,
+/// `GpuTable::take_touched`), weighs the placed ones again when the eye
+/// moved ([`EYE_STEP`]), and looks at every face in turn over [`SWEEP`]
+/// frames. Looking at each face on each frame took 3 ms on a busy region.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gather(
+    records: &mut RecordStore,
+    cull: &mut CullTables,
+    palettes: &[[[f32; 4]; 4]],
+    written: &mut Vec<std::ops::Range<usize>>,
+    camera: glam::Vec3,
+    far: f32,
+    shifted: bool,
+    tracker: &mut PoseTracker,
+    out: &mut Faces,
+) {
+    let started = std::time::Instant::now();
+    tracker.frame += 1;
+    let frame = tracker.frame;
+    let far = far.max(16.0) * FAR_MARGIN;
+    // (both: each starts being followed)
+    let followed = records.watch_changes() & cull.objects.watch(object_differs);
+    tracker.changed.clear();
+    records.take_changed(&mut tracker.changed);
+    tracker.objects.clear();
+    cull.objects.take_touched(&mut tracker.objects);
+    merge(written);
+    if shifted {
+        tracker.placed.rebase(frame);
+        tracker.by_object = ByObject::default();
+        tracker.skeletons.clear();
+        tracker.still = Arc::default();
+        tracker.cells = Arc::default();
+        tracker.set += 1;
+    }
+    // a top level's custom index holds 24 bits, one of them the merged
+    // cells' (rt_common.wgsl `hit_record`)
+    let faces = records.faces.len().min(1 << 23);
+    tracker.placed.begin(faces);
+    let world = World {
+        records,
+        objects: &cull.objects,
+        camera,
+        far,
+        frame,
+    };
+    if !followed || shifted {
+        // what changed is not known: every face
+        for id in 0..faces {
+            tracker.look(id, &world);
+        }
+        (tracker.weighed_at, tracker.far, tracker.owed) = (camera, far, 0);
+    } else {
+        let changed = std::mem::take(&mut tracker.changed);
+        for &id in changed.iter().filter(|&&id| (id as usize) < faces) {
+            tracker.look(id as usize, &world);
+        }
+        tracker.changed = changed;
+        let mut ids = std::mem::take(&mut tracker.scratch);
+        for &object in &tracker.objects {
+            ids.extend(tracker.by_object.faces(object).filter(|&id| id < faces));
+        }
+        for id in ids.drain(..) {
+            tracker.look(id, &world);
+        }
+        tracker.scratch = ids;
+        for _ in 0..faces.div_ceil(SWEEP) {
+            tracker.sweep = (tracker.sweep + 1) % faces;
+            tracker.look(tracker.sweep, &world);
+        }
+        if camera.distance(tracker.weighed_at) > EYE_STEP || far != tracker.far {
+            (tracker.weighed_at, tracker.far, tracker.owed) = (camera, far, faces);
+        }
+        let turn = faces.div_ceil(WEIGH_FRAMES).min(tracker.owed);
+        tracker.owed -= turn;
+        for _ in 0..turn {
+            tracker.cursor = (tracker.cursor + 1) % faces;
+            tracker.weigh(tracker.cursor, &world);
+        }
+    }
+    let records = world.records;
+    // the still set, on the frames it changes
     if tracker.placed.decide(frame) {
         let set_started = std::time::Instant::now();
         let placed = &tracker.placed;
         let mut large = Vec::new();
         tracker.small.clear();
-        for id in (0..faces).filter(|&id| placed.in_still(id)) {
-            let (Some(face), Some(record)) = (records.faces.get(id), records.get(id as u32)) else {
+        for id in 0..faces {
+            let (Some((cell, mark, opaque)), Some(face)) = (placed.held(id), records.faces.get(id)) else {
                 continue;
             };
-            let i = instance_of(id, face, record);
-            if i.index_count / 3 > MERGED_TRIANGLES {
-                large.push(i);
+            if face.index_count / 3 > MERGED_TRIANGLES {
+                if let Some(record) = records.get(id as u32) {
+                    large.push(instance_of(id, face, record));
+                }
                 continue;
             }
+            // (its cell and whether it is opaque as its last look found
+            // them: a still face's record is not read)
             tracker.small.push(Small {
-                cell: cell_of(&record.model),
-                mark: placed.mark(id),
+                cell,
+                mark,
                 face: Posed {
-                    record: i.record,
-                    base_vertex: i.base_vertex as u32,
-                    first_index: i.first_index,
-                    index_count: i.index_count,
-                    opaque: i.opaque,
+                    record: id as u32,
+                    base_vertex: face.base_vertex as u32,
+                    first_index: face.first_index,
+                    index_count: face.index_count - face.index_count % 3,
+                    opaque,
                 },
             });
         }
@@ -920,111 +1374,134 @@ pub(crate) fn gather(
     out.set = tracker.set;
     out.eye = camera.to_array();
     out.why = tracker.placed.why;
-    let placed = &tracker.placed;
-    out.moving.retain(|i| placed.moving(i.record as usize));
-    choose_rebuilds(palettes, camera, tracker, out);
+    out.moving.clear();
+    let moving = std::mem::take(&mut tracker.placed.moving);
+    out.moving.extend(moving.iter().filter_map(|&id| {
+        let (face, record) = (records.faces.get(id as usize)?, records.get(id)?);
+        tracker
+            .placed
+            .emits(id, face.index_count / 3 <= MERGED_TRIANGLES)
+            .then(|| instance_of(id as usize, face, record))
+    }));
+    tracker.placed.moving = moving;
+    for s in tracker.skeletons.values_mut().filter(|s| s.dirty) {
+        let ids = std::mem::take(&mut s.ids);
+        s.read(ids.iter().filter_map(|&id| {
+            let (face, record) = (records.faces.get(id as usize)?, records.get(id)?);
+            let rf = record.flags[0];
+            let face = Posed {
+                record: id,
+                base_vertex: face.base_vertex as u32,
+                first_index: face.first_index,
+                index_count: face.index_count - face.index_count % 3,
+                opaque: rf & flags::ALPHA_MASK == 0,
+            };
+            Some((face, record.model, rf))
+        }));
+        s.ids = ids;
+    }
+    out.posed.clear();
+    out.groups.clear();
+    choose_rebuilds(palettes, written, camera, &mut tracker.skeletons, out);
+    written.clear();
     tracker.spent[0] += started.elapsed().as_micros() as u64;
     out.spent = tracker.spent;
 }
 
-/// Groups the posed candidates by skeleton and picks the skeletons built
-/// again this frame: new ones, those whose faces changed, and those whose
-/// vertices drifted past what a shadow shows, nearest first within
-/// [`REBUILD_TRIANGLES`].
-fn choose_rebuilds(palettes: &[[[f32; 4]; 4]], camera: glam::Vec3, tracker: &mut PoseTracker, out: &mut Faces) {
-    use std::hash::{Hash, Hasher};
-    let frame = tracker.frame;
-    let stride = crate::types::PALETTE_STRIDE as usize;
-    tracker.scratch.sort_by_key(|c| c.key);
-    // (start, end, distance, must, faces' hash) of each skeleton's run
-    let mut runs: Vec<(usize, usize, f32, bool, u64)> = Vec::new();
-    let mut start = 0;
-    while start < tracker.scratch.len() {
-        let key = tracker.scratch[start].key;
-        let mut end = start;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        while end < tracker.scratch.len() && tracker.scratch[end].key == key {
-            let f = tracker.scratch[end].face;
-            (f.record, f.base_vertex, f.first_index, f.index_count, f.opaque).hash(&mut hasher);
-            end += 1;
+/// Sorts `ranges` and joins those that touch.
+fn merge(ranges: &mut Vec<std::ops::Range<usize>>) {
+    ranges.sort_unstable_by_key(|r| r.start);
+    let mut kept = 0;
+    for i in 1..ranges.len() {
+        if ranges[i].start <= ranges[kept].end {
+            ranges[kept].end = ranges[kept].end.max(ranges[i].end);
+        } else {
+            kept += 1;
+            ranges[kept] = ranges[i].clone();
         }
-        let faces = hasher.finish();
-        let run = &tracker.scratch[start..end];
-        let distance = glam::Vec3::from(run[0].origin).distance(camera);
-        let joints = palettes
-            .get(key as usize..(key as usize + stride).min(palettes.len()))
-            .unwrap_or(&[]);
-        let must = match tracker.seen.get_mut(&key) {
-            Some(seen) if seen.built && seen.faces == faces && seen.joints.len() == joints.len() => {
-                seen.last = frame;
-                // (a skeleton that moves is past the limit at its first
-                // joints: most are not read)
-                let allowed = drift_allowed(distance);
-                seen.joints.iter().zip(joints).any(|(a, b)| drift(a, b) > allowed)
-                    || seen.models.iter().zip(run).any(|(a, c)| drift(a, &c.model) > allowed)
-            }
-            Some(seen) if seen.faces == faces => {
-                seen.last = frame;
-                true
-            }
-            _ => {
-                tracker.seen.insert(
-                    key,
-                    Seen {
-                        faces,
-                        built: false,
-                        joints: Vec::new(),
-                        models: Vec::new(),
-                        last: frame,
-                    },
-                );
-                true
-            }
-        };
-        runs.push((start, end, distance, must, faces));
-        start = end;
     }
-    tracker.seen.retain(|_, s| s.last == frame);
+    ranges.truncate(kept + 1);
+}
+
+/// Picks the skeletons built again this frame: new ones, those whose faces
+/// changed, and those whose vertices drifted past what a shadow shows,
+/// nearest first within [`REBUILD_TRIANGLES`]; and lists them all.
+/// `written` is the palettes' entries written since the last frame, in
+/// order and apart ([`merge`]): only those are read, the other joints are
+/// as they were last measured (a skeleton's are 261 matrices, a crowd's
+/// megabytes, and each skeleton's anchor is written every frame).
+fn choose_rebuilds(
+    palettes: &[[[f32; 4]; 4]],
+    written: &[std::ops::Range<usize>],
+    camera: glam::Vec3,
+    skeletons: &mut BTreeMap<u32, Skeleton>,
+    out: &mut Faces,
+) {
+    let stride = crate::types::PALETTE_STRIDE as usize;
+    let joints_of = |key: u32| {
+        palettes
+            .get(key as usize..(key as usize + stride).min(palettes.len()))
+            .unwrap_or(&[])
+    };
+    skeletons.retain(|_, s| !s.faces.is_empty());
     // the skeletons that must be built again, nearest first, within budget
-    let mut order: Vec<usize> = (0..runs.len()).filter(|&r| runs[r].3).collect();
-    order.sort_by(|&a, &b| runs[a].2.total_cmp(&runs[b].2));
-    let mut chosen = vec![false; runs.len()];
+    let mut must: Vec<(f32, u32)> = Vec::new();
+    let mut next = 0;
+    for (&key, s) in skeletons.iter_mut() {
+        let distance = s.origin(key, palettes).distance(camera);
+        let allowed = drift_allowed(distance);
+        let joints = joints_of(key);
+        let first = key as usize;
+        while written.get(next).is_some_and(|w| w.end <= first) {
+            next += 1;
+        }
+        if s.joints.len() != joints.len() {
+            s.drifted = f32::INFINITY;
+        }
+        let mut at = next;
+        while s.drifted <= allowed
+            && let Some(w) = written.get(at).filter(|w| w.start < first + joints.len())
+        {
+            let (a, b) = (w.start.max(first) - first, w.end.min(first + joints.len()) - first);
+            s.drifted = s.drifted.max(joint_drift(&s.joints[a..b], &joints[a..b], allowed));
+            at += 1;
+        }
+        if !s.built || s.moved > allowed || s.drifted > allowed {
+            must.push((distance, key));
+        }
+    }
+    must.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut chosen: Vec<u32> = Vec::new();
     let mut triangles = 0u64;
-    for r in order {
-        let (s, e, _, _, _) = runs[r];
-        let tris: u64 = tracker.scratch[s..e].iter().map(|c| c.face.index_count as u64 / 3).sum();
+    for (_, key) in must {
+        let tris: u64 = skeletons
+            .get(&key)
+            .map_or(0, |s| s.faces.iter().map(|f| f.index_count as u64 / 3).sum());
         if triangles > 0 && triangles + tris > REBUILD_TRIANGLES {
             continue;
         }
         triangles += tris;
-        chosen[r] = true;
+        chosen.push(key);
     }
-    for (r, &(s, e, _, _, faces)) in runs.iter().enumerate() {
-        let run = &tracker.scratch[s..e];
-        let key = run[0].key;
-        let vertices: u32 = run.iter().map(|c| c.face.index_count).sum();
+    chosen.sort_unstable();
+    for (&key, s) in skeletons.iter_mut() {
+        let rebuild = chosen.binary_search(&key).is_ok();
         let first = out.posed.len() as u32;
-        if chosen[r] {
-            out.posed.extend(run.iter().map(|c| c.face));
-            if let Some(seen) = tracker.seen.get_mut(&key) {
-                seen.built = true;
-                seen.joints.clear();
-                seen.joints.extend_from_slice(
-                    palettes
-                        .get(key as usize..(key as usize + stride).min(palettes.len()))
-                        .unwrap_or(&[]),
-                );
-                seen.models.clear();
-                seen.models.extend(run.iter().map(|c| c.model));
-            }
+        if rebuild {
+            out.posed.extend_from_slice(&s.faces);
+            s.built = true;
+            s.joints.clear();
+            s.joints.extend_from_slice(joints_of(key));
+            s.built_models.clone_from(&s.models);
+            (s.moved, s.drifted) = (0.0, 0.0);
         }
         out.groups.push(PosedGroup {
             key,
             first,
-            count: if chosen[r] { run.len() as u32 } else { 0 },
-            vertices,
-            faces,
-            rebuild: chosen[r],
+            count: if rebuild { s.faces.len() as u32 } else { 0 },
+            vertices: s.vertices,
+            faces: s.hash,
+            rebuild,
         });
     }
 }
@@ -1054,6 +1531,17 @@ const FACE_VERTICES: u64 = 1 << 16;
 /// Triangles of bottom levels built in one frame: the others wait (and their
 /// faces are not traced) until a later frame.
 const BUILD_TRIANGLES: u64 = 1 << 20;
+/// Bottom levels made in one frame, whatever their triangles: each costs
+/// the render thread about a microsecond to make, and the faces of a
+/// region that comes or goes are tens of thousands of small ones.
+const BUILD_LEVELS: usize = 512;
+
+/// Whether a frame that already builds `levels` bottom levels of
+/// `triangles` in all has room for one more of `more` triangles (the first
+/// always has).
+fn build_room(levels: usize, triangles: u64, more: u64) -> bool {
+    levels < BUILD_LEVELS && (triangles == 0 || triangles + more <= BUILD_TRIANGLES)
+}
 /// Posed vertices of the merged cells whose levels are made in one frame,
 /// the nearest first (the nearest is always made): the others keep the
 /// level of an earlier set, or wait for theirs.
@@ -1178,6 +1666,20 @@ struct Cpu {
     /// The frames a still set came, and their time.
     sets: u32,
     set_us: u64,
+    slowest: Slowest,
+}
+
+/// The slowest frame of [`Cpu`]: its time by part (µs: the set and the
+/// cells' posing, the bottom levels, the scene's level and the builds, the
+/// moving and the posed faces, the trace), and what it made.
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+struct Slowest {
+    parts: [u64; 5],
+    set: bool,
+    levels: usize,
+    cells: usize,
+    skeletons: usize,
+    moving: usize,
 }
 
 /// A merged cell's bottom level: a geometry per face, in world space.
@@ -1481,7 +1983,7 @@ pub(crate) struct RtShadows {
     /// and since then: the frames encoded, the time it took on the render
     /// thread (µs) in all, at most, and on the frames a set came.
     why: [u64; 10],
-    spent: [u64; 2],
+    spent: [u64; 3],
     logged_set: u64,
     cpu: Cpu,
     frame: u64,
@@ -1544,7 +2046,7 @@ impl Timer {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("rt timestamps readback"),
-                    size: count as u64 * 8,
+                    size: crate::readback::readback_size(count as u64 * 8),
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1740,7 +2242,7 @@ impl RtShadows {
             scene_builds: 0,
             still_sizes: [(0, 0); 5],
             why: [0; 10],
-            spent: [0; 2],
+            spent: [0; 3],
             logged_set: 0,
             cpu: Cpu::default(),
             frame: 0,
@@ -2327,12 +2829,12 @@ impl RtShadows {
         if let Some(timer) = &mut self.timer {
             if let Some((ms, frames)) = timer.harvest() {
                 let st = &self.stats;
-                let main: [u64; 2] =
+                let main: [u64; 3] =
                     std::array::from_fn(|i| faces.spent[i].saturating_sub(std::mem::replace(&mut self.spent[i], faces.spent[i])));
                 let sets = faces.set.saturating_sub(std::mem::replace(&mut self.logged_set, faces.set));
                 let cpu = std::mem::take(&mut self.cpu);
                 log::info!(
-                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame, {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame",
+                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame ({} faces looked at), {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame; the slowest: {:?}",
                     ms[0],
                     ms[1],
                     ms[2],
@@ -2354,11 +2856,13 @@ impl RtShadows {
                     st.posed_faces,
                     st.posed_vertices,
                     main[0] as f64 / 1000.0 / frames.max(1) as f64,
+                    main[2] / frames.max(1) as u64,
                     main[1] as f64 / 1000.0 / sets.max(1) as f64,
                     sets,
                     cpu.us as f64 / 1000.0 / cpu.frames.max(1) as f64,
                     cpu.most as f64 / 1000.0,
                     cpu.set_us as f64 / 1000.0 / cpu.sets.max(1) as f64,
+                    cpu.slowest,
                 );
             }
             // the pose's start: an empty pass's timestamp, as the pose may
@@ -2428,6 +2932,9 @@ impl RtShadows {
             bake.push(n);
             self.cell_queue.pop();
         }
+        let mut parts = [0u64; 5];
+        let mut lap = started;
+        let mut part = |n: usize| parts[n] += std::mem::replace(&mut lap, std::time::Instant::now()).elapsed().as_micros() as u64;
         let pose_group = self.scene_group(device, scene);
         let (posed_faces, posed) = {
             let bake: Vec<&Cell> = bake.iter().map(|&n| &cells[n]).collect();
@@ -2445,6 +2952,7 @@ impl RtShadows {
                 }),
             }));
         }
+        part(0);
         let same_arena = self.arena.as_ref().is_some_and(|(v, i)| v == vertices && i == indices);
         if !same_arena {
             self.bottoms.clear();
@@ -2499,7 +3007,7 @@ impl RtShadows {
                 continue;
             }
             let tris = key.index_count as u64 / 3;
-            if triangles > 0 && triangles + tris > BUILD_TRIANGLES {
+            if !build_room(new.len(), triangles, tris) {
                 waiting += 1;
                 continue;
             }
@@ -2514,7 +3022,7 @@ impl RtShadows {
                 new[n].2 = true;
             } else {
                 let tris = key.index_count as u64 / 3;
-                if triangles > 0 && triangles + tris > BUILD_TRIANGLES {
+                if !build_room(new.len(), triangles, tris) {
                     break;
                 }
                 triangles += tris;
@@ -2560,6 +3068,7 @@ impl RtShadows {
                 (n, offset, sizes, blas)
             })
             .collect();
+        part(1);
         // the scene's top level: built when its set changed, when a cell's
         // level is made, when the last bottom level it waited for is, and
         // now and then on the way
@@ -2704,6 +3213,7 @@ impl RtShadows {
             self.bottoms.retain(|_, b| b.held || frame - b.used <= KEEP_FRAMES);
             self.merged.retain(|_, m| m.held || frame - m.used <= KEEP_FRAMES);
         }
+        part(2);
         // the moving faces, placed with the skeletons: after the bottom
         // levels' build, which theirs may be part of
         let movers: Vec<Mover<'_>> = faces
@@ -2720,6 +3230,7 @@ impl RtShadows {
         let (skeletons_built, skeletons) = self.poser.build(device, queue, encoder, faces, &movers);
         let moving = movers.len();
         drop(movers);
+        part(3);
         self.posed_live = skeletons > 0 || moving > 0;
         // the trace reads the posed top level only when it holds a face
         queue.write_buffer(
@@ -2744,10 +3255,21 @@ impl RtShadows {
             skeletons_built,
         };
         self.trace(device, encoder, t, depth, contact, scene);
+        part(4);
         let us = started.elapsed().as_micros() as u64;
         self.cpu.frames += 1;
         self.cpu.us += us;
-        self.cpu.most = self.cpu.most.max(us);
+        if us > self.cpu.most {
+            self.cpu.most = us;
+            self.cpu.slowest = Slowest {
+                parts,
+                set: new_set,
+                levels: built,
+                cells: cells_built,
+                skeletons: skeletons_built,
+                moving,
+            };
+        }
         if new_set {
             self.cpu.sets += 1;
             self.cpu.set_us += us;
@@ -3792,57 +4314,98 @@ mod tests {
         }
     }
 
-    fn candidate(key: u32, record: u32, x: f32) -> Candidate {
+    /// Reads skeleton `key`'s faces: one of `indices` indices per record,
+    /// at `x`.
+    fn read(t: &mut BTreeMap<u32, Skeleton>, key: u32, records: &[u32], indices: u32, x: f32) {
         let mut model = glam::Mat4::IDENTITY.to_cols_array_2d();
         model[3][0] = x;
-        Candidate {
-            key,
-            face: Posed {
+        t.entry(key).or_default().read(records.iter().map(|&record| {
+            let face = Posed {
                 record,
                 base_vertex: 0,
                 first_index: 0,
-                index_count: 300,
+                index_count: indices,
                 opaque: true,
-            },
-            model,
-            origin: [x, 0.0, 0.0],
-        }
+            };
+            (face, model, 0)
+        }));
     }
 
-    fn choose(tracker: &mut PoseTracker, candidates: Vec<Candidate>) -> Vec<(u32, bool)> {
-        tracker.frame += 1;
-        tracker.scratch = candidates;
+    fn choose(t: &mut BTreeMap<u32, Skeleton>) -> Vec<(u32, bool)> {
         let mut out = Faces::default();
-        choose_rebuilds(&[], glam::Vec3::ZERO, tracker, &mut out);
+        choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
         out.groups.iter().map(|g| (g.key, g.rebuild)).collect()
     }
 
     #[test]
     fn rt_shadows_a_still_skeleton_keeps_its_level() {
-        let mut t = PoseTracker::default();
-        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.0)]), vec![(0, true)]);
-        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.0)]), vec![(0, false)]);
+        let mut t = BTreeMap::new();
+        read(&mut t, 0, &[1], 300, 5.0);
+        assert_eq!(choose(&mut t), vec![(0, true)]);
+        // its faces are not read again while none changes
+        assert_eq!(choose(&mut t), vec![(0, false)]);
         // less than the ray's start offset at 5 m (0.02 m): kept
-        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.015)]), vec![(0, false)]);
+        read(&mut t, 0, &[1], 300, 5.015);
+        assert_eq!(choose(&mut t), vec![(0, false)]);
         // further: built again
-        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.05)]), vec![(0, true)]);
+        read(&mut t, 0, &[1], 300, 5.05);
+        assert_eq!(choose(&mut t), vec![(0, true)]);
+        assert_eq!(choose(&mut t), vec![(0, false)]);
         // another face set: built again even when still
-        assert_eq!(choose(&mut t, vec![candidate(0, 1, 5.05), candidate(0, 2, 5.05)]), vec![(0, true)]);
+        read(&mut t, 0, &[1, 2], 300, 5.05);
+        assert_eq!(choose(&mut t), vec![(0, true)]);
+        // its last face gone: no skeleton
+        read(&mut t, 0, &[], 300, 5.05);
+        assert_eq!(choose(&mut t), vec![]);
     }
 
     #[test]
     fn rt_shadows_rebuilds_go_nearest_first_within_the_budget() {
-        let mut t = PoseTracker::default();
-        let big = |key: u32, x: f32| {
-            let mut c = candidate(key, key, x);
-            c.face.index_count = (REBUILD_TRIANGLES * 3 / 2) as u32;
-            c
-        };
-        let groups = choose(&mut t, vec![big(1, 30.0), big(2, 3.0), big(3, 10.0)]);
+        let mut t = BTreeMap::new();
+        let big = (REBUILD_TRIANGLES * 3 / 2) as u32;
+        for (key, x) in [(1, 30.0), (2, 3.0), (3, 10.0)] {
+            read(&mut t, key, &[key], big, x);
+        }
         // the nearest two fit, the farthest waits for a later frame
-        assert_eq!(groups, vec![(1, false), (2, true), (3, true)]);
-        let groups = choose(&mut t, vec![big(1, 30.0), big(2, 3.0), big(3, 10.0)]);
-        assert_eq!(groups, vec![(1, true), (2, false), (3, false)]);
+        assert_eq!(choose(&mut t), vec![(1, false), (2, true), (3, true)]);
+        assert_eq!(choose(&mut t), vec![(1, true), (2, false), (3, false)]);
+    }
+
+    #[test]
+    fn rt_shadows_a_skeleton_s_joints_are_read_when_written() {
+        let stride = crate::types::PALETTE_STRIDE as usize;
+        let mut palettes = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); 2 * stride];
+        let mut t = BTreeMap::new();
+        read(&mut t, 0, &[1], 300, 5.0);
+        read(&mut t, stride as u32, &[2], 300, 5.0);
+        let mut choose = |palettes: &[[[f32; 4]; 4]], written: &[std::ops::Range<usize>]| {
+            let mut out = Faces::default();
+            choose_rebuilds(palettes, written, glam::Vec3::ZERO, &mut t, &mut out);
+            out.groups.iter().map(|g| g.rebuild).collect::<Vec<_>>()
+        };
+        assert_eq!(choose(&palettes, &[]), [true, true]);
+        assert_eq!(choose(&palettes, &[]), [false, false]);
+        // the second one's joint moves, and is written: built again
+        palettes[stride + 7][3][0] = 1.0;
+        assert_eq!(choose(&palettes, std::slice::from_ref(&(stride + 7..stride + 8))), [false, true]);
+        assert_eq!(choose(&palettes, std::slice::from_ref(&(0..2 * stride))), [false, false]);
+        // a little: kept, even written
+        palettes[3][3][0] = 0.005;
+        assert_eq!(choose(&palettes, std::slice::from_ref(&(0..stride))), [false, false]);
+        // only what was written is read: the first one's anchor alone,
+        // then the joint that moved, in a range that starts before it
+        palettes[5][3][0] = 1.0;
+        let anchor = crate::types::SKELETON_ANCHOR as usize;
+        assert_eq!(
+            choose(&palettes, &[anchor..anchor + 1, stride + anchor..stride + anchor + 1]),
+            [false, false]
+        );
+        assert_eq!(choose(&palettes, &[2..6, stride - 1..stride + 1]), [true, false]);
+        assert_eq!(choose(&palettes, &[]), [false, false]);
+        let mut ranges = vec![40..50, 0..10, 10..12, 45..60, 70..71];
+        merge(&mut ranges);
+        assert_eq!(ranges, [0..12, 40..60, 70..71]);
+        merge(&mut Vec::new());
     }
 
     #[test]
@@ -3869,22 +4432,34 @@ mod tests {
         F(id, place, 0, true, false)
     }
 
-    /// Visits `faces` on the tracker's next frame, as `gather` does (a
-    /// full look when a face changed and every RECHECK frames): whether a
-    /// new still set was made, and the moving faces.
+    /// The tracker's next frame, with a look at every face: those of
+    /// `faces` are there, the others are not. Whether a new still set was
+    /// made, and the moving faces.
     fn frame(t: &mut StillTracker, n: &mut u64, faces: &[F]) -> (bool, Vec<usize>) {
         *n += 1;
-        t.begin(8);
-        let maybe: Vec<usize> = faces
-            .iter()
-            .filter(|&&F(id, place, shape, kept, near)| {
-                let look = (id as u64 + *n).is_multiple_of(RECHECK);
-                (if look { None } else { t.same(id, *n, place, shape) }).unwrap_or_else(|| t.visit(id, *n, place, shape, kept, near, true))
-            })
-            .map(|f| f.0)
-            .collect();
-        let set = t.decide(*n);
-        (set, maybe.into_iter().filter(|&id| t.moving(id)).collect())
+        t.begin(t.tracks.len().max(8));
+        for id in 0..t.tracks.len() {
+            match faces.iter().find(|f| f.0 == id) {
+                Some(&F(id, place, shape, kept, near)) => t.visit(id, *n, place, shape, 0, kept, near, true),
+                None if t.tracks[id].present => t.absent(id, *n, SLOT_FREED),
+                None => {}
+            }
+        }
+        quiet_end(t, *n)
+    }
+
+    /// The tracker's next frame, with no look at any face.
+    fn quiet(t: &mut StillTracker, n: &mut u64) -> (bool, Vec<usize>) {
+        *n += 1;
+        t.begin(t.tracks.len().max(8));
+        quiet_end(t, *n)
+    }
+
+    fn quiet_end(t: &mut StillTracker, n: u64) -> (bool, Vec<usize>) {
+        let set = t.decide(n);
+        let mut moving: Vec<usize> = t.moving().iter().map(|&id| id as usize).collect();
+        moving.sort_unstable();
+        (set, moving)
     }
 
     /// Repeats `faces` until a still set is made: the frames it took, with
@@ -3906,10 +4481,37 @@ mod tests {
         // the first frame makes the set, with every face in it
         assert_eq!(frame(&mut t, &mut n, &[near(0, 1), far(1, 2)]), (true, vec![]));
         assert!(t.in_still(0) && t.in_still(1));
-        // nothing changes: the set stands
+        // nothing changes: the set stands, looked at or not
         for _ in 0..3 * LATER {
             assert_eq!(frame(&mut t, &mut n, &[near(0, 1), far(1, 2)]), (false, vec![]));
         }
+        for _ in 0..3 * LATER {
+            assert_eq!(quiet(&mut t, &mut n), (false, vec![]));
+        }
+        assert!(t.in_still(0) && t.in_still(1));
+    }
+
+    #[test]
+    fn rt_shadows_a_face_that_moved_comes_to_rest_with_no_look() {
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
+        assert_eq!(frame(&mut t, &mut n, &[near(0, 1), near(1, 3)]), (true, vec![1]));
+        // nothing looks at it again: it is traced as moving, then a set
+        // takes it back
+        let mut frames = 0;
+        loop {
+            frames += 1;
+            let (set, moving) = quiet(&mut t, &mut n);
+            if set {
+                assert!(moving.is_empty());
+                break;
+            }
+            assert_eq!(moving, vec![1], "frame {frames}");
+            assert!(frames < 40 * STILL_FRAMES as u64);
+        }
+        assert!(frames >= 2 * STILL_FRAMES as u64, "back after {frames} frames");
+        assert!(t.in_still(0) && t.in_still(1));
+        assert_eq!(quiet(&mut t, &mut n), (false, vec![]));
     }
 
     #[test]
@@ -3965,14 +4567,15 @@ mod tests {
     fn rt_shadows_a_gone_face_is_counted_once_by_its_cause() {
         let (mut t, mut n) = (StillTracker::default(), 0);
         frame(&mut t, &mut n, &[far(0, 1), far(1, 2)]);
-        // not found on two frames: one count; a face no set holds: none
-        t.missing(1, SLOT_FREED);
-        t.missing(1, SLOT_FREED);
-        t.missing(5, NO_GEOMETRY);
-        t.other(0, n + 1, 1, 0, NOT_TRACED);
-        t.other(0, n + 2, 1, 0, NOT_TRACED);
+        // not found by two looks: one count; a face no set holds: none
+        t.absent(1, n + 1, SLOT_FREED);
+        t.absent(1, n + 2, SLOT_FREED);
+        t.absent(5, n + 1, NO_GEOMETRY);
+        t.other(0, n + 1, 1, 0, NOT_TRACED, 0);
+        t.other(0, n + 2, 1, 0, NOT_TRACED, 0);
         assert_eq!(t.why[SLOT_FREED..], [1, 0, 1, 0]);
-        // the next set forgets them: gone again later counts again
+        // face 1 is back as it was: it never left. The next set (made
+        // without face 0) forgets them: gone again later counts again
         until_set(&mut t, &mut n, &[far(1, 2)], &[]);
         t.missing(1, NO_GEOMETRY);
         assert_eq!(t.why[SLOT_FREED..], [1, 1, 1, 0]);
@@ -4001,12 +4604,29 @@ mod tests {
         let (mut t, mut n) = (StillTracker::default(), 0);
         frame(&mut t, &mut n, &[near(0, 1), far(1, 2)]);
         // face 1 is now too far: never among the moving ones, and out of
-        // the set later (noticed at its next full look)
-        let frames = until_set(&mut t, &mut n, &[near(0, 1), F(1, 2, 0, false, false)], &[]);
-        assert!((LATER..=LATER + RECHECK).contains(&frames), "after {frames} frames");
+        // the set later
+        assert_eq!(until_set(&mut t, &mut n, &[near(0, 1), F(1, 2, 0, false, false)], &[]), LATER + 1);
         assert!(t.in_still(0) && !t.in_still(1));
+        // the same when the eye left it behind and nothing looked at it
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[near(0, 1), far(1, 2)]);
+        n += 1;
+        t.begin(8);
+        t.weigh(1, n, false, false);
+        assert!(!t.decide(n));
+        for _ in 1..LATER {
+            assert_eq!(quiet(&mut t, &mut n), (false, vec![]));
+        }
+        assert_eq!(quiet(&mut t, &mut n), (true, vec![]));
+        assert!(t.in_still(0) && !t.in_still(1));
+        // and it comes back as a moving face until a set takes it
+        n += 1;
+        t.begin(8);
+        t.weigh(1, n, true, false);
+        assert!(!t.decide(n));
+        assert_eq!(t.moving(), [1]);
         // and after a shift of the world's origin every face is new
-        t.reset();
+        t.rebase(n + 1);
         assert_eq!(frame(&mut t, &mut n, &[near(0, 9), near(1, 8)]), (true, vec![]));
     }
 
@@ -4030,30 +4650,198 @@ mod tests {
         frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
         // face 1 turns into a face that is not traced (a blended one):
         // the next set, which comes quickly, is without it
-        let mut frames = 0;
-        loop {
-            n += 1;
+        n += 1;
+        t.begin(8);
+        t.other(1, n, 2, 0, NOT_TRACED, 0);
+        assert!(!t.decide(n));
+        let mut frames = 1;
+        while !quiet(&mut t, &mut n).0 {
             frames += 1;
-            t.begin(8);
-            assert_eq!(t.same(0, n, 1, 0), Some(false));
-            t.other(1, n, 2, 0, NOT_TRACED);
-            if t.decide(n) {
-                break;
-            }
             assert!(t.in_still(1) && frames < STILL_EVERY);
         }
         assert!(t.in_still(0) && !t.in_still(1));
-        // and is not looked at again while it stays the same
+        assert_eq!(quiet(&mut t, &mut n), (false, vec![]));
+        // a skeleton's face is known by its skeleton, a placed one is not
+        t.other(1, n, 2, 0, POSED, 7);
+        assert_eq!((t.skeleton(1), t.skeleton(0)), (Some(7), None));
+        assert!(t.is(1, 2, 0) && !t.is(1, 3, 0));
+    }
+
+    #[test]
+    fn rt_shadows_a_face_that_blinks_makes_one_set() {
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
+        // face 1 is gone a few frames and back as it was, before any set
+        // was made without it: it never left, and no set is made
+        for _ in 0..QUICK - 1 {
+            assert_eq!(frame(&mut t, &mut n, &[near(0, 1)]), (false, vec![]));
+        }
+        for _ in 0..2 * LATER {
+            assert_eq!(frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]), (false, vec![]));
+        }
+        assert!(t.in_still(1) && t.tracks[1].relapses == 0);
+        // gone for longer: a set drops it
+        until_set(&mut t, &mut n, &[near(0, 1)], &[]);
+        assert!(!t.in_still(1));
+        // it then blinks, a second there and a second not: traced with
+        // the moving ones when there, and no set for it
+        for _ in 0..8 {
+            for _ in 0..60 {
+                assert_eq!(frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]), (false, vec![1]));
+            }
+            for _ in 0..60 {
+                assert_eq!(frame(&mut t, &mut n, &[near(0, 1)]), (false, vec![]));
+            }
+        }
+        // it stays: a set takes it back, after twice STILL_FRAMES at least
+        let back = until_set(&mut t, &mut n, &[near(0, 1), near(1, 2)], &[1]);
+        assert!(back >= 2 * STILL_FRAMES as u64, "back after {back} frames");
+        assert!(t.in_still(1));
+        // the same for one that is no longer traced (a blended face) and
+        // then is again
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
         n += 1;
         t.begin(8);
-        assert_eq!(t.same(1, n, 2, 0), Some(false));
-        assert_eq!(t.same(0, n, 1, 0), Some(false));
+        t.other(1, n, 2, 9, NOT_TRACED, 0);
         assert!(!t.decide(n));
-        // a skeleton's face is looked at every frame
-        t.other(1, n, 2, 0, POSED);
-        n += 1;
-        t.begin(8);
-        assert_eq!(t.same(1, n, 2, 0), None);
+        while !quiet(&mut t, &mut n).0 {}
+        assert_eq!(t.tracks[1].relapses, 1);
+        assert_eq!(frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]), (false, vec![1]));
+        assert!(!t.tracks[1].rests(n + STILL_FRAMES as u64));
+        // another face in its slot is a new one, still from the start
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 2)]);
+        until_set(&mut t, &mut n, &[near(0, 1)], &[]);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 5)]);
+        assert!(t.tracks[1].relapses == 0 && t.tracks[1].rests(n));
+    }
+
+    #[test]
+    fn rt_shadows_a_crowd_of_small_arrivals_waits_for_its_set() {
+        let many: Vec<F> = (0..MANY + 2).map(|id| near(id, 1 + id as u64)).collect();
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        t.tracks.resize(many.len(), Track::default());
+        frame(&mut t, &mut n, &many[..2]);
+        // one arrives: traced at once, small or not
+        assert_eq!(frame(&mut t, &mut n, &many[..3]), (false, vec![2]));
+        assert!(t.emits(2, true));
+        // the others arrive: the small ones are not traced before their
+        // set, the large ones are, and so is the one that already was
+        assert!(!frame(&mut t, &mut n, &many).0);
+        assert!(t.emits(2, true) && !t.emits(3, true) && t.emits(4, false));
+        assert!(!t.emits(3, true) && t.emits(4, true));
+        assert_eq!(
+            until_set(&mut t, &mut n, &many, &(2..many.len()).collect::<Vec<_>>()),
+            STILL_EVERY - 2
+        );
+        assert!(t.in_still(3) && !t.tracks[3].new);
+        // one that moves is traced, whatever waits
+        let mut moved = many.clone();
+        moved[3] = far(3, 999);
+        frame(&mut t, &mut n, &moved);
+        assert!(t.emits(3, true));
+    }
+
+    #[test]
+    fn rt_shadows_a_new_origin_moves_no_face() {
+        let all = [near(0, 1), near(1, 2), near(2, 3)];
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        frame(&mut t, &mut n, &all);
+        // the origin changes: a set of the faces where they are
+        t.rebase(n + 1);
+        assert_eq!(frame(&mut t, &mut n, &all), (true, vec![]));
+        // the scene writes face 0 at its new place, then face 1: arrivals,
+        // still at once, that the next set takes; neither moved
+        let first = [near(0, 11), near(1, 2), near(2, 3)];
+        assert_eq!(frame(&mut t, &mut n, &first), (false, vec![0]));
+        assert!(t.tracks[0].rests(n) && t.tracks[0].new && t.tracks[0].relapses == 0);
+        let both = [near(0, 11), near(1, 12), near(2, 3)];
+        assert_eq!(frame(&mut t, &mut n, &both), (false, vec![0, 1]));
+        assert!(until_set(&mut t, &mut n, &both, &[0, 1]) <= STILL_EVERY);
+        assert!(t.in_still(0) && t.in_still(1) && t.why[2] == 0);
+        // a second change of place is a move
+        let moved = [near(0, 21), near(1, 12), near(2, 3)];
+        frame(&mut t, &mut n, &moved);
+        assert!(!t.tracks[0].rests(n) && t.tracks[0].relapses == 1);
+        // and so is the first, once the scene has had its time (face 2
+        // stood where the new origin left it)
+        for _ in 0..REBASE_FRAMES {
+            quiet(&mut t, &mut n);
+        }
+        frame(&mut t, &mut n, &[near(0, 21), near(1, 12), near(2, 13)]);
+        assert!(!t.tracks[2].rests(n) && t.tracks[2].relapses == 1);
+        // a face that came after the origin changed moves at its first
+        let (mut t, mut n) = (StillTracker::default(), 0);
+        t.rebase(1);
+        frame(&mut t, &mut n, &all[..2]);
+        frame(&mut t, &mut n, &all);
+        until_set(&mut t, &mut n, &all, &[2]);
+        frame(&mut t, &mut n, &[near(0, 1), near(1, 2), near(2, 13)]);
+        assert!(!t.tracks[2].rests(n));
+    }
+
+    #[test]
+    fn rt_shadows_a_frame_builds_so_many_bottom_levels() {
+        // the first always, however large
+        assert!(build_room(0, 0, 4 * BUILD_TRIANGLES));
+        // then within the triangles
+        assert!(build_room(1, 100, BUILD_TRIANGLES - 100));
+        assert!(!build_room(1, 100, BUILD_TRIANGLES));
+        // and within the count, however small
+        assert!(build_room(BUILD_LEVELS - 1, 1000, 12));
+        assert!(!build_room(BUILD_LEVELS, 1000, 12));
+    }
+
+    #[test]
+    fn rt_shadows_an_object_finds_its_faces() {
+        let mut by = ByObject::default();
+        let of = |by: &ByObject, object: u32| by.faces(object).collect::<Vec<_>>();
+        for (face, object) in [(0, 4), (1, 9), (2, 4), (5, 4)] {
+            by.set(face, object);
+        }
+        assert_eq!(
+            (of(&by, 4), of(&by, 9), of(&by, 3), of(&by, 99)),
+            (vec![5, 2, 0], vec![1], vec![], vec![])
+        );
+        // the middle one, the first one, then the last one go
+        by.set(2, 9);
+        assert_eq!((of(&by, 4), of(&by, 9)), (vec![5, 0], vec![2, 1]));
+        by.set(5, NO_OBJECT);
+        by.set(0, NO_OBJECT);
+        by.set(0, NO_OBJECT);
+        assert_eq!((of(&by, 4), of(&by, 9)), (vec![], vec![2, 1]));
+        by.set(0, 4);
+        assert_eq!(of(&by, 4), vec![0]);
+    }
+
+    #[test]
+    fn rt_shadows_an_object_s_change_is_followed_when_its_faces_read_it() {
+        let placed = CullObject {
+            sphere: [1.0, 2.0, 3.0, 4.0],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        };
+        let differs = |change: fn(&mut CullObject)| {
+            let mut b = placed;
+            change(&mut b);
+            object_differs(&placed, &b)
+        };
+        assert!(differs(|o| o.flags |= object_flags::HIDDEN));
+        assert!(differs(|o| o.flags = 0));
+        assert!(differs(|o| o.sphere[0] = 9.0));
+        assert!(differs(|o| o.anchor = 3));
+        // what no look reads
+        assert!(!differs(|o| o.flags |= object_flags::NO_PROBE | object_flags::PHYSICAL));
+        assert!(!differs(|o| o.state = 5));
+        // a posed object's sphere moves each frame
+        let avatar = CullObject {
+            flags: object_flags::ACTIVE | object_flags::AVATAR,
+            ..placed
+        };
+        let mut moved = avatar;
+        moved.sphere[0] = 9.0;
+        assert!(!object_differs(&avatar, &moved));
     }
 
     #[test]
