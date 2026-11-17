@@ -1111,7 +1111,14 @@ pub fn timeline(ctx: &egui::Context, p: &Palette, d: &mut Director, bottom_top: 
                 ui.set_width(width - 20.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    strip_buttons(ui, p, d, live, actions);
+                    // the playback and "Keyframe" on a first row, the
+                    // track's edits under them, where the ruler's height
+                    // left room: the ruler keeps the strip's width
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                        ui.horizontal(|ui| strip_buttons(ui, p, d, live, actions));
+                        ui.horizontal(|ui| strip_edits(ui, p, d, live, actions));
+                    });
                     let ruler_w = (ui.available_width() - CLOCK_W - super::director_ruler::BUTTONS_W - 12.0).max(80.0);
                     ruler(ui, p, d, ruler_w, live.restricted, actions);
                     super::director_ruler::zoom_buttons(ui, p, ruler_span(d.track.duration()), d.time);
@@ -1201,6 +1208,11 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
     {
         actions.push(Action::AddKey);
     }
+}
+
+/// The track's edits, under the playback's buttons: delete the selected
+/// keyframe, clear the track (asked first), undo, redo.
+fn strip_edits(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, actions: &mut Vec<Action>) {
     let tip = aurora_i18n::tr!("director-delete-tip");
     if widgets::action_button_if(
         ui,
