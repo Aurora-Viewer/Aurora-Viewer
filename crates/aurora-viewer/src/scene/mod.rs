@@ -794,9 +794,15 @@ pub struct SceneStats {
     pub skeletons_rebuilt: usize,
     /// How the avatars of the last lists are drawn.
     pub avatars: AvatarCounts,
-    /// Avatars, ours included, nearer than `Scene::avatar_count_radius`
-    /// (Autotune's distance mode); 0 when it is 0.
+    /// Avatars, ours included, within the draw distance (Autotune).
+    pub avatars_in_range: usize,
+    /// Avatars, ours included, nearer than `Scene::avatar_count_radius`, and
+    /// than it less `autotune::DISTANCE_MARGIN`, within the draw distance
+    /// (Autotune's distance mode); 0 when it is 0. `avatars_within_radius`
+    /// is the radius they were counted with.
     pub avatars_within: usize,
+    pub avatars_well_within: usize,
+    pub avatars_within_radius: f32,
 }
 
 /// How the avatars of a frame's lists are drawn (`avatar summary`).
@@ -5036,12 +5042,20 @@ impl Scene {
         }
         self.stats.avatars_hidden = imp_avatars.len();
         // (sorted by distance, ours first at -1)
-        let radius = self.avatar_count_radius.min(dd);
-        self.stats.avatars_within = if radius > 0.0 {
-            avatars.partition_point(|(d, _)| *d < radius)
-        } else {
-            0
+        let within = |radius: f32| {
+            let radius = radius.min(dd);
+            if radius > 0.0 { avatars.partition_point(|(d, _)| *d < radius) } else { 0 }
         };
+        self.stats.avatars_in_range = within(dd);
+        let radius = self.avatar_count_radius;
+        let (outer, inner) = if radius > 0.0 {
+            (within(radius), within(radius - crate::settings::autotune::DISTANCE_MARGIN))
+        } else {
+            (0, 0)
+        };
+        self.stats.avatars_within = outer;
+        self.stats.avatars_well_within = inner;
+        self.stats.avatars_within_radius = radius;
         // every frame, not only with the probes: the crash report's last state
         // and the grid's viewer statistics read these too
         self.stats.avatars = AvatarCounts {

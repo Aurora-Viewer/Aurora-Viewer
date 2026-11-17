@@ -4,7 +4,7 @@
 //! scene. Started from the Performance window, or at the login with
 //! "Continuous" kept (LLPerfStats::Tunables::initialiseFromSettings).
 use super::*;
-use crate::settings::autotune::{Decision, Frame, Hold, Status, Tuned, Tuner};
+use crate::settings::autotune::{Decision, Frame, Hold, Status, Tuned, Tuner, Within};
 
 /// Autotune in the app.
 #[derive(Debug, Default)]
@@ -66,8 +66,14 @@ impl App {
     }
 
     /// Keep the values found as the user's (after a run without
-    /// "Continuous"): the hold ends without giving anything back.
+    /// "Continuous"): the hold ends without giving anything back, and they
+    /// are saved. Not under the photo quality: it holds the user's values
+    /// from before and would give those back at its end (the window greys
+    /// the button out, [`App::autotune_view`]).
     pub(super) fn autotune_keep(&mut self) {
+        if self.settings.photo_held.is_some() {
+            return;
+        }
         self.autotune.tuner = None;
         if self.settings.autotune_hold.take().is_some() {
             log::info!(
@@ -75,6 +81,7 @@ impl App {
                 self.settings.draw_distance,
                 self.settings.max_avatars
             );
+            self.settings.save();
         }
         self.autotune_clear_scene();
     }
@@ -98,6 +105,11 @@ impl App {
     pub(super) fn autotune_frame(&mut self, work: Option<Duration>, held_to: f32) {
         self.autotune.held_to = held_to;
         if self.autotune.tuner.is_none() && self.settings.autotune_hold.is_none() {
+            // (a hold dropped another way than Stop or Keep: the scene's
+            // lists go with it)
+            if !self.scene.avatar_keep_full.is_empty() || self.scene.avatar_keep_full_within != 0 || self.scene.avatar_count_radius != 0.0 {
+                self.autotune_clear_scene();
+            }
             return;
         }
         let work = if self.demo { self.autotune_demo_work(work) } else { work };
@@ -115,15 +127,28 @@ impl App {
         let applied = Tuned::read(&self.settings);
         let user = hold.as_ref().map_or(applied, |h| h.user(&self.settings));
         let config = self.settings.autotune.clone();
+        // the distance mode's radius, set before the decision: the count is
+        // only used once the scene has made it with this radius
+        let radius = if self.autotune.tuner.is_some() && config.by_distance {
+            config.impostor_distance
+        } else {
+            0.0
+        };
+        self.scene.avatar_count_radius = radius;
+        let stats = &self.scene.stats;
+        let within_distance = (radius > 0.0 && stats.avatars_within_radius == radius).then_some(Within {
+            outer: stats.avatars_within as u32,
+            inner: stats.avatars_well_within as u32,
+        });
+        let avatars = stats.avatars_in_range as u32;
         if let Some(tuner) = &mut self.autotune.tuner {
-            let counts = self.scene.stats.avatars;
             let frame = Frame {
                 now: Instant::now(),
                 work_ms: work.map_or(0.0, |w| w.as_secs_f32() * 1000.0),
                 cap_fps: held_to,
                 paused,
-                avatars: (counts.full + counts.impostors) as u32,
-                within_distance: config.by_distance.then_some(self.scene.stats.avatars_within as u32),
+                avatars,
+                within_distance,
             };
             match tuner.tick(&config, frame, applied, user) {
                 Decision::Keep => {}
@@ -154,12 +179,9 @@ impl App {
     /// avatars in full are under the user's limit, and the distance mode's
     /// count.
     fn autotune_scene(&mut self, user: Tuned) {
-        let running = self.autotune.tuner.is_some();
-        self.scene.avatar_count_radius = if running && self.settings.autotune.by_distance {
-            self.settings.autotune.impostor_distance
-        } else {
-            0.0
-        };
+        if self.autotune.tuner.is_none() {
+            self.scene.avatar_count_radius = 0.0;
+        }
         if self.settings.max_avatars >= user.max_avatars {
             if !self.scene.avatar_keep_full.is_empty() || self.scene.avatar_keep_full_within != 0 {
                 self.scene.avatar_keep_full.clear();
@@ -205,6 +227,7 @@ impl App {
             held_to: self.autotune.held_to,
             live,
             user: self.settings.autotune_hold.as_ref().map_or(live, |h| h.user(&self.settings)),
+            can_keep: self.settings.photo_held.is_none(),
         }
     }
 

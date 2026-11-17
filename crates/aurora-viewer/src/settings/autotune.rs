@@ -48,8 +48,12 @@
 //!   the session, with a button that gives the user's back and one that
 //!   keeps them as the user's.
 //! - A step up that brings the frames back under the target doubles the
-//!   wait before the next step up (to two minutes at most), so that it never
-//!   goes up and down in a loop.
+//!   wait before the next step up (to two minutes at most), and one that
+//!   holds halves it again, so that a scene at the edge is tried again at
+//!   most every two minutes instead of going up and down in a loop.
+//! - The distance mode has a margin ([`DISTANCE_MARGIN`]): someone standing
+//!   at the impostor distance does not flip an avatar between full and
+//!   impostor.
 //!
 //! The decision is a pure function of the frames and the values
 //! ([`Tuner::tick`]), run once a frame on a ring of 50 frame times: a few
@@ -75,9 +79,14 @@ pub const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
 pub const UP_INTERVALS: u32 = 3;
 /// The most a step up may wait after the back-off.
 pub const MAX_UP_WAIT: Duration = Duration::from_secs(120);
-/// A step up followed by frames too slow within this time doubles the wait
-/// of the next one.
+/// A step up is on trial for this long, and at least until the first
+/// measurement made with it: frames too slow meanwhile double the wait of
+/// the next one; a step up that holds halves it again.
 pub const BOUNCE_WINDOW: Duration = Duration::from_secs(10);
+/// The distance mode's margin (m): an avatar raises the count once it is this
+/// much inside the impostor distance, and lowers it once it is past it, so
+/// that someone standing at the edge does not flip it.
+pub const DISTANCE_MARGIN: f32 = 4.0;
 /// The wait after a pause (background, teleport, photo, draw distance
 /// stepping) before tuning again (target_fps * 5 frames).
 pub const RESUME_WAIT: Duration = Duration::from_secs(5);
@@ -217,13 +226,15 @@ impl Hold {
     }
 
     /// A value the user changed becomes theirs. Not while the photo quality
-    /// or the steps hold the live values: theirs are not the user's.
+    /// holds the live values, nor the draw distance while the steps hold it:
+    /// theirs are not the user's. (The steps leave the avatars in full alone:
+    /// a change of them during the steps is the user's.)
     pub fn sync(&mut self, s: &Settings) {
-        if Self::others_hold(s) {
+        if s.photo_held.is_some() {
             return;
         }
         let now = Tuned::read(s);
-        if now.draw_distance != self.applied.draw_distance {
+        if s.draw_stepping.is_none() && now.draw_distance != self.applied.draw_distance {
             self.user.draw_distance = now.draw_distance;
             self.applied.draw_distance = now.draw_distance;
         }
@@ -277,15 +288,21 @@ impl Hold {
 
     /// A graphics level or a saved profile the user chose was just written:
     /// its values are the user's, even one equal to a tuned value. Not
-    /// under the photo quality, which holds the user's values itself.
+    /// under the photo quality, which holds the user's values itself, nor the
+    /// draw distance under the steps (they end on the value set during them).
     pub fn chosen(s: &mut Settings) {
-        if Self::others_hold(s) {
+        if s.photo_held.is_some() {
             return;
         }
+        let stepping = s.draw_stepping.is_some();
         let now = Tuned::read(s);
         if let Some(h) = &mut s.autotune_hold {
-            h.user = now;
-            h.applied = now;
+            if !stepping {
+                h.user.draw_distance = now.draw_distance;
+                h.applied.draw_distance = now.draw_distance;
+            }
+            h.user.max_avatars = now.max_avatars;
+            h.applied.max_avatars = now.max_avatars;
         }
     }
 
@@ -343,9 +360,18 @@ pub struct Frame {
     pub paused: bool,
     /// Avatars within the draw distance, ours included.
     pub avatars: u32,
-    /// With the distance mode: avatars within the impostor distance (and the
-    /// draw distance), ours included.
-    pub within_distance: Option<u32>,
+    /// With the distance mode: the avatars around, counted with the current
+    /// impostor distance (None until the scene has counted with it).
+    pub within_distance: Option<Within>,
+}
+
+/// The distance mode's count, ours included, within the draw distance too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Within {
+    /// Nearer than the impostor distance.
+    pub outer: u32,
+    /// Nearer than the impostor distance less [`DISTANCE_MARGIN`].
+    pub inner: u32,
 }
 
 /// What the tuner decided.
@@ -371,9 +397,12 @@ pub struct Tuner {
     /// user's, and the lever starts again from it.
     wrote: Option<Tuned>,
     /// The last change of the frame rate lever, and whether it was a step up.
-    last_change: Option<(Instant, bool)>,
-    /// The last change of the distance mode's bound.
+    last_change: Option<Instant>,
+    /// The distance mode's bound of the avatars in full, and its last change.
+    distance_cap: Option<u32>,
     last_distance_change: Option<Instant>,
+    /// The last step up while it is on trial (see [`BOUNCE_WINDOW`]).
+    up_on_trial: Option<Instant>,
     /// Since when the frames have had room.
     room_since: Option<Instant>,
     /// Since when the frames have been at the target or had room, with no
@@ -392,20 +421,29 @@ impl Default for Tuner {
             level: None,
             wrote: None,
             last_change: None,
+            distance_cap: None,
             last_distance_change: None,
+            up_on_trial: None,
             room_since: None,
             held_since: None,
-            up_wait: CHANGE_INTERVAL * UP_INTERVALS,
+            up_wait: UP_WAIT,
             status: Status::Off,
         }
     }
 }
 
+/// The wait before a step up, before any back-off.
+const UP_WAIT: Duration = Duration::from_secs(UP_INTERVALS as u64 * CHANGE_INTERVAL.as_secs());
+
 /// The median of the frame times (updateMeanFrameTime).
 fn median(frames: &VecDeque<f32>) -> f32 {
-    let mut v: Vec<f32> = frames.iter().copied().collect();
-    v.sort_by(f32::total_cmp);
-    let n = v.len();
+    let mut buf = [0.0f32; FRAMES];
+    let n = frames.len().min(FRAMES);
+    for (to, from) in buf.iter_mut().zip(frames.iter()) {
+        *to = *from;
+    }
+    let v = &mut buf[..n];
+    v.sort_unstable_by(f32::total_cmp);
     if n == 0 {
         0.0
     } else if n.is_multiple_of(2) {
@@ -478,25 +516,44 @@ impl Tuner {
 
         // the distance mode bounds the avatars in full whatever the frame
         // rate (updateAvatarParams, userImpostorDistanceTuningEnabled):
-        // never above the user's limit nor under the floor; a rise waits a
-        // change interval, so that someone at the edge does not flip it
-        let cap = match (config.by_distance, frame.within_distance) {
-            (true, Some(n)) => n.clamp(floor, user_max),
-            _ => user_max,
+        // never above the user's limit nor under the floor. It goes down as
+        // soon as someone is past the distance, up once someone is
+        // DISTANCE_MARGIN inside it and a change interval after the last
+        // change, so that someone at the edge does not flip it; until the
+        // scene has counted with the current distance it stays as it is.
+        let cap = if config.by_distance {
+            let was = self.distance_cap.map(|c| c.clamp(floor, user_max));
+            let cap = match (frame.within_distance, was) {
+                (Some(w), was) => {
+                    let outer = w.outer.clamp(floor, user_max);
+                    let inner = w.inner.clamp(floor, user_max).min(outer);
+                    match was {
+                        None => outer,
+                        Some(c) if outer < c => outer,
+                        Some(c) if inner > c && self.last_distance_change.is_none_or(|t| frame.now >= t + CHANGE_INTERVAL) => inner,
+                        Some(c) => c,
+                    }
+                }
+                (None, was) => was.unwrap_or(user_max),
+            };
+            self.distance_cap = Some(cap);
+            cap
+        } else {
+            self.distance_cap = None;
+            user_max
         };
-        let mut want = Tuned {
+        let want = Tuned {
             max_avatars: level.min(cap),
             ..applied
         };
-        if want.max_avatars > applied.max_avatars
-            && self.wrote.is_some()
-            && self.last_distance_change.is_some_and(|t| frame.now < t + CHANGE_INTERVAL)
-        {
-            want.max_avatars = applied.max_avatars;
-        }
         if want.max_avatars != applied.max_avatars {
+            // a change of the avatars drawn: the frame rate lever measures
+            // again with it
             self.last_distance_change = Some(frame.now);
             self.level = Some(level);
+            self.frames.clear();
+            self.room_since = None;
+            self.held_since = None;
             return self.set(want);
         }
 
@@ -504,7 +561,7 @@ impl Tuner {
             self.status = Status::Waiting;
             return Decision::Keep;
         };
-        if self.last_change.is_some_and(|(t, _)| frame.now < t + CHANGE_INTERVAL) {
+        if self.last_change.is_some_and(|t| frame.now < t + CHANGE_INTERVAL) {
             return Decision::Keep;
         }
         let target_ms = 1000.0 / effective_target(config, frame.cap_fps);
@@ -516,9 +573,7 @@ impl Tuner {
             // too slow: one step down, the avatars first
             self.room_since = None;
             self.held_since = None;
-            if let Some((t, true)) = self.last_change
-                && frame.now < t + BOUNCE_WINDOW
-            {
+            if self.up_on_trial.take().is_some() {
                 // the last step up brought it back under the target
                 self.up_wait = (self.up_wait * 2).min(MAX_UP_WAIT);
             }
@@ -545,6 +600,11 @@ impl Tuner {
         }
 
         self.status = Status::OnTarget;
+        if self.up_on_trial.is_some_and(|t| frame.now >= t + BOUNCE_WINDOW) {
+            // the last step up held: the wait comes back down
+            self.up_on_trial = None;
+            self.up_wait = (self.up_wait / 2).max(UP_WAIT);
+        }
         let held = *self.held_since.get_or_insert(frame.now);
         if frame_ms < target_ms * (1.0 - BAND) {
             // room: give back after a longer wait, the avatars first
@@ -588,7 +648,8 @@ impl Tuner {
 
     /// A step of the frame rate lever: the next measurement starts afresh.
     fn change(&mut self, now: Instant, up: bool, to: Tuned) -> Decision {
-        self.last_change = Some((now, up));
+        self.last_change = Some(now);
+        self.up_on_trial = up.then_some(now);
         self.frames.clear();
         self.room_since = None;
         self.held_since = None;

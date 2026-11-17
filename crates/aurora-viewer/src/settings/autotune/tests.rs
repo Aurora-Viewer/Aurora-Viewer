@@ -8,7 +8,7 @@ struct Run {
     hold: Option<Hold>,
     now: Instant,
     avatars: u32,
-    within: Option<u32>,
+    within: Option<Within>,
     changes: Vec<(Duration, Tuned)>,
     start: Instant,
 }
@@ -83,6 +83,12 @@ impl Run {
     fn user(&self) -> Tuned {
         self.hold.as_ref().map_or(self.live(), |h| h.user(&self.s))
     }
+}
+
+/// The distance mode's count: `outer` within the distance, `inner` well
+/// within it.
+fn w(outer: u32, inner: u32) -> Option<Within> {
+    Some(Within { outer, inner })
 }
 
 /// 30 frames per second: 33.3 ms. Too slow past 36.7, room under 30.
@@ -277,7 +283,7 @@ fn a_pause_waits_and_measures_again() {
 }
 
 #[test]
-fn it_never_goes_up_and_down_in_a_loop() {
+fn an_up_and_down_loop_backs_off_to_one_try_every_two_minutes() {
     // a scene right at the edge: fast with a step given back, slow with it
     let mut r = Run::new(256.0, 16);
     r.avatars = 40;
@@ -429,35 +435,50 @@ fn the_hold_never_writes_above_the_users_values_nor_outside_the_bounds() {
 fn the_distance_mode_draws_in_full_only_the_avatars_in_range_never_more_than_the_users() {
     let mut r = Run::new(256.0, 16);
     r.config.by_distance = true;
-    r.within = Some(9);
+    r.within = w(9, 9);
     r.run(ON, 7.0);
     assert_eq!(r.live().max_avatars, 9);
     // more in range than the user's limit: the user's limit
-    r.within = Some(60);
+    r.within = w(60, 60);
     r.run(ON, 3.0);
     assert_eq!(r.live().max_avatars, 16);
     // nobody in range: ours and the five nearest still
-    r.within = Some(1);
+    r.within = w(1, 1);
     r.run(ON, 3.0);
     assert_eq!(r.live().max_avatars, AVATAR_FLOOR);
     // with frames too slow the lever goes under the range's count
-    r.within = Some(12);
+    r.within = w(12, 12);
     r.run(SLOW, 20.0);
     assert_eq!(r.live().max_avatars, AVATAR_FLOOR);
 }
 
 #[test]
-fn the_distance_mode_does_not_flip_at_every_frame() {
+fn the_distance_mode_does_not_flip_for_someone_at_the_edge() {
     let mut r = Run::new(256.0, 16);
     r.config.by_distance = true;
+    r.within = w(8, 8);
     r.run(ON, 7.0);
+    assert_eq!(r.live().max_avatars, 8);
     let before = r.changes.len();
-    for i in 0..600 {
-        r.within = Some(if i % 2 == 0 { 8 } else { 9 });
+    // someone standing at the edge: in and out of the distance at every
+    // frame, never well inside it
+    for i in 0..1800 {
+        r.within = if i % 2 == 0 { w(8, 8) } else { w(9, 8) };
         r.frame(ON, false);
     }
-    // about one rise a second at most
-    assert!(r.changes.len() - before <= 2 * 600 * 33 / 1000 + 2, "{}", r.changes.len() - before);
+    assert_eq!(r.changes.len(), before, "{:?}", &r.changes[before..]);
+    // they walk in: one rise; out past the distance: one drop
+    r.within = w(9, 9);
+    r.run(ON, 2.0);
+    assert_eq!(r.live().max_avatars, 9);
+    r.within = w(8, 8);
+    r.run(ON, 2.0);
+    assert_eq!(r.live().max_avatars, 8);
+    assert_eq!(r.changes.len(), before + 2);
+    // no count made with the current distance yet: it stays as it is
+    r.within = None;
+    r.run(ON, 5.0);
+    assert_eq!(r.live().max_avatars, 8);
 }
 
 #[test]
@@ -594,4 +615,120 @@ fn the_settings_file_holds_the_users_values_while_it_runs() {
     let json = serde_json::to_value(&saved).expect("json");
     assert!(json.get("autotune_hold").is_none());
     assert_eq!(json["draw_distance"], 256.0);
+}
+
+/// A scene right at the edge: slow with 12 avatars in full or more.
+fn edge(r: &Run, slow: f32, fast: f32) -> f32 {
+    if r.live().max_avatars >= 12 { slow } else { fast }
+}
+
+/// The times of the step ups of a run.
+fn ups(r: &Run) -> Vec<Duration> {
+    r.changes
+        .windows(2)
+        .filter(|w| w[1].1.max_avatars > w[0].1.max_avatars)
+        .map(|w| w[1].0)
+        .collect()
+}
+
+#[test]
+fn the_wait_comes_back_down_once_the_load_is_gone() {
+    let mut r = Run::new(256.0, 16);
+    let end = r.now + Duration::from_secs(900);
+    while r.now < end {
+        let ms = edge(&r, SLOW, FAST);
+        r.frame(ms, false);
+    }
+    assert_eq!(r.tuner.up_wait, MAX_UP_WAIT, "backed off");
+    // the load goes away for good: each step up that holds halves the wait
+    let from = r.changes.len();
+    r.run(FAST, 600.0);
+    assert_eq!(
+        r.live(),
+        Tuned {
+            draw_distance: 256.0,
+            max_avatars: 16
+        }
+    );
+    let times: Vec<Duration> = r.changes[from..].iter().map(|(t, _)| *t).collect();
+    let gaps: Vec<Duration> = times.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.windows(2).all(|g| g[1] <= g[0]), "{gaps:?}");
+    assert!(*gaps.last().expect("gaps") < Duration::from_secs(30), "{gaps:?}");
+}
+
+#[test]
+fn a_bounce_is_seen_at_a_low_target_too() {
+    // 3 fps: a measurement takes longer than the bounce window
+    let mut r = Run::new(256.0, 16);
+    r.config.target_fps = 3;
+    let end = r.now + Duration::from_secs(3600);
+    while r.now < end {
+        let ms = edge(&r, 500.0, 200.0);
+        r.frame(ms, false);
+    }
+    let ups = ups(&r);
+    assert!(ups.len() >= 3, "{ups:?}");
+    let gaps: Vec<Duration> = ups.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.windows(2).all(|g| g[1] >= g[0]), "{gaps:?}");
+    assert!(*gaps.last().expect("gaps") >= MAX_UP_WAIT, "{gaps:?}");
+}
+
+#[test]
+fn a_change_of_the_avatars_during_the_steps_is_the_users() {
+    let mut s = Settings {
+        draw_distance: 256.0,
+        max_avatars: 16,
+        ..Settings::default()
+    };
+    let mut h = Hold::new(&s);
+    h.write(
+        &mut s,
+        Tuned {
+            draw_distance: 100.0,
+            max_avatars: 8,
+        },
+    );
+    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Duration::from_secs(20), Instant::now());
+    s.draw_stepping = Some(steps);
+    s.draw_distance = value;
+    // the user sets 10 avatars in Preferences during the steps
+    s.max_avatars = 10;
+    h.sync(&s);
+    assert_eq!(
+        h.user(&s),
+        Tuned {
+            draw_distance: 256.0,
+            max_avatars: 10
+        }
+    );
+    h.restore(&mut s);
+    assert_eq!(s.max_avatars, 10);
+    assert_eq!(s.draw_stepping.map(|st| st.user), Some(256.0));
+}
+
+#[test]
+fn a_level_chosen_while_it_runs_is_the_users_even_at_the_tuned_values() {
+    let mut s = Settings {
+        draw_distance: 256.0,
+        max_avatars: 16,
+        ..Settings::default()
+    };
+    let mut h = Hold::new(&s);
+    let tuned = Tuned {
+        draw_distance: 64.0,
+        max_avatars: 6,
+    };
+    h.write(&mut s, tuned);
+    s.autotune_hold = Some(h);
+    // under the photo quality, nothing is taken
+    let mut photo = s.clone();
+    photo.photo_held = Some(crate::snapshot::quality::boost(&mut photo));
+    Hold::chosen(&mut photo);
+    assert_eq!(photo.autotune_hold, Some(h));
+    // a level whose values are the tuned ones: they are the user's now
+    Hold::chosen(&mut s);
+    let h = s.autotune_hold.take().expect("held");
+    assert_eq!(h.user(&s), tuned);
+    h.restore(&mut s);
+    assert_eq!(Tuned::read(&s), tuned);
 }

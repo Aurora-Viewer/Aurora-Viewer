@@ -27,6 +27,9 @@ pub struct View {
     /// The values live, and the user's own.
     pub live: Tuned,
     pub user: Tuned,
+    /// Whether "Keep these settings" may be pressed (not under the photo
+    /// quality).
+    pub can_keep: bool,
 }
 
 impl Default for View {
@@ -42,6 +45,7 @@ impl Default for View {
             held_to: 0.0,
             live: t,
             user: t,
+            can_keep: true,
         }
     }
 }
@@ -130,7 +134,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Ve
                 .on_hover_text(tr!("autotune-continuous-tip"));
             if config.continuous {
                 ui.indent("autotune-keep", |ui| {
-                    widgets::checkbox(ui, p, &mut config.keep_continuous, tr!("autotune-keep-continuous"));
+                    widgets::switch_labeled(ui, p, &mut config.keep_continuous, tr!("autotune-keep-continuous"));
                 });
             }
             let target = autotune::effective_target(&config, v.held_to);
@@ -188,8 +192,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Ve
                     if widgets::action_button(ui, p, "restore", tr!("autotune-give-back"), ActionKind::Flat, vec2(0.0, 0.0)).clicked() {
                         out.push(Action::Autotune(Request::Stop));
                     }
-                    if widgets::action_button(ui, p, "check", tr!("autotune-keep"), ActionKind::Flat, vec2(0.0, 0.0))
+                    // (not while the photo quality holds the values: it gives
+                    // the user's from before back at its end)
+                    if widgets::action_button_if(ui, p, "check", tr!("autotune-keep"), ActionKind::Flat, vec2(0.0, 0.0), v.can_keep)
                         .on_hover_text(tr!("autotune-keep-tip"))
+                        .on_disabled_hover_text(tr!("autotune-keep-photo-tip"))
                         .clicked()
                     {
                         out.push(Action::Autotune(Request::Keep));

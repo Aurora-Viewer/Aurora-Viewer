@@ -9114,6 +9114,7 @@ autotune-finished-note = La cible est tenue. Les réglages trouvés restent pour
 autotune-give-back = Rendre mes réglages
 autotune-keep = Garder ces réglages
 autotune-keep-tip = Fait des réglages trouvés les vôtres : ils sont enregistrés, et le niveau graphique peut s’afficher comme personnalisé.
+autotune-keep-photo-tip = Pas pendant la qualité photo : elle remet vos réglages d’avant quand elle se termine. Fermez d’abord la photo.
 autotune-strategy = Ce qu’il peut changer
 autotune-strategy-avatars = Les avatars seulement
 autotune-strategy-both = Les avatars et la scène (distance d’affichage)

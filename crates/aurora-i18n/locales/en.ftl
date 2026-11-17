@@ -9109,6 +9109,7 @@ autotune-finished-note = The target is held. The settings found stay for this se
 autotune-give-back = Give back my settings
 autotune-keep = Keep these settings
 autotune-keep-tip = Makes the settings found your own: they are saved, and the graphics level may show as custom.
+autotune-keep-photo-tip = Not while the photo quality is on: it gives your earlier settings back when it ends. Close the photo first.
 autotune-strategy = What it may change
 autotune-strategy-avatars = Avatars only
 autotune-strategy-both = Avatars and scene (draw distance)
