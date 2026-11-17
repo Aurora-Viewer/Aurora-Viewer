@@ -2158,6 +2158,8 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
         let sub_name = sub.info.name.trim();
         let sub_words = words(sub_name);
         let read = classify(sub_name, -1, 0);
+        // (a skin's tones too: `Light`, `Tan`, `Dark`)
+        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
         // (beside a shelf word, the subfolder's first word past shelf and
         // occasion words: `Gift Starlight Top` under `Gift Starlight Outfit`)
         let lead = sub_words
@@ -2167,10 +2169,14 @@ fn versions_only(inv: &Inventory, f: &super::Folder, name: &str, named: bool) ->
             lead.is_some_and(|w| own.contains(w))
         } else {
             sub_words.iter().any(|w| own.contains(w))
-        } || whole_name && sub_words.starts_with(&name_words);
+        } || whole_name
+            // (the whole name, after a colour or a finish too: `Red
+            // Christmas Sweater` under `Christmas Sweater`)
+            && (0..sub_words.len()).any(|i| {
+                sub_words[i..].starts_with(&name_words)
+                    && sub_words[..i].iter().all(|w| FINISHES.contains(&w.as_str()) || tone(w))
+            });
         // a fatpack's own folders (`HUDs`, `Textures`, `Appliers`)
-        // (a skin's tones too: `Light`, `Tan`, `Dark`)
-        let tone = |w: &String| VOCABULARY.skin_tones.iter().any(|t| t == w) || w == "dark";
         let fatpack = !sub_words.is_empty() && sub_words.iter().all(|w| VERSION_WORDS.contains(&w.as_str()) || tone(w));
         // (a kind written as a phrase: `Hair Base`)
         let phrase_kind = is_kind(&sub_words.join(" "));
@@ -2301,7 +2307,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 52] = [
+const SHELF_WORDS: [&str; 53] = [
     "my",
     "old",
     "new",
@@ -2354,6 +2360,7 @@ const SHELF_WORDS: [&str; 52] = [
     "men",
     "mens",
     "unisex",
+    "gachas",
 ];
 
 /// Occasions and seasons: a shelf's word beside a plural kind or alone

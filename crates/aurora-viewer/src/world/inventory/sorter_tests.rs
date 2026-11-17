@@ -3552,3 +3552,27 @@ fn an_occasion_kind_shelf_of_tagged_deliveries_opens() {
         assert!(whole_sources(&inv, &Preferences::default()).contains(&id(900)), "{name} is opened");
     }
 }
+
+/// Audit 49: colour versions written before the whole name keep an
+/// occasion product whole.
+#[test]
+fn colour_first_versions_keep_an_occasion_product_whole() {
+    let none = HashSet::new();
+    for (name, subs) in [
+        ("Christmas Sweater", ["Red Christmas Sweater", "Green Christmas Sweater"]),
+        ("Winter Boots", ["Black Winter Boots", "Brown Winter Boots"]),
+    ] {
+        let mut inv = fixture(&[]);
+        add_folder(&mut inv, 900, 1, name);
+        for (n, sub) in subs.iter().enumerate() {
+            add_folder(&mut inv, 901 + n as u128, 900, sub);
+            add_item(&mut inv, 950 + n as u128, 901 + n as u128, sub, 0);
+        }
+        let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+        let moved: HashSet<Uuid> = plan.moves.iter().map(|m| m.id).collect();
+        assert!(
+            ![901, 902, 950, 951].iter().any(|n| moved.contains(&id(*n))),
+            "{name} is never opened"
+        );
+    }
+}
