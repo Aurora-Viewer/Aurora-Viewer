@@ -18,6 +18,8 @@ mod field_centering_tests;
 #[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
+#[cfg(test)]
+mod auto_height_tests;
 pub mod color;
 mod copy_on_click;
 pub mod demo;
@@ -80,6 +82,18 @@ pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
 }
 
 /// The background areas that are panels of their own, by layer id.
+/// The body of a window of automatic height (`Floater::auto_height`) that
+/// scrolls once it is taller than `room`: then exactly `room` tall. Without
+/// the floor, a body taller than the room took the height egui's window
+/// had last frame, so a window squeezed once (the viewer's window made tiny,
+/// a tester's report of 2026-11-17) kept its small height for good.
+pub(crate) fn auto_height_body(room: f32) -> egui::ScrollArea {
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, true])
+}
+
 #[derive(Clone, Default)]
 struct SolidAreas(std::collections::HashSet<egui::Id>);
 

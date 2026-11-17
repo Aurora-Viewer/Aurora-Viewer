@@ -251,61 +251,58 @@ pub fn window(
     Floater::new(WINDOW, aurora_i18n::tr!("director-title"), pos, Vec2::new(WIDTH, 560.0))
         .auto_height()
         .show(ctx, p, open, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(room)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                    widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
-                        camera_section(ui, p, live, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
-                        lock_section(ui, p, d, live, actions);
-                    });
-                    let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
-                        Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
-                        None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
-                    };
-                    widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
-                        keyframe_section(ui, p, d, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
-                        path_section(ui, p, d);
-                    });
-                    widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
-                        playback_section(ui, p, d);
-                    });
-                    widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
-                        picture_section(ui, p, d, live.target.is_some());
-                    });
-                    widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
-                        record_section(ui, p, record, live, actions);
-                    });
-                    widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
-                        tracks_section(ui, p, tracks, d.track.is_empty(), actions);
-                    });
-                    widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
-                        isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
-                    });
-                    let Env {
-                        ui: lists,
-                        view,
-                        loading,
-                        time_of_day,
-                        lighting,
-                        out,
-                    } = env;
-                    widgets::collapsing(
-                        ui,
-                        p,
-                        "director_environment",
-                        aurora_i18n::tr!("director-environment"),
-                        false,
-                        |ui| {
-                            lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
-                        },
-                    );
+            widgets::auto_height_body(room).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                widgets::collapsing(ui, p, "director_camera", aurora_i18n::tr!("director-camera"), true, |ui| {
+                    camera_section(ui, p, live, actions);
                 });
+                widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
+                    lock_section(ui, p, d, live, actions);
+                });
+                let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
+                    Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
+                    None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
+                };
+                widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
+                    keyframe_section(ui, p, d, actions);
+                });
+                widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
+                    path_section(ui, p, d);
+                });
+                widgets::collapsing(ui, p, "director_playback", aurora_i18n::tr!("director-playback"), false, |ui| {
+                    playback_section(ui, p, d);
+                });
+                widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
+                    picture_section(ui, p, d, live.target.is_some());
+                });
+                widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
+                    record_section(ui, p, record, live, actions);
+                });
+                widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
+                    tracks_section(ui, p, tracks, d.track.is_empty(), actions);
+                });
+                widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
+                    isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
+                });
+                let Env {
+                    ui: lists,
+                    view,
+                    loading,
+                    time_of_day,
+                    lighting,
+                    out,
+                } = env;
+                widgets::collapsing(
+                    ui,
+                    p,
+                    "director_environment",
+                    aurora_i18n::tr!("director-environment"),
+                    false,
+                    |ui| {
+                        lists.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, None, out);
+                    },
+                );
+            });
         });
 }
 
