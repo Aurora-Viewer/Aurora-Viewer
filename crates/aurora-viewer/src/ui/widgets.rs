@@ -18,6 +18,8 @@ mod field_centering_tests;
 #[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
+#[cfg(test)]
+mod auto_height_tests;
 pub mod color;
 mod copy_on_click;
 pub mod demo;
@@ -33,6 +35,8 @@ mod resize;
 mod restricted_text;
 #[cfg(test)]
 mod restricted_text_tests;
+#[cfg(test)]
+mod solid_background_tests;
 pub use crate::text_validation::Policy as TextPolicy;
 pub use restricted_text::field as restricted_text_field;
 pub use restricted_text::number as restricted_number;
@@ -75,7 +79,51 @@ pub(crate) use workspace::{
 /// grips consume the press outside their window too, as LLResizeHandle and
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
-    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos) || solid_background_at(ctx, pos)
+}
+
+/// The background areas that are panels of their own, by layer id.
+/// The body of a window of automatic height (`Floater::auto_height`) that
+/// scrolls once it is taller than `room`: then exactly `room` tall. Without
+/// the floor, a body taller than the room took the height egui's window
+/// had last frame, so a window squeezed once (the viewer's window made tiny,
+/// a tester's report of 2026-11-17) kept its small height for good.
+pub(crate) fn auto_height_body(room: f32) -> egui::ScrollArea {
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, true])
+}
+
+#[derive(Clone, Default)]
+struct SolidAreas(std::collections::HashSet<egui::Id>);
+
+fn solid_areas_id() -> egui::Id {
+    egui::Id::unique("aurora_solid_background_areas")
+}
+
+/// The background area `id` (`Order::Background`, kept under the windows) is
+/// a panel of its own, the Director's timeline or a keyframe of it in the
+/// world: a press on it is its own, never the world's. egui leaves a press
+/// on such an area to the world (`is_pointer_over_egui` only counts a
+/// background area outside the root's free room), and the world reads the
+/// press before egui's pass has seen it (`egui_wants_pointer_input` comes
+/// too late): without this, a click on the strip between its buttons walked
+/// the avatar there or stood it up.
+pub(crate) fn solid_background(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.insert(id);
+    });
+}
+
+/// The topmost area at `pos` (shown last frame, interactable, a window above
+/// it first) is a solid background area (`solid_background`).
+fn solid_background_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    let Some(layer) = ctx.memory(|m| m.layer_id_at(pos)) else {
+        return false;
+    };
+    layer.order == egui::Order::Background
+        && ctx.data_mut(|d| d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.contains(&layer.id))
 }
 
 /// Any floater/bare window is moving or resizing, independently of drawing

@@ -1144,8 +1144,11 @@ when unfocused") is ignored during a screenshot.
   held a second, and the interface is back. `lock` turns the lock on, on our
   avatar's neck (`director demo: view locked on our avatar's neck`): the
   view turns so that the neck sits in the middle of the screen, under an
-  amber ring, wherever the camera stands; the second and third keyframes
-  are locked (their cameras point at the neck), the picture is 2.39:1 (the
+  amber ring, wherever the camera stands; the second keyframe looks at the
+  neck and the third at the head, targets of their own (the Keyframe
+  section says `My avatar · Neck`, `My avatar · Head`; their cameras point
+  there), the fourth's target is cleared (`Where its camera is laid`), the
+  first follows the lock (`The lock's target: …`); the picture is 2.39:1 (the
   frame outlined, what lies above and below it dimmed) with the rule of
   thirds. `green` isolates our avatar (the photo mode's isolation, on "My
   avatar") on an empty background filled with the key green
