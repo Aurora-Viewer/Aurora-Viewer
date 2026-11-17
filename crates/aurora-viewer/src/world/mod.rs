@@ -608,6 +608,8 @@ pub struct World {
     pub attention: Vec<attention::Attention>,
     /// L$ balance changes (previous, new), for the money sounds.
     pub balance_changes: Vec<(Option<i32>, i32)>,
+    /// Health changes (previous, new), for the hurt sounds.
+    pub health_changes: Vec<(f32, f32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
     /// Avatars whose viewer said they type in the nearby chat
@@ -949,6 +951,7 @@ impl World {
             im_messages: Vec::new(),
             attention: Vec::new(),
             balance_changes: Vec::new(),
+            health_changes: Vec::new(),
             typing_started: Vec::new(),
             nearby_typing: HashSet::new(),
             login: None,
@@ -4245,6 +4248,8 @@ impl World {
                 None
             }
             NetEvent::Health(health) => {
+                // the app compares with UISndHealthReductionThreshold
+                self.health_changes.push((self.health, health));
                 self.health = health;
                 None
             }
@@ -4856,6 +4861,11 @@ impl World {
                     {
                         self.ui_sounds.push(UiSound::NearbyChat);
                     }
+                    // UISndChatMention (LLIMMgr's nearby chat toast): a
+                    // resident's line that mentions us, out of do not disturb
+                    if !self.status.dnd && crate::ui::chat::mentions(&c.message, &self.agent_id) {
+                        self.ui_sounds.push(UiSound::ChatMention);
+                    }
                     ChatKind::Local(c.chat_type)
                 }
             }
@@ -5019,11 +5029,12 @@ impl World {
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }
-            // UISndNewIncomingIMSession (by the IM mode)
+            // UISndNewIncomingIMSession (by the IM mode), or UISndChatMention
             self.im_messages.push(ImMessage {
                 kind: ImKind::Private,
                 session: im.from_agent_id,
                 new_session: !self.social.has_session(&im.from_agent_id),
+                mention: crate::ui::chat::mentions(&im.message, &self.agent_id),
             });
             let from = self
                 .social
@@ -5560,8 +5571,10 @@ impl World {
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
         self.link_object_notification(id, q.task, &object, &owner);
-        // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
-        self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+        // process_script_experience_details: UISndQuestionExperience, off by
+        // default like the Legacy Viewer's (Aurora played the script
+        // dialog's sound here before the sound existed)
+        self.ui_sounds.push(UiSound::QuestionExperience);
     }
 
     /// Answer a notification: messages to send and a URL to open.
@@ -8124,6 +8137,37 @@ mod motion_tests {
         assert!(world.im_messages.is_empty(), "no message");
         world.apply(notice(&world, IM_TYPING_STOP));
         assert!(!world.social.is_typing(&from));
+    }
+
+    /// UISndChatMention: a private message that mentions us is marked for
+    /// the mention's sound, one that mentions someone else is not; a health
+    /// change is handed to the app for UISndHealthReduction*.
+    #[test]
+    fn mentions_and_health_reach_the_interface_sounds() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(78);
+        let other = Uuid::from_u128(79);
+        let im = |world: &World, message: String| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Mentioner Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message,
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        let me = world.agent_id;
+        world.apply(im(&world, format!("hi secondlife:///app/agent/{me}/mention !")));
+        world.apply(im(&world, format!("ask secondlife:///app/agent/{other}/mention")));
+        let mentions: Vec<bool> = std::mem::take(&mut world.im_messages).iter().map(|m| m.mention).collect();
+        assert_eq!(mentions, [true, false]);
+        world.apply(NetEvent::Health(80.0));
+        assert_eq!(std::mem::take(&mut world.health_changes), [(100.0, 80.0)]);
     }
 
     /// FSOpenIMContainerOnOfflineMessage: a message kept while we were

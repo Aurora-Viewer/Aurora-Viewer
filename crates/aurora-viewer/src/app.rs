@@ -6393,6 +6393,15 @@ impl App {
                 w.ui_sounds.push(s);
             }
         }
+        let health_changes = std::mem::take(&mut w.health_changes);
+        if !health_changes.is_empty() {
+            let male = crate::physics_editor::male(w);
+            for (old, new) in health_changes {
+                if let Some(s) = ui.health_sound(old, new, male) {
+                    w.ui_sounds.push(s);
+                }
+            }
+        }
         // push to talk / microphone button (voice_follow_key, LLVoiceClient)
         if self.mic_on != self.mic_was {
             self.mic_was = self.mic_on;
