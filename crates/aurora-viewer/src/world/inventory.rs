@@ -551,13 +551,27 @@ impl Inventory {
         if self.missing_items.is_empty() {
             return;
         }
-        let now = std::time::Instant::now();
+        self.expire_given_up(std::time::Instant::now());
+        items.retain(|id| !self.broken(id));
+    }
+
+    /// The items given up past [`ITEM_GIVE_UP`] are no longer broken links:
+    /// the outfits and attachments that need them ask again (the
+    /// generation changes, so their views look again). Called every frame
+    /// by the inventory's pump; nothing to do most of the time.
+    pub fn expire_given_up(&mut self, now: std::time::Instant) {
+        if self.gave_up_at.is_empty() {
+            return;
+        }
         let expired: Vec<Uuid> = self
             .gave_up_at
             .iter()
             .filter(|(_, at)| now.saturating_duration_since(**at) >= ITEM_GIVE_UP)
             .map(|(id, _)| *id)
             .collect();
+        if expired.is_empty() {
+            return;
+        }
         for id in expired {
             self.gave_up_at.remove(&id);
             self.item_failures.remove(&id);
@@ -565,7 +579,7 @@ impl Inventory {
                 self.missing_items.remove(&id);
             }
         }
-        items.retain(|id| !self.broken(id));
+        self.generation += 1;
     }
 
     /// Leaves out of an item read the broken links' originals and the items

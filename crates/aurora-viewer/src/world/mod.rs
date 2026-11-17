@@ -1683,6 +1683,9 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
+        // (items a busy server would not give are asked again after their
+        // pause, whether or not another read comes)
+        self.inventory.expire_given_up(std::time::Instant::now());
         let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
         self.inventory.walk_busy = !self.inventory_background.is_idle();
         commands
