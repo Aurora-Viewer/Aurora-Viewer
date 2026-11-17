@@ -206,11 +206,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
             cx.group(tr!("ui-options-conversations"), |cx| {
                 // FSShowTimestampsIM (on): private and group conversations
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_im));
-                cx.toggle(
+                if cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
                     tr!("ui-options-show-contacts-tab-hint"),
                     &field!(show_contacts_tab),
-                );
+                ) && cx.s.show_contacts_tab
+                {
+                    // a torn-off Contacts goes back into Conversations
+                    cx.r.show_contacts_tab_on = true;
+                }
                 // FSChatWindow: separate IM windows (0) or the tabbed one (1,
                 // the default)
                 cx.toggle(

@@ -5404,6 +5404,7 @@ impl App {
             // minimized window expands (LLFloaterReg::toggleInstance)
             Action::NearbyChat => self.chat_ui.toggle_nearby_chat(&self.egui_ctx, &mut self.panels.chat),
             Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
+            Action::Contacts => self.reveal_contacts(),
             Action::People => {
                 ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
@@ -14764,6 +14765,12 @@ impl App {
                 self.world.social.friends.clear();
             }
         }
+        // AURORA_DEMO_CONTACTS=lost: the Communicate › Contacts command
+        // (app/shortcuts.rs) at frame 900, out of the dead end a restart used
+        // to leave (resumed): captures at 700 and 1100 show before and after
+        if self.demo && self.frame_count == 900 && std::env::var("AURORA_DEMO_CONTACTS").as_deref() == Ok("lost") {
+            self.reveal_contacts();
+        }
         // AURORA_DEMO_CONTACTS=conference|map|invite: what the buttons need
         // selected, once the friends and groups are in
         if self.demo
@@ -16427,6 +16434,7 @@ impl App {
                     self.open_marketplace_listings();
                 }
             }
+            BarAction::Contacts => self.reveal_contacts(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.open(ui::options::Page::Chat, 0);
@@ -17716,6 +17724,9 @@ impl App {
         self.options_ui.flycam_active = self.joystick.active;
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        if res.show_contacts_tab_on {
+            self.dock_contacts();
+        }
         self.sync_appearance_camera();
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         if res.toggle_flycam {
@@ -22269,9 +22280,11 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden: the
-            // Contacts tab of Conversations (or its torn-off window, or the
-            // resident picker of "Add...")
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost:
+            // the Contacts tab of Conversations (or its torn-off window, or
+            // the resident picker of "Add..."); `lost` starts in the state a
+            // restart used to leave: torn off, its tab hidden and its window
+            // never reopened
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -22285,6 +22298,11 @@ impl ApplicationHandler for App {
                 let detached = matches!(v.as_str(), "detached" | "detache");
                 self.settings.contacts.torn_off = detached;
                 self.panels.contacts = detached;
+                if matches!(v.as_str(), "lost" | "perdu") {
+                    self.settings.show_contacts_tab = true;
+                    self.settings.contacts.torn_off = true;
+                    self.panels.contacts = false;
+                }
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }

@@ -102,6 +102,21 @@ impl Default for ContactsSettings {
     }
 }
 
+/// Where Contacts shows, as FSFloaterContacts::onOpen decides it
+/// (indra/newview/fsfloatercontacts.cpp): its own window while
+/// ContactsTornOff, the first tab of the Conversations window otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// The first tab of the Conversations window (LLMultiFloater::addFloater).
+    Docked,
+    /// Its own window (ContactsTornOff).
+    TornOff,
+}
+
+pub fn placement(torn_off: bool) -> Placement {
+    if torn_off { Placement::TornOff } else { Placement::Docked }
+}
+
 pub enum ContactsAction {
     Im(Uuid),
     /// Call the friends chosen: one directly, several in a conference
@@ -2457,6 +2472,12 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn a_torn_off_contacts_stays_in_its_window() {
+        assert_eq!(placement(false), Placement::Docked);
+        assert_eq!(placement(true), Placement::TornOff);
     }
 
     #[test]
