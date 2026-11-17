@@ -27,8 +27,12 @@
 //!   (`backup::is_this_pc`), with the settings Debug Settings hides
 //!   (`registry`);
 //! - the pages that guard the user ([`NEVER_SHARED`]): privacy, protections,
-//!   RLVa, network and proxy, language and updates. A code from someone
-//!   else never lowers a protection nor redirects the network;
+//!   RLVa, network and proxy, language and updates, confirmations and chat
+//!   commands; and on the other pages the settings that protect the user or
+//!   send something out ([`PROTECTIVE`]: auto-accepting inventory, media
+//!   that plays by itself or skips the site filter, announces on a chat
+//!   channel, the scripted bridge). A code from someone else never lowers a
+//!   protection nor redirects the network;
 //! - a setting no page of Preferences shows (Debug Settings only);
 //! - a value holding a UUID (someone's asset, AGENTS.md "Creators'
 //!   permissions"), a web address, a path, an e-mail address, a line break
@@ -68,18 +72,19 @@ pub const SHARED_PAGES: &[&str] = &[
     "layout",
     "appearance",
     "accessibility",
-    "confirmations",
     "inventory",
     "controls",
     "gamepad",
     "shortcuts",
-    "commands",
     "fun",
 ];
 
 /// The pages a code never carries, and whose settings an import refuses:
-/// they guard the user, or belong to this PC and its network.
-pub const NEVER_SHARED: &[&str] = &["privacy", "protections", "rlva", "network", "system"];
+/// they guard the user, or belong to this PC and its network. Confirmations
+/// guard payments, deletions and teleports; Commands holds the chat command
+/// words, which a code could rename to an everyday word, and their
+/// announces on a chat channel.
+pub const NEVER_SHARED: &[&str] = &["privacy", "protections", "rlva", "network", "system", "confirmations", "commands"];
 
 /// The pages "Looks only" ticks: what the world and the windows look like.
 pub const LOOKS: &[&str] = &["graphics", "appearance", "layout", "camera"];
@@ -100,6 +105,28 @@ const PERSONAL: &[&str] = &[
     "media.plugin_dir",
     "gpu_driver_dismissed",
     "ignored_update",
+];
+
+/// Settings on a shared page that protect the user or send something out:
+/// a code never carries them and an import refuses them, so that a code
+/// from someone else never lowers a protection (a new resident would tick
+/// "Apply" without recognising them in the preview).
+const PROTECTIVE: &[&str] = &[
+    // items given to the user land without asking
+    "auto_accept_inventory",
+    "auto_accept_inventory_chat",
+    "auto_accept_inventory_notify",
+    // media that plays by itself or a site not asked about reveals the
+    // user's IP address to whoever hosts it
+    "audio.media_autoplay",
+    "media.autoplay_huds",
+    "media.allow_scripted",
+    "media.filter",
+    // posts on a chat channel, channel 0 included
+    "audio.stream_title_announce",
+    "audio.stream_title_channel",
+    // the scripted bridge worn by the viewer
+    "use_bridge",
 ];
 
 /// Which page of Preferences shows each setting, by its path. Built from
@@ -139,10 +166,16 @@ impl Catalog {
     }
 }
 
-fn personal(key: &str) -> bool {
-    PERSONAL
-        .iter()
+/// Whether `key` is one of `list` or inside one of them (`keywords.words`).
+fn listed(list: &[&str], key: &str) -> bool {
+    list.iter()
         .any(|p| key == *p || key.strip_prefix(p).is_some_and(|rest| rest.starts_with('.')))
+}
+
+/// A setting no code carries and no import takes, whatever its page: the
+/// user's own business, or a protection.
+fn kept_out(key: &str) -> bool {
+    listed(PERSONAL, key) || listed(PROTECTIVE, key)
 }
 
 /// A value that may travel in a code (both ways).
@@ -165,7 +198,7 @@ fn safe_value(value: &Value) -> bool {
 pub fn shareable(settings: &Settings, catalog: &Catalog, pages: &[&str]) -> Vec<(&'static str, String, Value)> {
     registry::entries(settings, &registry::defaults())
         .into_iter()
-        .filter(|e| e.changed() && !personal(&e.key) && safe_value(&e.value))
+        .filter(|e| e.changed() && !kept_out(&e.key) && safe_value(&e.value))
         .filter_map(|e| {
             let page = catalog.shared_page(&e.key)?;
             pages.contains(&page).then_some((page, e.key, e.value))
@@ -258,7 +291,9 @@ impl Code {
                     .split(',')
                     .filter_map(|p| SHARED_PAGES.iter().copied().find(|s| *s == p.trim()))
                     .collect();
-                code.pages.dedup();
+                // each page once, wherever it repeats
+                let mut seen = std::collections::HashSet::new();
+                code.pages.retain(|page| seen.insert(*page));
             } else if let Some((key, value)) = line.split_once(" = ")
                 && code.values.len() < MAX_LINES
                 && let Ok(value) = serde_json::from_str::<Value>(value.trim())
@@ -325,7 +360,7 @@ impl Plan {
                 plan.refused += 1;
                 continue;
             };
-            if personal(key) || locks.locked(key) || !safe_value(value) || !entry.accepts(value) {
+            if kept_out(key) || locks.locked(key) || !safe_value(value) || !entry.accepts(value) {
                 plan.refused += 1;
                 continue;
             }
@@ -348,7 +383,7 @@ impl Plan {
                 };
                 if code.pages.contains(&page)
                     && entry.changed()
-                    && !personal(&entry.key)
+                    && !kept_out(&entry.key)
                     && !locks.locked(&entry.key)
                     && !code.values.iter().any(|(k, _)| *k == entry.key)
                 {

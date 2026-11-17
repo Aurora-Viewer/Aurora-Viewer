@@ -260,7 +260,7 @@ fn every_page_of_preferences_is_shared_or_never_shared() {
 fn every_personal_setting_is_a_setting() {
     // a renamed setting would quietly go into the codes again
     let saved = serde_json::to_value(Settings::default().to_saved()).unwrap();
-    for key in PERSONAL {
+    for key in PERSONAL.iter().chain(PROTECTIVE) {
         let mut at = &saved;
         for part in key.split('.') {
             at = at.get(part).unwrap_or_else(|| panic!("{key} is not a setting"));
@@ -313,4 +313,88 @@ fn personal_texts_and_this_pc_hardware_are_not_shared() {
         false,
     );
     assert_eq!((plan.changes.len(), plan.refused), (0, 2));
+}
+
+#[test]
+fn protections_are_never_shared_nor_accepted() {
+    let catalog = Catalog::new([
+        ("inventory", "auto_accept_inventory".to_owned()),
+        ("media", "audio.media_autoplay".to_owned()),
+        ("media", "media".to_owned()),
+        ("sound", "audio.stream_title_announce".to_owned()),
+        ("sound", "audio.stream_title_channel".to_owned()),
+        ("aurora", "use_bridge".to_owned()),
+        ("confirmations", "confirm_teleports".to_owned()),
+        ("commands", "chat_commands".to_owned()),
+        ("graphics", "draw_distance".to_owned()),
+    ]);
+    // a user whose protections are down shares none of it
+    let mut s = Settings::default();
+    s.auto_accept_inventory = !s.auto_accept_inventory;
+    s.audio.media_autoplay = !s.audio.media_autoplay;
+    s.media.autoplay_huds = !s.media.autoplay_huds;
+    s.media.allow_scripted = !s.media.allow_scripted;
+    s.media.filter = !s.media.filter;
+    s.audio.stream_title_announce = !s.audio.stream_title_announce;
+    s.audio.stream_title_channel = 0;
+    s.use_bridge = !s.use_bridge;
+    s.draw_distance = 222.0;
+    let all = ["inventory", "media", "sound", "aurora", "confirmations", "commands", "graphics"];
+    let text = export(&s, &catalog, &all, "");
+    for key in [
+        "auto_accept_inventory",
+        "media_autoplay",
+        "autoplay_huds",
+        "allow_scripted",
+        "media.filter",
+        "stream_title",
+        "use_bridge",
+        "confirmations",
+        "commands",
+    ] {
+        assert!(!text.contains(key), "{key} in {text}");
+    }
+    assert!(text.contains("draw_distance"), "{text}");
+
+    // a hand-written code that lowers them is refused, both ways round
+    let defaults = Settings::default();
+    let code = format!(
+        "{HEADER}\npages: inventory, media, sound, aurora, confirmations, commands\n\
+         auto_accept_inventory = {}\naudio.media_autoplay = {}\nmedia.allow_scripted = {}\n\
+         media.filter = {}\naudio.stream_title_announce = {}\naudio.stream_title_channel = 0\n\
+         use_bridge = {}\nconfirm_teleports = {}\n",
+        !defaults.auto_accept_inventory,
+        !defaults.audio.media_autoplay,
+        !defaults.media.allow_scripted,
+        !defaults.media.filter,
+        !defaults.audio.stream_title_announce,
+        !defaults.use_bridge,
+        !defaults.confirm_teleports,
+    );
+    let code = Code::parse(&code).unwrap();
+    assert!(
+        !code.pages.iter().any(|p| *p == "confirmations" || *p == "commands"),
+        "{:?}",
+        code.pages
+    );
+    let plan = Plan::new(&code, &defaults, &catalog, &Locks::default(), false);
+    assert!(
+        plan.changes.is_empty(),
+        "{:?}",
+        plan.changes.iter().map(|c| &c.key).collect::<Vec<_>>()
+    );
+    assert_eq!(plan.refused, 8);
+    // nor does "reset the others" put them back to their defaults
+    let plan = Plan::new(&code, &s, &catalog, &Locks::default(), true);
+    assert!(
+        plan.changes.iter().all(|c| c.key == "draw_distance"),
+        "{:?}",
+        plan.changes.iter().map(|c| &c.key).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_page_named_twice_is_kept_once() {
+    let code = Code::parse(&format!("{HEADER}\npages: graphics, camera, graphics\n")).unwrap();
+    assert_eq!(code.pages, ["graphics", "camera"]);
 }

@@ -492,7 +492,15 @@ pub(super) fn undo(s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) 
     let Some(undo) = st.share.undo.take() else {
         return;
     };
-    let values: Vec<(&str, Value)> = undo.before.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    // a restriction that started after the import (RLVa's camera limits)
+    // holds its settings: the undo leaves them as they are
+    let locks = locks(st);
+    let values: Vec<(&str, Value)> = undo
+        .before
+        .iter()
+        .filter(|(k, _)| !locks.locked(k))
+        .map(|(k, v)| (k.as_str(), v.clone()))
+        .collect();
     crate::settings::registry::set_many(s, &values);
     for page in undo.pages.iter().filter_map(|key| page_of(key)) {
         st.after_reset(page, s, r);
