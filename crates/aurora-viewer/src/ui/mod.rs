@@ -102,6 +102,7 @@ pub mod object_actions;
 pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
+pub mod panorama;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -178,6 +179,9 @@ pub struct Panels {
     pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -280,6 +284,7 @@ impl Panels {
             group_titles: false,
             wearable_favorites: false,
             snapshot: false,
+            snapshot_pano: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
