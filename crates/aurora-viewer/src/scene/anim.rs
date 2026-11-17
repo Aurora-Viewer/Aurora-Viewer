@@ -600,6 +600,9 @@ pub struct Controller {
     /// at camera", so that an AO stand that keys the head does not hold it.
     /// Aurora's own; the torso keeps the animations' pose.
     pub look_over_animations: bool,
+    /// `look_over_animations` as last logged, with the head's strongest
+    /// animation priority.
+    look_over_logged: bool,
     procedural: Procedural,
     /// Joints used by the procedural motions, as posed last frame
     /// (skeleton space).
@@ -796,10 +799,11 @@ const EYE_EASE: f32 = 0.5;
 const MEDIUM_PRIORITY: i32 = 1;
 /// LLBodyNoiseMotion's priority.
 const HIGH_PRIORITY: i32 = 2;
-/// Above any animation's priority (an animation keys at most 6;
-/// LL_CHARACTER_MAX_PRIORITY is 7): the head and eyes under
-/// `look_over_animations`.
-const LOOK_OVER_ANIMATIONS: i32 = 7;
+/// Above any animation's priority: the head and eyes under
+/// `look_over_animations`. LLKeyframeMotion::deserialize brings a base
+/// priority back under ADDITIVE_PRIORITY but takes a joint's own priority
+/// as the file has it, so a joint may key 7 or more (an AO stand did).
+const LOOK_OVER_ANIMATIONS: i32 = i32::MAX;
 
 /// LLSmoothInterpolation::getInterpolant.
 fn interpolant(dt: f32, half_life: f32) -> f32 {
@@ -1517,6 +1521,17 @@ impl Controller {
                     );
                     s.truncate(JOINT_STATES);
                 }
+            }
+        }
+        if self.look_over_animations != self.look_over_logged {
+            self.look_over_logged = self.look_over_animations;
+            if self.look_over_animations {
+                let top = |name: &str| rig.names.get(name).and_then(|&j| states.get(j)?.first().map(|state| state.0));
+                log::info!(
+                    "look over animations: on; strongest animation priority on mHead {:?}, mNeck {:?}",
+                    top("mHead"),
+                    top("mNeck")
+                );
             }
         }
         // head, eye, breathing and body noise motions, started with the
@@ -3146,7 +3161,7 @@ mod tests {
         assert!(left - ahead > 0.4, "eyes back ahead: {left} -> {ahead}");
     }
 
-    /// An AO stand that keys the head and neck at priority 4 holds them
+    /// An AO stand that keys the head and neck at priority 7 holds them
     /// against the look-at (MEDIUM_PRIORITY, as in the Legacy Viewer); with
     /// `look_over_animations` (the photo window's "Look at camera") the
     /// head turns to the target anyway, and the torso keeps the stand.
@@ -3159,7 +3174,8 @@ mod tests {
             .into_iter()
             .map(|name| aurora_assets::JointMotion {
                 joint_name: name.into(),
-                priority: 4,
+                // a joint's own priority may pass 6 (the file's, unclamped)
+                priority: if name == "mTorso" { 4 } else { 7 },
                 rot_keys: vec![aurora_assets::anim::RotKey {
                     time: 0.0,
                     rotation: Quat::IDENTITY,
