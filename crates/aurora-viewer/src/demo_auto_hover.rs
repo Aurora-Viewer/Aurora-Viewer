@@ -9,6 +9,8 @@ pub const LEFT: u32 = 9350;
 pub const RIGHT: u32 = 9351;
 pub const HEEL: u32 = 9352;
 pub const STILT: u32 = 9353;
+/// How far `auto-variant`'s second foot variant reaches below the first.
+pub const VARIANT_DROP: f32 = 0.3;
 pub const MESH: Uuid = Uuid::from_u128(0xd0d0_aaaa_0000_0000_0000_0000_0000_9350);
 
 pub fn rigid_objects() -> Vec<ObjectUpdate> {
@@ -104,7 +106,17 @@ pub fn rigged_model(lib: &AvatarLibrary) -> Model {
 }
 
 pub fn install_mesh(lib: &AvatarLibrary, scene: &mut Scene) -> Result<(), aurora_assets::AssetError> {
+    install_variant_mesh(lib, scene, 0.0)
+}
+
+/// The same shoes with the right foot's face (face 1) lowered `drop`
+/// metres: a second foot variant (a high heel, a paw) that a body or boot
+/// HUD shows or hides with a zero face alpha (#3962).
+pub fn install_variant_mesh(lib: &AvatarLibrary, scene: &mut Scene, drop: f32) -> Result<(), aurora_assets::AssetError> {
     let mut model = rigged_model(lib);
+    for vertex in &mut model.faces[1].vertices {
+        vertex.position[2] -= drop;
+    }
     model.normalize()?;
     let data = encode::asset(
         &[None, None, None, Some(model)],
@@ -259,8 +271,10 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
                 | "auto-ik"
                 | "auto-ik-moving"
                 | "auto-ik-others"
+                | "auto-variant"
         ) {
-            if let Err(error) = install_mesh(&world.avatar_lib, scene) {
+            let drop = if mode == "auto-variant" { VARIANT_DROP } else { 0.0 };
+            if let Err(error) = install_variant_mesh(&world.avatar_lib, scene, drop) {
                 log::warn!("demo auto hover: {error}");
                 return;
             }
@@ -314,6 +328,24 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         // This synthetic resident uses the same shape and shoes as ours.
         // Its simulator already supplies the correct height before IK.
         resident.position.z = super::floor_at(resident.position.x, resident.position.y) + height * 0.5 + hover;
+    }
+    if mode == "auto-variant" && matches!(frame, 720 | 840) {
+        // The HUD hides the lower variant, then shows it again.
+        let alpha = if frame == 720 { 0.0 } else { 1.0 };
+        if let Some(shoes) = world
+            .objects
+            .index_of(&crate::world::objects::ObjKey {
+                region: HANDLE,
+                local_id: LEFT,
+            })
+            .and_then(|index| world.objects.get_mut(index))
+        {
+            let mut te = shoes.te.as_deref().cloned().unwrap_or_default();
+            if let Some(face) = te.faces.get_mut(1) {
+                face.color[3] = alpha;
+            }
+            shoes.te = Some(Arc::new(te));
+        }
     }
     if mode == "auto-stilt" && matches!(frame, 720 | 840) {
         let length = if frame == 720 { 0.6 } else { 1.2 };
