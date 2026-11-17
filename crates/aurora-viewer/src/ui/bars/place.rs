@@ -30,6 +30,9 @@ const NAME_AFTER: f32 = 6.0;
 const NAME_SIZE: f32 = 11.5;
 /// Set once the destination field of the open place menu took the focus.
 const DEST_FOCUSED: &str = "bars_place_destination_focused";
+/// The room the place's texts keep before the island gives its buttons up
+/// for one menu button, in a narrow window (#2737).
+const COMPACT_TEXT_MIN: f32 = 80.0;
 
 /// How much the place island says, from the most to the least: every right
 /// named, the forbidden ones named, the position, the parcel and the region
@@ -213,9 +216,12 @@ fn measure(ui: &egui::Ui, st: &StatusInfo) -> Widths {
 }
 
 /// The place island's rectangle in `span` (the room between the menu and
-/// the account islands) and what it shows there.
-pub fn layout(ui: &egui::Ui, st: &StatusInfo, span: Rect) -> (Rect, Detail) {
+/// the account islands), what it shows there, and whether it turns compact:
+/// the rating and one cut line of the place, then a menu button for the
+/// controls and rights the full island shows (#2737).
+pub fn layout(ui: &egui::Ui, st: &StatusInfo, span: Rect) -> (Rect, Detail, bool) {
     let widths = measure(ui, st);
+    let compact = compact(&widths, span.width());
     let detail = choose(&widths, span.width(), st.islands.rights_text);
     let natural = widths.natural(detail);
     let width = if st.islands.stretch {
@@ -223,7 +229,18 @@ pub fn layout(ui: &egui::Ui, st: &StatusInfo, span: Rect) -> (Rect, Detail) {
     } else {
         natural.min(span.width())
     };
-    (Rect::from_min_size(span.min, Vec2::new(width.max(0.0), span.height())), detail)
+    (
+        Rect::from_min_size(span.min, Vec2::new(width.max(0.0), span.height())),
+        detail,
+        compact,
+    )
+}
+
+/// Whether the span leaves less than the buttons and the least room for the
+/// place's text: the full island would then draw its buttons over one
+/// another, so they go into its menu.
+fn compact(widths: &Widths, span: f32) -> bool {
+    span < widths.fixed + COMPACT_TEXT_MIN
 }
 
 /// The place island at `rect`. Returns the action of a click.
@@ -235,7 +252,11 @@ pub fn island(
     st: &StatusInfo,
     rect: Rect,
     detail: Detail,
+    compact: bool,
 ) -> Option<BarAction> {
+    if compact {
+        return compact_island(ui, p, icons, panels, st, rect);
+    }
     let mut action = None;
     let top = rect.center().y - SLOT / 2.0;
 
@@ -313,6 +334,66 @@ pub fn island(
     {
         action = Some(BarAction::LandmarkStar(a));
     }
+    action
+}
+
+/// The place island when the span is too narrow for its buttons: the
+/// rating, one cut line of the place and a menu button. The arrows, home,
+/// favourites, the star and the parcel rights live in its menu there, so
+/// nothing is drawn over anything else (#2737).
+fn compact_island(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels, st: &StatusInfo, rect: Rect) -> Option<BarAction> {
+    let mut action = None;
+    let top = rect.center().y - SLOT / 2.0;
+    let resp = ui.interact(rect, Id::unique("bars_place_island"), Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let hot = resp.hovered() || open;
+    slot_face(ui, p, rect, hot, false);
+    place_options(&resp, p, st, &mut action);
+    if super::demo::get().open == Some(super::demo::Open::PlaceOptions) && ui.ctx().cumulative_frame_nr() >= 300 {
+        let id = Id::unique("bars_place_demo_options");
+        let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+        let at = Pos2::new(rect.left() + rect.width() * 0.3, rect.center().y);
+        menu::popup_at(ui.ctx(), id, at, &mut open, p, |ui| options_body(ui, p, st, &mut action));
+        ui.ctx().data_mut(|d| d.insert_temp(id, open));
+    }
+
+    let painter = ui.painter_at(rect);
+    let cy = rect.center().y;
+    let badge = Rect::from_center_size(Pos2::new(rect.left() + PAD + BADGE / 2.0, cy), Vec2::splat(BADGE));
+    crate::ui::widgets::paint_maturity_badge(&painter, p, st.maturity, badge, crate::ui::widgets::inner_radius(ui.visuals()));
+    // the menu button at the right end, the place's text in what is left
+    let more = Rect::from_min_size(Pos2::new(rect.right() - PAD - SLOT, top), Vec2::splat(SLOT));
+    paint_icon(ui, icons, "dots", more, ICON, slot_ink(p, hot, true));
+    let x = badge.right() + LOC_GAP;
+    let room = (more.left() - LOC_GAP - x).max(0.0);
+    let (parcel, region, _) = texts(st);
+    let label = if region.is_empty() {
+        parcel
+    } else {
+        format!("{parcel} · {region}")
+    };
+    let site = run_galley(&painter, &label, parcel_font(ui.ctx()), p.ink, false, room);
+    let baseline = crate::ui::widgets::centered_baseline(&painter, parcel_font(ui.ctx()), cy);
+    crate::ui::widgets::paint_on_baseline(&painter, site, x, baseline, p.ink);
+
+    demo_open(ui.ctx(), &resp, super::demo::Open::Place);
+    if !open {
+        ui.ctx().data_mut(|d| d.remove::<bool>(Id::unique(DEST_FOCUSED)));
+    }
+    menu::dropdown_placed(
+        &resp,
+        p,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        Some((egui::RectAlign::BOTTOM_START, 10.0)),
+        |ui| {
+            if let Some(a) = place_menu(ui, p, icons, panels, st) {
+                action = Some(a);
+                ui.close();
+            }
+        },
+    );
+    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-bars-place-menu-tip"));
+    place_options(&resp, p, st, &mut action);
     action
 }
 
@@ -594,6 +675,36 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
         });
     });
     ui.add_space(6.0);
+    // the arrows and the favourites the island shows when it has the room;
+    // here in a narrow window, where its buttons go (#2737)
+    let arrow = |left: bool, dest: Option<&str>| match dest {
+        Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_owned()),
+        Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_owned()),
+        None if left => aurora_i18n::tr!("ui-bars-no-previous-destination").to_owned(),
+        None => aurora_i18n::tr!("ui-bars-no-next-destination").to_owned(),
+    };
+    if menu::item_if(ui, p, "arrow-left", &arrow(true, st.tp_back.as_deref()), st.tp_back.is_some()) {
+        action = Some(BarAction::TeleportBack);
+    }
+    if menu::item_if(
+        ui,
+        p,
+        "arrow-right",
+        &arrow(false, st.tp_forward.as_deref()),
+        st.tp_forward.is_some(),
+    ) {
+        action = Some(BarAction::TeleportForward);
+    }
+    if st.favorites.access == crate::settings::FavoritesAccess::Menu {
+        menu::submenu(ui, p, "bookmarks-filled", aurora_i18n::tr!("common-favorites"), true, |ui| {
+            let mut fav = None;
+            super::favorites::menu_body(ui, p, icons, st.favorites, &mut fav);
+            if let Some(a) = fav {
+                action = Some(BarAction::from(a));
+                ui.close();
+            }
+        });
+    }
     // About Land first, the width of the menu: what this menu is opened for
     // most (it was a row among the others, below the rights)
     if crate::ui::widgets::action_button(
@@ -744,6 +855,16 @@ mod tests {
             forbidden_names: 110.0,
             all_names: 460.0,
         }
+    }
+
+    /// The full island's buttons and the least room for its text decide
+    /// whether it turns compact (#2737).
+    #[test]
+    fn a_narrow_span_turns_the_place_compact() {
+        let w = widths();
+        assert!(!compact(&w, w.fixed + COMPACT_TEXT_MIN));
+        assert!(compact(&w, w.fixed + COMPACT_TEXT_MIN - 1.0));
+        assert!(compact(&w, 230.0));
     }
 
     /// The three widths of the mockup: 1280 shows the parcel and the region,

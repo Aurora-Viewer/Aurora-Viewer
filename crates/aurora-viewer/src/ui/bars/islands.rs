@@ -296,7 +296,7 @@ pub fn top(
     let bug_rect =
         (st.show_bug_report && !compact).then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
     let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
-    let (place_rect, detail) = super::place::layout(ui, st, span);
+    let (place_rect, detail, place_compact) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
     // interface (`Context::is_pointer_over_egui`), between them over the world
@@ -376,7 +376,7 @@ pub fn top(
         });
     }
     area(&ctx, p, "place", place_rect, |ui| {
-        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
+        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail, place_compact) {
             action = a;
         }
     });
