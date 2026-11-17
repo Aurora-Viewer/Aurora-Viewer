@@ -1815,11 +1815,20 @@ impl BuildTool {
     /// The active group goes in DeRezObject, like LLSelectMgr::packDeRezHeader
     /// (indra/newview/llselectmgr.cpp), regardless of the parcel group.
     pub fn delete(&mut self, world: &mut World) {
+        // UISndInvalidOp: attachments are never deleted (deleteable_count 0)
         if self.attachment_selected(world) {
+            world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             return;
         }
         let roots = self.roots(world);
         if roots.is_empty() {
+            return;
+        }
+        // rlvCanDeleteOrReturn refuses before anything is sent: UISndInvalidOp
+        // and no deletion sound (the send boundary would refuse it too)
+        if !roots.iter().all(|&r| world.rlva_can_delete_or_return(r)) {
+            world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
+            world.system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
         let trash = Self::folder_of_type(world, 14);
@@ -1934,7 +1943,25 @@ impl BuildTool {
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
     /// Group selection follows packDuplicateHeader (indra/newview/llselectmgr.cpp).
     pub fn duplicate(&mut self, world: &mut World, s: &BuildSettings, offset: Vec3, select_copy: bool) {
-        if self.attachment_selected(world) || self.roots(world).is_empty() {
+        if self.roots(world).is_empty() {
+            return;
+        }
+        // LLSelectMgr::selectDuplicate: no copy of an attachment, nor of what
+        // rlvCanDeleteOrReturn keeps (the send boundary's rule, asked first
+        // so that the refusal sounds): UISndInvalidOp
+        let refused = |world: &World, roots: &[usize]| {
+            self.group_by_region(world, roots).into_iter().any(|(handle, local_ids)| {
+                !world.rlva_allows_build(&BuildCmd::Duplicate {
+                    handle,
+                    local_ids,
+                    offset,
+                    flags: 0,
+                    group_id: Uuid::nil(),
+                })
+            })
+        };
+        if self.attachment_selected(world) || refused(world, &self.roots(world)) {
+            world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             return;
         }
         let roots = self.copyable_roots(world);

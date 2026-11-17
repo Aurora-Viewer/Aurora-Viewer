@@ -1617,7 +1617,9 @@ fn drag_update(
         // Shift-drag leaves a copy behind (LLManipTranslate::handleHover, selectDuplicate)
         if d.mode == EditMode::Move && mods.shift && !mods.ctrl && cam.hud.is_none() {
             if d.linked {
-                // Firestorm refuses to copy individual parts
+                // Firestorm refuses to copy individual parts, once a drag
+                // (mWarningNoDragCopy): UISndInvalidOp
+                world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
                 for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {

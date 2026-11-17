@@ -37,6 +37,8 @@ impl World {
             kind: ImKind::Private,
             session: from,
             new_session: true,
+            // the announcement carries no text of theirs yet
+            mention: false,
         });
         self.social.session_mut(from);
         let line = ChatLine {
