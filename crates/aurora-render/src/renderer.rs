@@ -976,6 +976,9 @@ struct Targets {
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
+    /// The ray-traced shadows' mask (rt_shadows.rs), when the device traces:
+    /// bound in the contact mask's place.
+    rt: Option<crate::rt_shadows::Targets>,
     water_refl: Option<ReflTarget>,
     water_air: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
@@ -1977,6 +1980,10 @@ pub(crate) struct Backend {
     clouds: Option<crate::clouds::Clouds>,
     /// This frame draws the volumetric clouds over the sky.
     clouds_now: bool,
+    /// The ray-traced sun shadows (AURORA_RT_SHADOWS), and whether this
+    /// frame traces them.
+    rt: Option<crate::rt_shadows::RtShadows>,
+    rt_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -4278,6 +4285,7 @@ impl Backend {
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
+        let rt = crate::rt_shadows::RtShadows::new(&device, &queue);
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -4458,6 +4466,8 @@ impl Backend {
             contact,
             clouds: None,
             clouds_now: false,
+            rt,
+            rt_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -6233,6 +6243,7 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
+        let rt = crate::rt_shadows::Targets::new(device, w, h);
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -6278,6 +6289,7 @@ impl Backend {
             gtao_shown,
             ao_depth,
             contact,
+            rt,
             depth_ss_tex,
             water_refl,
             water_air,
@@ -6460,7 +6472,13 @@ impl Backend {
         .unwrap_or(&dummies.white);
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
-        let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
+        // the traced mask holds the contact shadows too (rt_shadows.wgsl)
+        let contact = t
+            .rt
+            .as_ref()
+            .map(|r| &r.result)
+            .or(t.contact.as_ref().map(|c| &c.result))
+            .unwrap_or(&dummies.black);
         let il = t
             .gtao
             .as_ref()
@@ -7979,6 +7997,7 @@ impl Backend {
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
+            rt: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
         let grade = [
@@ -8326,6 +8345,7 @@ impl Backend {
             motion_cut,
             world_shift,
             input_at,
+            rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
         self.film_reads.begin(match wanted {
@@ -8761,6 +8781,7 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
+        self.rt_now = f.shadows && self.rt.is_some() && self.targets.rt.is_some() && rt_faces.is_some();
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -8867,6 +8888,11 @@ impl Backend {
             air.misc = [0.0, 0.0, 0.0, 1.0];
             air.clip_plane = [0.0, 0.0, 1.0, -f.water_height];
             self.queue.write_buffer(&self.refl_buffers[7], 0, bytemuck::bytes_of(&air));
+        }
+        if self.rt_now {
+            // the traced mask stands for the shadow map where it is read
+            main.contact[0] = 1.0;
+            main.contact[2] = 1.0;
         }
         if self.contact_now {
             main.contact[0] = 1.0;
@@ -9376,6 +9402,17 @@ impl Backend {
             // viewfinder marches as much further
             self.contact
                 .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+        }
+        if let (true, Some(rt), Some(t)) = (self.rt_now, &self.rt, &self.targets.rt) {
+            rt.write(
+                &self.queue,
+                t,
+                fu.proj * fu.view,
+                fu.camera_pos,
+                f.sun_dir,
+                f.sun_visible > 0.0,
+                self.contact_now,
+            );
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -10364,6 +10401,22 @@ impl Backend {
                 }
             }
             self.contact.encode(&mut encoder, t, more);
+        }
+        if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
+            let contact = match (self.contact_now, &self.targets.contact) {
+                (true, Some(c)) => &c.result,
+                _ => &self.dummies.black,
+            };
+            rt.encode(
+                &self.device,
+                &mut encoder,
+                t,
+                &self.targets.depth_ss,
+                contact,
+                &scene.vertices,
+                &scene.indices,
+                faces,
+            );
         }
         mark(&mut encoder, MARK_CONTACT_END);
         // ---- FSR: the blended faces drawn over what lies behind them, even
