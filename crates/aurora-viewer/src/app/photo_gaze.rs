@@ -1,5 +1,5 @@
-//! The photo window's "Look at camera" and "Turn to camera" (Aurora's own:
-//! the Legacy Viewer's photo tools have neither).
+//! The photo window's "Look at camera", "Others look at camera" and "Turn
+//! to camera" (Aurora's own: the Legacy Viewer's photo tools have none).
 //!
 //! - **Look at camera** keeps our look-at target on the camera while the
 //!   window is open: a FOCUS target on a global point, the type the Legacy
@@ -7,19 +7,23 @@
 //!   setFocusGlobal → setLookAt(LOOKAT_TARGET_FOCUS), indra/newview/
 //!   llagentcamera.cpp). What is sent goes through `set_look_at`, so the
 //!   privacy settings and the look-at range apply as for any other target,
-//!   and the others see the same ViewerEffect the Legacy Viewer sends: no
-//!   new message. Our own head takes the camera on our viewer even with
-//!   "no look-at target, even for me" (`lookat::LookAts::own_local`): the
-//!   switch is a choice made for the photo, and nothing more is sent. The head and eyes take it within LLHeadRotMotion's limits,
-//!   and on our viewer over every animation (`own_over_animations`): an AO
-//!   stand that keys the head would otherwise hold it, and the photo is
-//!   drawn here. The others' viewers blend our animations as the Legacy
-//!   Viewer does, so they see the stand's head where it keys one.
-//! - **Turn to camera** turns the body once toward the camera, with the
+//!   and the others see the same ViewerEffect: no new message.
+//! - **Others look at camera** turns, on our viewer only, the heads of the
+//!   nearby avatars whose owners accepted our posing request
+//!   (`world::poser_consent`, the poser's consent): nothing is sent for
+//!   them, and a refusal or a withdrawal stops it at once.
+//! - On our viewer, the avatars that look (`lookat::PhotoLook`) take the
+//!   camera even with "no look-at target, even for me" (ours: a choice made
+//!   for the photo), within LLHeadRotMotion's limits and over every
+//!   animation (`scene::anim::Controller::look_over_animations`): an AO
+//!   stand that keys the head would otherwise hold it. Other viewers blend
+//!   the animations as the Legacy Viewer does, so they see the stand's head
+//!   where it keys one.
+//! - **Turn to camera** turns our body once toward the camera, with the
 //!   turn of FSTurnAvatarToSelectedObject (`selection_turn`: the yaw flags
 //!   go out with the AgentUpdate). A camera that follows the avatar would
-//!   swing around with it, so it is first locked where it looks, from where it stands (as a
-//!   click on our avatar with ClickOnAvatarKeepsCamera).
+//!   swing round with it, so it is first locked where it looks, from where
+//!   it stands (as a click on our avatar with ClickOnAvatarKeepsCamera).
 
 use super::*;
 
@@ -71,15 +75,29 @@ impl App {
     pub(super) fn update_photo_gaze(&mut self) {
         use crate::world::lookat;
         let wanted = self.photo_gaze_wanted();
-        self.world.look_at.own_over_animations = wanted;
-        self.world.look_at.own_glance = glance(self.settings.snapshot.look_intensity);
         let camera = self
             .world
             .main_origin()
             .map(|(mx, my)| glam::DVec3::new(mx as f64, my as f64, 0.0) + self.camera.position.as_dvec3());
         // our head on our viewer, even with "no look-at target, even for
-        // me": the switch is a choice made for the photo
-        self.world.look_at.own_local = camera.filter(|_| wanted);
+        // me": the switch is a choice made for the photo; and the heads of
+        // those who allowed posing ("Others look at camera")
+        let others = self.panels.snapshot && self.settings.snapshot.look_at_camera_others && self.in_world();
+        let consent = &self.world.poser_consent;
+        let allowed: Vec<uuid::Uuid> = if others {
+            consent
+                .accepted_peers()
+                .filter(|&peer| consent.can_pose(&self.world, peer))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let photo = &mut self.world.look_at.photo;
+        photo.others.clear();
+        photo.others.extend(allowed);
+        photo.own = wanted;
+        photo.glance = glance(self.settings.snapshot.look_intensity);
+        photo.camera = camera.filter(|_| photo.own || !photo.others.is_empty());
         match gaze(wanted, self.photo_gaze) {
             Gaze::Camera => {
                 let Some(at) = camera else {
@@ -131,6 +149,10 @@ impl App {
             return;
         };
         let frame = self.frame_count;
+        if mode.trim() == "others" {
+            self.demo_photo_gaze_others(frame);
+            return;
+        }
         if frame < 610 || !self.panels.snapshot {
             return;
         }
@@ -160,6 +182,75 @@ impl App {
             self.camera
                 .set_view(side(start + turn), head, &mut self.world.agent, &self.settings.camera);
         }
+    }
+}
+
+impl App {
+    /// AURORA_DEMO_PHOTO_GAZE=others: at frame 400 the poser's crowd of five
+    /// residents stands in front of us (`demo::poser::crowd`); at 600 every
+    /// avatar nearby that is not muted is asked to allow posing and accepts
+    /// (the poser's consent fixture); at
+    /// 610 "Others look at camera" turns on, "Look at camera" stays off,
+    /// and the camera stands 3 m from the nearest of them, 70° to its left,
+    /// at the height of its head: its head and eyes turn to the lens. The
+    /// log gives `photo gaze demo: others, <n> allowed of <m> nearby`.
+    fn demo_photo_gaze_others(&mut self, frame: u64) {
+        let now = Instant::now();
+        // the poser's crowd: five residents in an arc in front of us
+        if frame == 400
+            && let Some(handle) = self.world.main_region
+        {
+            self.world.apply(aurora_net::NetEvent::ObjectUpdates {
+                handle,
+                objects: crate::demo::poser::crowd(),
+            });
+        }
+        let me = self.world.agent_id;
+        let peers: Vec<uuid::Uuid> = self
+            .world
+            .objects
+            .avatars()
+            .map(|(_, o)| o.full_id)
+            .filter(|&id| id != me && crate::world::poser_consent::nearby(&self.world, id))
+            .collect();
+        if frame == 600 || frame == 601 {
+            let mut consent = std::mem::take(&mut self.world.poser_consent);
+            for &peer in &peers {
+                if frame == 600 {
+                    consent.request(&self.world, peer, now);
+                } else {
+                    consent.demo_accept(&self.world, peer, std::time::Duration::ZERO);
+                }
+            }
+            self.world.poser_consent = consent;
+        }
+        if frame != 610 || !self.panels.snapshot {
+            return;
+        }
+        self.settings.snapshot.look_at_camera = false;
+        self.settings.snapshot.look_at_camera_others = true;
+        let allowed = peers.iter().filter(|&&p| self.world.poser_consent.can_pose(&self.world, p)).count();
+        let nearest = peers
+            .iter()
+            .filter_map(|&p| Some((crate::world::poser_consent::distance(&self.world, p)?, p)))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        log::info!("photo gaze demo: others, {allowed} allowed of {} nearby", peers.len());
+        let Some((_, subject)) = nearest else {
+            return;
+        };
+        let Some(idx) = self.world.objects.index_of_uuid(&subject) else {
+            return;
+        };
+        let (Some(head), Some((_, rot, _))) = (
+            self.scene.head_world(&self.world, &subject, now),
+            crate::scene::Scene::object_transform(&self.world, idx, now, 0),
+        ) else {
+            return;
+        };
+        let ahead = rot * Vec3::X;
+        let yaw = ahead.y.atan2(ahead.x) + 70f32.to_radians();
+        let eye = head + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 3.0;
+        self.camera.set_view(eye, head, &mut self.world.agent, &self.settings.camera);
     }
 }
 

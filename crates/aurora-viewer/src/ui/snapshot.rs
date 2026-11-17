@@ -878,7 +878,16 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.look_at_camera);
             },
         );
-        ui.add_enabled_ui(s.look_at_camera, |ui| {
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-look-others"),
+            Some(aurora_i18n::tr!("photo-look-others-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.look_at_camera_others);
+            },
+        );
+        ui.add_enabled_ui(s.look_at_camera || s.look_at_camera_others, |ui| {
             row(
                 ui,
                 p,

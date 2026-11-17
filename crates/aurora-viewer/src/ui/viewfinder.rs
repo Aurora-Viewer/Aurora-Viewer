@@ -2526,6 +2526,14 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         }),
     ));
     v.push((
+        aurora_i18n::tr!("photo-look-others"),
+        yes_no(s.look_at_camera_others),
+        Box::new(|s, _| {
+            s.look_at_camera_others = !s.look_at_camera_others;
+            None
+        }),
+    ));
+    v.push((
         aurora_i18n::tr!("photo-look-intensity"),
         format!("{} %", s.look_intensity),
         Box::new(|s, _| {

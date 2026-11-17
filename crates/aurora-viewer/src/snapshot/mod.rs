@@ -231,6 +231,10 @@ pub struct Settings {
     /// "Look at camera"; the eyes do the rest. 100 faces it, about 50 a
     /// three-quarter turn, 0 a side glance of the eyes alone.
     pub look_intensity: u8,
+    /// "Others look at camera": while the photo window is open, the nearby
+    /// avatars whose owners accepted our posing request look at the
+    /// camera too, on our viewer only (`app::photo_gaze`). Off.
+    pub look_at_camera_others: bool,
     /// The preview follows the camera.
     pub auto_refresh: bool,
     /// Date and time in the file name.
@@ -306,6 +310,7 @@ impl Default for Settings {
             huds: false,
             look_at_camera: false,
             look_intensity: 100,
+            look_at_camera_others: false,
             auto_refresh: false,
             timestamp_names: true,
             folder: None,
