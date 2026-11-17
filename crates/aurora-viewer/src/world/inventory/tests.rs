@@ -1708,3 +1708,39 @@ fn a_broken_links_original_is_never_read_again() {
     inv.drop_broken(&mut asked);
     assert_eq!(asked, vec![other]);
 }
+
+/// An item already on its way is never asked twice: copies of the same
+/// read counted their failures as attempts, twenty at once. Its answer, its
+/// failure or the deadline frees it.
+#[test]
+fn an_item_on_its_way_is_never_read_twice() {
+    let mut inv = Inventory::default();
+    let (a, b) = (Uuid::from_u128(77), Uuid::from_u128(78));
+    let now = std::time::Instant::now();
+    let mut first = vec![a, b, a];
+    inv.claim_item_reads(&mut first, now);
+    assert_eq!(first, vec![a, b], "once each");
+    let mut again = vec![a, b];
+    inv.claim_item_reads(&mut again, now);
+    assert!(again.is_empty(), "both still on their way");
+    // a failure counts once, then the item may be asked again
+    inv.items_failed(&[a]);
+    assert_eq!(inv.item_failures[&a], 1);
+    let mut retry = vec![a, b];
+    inv.claim_item_reads(&mut retry, now);
+    assert_eq!(retry, vec![a]);
+    // a read never answered frees its item after the deadline
+    let mut late = vec![b];
+    inv.claim_item_reads(&mut late, now + ITEM_READ_DEADLINE);
+    assert_eq!(late, vec![b]);
+    // a late copy of a broken link's read counts nothing more
+    for _ in 0..ITEM_FETCH_ATTEMPTS {
+        inv.items_failed(&[a]);
+    }
+    let attempts = inv.item_failures[&a];
+    inv.items_failed(&[a]);
+    assert_eq!(inv.item_failures[&a], attempts);
+    let mut dead = vec![a];
+    inv.claim_item_reads(&mut dead, now + ITEM_READ_DEADLINE);
+    assert!(dead.is_empty(), "a broken link is never read again");
+}

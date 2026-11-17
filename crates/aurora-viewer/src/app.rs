@@ -2319,8 +2319,9 @@ impl App {
         // this session (LLViewerInventoryItem::isBrokenLink): on a huge
         // inventory, hundreds of dead links each read over and over took
         // requests from the folder walk
-        if let NetCommand::FetchItems { items, .. } = &mut cmd {
-            self.world.inventory.drop_broken(items);
+        // (nor an item already on its way: one read an item at a time)
+        if let NetCommand::FetchItems { items, .. } | NetCommand::FetchAttachmentItems { items } = &mut cmd {
+            self.world.inventory.claim_item_reads(items, std::time::Instant::now());
             if items.is_empty() {
                 return;
             }

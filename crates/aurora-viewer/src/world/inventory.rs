@@ -74,6 +74,9 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
+    /// Items with a read on its way, and since when (`claim_item_reads`):
+    /// one read an item at a time, so a failure counts once.
+    pub items_reading: HashMap<Uuid, std::time::Instant>,
     /// The listing folders the Marketplace data holds in place, set by the
     /// listings every frame (`marketplace::Holds`).
     pub listing_holds: super::marketplace::Holds,
@@ -96,6 +99,8 @@ pub struct Inventory {
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+/// An item read unanswered this long no longer stops another read of it.
+pub const ITEM_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
 // v3 could store a no-copy original as removed even when the offer never
 // reached a simulator. The folder version alone cannot distinguish that cache.
@@ -537,6 +542,27 @@ impl Inventory {
         }
     }
 
+    /// Leaves out of an item read the broken links' originals and the items
+    /// already on their way (asked again by another window or the outfit
+    /// code before the first answer came: on a huge inventory the same dead
+    /// link was read twenty times at once, each failure counted as an
+    /// attempt), and marks the rest as on their way. A read never answered
+    /// frees its item after [`ITEM_READ_DEADLINE`].
+    pub fn claim_item_reads(&mut self, items: &mut Vec<Uuid>, now: std::time::Instant) {
+        self.drop_broken(items);
+        let mut seen = HashSet::new();
+        items.retain(|id| {
+            seen.insert(*id)
+                && self
+                    .items_reading
+                    .get(id)
+                    .is_none_or(|since| now.saturating_duration_since(*since) >= ITEM_READ_DEADLINE)
+        });
+        for id in items.iter() {
+            self.items_reading.insert(*id, now);
+        }
+    }
+
     /// A broken link's original: confirmed gone, and not received since.
     pub fn broken(&self, id: &Uuid) -> bool {
         self.missing_items.contains(id) && !self.items.contains_key(id)
@@ -546,6 +572,7 @@ impl Inventory {
     pub fn items_missing(&mut self, ids: Vec<Uuid>) {
         self.generation += 1;
         for id in ids {
+            self.items_reading.remove(&id);
             self.item_failures.remove(&id);
             self.item_retries.remove(&id);
             self.missing_items.insert(id);
@@ -555,16 +582,32 @@ impl Inventory {
     /// These item reads failed: asked again, up to `ITEM_FETCH_ATTEMPTS`.
     pub fn items_failed(&mut self, ids: &[Uuid]) {
         self.generation += 1;
+        // (one line a batch, never one a link: hundreds of dead links pushed
+        // everything else out of the last warnings)
+        let mut broken = 0;
+        let mut first = None;
         for id in ids {
+            self.items_reading.remove(id);
+            // (already a broken link: a late copy of its read counts nothing)
+            if self.missing_items.contains(id) {
+                continue;
+            }
             let attempts = self.item_failures.entry(*id).or_insert(0);
             *attempts += 1;
             if *attempts >= ITEM_FETCH_ATTEMPTS {
-                log::warn!("inventory item {id} still unreadable after {attempts} attempts: treated as a broken link");
+                broken += 1;
+                first.get_or_insert(*id);
                 self.item_retries.remove(id);
                 self.missing_items.insert(*id);
             } else {
                 self.item_retries.insert(*id);
             }
+        }
+        if let Some(first) = first {
+            log::warn!(
+                "{broken} inventory items still unreadable after {ITEM_FETCH_ATTEMPTS} attempts: treated as broken links ({} in all; first {first})",
+                self.missing_items.len()
+            );
         }
     }
 
