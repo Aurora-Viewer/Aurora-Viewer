@@ -28,6 +28,8 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
+mod shots;
+
 /// The window's id.
 pub const WINDOW: &str = "director";
 
@@ -108,6 +110,9 @@ pub enum Action {
     /// place of the list.
     SaveTrack,
     LoadTrack(usize),
+    /// This keyframe travels with its target (from where it is now), or
+    /// stays where it is in the world.
+    KeyTravel(usize, bool),
 }
 
 /// The saved tracks as the window shows them.
@@ -146,6 +151,8 @@ pub struct Live {
     pub can_record: bool,
     /// A film is being recorded.
     pub recording: bool,
+    /// Where a shot starts from (`director::shots`).
+    pub shots: director::shots::Here,
 }
 
 /// The recording as the window shows it (`recorder.rs`).
@@ -258,6 +265,9 @@ pub fn window(
                 });
                 widgets::collapsing(ui, p, "director_lock", aurora_i18n::tr!("director-lock"), true, |ui| {
                     lock_section(ui, p, d, live, actions);
+                });
+                widgets::collapsing(ui, p, "director_shots", aurora_i18n::tr!("director-shots"), false, |ui| {
+                    shots::shots_section(ui, p, d, live)
                 });
                 let keyframe = match d.selected.filter(|index| *index < d.track.len()) {
                     Some(index) => aurora_i18n::tr!("director-keyframe", number = index + 1),
@@ -913,6 +923,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     if index > 0 {
         span_rows(ui, p, d, index);
     }
+    shots::keyframe_rows(ui, p, d, index, actions);
     row(ui, p, aurora_i18n::tr!("director-lens"), |ui| {
         if let Some(fov) = degrees(ui, key.pose.fov, LENS_DEGREES, true) {
             d.track.set_pose(index, Pose { fov, ..key.pose });
@@ -1751,6 +1762,7 @@ mod tests {
             can_redo: false,
             can_record: false,
             recording: false,
+            shots: Default::default(),
         }
     }
 
