@@ -150,6 +150,9 @@ pub(crate) struct FramePacket {
     pub world_shift: [f32; 2],
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
+    /// The faces the ray-traced shadows trace this frame (rt_shadows.rs;
+    /// None when the device does not trace).
+    pub rt: Option<std::sync::Arc<Vec<crate::rt_shadows::Instance>>>,
     pub input_at: Option<Instant>,
 }
 

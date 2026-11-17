@@ -1608,6 +1608,11 @@ impl Renderer {
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
+            rt: self.device.features().contains(crate::rt_shadows::FEATURES).then(|| {
+                let mut faces = Vec::new();
+                crate::rt_shadows::gather(&self.records, &self.cull, &mut faces);
+                std::sync::Arc::new(faces)
+            }),
         };
         self.frames += 1;
         let built = t0.elapsed();
@@ -2022,6 +2027,14 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
+    // the ray-traced shadows' experiment (rt_shadows.rs), not with VR
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    let rt_allowed = xr.is_none();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    let rt_allowed = true;
+    if rt_allowed && crate::rt_shadows::wanted(afeat) {
+        features |= crate::rt_shadows::FEATURES;
+    }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {
         features |= wgpu::Features::TIMESTAMP_QUERY;
@@ -2099,7 +2112,13 @@ fn open_device(
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
-        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
+            // SAFETY: wgpu's ray queries are experimental (its API may still
+            // change); asked only with AURORA_RT_SHADOWS, an experiment.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         memory_hints: wgpu::MemoryHints::Manual {
             suballocated_device_memory_block_size: MEMORY_BLOCK..MEMORY_BLOCK,
         },

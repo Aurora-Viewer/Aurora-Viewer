@@ -1547,6 +1547,11 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 // The sun's shadow of an opaque surface of the main view: the shadow map,
 // and the contact shadows where they are on.
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
+    // the ray-traced mask (rt_shadows.rs), the contact shadows in it, where
+    // the surface is the prepass's; the shadow map elsewhere
+    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_surface && !in_reflection_pass()) {
+        return contact_shadow(frag);
+    }
     let s = shadow_factor(world_pos, n, vertex_depth);
     if (frame.params.z < 0.5) {
         return s;
