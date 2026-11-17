@@ -5057,7 +5057,8 @@ both open states and the selection count. Capture at frame 620.
   and then to the other: with `1` or `2`, the lamps keep their maps all the
   way round (`AURORA_PROJECTOR_TRACE=1`'s `point trace:` lines show the
   owners), and no shadow fades out and back as the camera passes; with
-  `AURORA_POINT_SHADOW_ANCHOR=0` the map follows the lamp nearest the
+  `AURORA_POINT_SHADOW_ANCHOR=0` (or Preferences › Graphics › "Point
+  shadows follow the avatar" off) the map follows the lamp nearest the
   camera. `window`: a point light outside a mullioned
   window instead, lighting the floor inside at a low angle: with `2`, the
   frame and bars cast clean shadows. `glass` adds a blended pane (alpha
@@ -14185,7 +14186,8 @@ What the inventory must show with these scenarios:
   decode and kept in the transcoded cache: delete the `.bc7` files of the
   textures compared (`<cache>/tex/<id>.bc7`) before each of the two launches.
 - **`AURORA_POINT_SHADOW_ANCHOR=0`**: point-light shadows ranked from the
-  camera wherever it is, as before. Otherwise, with the camera within 6 m
+  camera wherever it is, as before, like the option "Point shadows follow
+  the avatar" off, whatever the option says. Otherwise, with the camera within 6 m
   of our avatar, they are ranked from the avatar, and a light out of view
   keeps its map; from 10 m on, from the camera; in between, from a point
   that slides from one to the other. Compare with

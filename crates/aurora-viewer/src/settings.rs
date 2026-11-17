@@ -1715,6 +1715,12 @@ pub struct Settings {
     pub point_shadows: bool,
     /// How many of them, 1 to `MAX_POINT_SHADOWS`.
     pub point_shadow_limit: u8,
+    /// Point-light shadows ranked from our avatar while the camera is near
+    /// it (`scene::lights::point_anchor`), so that circling or zooming
+    /// around it keeps the same lights' maps. Off, they are ranked from the
+    /// camera: the lamps nearest it cast, which changes the look as the
+    /// camera moves.
+    pub point_shadow_avatar: bool,
     /// Screen-space contact shadows of the sun or the moon, beyond the
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
@@ -2834,6 +2840,7 @@ impl Default for Settings {
             projector_shadow_limit: 2,
             point_shadows: false,
             point_shadow_limit: 1,
+            point_shadow_avatar: true,
             contact_shadows: false,
             soft_shadows: false,
             shadow_softness: SHADOW_SOFTNESS,
@@ -4390,6 +4397,7 @@ mod tests {
         let settings = Settings::default();
         assert!(!settings.point_shadows);
         assert_eq!(settings.point_shadow_limit, 1);
+        assert!(settings.point_shadow_avatar, "ranked from the avatar once turned on");
         assert_eq!(settings.render_settings().point_shadow_limit, 0, "off: no map is made");
 
         let mut on = Settings {

@@ -733,6 +733,13 @@ fn light(cx: &mut Cx) {
                     .changed()
                 },
             );
+            let p = cx.p;
+            cx.row(
+                tr!("ui-options-point-shadow-avatar"),
+                tr!("ui-options-point-shadow-avatar-help"),
+                &field!(point_shadow_avatar),
+                |ui, s| ui.add_enabled_ui(enabled, |ui| toggle(ui, &p, &mut s.point_shadow_avatar)).inner,
+            );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
