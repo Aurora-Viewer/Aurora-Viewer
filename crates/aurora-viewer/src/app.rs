@@ -22666,6 +22666,20 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
+                // faces-picker-multiple: the second prim wears another texture
+                if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-picker-multiple,")) {
+                    for event in &mut events {
+                        if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
+                            for object in objects.iter_mut().filter(|object| object.local_id == 99621) {
+                                if let Some(te) = object.texture_entry.as_mut() {
+                                    for face in &mut std::sync::Arc::make_mut(te).faces {
+                                        face.texture = crate::demo::TEX_TILES;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if complex && let Some(gfx) = &mut self.gfx {
                     if physics {
                         let analysed = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics-analysed"));
