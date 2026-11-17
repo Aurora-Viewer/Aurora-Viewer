@@ -811,6 +811,23 @@ fn interpolant(dt: f32, half_life: f32) -> f32 {
 }
 
 /// LLQuaternion::constrain: limit a rotation to `angle`.
+/// How far a look-at target, as a rotation from the chest (`rel`), is
+/// within a natural turn of the neck: 1 up to `NATURAL_REACH.0` off the
+/// chest's front, 0 from `NATURAL_REACH.1` on, smooth between. Aurora's own,
+/// for `look_over_animations`: past it the head goes back to the
+/// animation's instead of staring behind the body.
+fn natural_reach(rel: Quat) -> f32 {
+    let f = rel * Vec3::X;
+    let angle = f.x.clamp(-1.0, 1.0).acos();
+    let (from, to) = (NATURAL_REACH.0.to_radians(), NATURAL_REACH.1.to_radians());
+    let t = ((angle - from) / (to - from)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// Degrees off the chest's front where the look over the animations starts
+/// to give up, and where it has (`natural_reach`).
+const NATURAL_REACH: (f32, f32) = (70.0, 110.0);
+
 fn constrain(q: Quat, angle: f32) -> Quat {
     let q = if q.w < 0.0 { -q } else { q };
     let c = (angle * 0.5).cos();
@@ -1061,6 +1078,9 @@ impl Controller {
         };
         let head_w = pr.head.update(!self.look_cleared, now, HEAD_ROT_EASE);
         let eye_w = pr.eyes.update(true, now, EYE_EASE);
+        // how far the target is within a natural reach (1) or out of it (0),
+        // over the animations only (`natural_reach`)
+        let mut reach = 1.0;
         // LLHeadRotMotion::onUpdate (in the root frame)
         if head_w > 0.0 {
             let target = match self.look {
@@ -1079,7 +1099,18 @@ impl Controller {
                 }
                 None => Quat::IDENTITY,
             };
-            let head_local = constrain(target, HEAD_ROTATION_CONSTRAINT);
+            // over the animations, the reach is the body's as the
+            // animation poses it (the chest), not the root's: a stand that
+            // turns the body would otherwise leave the head twisted round
+            let chest_rot = p.chest.map(|c| c.0).filter(|_| self.look_over_animations);
+            let head_local = match chest_rot {
+                Some(chest) => {
+                    let rel = chest.inverse() * target;
+                    reach = natural_reach(rel);
+                    chest * constrain(rel, HEAD_ROTATION_CONSTRAINT)
+                }
+                None => constrain(target, HEAD_ROTATION_CONSTRAINT),
+            };
             let torso_target = nlerp(TORSO_LAG, Quat::IDENTITY, head_local);
             pr.torso = nlerp(interpolant(dt, TORSO_LOOKAT_LAG_HALF_LIFE), pr.torso, torso_target);
             pr.last_head = nlerp(interpolant(dt, HEAD_LOOKAT_LAG_HALF_LIFE), pr.last_head, head_local);
@@ -1088,10 +1119,15 @@ impl Controller {
             }
             if let (Some(neck), Some(head), Some(chest)) = (j.neck, j.head, p.chest) {
                 // what is left after the chest, half to the neck, half to the head
-                let h = chest.0.inverse() * pr.last_head;
+                let mut h = chest.0.inverse() * pr.last_head;
+                if chest_rot.is_some() {
+                    // the lag must not carry it past the reach while the
+                    // body turns; out of reach, back to the animation's head
+                    h = nlerp(reach, Quat::IDENTITY, constrain(h, HEAD_ROTATION_CONSTRAINT));
+                }
                 let half = nlerp(NECK_LAG, Quat::IDENTITY, h);
-                out.push((neck, look_priority, head_w, half, false));
-                out.push((head, look_priority, head_w, half, false));
+                out.push((neck, look_priority, head_w * reach, half, false));
+                out.push((head, look_priority, head_w * reach, half, false));
             }
         }
         // LLEyeMotion::onUpdate
@@ -1133,6 +1169,10 @@ impl Controller {
                 } else {
                     Quat::IDENTITY
                 };
+                if self.look_over_animations {
+                    // out of reach, the eyes come back ahead with the head
+                    rot = nlerp(reach, Quat::IDENTITY, rot);
+                }
                 out.push((l, look_priority, eye_w, rot * jitter * vq, false));
                 out.push((r, look_priority, eye_w, rot * jitter * vq.inverse(), false));
             }
@@ -3210,6 +3250,64 @@ mod tests {
             torso.abs() < 0.02 && torso_held.abs() < 0.02,
             "the torso keeps the stand: {torso_held} {torso}"
         );
+    }
+
+    /// An animation that turns the body round (a walk in circles) with
+    /// the camera behind it: over the animations, the head keeps a natural
+    /// reach from the chest instead of staring backwards, and gives the
+    /// head back to the animation; within reach, it still turns.
+    #[test]
+    fn the_look_over_animations_keeps_a_natural_reach_from_the_chest() {
+        let rig = rig();
+        let turned = |yaw: f32| {
+            let mut animation = swing(&rig).anim.clone();
+            animation.looping = true;
+            animation.joints = [("mTorso", yaw, 4), ("mNeck", 0.0, 7), ("mHead", 0.0, 7)]
+                .into_iter()
+                .map(|(name, yaw, priority)| aurora_assets::JointMotion {
+                    joint_name: name.into(),
+                    priority,
+                    rot_keys: vec![aurora_assets::anim::RotKey {
+                        time: 0.0,
+                        rotation: Quat::from_rotation_z(yaw),
+                    }],
+                    pos_keys: Vec::new(),
+                })
+                .collect();
+            Arc::new(BoundAnim::bind(animation, &rig))
+        };
+        let rot = |pose: &[[[f32; 4]; 4]], name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let yaw = |q: Quat| {
+            let f = q * Vec3::X;
+            f.y.atan2(f.x)
+        };
+        // the head's yaw from the chest, the camera ahead of the root
+        let run = |body: f32| {
+            let animation = turned(body);
+            let t0 = Instant::now();
+            let mut controller = synchronized_controller();
+            controller.sync(&[signal(Uuid::from_u128(7), 1, t0)], t0, |_| Some(animation.clone()));
+            controller.look_over_animations = true;
+            controller.look = Some(Vec3::new(2.0, 0.0, 0.0));
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            for i in 0..=60 {
+                controller.evaluate(&rig, t0 + Duration::from_secs_f32(i as f32 * 0.05), None, &mut pose);
+            }
+            yaw(rot(&pose, "mChest").inverse() * rot(&pose, "mHead"))
+        };
+        // the body turned 40° away: the head turns back to the camera
+        let near = run(40f32.to_radians());
+        assert!(near < -0.4, "within reach the head turns to the camera: {near}");
+        // the body turned round: the head stays with the animation's
+        let behind = run(170f32.to_radians());
+        assert!(behind.abs() < 0.05, "out of reach the head is the animation's: {behind}");
+        // never past the head's constraint from the chest
+        for body in [60f32, 90.0, 120.0] {
+            let h = run(body.to_radians());
+            assert!(h.abs() <= HEAD_ROTATION_CONSTRAINT + 0.02, "{body}°: {h}");
+        }
+        assert_eq!(natural_reach(Quat::IDENTITY), 1.0);
+        assert_eq!(natural_reach(Quat::from_rotation_z(std::f32::consts::PI)), 0.0);
     }
 
     #[test]
