@@ -383,6 +383,18 @@ pub struct CameraSettings {
     pub show_avatar_in_mouselook: bool,
     /// Optional animated eye position; mouse aim never follows head rotation.
     pub mouselook_follow_eyes: bool,
+    /// Over-the-shoulder aim: mouselook's controls with the camera behind the
+    /// avatar's shoulder (`OTSEnabled`, Megapahit viewer). M and the
+    /// mouselook commands enter it instead of the first-person view.
+    pub over_the_shoulder: bool,
+    /// OTSCameraDistance: how far behind the avatar the camera sits (m).
+    pub ots_distance: f32,
+    /// OTSCameraSide: to the side of the avatar (m), negative to its right.
+    pub ots_side: f32,
+    /// OTSCameraHeight: above the avatar's centre (m).
+    pub ots_height: f32,
+    /// OTSFocusDistance: how far in front of the avatar the view converges (m).
+    pub ots_focus_distance: f32,
     /// Move the third-person avatar camera and focus with this animated joint.
     pub third_person_follow_joint: Option<CameraFollowJoint>,
     /// Strength of the selected joint's translation, in percent (100 = full).
@@ -484,6 +496,11 @@ impl Default for CameraSettings {
             enable_mouselook: true,
             show_avatar_in_mouselook: false,
             mouselook_follow_eyes: false,
+            over_the_shoulder: false,
+            ots_distance: 3.0,
+            ots_side: -0.5,
+            ots_height: 0.5,
+            ots_focus_distance: 10.0,
             third_person_follow_joint: None,
             third_person_follow_intensity: 100,
             wheel_exits_mouselook: true,
@@ -579,6 +596,13 @@ pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
 /// (floater_phototools_camera.xml, floater_phototools.xml), up to a half-life
 /// of 6 s, and not the 9 of panel_preferences_move.xml: both sliders drive the
 /// same setting, and Aurora has one.
+/// Ranges of the over-the-shoulder camera's sliders, as the Megapahit
+/// viewer's Preferences › Move & View › Over-The-Shoulder offers them.
+pub const OTS_DISTANCE_RANGE: std::ops::RangeInclusive<f32> = 1.0..=10.0;
+pub const OTS_SIDE_RANGE: std::ops::RangeInclusive<f32> = -1.0..=1.0;
+pub const OTS_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
+pub const OTS_FOCUS_RANGE: std::ops::RangeInclusive<f32> = 2.0..=30.0;
+
 pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=300.0;
 
 impl CameraSettings {
@@ -636,6 +660,11 @@ impl CameraSettings {
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
         self.mouselook_iff_range = fix(self.mouselook_iff_range, 0.0, 500.0, d.mouselook_iff_range);
+        let range = |v: f32, r: &std::ops::RangeInclusive<f32>, def: f32| fix(v, *r.start(), *r.end(), def);
+        self.ots_distance = range(self.ots_distance, &OTS_DISTANCE_RANGE, d.ots_distance);
+        self.ots_side = range(self.ots_side, &OTS_SIDE_RANGE, d.ots_side);
+        self.ots_height = range(self.ots_height, &OTS_HEIGHT_RANGE, d.ots_height);
+        self.ots_focus_distance = range(self.ots_focus_distance, &OTS_FOCUS_RANGE, d.ots_focus_distance);
         self
     }
 }

@@ -291,6 +291,45 @@ fn mouselook(cx: &mut Cx) {
             tr!("ui-options-camera-follow-eyes-tip"),
             &field!(camera.mouselook_follow_eyes),
         );
+        // OTSEnabled and its offsets (Megapahit viewer,
+        // panel_preferences_move.xml "Over-The-Shoulder")
+        cx.toggle(
+            tr!("ui-options-camera-over-the-shoulder"),
+            tr!("ui-options-camera-over-the-shoulder-tip"),
+            &field!(camera.over_the_shoulder),
+        );
+        let off = !cx.s.camera.over_the_shoulder;
+        cx.subs(off, |cx| {
+            use crate::camera::{OTS_DISTANCE_RANGE, OTS_FOCUS_RANGE, OTS_HEIGHT_RANGE, OTS_SIDE_RANGE};
+            cx.slider(
+                tr!("ui-options-camera-ots-distance"),
+                tr!("ui-options-camera-ots-distance-tip"),
+                &field!(camera.ots_distance),
+                OTS_DISTANCE_RANGE,
+                " m",
+            );
+            cx.slider(
+                tr!("ui-options-camera-ots-side"),
+                tr!("ui-options-camera-ots-side-tip"),
+                &field!(camera.ots_side),
+                OTS_SIDE_RANGE,
+                " m",
+            );
+            cx.slider(
+                tr!("ui-options-camera-ots-height"),
+                tr!("ui-options-camera-ots-height-tip"),
+                &field!(camera.ots_height),
+                OTS_HEIGHT_RANGE,
+                " m",
+            );
+            cx.slider(
+                tr!("ui-options-camera-ots-focus"),
+                tr!("ui-options-camera-ots-focus-tip"),
+                &field!(camera.ots_focus_distance),
+                OTS_FOCUS_RANGE,
+                " m",
+            );
+        });
         cx.toggle(
             tr!("ui-options-camera-alt-right-click-menu"),
             tr!("ui-options-camera-alt-right-click-menu-tip"),
