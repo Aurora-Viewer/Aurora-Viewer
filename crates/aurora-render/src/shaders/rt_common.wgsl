@@ -1,0 +1,243 @@
+// What the ray-traced passes share (rt_shadows.rs): the scene's tables as
+// a ray's hit reads them, the placement of a vertex as the vertex shaders
+// place it (object.wgsl `placed_model`: palette times inverse bind, blended
+// over four joints; a worn prim placed by its anchor; without the live
+// morphs), and the surface under a hit (its record, normal, texture
+// coordinates and base colour). Prepended to each ray-traced shader.
+//
+// Group 1 is the scene, group 2 the renderer's bindless textures.
+
+const FLAG_ALPHA_MASK: u32 = 2u;
+const FLAG_PBR: u32 = 8u;
+const FLAG_TERRAIN: u32 = 64u;
+const FLAG_SKINNED: u32 = 128u;
+const FLAG_ANCHORED: u32 = 4096u;
+const SKELETON_ANCHOR: u32 = 208u;
+// vec4s of a draw record (types::DrawRecord) and where its parts start
+const RECORD_VEC4S: u32 = 19u;
+const RECORD_BASE_COLOR: u32 = 4u;
+const RECORD_EMISSIVE: u32 = 5u;
+const RECORD_UV_ST: u32 = 6u;
+const RECORD_PARAMS: u32 = 7u;
+const RECORD_TEX: u32 = 8u;
+const RECORD_FLAGS: u32 = 9u;
+// u32 words of an arena vertex and of a skin vertex (types.rs)
+const VERTEX_WORDS: u32 = 6u;
+const SKIN_WORDS: u32 = 3u;
+
+struct SkinBind {
+    inverse_bind: mat4x4<f32>,
+    joint: vec4<u32>,
+};
+
+// gpu_cull::CullFace: a record's geometry in the arena
+struct CullFace {
+    index_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    object: u32,
+    bits: u32,
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+};
+
+@group(1) @binding(0) var<storage, read> records: array<vec4<u32>>;
+@group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
+@group(1) @binding(2) var<storage, read> skin_binds: array<SkinBind>;
+@group(1) @binding(3) var<storage, read> vertices: array<u32>;
+@group(1) @binding(4) var<storage, read> skin: array<u32>;
+@group(1) @binding(5) var<storage, read> indices: array<u32>;
+@group(1) @binding(6) var<storage, read> cull_faces: array<CullFace>;
+// The records of the posed top level's faces: an instance's custom index
+// is where its skeleton's start, its geometries are its faces in order.
+@group(1) @binding(7) var<storage, read> posed_records: array<u32>;
+
+@group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
+@group(2) @binding(1) var tex_sampler: sampler;
+struct TextureLocations {
+    page_count: u32,
+    values: array<u32>,
+}
+@group(2) @binding(2) var<storage, read> tex_loc: TextureLocations;
+
+fn record_vec(record: u32, part: u32) -> vec4<u32> {
+    return records[record * RECORD_VEC4S + part];
+}
+
+fn record_vecf(record: u32, part: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(record_vec(record, part));
+}
+
+fn record_model(record: u32) -> mat4x4<f32> {
+    let base = record * RECORD_VEC4S;
+    return mat4x4<f32>(
+        bitcast<vec4<f32>>(records[base]),
+        bitcast<vec4<f32>>(records[base + 1u]),
+        bitcast<vec4<f32>>(records[base + 2u]),
+        bitcast<vec4<f32>>(records[base + 3u]),
+    );
+}
+
+fn index_at(i: u32) -> u32 {
+    let word = indices[i >> 1u];
+    return select(word & 0xffffu, word >> 16u, (i & 1u) == 1u);
+}
+
+fn vertex_pos(v: u32) -> vec3<f32> {
+    let w = v * VERTEX_WORDS;
+    return vec3<f32>(bitcast<f32>(vertices[w]), bitcast<f32>(vertices[w + 1u]), bitcast<f32>(vertices[w + 2u]));
+}
+
+fn vertex_normal(v: u32) -> vec3<f32> {
+    return unpack4x8snorm(vertices[v * VERTEX_WORDS + 3u]).xyz;
+}
+
+fn vertex_uv(v: u32) -> vec2<f32> {
+    let w = v * VERTEX_WORDS;
+    return vec2<f32>(bitcast<f32>(vertices[w + 4u]), bitcast<f32>(vertices[w + 5u]));
+}
+
+fn joint_matrix(flags: vec4<u32>, j: u32) -> mat4x4<f32> {
+    let b = skin_binds[flags.z + j];
+    return palettes[flags.y + b.joint.x] * b.inverse_bind;
+}
+
+// Where the vertex shaders put vertex `v` of `record` (object.wgsl
+// `placed_model`).
+fn placed_matrix(record: u32, v: u32) -> mat4x4<f32> {
+    let flags = record_vec(record, RECORD_FLAGS);
+    if ((flags.x & FLAG_SKINNED) != 0u) {
+        let s = v * SKIN_WORDS;
+        let jw = skin[s];
+        let joints = vec4<u32>(jw & 0xffu, (jw >> 8u) & 0xffu, (jw >> 16u) & 0xffu, jw >> 24u);
+        let weights = vec4<f32>(
+            f32(skin[s + 1u] & 0xffffu),
+            f32(skin[s + 1u] >> 16u),
+            f32(skin[s + 2u] & 0xffffu),
+            f32(skin[s + 2u] >> 16u),
+        ) / 65535.0;
+        let ws = max(weights.x + weights.y + weights.z + weights.w, 1e-4);
+        var sm = joint_matrix(flags, joints.x) * weights.x;
+        if (weights.y > 0.0) { sm += joint_matrix(flags, joints.y) * weights.y; }
+        if (weights.z > 0.0) { sm += joint_matrix(flags, joints.z) * weights.z; }
+        if (weights.w > 0.0) { sm += joint_matrix(flags, joints.w) * weights.w; }
+        sm = sm * (1.0 / ws);
+        if ((flags.x & FLAG_ANCHORED) != 0u) {
+            return palettes[flags.y + SKELETON_ANCHOR] * sm;
+        }
+        return record_model(record) * sm;
+    }
+    if ((flags.x & FLAG_ANCHORED) != 0u) {
+        return palettes[flags.y] * record_model(record);
+    }
+    return record_model(record);
+}
+
+// The surface under a hit.
+struct Surface {
+    record: u32,
+    // world normal, facing the ray's origin
+    normal: vec3<f32>,
+    uv: vec2<f32>,
+};
+
+// The surface of triangle `primitive` of `record` at `bary` (the hit's
+// barycentrics, of its second and third vertices), seen along `dir`.
+fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> Surface {
+    let face = cull_faces[record];
+    let first = face.first_index + primitive * 3u;
+    let base = u32(max(face.base_vertex, 0));
+    let v0 = base + index_at(first);
+    let v1 = base + index_at(first + 1u);
+    let v2 = base + index_at(first + 2u);
+    let w = vec3<f32>(1.0 - bary.x - bary.y, bary.x, bary.y);
+    let m = placed_matrix(record, v0);
+    let local_n = vertex_normal(v0) * w.x + vertex_normal(v1) * w.y + vertex_normal(v2) * w.z;
+    var n = normalize((m * vec4<f32>(local_n, 0.0)).xyz + vec3<f32>(0.0, 0.0, 1e-6));
+    if (dot(n, dir) > 0.0) {
+        n = -n;
+    }
+    var s: Surface;
+    s.record = record;
+    s.normal = n;
+    s.uv = vertex_uv(v0) * w.x + vertex_uv(v1) * w.y + vertex_uv(v2) * w.z;
+    return s;
+}
+
+// The record of a hit: a placed face's instance carries its record, a
+// posed skeleton's instance where its faces' records start.
+fn hit_record(posed: bool, custom: u32, geometry: u32) -> u32 {
+    if (posed) {
+        return posed_records[custom + geometry];
+    }
+    return custom;
+}
+
+fn texture_page_index(loc: u32) -> u32 {
+    let page = loc >> 16u;
+    let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
+    return select(page, 0u, page > last_bound_page);
+}
+
+fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    let loc = tex_loc.values[idx];
+    return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
+}
+
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((max(c, vec3<f32>(0.0)) + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+// The diffuse map's coordinates (object.wgsl `te_uv`: `ll_uv` / `pbr_uv`).
+// Not yet: planar mapping and texture animation.
+fn diffuse_uv(record: u32, uv: vec2<f32>) -> vec2<f32> {
+    let so = record_vecf(record, RECORD_UV_ST);
+    let rot = record_vecf(record, RECORD_PARAMS).x;
+    let c = cos(rot);
+    let sn = sin(rot);
+    if ((record_vec(record, RECORD_FLAGS).x & FLAG_PBR) != 0u) {
+        let v = vec2<f32>(uv.x, 1.0 - uv.y) * so.xy;
+        return vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y) + so.zw;
+    }
+    var s = uv.x - 0.5;
+    var t = uv.y - 0.5;
+    let tmp = s;
+    s = s * c + t * sn;
+    t = -tmp * sn + t * c;
+    return vec2<f32>(s * so.x + so.z + 0.5, 1.0 - (t * so.y + so.w + 0.5));
+}
+
+// The linear base colour and alpha of `record` at `uv`, from its texture's
+// mip `lod` (object.wgsl `eval_material_base`). Terrain, shaded by its own
+// path, reads as a mid brown-green.
+fn base_color(record: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    let flags = record_vec(record, RECORD_FLAGS).x;
+    if ((flags & FLAG_TERRAIN) != 0u) {
+        return vec4<f32>(0.12, 0.11, 0.07, 1.0);
+    }
+    let tint = record_vecf(record, RECORD_BASE_COLOR);
+    let tex = sample_tex_level(record_vec(record, RECORD_TEX).x, diffuse_uv(record, uv), lod);
+    if ((flags & FLAG_PBR) != 0u) {
+        return vec4<f32>(srgb_to_linear(tex.rgb), tex.a) * tint;
+    }
+    return vec4<f32>(srgb_to_linear(tex.rgb * tint.rgb), tex.a * tint.a);
+}
+
+// Whether an alpha-masked face lets a ray through at `uv`: under its
+// cutoff (object.wgsl `mask_color`).
+fn masked_out(record: u32, uv: vec2<f32>) -> bool {
+    let flags = record_vec(record, RECORD_FLAGS).x;
+    if ((flags & FLAG_ALPHA_MASK) == 0u) {
+        return false;
+    }
+    return base_color(record, uv, 0.0).a < record_vecf(record, RECORD_PARAMS).w;
+}
+
+// The light an emissive face gives off (rgb, linear; without its emissive
+// map).
+fn emissive_color(record: u32) -> vec3<f32> {
+    return record_vecf(record, RECORD_EMISSIVE).rgb;
+}
