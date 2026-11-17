@@ -1223,6 +1223,11 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
         w.chars().any(char::is_alphabetic)
             && !VOCABULARY.store_stopwords.contains(&w)
             && !VOCABULARY.categories.iter().any(|(_, keys)| keys.contains(&w))
+            // (a body's fitting names no product: `Top - Legacy`)
+            && !VOCABULARY
+                .bodies
+                .iter()
+                .any(|b| b.strong.iter().chain(&b.weak).any(|k| k.split_whitespace().any(|p| p == w)))
     });
     if set && !named {
         return whole;
