@@ -246,7 +246,10 @@ pub fn thumbnails(
         let size = shown(picture.map_or(Vec2::new(16.0, 9.0), |(_, size)| *size));
         let center = Pos2::new(x_of(key.time), band.center().y);
         let rect = Rect::from_center_size(center, size);
-        let response = ui.interact(rect, ui.scope_id().with(("director_thumb", index)), Sense::click());
+        let mut response = ui.interact(rect, ui.scope_id().with(("director_thumb", index)), Sense::click());
+        if picture.is_none() {
+            response = response.on_hover_text(aurora_i18n::tr!("director-thumb-missing-tip"));
+        }
         if response.double_clicked() {
             double = Some(index);
         } else if response.clicked() {

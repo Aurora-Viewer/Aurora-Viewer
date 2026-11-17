@@ -26,13 +26,13 @@ use std::time::Instant;
 /// Where ffmpeg is downloaded from, by the user.
 pub const DOWNLOAD_PAGE: &str = "https://ffmpeg.org/download.html";
 /// The frames a second a film can have.
-pub const RATES: [u32; 5] = [24, 25, 30, 50, 60];
+pub const RATES: [u32; 6] = [24, 25, 30, 50, 60, 120];
 /// Frames waiting for the writer: past this, a frame is skipped and the next
 /// one written is repeated in its place.
 const QUEUE: usize = 3;
-/// A frame is never written more than this many times in a row (two seconds
-/// of a 60 fps film): past it the film is shortened rather than frozen.
-const MAX_REPEAT: u32 = 120;
+/// A frame is never written more than this many seconds of film in a row:
+/// past it the film is shortened rather than frozen.
+const MAX_REPEAT_SECONDS: u32 = 2;
 /// The first lines of what ffmpeg wrote, kept for the message of a failure:
 /// it names the cause first, then what stopped because of it.
 const ERROR_HEAD: usize = 600;
@@ -446,7 +446,7 @@ pub struct Pace {
     fps: u32,
     /// Frames written so far, repeats included.
     written: u64,
-    /// A long stall shortens the film (`MAX_REPEAT`); not for a film with
+    /// A long stall shortens the film (`MAX_REPEAT_SECONDS`); not for a film with
     /// sound, whose picture must last what its sound lasts.
     capped: bool,
 }
@@ -475,7 +475,7 @@ impl Pace {
         let wanted = (elapsed.max(0.0) * f64::from(self.fps)).floor() as u64 + 1;
         let owed = wanted.saturating_sub(self.written);
         if self.capped {
-            owed.min(u64::from(MAX_REPEAT)) as u32
+            owed.min(u64::from(MAX_REPEAT_SECONDS * self.fps)) as u32
         } else {
             owed.min(u64::from(u32::MAX)) as u32
         }
@@ -857,7 +857,7 @@ mod tests {
         assert_eq!(pace.written(), 13);
         assert_eq!(pace.due(0.4), 0);
         // a long stall is not a frozen film without end
-        assert_eq!(pace.due(1000.0), MAX_REPEAT);
+        assert_eq!(pace.due(1000.0), MAX_REPEAT_SECONDS * 30);
         assert_eq!(Pace::new(0).due(-5.0), 1);
     }
 
@@ -1148,7 +1148,7 @@ mod tests {
         let mut uncapped = Pace::uncapped(60);
         capped.wrote(1);
         uncapped.wrote(1);
-        assert_eq!(capped.due(5.0), MAX_REPEAT);
+        assert_eq!(capped.due(5.0), MAX_REPEAT_SECONDS * 60);
         assert_eq!(uncapped.due(5.0), 300);
         uncapped.wrote(300);
         assert_eq!(uncapped.written(), 301);

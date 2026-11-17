@@ -11,7 +11,7 @@
 //! track has none (a placeholder) until "Go to" puts the camera there: the
 //! picture is taken once the live view is that keyframe's.
 
-use crate::camera::track::Pose;
+use crate::camera::track::{Keyframe, Pose};
 use std::collections::{HashMap, VecDeque};
 
 /// Pictures kept at most (the oldest go first): a few tracks' worth.
@@ -139,6 +139,26 @@ impl<T: Clone> Thumbs<T> {
         self.pictures.iter()
     }
 
+    /// While the track plays or its playhead is held, the view goes through
+    /// each keyframe's own (the interface hidden while it plays): the first
+    /// keyframe without a picture whose time the playhead passed this frame,
+    /// from `before` to `now` both included (a loop that went back to the
+    /// start passes the end and the start), to take its picture now. So a
+    /// track loaded, imported or laid by a demo gets its pictures the first
+    /// time it is played, not only the keyframes laid by hand.
+    pub fn passed<'a>(&self, keys: &'a [Keyframe], before: f32, now: f32) -> Option<&'a Keyframe> {
+        const EPS: f32 = 1e-4;
+        let hit = |time: f32| {
+            if now >= before {
+                time >= before - EPS && time <= now + EPS
+            } else {
+                time >= before - EPS || time <= now + EPS
+            }
+        };
+        keys.iter()
+            .find(|key| hit(key.time) && matches!(self.slot(&key.pose), Slot::Missing))
+    }
+
     /// "Go to" a keyframe: without a picture, one is taken once the live
     /// view is there.
     pub fn go_to(&mut self, pose: &Pose) {
@@ -196,6 +216,35 @@ mod tests {
             track.append(at(x));
         }
         track
+    }
+
+    #[test]
+    fn a_track_played_takes_the_pictures_its_keyframes_lack() {
+        let track = three();
+        let keys = track.keys();
+        let times: Vec<f32> = keys.iter().map(|key| key.time).collect();
+        let mut thumbs: Thumbs<u8> = Thumbs::default();
+        // the start delay holds the first view: it is passed at once
+        let first = thumbs.passed(keys, 0.0, 0.0).expect("the first keyframe");
+        assert_eq!(first.time, times[0]);
+        let tag = thumbs.request(&first.pose);
+        // asked: not again while its picture is on its way
+        assert!(thumbs.passed(keys, 0.0, 0.0).is_none());
+        assert!(thumbs.arrived(tag, 1));
+        // between two keyframes nothing is passed
+        assert!(thumbs.passed(keys, times[0] + 0.1, times[1] - 0.1).is_none());
+        // the frame that goes past the second keyframe takes it
+        let second = thumbs.passed(keys, times[1] - 0.01, times[1] + 0.01).expect("the second");
+        assert_eq!(second.time, times[1]);
+        let tag = thumbs.request(&second.pose);
+        assert!(thumbs.arrived(tag, 2));
+        // a loop back to the start passes the end: the third, not the first
+        let third = thumbs.passed(keys, times[2] - 0.01, 0.02).expect("the third");
+        assert_eq!(third.time, times[2]);
+        let tag = thumbs.request(&third.pose);
+        assert!(thumbs.arrived(tag, 3));
+        // every keyframe has its picture: nothing more is asked
+        assert!(thumbs.passed(keys, 0.0, times[2]).is_none());
     }
 
     #[test]

@@ -598,6 +598,26 @@ impl App {
         self.director.library.thumbs.go_to(pose);
     }
 
+    /// After the playback's tick, while the track plays or its playhead is
+    /// held: the picture of a keyframe without one that the view went
+    /// through this frame (`Thumbs::passed`), one a frame.
+    pub(super) fn director_thumbnail_pass(&mut self, before: f32) {
+        use crate::director::Mode;
+        if !matches!(self.director.d.mode, Mode::Playing { .. } | Mode::Scrubbing) || self.director.library.thumb_request.is_some() {
+            return;
+        }
+        let now = self.director.d.time;
+        let passed = self
+            .director
+            .library
+            .thumbs
+            .passed(self.director.d.track.keys(), before, now)
+            .map(|key| key.pose);
+        if let Some(pose) = passed {
+            self.director_thumbnail(&pose);
+        }
+    }
+
     /// Each frame, after the view is set: the thumbnail "Go to" waits for.
     pub(super) fn director_thumbnail_refresh(&mut self) {
         let live = self.director_pose();

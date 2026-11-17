@@ -565,6 +565,7 @@ impl App {
         self.director.d.tick(dt);
         self.director_extra_frame(open);
         self.director_montage_tick(before, dt);
+        self.director_thumbnail_pass(before);
         self.director_render_scrub(open);
         if matches!(was, Mode::Playing { .. }) && !self.director.d.playing() {
             log::info!("director: playback ended at {:.1} s", self.director.d.time);

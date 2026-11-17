@@ -108,7 +108,7 @@ fn live_or_set(ui: &mut egui::Ui, p: &Palette, value: &mut Option<f32>, live: f3
         None => {
             let text = aurora_i18n::tr!("director-shot-live", value = aurora_i18n::number(f64::from(live), 1));
             ui.label(RichText::new(text).size(12.5).color(p.muted)).on_hover_text(tip);
-            if widgets::icon_button(ui, p, "pencil", aurora_i18n::tr!("director-shot-set"), true) {
+            if widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("director-shot-set"), true) {
                 *value = Some(live);
             }
         }
