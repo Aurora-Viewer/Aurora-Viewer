@@ -240,6 +240,19 @@ impl App {
             Request::Keep => self.autotune_keep(),
             Request::Config(mut config) => {
                 config.sanitize();
+                // (the switches and choices, not each step of a slider)
+                let was = &self.settings.autotune;
+                if (was.continuous, was.keep_continuous, was.strategy, was.by_distance)
+                    != (config.continuous, config.keep_continuous, config.strategy, config.by_distance)
+                {
+                    log::info!(
+                        "autotune: continuous {}, at the next login {}, {:?}, by distance {}",
+                        config.continuous,
+                        config.keep_continuous,
+                        config.strategy,
+                        config.by_distance
+                    );
+                }
                 self.settings.autotune = config;
                 self.settings.save();
             }
@@ -256,11 +269,13 @@ fn demo_mode() -> Option<&'static str> {
         .as_deref()
 }
 
-/// The demo's heavy scene: a frame costs 12 ms, 2.4 ms per avatar drawn in
-/// full and 0.06 ms per metre of draw distance, so that at a 30 fps target
-/// both levers are needed (16 avatars at 256 m is about 66 ms).
+/// The demo's heavy scene: a frame costs 16 ms, 2.4 ms per avatar drawn in
+/// full and 0.1 ms per metre of draw distance, so that at a 30 fps target
+/// both levers are needed with the default settings and a crowd
+/// (`AURORA_DEMO_CROWD=20`): 16 avatars at 96 m is 64 ms, six still 40 ms,
+/// reached at 56 m.
 fn demo_frame_ms(avatars_full: usize, draw_distance: f32) -> f32 {
-    12.0 + 2.4 * avatars_full as f32 + 0.06 * draw_distance
+    16.0 + 2.4 * avatars_full as f32 + 0.1 * draw_distance
 }
 
 impl App {
@@ -288,5 +303,18 @@ impl App {
             }),
             _ => work,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::demo_frame_ms;
+
+    #[test]
+    fn the_demo_scene_needs_both_levers_with_the_default_settings() {
+        let target_ms = 1000.0 / 30.0 * 1.1;
+        assert!(demo_frame_ms(16, 96.0) > target_ms, "slow at the start");
+        assert!(demo_frame_ms(6, 96.0) > target_ms, "the avatars alone are not enough");
+        assert!(demo_frame_ms(6, 56.0) <= target_ms, "reached above the minimum distance");
     }
 }

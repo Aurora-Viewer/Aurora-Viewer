@@ -6247,7 +6247,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_OPACITY=active:<0-1>,inactive:…,conversations:…,bars:…,menus:…,console:…,tags:…,minimap:…` | See-through surfaces of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
-| `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene, with or without "Continuous" |
+| `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
@@ -6621,10 +6621,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   frame rate (the Legacy Viewer's Autotune, `settings/autotune.rs`) and
   starts it towards 30 fps. `1` tunes on the real frames (the demo is light:
   it should stay on target and change nothing). `slow` replaces the
-  measured frame time with a simulated heavy scene (12 ms, 2.4 ms per avatar
-  drawn in full, 0.06 ms per metre of draw distance), "Continuous" on: after
-  the 5 s wait the avatars in full come down one a second to six (ours and
-  the five nearest), then the draw distance by 10 m until the rate is
+  measured frame time with a simulated heavy scene (16 ms, 2.4 ms per avatar
+  drawn in full, 0.1 ms per metre of draw distance; run it with
+  `AURORA_DEMO_CROWD=20`, so that more than six avatars are around),
+  "Continuous" on: after the 5 s wait the avatars in full come down one a
+  second to six (ours and the five nearest), then the draw distance by
+  10 m until the rate is
   reached; the rows show the live values against the user's. `once` is the
   same without "Continuous": once on target it stops by itself and offers
   "Give back my settings" and "Keep these settings". What to look for: no
