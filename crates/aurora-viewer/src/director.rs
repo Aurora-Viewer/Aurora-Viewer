@@ -14,11 +14,15 @@
 //! keyframe taken meanwhile keeps that target as its own (`KeyAim::On`): a
 //! track can look at a dancer, then at another, the view passing from one
 //! to the next between their keyframes. A keyframe laid with the lock off
-//! follows the lock (`KeyAim::Lock`): played, it looks at the lock's target
-//! while the lock is on (a user who turns it on after laying the path
-//! expects the playback to follow the target), where its camera was laid
-//! while it is off. A keyframe whose target is cleared (`KeyAim::Free`)
-//! looks where its camera was laid, whatever the lock.
+//! looks where its camera was laid (`KeyAim::Free`). Each keyframe keeps
+//! its own lock, switched in its row: turning the live lock on or off
+//! changes none of them (the human's choice, 2026-11-17: keyframes that
+//! followed the live switch were all unlocked with it). Older tracks may
+//! still hold keyframes that follow the live lock (`KeyAim::Lock`), read
+//! and played as before.
+
+pub mod group;
+pub mod shots;
 
 use crate::camera::track::{self, Pose, Track};
 use glam::Vec3;
@@ -264,6 +268,9 @@ pub struct Director {
     pub mode: Mode,
     /// The keyframe the window edits.
     pub selected: Option<usize>,
+    /// The other keyframes selected with it (Ctrl or Shift + click), moved,
+    /// deleted and set with it (`director/group.rs`).
+    pub group: Vec<usize>,
     pub looping: bool,
     /// The HUDs go with the interface while the track plays.
     pub hide_huds: bool,
@@ -288,6 +295,8 @@ pub struct Director {
     /// The distance (m) that lens is focused at when the view is not locked
     /// on a target (locked, it focuses on the target).
     pub focus: f32,
+    /// The fades and the title cards, saved with the track (director_titles.rs).
+    pub finish: crate::director_titles::Finish,
 }
 
 impl Default for Director {
@@ -297,6 +306,7 @@ impl Default for Director {
             time: 0.0,
             mode: Mode::Editing,
             selected: None,
+            group: Vec::new(),
             looping: false,
             hide_huds: true,
             show_path: true,
@@ -309,6 +319,7 @@ impl Default for Director {
             shake: 0.0,
             dof: None,
             focus: DEFAULT_FOCUS,
+            finish: Default::default(),
         }
     }
 }
@@ -345,9 +356,10 @@ impl Director {
         } else {
             self.track.append(pose)
         }?;
-        let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Lock };
+        let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Free };
         self.track.set_aim(index, aim);
         self.selected = Some(index);
+        self.group.clear();
         self.time = self.track.keys()[index].time;
         Some(index)
     }
@@ -369,12 +381,19 @@ impl Director {
             Some(s) if s > index => Some(s - 1),
             other => other,
         };
+        self.group.retain(|other| *other != index);
+        for other in &mut self.group {
+            if *other > index {
+                *other -= 1;
+            }
+        }
         self.time = self.time.min(self.track.duration());
     }
 
     pub fn clear(&mut self) {
         self.track.clear();
         self.selected = None;
+        self.group.clear();
         self.time = 0.0;
         self.mode = Mode::Editing;
     }
@@ -383,6 +402,7 @@ impl Director {
     pub fn select(&mut self, index: usize) {
         if let Some(key) = self.track.keys().get(index) {
             self.selected = Some(index);
+            self.group.clear();
             self.time = key.time;
         }
     }
@@ -498,6 +518,8 @@ impl Director {
             Mode::Editing => return None,
             Mode::Scrubbing | Mode::Playing { .. } => self.track.sample(self.time)?,
         };
+        // (the keyframes that travel with their target moved with it)
+        let pose = shots::travelled(self, pose, &find);
         let (before, after, s) = self.track.around(self.time)?;
         let turned = |index: usize| match self.key_aim(index).and_then(&find) {
             Some(point) => pose.aimed(point, 1.0).rotation,
@@ -513,6 +535,7 @@ impl Director {
     pub fn load(&mut self, track: Track) {
         self.track = track;
         self.selected = None;
+        self.group.clear();
         self.time = 0.0;
         self.mode = Mode::Editing;
     }
@@ -547,6 +570,7 @@ impl Snapshot {
     fn restore(&self, d: &mut Director) {
         d.track = self.track.clone();
         d.selected = self.selected.filter(|index| *index < d.track.len());
+        d.group.clear();
         d.time = self.time;
     }
 }
@@ -777,7 +801,7 @@ mod tests {
         d.lock.on = false;
         d.add_key(at(20.0));
         let aims: Vec<KeyAim> = d.track.keys().iter().map(|k| k.aim).collect();
-        assert_eq!(aims, [KeyAim::Lock, KeyAim::On(d.lock.aim()), KeyAim::Lock]);
+        assert_eq!(aims, [KeyAim::Free, KeyAim::On(d.lock.aim()), KeyAim::Free]);
         // played, the view turns to the target where the keyframes say so
         let target = Vec3::new(10.0, 50.0, 20.0);
         let towards = |d: &Director| {
@@ -795,10 +819,26 @@ mod tests {
     }
 
     #[test]
-    fn the_lock_turned_on_after_the_keyframes_locks_the_whole_playback() {
-        // the path laid first, the lock turned on afterwards: every keyframe
-        // follows the lock, and the playback follows the target throughout
+    fn the_live_lock_changes_no_keyframe() {
+        // the path laid first, the lock turned on afterwards: each keyframe
+        // keeps its own (off), and turning one on changes none of the others
         let mut d = three();
+        d.lock.on = true;
+        assert!(d.track.keys().iter().all(|key| key.aim == KeyAim::Free));
+        assert!((0..3).all(|index| d.key_aim(index).is_none()));
+        d.track.set_aim(1, KeyAim::On(d.lock.aim()));
+        d.lock.on = false;
+        assert_eq!((d.key_aim(0), d.key_aim(1), d.key_aim(2)), (None, Some(d.lock.aim()), None));
+    }
+
+    #[test]
+    fn an_older_track_that_follows_the_lock_still_follows_it() {
+        // keyframes of an older track that follow the live lock: the
+        // playback follows the target throughout while it is on
+        let mut d = three();
+        for index in 0..3 {
+            d.track.set_aim(index, KeyAim::Lock);
+        }
         assert!(d.aims().is_empty());
         d.lock.on = true;
         assert_eq!(d.aims(), [d.lock.aim()]);

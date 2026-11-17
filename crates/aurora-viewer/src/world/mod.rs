@@ -608,6 +608,8 @@ pub struct World {
     pub attention: Vec<attention::Attention>,
     /// L$ balance changes (previous, new), for the money sounds.
     pub balance_changes: Vec<(Option<i32>, i32)>,
+    /// Health changes (previous, new), for the hurt sounds.
+    pub health_changes: Vec<(f32, f32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
     /// Avatars whose viewer said they type in the nearby chat
@@ -632,6 +634,9 @@ pub struct World {
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
     pub rlva_privacy: rlva::privacy::TextFilter,
+    /// `rlva_privacy` without the names: what the places that name their
+    /// residents (`NameScope::Roster`) still hide under `@showloc`.
+    pub rlva_place_privacy: rlva::privacy::TextFilter,
     pub rlva_hover_privacy: rlva::privacy::TextFilter,
     rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
@@ -949,6 +954,7 @@ impl World {
             im_messages: Vec::new(),
             attention: Vec::new(),
             balance_changes: Vec::new(),
+            health_changes: Vec::new(),
             typing_started: Vec::new(),
             nearby_typing: HashSet::new(),
             login: None,
@@ -1050,6 +1056,7 @@ impl World {
             ik_targets: rig_targets::Targets::default(),
             rlva: rlva::Rlva::default(),
             rlva_privacy: Default::default(),
+            rlva_place_privacy: Default::default(),
             rlva_hover_privacy: Default::default(),
             rlva_location_hidden: false,
             derender: derender::Derender::default(),
@@ -4245,6 +4252,8 @@ impl World {
                 None
             }
             NetEvent::Health(health) => {
+                // the app compares with UISndHealthReductionThreshold
+                self.health_changes.push((self.health, health));
                 self.health = health;
                 None
             }
@@ -4856,6 +4865,11 @@ impl World {
                     {
                         self.ui_sounds.push(UiSound::NearbyChat);
                     }
+                    // UISndChatMention (LLIMMgr's nearby chat toast): a
+                    // resident's line that mentions us, out of do not disturb
+                    if !self.status.dnd && crate::ui::chat::mentions(&c.message, &self.agent_id) {
+                        self.ui_sounds.push(UiSound::ChatMention);
+                    }
                     ChatKind::Local(c.chat_type)
                 }
             }
@@ -5019,16 +5033,19 @@ impl World {
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }
-            // UISndNewIncomingIMSession (by the IM mode)
+            // UISndNewIncomingIMSession (by the IM mode), or UISndChatMention
             self.im_messages.push(ImMessage {
                 kind: ImKind::Private,
                 session: im.from_agent_id,
                 new_session: !self.social.has_session(&im.from_agent_id),
+                mention: crate::ui::chat::mentions(&im.message, &self.agent_id),
             });
+            // named whatever `@shownames`: an instant message is not the
+            // nearby chat (process_improved_im tests nothing for it)
             let from = self
                 .social
                 .avatar_names
-                .complete(&im.from_agent_id)
+                .complete_in(names::NameScope::Roster, &im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
             let open = attention::Open::Conversation(im.from_agent_id);
@@ -5560,8 +5577,10 @@ impl World {
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
         self.link_object_notification(id, q.task, &object, &owner);
-        // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
-        self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+        // process_script_experience_details: UISndQuestionExperience, off by
+        // default like the Legacy Viewer's (Aurora played the script
+        // dialog's sound here before the sound existed)
+        self.ui_sounds.push(UiSound::QuestionExperience);
     }
 
     /// Answer a notification: messages to send and a URL to open.
@@ -5869,6 +5888,12 @@ impl World {
         if !id.is_nil() && !self.rlva_can_name(*id) {
             return Some(self.rlva_anonymous(*id).display_name.clone());
         }
+        self.scene_name(id)
+    }
+
+    /// The name the scene gives an avatar, whatever RLVa hides: for the
+    /// callers that applied `@shownames` themselves.
+    fn scene_name(&self, id: &Uuid) -> Option<String> {
         let idx = self.objects.index_of_uuid(id)?;
         self.objects.get(idx)?.display_name()
     }
@@ -5898,8 +5923,11 @@ impl World {
             // never during login, in do not disturb nor for a blocked resident
             if toast && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 let notification = self.notifications.push_presence(id, n.clone(), online);
-                self.notifications
-                    .link_name(notification, self.social.name_of(&id), notifications::NameTarget::Avatar(id));
+                self.notifications.link_name(
+                    notification,
+                    self.social.name_in(names::NameScope::Roster, &id),
+                    notifications::NameTarget::Avatar(id),
+                );
             }
             // FriendOnlineOffline for the system (never during login)
             if self.notifications.started && !self.mutes.is_muted_id(&id) {
@@ -5916,7 +5944,7 @@ impl World {
                 // checked as nearby chat (LLAvatarTracker::processNotify),
                 // unless notices are kept quiet (#741)
                 if self.alerts(ChatKind::System) {
-                    let from = self.social.name_of(&id);
+                    let from = self.social.name_in(names::NameScope::Roster, &id);
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
                 // the name is a link to the resident (social::online_chat_line)
@@ -5974,8 +6002,11 @@ impl World {
             (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
-        self.notifications
-            .link_name(notification, self.social.name_of(&from), notifications::NameTarget::Avatar(from));
+        self.notifications.link_name(
+            notification,
+            self.social.name_in(names::NameScope::Roster, &from),
+            notifications::NameTarget::Avatar(from),
+        );
         if m.kind == ImKind::Group {
             self.notifications.link_name(
                 notification,
@@ -6039,10 +6070,17 @@ impl World {
     /// Complete name of an avatar ("Jane Doe (janedoe)"), else its legacy
     /// name (name-values, UUIDNameReply).
     pub fn person_name(&self, id: &Uuid) -> Option<String> {
+        self.person_name_in(names::NameScope::World, id)
+    }
+
+    /// `person_name` for a name shown in `scope`.
+    pub fn person_name_in(&self, scope: names::NameScope, id: &Uuid) -> Option<String> {
         self.social
             .avatar_names
-            .complete(id)
-            .or_else(|| self.avatar_name(id))
+            // (the stand-in of a resident `scope` hides: the names below
+            // are those of the residents it shows)
+            .complete_in(scope, id)
+            .or_else(|| self.scene_name(id))
             .or_else(|| self.social.names.get(id).cloned())
     }
 
@@ -8124,6 +8162,37 @@ mod motion_tests {
         assert!(world.im_messages.is_empty(), "no message");
         world.apply(notice(&world, IM_TYPING_STOP));
         assert!(!world.social.is_typing(&from));
+    }
+
+    /// UISndChatMention: a private message that mentions us is marked for
+    /// the mention's sound, one that mentions someone else is not; a health
+    /// change is handed to the app for UISndHealthReduction*.
+    #[test]
+    fn mentions_and_health_reach_the_interface_sounds() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(78);
+        let other = Uuid::from_u128(79);
+        let im = |world: &World, message: String| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Mentioner Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message,
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        let me = world.agent_id;
+        world.apply(im(&world, format!("hi secondlife:///app/agent/{me}/mention !")));
+        world.apply(im(&world, format!("ask secondlife:///app/agent/{other}/mention")));
+        let mentions: Vec<bool> = std::mem::take(&mut world.im_messages).iter().map(|m| m.mention).collect();
+        assert_eq!(mentions, [true, false]);
+        world.apply(NetEvent::Health(80.0));
+        assert_eq!(std::mem::take(&mut world.health_changes), [(100.0, 80.0)]);
     }
 
     /// FSOpenIMContainerOnOfflineMessage: a message kept while we were

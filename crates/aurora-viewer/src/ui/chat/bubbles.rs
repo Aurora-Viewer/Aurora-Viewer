@@ -132,6 +132,7 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                         p,
                         env.emoji,
                         world,
+                        env.names,
                         env.want_names,
                         &text,
                         chat_size(ui.ctx(), 12.0),
@@ -194,7 +195,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let name = super::sender_name(world, env.own_name, line);
+    let name = super::sender_name(world, env.names, env.own_name, line);
     // a history line's sender is known when its name was cached
     // (world/transcripts.rs): its picture shows, dimmed
     let avatar = if object {
@@ -258,7 +259,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
     let emphasis = super::line_emphasis(env, line, italics);
-    let text = world.rlva_filter_text(&text).into_owned();
+    let text = world.rlva_filter_text_in(env.names, &text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
@@ -296,7 +297,19 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(ui, p, env.emoji, world, env.want_names, &visible, size, text_color, emphasis, mark);
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        env.names,
+                        env.want_names,
+                        &visible,
+                        size,
+                        text_color,
+                        emphasis,
+                        mark,
+                    );
                 }
                 super::previews::cards(ui, env, line, &text);
             });
@@ -493,6 +506,7 @@ mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",

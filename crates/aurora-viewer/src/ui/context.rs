@@ -1027,8 +1027,11 @@ fn avatar_menu_reporting(
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
         }
     };
+    // "can_add" of PeopleContextMenu (llpanelpeoplemenus.cpp): no
+    // friendship offer to a resident `@shownames` hides, from a list that
+    // names them either
     let add_friend = |ui: &mut egui::Ui| {
-        if friend.is_none() && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
+        if friend.is_none() && world.rlva_can_name(id) && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
             act(CtxAction::AddFriend(id));
         }
     };
