@@ -416,6 +416,12 @@
     {
       "category": "jewelry",
       "words": [
+        "pin",
+        "pins",
+        "brooch",
+        "brooches",
+        "lapel pin",
+        "flag pin",
         "brow ring",
         "brow piercing",
         "eyebrow ring",
@@ -585,6 +591,8 @@
     {
       "category": "decor",
       "words": [
+        "tree top",
+        "tree topper",
         "grass",
         "tree",
         "trees",

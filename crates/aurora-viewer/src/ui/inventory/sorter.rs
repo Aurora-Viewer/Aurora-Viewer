@@ -681,7 +681,9 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
             }
             // (a folder holding one not read now, a refresh meanwhile: its
             // seen parts go, smaller; never what was not read)
-            sorter::purge::Piece::Folder(id) if inv.folders.contains_key(&id) && inside(id) && !holds_worn(id) => {
+            sorter::purge::Piece::Folder(id)
+                if inv.folders.contains_key(&id) && inside(id) && !holds_worn(id) && !sorter::purge::blind(inv, id) =>
+            {
                 if let Some(parts) = sorter::purge::split_piece(inv, &piece) {
                     for part in parts.into_iter().rev() {
                         job.pieces.push_front(part);

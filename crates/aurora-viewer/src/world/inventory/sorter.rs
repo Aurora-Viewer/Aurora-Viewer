@@ -757,6 +757,12 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     let head_named = ["lelutka", "catwa", "genus", "evox", "evo x", "akeruka"]
         .iter()
         .any(|h| has(&words, h));
+    // (a costume or an outfit named for a decor thing, `Christmas Tree
+    // Costume`, `Flag Outfit`, is an outfit; a name that says decor stays)
+    let category = match category {
+        Some(Category::Decor) if !has(&words, "decor") && (has(&words, "costume") || has(&words, "outfit")) => Some(Category::Outfits),
+        other => other,
+    };
     // (a head's skin: `Ruellia Lel Evo X Tone Rose`, `Mavis / Ghost / No
     // Brows / Evo X`, `Body+EVOX Overlay`: a tone, a no-brows version or an
     // overlay beside a head's name is a skin, not the head's add-on nor its

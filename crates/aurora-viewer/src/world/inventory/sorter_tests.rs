@@ -4006,3 +4006,13 @@ fn flexi_builds_are_no_hair() {
     }
     assert_eq!(classify("Velmora Flexi Bun", 6, 0).category, Some(Category::Hair));
 }
+
+/// Audit 72: costumes named for a decor thing, pins.
+#[test]
+fn costumes_and_pins() {
+    assert_eq!(classify("Brindle Christmas Tree Costume", 6, 0).category, Some(Category::Outfits));
+    assert_eq!(classify("Kira Flag Outfit", 6, 0).category, Some(Category::Outfits));
+    assert_eq!(classify("Kira Flag Pin", 6, 0).category, Some(Category::Jewelry));
+    assert_eq!(classify("Brindle Christmas Tree Decor", 6, 0).category, Some(Category::Decor));
+    assert_eq!(classify("Brindle Tree Top Star", 6, 0).category, Some(Category::Decor));
+}
