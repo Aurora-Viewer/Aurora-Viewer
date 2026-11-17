@@ -52,7 +52,7 @@ pub(super) enum Job {
     Save(Save),
     Import(Arc<SubjectPose>, Vec<usize>, String, i32),
     /// Convert a folder of Legacy Viewer or Alchemy poses into the library:
-    /// the one given (the tests'), or the one chosen in the folder dialog.
+    /// the one given, or the one chosen in the folder dialog.
     ImportLegacyFolder(Option<PathBuf>),
 }
 /// Whether a library entry named `name` shows under the search `filter`
