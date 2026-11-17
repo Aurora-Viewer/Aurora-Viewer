@@ -41,6 +41,8 @@ enum Output {
     /// Saved outside the library by Save as…
     SavedTo(PathBuf),
     Prepared(clip::Prepared),
+    /// A folder of Legacy Viewer poses converted into the library.
+    ImportedFolder(legacy_pose::Imported),
     Failed(String),
     Cancelled,
 }
@@ -49,6 +51,9 @@ pub(super) enum Job {
     Load(Option<PathBuf>, LoadMode, Uuid),
     Save(Save),
     Import(Arc<SubjectPose>, Vec<usize>, String, i32),
+    /// Convert a folder of Legacy Viewer or Alchemy poses into the library:
+    /// the one given (the tests'), or the one chosen in the folder dialog.
+    ImportLegacyFolder(Option<PathBuf>),
 }
 /// Whether a library entry named `name` shows under the search `filter`
 /// (case-insensitive, anywhere in the name).
@@ -126,7 +131,18 @@ impl Default for Service {
         }
     }
 }
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+/// Write `bytes` to `path` in `dir` through a temporary file, so that a
+/// failure leaves no half-written pose in the library.
+pub(super) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temp = dir.join(format!("{}.tmp", Uuid::new_v4()));
+    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+pub(super) fn read(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .map_err(|e| e.to_string())?
@@ -164,7 +180,8 @@ fn list(root: &Path, rig: &Rig) -> Result<Vec<Entry>, String> {
     if !root.exists() {
         return Ok(out);
     }
-    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(512) {
+    // the library of a long-time Legacy Viewer user can hold thousands of poses
+    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())?.take(4096) {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_file()
             && path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".aurora-pose.json"))
@@ -233,6 +250,18 @@ impl Service {
                     let path = path.display().to_string();
                     self.message = Some(aurora_i18n::tr!("poser-saved-to", path = path.as_str()).to_string());
                 }
+                Output::ImportedFolder(imported) => {
+                    self.ready = false;
+                    self.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-imported",
+                            added = imported.added,
+                            kept = imported.kept,
+                            unreadable = imported.unreadable
+                        )
+                        .to_string(),
+                    );
+                }
                 Output::Failed(message) => {
                     self.message = Some(message);
                     self.ready = true;
@@ -264,7 +293,7 @@ impl Service {
                                     dialog = dialog.set_directory(&root);
                                 }
                                 let Some(p) = dialog
-                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "anim", "bvh"])
+                                    .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "xml", "anim", "bvh"])
                                     .pick_file()
                                 else {
                                     return Ok(Output::Cancelled);
@@ -292,6 +321,9 @@ impl Service {
                                     mode,
                                 ),
                             )
+                        } else if legacy_pose::is_pose_file(&path) {
+                            let document = legacy_pose::document(&bytes, legacy_pose::pose_name(&path), &rig)?;
+                            Output::Loaded(subject, Loaded::Pose(document, mode))
                         } else {
                             let document: Document = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
                             if !document.valid(&rig) {
@@ -335,12 +367,7 @@ impl Service {
                         let bvh = if bvh { Some(bvh::encode(&rig, &pose, unlock)?) } else { None };
                         let dir = path.parent().unwrap_or(&root);
                         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-                        let temp = dir.join(format!("{}.tmp", Uuid::new_v4()));
-                        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-                        if let Err(e) = std::fs::rename(&temp, &path) {
-                            let _ = std::fs::remove_file(&temp);
-                            return Err(e.to_string());
-                        }
+                        write_atomic(dir, &path, &bytes)?;
                         if let Some(bvh) = bvh {
                             std::fs::write(&bvh_path, bvh).map_err(|e| e.to_string())?;
                         }
@@ -352,6 +379,22 @@ impl Service {
                     }
                     Job::Import(pose, translations, name, priority) => {
                         Output::Prepared(native(&rig, &pose, &translations, name, priority)?)
+                    }
+                    Job::ImportLegacyFolder(folder) => {
+                        let folder = match folder {
+                            Some(folder) => folder,
+                            None => {
+                                let mut dialog = rfd::FileDialog::new().set_title(aurora_i18n::tr!("poser-import-legacy-title"));
+                                if let Some(dir) = legacy_pose::default_folder() {
+                                    dialog = dialog.set_directory(dir);
+                                }
+                                let Some(folder) = dialog.pick_folder() else {
+                                    return Ok(Output::Cancelled);
+                                };
+                                folder
+                            }
+                        };
+                        Output::ImportedFolder(legacy_pose::import_folder(&folder, &root, &rig)?)
                     }
                 })
             };
