@@ -9814,6 +9814,19 @@ script-preferences-owner-say = Route llOwnerSay to script debug
 script-preferences-recompile = Allow recompilation without source changes
 script-preferences-external = External editor command
 script-preferences-external-hint = Use %s for the file; quote paths that contain spaces.
+script-preferences-websocket = Enable WebSocket sync
+script-preferences-websocket-port = WebSocket listen port
+script-preferences-websocket-debug = Forward script errors and debug to WebSocket clients
+script-preferences-websocket-hint = An editor on this computer only (such as the Second Life extension for VS Code) can then follow the scripts you open in the external editor and get their compile results.
+script-sync-started = External editor server started on port { $port }.
+script-sync-failed = Failed to start external editor server on port { $port }.
+script-sync-stopped = External editor server stopped.
+script-sync-upload-failed = File upload failed: { $reason }
+script-sync-demo-followed = Demo editor: following the script.
+script-sync-demo-compiled = Demo editor: compile result received, { $count ->
+    [one] { $count } error, line { $row }
+   *[other] { $count } errors, first at line { $row }
+    }.
 script-color-text = Text
 script-color-cursor = Cursor
 script-color-background = Background
