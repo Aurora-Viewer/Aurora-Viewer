@@ -477,7 +477,8 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
 // (sky_clouds) cuts its coverage from it: the same two taps (the texture,
 // and the texture 16 times smaller as detail), the same cover shift from
 // `cloud_shadow`. The scroll and the placement are applied by the trace.
-// R: coverage, G: unused (the type is the sky's, a uniform), B: the detail
+// R: coverage, G: the share of the continuous sheet (0 for heaps, 1 for an
+// overcast sky; the trace closes the sheet's gaps with it), B: the detail
 // tap, which varies the cloud tops, A: unused.
 const CLOUD_WEATHER_SIZE: f32 = 512.0;
 const HEAP_KNEE: f32 = 0.4;
@@ -505,7 +506,7 @@ fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32>
     // their cover rises at a fifth of the pace and tops out at 0.52 (a full
     // cover makes a slab of them), the gaps stay and fair heaps are untouched.
     let heaps = mix(min(wc0, HEAP_KNEE) + max(wc0 - HEAP_KNEE, 0.0) * HEAP_SLOPE, wc0, sheet);
-    return vec4<f32>(mix(heaps, wc1, sheet), 0.0, detail, 0.0);
+    return vec4<f32>(mix(heaps, wc1, sheet), sheet, detail, 0.0);
 }
 
 fn lattice_gradient(i: vec3<f32>) -> vec3<f32> {

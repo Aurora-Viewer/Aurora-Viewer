@@ -217,11 +217,15 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     base *= height_grad(hv / thick, t, w.b);
     base *= mix(mix(0.45, 1.0, saturate(n.g * 1.8)), 1.0, t);
     // Cumulus: coverage shrinks with height, so domes rather than columns.
-    let cov = w.r * 0.85 * mix(1.0, mix(1.0, 0.55, hf), t);
+    // A sheet (the weather map's G, an overcast sky) has no gaps: its cut
+    // closes as it takes over, and its thin places stay thin instead of
+    // opening on the clear sky (seen across kilometres of the layer near
+    // the horizon, where the Legacy layer is a full cover).
+    let cov = mix(w.r * 0.85 * mix(1.0, mix(1.0, 0.55, hf), t), 1.0, w.g);
     base = saturate(remap(base, 1.0 - cov, 1.0, 0.0, 1.0));
     // A shape that only just passes the cut is a speck, not a cloud: the
-    // soft edge starts a little above it.
-    base *= smoothstep(0.04, 0.24, base) * mix(0.55, 1.0, cov);
+    // soft edge starts a little above it (heaps only).
+    base *= mix(smoothstep(0.04, 0.24, base), 1.0, w.g) * mix(0.55, 1.0, cov);
     if !full || base <= 0.0 { return base; }
     let c = textureSampleLevel(curl_t, samp, q.xz / CURL_KM, 0.0).xy * 2.0 - 1.0;
     let qd = q + vec3f(c.x, 0.0, c.y) * 0.12 * (1.0 - hf);
