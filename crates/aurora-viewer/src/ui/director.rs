@@ -18,13 +18,14 @@ use super::hud::Projector;
 use super::viewfinder::{Isolate, IsolateRow};
 use super::widgets::{self, ActionKind, Floater};
 use crate::camera::track::{self, Curve, Keyframe, Pose};
-use crate::director::{self, Director, Format, Joint, Mode, Target};
+use crate::director::{self, Aim, Director, Format, Joint, KeyAim, Mode, Target};
 use crate::recorder;
 use crate::snapshot::isolate::{Isolation, Mode as Shown};
 use crate::theme::Palette;
 use crate::world::eep_env::LocalView;
 use egui::{Align2, Color32, FontId, Id, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use glam::Vec3;
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 /// The window's id.
@@ -133,9 +134,11 @@ pub struct Live {
     pub restricted: bool,
     /// The camera is focused on an avatar or an object: the lock can take it.
     pub focus: bool,
-    /// Where the lock's target is now (smoothed); `None` when it is not in
-    /// sight, or nothing needs it.
+    /// Where what the view looks at now is (smoothed); `None` when it is
+    /// not in sight, or the view looks at nothing.
     pub target: Option<Vec3>,
+    /// A target the lock or a keyframe looks at is not in sight.
+    pub lost: bool,
     /// The track has a change to undo, an undone one to redo.
     pub can_undo: bool,
     pub can_redo: bool,
@@ -346,6 +349,29 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
     }
 }
 
+/// A target as the window names it: whose, and which part of an avatar.
+fn aim_label(aim: Aim) -> String {
+    let target = match aim.target {
+        Target::Own => aurora_i18n::tr!("director-lock-own"),
+        Target::Avatar(_) => aurora_i18n::tr!("director-lock-avatar"),
+        Target::Object(_) => return aurora_i18n::tr!("director-lock-object").to_owned(),
+    };
+    aurora_i18n::tr!("director-aim-joint", target = target, joint = joint_label(aim.joint))
+}
+
+/// What a keyframe looks at when it plays, as the window says it.
+fn key_aim_label(d: &Director, aim: KeyAim) -> String {
+    match aim {
+        KeyAim::Lock if d.lock.on => {
+            let target = aim_label(d.lock.aim());
+            aurora_i18n::tr!("director-key-aim-lock-on", target = target.as_str())
+        }
+        KeyAim::Lock => aurora_i18n::tr!("director-key-aim-lock-off").to_owned(),
+        KeyAim::Free => aurora_i18n::tr!("director-key-aim-free").to_owned(),
+        KeyAim::On(aim) => aim_label(aim),
+    }
+}
+
 fn joint_label(joint: Joint) -> &'static str {
     match joint {
         Joint::Head => aurora_i18n::tr!("director-joint-head"),
@@ -431,11 +457,10 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
             .trailing_fill(true);
         ui.add(slider).on_hover_text(aurora_i18n::tr!("director-lock-smoothing-tip"));
     });
-    // a lock that is asked for and finds nothing says so: the view is free
-    let wanted = d.wants_target();
+    // a target that is asked for and not found says so: the view is free
     if live.restricted {
         ui.label(RichText::new(aurora_i18n::tr!("director-restricted")).size(12.0).color(p.warn));
-    } else if wanted && live.target.is_none() {
+    } else if live.lost {
         ui.label(RichText::new(aurora_i18n::tr!("director-lock-lost")).size(12.0).color(p.warn));
     }
 }
@@ -852,23 +877,45 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
     {
         d.track.set_rest(index, rest);
     }
-    // while the lock is on, every keyframe is played locked: shown ticked,
-    // its own choice kept for when the lock goes off
-    let mut locked = d.key_locked(index);
-    let lock_on = d.lock.on;
-    let response = ui
-        .add_enabled_ui(!lock_on, |ui| {
-            widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("director-key-locked"))
-        })
-        .inner;
-    let tip = if lock_on {
-        aurora_i18n::tr!("director-key-locked-by-lock-tip")
-    } else {
-        aurora_i18n::tr!("director-key-locked-tip")
-    };
-    if response.on_hover_text(tip).on_disabled_hover_text(tip).changed() && !lock_on {
-        d.track.set_locked(index, locked);
-    }
+    // what it looks at when it plays: the lock's target while the lock is
+    // on, a target of its own, or where its camera was laid
+    row(ui, p, aurora_i18n::tr!("director-key-aim"), |ui| {
+        ui.label(RichText::new(key_aim_label(d, key.aim)).size(12.5).color(p.ink))
+            .on_hover_text(aurora_i18n::tr!("director-key-aim-tip"));
+    });
+    ui.horizontal_wrapped(|ui| {
+        let size = Vec2::new(0.0, 26.0);
+        let own = KeyAim::On(d.lock.aim());
+        let choices = [
+            (
+                own,
+                "crosshair",
+                aurora_i18n::tr!("director-key-aim-take"),
+                aurora_i18n::tr!("director-key-aim-take-tip"),
+            ),
+            (
+                KeyAim::Free,
+                "circle-x-filled",
+                aurora_i18n::tr!("director-key-aim-clear"),
+                aurora_i18n::tr!("director-key-aim-clear-tip"),
+            ),
+            (
+                KeyAim::Lock,
+                "link-filled",
+                aurora_i18n::tr!("director-key-aim-follow"),
+                aurora_i18n::tr!("director-key-aim-follow-tip"),
+            ),
+        ];
+        for (aim, icon, label, tip) in choices {
+            if widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, size, key.aim != aim)
+                .on_hover_text(tip)
+                .on_disabled_hover_text(tip)
+                .clicked()
+            {
+                d.track.set_aim(index, aim);
+            }
+        }
+    });
     ui.horizontal(|ui| {
         let size = Vec2::new(0.0, 26.0);
         if widgets::action_button(
@@ -1456,15 +1503,15 @@ pub fn guides(ctx: &egui::Context, p: &Palette, proj: &Projector, d: &Director, 
 /// The track in the world, while it is edited: the path, a dot each second,
 /// a camera at each keyframe (click: select; double click: the camera goes
 /// there), the handles of the selected one and where the playhead is. A
-/// locked keyframe's camera points at the lock's `target`, as it will when
-/// the track plays.
+/// keyframe's camera points at what it looks at (its target, where `aims`
+/// has found it), as it will when the track plays.
 pub fn world(
     ctx: &egui::Context,
     p: &Palette,
     proj: &Projector,
     d: &mut Director,
     aspect: f32,
-    target: Option<Vec3>,
+    aims: &HashMap<Aim, Vec3>,
     actions: &mut Vec<Action>,
 ) {
     if !d.show_path || d.track.is_empty() || d.mode != Mode::Editing {
@@ -1507,9 +1554,9 @@ pub fn world(
         let selected = d.selected == Some(index);
         let color = if selected { p.violet_light } else { p.ink };
         let stroke = Stroke::new(if selected { 2.0 } else { 1.5 }, color);
-        let shown = match target {
-            Some(point) if d.key_locked(index) => key.pose.aimed(point, 1.0),
-            _ => key.pose,
+        let shown = match d.key_aim(index).and_then(|aim| aims.get(&aim)) {
+            Some(point) => key.pose.aimed(*point, 1.0),
+            None => key.pose,
         };
         for (a, b) in camera_edges(&shown, aspect) {
             line(&painter, proj, a, b, Stroke::new(stroke.width, color.gamma_multiply(0.3)));
@@ -1627,6 +1674,7 @@ mod tests {
             restricted: false,
             focus: false,
             target: None,
+            lost: false,
             can_undo: false,
             can_redo: false,
             can_record: false,
@@ -1745,7 +1793,7 @@ mod tests {
         });
         assert_eq!(d.mode, Mode::Scrubbing);
         assert!(d.time > d.track.duration(), "the playhead went where the pointer is: {}", d.time);
-        assert!(d.view(None).is_some());
+        assert!(d.view(|_| None).is_some());
         bench.frame(vec![Bench::button(at, false)], |ctx, p| {
             timeline(ctx, p, &mut d, BOTTOM_TOP, &live(), &mut actions);
         });
@@ -1784,7 +1832,9 @@ mod tests {
         };
         let mut actions = Vec::new();
         for _ in 0..3 {
-            bench.frame(vec![], |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(vec![], |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         let (at, _) = projector.project(d.track.keys()[1].pose.position).expect("in view");
         for events in [
@@ -1792,7 +1842,9 @@ mod tests {
             vec![Bench::button(at, true)],
             vec![Bench::button(at, false)],
         ] {
-            bench.frame(events, |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(events, |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         assert_eq!(d.selected, Some(1));
         assert_eq!(d.time, 3.0, "the playhead follows the selection");
@@ -1801,7 +1853,9 @@ mod tests {
         d.selected = None;
         d.scrub(1.0);
         for events in [vec![Bench::button(at, true)], vec![Bench::button(at, false)]] {
-            bench.frame(events, |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
+            bench.frame(events, |ctx, p| {
+                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+            });
         }
         assert_eq!(d.selected, None);
     }

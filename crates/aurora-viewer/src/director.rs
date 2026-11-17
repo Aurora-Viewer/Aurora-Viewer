@@ -11,11 +11,14 @@
 //! The lock keeps a target in the centre of the view: a joint of an avatar
 //! (ours or another: the neck of a dancer), or an object. Live, it turns
 //! the user's own camera wherever they move it, with no keyframe at all; a
-//! keyframe taken meanwhile is locked too. Played, the whole track is
-//! locked while the lock is on, whenever its keyframes were taken (a user
-//! who turns it on after laying the path expects the playback to follow the
-//! target); with the lock off, the view locks where the keyframes say so
-//! (`Track::lock_weight`).
+//! keyframe taken meanwhile keeps that target as its own (`KeyAim::On`): a
+//! track can look at a dancer, then at another, the view passing from one
+//! to the next between their keyframes. A keyframe laid with the lock off
+//! follows the lock (`KeyAim::Lock`): played, it looks at the lock's target
+//! while the lock is on (a user who turns it on after laying the path
+//! expects the playback to follow the target), where its camera was laid
+//! while it is off. A keyframe whose target is cleared (`KeyAim::Free`)
+//! looks where its camera was laid, whatever the lock.
 
 use crate::camera::track::{self, Pose, Track};
 use glam::Vec3;
@@ -56,7 +59,7 @@ pub fn linear(color: [u8; 3]) -> [f32; 3] {
 }
 
 /// The joint of an avatar the view is locked on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Joint {
     Head,
     #[default]
@@ -91,7 +94,7 @@ impl Joint {
 }
 
 /// What the view is locked on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Target {
     /// A joint of our own avatar.
     #[default]
@@ -102,16 +105,48 @@ pub enum Target {
     Object(Uuid),
 }
 
+/// What a view looks at: a target, and the joint when it is an avatar (an
+/// object is looked at in its centre).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Aim {
+    pub target: Target,
+    pub joint: Joint,
+}
+
+/// Where a keyframe's view looks when the track plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyAim {
+    /// At the lock's target while the lock is on, where its camera was laid
+    /// while it is off: a keyframe laid with the lock off.
+    #[default]
+    Lock,
+    /// Where its camera was laid, whatever the lock: its target cleared.
+    Free,
+    /// At its own target, whatever the lock: a keyframe laid while the lock
+    /// was on, or given the lock's target then.
+    On(Aim),
+}
+
 /// The lock of the view on a target.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Lock {
-    /// The user's own camera is locked on the target, and so is a keyframe
-    /// taken meanwhile and the whole track when it plays.
+    /// The user's own camera is locked on the target; a keyframe taken
+    /// meanwhile keeps it, and the keyframes that follow the lock are
+    /// played locked on it.
     pub on: bool,
     pub target: Target,
     pub joint: Joint,
     /// See `DEFAULT_SMOOTHING`.
     pub smoothing: f32,
+}
+
+impl Lock {
+    pub fn aim(&self) -> Aim {
+        Aim {
+            target: self.target,
+            joint: self.joint,
+        }
+    }
 }
 
 impl Default for Lock {
@@ -301,8 +336,8 @@ impl Director {
     /// the last one (`track::DEFAULT_GAP` later). A keyframe already under
     /// the playhead is never replaced: that is "Update". The new keyframe
     /// is selected and the playhead goes to it; taken while the view is
-    /// locked on the target, it is a locked keyframe. `None` when the track
-    /// is full.
+    /// locked on the target, it keeps that target, else it follows the
+    /// lock. `None` when the track is full.
     pub fn add_key(&mut self, pose: Pose) -> Option<usize> {
         let on_key = self.track.nearest(self.time, track::MIN_GAP).is_some();
         let index = if !self.track.is_empty() && !on_key && self.time > 0.0 && self.time <= track::MAX_TIME {
@@ -310,7 +345,8 @@ impl Director {
         } else {
             self.track.append(pose)
         }?;
-        self.track.set_locked(index, self.lock.on);
+        let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Lock };
+        self.track.set_aim(index, aim);
         self.selected = Some(index);
         self.time = self.track.keys()[index].time;
         Some(index)
@@ -414,37 +450,62 @@ impl Director {
         }
     }
 
-    /// How much the played view is locked on the target at `time`, from 0
-    /// to 1: wholly while the lock is on, else as much as the keyframes
-    /// around `time` are locked.
-    pub fn lock_weight(&self, time: f32) -> f32 {
-        if self.lock.on { 1.0 } else { self.track.lock_weight(time) }
+    /// What keyframe `index` looks at when it is played: its own target,
+    /// the lock's while the lock is on, or nothing (where its camera was
+    /// laid).
+    pub fn key_aim(&self, index: usize) -> Option<Aim> {
+        match self.track.keys().get(index)?.aim {
+            KeyAim::On(aim) => Some(aim),
+            KeyAim::Lock => self.lock.on.then(|| self.lock.aim()),
+            KeyAim::Free => None,
+        }
     }
 
-    /// The view at keyframe `index` turns to the target when it is played.
-    pub fn key_locked(&self, index: usize) -> bool {
-        self.lock.on || self.track.keys().get(index).is_some_and(|key| key.locked)
+    /// Every target the live lock and the keyframes look at, each once: the
+    /// ones to find in the scene each frame.
+    pub fn aims(&self) -> Vec<Aim> {
+        let mut aims = Vec::new();
+        let live = self.lock.on.then(|| self.lock.aim());
+        for aim in live.into_iter().chain((0..self.track.len()).filter_map(|i| self.key_aim(i))) {
+            if !aims.contains(&aim) {
+                aims.push(aim);
+            }
+        }
+        aims
     }
 
-    /// Something asks for the lock's target: the live lock or a keyframe.
-    pub fn wants_target(&self) -> bool {
-        self.lock.on || self.track.keys().iter().any(|key| key.locked)
+    /// What the view looks at now: the lock's target while the user's own
+    /// camera is locked; on the track, the target of the keyframe it is
+    /// nearer to, else of the other (it focuses there). `None`: nothing.
+    pub fn current_aim(&self) -> Option<Aim> {
+        match self.mode {
+            Mode::Editing => self.lock.on.then(|| self.lock.aim()),
+            Mode::Scrubbing | Mode::Playing { .. } => {
+                let (before, after, s) = self.track.around(self.time)?;
+                let (near, far) = if s < 0.5 { (before, after) } else { (after, before) };
+                self.key_aim(near).or_else(|| self.key_aim(far))
+            }
+        }
     }
 
     /// The view the track gives the camera now: while it plays or the
-    /// playhead is held. `None`: the user's own camera. With the lock's
-    /// `target` (where it is now), the view turns to it as much as it is
-    /// locked there (`lock_weight`).
-    pub fn view(&self, target: Option<Vec3>) -> Option<Pose> {
+    /// playhead is held. `None`: the user's own camera. `find` tells where
+    /// a target is now (`None`: not in sight); between two keyframes the
+    /// view turns smoothly from what one looks at to what the next does: a
+    /// target, another, or where its camera was laid.
+    pub fn view(&self, find: impl Fn(Aim) -> Option<Vec3>) -> Option<Pose> {
         let pose = match self.mode {
             Mode::Editing => return None,
             Mode::Scrubbing | Mode::Playing { .. } => self.track.sample(self.time)?,
         };
-        let pose = match target {
-            Some(target) => pose.aimed(target, self.lock_weight(self.time)),
-            None => pose,
+        let (before, after, s) = self.track.around(self.time)?;
+        let turned = |index: usize| match self.key_aim(index).and_then(&find) {
+            Some(point) => pose.aimed(point, 1.0).rotation,
+            None => pose.rotation,
         };
-        Some(track::hand_held(pose, self.time, self.shake))
+        let (from, to) = (turned(before), turned(after));
+        let rotation = if from == to { from } else { from.slerp(to, s).normalize() };
+        Some(track::hand_held(Pose { rotation, ..pose }, self.time, self.shake))
     }
 
     /// Replace the track by one loaded from a file: nothing selected, the
@@ -585,7 +646,7 @@ mod tests {
 
     /// The track gives the view of the keyframe at `x`.
     fn views(d: &Director, x: f32) -> bool {
-        d.view(None).is_some_and(|pose| pose.position.distance(at(x).position) < 1e-3)
+        d.view(|_| None).is_some_and(|pose| pose.position.distance(at(x).position) < 1e-3)
     }
 
     #[test]
@@ -637,7 +698,7 @@ mod tests {
         d.add_key(at(0.0));
         assert!(!d.play());
         assert_eq!(d.mode, Mode::Editing);
-        assert_eq!(d.view(None), None);
+        assert_eq!(d.view(|_| None), None);
     }
 
     #[test]
@@ -663,7 +724,7 @@ mod tests {
         assert!(d.playing());
         d.tick(END_HOLD * 0.6);
         assert_eq!(d.mode, Mode::Editing);
-        assert_eq!(d.view(None), None);
+        assert_eq!(d.view(|_| None), None);
     }
 
     #[test]
@@ -686,7 +747,7 @@ mod tests {
         d.scrub(3.0);
         assert!(views(&d, 10.0));
         d.end_scrub();
-        assert_eq!(d.view(None), None);
+        assert_eq!(d.view(|_| None), None);
         assert_eq!(d.time, 3.0);
         // not while the track plays
         d.start_delay = 0.0;
@@ -708,19 +769,19 @@ mod tests {
     }
 
     #[test]
-    fn a_keyframe_taken_while_the_view_is_locked_is_a_locked_keyframe() {
+    fn a_keyframe_taken_while_the_view_is_locked_keeps_the_target() {
         let mut d = Director::default();
         d.add_key(at(0.0));
         d.lock.on = true;
         d.add_key(at(10.0));
         d.lock.on = false;
         d.add_key(at(20.0));
-        let locked: Vec<bool> = d.track.keys().iter().map(|k| k.locked).collect();
-        assert_eq!(locked, [false, true, false]);
+        let aims: Vec<KeyAim> = d.track.keys().iter().map(|k| k.aim).collect();
+        assert_eq!(aims, [KeyAim::Lock, KeyAim::On(d.lock.aim()), KeyAim::Lock]);
         // played, the view turns to the target where the keyframes say so
         let target = Vec3::new(10.0, 50.0, 20.0);
         let towards = |d: &Director| {
-            let pose = d.view(Some(target)).expect("view");
+            let pose = d.view(|_| Some(target)).expect("view");
             pose.forward().dot((target - pose.position).normalize())
         };
         d.scrub(0.0);
@@ -730,37 +791,95 @@ mod tests {
         d.scrub(1.5);
         assert!((0.3..0.999).contains(&towards(&d)), "turning to it in between");
         // without a target to find (the avatar left), the track's own view
-        assert!(d.view(None).expect("view").forward().dot(Vec3::X) > 0.999);
+        assert!(d.view(|_| None).expect("view").forward().dot(Vec3::X) > 0.999);
     }
 
     #[test]
     fn the_lock_turned_on_after_the_keyframes_locks_the_whole_playback() {
-        // the path laid first, the lock turned on afterwards: no keyframe
-        // of it is locked, yet the playback follows the target throughout
+        // the path laid first, the lock turned on afterwards: every keyframe
+        // follows the lock, and the playback follows the target throughout
         let mut d = three();
-        assert!(!d.wants_target());
+        assert!(d.aims().is_empty());
         d.lock.on = true;
-        assert!(d.wants_target());
-        assert!(d.track.keys().iter().all(|key| !key.locked));
-        assert!((0..3).all(|index| d.key_locked(index)));
+        assert_eq!(d.aims(), [d.lock.aim()]);
+        assert!(d.track.keys().iter().all(|key| key.aim == KeyAim::Lock));
+        assert!((0..3).all(|index| d.key_aim(index).is_some()));
         let target = Vec3::new(10.0, 50.0, 20.0);
         for time in [0.0, 1.5, 3.0, 4.5, 6.0] {
             d.scrub(time);
-            assert_eq!(d.lock_weight(time), 1.0);
-            let pose = d.view(Some(target)).expect("view");
+            let pose = d.view(|_| Some(target)).expect("view");
             assert!(
                 pose.forward().dot((target - pose.position).normalize()) > 0.999,
                 "locked at {time} s"
             );
         }
-        // off again: the keyframes say, and none is locked
+        // off again: none is locked
         d.lock.on = false;
-        assert!(!d.key_locked(1));
+        assert!(!d.key_aim(1).is_some());
         d.scrub(3.0);
-        assert_eq!(d.lock_weight(3.0), 0.0);
-        let pose = d.view(Some(target)).expect("view");
+        let pose = d.view(|_| Some(target)).expect("view");
         assert!(pose.forward().dot((target - pose.position).normalize()) < 0.999);
-        assert!(!d.key_locked(99));
+        assert!(!d.key_aim(99).is_some());
+        assert_eq!(d.key_aim(99), None);
+    }
+
+    #[test]
+    fn each_keyframe_can_look_at_a_target_of_its_own_or_at_none() {
+        let mut d = three();
+        let (first, second) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let aim = |id| Aim {
+            target: Target::Avatar(id),
+            joint: Joint::Head,
+        };
+        // a dancer, then another; the last keyframe's target cleared, and
+        // the lock on, on a third: it does not change the first two
+        d.track.set_aim(0, KeyAim::On(aim(first)));
+        d.track.set_aim(1, KeyAim::On(aim(second)));
+        d.track.set_aim(2, KeyAim::Free);
+        d.lock.on = true;
+        d.lock.target = Target::Own;
+        assert_eq!(d.aims(), [d.lock.aim(), aim(first), aim(second)]);
+        assert_eq!(
+            (d.key_aim(0), d.key_aim(1), d.key_aim(2)),
+            (Some(aim(first)), Some(aim(second)), None)
+        );
+        let (a, b) = (Vec3::new(0.0, 40.0, 20.0), Vec3::new(10.0, 40.0, 20.0));
+        let find = |found: Aim| match found.target {
+            Target::Avatar(id) if id == first => Some(a),
+            Target::Avatar(id) if id == second => Some(b),
+            _ => Some(Vec3::new(-50.0, 0.0, 20.0)),
+        };
+        let towards = |d: &Director, point: Vec3| {
+            let pose = d.view(find).expect("view");
+            pose.forward().dot((point - pose.position).normalize())
+        };
+        d.scrub(0.0);
+        assert!(towards(&d, a) > 0.999, "the first dancer");
+        assert_eq!(d.current_aim(), Some(aim(first)));
+        d.scrub(3.0);
+        assert!(towards(&d, b) > 0.999, "the second");
+        // in between, from one to the other, smoothly
+        d.scrub(1.5);
+        assert!(towards(&d, a) < 0.999 && towards(&d, b) < 0.999);
+        assert!(towards(&d, a) > 0.9 && towards(&d, b) > 0.9);
+        // cleared: where its camera was laid, even with the lock on
+        d.scrub(6.0);
+        let pose = d.view(find).expect("view");
+        assert!(pose.forward().dot(Vec3::X) > 0.999);
+        assert_eq!(d.current_aim(), Some(aim(second)), "the nearer one with a target");
+        // the second's dancer gone: free there, the first still followed
+        let gone = |found: Aim| (found != aim(second)).then(|| find(found)).flatten();
+        d.scrub(3.0);
+        assert!(d.view(gone).expect("view").forward().dot(Vec3::X) > 0.999);
+        d.scrub(0.0);
+        let pose = d.view(gone).expect("view");
+        assert!(pose.forward().dot((a - pose.position).normalize()) > 0.999);
+        // editing: the live lock's target
+        d.stop();
+        assert_eq!(d.current_aim(), Some(d.lock.aim()));
+        d.lock.on = false;
+        assert_eq!(d.current_aim(), None);
+        assert_eq!(d.aims(), [aim(first), aim(second)], "the keyframes still look at their dancers");
     }
 
     #[test]
@@ -884,9 +1003,9 @@ mod tests {
         // a hand-held camera moves the played view, not the keyframes
         d.shake = 1.0;
         d.scrub(1.0);
-        let held = d.view(None).expect("view");
+        let held = d.view(|_| None).expect("view");
         d.shake = 0.0;
-        let steady = d.view(None).expect("view");
+        let steady = d.view(|_| None).expect("view");
         assert!(held.position.distance(steady.position) > 1e-4);
         assert_eq!(d.track, other.track);
     }
