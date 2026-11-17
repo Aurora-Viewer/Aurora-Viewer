@@ -10,6 +10,7 @@ pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
+pub mod share;
 pub mod stream_list;
 
 /// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).

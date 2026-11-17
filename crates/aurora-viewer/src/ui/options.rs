@@ -11,6 +11,7 @@ mod pages;
 pub(crate) use pages::aurora::aurora_word;
 mod saved_graphics;
 mod scale;
+pub mod share;
 
 pub use pages::privacy;
 pub(crate) use pages::sound::{ear_choice, noise_choice};
@@ -339,6 +340,8 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         }
     } else if what == "cogs" {
         st.demo_open_cogs = true;
+    } else if what == "share" || what == "share-import" {
+        st.share.demo = Some(what == "share-import");
     } else if what == "system-fonts" || what == "system-fonts-scroll" {
         st.demo_font_list = Some(what == "system-fonts-scroll");
     } else if let Some(query) = what.strip_prefix("search=") {
@@ -551,6 +554,8 @@ pub struct OptionsUi {
     pub restore: Option<backup::Pending>,
     pub backup_status: String,
     pub restore_status: String,
+    /// The share code's windows and the undo of the last import.
+    pub share: share::State,
 }
 
 impl OptionsUi {
@@ -1238,6 +1243,39 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
     out
 }
 
+/// The page of each setting a row of Preferences edits (`Page::key`), its
+/// path and the row's label, in the interface's language: what a share
+/// code may carry (`settings/share.rs`). A setting a page only keeps in
+/// step (`Cx::track`) has its path for a label.
+pub fn setting_pages() -> Vec<(&'static str, String, String)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut s = Settings::default();
+    let d = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut r = OptionsResult::default();
+    let mut out = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        for page in Page::ALL {
+            run_page(&mut cx, page, None);
+        }
+        let labels: HashMap<String, String> = std::mem::take(&mut cx.described)
+            .into_iter()
+            .map(|(path, label, _)| (path.replace(' ', ""), label))
+            .collect();
+        out = std::mem::take(&mut cx.collected)
+            .into_iter()
+            .map(|(page, path)| {
+                let path = path.replace(' ', "");
+                let label = labels.get(&path).cloned().unwrap_or_else(|| path.clone());
+                (page.key(), path, label)
+            })
+            .collect();
+    });
+    out
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1372,6 +1410,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
+    share::modals(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
     r
