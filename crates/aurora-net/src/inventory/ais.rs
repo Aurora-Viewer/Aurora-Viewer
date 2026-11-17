@@ -139,6 +139,9 @@ const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5)
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): a subtree read.
 pub const TREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+/// A subtree read's whole time, its retries and their waits included:
+/// under the walk's own deadline (background.rs TREE_DEADLINE, 240 s).
+pub const TREE_TOTAL: std::time::Duration = std::time::Duration::from_secs(210);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +269,11 @@ pub async fn fetch_tree(
     // one that times out, or that a gateway gives up on, is never asked
     // again as is: the walk reads it in smaller parts)
     let doc = if depth > 0 {
-        get_with(http, url, TREE_TIMEOUT, 0).await?
+        // (one answer within TREE_TOTAL, retries and waits included: the
+        // walk's deadline never frees a slot while its request still runs)
+        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0))
+            .await
+            .unwrap_or_else(|_| Err(FetchError::new(FetchFailure::Transient, None)))?
     } else {
         get(http, url).await?
     };
@@ -342,7 +349,8 @@ async fn get_with(http: &reqwest::Client, url: String, timeout: std::time::Durat
             // (a gateway that gave up on a subtree read gives up on it
             // again: the walk reads it in parts at once; a throttle, 429,
             // waits as always)
-            let gateway = matches!(status, 502..=504) && timeout_retries < RETRY_ATTEMPTS;
+            // (a 503 waits for its Retry-After: an overload, never split)
+            let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
             if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
                 tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;

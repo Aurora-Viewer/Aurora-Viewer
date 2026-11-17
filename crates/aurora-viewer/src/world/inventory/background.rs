@@ -114,6 +114,9 @@ pub struct BackgroundFetch {
     started: bool,
     orphans_requested: bool,
     orphans_pending: Option<u64>,
+    /// When the orphans request went: one never answered is given up after
+    /// [`READ_DEADLINE`], never holding a slot for the session.
+    orphans_sent: Option<Instant>,
     orphans_failed: bool,
     /// Since when the current walk sends requests, and how many (logged
     /// when it ends).
@@ -272,6 +275,7 @@ impl BackgroundFetch {
             self.next_request += 1;
             self.orphans_requested = true;
             self.orphans_pending = Some(request);
+            self.orphans_sent = Some(now);
             self.orphans_failed = false;
             out.push(NetCommand::FetchInventoryOrphans { request });
         }
@@ -297,6 +301,33 @@ impl BackgroundFetch {
             }
         }
         self.retries = waiting;
+        if self.orphans_pending.is_some()
+            && self
+                .orphans_sent
+                .is_some_and(|at| now.saturating_duration_since(at) >= READ_DEADLINE)
+        {
+            log::warn!("inventory background fetch: the lost items request was never answered, given up");
+            self.orphans_pending = None;
+            self.orphans_failed = true;
+        }
+        // A folder the user's own read holds (`waiting`) whose answer never
+        // comes is read again after the deadline: it never keeps the walk
+        // busy for the session.
+        for (id, _) in &self.waiting {
+            if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching) && !inv.queue.iter().any(|(q, _)| q == id) {
+                let since = *self.orphaned.entry(*id).or_insert(now);
+                if now.saturating_duration_since(since) >= READ_DEADLINE {
+                    log::warn!(
+                        "inventory background fetch: {id} asked by the user {} s ago never arrived, asked again",
+                        READ_DEADLINE.as_secs()
+                    );
+                    if let Some(f) = inv.folders.get_mut(id) {
+                        f.state = FetchState::Unknown;
+                    }
+                    self.orphaned.remove(id);
+                }
+            }
+        }
         self.watch(inv, now);
         let mut steps = 0;
         while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
@@ -676,8 +707,9 @@ impl BackgroundFetch {
             // on a failed recursive read; only a refusal, 429 or 5xx, or a
             // folder alone waits for its retry)
             // (a gateway's timeout, 502 to 504, is a timeout too)
+            // (a 503 is an overload: it waits for its retry like a 429)
             let timed_out =
-                error.kind == FetchFailure::Transient && depth > 0 && error.status.is_none_or(|status| matches!(status, 502..=504));
+                error.kind == FetchFailure::Transient && depth > 0 && error.status.is_none_or(|status| matches!(status, 502 | 504));
             if timed_out {
                 log::warn!(
                     "background inventory read of {folder} timed out ({} folders, depth {depth}): read in parts",
