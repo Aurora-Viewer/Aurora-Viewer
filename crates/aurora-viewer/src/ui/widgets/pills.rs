@@ -523,7 +523,7 @@ mod chip_row_tests {
     fn frame(ctx: &egui::Context, chosen: &mut usize, events: Vec<egui::Event>) -> Vec<Rect> {
         let p = crate::theme::Theme::default().palette();
         let mut rects = Vec::new();
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(200.0, 120.0))),
                 events,
@@ -547,6 +547,8 @@ mod chip_row_tests {
                 });
             },
         );
+        // no renderer takes the font atlas here
+        output.textures_delta.clear();
         rects
     }
 

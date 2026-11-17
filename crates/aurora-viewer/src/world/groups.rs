@@ -1166,7 +1166,9 @@ mod tests {
             let said = session_error(code).expect("a sentence");
             assert_eq!(said, sentence, "{code}");
             assert_ne!(said, generic, "{code}");
-            assert!(!said.contains(code), "{code}");
+            // a sentence, never the code: a code that is a word ("removed",
+            // "muted") may well be part of an English sentence
+            assert!(said != code && !said.contains('_'), "{code}: {said}");
         }
     }
 
