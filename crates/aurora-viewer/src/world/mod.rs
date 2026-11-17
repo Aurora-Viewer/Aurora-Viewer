@@ -5029,10 +5029,12 @@ impl World {
                 session: im.from_agent_id,
                 new_session: !self.social.has_session(&im.from_agent_id),
             });
+            // named whatever `@shownames`: an instant message is not the
+            // nearby chat (process_improved_im tests nothing for it)
             let from = self
                 .social
                 .avatar_names
-                .complete(&im.from_agent_id)
+                .complete_in(names::NameScope::Roster, &im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
             let open = attention::Open::Conversation(im.from_agent_id);

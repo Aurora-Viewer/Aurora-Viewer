@@ -846,7 +846,7 @@ fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>)
                 }
                 None => {
                     if let Some(id) = ids.first() {
-                        let name = world.social.name_of(id);
+                        let name = world.social.name_in(NameScope::Roster, id);
                         world.system_notice(
                             aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()),
                             crate::world::notice_topics::Topic::People,
@@ -2171,7 +2171,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
     let Some(d) = st.dialog.as_mut() else {
         return;
     };
-    let name = |id: &Uuid| world.social.name_of(id);
+    let name = |id: &Uuid| world.social.name_in(NameScope::Roster, id);
     // removing a friend, a set or its members is the destructive answer
     let (icon, kind) = match d {
         Dialog::RemoveFriends(_) | Dialog::RemoveSet(_) | Dialog::RemoveFromSet { .. } => ("trash-filled", widgets::ActionKind::Danger),

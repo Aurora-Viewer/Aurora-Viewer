@@ -359,7 +359,7 @@ impl World {
             let name = self
                 .social
                 .avatar_names
-                .complete(&key)
+                .complete_in(NameScope::Roster, &key)
                 .or_else(|| self.social.names.get(&key).cloned())
                 .unwrap_or_default();
             let session = conversations::private_session(self.agent_id, key);
@@ -387,7 +387,7 @@ impl World {
             return;
         };
         c.offline = offline;
-        if c.kind == Kind::Private && self.social.avatar_names.complete(&key).is_none() {
+        if c.kind == Kind::Private && self.social.avatar_names.complete_in(NameScope::Roster, &key).is_none() {
             self.chat_log.conversations.unnamed.insert(key);
         }
         self.chat_log.conversations.log(c);
@@ -415,7 +415,7 @@ impl World {
                 .conversations
                 .unnamed
                 .iter()
-                .filter_map(|id| Some((*id, self.social.avatar_names.complete(id)?)))
+                .filter_map(|id| Some((*id, self.social.avatar_names.complete_in(NameScope::Roster, id)?)))
                 .collect();
             for (id, name) in named {
                 self.chat_log.conversations.unnamed.remove(&id);

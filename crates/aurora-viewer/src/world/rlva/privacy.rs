@@ -1197,4 +1197,59 @@ mod tests {
         let away = Uuid::from_u128(0xF9);
         assert_eq!(world.person_name_in(NameScope::Roster, &away), None);
     }
+
+    /// A message of `dialog` from `from`, as the simulator sends it.
+    fn message(world: &World, from: Uuid, dialog: u8, text: &str) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: from,
+            from_name: "Near Tester".into(),
+            to_agent_id: world.agent_id,
+            dialog,
+            session_id: Uuid::from_u128(0x5e55),
+            message: text.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn shownames_names_who_writes_or_offers_friendship_as_their_message_arrives() {
+        use crate::world::notifications::{Kind, im};
+        let (mut world, near) = shownames_world();
+        // an instant message: its line, its conversation and its toast
+        world.apply(message(&world, near, 0, "hello there"));
+        let line = |world: &World| {
+            let session = world.social.ims.iter().find(|s| s.other == near).expect("the conversation");
+            session.lines.back().expect("its line").clone()
+        };
+        assert_eq!(line(&world).from, "Near Tester");
+        assert_eq!(world.session_title(&near), "Near Tester");
+        for m in std::mem::take(&mut world.im_messages) {
+            world.notify_message(&m, false);
+        }
+        // a friendship offer
+        world.apply(message(&world, near, im::FRIENDSHIP_OFFERED, "be my friend"));
+        world.refresh_rlva_privacy();
+        for kind in [Kind::Message, Kind::Friendship] {
+            let n = world.notifications.list.iter().find(|n| n.kind == kind).expect("the notice");
+            assert!(n.title.contains("Near Tester"), "{kind:?}: {}", n.title);
+            assert!(n.name_links.iter().any(|l| l.name == "Near Tester"), "{kind:?}");
+        }
+        // the nearby chat of the same resident stays anonymous
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Near Tester".into(),
+            source_id: near,
+            owner_id: near,
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "hello everyone".into(),
+        }));
+        let said = world.chat.back().expect("the nearby line");
+        assert_eq!(said.text, "hello everyone");
+        assert!(!said.from.contains("Tester"), "{}", said.from);
+    }
 }
