@@ -1498,6 +1498,21 @@ impl InventoryUi {
                 state.understood = false;
                 state.confirm = Some(Confirm::Whole);
             }
+            // (the preview with a folder per store, an option off by default)
+            "preview-stores" => {
+                state.tab = PREVIEW;
+                prefs.stores = true;
+            }
+            // (Empty in small steps' confirmation, for a picture only: no
+            // folder behind it, so nothing is ever deleted)
+            "purge-confirm" => {
+                state.tab = CLEANUP;
+                state.confirm = Some(Confirm::Purge(
+                    Uuid::nil(),
+                    aurora_i18n::tr!("inventory-purge-trash-name").to_string(),
+                    48_215,
+                ));
+            }
             _ => state.tab = PREVIEW,
         }
     }
