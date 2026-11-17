@@ -1686,6 +1686,12 @@ impl World {
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
+    /// Read these folders with all they hold through the background walk
+    /// (Auto-sort's layout to share), in its batches and at its pace.
+    pub fn fetch_inventory_subtrees(&mut self, folders: &[Uuid]) {
+        self.inventory_background.fetch_subtrees(&self.inventory, folders);
+    }
+
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
         // not applied yet: the file holds more than the inventory in memory

@@ -3445,3 +3445,19 @@ fn the_shared_read_ends_whatever_the_trash_and_failed_folders_hold() {
     inv.folders.get_mut(&id(10_000)).expect("folder").state = FetchState::Fetching;
     assert_eq!(read_progress(&inv).pending, 1);
 }
+
+/// The share's read asks only the topmost unread folders (each read with
+/// all it holds), never the Trash's nor a folder too large for the server.
+#[test]
+fn the_shared_read_asks_only_the_topmost_unread_folders() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "Shelf");
+    add_folder(&mut inv, 901, 900, "Inner");
+    add_folder(&mut inv, 902, 11, "Deleted");
+    add_folder(&mut inv, 903, 1, "Huge");
+    for n in [900, 901, 902, 903] {
+        inv.folders.get_mut(&id(n)).expect("folder").state = FetchState::Unknown;
+    }
+    inv.too_big.insert(id(903));
+    assert_eq!(unread_tops(&inv, 10), vec![id(900)]);
+}

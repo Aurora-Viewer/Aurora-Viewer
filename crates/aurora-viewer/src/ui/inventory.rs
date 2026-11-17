@@ -204,6 +204,9 @@ pub enum InvAction {
     /// Preferences › Confirmations / Inventory: stop asking before a Trash
     /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
     StopConfirmingDelete,
+    /// Read these folders with all they hold through the inventory's
+    /// background walk (Auto-sort's layout to share).
+    FetchSubtrees(Vec<Uuid>),
     WearLibrary {
         item: Uuid,
         replace: bool,

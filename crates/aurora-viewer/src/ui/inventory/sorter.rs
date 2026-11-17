@@ -93,6 +93,9 @@ enum Share {
         moved: Instant,
         /// Saved now with what is read (`Save what's loaded now`).
         now: bool,
+        /// When the progress was last read (twice a second, never each
+        /// frame: two walks of 40,000 folders).
+        checked: Option<Instant>,
     },
     /// Written on another thread.
     Saving(std::sync::mpsc::Receiver<Result<(std::path::PathBuf, usize), String>>),
@@ -1401,7 +1404,7 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     st.sorter.held = hold;
-    share_step(inv, &mut st.sorter);
+    share_step(inv, &mut st.sorter, actions);
     // the default folders the user allowed, for the hands-off rule
     let unlocked = prefs.sorter.unlocked_set(inv);
     if inv.sorter_unlocked != unlocked {
@@ -3616,6 +3619,9 @@ fn snapshot_date(at: i64) -> String {
 /// saved with what is loaded (a folder the server never gives).
 const SHARE_LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// How often the read's progress is looked at.
+const SHARE_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// How long the read may stand still (no folder read, failed or asked)
 /// before the layout is saved with what is there.
 const SHARE_STALL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -3624,11 +3630,26 @@ const SHARE_STALL: std::time::Duration = std::time::Duration::from_secs(60);
 /// frame, like the inventory's own search), then written to the Desktop on
 /// another thread. Folder and item names and where each is, never an asset
 /// id; nothing moves.
-fn share_step(inv: &mut Inventory, state: &mut State) {
+fn share_step(inv: &mut Inventory, state: &mut State, actions: &mut Vec<InvAction>) {
     match state.shared.as_ref() {
-        Some(Share::Loading { since, moved, now, .. }) => {
+        Some(Share::Loading {
+            since,
+            moved,
+            now,
+            checked,
+            ..
+        }) => {
             let (since, moved, now) = (*since, *moved, *now);
-            crate::world::inventory::actions::request_tree(inv, inv.root);
+            if !now && checked.is_some_and(|at| at.elapsed() < SHARE_CHECK) {
+                return;
+            }
+            // what is left goes to the inventory's background walk, as the
+            // Legacy Viewer's search does (whole subtrees in its batches,
+            // its own pace and retries), never a read a folder a frame
+            let tops = sorter::unread_tops(inv, 400);
+            if !tops.is_empty() {
+                actions.push(InvAction::FetchSubtrees(tops));
+            }
             // Done once nothing is left to come (every folder read, failed
             // or too large for the server), when nothing moved on for a
             // while, at the limit, or when the user asks. The same trees the
@@ -3649,6 +3670,7 @@ fn share_step(inv: &mut Inventory, state: &mut State) {
                     progress,
                     moved,
                     now,
+                    checked: Some(Instant::now()),
                 });
                 return;
             }
@@ -3722,6 +3744,7 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
                 progress: sorter::ReadProgress::default(),
                 moved: now,
                 now: false,
+                checked: None,
             });
         }
     });

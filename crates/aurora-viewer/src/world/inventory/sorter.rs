@@ -1154,6 +1154,31 @@ pub struct ReadProgress {
     pub pending: usize,
 }
 
+/// The folders still to read whose parent is read: each one asked with all
+/// it holds reads the rest below it (at most `limit`).
+pub fn unread_tops(inv: &Inventory, limit: usize) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    let mut stack = vec![inv.root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if out.len() >= limit || !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.library || matches!(f.info.type_default, 14 | 50) {
+            continue;
+        }
+        if f.state == FetchState::Unknown && !inv.too_big.contains(&id) {
+            out.push(id);
+            continue;
+        }
+        if f.state == FetchState::Fetched {
+            stack.extend(f.children.iter().copied());
+        }
+    }
+    out
+}
+
 pub fn read_progress(inv: &Inventory) -> ReadProgress {
     let mut progress = ReadProgress::default();
     let mut stack = vec![inv.root];

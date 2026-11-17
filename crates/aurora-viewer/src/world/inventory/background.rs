@@ -140,6 +140,23 @@ impl BackgroundFetch {
         self.legacy = [inventory, library];
     }
 
+    /// Read these folders with all they hold, before the rest of the walk
+    /// (LLInventoryModelBackgroundFetch::start(cat_id, recursive), as the
+    /// Legacy Viewer's search and Auto-sort's layout to share need the
+    /// whole tree): the walk's own batches (20 subtrees a request, 19 in
+    /// flight), never one request per folder. One already on its way or
+    /// queued is not asked twice.
+    pub fn fetch_subtrees(&mut self, inv: &Inventory, folders: &[Uuid]) {
+        if !self.started {
+            self.start(inv);
+        }
+        for id in folders.iter().rev() {
+            if !self.pending.contains(id) && !self.queue.iter().any(|(queued, _)| queued == id) {
+                self.queue.push_front((*id, Kind::Recursive));
+            }
+        }
+    }
+
     pub fn is_idle(&self) -> bool {
         self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none() && self.retries.is_empty()
     }
