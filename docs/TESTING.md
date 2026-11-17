@@ -7768,6 +7768,13 @@ failure. Grid validation and any paid upload are performed by the human.
     real shortcut handler and restores the demo's saved bindings. Both
     `demo altgr shortcuts` log lines must say `captured=true opened=true`;
     the toolbox stays open, the shortcut page shows its ordinary binding.
+  - `proxy` on `network`: reveals the Proxy group, scrolled to its voice
+    switch, with its rows open: the
+    HTTP proxy, the SOCKS 5 proxy and its authentication, the other HTTP
+    traffic (a choice whose proxy is off is greyed), and the two "without
+    the proxy" switches (voice, media) with their warning; turning one on
+    asks for a confirmation first. The demo is on loopback, which always
+    stays direct: nothing here goes through a proxy.
   - `alerts` on `confirmations`: reveals its last two groups, the one list
     of every "don't ask / don't show again" answer: the questions of other
     pages (their own rows, still counted on their page) and the warnings

@@ -541,6 +541,7 @@ dependencies = [
 name = "aurora-audio"
 version = "0.1.0"
 dependencies = [
+ "aurora-proxy",
  "aurora-version",
  "cpal",
  "crossbeam-channel",
@@ -613,6 +614,7 @@ dependencies = [
  "aurora-llsd",
  "aurora-msg",
  "aurora-prim",
+ "aurora-proxy",
  "aurora-version",
  "base64 0.23.1",
  "crossbeam-channel",
@@ -639,6 +641,17 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.3",
  "uuid",
+]
+
+[[package]]
+name = "aurora-proxy"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -675,6 +688,7 @@ name = "aurora-updater"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aurora-proxy",
  "aurora-version",
  "directories",
  "log",
@@ -709,6 +723,7 @@ dependencies = [
  "aurora-media",
  "aurora-net",
  "aurora-prim",
+ "aurora-proxy",
  "aurora-render",
  "aurora-updater",
  "aurora-version",

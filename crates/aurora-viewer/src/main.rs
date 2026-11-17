@@ -88,6 +88,7 @@ mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod pose_stand;
+mod proxy;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
@@ -194,6 +195,9 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // Preferences › Network › Proxy: before the first connection of the
+    // viewer (LLStartUp::startLLProxy, at startup)
+    proxy::install(&settings::Settings::load().proxy);
     splash::settings();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers

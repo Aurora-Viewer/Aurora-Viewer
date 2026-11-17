@@ -1844,6 +1844,11 @@ pub struct Settings {
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
     pub no_neighbour_regions: bool,
+    /// Preferences › Network and cache › Proxy (the Legacy Viewer's
+    /// floater_preferences_proxy.xml): read at startup (`proxy.rs`), applied
+    /// at the next start. The SOCKS 5 user name and password are in the
+    /// credential store (`credentials::store_proxy`), never here.
+    pub proxy: aurora_proxy::ProxySettings,
     pub parcel_visibility: crate::world::parcel_visibility::Settings,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
@@ -2747,6 +2752,7 @@ impl Default for Settings {
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
+            proxy: Default::default(),
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
             chat_island_width: 0.0,

@@ -310,6 +310,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
+        "proxy" => row(Page::Network, 0, tr!("ui-options-proxy-direct-voice")),
         _ => None,
     };
     let audio = match what {
@@ -318,7 +319,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
-    if what == "auto-accept" {
+    if what == "auto-accept" || what == "proxy" {
         st.demo_open_cogs = true;
     }
     if let Some(section) = audio {
@@ -530,6 +531,9 @@ pub struct OptionsUi {
     pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// Preferences › Network › Proxy: the credentials being typed and the
+    /// direct voice confirmation.
+    proxy: pages::proxy::ProxyPage,
     /// Entries of the conversation log of the account logged in.
     pub conversation_log_entries: usize,
     confirm_clear_conversation_log: bool,
@@ -1361,6 +1365,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    pages::proxy::frame(ctx, p, s, st, *open);
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
