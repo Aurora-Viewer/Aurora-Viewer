@@ -9792,6 +9792,19 @@ script-preferences-owner-say = Route llOwnerSay to script debug
 script-preferences-recompile = Allow recompilation without source changes
 script-preferences-external = External editor command
 script-preferences-external-hint = Use %s for the file; quote paths that contain spaces.
+script-preferences-websocket = Enable WebSocket sync
+script-preferences-websocket-port = WebSocket listen port
+script-preferences-websocket-debug = Forward script errors and debug to WebSocket clients
+script-preferences-websocket-hint = An editor on this computer only (such as the Second Life extension for VS Code) can then follow the scripts you open in the external editor and get their compile results.
+script-sync-started = External editor server started on port { $port }.
+script-sync-failed = Failed to start external editor server on port { $port }.
+script-sync-stopped = External editor server stopped.
+script-sync-upload-failed = File upload failed: { $reason }
+script-sync-demo-followed = Demo editor: following the script.
+script-sync-demo-compiled = Demo editor: compile result received, { $count ->
+    [one] { $count } error, line { $row }
+   *[other] { $count } errors, first at line { $row }
+    }.
 script-color-text = Text
 script-color-cursor = Cursor
 script-color-background = Background
@@ -14730,9 +14743,9 @@ inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 extra copy of { $items } items
    *[other] { $count } extra copies of { $items } items
 }
-inventory-cleanup-find-demos = Demos
-inventory-cleanup-demos-intro = Find the demo copies stores give to try things on (a name with the word DEMO, never Demon). They go to Pre-Trash for you to look at; a demo folder goes whole. Nothing is deleted.
-inventory-cleanup-demos-nothing = No demo of these types found.
+inventory-cleanup-find-demos = Demos
+inventory-cleanup-demos-intro = Find the demo copies stores give to try things on (a name with the word DEMO, never Demon). They go to Pre-Trash for you to look at; a demo folder goes whole. Nothing is deleted.
+inventory-cleanup-demos-nothing = No demo of these types found.
 inventory-cleanup-demos-summary = { $count ->
     [one] 1 demo ({ $items } items)
    *[other] { $count } demos ({ $items } items)

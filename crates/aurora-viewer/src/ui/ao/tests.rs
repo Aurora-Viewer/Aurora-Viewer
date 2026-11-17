@@ -1258,3 +1258,69 @@ fn quick_panel_dismisses_on_escape_and_outside_click_without_changing_preference
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.movement_prefs, before);
 }
+
+/// A selection dragged from the inventory onto the AO's list
+/// (FloaterAO::handleDragAndDrop, ACCEPT_YES_MULTI): one edit links every
+/// animation; a selection holding a folder is refused and says why.
+#[test]
+fn a_selection_dragged_from_the_inventory_adds_every_animation_at_once() {
+    let mut f = Fixture::new();
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let walks: Vec<Uuid> = set.states[&State::Walking]
+        .steps
+        .iter()
+        .flat_map(|s| &s.members)
+        .map(|a| a.original)
+        .chain(
+            set.states[&State::Running]
+                .steps
+                .iter()
+                .flat_map(|s| &s.members)
+                .map(|a| a.original),
+        )
+        .take(2)
+        .collect();
+    assert_eq!(walks.len(), 2, "the demo set walks and runs");
+    fn locate(shape: &egui::Shape, name: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == name => Some(t.pos + egui::vec2(5.0, 5.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| locate(s, name)),
+            _ => None,
+        }
+    }
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let release = |f: &mut Fixture, ids: Vec<Uuid>| {
+        let shapes = f.draw(Vec::new()).1;
+        let over = shapes.iter().find_map(|s| locate(&s.shape, "Aurora Stand A")).expect("list");
+        let away = egui::pos2(4.0, 4.0);
+        f.draw(vec![egui::Event::PointerMoved(away), press(away, true)]);
+        crate::ui::inventory::drag::demo_carry(&f.ctx, ids);
+        f.draw(Vec::new());
+        assert!(
+            f.draw(vec![egui::Event::PointerMoved(over)]).0.is_empty(),
+            "nothing before the release"
+        );
+        let out = f.draw(vec![press(over, false)]).0;
+        assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "the drop takes the cargo");
+        out
+    };
+
+    let out = release(&mut f, walks.clone());
+    let [Action::Edit(change, None)] = out.as_slice() else {
+        panic!("one inventory edit for the whole selection: {}", out.len())
+    };
+    assert!(
+        matches!(change.operations.last(), Some(Operation::Links { links, .. }) if links.len() == 2),
+        "{:?}",
+        change.operations
+    );
+
+    let out = release(&mut f, vec![walks[0], set.id]);
+    assert!(out.is_empty(), "a folder in the selection refuses the batch");
+    assert_eq!(f.state.message, aurora_i18n::tr!("ao-not-animation"));
+}

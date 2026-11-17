@@ -9788,6 +9788,19 @@ script-preferences-owner-say = Diriger llOwnerSay vers le débogage des scripts
 script-preferences-recompile = Autoriser la recompilation sans modifier la source
 script-preferences-external = Commande de l’éditeur externe
 script-preferences-external-hint = Utilise %s pour le fichier ; les chemins avec des espaces doivent être entre guillemets.
+script-preferences-websocket = Activer la synchronisation WebSocket
+script-preferences-websocket-port = Port d’écoute WebSocket
+script-preferences-websocket-debug = Transmettre les erreurs et le débogage des scripts aux clients WebSocket
+script-preferences-websocket-hint = Un éditeur de cet ordinateur seulement (comme l’extension Second Life pour VS Code) peut alors suivre les scripts ouverts dans l’éditeur externe et recevoir leurs résultats de compilation.
+script-sync-started = Serveur de l’éditeur externe démarré sur le port { $port }.
+script-sync-failed = Impossible de démarrer le serveur de l’éditeur externe sur le port { $port }.
+script-sync-stopped = Serveur de l’éditeur externe arrêté.
+script-sync-upload-failed = Échec de l’envoi du fichier : { $reason }
+script-sync-demo-followed = Éditeur de démo : script suivi.
+script-sync-demo-compiled = Éditeur de démo : résultat de compilation reçu, { $count ->
+    [one] { $count } erreur, ligne { $row }
+   *[other] { $count } erreurs, la première ligne { $row }
+    }.
 script-color-text = Texte
 script-color-cursor = Curseur
 script-color-background = Arrière-plan
@@ -14735,9 +14748,9 @@ inventory-cleanup-duplicates-summary = { $count ->
     [one] 1 exemplaire en trop de { $items } objets
    *[other] { $count } exemplaires en trop de { $items } objets
 }
-inventory-cleanup-find-demos = Démos
-inventory-cleanup-demos-intro = Trouve les copies de démonstration que les boutiques donnent pour essayer (un nom avec le mot DEMO, jamais Demon). Elles vont dans la Pré-corbeille pour que vous les regardiez ; un dossier de démo part entier. Rien n’est supprimé.
-inventory-cleanup-demos-nothing = Aucune démo de ces types.
+inventory-cleanup-find-demos = Démos
+inventory-cleanup-demos-intro = Trouve les copies de démonstration que les boutiques donnent pour essayer (un nom avec le mot DEMO, jamais Demon). Elles vont dans la Pré-corbeille pour que vous les regardiez ; un dossier de démo part entier. Rien n’est supprimé.
+inventory-cleanup-demos-nothing = Aucune démo de ces types.
 inventory-cleanup-demos-summary = { $count ->
     [one] 1 démo ({ $items } objets)
    *[other] { $count } démos ({ $items } objets)
