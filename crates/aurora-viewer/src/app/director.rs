@@ -2,6 +2,8 @@
 //! it takes for a keyframe, the camera it moves to one, the playback that
 //! hides the interface and the HUDs, the keys that end it, and its demo.
 
+mod shots;
+
 use super::App;
 use crate::camera::track::Pose;
 use crate::director::{self, Aim, Director, History, KeyAim, Mode, Target};
@@ -632,6 +634,7 @@ impl App {
             can_record: matches!(self.director.ffmpeg, Ffmpeg::Ready(_))
                 || (self.demo && std::env::var_os("AURORA_DEMO_DIRECTOR_FILM").is_some()),
             recording: self.director.recording.is_some(),
+            shots: self.director_shots_here(),
         }
     }
 
@@ -754,7 +757,9 @@ impl App {
                 Action::Update(index) => {
                     let pose = self.director_pose();
                     self.director.d.track.set_pose(index, pose);
+                    self.director_key_laid_again(index);
                 }
+                Action::KeyTravel(index, on) => self.director_key_travel(index, on),
                 Action::GoTo(index) => self.director_go_to(index),
                 Action::Play => self.director_play(),
                 Action::Lens(fov) => self.director_lens(fov),
@@ -903,7 +908,8 @@ impl App {
     /// live and all along the track, its second keyframe on the neck and its
     /// third on the head (targets of their own, kept when the lock goes
     /// off), the fourth's target cleared, in a 2.39:1 frame with the rule
-    /// of thirds; `green` shows our avatar alone on a green screen.
+    /// of thirds; `green` shows our avatar alone on a green screen; `orbit`
+    /// replaces the track by a shot (`app/director/shots.rs`).
     fn director_demo(&mut self) {
         if !self.demo {
             return;
@@ -982,6 +988,9 @@ impl App {
             isolation.set_transparent(true);
             self.director.d.key_color = Some(director::KEY_GREEN);
             log::info!("director demo: our avatar alone on a green screen");
+        }
+        if mode == "orbit" {
+            self.director_shots_demo();
         }
     }
 
