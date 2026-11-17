@@ -446,6 +446,7 @@
     {
       "category": "accessories",
       "words": [
+        "hood",
         "apron",
         "bag",
         "purse",
@@ -525,6 +526,8 @@
     {
       "category": "furniture",
       "words": [
+        "carpet",
+        "carpets",
         "platform bed",
         "display platform",
         "pose platform",
@@ -576,6 +579,8 @@
     {
       "category": "decor",
       "words": [
+        "chalice",
+        "goblet",
         "hair dryer",
         "decor",
         "plant",
