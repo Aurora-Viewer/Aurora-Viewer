@@ -616,6 +616,15 @@ impl SoundManager {
         }
     }
 
+    /// Gaming mode (app/gaming_mode.rs): every decoded sound nothing plays
+    /// or waits for goes, with the same protections as the budget's (the
+    /// interface sounds, those playing, queued, triggered, previewed); each
+    /// is decoded again from the disk cache when it is wanted. Not in the
+    /// Legacy Viewer.
+    pub fn release_idle(&mut self) {
+        self.drop_unused_clips(0, 0);
+    }
+
     /// Drops the least recently used decoded sounds past
     /// [`MAX_DECODED_CLIPS`] or [`DECODED_BUDGET`], except the kept ones
     /// and those playing or waiting to play (LLAudioEngine::getFreeBuffer
@@ -1334,6 +1343,22 @@ mod tests {
         sounds.want(Uuid::from_u128(6));
         assert_eq!(sounds.clips[&Uuid::from_u128(6)].state, 0);
         drop(voice);
+    }
+
+    #[test]
+    fn gaming_mode_releases_every_idle_sound_and_keeps_those_in_use() {
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-sound-memory-tests"));
+        for i in 1..=4u128 {
+            decoded(&mut sounds, Uuid::from_u128(i), 480);
+        }
+        // an object's looping sound, a triggered one, an interface sound
+        sounds.set_attached(None, Uuid::from_u128(100), Uuid::from_u128(1), 1.0, FLAG_LOOP);
+        sounds.trigger(Uuid::from_u128(2), Vec3::ZERO, None, 1.0);
+        sounds.want_kept(Uuid::from_u128(3));
+        sounds.release_idle();
+        assert!(in_memory(&sounds, 1) && in_memory(&sounds, 2) && in_memory(&sounds, 3));
+        assert!(!in_memory(&sounds, 4), "idle, however recent");
+        assert!(sounds.asset_settled(&Uuid::from_u128(4)), "known as good, read again when wanted");
     }
 
     #[test]
