@@ -6540,7 +6540,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The log at frames 741, 790 and 880 must say `mouselook=false` and
   `cursor held=false`, the camera about 1.4 m from the avatar at 880 (the
   closest zoom): mouselook is refused up front instead of entered and left
-  a frame later.
+  a frame later. `avatar-zoom` sets `camdistmax:5` on the avatar's own
+  view, scrolls four clicks out from frame 740 (the second already reaches
+  the limit) and one back in at frame 800. The log gives the camera's
+  distance to the avatar at frames 730, 790 and 880: about 3.3 m, 5 m (held
+  at the limit) and about 4.3 m (the click in moved the camera at once: no
+  zoom was kept past the limit).
   `sitting` sends a forced object sit at frame 700, then sitground at 740.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
