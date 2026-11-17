@@ -1,5 +1,7 @@
-//! Ray-traced sun shadows of the main view, an experiment behind
-//! `AURORA_RT_SHADOWS` (off by default; Vulkan devices with ray queries).
+//! Ray-traced sun shadows of the main view, and with them the local
+//! lights' shadows, the indirect light and the reflections: experimental,
+//! Preferences › Graphics › Ray tracing (`RenderSettings::ray_tracing`,
+//! off by default; devices opened with ray queries).
 //!
 //! Through wgpu's ray queries (`EXPERIMENTAL_RAY_QUERY`): a bottom level per
 //! face geometry of the arena, a top level of the faces that stand still in
@@ -30,13 +32,14 @@ use crate::gpu_cull::{CullFace, CullObject, CullTables, GpuTable, NO_OBJECT, obj
 use crate::pipeline_cache::CachedPipelines;
 use crate::types::{DrawRecord, flags};
 
-/// The device feature the experiment needs.
+/// The device feature ray tracing needs.
 pub const FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY;
 
-/// Which faces a ray passes (`AURORA_RT_SHADOWS`): `1` none, `front` those
-/// it meets from their front, `back` those it meets from behind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which faces a ray passes (`AURORA_RT_SHADOWS=front` or `back`): none,
+/// those it meets from their front, those it meets from behind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Cull {
+    #[default]
     None,
     Front,
     Back,
@@ -53,47 +56,87 @@ impl Cull {
     }
 }
 
-/// The experiment's mode, read once: None when `AURORA_RT_SHADOWS` is unset,
-/// empty or `0`.
-pub fn mode() -> Option<Cull> {
-    static MODE: OnceLock<Option<Cull>> = OnceLock::new();
-    *MODE.get_or_init(|| parse(std::env::var("AURORA_RT_SHADOWS").ok().as_deref()))
+/// `AURORA_RT_SHADOWS`, `AURORA_RT_LIGHTS`, `AURORA_RT_GI` and
+/// `AURORA_RT_REFLECTIONS`: the options of Preferences › Graphics › Ray
+/// tracing forced for a launch (a comparison, an automated run), whatever
+/// the settings and without changing them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Override {
+    shadows: Option<bool>,
+    lights: Option<bool>,
+    indirect: Option<bool>,
+    reflections: Option<bool>,
+    cull: Cull,
 }
 
-fn parse(value: Option<&str>) -> Option<Cull> {
-    match value?.trim() {
-        "" | "0" | "off" => None,
-        "front" => Some(Cull::Front),
-        "back" => Some(Cull::Back),
-        _ => Some(Cull::None),
+impl Override {
+    /// From the four variables' values: `0` or `off` forces an option off,
+    /// anything else on (`front` and `back`, the sun shadows with that
+    /// culling); unset or empty leaves it to the settings.
+    fn parse(shadows: Option<&str>, lights: Option<&str>, indirect: Option<&str>, reflections: Option<&str>) -> Self {
+        let forced = |value: Option<&str>| match value?.trim() {
+            "" => None,
+            "0" | "off" => Some(false),
+            _ => Some(true),
+        };
+        Override {
+            shadows: forced(shadows),
+            lights: forced(lights),
+            indirect: forced(indirect),
+            reflections: forced(reflections),
+            cull: match shadows.map(str::trim) {
+                Some("front") => Cull::Front,
+                Some("back") => Cull::Back,
+                _ => Cull::None,
+            },
+        }
+    }
+
+    fn from_env() -> Self {
+        static FORCED: OnceLock<Override> = OnceLock::new();
+        let var = |name: &str| std::env::var(name).ok();
+        *FORCED.get_or_init(|| {
+            Override::parse(
+                var("AURORA_RT_SHADOWS").as_deref(),
+                var("AURORA_RT_LIGHTS").as_deref(),
+                var("AURORA_RT_GI").as_deref(),
+                var("AURORA_RT_REFLECTIONS").as_deref(),
+            )
+        })
+    }
+
+    /// What is traced when the settings ask `asked`: nothing without the
+    /// sun's shadows, whose scene the others trace.
+    fn applied(self, asked: crate::RayTracing) -> crate::RayTracing {
+        let shadows = self.shadows.unwrap_or(asked.shadows);
+        crate::RayTracing {
+            shadows,
+            lights: shadows && self.lights.unwrap_or(asked.lights),
+            indirect: shadows && self.indirect.unwrap_or(asked.indirect),
+            reflections: shadows && self.reflections.unwrap_or(asked.reflections),
+        }
     }
 }
 
-/// Whether the traced reflections are on too (`AURORA_RT_REFLECTIONS`, with
-/// `AURORA_RT_SHADOWS`): they take SSR's place where SSR is on.
-pub fn reflections() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_REFLECTIONS").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
+/// Whether a device is to be opened with [`FEATURES`]: the settings ask for
+/// ray tracing (`asked`) or a launch variable forces it.
+pub(crate) fn wanted_at_open(asked: bool) -> bool {
+    Override::from_env()
+        .applied(crate::RayTracing {
+            shadows: asked,
+            ..Default::default()
+        })
+        .shadows
 }
 
-/// Whether the traced indirect light is on too (`AURORA_RT_GI`, with
-/// `AURORA_RT_SHADOWS`): it takes the screen-space indirect light's place.
-pub fn gi() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_GI").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
-}
-
-/// Whether the local point lights' shadows are traced too
-/// (`AURORA_RT_LIGHTS`, with `AURORA_RT_SHADOWS`).
-pub fn local_lights() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| mode().is_some() && std::env::var("AURORA_RT_LIGHTS").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off")))
-}
-
-/// Whether to ask a device for [`FEATURES`]: the experiment is on and the
-/// adapter has them.
-pub fn wanted(adapter: wgpu::Features) -> bool {
-    mode().is_some() && adapter.contains(FEATURES)
+/// What `device` traces when the settings ask `asked`: nothing on a device
+/// opened without ray queries.
+pub(crate) fn traced(device: &wgpu::Device, asked: crate::RayTracing) -> crate::RayTracing {
+    if device.features().contains(FEATURES) {
+        Override::from_env().applied(asked)
+    } else {
+        crate::RayTracing::default()
+    }
 }
 
 /// A face to trace: its record, its geometry in the arena, where it stands,
@@ -2103,7 +2146,9 @@ impl Timer {
     const REPORT: u32 = 240;
 
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, count: u32) -> Option<Self> {
-        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        // the timings are the profile's: nothing is measured, read back or
+        // logged in a run without AURORA_PROFILE
+        if !crate::renderer::profile() || !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return None;
         }
         let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
@@ -2201,13 +2246,10 @@ impl Timer {
 }
 
 impl RtShadows {
-    /// None when the experiment is off or the device has no ray queries.
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, textures: &wgpu::BindGroupLayout) -> Option<Self> {
-        let cull = mode()?;
-        if !device.features().contains(FEATURES) {
-            log::warn!("AURORA_RT_SHADOWS: the device has no ray queries, the shadow maps stay");
-            return None;
-        }
+    /// The ray tracer of a device opened with ray queries, tracing
+    /// `options` ([`traced`], with the sun's shadows).
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, textures: &wgpu::BindGroupLayout, options: crate::RayTracing) -> Self {
+        let cull = Override::from_env().cull;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt shadows"),
             source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")]).into()),
@@ -2293,8 +2335,8 @@ impl RtShadows {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        log::info!("AURORA_RT_SHADOWS: ray-traced sun shadows on ({cull:?} faces culled)");
-        Some(Self {
+        log::info!("ray tracing on: {options:?} ({cull:?} faces culled)");
+        Self {
             layout,
             pipeline,
             buffer,
@@ -2325,13 +2367,13 @@ impl RtShadows {
             stats: RtStats::default(),
             timer: Timer::new(device, queue, 4),
             poser: Poser::new(device, &scene_layout),
-            reflect: reflections().then(|| Reflect::new(device, queue, &scene_layout, textures)),
-            gi: gi().then(|| Gi::new(device, queue, &scene_layout, textures)),
-            lights: Some(Lights::new(device, queue, &scene_layout, textures)),
+            reflect: options.reflections.then(|| Reflect::new(device, queue, &scene_layout, textures)),
+            gi: options.indirect.then(|| Gi::new(device, queue, &scene_layout, textures)),
+            lights: Some(Lights::new(device, queue, &scene_layout, textures, options.lights)),
             posed_live: false,
             scene_layout,
             warned: false,
-        })
+        }
     }
 }
 
@@ -2737,9 +2779,10 @@ fn geometry_flags(opaque: bool) -> wgpu::AccelerationStructureGeometryFlags {
 }
 
 impl Targets {
-    /// The mask, when the device traces (AURORA_RT_SHADOWS and ray queries).
-    pub(crate) fn new(device: &wgpu::Device, width: u32, height: u32) -> Option<Self> {
-        if mode().is_none() || !device.features().contains(FEATURES) {
+    /// The mask and what the other traced effects of `options` write
+    /// ([`traced`]), when the sun's shadows are traced.
+    pub(crate) fn new(device: &wgpu::Device, width: u32, height: u32, options: crate::RayTracing) -> Option<Self> {
+        if !options.shadows {
             return None;
         }
         let size = (width.max(1), height.max(1));
@@ -2759,7 +2802,7 @@ impl Targets {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let reflect = reflections().then(|| {
+        let reflect = options.reflections.then(|| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("rt reflections"),
@@ -2777,7 +2820,7 @@ impl Targets {
                 })
                 .create_view(&wgpu::TextureViewDescriptor::default())
         });
-        let gi = gi().then(|| {
+        let gi = options.indirect.then(|| {
             let half = (size.0.div_ceil(2), size.1.div_ceil(2));
             let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
             let view = |label: &'static str, (width, height): (u32, u32), format: wgpu::TextureFormat| {
@@ -2910,7 +2953,7 @@ impl RtShadows {
                 let sets = faces.set.saturating_sub(std::mem::replace(&mut self.logged_set, faces.set));
                 let cpu = std::mem::take(&mut self.cpu);
                 log::info!(
-                    "AURORA_RT_SHADOWS: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame ({} faces looked at), {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame; the slowest: {:?}",
+                    "rt shadows: pose {:.3} ms, build {:.3} ms, trace {:.3} ms (GPU, mean of {frames} frames); {} placed faces ({} moving, {} merged into {} cells: {} made last frame, {} waiting; the still ones' level built {} times, for [at once, gone, moved, other geometry, to come in, to go out; gone: slot freed, no geometry, no longer traced, now posed]: {:?}; still faces of up to 64 / 256 / 1024 / 4096 / more triangles: {:?}), {} bottom levels ({} built last frame, {} triangles), {} waiting; {} skeletons ({} built last frame: {} faces, {} vertices); CPU: main thread {:.2} ms a frame ({} faces looked at), {:.2} ms a set ({} sets); render thread {:.2} ms a frame, {:.2} at most, {:.2} on a set's frame; the slowest: {:?}",
                     ms[0],
                     ms[1],
                     ms[2],
@@ -3513,7 +3556,7 @@ impl Reflect {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        log::info!("AURORA_RT_REFLECTIONS: ray-traced reflections on, in SSR's place");
+        log::info!("ray tracing: reflections on, in SSR's place");
         Reflect {
             layout,
             pipeline,
@@ -3729,7 +3772,7 @@ impl Gi {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        log::info!("AURORA_RT_GI: ray-traced indirect light on, in the screen-space indirect light's place");
+        log::info!("ray tracing: indirect light on, in the screen-space indirect light's place");
         Gi {
             trace_layout,
             filter_layout,
@@ -3748,7 +3791,13 @@ impl Gi {
 }
 
 impl Lights {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene_layout: &wgpu::BindGroupLayout, textures: &wgpu::BindGroupLayout) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene_layout: &wgpu::BindGroupLayout,
+        textures: &wgpu::BindGroupLayout,
+        points: bool,
+    ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rt lights"),
             source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")]).into()),
@@ -3831,10 +3880,6 @@ impl Lights {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let points = local_lights();
-        if points {
-            log::info!("AURORA_RT_LIGHTS: ray-traced point light shadows on");
-        }
         Lights {
             points,
             trace_layout,
@@ -3872,6 +3917,29 @@ fn traced_lights(lights: &[crate::types::PointLight]) -> Vec<TracedLightU> {
 }
 
 impl RtShadows {
+    /// Follows the options ([`traced`], still with the sun's shadows):
+    /// makes what an effect turned on needs, drops what one turned off
+    /// held.
+    pub(crate) fn set_options(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        textures: &wgpu::BindGroupLayout,
+        options: crate::RayTracing,
+    ) {
+        if options.reflections != self.reflect.is_some() {
+            self.reflect = options
+                .reflections
+                .then(|| Reflect::new(device, queue, &self.scene_layout, textures));
+        }
+        if options.indirect != self.gi.is_some() {
+            self.gi = options.indirect.then(|| Gi::new(device, queue, &self.scene_layout, textures));
+        }
+        if let Some(l) = &mut self.lights {
+            l.points = options.lights;
+        }
+    }
+
     /// Whether the point lights' shadows are traced: the frame then binds
     /// the mask with their share (common.wgsl `local_share`).
     pub(crate) fn traces_lights(&self) -> bool {
@@ -3909,7 +3977,7 @@ impl RtShadows {
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
-                "AURORA_RT_LIGHTS: trace {:.3} ms, reuse {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {} lights listed)",
+                "rt lights: trace {:.3} ms, reuse {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {} lights listed)",
                 ms[0],
                 ms[1],
                 ms[2],
@@ -4099,7 +4167,7 @@ impl RtShadows {
             && let Some((ms, frames)) = timer.harvest()
         {
             log::info!(
-                "AURORA_RT_GI: trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
+                "rt gi: trace {:.3} ms, denoise {:.3} ms, filter {:.3} ms (GPU, mean of {frames} frames, {}x{} rays)",
                 ms[0],
                 ms[1],
                 ms[2],
@@ -4248,7 +4316,7 @@ impl RtShadows {
         if let Some(timer) = &mut r.timer
             && let Some((ms, frames)) = timer.harvest()
         {
-            log::info!("AURORA_RT_REFLECTIONS: trace {:.3} ms (GPU, mean of {frames} frames)", ms[0]);
+            log::info!("rt reflections: trace {:.3} ms (GPU, mean of {frames} frames)", ms[0]);
         }
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
         let u = ReflectU {
@@ -4333,7 +4401,7 @@ impl RtShadows {
             &self.merged_records,
         ];
         if !self.warned && buffers.iter().any(|b| b.size() > max) {
-            log::warn!("AURORA_RT_SHADOWS: a scene buffer is larger than the device binds; what lies past it is not traced right");
+            log::warn!("ray tracing: a scene buffer is larger than the device binds; what lies past it is not traced right");
             self.warned = true;
         }
         let entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
@@ -5160,13 +5228,42 @@ mod tests {
     }
 
     #[test]
-    fn rt_shadows_mode_parses_the_variable() {
-        assert_eq!(parse(None), None);
-        assert_eq!(parse(Some("0")), None);
-        assert_eq!(parse(Some("")), None);
-        assert_eq!(parse(Some("1")), Some(Cull::None));
-        assert_eq!(parse(Some("front")), Some(Cull::Front));
-        assert_eq!(parse(Some("back")), Some(Cull::Back));
+    fn rt_shadows_the_variables_force_the_options_and_leave_the_others_to_the_settings() {
+        use crate::RayTracing;
+        let all = RayTracing {
+            shadows: true,
+            lights: true,
+            indirect: true,
+            reflections: true,
+        };
+        let sun = RayTracing {
+            shadows: true,
+            ..Default::default()
+        };
+        // no variable: the settings, and nothing without the sun's shadows
+        let none = Override::parse(None, None, None, None);
+        assert_eq!(none, Override::default());
+        assert_eq!(none.applied(all), all);
+        assert_eq!(none.applied(sun), sun);
+        assert_eq!(none.applied(RayTracing { shadows: false, ..all }), RayTracing::default());
+        // empty is unset
+        assert_eq!(Override::parse(Some(""), Some(" "), None, None), none);
+        // forced on, over settings that are off; the others stay theirs
+        let on = Override::parse(Some("1"), Some("1"), None, None);
+        assert_eq!(on.applied(RayTracing::default()), RayTracing { lights: true, ..sun });
+        assert_eq!(on.applied(all), all);
+        // forced off, over settings that are on
+        assert_eq!(Override::parse(Some("0"), None, None, None).applied(all), RayTracing::default());
+        assert_eq!(
+            Override::parse(Some("off"), Some("1"), Some("1"), Some("1")).applied(all),
+            RayTracing::default()
+        );
+        assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0")).applied(all), sun);
+        // the culling comes with the sun's shadows
+        assert_eq!(Override::parse(Some("1"), None, None, None).cull, Cull::None);
+        let front = Override::parse(Some("front"), None, None, None);
+        assert_eq!((front.cull, front.applied(RayTracing::default())), (Cull::Front, sun));
+        assert_eq!(Override::parse(Some(" back "), None, None, None).cull, Cull::Back);
     }
 
     #[test]

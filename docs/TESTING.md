@@ -7971,7 +7971,8 @@ failure. Grid validation and any paid upload are performed by the human.
     backup file would, and the chat says so.
   - the rows of the former filters, lit a moment and scrolled to:
     `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
-    Indirect light, its cog opened), `0:bloom`, `name-tags`, `attention`
+    Indirect light, its cog opened), `graphics/1:ray-tracing` (Light › Ray
+    tracing), `0:bloom`, `name-tags`, `attention`
     (Chat › Notifications), `tip-toast` (Chat › Notifications, the online /
     offline toasts' duration, greyed with Aurora's center) and
     `tip-toast-legacy` (the same with the Legacy toasts for the session: the
@@ -12582,6 +12583,10 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_RT_SHADOWS=1`, `0`, `front` or `back` | Ray-traced sun shadows forced on or off for this launch |
+| `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
+| `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
+| `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13087,6 +13092,28 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
+- **`AURORA_RT_SHADOWS=1|0|front|back`**, **`AURORA_RT_LIGHTS=1|0`**,
+  **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
+  options of Preferences › Graphics › Ray tracing (experimental, off by
+  default; `rt_shadows.rs`) for this launch, without changing the saved
+  settings: `1` forces one on, `0` (or `off`) off, and an unset variable
+  leaves it to its setting. They need a graphics card with ray queries,
+  and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
+  sun's and the moon's shadows of the main view in the shadow maps' place
+  (the Shadows setting must be on); `front` and `back` also make the rays
+  pass the faces they meet from the front or from behind, to compare. The
+  three others trace the scene the sun's shadows build, so they do nothing
+  without them: the point lights' shadows, the indirect light (in the
+  screen-space one's place, at the Indirect light intensity) and the
+  reflections (in the screen-space ones' place, which must be on). The
+  GPU device has ray queries only when ray tracing is on as it opens, by
+  the setting or `AURORA_RT_SHADOWS`: turning the setting on later makes
+  the window and the renderer again, as after a device loss, and
+  `AURORA_RT_SHADOWS=0` keeps that from happening. With
+  `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
+  (the faces posed, the levels built and the trace on the GPU, the faces
+  placed, and the render thread's time), `rt lights:`, `rt gi:` and
+  `rt reflections:` (each pass's GPU time).
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),

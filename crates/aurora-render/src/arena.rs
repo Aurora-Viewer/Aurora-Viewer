@@ -730,6 +730,12 @@ impl RecordStore {
         self.touched.watch() & self.faces.watch(|a, b| a != b)
     }
 
+    /// Stops following them (`watch_changes`).
+    pub(crate) fn unwatch_changes(&mut self) {
+        self.touched.unwatch();
+        self.faces.unwatch();
+    }
+
     /// Adds to `into` the records that changed since the last call, or
     /// whose face did (one that did both is there twice).
     pub(crate) fn take_changed(&mut self, into: &mut Vec<u32>) {

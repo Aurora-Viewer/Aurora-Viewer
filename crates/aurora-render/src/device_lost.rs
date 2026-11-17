@@ -82,6 +82,9 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
 pub struct DeviceLost {
     lost: Arc<AtomicBool>,
     work: Arc<Mutex<Work>>,
+    /// The renderer is replaced while its device works
+    /// ([`DeviceLost::leave_surface`]).
+    surface_left: Arc<AtomicBool>,
 }
 
 /// The GPU work the render thread last gave the device and the last it saw
@@ -175,6 +178,17 @@ impl DeviceLost {
 
     pub fn get(&self) -> bool {
         self.lost.load(Ordering::Acquire)
+    }
+
+    /// The renderer is about to be replaced by a new one on a new window
+    /// while its device works: its backend leaves the window surface to the
+    /// process, as a lost one's does (`Backend`'s `Drop`).
+    pub fn leave_surface(&self) {
+        self.surface_left.store(true, Ordering::Release);
+    }
+
+    pub fn surface_left(&self) -> bool {
+        self.surface_left.load(Ordering::Acquire)
     }
 
     /// A submission of frame `frame` is about to be made: noted before

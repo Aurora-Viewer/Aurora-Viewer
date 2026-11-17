@@ -81,6 +81,9 @@ pub struct GpuInfo {
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
+    /// Whether this device ray-traces (Preferences › Graphics › Ray
+    /// tracing).
+    pub ray_tracing: crate::RayTracingSupport,
 }
 
 impl GpuInfo {
@@ -220,6 +223,8 @@ pub struct Renderer {
     world_shift: [f32; 2],
     /// `rebase_world` was called since the last frame.
     rt_rebased: bool,
+    /// The last frame gathered the faces to trace.
+    rt_gathered: bool,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -361,7 +366,21 @@ impl Renderer {
     /// driver of their own that crashes the start on PCs that never use VR
     /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
     /// for a restart (`VrState::Unavailable`).
-    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
+    ///
+    /// `ray_tracing`: the settings ask for it (`RenderSettings::ray_tracing`),
+    /// so the device is opened with ray queries where the graphics card has
+    /// them. Off, it is opened as it always was, and the viewer makes the
+    /// renderer again when the setting is turned on
+    /// (`GpuInfo::ray_tracing`, `RayTracingSupport::NotOpened`).
+    pub fn new<W>(
+        window: Arc<W>,
+        width: u32,
+        height: u32,
+        vsync: bool,
+        gpu: &str,
+        xr: bool,
+        ray_tracing: bool,
+    ) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
@@ -541,9 +560,9 @@ impl Renderer {
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
         for (n, &i) in plan.order.iter().enumerate() {
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-            let opened_device = open_device(&adapters[i], xr_graphics.as_ref());
+            let opened_device = open_device(&adapters[i], ray_tracing, xr_graphics.as_ref());
             #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-            let opened_device = open_device(&adapters[i]);
+            let opened_device = open_device(&adapters[i], ray_tracing);
             match opened_device {
                 Ok(o) => {
                     let why = match (n, plan.reason) {
@@ -587,6 +606,7 @@ impl Renderer {
             timestamps,
             adapter_specific,
             max_textures,
+            ray_tracing,
         } = o;
         let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         // The same error every frame (a write into a buffer that could not
@@ -640,6 +660,7 @@ impl Renderer {
             adapters,
             notice,
             vulkan: vulkan_limits(&adapter),
+            ray_tracing,
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -783,6 +804,7 @@ impl Renderer {
             motion_cut: false,
             world_shift: [0.0; 2],
             rt_rebased: false,
+            rt_gathered: false,
             palettes_uploaded: 0,
             rt_palettes: Vec::new(),
             rt_written: Vec::new(),
@@ -1162,6 +1184,14 @@ impl Renderer {
     /// is drawn any more, the viewer should close.
     pub fn device_lost(&self) -> bool {
         self.lost.get()
+    }
+
+    /// Before this renderer is dropped for a new one on a new window while
+    /// its device works (ray tracing turned on, which needs a device opened
+    /// with ray queries): its window surface is left to the process, as
+    /// after a loss (`Backend`'s `Drop`).
+    pub fn leave_surface(&self) {
+        self.lost.leave_surface();
     }
 
     /// How long the GPU has kept the frame in the render thread's hands,
@@ -1623,6 +1653,18 @@ impl Renderer {
         let rt_camera = params.camera_pos;
         let rt_far = params.shadow_distance;
         let rt_shifted = std::mem::take(&mut self.rt_rebased) || self.world_shift != [0.0; 2];
+        let rt_on = crate::rt_shadows::traced(&self.device, self.settings.ray_tracing).shadows;
+        if !rt_on {
+            // turned off: nothing is followed for it, and it starts from
+            // nothing when it comes back
+            if std::mem::take(&mut self.rt_gathered) {
+                self.records.unwatch_changes();
+                self.cull.objects.unwatch();
+                self.rt_poses = Default::default();
+            }
+            self.rt_written.clear();
+        }
+        self.rt_gathered = rt_on;
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1650,7 +1692,7 @@ impl Renderer {
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
-            rt: self.device.features().contains(crate::rt_shadows::FEATURES).then(|| {
+            rt: rt_on.then(|| {
                 let mut faces = crate::rt_shadows::Faces::default();
                 crate::rt_shadows::gather(
                     &mut self.records,
@@ -2028,6 +2070,19 @@ struct OpenedDevice {
     timestamps: bool,
     adapter_specific: bool,
     max_textures: u32,
+    ray_tracing: crate::RayTracingSupport,
+}
+
+/// Whether a device ray-traces: `card` has ray queries, the device was
+/// `opened` with them, and it is the VR runtime's (`vr`).
+fn ray_tracing_support(card: bool, opened: bool, vr: bool) -> crate::RayTracingSupport {
+    use crate::RayTracingSupport as Support;
+    match (vr, card, opened) {
+        (true, ..) => Support::Vr,
+        (false, true, true) => Support::Ready,
+        (false, true, false) => Support::NotOpened,
+        (false, false, _) => Support::Unsupported,
+    }
 }
 
 /// The blocks of video memory wgpu's allocator carves resources out of
@@ -2049,6 +2104,7 @@ const MEMORY_BLOCK: u64 = 16 << 20;
 /// ones it has; an error when it lacks a needed one or the device fails.
 fn open_device(
     adapter: &wgpu::Adapter,
+    ray_tracing: bool,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))] xr: Option<&crate::xr_device::Graphics>,
 ) -> Result<OpenedDevice, RenderError> {
     let afeat = adapter.features();
@@ -2079,12 +2135,15 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
-    // the ray-traced shadows' experiment (rt_shadows.rs), not with VR
+    // ray tracing (rt_shadows.rs), not with VR: its ray queries only when
+    // it is asked for, so that a device that never traces is opened as
+    // before
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-    let rt_allowed = xr.is_none();
+    let vr = xr.is_some();
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let rt_allowed = true;
-    if rt_allowed && crate::rt_shadows::wanted(afeat) {
+    let vr = false;
+    let ray_queries = afeat.contains(crate::rt_shadows::FEATURES);
+    if !vr && ray_queries && crate::rt_shadows::wanted_at_open(ray_tracing) {
         features |= crate::rt_shadows::FEATURES;
     }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
@@ -2160,13 +2219,14 @@ fn open_device(
         alim.max_sampled_textures_per_shader_stage,
         in_all_pools.map_or_else(|| "unknown".to_string(), |n| n.to_string()),
     );
-    let descriptor = wgpu::DeviceDescriptor {
+    let descriptor = |features: wgpu::Features| wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
         experimental_features: if features.contains(crate::rt_shadows::FEATURES) {
             // SAFETY: wgpu's ray queries are experimental (its API may still
-            // change); asked only with AURORA_RT_SHADOWS, an experiment.
+            // change); asked only when ray tracing is, an experimental
+            // option.
             unsafe { wgpu::ExperimentalFeatures::enabled() }
         } else {
             wgpu::ExperimentalFeatures::disabled()
@@ -2176,16 +2236,30 @@ fn open_device(
         },
         trace: wgpu::Trace::Off,
     };
+    // A driver that lists ray queries and does not open with them keeps its
+    // card: the device is opened without, and ray tracing is not offered.
+    let asked = features;
+    let mut request = || match pollster::block_on(adapter.request_device(&descriptor(features))) {
+        Err(e) if features.contains(crate::rt_shadows::FEATURES) => {
+            log::warn!("the GPU device does not open with ray queries ({e}): opened without them, no ray tracing");
+            features.remove(crate::rt_shadows::FEATURES);
+            pollster::block_on(adapter.request_device(&descriptor(features))).map_err(|e| RenderError::Device(e.to_string()))
+        }
+        opened => opened.map_err(|e| RenderError::Device(e.to_string())),
+    };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     let (device, queue) = if let Some(xr) = xr {
-        let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
+        let graphics = xr
+            .open(adapter, &descriptor(asked))
+            .map_err(|e| RenderError::Device(e.to_string()))?;
         log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
         graphics
     } else {
-        pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
+        request()?
     };
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
+    let (device, queue) = request()?;
+    let ray_queries = ray_queries && features.contains(crate::rt_shadows::FEATURES) == asked.contains(crate::rt_shadows::FEATURES);
     Ok(OpenedDevice {
         device,
         queue,
@@ -2194,6 +2268,7 @@ fn open_device(
         timestamps,
         adapter_specific,
         max_textures,
+        ray_tracing: ray_tracing_support(ray_queries, features.contains(crate::rt_shadows::FEATURES), vr),
     })
 }
 

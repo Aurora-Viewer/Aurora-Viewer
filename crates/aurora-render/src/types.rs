@@ -1202,6 +1202,41 @@ pub enum AoMethod {
     Gtao { quality: u8 },
 }
 
+/// What is ray-traced (rt_shadows.rs), on a device opened with ray
+/// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
+/// experimental and off by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RayTracing {
+    /// The sun's and the moon's shadows of the main view, in the shadow
+    /// maps' place (with the sun shadows only). The others trace the scene
+    /// it builds: none without it.
+    pub shadows: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place (with `ssr` only).
+    pub reflections: bool,
+}
+
+/// Whether the device can ray-trace: what Preferences › Graphics › Ray
+/// tracing shows of the graphics card.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RayTracingSupport {
+    /// The device was opened with ray queries: the options apply at once.
+    Ready,
+    /// The graphics card has ray queries and the device was opened without
+    /// them (ray tracing was off then): the renderer is opened again to
+    /// trace (`Renderer::new`'s `ray_tracing`).
+    NotOpened,
+    /// The device is the VR runtime's: no ray tracing in a run set up for
+    /// VR.
+    Vr,
+    /// The graphics card or its driver has no ray queries.
+    #[default]
+    Unsupported,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     /// Requested per-eye XR size, bounded by runtime limits.
@@ -1247,6 +1282,7 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    pub ray_tracing: RayTracing,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1299,6 +1335,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            ray_tracing: RayTracing::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,

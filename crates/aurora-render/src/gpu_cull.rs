@@ -768,6 +768,13 @@ impl Touched {
         std::mem::replace(&mut self.on, true)
     }
 
+    /// Stops following: nothing is kept until the next `watch`.
+    pub(crate) fn unwatch(&mut self) {
+        self.on = false;
+        self.bits.clear();
+        self.ids.clear();
+    }
+
     pub(crate) fn mark(&mut self, i: usize) {
         if !self.on {
             return;
@@ -831,6 +838,12 @@ impl<T: Pod + PartialEq> GpuTable<T> {
     pub(crate) fn watch(&mut self, differs: fn(&T, &T) -> bool) -> bool {
         self.differs = Some(differs);
         self.touched.watch()
+    }
+
+    /// Stops following the changes (`watch`).
+    pub(crate) fn unwatch(&mut self) {
+        self.differs = None;
+        self.touched.unwatch();
     }
 
     /// Adds the entries that changed since the last call to `into`.
@@ -1809,6 +1822,18 @@ mod tests {
         t.mark(3);
         t.take(&mut ids);
         assert_eq!(ids, [3, 700, 64, 3]);
+        // no longer followed: what was marked is dropped, and the next
+        // `watch` starts from nothing
+        t.mark(9);
+        t.unwatch();
+        t.mark(10);
+        ids.clear();
+        t.take(&mut ids);
+        assert!(ids.is_empty());
+        assert!(!t.watch());
+        t.mark(9);
+        t.take(&mut ids);
+        assert_eq!(ids, [9]);
     }
 
     #[test]
