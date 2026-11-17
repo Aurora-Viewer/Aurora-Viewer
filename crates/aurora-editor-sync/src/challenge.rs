@@ -288,9 +288,7 @@ mod windows {
 
     #[cfg(test)]
     pub(super) fn file_sddl(path: &Path) -> io::Result<String> {
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
-        };
+        use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
         use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         let mut descriptor = std::ptr::null_mut();
@@ -312,6 +310,21 @@ mod windows {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
         let descriptor = Local(descriptor);
+        descriptor_text(&descriptor)
+    }
+
+    /// The descriptor an SDDL text gives, written back by Windows: a SID
+    /// that has an alias comes back as the alias (`LA` for the built-in
+    /// Administrator, the account of the CI's runners), as `file_sddl` reads it.
+    #[cfg(test)]
+    pub(super) fn canonical(text: &str) -> io::Result<String> {
+        descriptor_text(&descriptor(text)?)
+    }
+
+    #[cfg(test)]
+    fn descriptor_text(descriptor: &Local) -> io::Result<String> {
+        use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
+        use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
         let mut text = std::ptr::null_mut();
         // SAFETY: a valid descriptor; text is a LocalAlloc string on success.
         if unsafe {
@@ -336,7 +349,6 @@ mod windows {
             String::from_utf16_lossy(std::slice::from_raw_parts(text, len))
         };
         drop(allocation);
-        drop(descriptor);
         Ok(sddl)
     }
 }
@@ -417,7 +429,10 @@ mod tests {
         let challenge = Challenge::create_in(&dir).expect("challenge");
         let sid = windows::user_sid().expect("sid");
         // protected, one entry: full access for the user, nothing inherited
-        assert_eq!(windows::file_sddl(challenge.path()).expect("descriptor"), windows::sddl(&sid));
+        assert_eq!(
+            windows::file_sddl(challenge.path()).expect("descriptor"),
+            windows::canonical(&windows::sddl(&sid)).expect("expected")
+        );
         drop(challenge);
         let _ = fs::remove_dir(&dir);
     }
@@ -438,7 +453,10 @@ mod tests {
         #[cfg(windows)]
         {
             let sid = windows::user_sid().expect("sid");
-            assert_eq!(windows::file_sddl(&folder).expect("descriptor"), windows::dir_sddl(&sid));
+            assert_eq!(
+                windows::file_sddl(&folder).expect("descriptor"),
+                windows::canonical(&windows::dir_sddl(&sid)).expect("expected")
+            );
         }
         let _ = fs::remove_dir(&folder);
         let _ = fs::remove_dir(&dir);
