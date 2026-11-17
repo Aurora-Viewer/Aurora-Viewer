@@ -213,6 +213,8 @@ impl Server {
         let port = std_listener.local_addr()?.port();
         let listener = {
             let _entered = runtime.enter();
+            // proxy-guard: a server on 127.0.0.1 for editors on this PC; a
+            // proxy is for the viewer's outgoing connections
             TcpListener::from_std(std_listener)?
         };
         let shared = Arc::new(Shared {

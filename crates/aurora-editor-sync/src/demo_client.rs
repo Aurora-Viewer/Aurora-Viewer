@@ -39,6 +39,8 @@ pub fn spawn(runtime: &tokio::runtime::Handle, port: u16) -> mpsc::Receiver<Seen
     runtime.spawn(async move {
         let mut stream = None;
         for _ in 0..40 {
+            // proxy-guard: the demo editor speaks to the viewer's own server
+            // on 127.0.0.1, never through a proxy
             if let Ok(s) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
                 stream = Some(s);
                 break;
