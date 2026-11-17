@@ -1187,9 +1187,12 @@ fn tag_at(text: &str) -> Option<(&str, &str)> {
 /// when the whole name finds a head outside the tag (`[LeLutka] Bento
 /// Addon`).
 fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> Option<Category> {
-    // (a name that says decor, or costume, anywhere decides, the store's
-    // own name included: `[Fancy Decor] Rain Boots` is a display piece)
-    if matches!(whole, Some(Category::Decor | Category::Outfits)) {
+    // (a name that says decor anywhere decides, the store's own name
+    // included: `[Fancy Decor] Rain Boots` is a display piece; a decor
+    // thing in a store's name does not, `[Willow Tree] Ada Poses`; an
+    // outfit is the last category, nothing the rest says comes after it)
+    let says_decor = name.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("decor"));
+    if whole == Some(Category::Outfits) || (whole == Some(Category::Decor) && says_decor) {
         return whole;
     }
     // (a texture, a sound… is what its type says, whatever its name)

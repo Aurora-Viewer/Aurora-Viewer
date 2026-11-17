@@ -4074,6 +4074,12 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         "{}",
         path("[Ada Costume] Christmas Tree")
     );
+    // a decor thing in a store's name does not decide
+    assert!(
+        path("[Willow Tree] Ada Poses").contains(Category::Animations.folder()),
+        "{}",
+        path("[Willow Tree] Ada Poses")
+    );
     assert!(
         path("(3) [Moon Hair] Ada Dress").contains(Category::Dresses.folder()),
         "{}",
