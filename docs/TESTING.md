@@ -6247,6 +6247,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_OPACITY=active:<0-1>,inactive:…,conversations:…,bars:…,menus:…,console:…,tags:…,minimap:…` | See-through surfaces of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
+| `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene, with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
@@ -6599,15 +6600,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   its graph); `full` the resource monitor on its overview; `network` the
   monitor's Network section as the bars open it (the full view for this
   opening only); `monitor-<section>` one section of the monitor:
-  `overview`, `subsystems`, `threads`, `memory`, `network`, `disk`, `scene`
-  or `region` (`scene-objects`: the scene on its objects; `scene-worn` and
+  `overview`, `subsystems`, `threads`, `memory`, `network`, `disk`, `scene`,
+  `region` or `autotune` (`scene-objects`: the scene on its objects; `scene-worn` and
   `scene-huds`: what the agent wears on the body and on the screen, each
   with its share of the complexity (none on a HUD), triangles, prims and
   texture memory, the dearest first, with Inspect and Detach; combine with
   `AURORA_DEMO_WORN=1` and `AURORA_DEMO_HUDS=1` for rows). The monitor samples every half second: allow
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=1500` (25 s) for graphs
   with some history, and `AURORA_WINDOW_SIZE=1600,1000` so that its default
-  size (1180 × 760) fits. What to look for: the rail's eight sections with
+  size (1180 × 760) fits. What to look for: the rail's nine sections with
   their live figures; the overview's six tiles and their minute; the
   subsystems' table sorted by a column (click a title), its parts unfolded,
   the selected row's pane (threads, related settings, processor graph);
@@ -6615,6 +6616,24 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (the demo's simulator sends its statistics when the monitor asks). The
   demo has no circuit: the network's UDP counters stay empty but for its
   synthetic traffic, and no media process runs.
+
+- **`AURORA_DEMO_AUTOTUNE`**: opens the Performance window on its target
+  frame rate (the Legacy Viewer's Autotune, `settings/autotune.rs`) and
+  starts it towards 30 fps. `1` tunes on the real frames (the demo is light:
+  it should stay on target and change nothing). `slow` replaces the
+  measured frame time with a simulated heavy scene (12 ms, 2.4 ms per avatar
+  drawn in full, 0.06 ms per metre of draw distance), "Continuous" on: after
+  the 5 s wait the avatars in full come down one a second to six (ours and
+  the five nearest), then the draw distance by 10 m until the rate is
+  reached; the rows show the live values against the user's. `once` is the
+  same without "Continuous": once on target it stops by itself and offers
+  "Give back my settings" and "Keep these settings". What to look for: no
+  value above the user's, a change a second at most, no going up and down;
+  Stop (or Give back) puts the user's draw distance and avatars back at
+  once; Preferences › Graphics shows the user's level, not "custom", while
+  it runs; with the window in the background it waits. Demo values only:
+  the demo's start sets the target and "Continuous" in the settings of the
+  run, and the simulated time never reaches the grid.
 
 - **`AURORA_DEMO_PAY=<mode>`**: gives a balance of L$ 1,000 and opens the
   Pay window, Tess as the payee (her profile picture on the card), in the
