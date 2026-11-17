@@ -17,14 +17,23 @@
 // lit through or shadowed through, most of the image) is copied as it is:
 // the filter would leave each of its pixels unchanged.
 //
-// The image filtered: rgb a value (the share of the local light in all
-// three), a its history's frames (`cs_variance`'s input) or its variance
-// (`cs_atrous`'s). The guide (rt_history.wgsl `pack_normal`): xy the
-// normal, z the distance from the eye (0 where nothing is), w the second
-// moment of the luminance.
+// The image filtered: rgb a value, a its history's frames (`cs_variance`'s
+// input) or its variance (`cs_atrous`'s). The guide (rt_history.wgsl
+// `pack_normal`): xy the normal, z the distance from the eye (0 where
+// nothing is), w the second moment of the luminance.
+//
+// `cs_variance_pair` and `cs_atrous_pair` are the same for two numbers
+// filtered at once, each by its own variance: rt_lights.wgsl's share of
+// the local light (r, its frames in a, its second moment in the guide) and
+// the sun's light
+// (g, its frames in b; a ray is stopped or is not, so its second moment is
+// its mean). Between the passes b and a are their variances. One pass's
+// reads serve both, and a shadow's sharp edge is not blurred by the noise
+// of the other light's penumbra across it.
 
 struct Params {
-    // width, height of the image, z: this pass's step (pixels)
+    // width, height of the image, z: this pass's step (pixels), w: the
+    // variance under which a pixel has no noise worth filtering
     size: vec4<f32>,
 };
 
@@ -34,9 +43,6 @@ struct Params {
 @group(0) @binding(3) var output: texture_storage_2d<rgba16float, write>;
 // one per 8×8 tile, row by row: 1 when a pixel of it has variance
 @group(0) @binding(4) var<storage, read_write> tiles: array<u32>;
-
-// The variance under which a pixel has no noise.
-const NOISE_FLOOR: f32 = 1e-7;
 
 var<workgroup> tile_noisy: atomic<u32>;
 
@@ -159,7 +165,7 @@ fn cs_variance(
     }
     workgroupBarrier();
     let p = vec2<i32>(id.xy);
-    if (inside(p) && variance_at(p) > NOISE_FLOOR) {
+    if (inside(p) && variance_at(p) > params.size.w) {
         atomicOr(&tile_noisy, 1u);
     }
     workgroupBarrier();
@@ -213,7 +219,7 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
     }
     // no noise about it (lit through, or shadowed through, for long
     // enough): nothing to filter, which is most of the image
-    if (v <= 1e-7) {
+    if (v <= params.size.w * v_w) {
         textureStore(output, p, c);
         return;
     }
@@ -248,4 +254,136 @@ fn cs_atrous(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id
         return;
     }
     textureStore(output, p, vec4<f32>(sum / w_sum, variance / (w_sum * w_sum)));
+}
+
+// The share's variance (x) and the sun's (y) at pixel `p`, written with
+// their values to `output`.
+fn variance_pair_at(p: vec2<i32>) -> vec2<f32> {
+    let g = textureLoad(guide, p, 0);
+    let c = textureLoad(input, p, 0);
+    if (g.z <= 0.0) {
+        textureStore(output, p, vec4<f32>(c.rg, 0.0, 0.0));
+        return vec2<f32>(0.0);
+    }
+    var variance = vec2<f32>(max(g.w - c.r * c.r, 0.0), c.g * (1.0 - c.g));
+    if (min(c.a, c.b) < SHORT_HISTORY) {
+        let n = unpack_normal(g.xy);
+        let slope = depth_slope(p, g.z);
+        var m1 = vec2<f32>(0.0);
+        var m2 = 0.0;
+        var w_sum = 0.0;
+        for (var y = -3; y <= 3; y++) {
+            for (var x = -3; x <= 3; x++) {
+                let q = p + vec2<i32>(x, y);
+                if (!inside(q)) {
+                    continue;
+                }
+                let gq = textureLoad(guide, q, 0);
+                let w = geometry_weight(n, g.z, slope, gq, length(vec2<f32>(f32(x), f32(y))));
+                if (w <= 0.0) {
+                    continue;
+                }
+                m1 += textureLoad(input, q, 0).rg * w;
+                m2 += gq.w * w;
+                w_sum += w;
+            }
+        }
+        if (w_sum > 0.0) {
+            m1 /= w_sum;
+            m2 /= w_sum;
+            if (c.a < SHORT_HISTORY) {
+                variance.x = max(m2 - m1.x * m1.x, 0.0) * SHORT_HISTORY / max(c.a, 1.0);
+            }
+            if (c.b < SHORT_HISTORY) {
+                variance.y = max(variance.y, m1.y * (1.0 - m1.y)) * SHORT_HISTORY / max(c.b, 1.0);
+            }
+        }
+    }
+    textureStore(output, p, vec4<f32>(c.rg, variance));
+    return variance;
+}
+
+@compute @workgroup_size(8, 8)
+fn cs_variance_pair(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+    @builtin(workgroup_id) tile: vec3<u32>,
+) {
+    if (local == 0u) {
+        atomicStore(&tile_noisy, 0u);
+    }
+    workgroupBarrier();
+    let p = vec2<i32>(id.xy);
+    if (inside(p)) {
+        let v = variance_pair_at(p);
+        if (max(v.x, v.y) > params.size.w) {
+            atomicOr(&tile_noisy, 1u);
+        }
+    }
+    workgroupBarrier();
+    if (local == 0u) {
+        tiles[tile.x + tile.y * tiles_wide()] = atomicLoad(&tile_noisy);
+    }
+}
+
+@compute @workgroup_size(8, 8)
+fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) tile: vec3<u32>) {
+    let p = vec2<i32>(id.xy);
+    if (!inside(p)) {
+        return;
+    }
+    let c = textureLoad(input, p, 0);
+    if (calm(vec2<i32>(tile.xy))) {
+        textureStore(output, p, c);
+        return;
+    }
+    let g = textureLoad(guide, p, 0);
+    if (g.z <= 0.0) {
+        textureStore(output, p, c);
+        return;
+    }
+    var v = vec2<f32>(0.0);
+    var v_w = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let q = p + vec2<i32>(x, y);
+            if (inside(q)) {
+                let k = select(0.5, 1.0, x == 0) * select(0.5, 1.0, y == 0);
+                v += textureLoad(input, q, 0).ba * k;
+                v_w += k;
+            }
+        }
+    }
+    let noisy = v > vec2<f32>(params.size.w * v_w);
+    if (!any(noisy)) {
+        textureStore(output, p, c);
+        return;
+    }
+    let sigma = SIGMA_LUMA * sqrt(max(v / v_w, vec2<f32>(0.0))) + vec2<f32>(1e-4);
+    let step = i32(params.size.z);
+    let n = unpack_normal(g.xy);
+    let slope = depth_slope(p, g.z);
+
+    var sum = vec2<f32>(0.0);
+    var variance = vec2<f32>(0.0);
+    var w_sum = vec2<f32>(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let q = p + vec2<i32>(x, y) * step;
+            if (!inside(q)) {
+                continue;
+            }
+            let cq = textureLoad(input, q, 0);
+            let gq = textureLoad(guide, q, 0);
+            let pixels = length(vec2<f32>(f32(x), f32(y))) * f32(step);
+            let k = select(0.5, 1.0, x == 0) * select(0.5, 1.0, y == 0);
+            let w = k * geometry_weight(n, g.z, slope, gq, pixels) * exp(-abs(cq.rg - c.rg) / sigma);
+            sum += cq.rg * w;
+            variance += cq.ba * w * w;
+            w_sum += w;
+        }
+    }
+    let filtered = vec2<bool>(noisy.x && w_sum.x > 1e-6, noisy.y && w_sum.y > 1e-6);
+    let safe = max(w_sum, vec2<f32>(1e-6));
+    textureStore(output, p, vec4<f32>(select(c.rg, sum / safe, filtered), select(c.ba, variance / (safe * safe), filtered)));
 }

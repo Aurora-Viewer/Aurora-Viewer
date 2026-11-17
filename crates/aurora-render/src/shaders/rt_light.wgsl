@@ -50,6 +50,60 @@ fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool
     return rayQueryGetCommittedIntersection(&rp).kind == RAY_QUERY_INTERSECTION_NONE;
 }
 
+// How far along `dir` from `origin`, a pixel of the view, something stops
+// a shadow ray within `reach` (any of what does, not the nearest), or -1
+// when nothing does: for the shadows that soften with that distance
+// (rt_lights.wgsl). `curved`: rt_common.wgsl `shadows`. One query serves
+// the scene's level then the posed one, and its flags are constant where
+// each starts: a pass pays for each query its shader holds, run or not.
+fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool, curved: bool) -> f32 {
+    var rq: ray_query;
+    if (curved) {
+        let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE, 0xFFu, 0.0, reach, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (shadows(rayQueryGetCandidateIntersection(&rq), false, dir, true)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                if (shadows(rayQueryGetCandidateIntersection(&rq), true, dir, true)) {
+                    rayQueryConfirmIntersection(&rq);
+                }
+            }
+            hit = rayQueryGetCommittedIntersection(&rq);
+        }
+        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+            return hit.t;
+        }
+        return -1.0;
+    }
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, reach, origin, dir);
+    rayQueryInitialize(&rq, scene_tlas, ray);
+    while (rayQueryProceed(&rq)) {
+        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
+            rayQueryConfirmIntersection(&rq);
+        }
+    }
+    var hit = rayQueryGetCommittedIntersection(&rq);
+    if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+        rayQueryInitialize(&rq, posed_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (stops(rayQueryGetCandidateIntersection(&rq), true, dir)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        hit = rayQueryGetCommittedIntersection(&rq);
+    }
+    if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+        return hit.t;
+    }
+    return -1.0;
+}
+
 // The light a hit's surface sends back, as diffuse: its base colour (from
 // mip `lod`) lit by the sun, with a shadow ray (`offset` off the surface),
 // and by the sky's hemisphere, plus its emission. shade_pbr's diffuse: the
