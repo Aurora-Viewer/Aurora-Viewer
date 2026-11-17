@@ -4080,6 +4080,18 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         "{}",
         path("[Willow Tree] Ada Poses")
     );
+    // what an item fits or goes on never names what it is
+    for (name, category) in [
+        ("[Ink Tattoo] Ada LeLutka EvoX", Category::Tattoos),
+        ("[Glam Skins] Ada Catwa", Category::Skins),
+        ("[Ink Tattoo] Ada Omega Applier", Category::Tattoos),
+        ("[Moon Hair] Ada Addon", Category::Hair),
+        ("[Gem Jewelry] Ada Ear Cuff", Category::Jewelry),
+        ("[Gem Jewelry] Ada Belly Chain", Category::Jewelry),
+        ("[Doll Makeup] Smoky Eyes", Category::Makeup),
+    ] {
+        assert!(path(name).contains(category.folder()), "{name}: {}", path(name));
+    }
     // a pack word in the rest says how it is sold, not what it is
     assert!(
         path("[Moon Hair] Ada Fatpack").contains(Category::Hair.folder()),

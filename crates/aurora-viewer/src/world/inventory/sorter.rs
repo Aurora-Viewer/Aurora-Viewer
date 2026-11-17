@@ -1234,6 +1234,40 @@ fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> 
     if piece == Some(Category::Outfits) && !outfit {
         return whole;
     }
+    // (only a thing sold on its own names what the item is; what it fits
+    // or goes on, a head (`[Ink Tattoo] Ada LeLutka EvoX`), an add-on or
+    // an applier, a body part (`[Gem Jewelry] Ada Ear Cuff`), a look's
+    // parts (`[Doll Makeup] Smoky Eyes`), leaves the whole name's reading)
+    let product = matches!(
+        piece,
+        Some(
+            Category::Hair
+                | Category::Shoes
+                | Category::Stockings
+                | Category::Lingerie
+                | Category::Swimwear
+                | Category::Bodysuits
+                | Category::Dresses
+                | Category::Skirts
+                | Category::Pants
+                | Category::Shorts
+                | Category::Jackets
+                | Category::Tops
+                | Category::Sleepwear
+                | Category::Gloves
+                | Category::Jewelry
+                | Category::Animations
+                | Category::Huds
+                | Category::Furniture
+                | Category::Decor
+                | Category::Vehicles
+                | Category::Pets
+                | Category::Outfits
+        )
+    );
+    if !product {
+        return whole;
+    }
     piece.or(whole)
 }
 
