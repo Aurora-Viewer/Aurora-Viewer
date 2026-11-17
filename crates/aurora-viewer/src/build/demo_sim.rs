@@ -327,6 +327,7 @@ impl DemoSim {
                     .into_iter()
                     .collect();
                 let mut events = vec![NetEvent::InventoryUpdated {
+                    bulk: false,
                     folders: Vec::new(),
                     items,
                 }];

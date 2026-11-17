@@ -1057,6 +1057,7 @@ mod tests {
         w.on_im(offer(im::TASK_INVENTORY_OFFERED, "Free gift"));
         // an update before the answer is not the gift
         w.apply(aurora_net::NetEvent::InventoryUpdated {
+            bulk: false,
             folders: Vec::new(),
             items: vec![item(Uuid::from_u128(0x31), folder)],
         });
@@ -1066,6 +1067,7 @@ mod tests {
         // what the inventory already knew is not the gift
         let gift = Uuid::from_u128(0x32);
         w.apply(aurora_net::NetEvent::InventoryUpdated {
+            bulk: false,
             folders: Vec::new(),
             items: vec![item(gift, folder), item(old, folder)],
         });
@@ -1091,6 +1093,7 @@ mod tests {
         };
         let inv_root = w.inventory.root;
         w.apply(aurora_net::NetEvent::InventoryUpdated {
+            bulk: false,
             folders: vec![folder(inner, top), folder(top, inv_root)],
             items: vec![item(Uuid::from_u128(0x42), inner)],
         });

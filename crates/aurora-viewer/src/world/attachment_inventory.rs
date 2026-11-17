@@ -466,6 +466,7 @@ mod tests {
         }
         assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
         world.apply(NetEvent::InventoryUpdated {
+            bulk: false,
             folders: Vec::new(),
             items: vec![item],
         });
@@ -1218,6 +1219,7 @@ mod tests {
             let lost = with_lost_folder(&mut world, &item);
             item.parent = Uuid::nil();
             let notification = NetEvent::InventoryUpdated {
+                bulk: false,
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };

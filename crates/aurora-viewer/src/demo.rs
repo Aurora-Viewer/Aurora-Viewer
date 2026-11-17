@@ -3106,6 +3106,7 @@ pub fn task_offer_delivery(command: &aurora_net::NetCommand, owner: Uuid) -> Opt
     };
     let parent = Uuid::from_slice(bucket).ok()?;
     Some(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: Vec::new(),
         items: vec![aurora_net::inventory::InvItem {
             id: DEMO_TASK_GIFT,
