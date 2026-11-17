@@ -11793,7 +11793,7 @@ What the inventory must show with these scenarios:
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (`layers`, the Standard order of the setting); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_OIT=0`, `1` or `alt` | The stochastic transparency off or on for this launch, whatever the setting "Order of transparent surfaces" says (`stochastic` is the same as `1`); `alt`: on two seconds in three, the setting's order the third |
 | `AURORA_ST_SAMPLES=4` or `8` | The most samples a stochastic pass takes (default 8), to measure the cost and the grain of 4; for measurements, not a setting |
-| `AURORA_ST_GUARDS=0` | The stochastic transparency's tests for a NaN left out of the alpha passes and of the resolve's samples, to measure what they cost; for measurements only |
+| `AURORA_ST_GUARDS=0` | The stochastic transparency's tests for a NaN left out of the alpha passes and of the resolve's samples, to measure what they cost; development builds only |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -12482,11 +12482,20 @@ What the inventory must show with these scenarios:
   fewer), the resolve, the temporal blend, the smoothing and the composite
   run on those tiles alone, through indirect dispatches and draws, and the
   three targets the steps write are cleared first (nothing blended is what
-  they wrote for a pixel with nothing). The image does not change. Check
+  they wrote for a pixel with nothing). Once 60 % of the tiles or more are
+  listed (the count read back a few frames late, back to the tiles under
+  40 %), or while glowing faces are drawn, the steps run on the whole view
+  as before the tiles instead: the depth spread drawn over the tiles made
+  the stochastic depth pass of a busy region about 3 ms slower, where the
+  list saves nothing. The log names each change of form (`oit stochastic:
+  <n> of <m> tiles listed, the steps run on the whole view`, or `on the
+  tiles`). The image does not change. Check
   with `AURORA_DEMO_GLASS_PATCH=10` (a tenth of the view), `AURORA_BLEND_ORDER=5`,
   `AURORA_PROFILE=1`: the `oit stochastic gpu ms` line, `resolve_composite`
   (0.22 ms with the whole view resolved, about 0.05 ms with the tiles;
-  the whole method 0.44 → 0.22 ms on one NVIDIA card, 1278 x 1360).
+  the whole method 0.44 → 0.22 ms on one NVIDIA card, 1278 x 1360); and
+  with `AURORA_DEMO_VEILS=40,0,25` (every tile covered) the method costs
+  what it did before the tiles.
 - **`AURORA_ST_SAMPLES=4|8`, `AURORA_ST_GUARDS=0`** (`oit_stochastic.rs`):
   measurement switches of the stochastic transparency, read once at the
   first use, for measurements (no setting, no user option). With
@@ -12498,7 +12507,8 @@ What the inventory must show with these scenarios:
   passes and the per-sample tests of the resolve (`ST_GUARDS` in
   `object.wgsl` and `oit_stochastic.wgsl`) are left out; the test of the
   history stays. It measured as free (0.00 to 0.03 ms) on one NVIDIA card:
-  the switch is there to measure it again on another. The log's `oit
+  the switch is there to measure it again on another. A published
+  (`release`) build ignores `AURORA_ST_GUARDS`: its guards stay on. The log's `oit
   stochastic: made` line names the pass sample counts the device takes.
 - **`AURORA_OIT=0|1|alt`**: the stochastic transparency off or on
   (`alt`: on two seconds in three and the order of the setting the third,

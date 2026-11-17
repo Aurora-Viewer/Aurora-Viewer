@@ -153,6 +153,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     cli::get();
+    // the stochastic transparency's measurement switches that weaken it
+    // (AURORA_ST_GUARDS) are read by development builds alone
+    aurora_render::oit_stochastic::set_development_build(env!("AURORA_BUILD_PROFILE") != "release");
     // without a window: before the crash watcher, the logs and the link
     // hand-off
     if cli::get().uninstall {

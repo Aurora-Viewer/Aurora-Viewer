@@ -60,7 +60,11 @@
 //! lists them, from the pass's transmittance (every tile while glowing faces
 //! are drawn), and the depth spread, the three steps and the composite are
 //! dispatched or drawn for them through indirect arguments, the targets
-//! they write being cleared first.
+//! they write being cleared first. Where most of the view is listed (the
+//! count read back a few frames late, `whole_after`), or with glowing faces,
+//! they run on the whole view instead, one triangle and a dispatch over it:
+//! drawn over every tile, the depth spread made the stochastic depth pass
+//! of a busy region half as slow again, and the list saves nothing there.
 //!
 //! Everything here is made the first frame the method is on, on the render
 //! thread, and nothing while it is off: the passes' shaders are a module of
@@ -100,6 +104,15 @@ const TILE_BYTES: &[u8; TILE_CELLS * 2] = include_bytes!("oit_stochastic_tile.bi
 /// `TILE_ROW`): its rows are the tiles over this, far under a device's
 /// 65 535 workgroups of a dimension.
 const TILE_ROW: u32 = 256;
+/// The part of the tiles listed (`cs_tiles`, read back a few frames late)
+/// from which the steps run on the whole view instead, as many as from
+/// which they go back to the tiles: drawn over a quad a tile, the stochastic
+/// depth and the passes reading it cost more than over one triangle (a busy
+/// region with every tile listed: the depth pass 6.96 to 10.27 ms), and the
+/// list saves nothing there. Two thresholds, so that a view near one does
+/// not change form every few frames.
+const WHOLE_FROM: (u32, u32) = (3, 5);
+const TILES_UNDER: (u32, u32) = (2, 5);
 /// The most samples a stochastic pass takes (the expand map's size).
 pub const MAX_PASS_SAMPLES: u32 = 8;
 /// The temporal blend's least weight of the current frame (where the
@@ -263,15 +276,30 @@ pub(crate) fn with_guards(src: String, on: bool) -> String {
 }
 
 /// Whether an `AURORA_ST_GUARDS` value leaves the NaN tests on: only `0`
-/// turns them off.
-fn guards_from(value: Option<&str>) -> bool {
-    value.map(str::trim) != Some("0")
+/// turns them off, and only in a development build (`dev`, `ci`,
+/// `debugging`): a published viewer keeps its guards whatever is set.
+fn guards_from(value: Option<&str>, development: bool) -> bool {
+    !development || value.map(str::trim) != Some("0")
+}
+
+/// The viewer was built with a development profile (`set_development_build`).
+static DEVELOPMENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tells the method the viewer's build profile, at start, before any frame:
+/// `AURORA_ST_GUARDS` is read by development builds only.
+pub fn set_development_build(on: bool) {
+    DEVELOPMENT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `AURORA_ST_GUARDS` read once (a measurement switch, docs/TESTING.md).
 fn guards_on() -> bool {
     static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| guards_from(std::env::var("AURORA_ST_GUARDS").ok().as_deref()))
+    *VALUE.get_or_init(|| {
+        guards_from(
+            std::env::var("AURORA_ST_GUARDS").ok().as_deref(),
+            DEVELOPMENT.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    })
 }
 
 /// The most samples an `AURORA_ST_SAMPLES` value allows a pass: 4 or 8;
@@ -554,6 +582,30 @@ struct Targets {
     clears: [Vec<wgpu::TextureView>; 2],
 }
 
+/// The count of the listed tiles read back (`cs_tiles`' instance count),
+/// without a wait: copied a frame, mapped after its submission, read by a
+/// later `prepare`.
+struct CountRead {
+    buffer: wgpu::Buffer,
+    state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    /// the tiles of the view the count was copied for
+    total: std::sync::atomic::AtomicU32,
+}
+
+/// `CountRead::state`: free, a copy encoded, mapping, mapped, failed.
+const READ_IDLE: u8 = 0;
+const READ_ENCODED: u8 = 1;
+const READ_WAITING: u8 = 2;
+const READ_MAPPED: u8 = 3;
+const READ_FAILED: u8 = 4;
+
+/// Whether the steps run on the whole view, from the last count read back:
+/// `whole` the form so far, `listed` of `total` tiles holding a blended face.
+fn whole_after(whole: bool, listed: u32, total: u32) -> bool {
+    let (num, den) = if whole { TILES_UNDER } else { WHOLE_FROM };
+    u64::from(listed) * u64::from(den) >= u64::from(total) * u64::from(num) && total > 0
+}
+
 /// What a frame tells `prepare`.
 pub(crate) struct Frame {
     pub width: u32,
@@ -602,6 +654,12 @@ pub(crate) struct Stochastic {
     idle: u32,
     /// glowing faces are accumulated this frame
     glow: bool,
+    /// this frame's steps run on the whole view (with glowing faces, which
+    /// list every tile, or once most tiles were listed: `whole_after`)
+    whole: bool,
+    /// the last count read back asked for the whole view
+    wide: bool,
+    count_read: CountRead,
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -820,6 +878,18 @@ impl Stochastic {
             history_ready: false,
             idle: 0,
             glow: false,
+            whole: true,
+            wide: false,
+            count_read: CountRead {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("oit stochastic tile count"),
+                    size: crate::readback::readback_size(4),
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(READ_IDLE)),
+                total: std::sync::atomic::AtomicU32::new(0),
+            },
         }
     }
 
@@ -896,6 +966,15 @@ impl Stochastic {
             }
         }
         self.idle = 0;
+        self.read_count();
+        // glowing faces list every tile: the whole view at once
+        let whole = f.glow || self.wide;
+        // (the expand's vertices: one triangle over the view, or a quad a tile)
+        queue.write_buffer(
+            &self.expand_params,
+            u64::from(MAX_PASS_SAMPLES * 4 + 8),
+            bytemuck::cast_slice(&[u32::from(whole)]),
+        );
         self.frame = self.frame.wrapping_add(1);
         let sp = StParams {
             samples: pass,
@@ -911,7 +990,11 @@ impl Stochastic {
             width: f.width,
             height: f.height,
             samples_hw: pass,
-            flags: u32::from(history) | (u32::from(f.glow) << 1) | (u32::from(f.samples == 1) << 2) | (u32::from(kept) << 3),
+            flags: u32::from(history)
+                | (u32::from(f.glow) << 1)
+                | (u32::from(f.samples == 1) << 2)
+                | (u32::from(kept) << 3)
+                | (u32::from(whole) << 4),
             temporal_weight: if history { self.temporal } else { 1.0 },
             trans_samples: f.samples,
             _pad: [0; 2],
@@ -927,7 +1010,55 @@ impl Stochastic {
         }
         self.history_ready = true;
         self.glow = f.glow;
+        self.whole = whole;
         true
+    }
+
+    /// The count of listed tiles read back since the last frame, if any:
+    /// the form of the steps follows it (`whole_after`).
+    fn read_count(&mut self) {
+        use std::sync::atomic::Ordering;
+        let read = &self.count_read;
+        match read.state.load(Ordering::Acquire) {
+            READ_MAPPED => {
+                let listed = read
+                    .buffer
+                    .get_mapped_range(..)
+                    .ok()
+                    .and_then(|v| v.get(..4).map(crate::readback::u32_array::<1>))
+                    .map(|[n]| n);
+                read.buffer.unmap();
+                read.state.store(READ_IDLE, Ordering::Release);
+                if let Some(listed) = listed {
+                    let wide = whole_after(self.wide, listed, read.total.load(Ordering::Relaxed));
+                    if wide != self.wide {
+                        log::info!(
+                            "oit stochastic: {listed} of {} tiles listed, the steps run on {}",
+                            read.total.load(Ordering::Relaxed),
+                            if wide { "the whole view" } else { "the tiles" }
+                        );
+                    }
+                    self.wide = wide;
+                }
+            }
+            READ_FAILED => read.state.store(READ_IDLE, Ordering::Release),
+            _ => {}
+        }
+    }
+
+    /// Maps the count copied this frame, once its commands are submitted
+    /// (no wait: a later frame reads it).
+    pub fn after_submit(&self) {
+        use std::sync::atomic::Ordering;
+        let read = &self.count_read;
+        if read.state.load(Ordering::Acquire) != READ_ENCODED {
+            return;
+        }
+        read.state.store(READ_WAITING, Ordering::Release);
+        let state = read.state.clone();
+        read.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            state.store(if r.is_ok() { READ_MAPPED } else { READ_FAILED }, Ordering::Release);
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -987,7 +1118,7 @@ impl Stochastic {
         let tiles = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("oit stochastic tiles"),
             size: (8 + tile_count) * 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let (tiles_trans_ms, tiles_trans_one) = if samples > 1 {
@@ -1198,10 +1329,11 @@ impl Stochastic {
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &t.depth,
-                        // (only the listed tiles are written: the passes after
-                        // draw nowhere else)
+                        // (cleared, even where no tile is listed: a depth
+                        // loaded from the last frame made the stochastic
+                        // depth pass of a busy region half as slow again)
                         depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
+                            load: wgpu::LoadOp::Clear(0.0),
                             store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
@@ -1212,7 +1344,11 @@ impl Stochastic {
                 });
                 pass.set_pipeline(expand);
                 pass.set_bind_group(0, &group, &[]);
-                pass.draw_indirect(&t.tiles, 16);
+                if self.whole {
+                    pass.draw(0..3, 0..1);
+                } else {
+                    pass.draw_indirect(&t.tiles, 16);
+                }
             }
             _ => encoder.copy_texture_to_texture(scene_depth.0.as_image_copy(), t.depth_tex.as_image_copy(), scene_depth.0.size()),
         }
@@ -1311,15 +1447,31 @@ impl Stochastic {
     /// Lists the tiles of 8 x 8 pixels that hold a blended face, from the
     /// total alpha: what comes after runs on those alone (every tile when
     /// glowing faces are drawn, their glow needing no alpha).
+    /// On the whole view the list is made only for a count to read back
+    /// (none with glowing faces, which list every tile).
     pub fn mark_tiles(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
+        use std::sync::atomic::Ordering;
         let Some(t) = &self.targets else { return };
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("oit stochastic tiles"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&r.tiles);
-        pass.set_bind_group(0, &t.tiles_group, &[]);
-        pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+        let free = self.count_read.state.load(Ordering::Acquire) == READ_IDLE;
+        if self.whole && (self.glow || !free) {
+            return;
+        }
+        let (columns, rows) = (t.width.div_ceil(8), t.height.div_ceil(8));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("oit stochastic tiles"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&r.tiles);
+            pass.set_bind_group(0, &t.tiles_group, &[]);
+            pass.dispatch_workgroups(columns, rows, 1);
+        }
+        if free && !self.glow {
+            // (the instance count, word 5)
+            encoder.copy_buffer_to_buffer(&t.tiles, 20, &self.count_read.buffer, 0, 4);
+            self.count_read.total.store(columns * rows, Ordering::Relaxed);
+            self.count_read.state.store(READ_ENCODED, Ordering::Release);
+        }
     }
 
     /// The resolve, the temporal blend, then the smoothing, in the listed
@@ -1328,6 +1480,25 @@ impl Stochastic {
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
         let Some(t) = &self.targets else { return };
         let parity = self.parity();
+        let groups = &t.groups[parity];
+        let steps = [
+            ("oit stochastic resolve", &r.resolve, &groups[0]),
+            ("oit stochastic temporal blend", &r.temporal, &groups[1]),
+            ("oit stochastic smoothing", &r.smooth, &groups[2]),
+        ];
+        if self.whole {
+            // every pixel written: nothing to clear
+            for (label, pipeline, group) in steps {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(label),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, group, &[]);
+                pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+            }
+            return;
+        }
         // (a pass that clears the three: no feature needed, and a fast clear)
         let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = t.clears[parity]
             .iter()
@@ -1351,12 +1522,7 @@ impl Stochastic {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        let groups = &t.groups[parity];
-        for (label, pipeline, group) in [
-            ("oit stochastic resolve", &r.resolve, &groups[0]),
-            ("oit stochastic temporal blend", &r.temporal, &groups[1]),
-            ("oit stochastic smoothing", &r.smooth, &groups[2]),
-        ] {
+        for (label, pipeline, group) in steps {
             // (a pass each: each reads what the one before it wrote)
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
@@ -1374,10 +1540,17 @@ impl Stochastic {
         let Some(t) = &self.targets else { return };
         pass.set_pipeline(&r.composite);
         pass.set_bind_group(0, &t.groups[self.parity()][3], &[]);
-        pass.draw_indirect(&t.tiles, 16);
+        let draw = |pass: &mut wgpu::RenderPass| {
+            if self.whole {
+                pass.draw(0..3, 0..1);
+            } else {
+                pass.draw_indirect(&t.tiles, 16);
+            }
+        };
+        draw(pass);
         if self.glow {
             pass.set_pipeline(&r.composite_glow);
-            pass.draw_indirect(&t.tiles, 16);
+            draw(pass);
         }
     }
 }
@@ -1960,11 +2133,15 @@ mod tests {
         for v in ["", "2", "16", "0", "four", "-4"] {
             assert_eq!(samples_cap_from(Some(v)), 8, "{v:?}");
         }
-        assert!(guards_from(None));
-        assert!(guards_from(Some("1")));
-        assert!(guards_from(Some("")));
-        assert!(!guards_from(Some("0")));
-        assert!(!guards_from(Some(" 0 ")));
+        assert!(guards_from(None, true));
+        assert!(guards_from(Some("1"), true));
+        assert!(guards_from(Some(""), true));
+        assert!(!guards_from(Some("0"), true));
+        assert!(!guards_from(Some(" 0 "), true));
+        // a published build keeps them whatever is set
+        for value in [None, Some("0"), Some(" 0 "), Some("1")] {
+            assert!(guards_from(value, false), "{value:?}");
+        }
     }
 
     #[test]
@@ -1994,16 +2171,8 @@ mod tests {
 
     #[test]
     fn the_tile_list_is_laid_out_as_the_shaders_and_the_passes_read_it() {
-        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace(
-            "
-", "
-",
-        );
-        let expand = include_str!("shaders/oit_stochastic_expand.wgsl").replace(
-            "
-", "
-",
-        );
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        let expand = include_str!("shaders/oit_stochastic_expand.wgsl").replace("\r\n", "\n");
         // 8 words of arguments (the dispatch at 0, the quads' draw at 16
         // bytes: 6 vertices, then the count), the tiles after them
         assert!(resolve.contains("const TILE_FIRST = 8u;"));
@@ -2011,9 +2180,39 @@ mod tests {
         assert!(resolve.contains("atomicAdd(&tile_out[5], 1u);"));
         assert!(resolve.contains("@group(0) @binding(13) var<storage, read> tile_list"));
         assert!(expand.contains("@group(0) @binding(3) var<storage, read> tile_list"));
-        // the expand parameters: the map, then the target's size
-        assert!(expand.contains("size: vec2<u32>"));
+        // the expand parameters: the map, then the target's size, then the
+        // whole view's word (`prepare` writes it at the map's end + 8)
+        assert!(expand.contains("size: vec2<u32>,\n    // 1: one triangle"));
+        assert!(expand.contains("whole: u32,\n};"));
+        assert!(expand.contains("if (ep.whole != 0u) {"));
         assert_eq!(u64::from(MAX_PASS_SAMPLES * 4 + 16), 48);
+        // the whole view: `ResolveParams` flag 16, read by the steps and the
+        // quads' vertices
+        assert!(resolve.contains("return (rp.flags & 16u) != 0u;"));
+        assert!(resolve.contains("fn vs_tile(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {\n    if (whole_view()) {"));
+        assert_eq!(resolve.matches("let g = step_pixel(wg, l);").count(), 3);
+    }
+
+    #[test]
+    fn the_steps_take_the_whole_view_once_most_tiles_are_listed() {
+        let total = 100;
+        // from the tiles: the whole view from 60 % listed
+        assert!(!whole_after(false, 0, total));
+        assert!(!whole_after(false, 59, total));
+        assert!(whole_after(false, 60, total));
+        assert!(whole_after(false, 100, total));
+        // from the whole view: back to the tiles under 40 %, not between
+        assert!(whole_after(true, 59, total));
+        assert!(whole_after(true, 40, total));
+        assert!(!whole_after(true, 39, total));
+        assert!(!whole_after(true, 0, total));
+        // no tile counted (a count of another view): the tiles
+        assert!(!whole_after(true, 0, 0));
+        assert!(!whole_after(false, 5, 0));
+        // a 4K view's tiles do not overflow the product
+        let k4 = 3840u32.div_ceil(8) * 2160u32.div_ceil(8);
+        assert!(whole_after(false, k4, k4));
+        assert!(!whole_after(false, k4 / 2, k4));
     }
 
     /// The rows of the resolve's dispatch for a target: the tiles over

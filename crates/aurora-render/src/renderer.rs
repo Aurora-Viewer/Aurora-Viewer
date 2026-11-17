@@ -12021,6 +12021,9 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        if let Some(st) = &self.st {
+            st.after_submit();
+        }
         self.exposure.after_submit();
         self.histogram.after_submit();
         self.drawn_pick.after_submit();

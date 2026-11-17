@@ -33,7 +33,9 @@
 // (`cs_tiles`, after the total alpha: the tiles are listed, the steps are
 // dispatched and the composite is drawn for them through indirect
 // arguments); the targets they write are cleared first, which is what they
-// write for a pixel with nothing.
+// write for a pixel with nothing. When most of the view is listed, or
+// glowing faces list all of it, they run on the whole view instead
+// (`ResolveParams` flag 16, oit_stochastic.rs `whole_after`).
 // 5. fs_composite_glow: the blended faces' glow, accumulated like their
 //    colour (object.wgsl fs_st_glow) and corrected the same way, added to
 //    the scene alpha (the glow amount) once the composite has dimmed it.
@@ -178,6 +180,24 @@ fn tile_index(wg: vec3<u32>) -> u32 {
     return wg.x + wg.y * TILE_ROW;
 }
 
+// The steps run on the whole view this frame (a workgroup a tile, in order).
+fn whole_view() -> bool {
+    return (rp.flags & 16u) != 0u;
+}
+
+// The pixel a step's invocation `l` of workgroup `wg` writes: past the
+// target (left at once) for a workgroup past the listed tiles.
+fn step_pixel(wg: vec3<u32>, l: vec3<u32>) -> vec3<u32> {
+    if (whole_view()) {
+        return vec3<u32>(wg.xy * 8u + l.xy, 0u);
+    }
+    let idx = tile_index(wg);
+    if (idx >= tile_list[5]) {
+        return vec3<u32>(0xffffffffu, 0xffffffffu, 0u);
+    }
+    return tile_pixel(idx, l);
+}
+
 // The pixel of invocation `l` of the listed tile `idx`: one workgroup a tile.
 fn tile_pixel(idx: u32, l: vec3<u32>) -> vec3<u32> {
     let t = tile_list[TILE_FIRST + idx];
@@ -227,11 +247,7 @@ fn cs_tiles(
 
 @compute @workgroup_size(8, 8)
 fn cs_resolve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let idx = tile_index(wg);
-    if (idx >= tile_list[5]) {
-        return;
-    }
-    let g = tile_pixel(idx, l);
+    let g = step_pixel(wg, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -361,11 +377,7 @@ fn last_frame(px: vec2<i32>, aux: vec4<f32>, total: f32) -> vec4<f32> {
 
 @compute @workgroup_size(8, 8)
 fn cs_temporal(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let idx = tile_index(wg);
-    if (idx >= tile_list[5]) {
-        return;
-    }
-    let g = tile_pixel(idx, l);
+    let g = step_pixel(wg, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -399,11 +411,7 @@ fn cs_temporal(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
 
 @compute @workgroup_size(8, 8)
 fn cs_smooth(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let idx = tile_index(wg);
-    if (idx >= tile_list[5]) {
-        return;
-    }
-    let g = tile_pixel(idx, l);
+    let g = step_pixel(wg, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -442,9 +450,14 @@ fn cs_smooth(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id)
     textureStore(resolved_w, px, vec4<f32>(mid, c.a));
 }
 
-// The listed tiles, a quad each (two triangles, 6 vertices an instance).
+// The listed tiles, a quad each (two triangles, 6 vertices an instance), or
+// on the whole view one triangle over it (3 vertices, one instance).
 @vertex
 fn vs_tile(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {
+    if (whole_view()) {
+        let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
+        return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    }
     let t = tile_list[TILE_FIRST + i];
     var corners = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
     let c = corners[v];
