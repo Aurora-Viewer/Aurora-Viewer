@@ -271,6 +271,10 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
+    /// The viewfinder's tilt (radians) when it last closed: the view is
+    /// levelled meanwhile, the next opening takes it back (feedback 585:
+    /// leaving the photo mode to change a setting lost the angle).
+    pub(super) roll_kept: f32,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -480,6 +484,7 @@ impl Default for Snapshots {
             vf_tick_slot: None,
             vf_free_up: 0.0,
             fov_before: None,
+            roll_kept: 0.0,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
