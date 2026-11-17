@@ -462,7 +462,7 @@ disable CAS (FSR sharpens with its own RCAS); RLVa's
 nearest-pixel scaling and full-resolution photos keep their existing paths.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
-(at least 800 × 560), to measure according to the size of the window:
+(at least 480 × 320), to measure according to the size of the window:
 without it, the demo opens at the size the window had in the last launch
 that was closed, whichever agent launched it. The window is placed like that
 of a screenshot (neither position nor maximised state saved) and its size is

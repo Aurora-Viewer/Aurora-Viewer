@@ -127,7 +127,7 @@ pub fn geometry_styled(
         button = MIN_BUTTON;
         widths = row(button);
     }
-    let width = row_width(&widths, button);
+    let width = row_width(&widths, button).min((right - start).max(PAD * 2.0 + button));
     let height = button + V_PAD * 2.0;
     let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
     let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
@@ -252,12 +252,6 @@ pub fn bottom(
         let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        child.spacing_mut().item_spacing.x = GAP;
         // Speak keeps its width for its arrow, within the common height
         let look = |b: &crate::ui::skin::ToolButton| {
             let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
@@ -271,7 +265,22 @@ pub fn bottom(
                 editing: row.editing,
             }
         };
-        let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        // the dock takes the room the chat island leaves; a narrow window
+        // scrolls its buttons like the Legacy bar's toolbar (#2737)
+        let rects = egui::ScrollArea::horizontal()
+            .id_salt("dock_scroll")
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .max_width(inner.width())
+            .show(&mut child, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = GAP;
+                    toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, row, &mut action)
+                })
+                .inner
+            })
+            .inner;
         if cfg!(test)
             && let Some(speak) = buttons.iter().position(|b| b.command == "speak").and_then(|i| rects.get(i))
         {
@@ -627,6 +636,19 @@ mod tests {
             assert!(g.dock.left() >= g.chat.right() + AFTER_CHAT);
             assert_eq!(g.dock.width(), PAD * 2.0 + 16.0 * button + DOCK_MIC_W + GAP * 16.0);
         }
+    }
+
+    /// A narrow screen keeps the chat island's least width and caps the
+    /// dock to the room it leaves; its buttons scroll inside it (#2737).
+    #[test]
+    fn a_narrow_screen_caps_the_dock_and_scrolls_its_buttons() {
+        let s = screen(480.0);
+        let g = geometry(s, 0.0, 17, true);
+        assert_eq!(g.chat.width(), MIN_CHAT);
+        assert!(g.dock.right() <= s.right() - MARGIN + 0.5, "{g:?}");
+        assert!(g.chat.right() + AFTER_CHAT <= g.dock.left() + 0.5, "{g:?}");
+        let buttons = g.widths.iter().sum::<f32>() + GAP * (g.widths.len() - 1) as f32;
+        assert!(buttons > g.dock.width() - PAD * 2.0, "{g:?}");
     }
 
     /// A wide chat island pushes the dock right; the dock never leaves the
