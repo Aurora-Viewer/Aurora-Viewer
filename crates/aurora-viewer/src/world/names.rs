@@ -85,6 +85,63 @@ impl Default for NameOptions {
     }
 }
 
+/// Where a resident's name is about to be shown: what RLVa's `@shownames`
+/// hides depends on it. The Legacy Viewer has no rule in its name cache:
+/// each of its windows asks RlvActions::canShowName (rlvactions.cpp), some
+/// with a condition of their own, and the windows that ask nothing (friends
+/// list, group members, profiles, IM sessions) show the real name. Here the
+/// caller names its case and `NameScope::shows` is the one rule for all.
+///
+/// A lookup that names no scope is `World`: stricter than the Legacy Viewer
+/// where that one asks nothing, never looser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameScope {
+    /// Someone met in the world: name tag, local chat, radar and nearby
+    /// lists, mini-map, hover tip, avatar menus, the notices that are not
+    /// about a conversation (`notifications::Kind::names`). Hidden unless
+    /// excepted, wherever they are (canShowName(SNC_DEFAULT, id) alone:
+    /// LLVOAvatar::idleUpdateNameTagText, LLNetMap::draw,
+    /// LLToolPie::handleTooltipObject…).
+    World,
+    /// The owner of an object, in the windows about that object: hidden
+    /// unless excepted, around or not (LLFloaterInspect::refresh,
+    /// LLInspectObject::updateCreator, LLPanelPermissions::refresh).
+    Owner,
+    /// The creator of an object owned by `owner` (nil for none or a group):
+    /// hidden only when it would tell who is around, the creator owning the
+    /// object or standing in a region around (the same three functions:
+    /// `owner == creator || RlvUtil::isNearbyAgent(creator)`).
+    Creator { owner: Uuid },
+    /// Someone known besides the world, and what opens from there: the
+    /// friends list, group members and roles, the recent people, contact
+    /// sets, search results, the blocked list, a profile and its partner,
+    /// an IM session, a group's or a conference's (lines, header,
+    /// participants, transcript, call) and the notices of a message, a
+    /// call, a teleport or friendship offer, a group or a friend going on
+    /// or off line. Never hidden (FSFloaterContacts,
+    /// LLPanelGroupMembersSubTab, LLPanelProfile, FSFloaterIM,
+    /// FSFloaterSearch, LLBlockList and LLConversationLogList have no
+    /// `@shownames` test, nor do the plain LLAvatarList of the recent
+    /// people and of the contact sets, nor process_improved_im for these
+    /// messages, llimprocessing.cpp).
+    Roster,
+}
+
+impl NameScope {
+    /// The real name of `id` is shown under `@shownames=n`. `excepted`:
+    /// oneself or an `@shownames:<uuid>` exception (canShowName); `nearby`:
+    /// in a region around (RlvUtil::isNearbyAgent, rlvcommon.cpp), asked
+    /// only where it counts.
+    pub fn shows(self, id: &Uuid, excepted: bool, nearby: impl FnOnce() -> bool) -> bool {
+        excepted
+            || match self {
+                NameScope::World | NameScope::Owner => false,
+                NameScope::Creator { owner } => owner != *id && !nearby(),
+                NameScope::Roster => true,
+            }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AvatarName {
     /// Account name ("jane.doe", "janedoe").
@@ -161,6 +218,16 @@ impl AvatarName {
             if f.is_empty() { self.display_name.clone() } else { f.clone() }
         } else {
             format!("{f} {l}")
+        }
+    }
+
+    /// LLAvatarName::getLegacyName: "Firstname Lastname" with the last name
+    /// whatever it is ("Resident" too), the display name without either.
+    pub fn legacy_name(&self) -> String {
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            self.display_name.clone()
+        } else {
+            format!("{} {}", self.legacy_first, self.legacy_last)
         }
     }
 
@@ -283,6 +350,9 @@ pub fn build_legacy_name(complete: &str, trim_resident: bool) -> String {
 pub struct AvatarNames {
     rlva_private: bool,
     rlva_allowed: HashSet<Uuid>,
+    /// The avatars of the regions around while `rlva_private`
+    /// (LLWorld::getAvatars), for the scopes that hide only those.
+    rlva_nearby: HashSet<Uuid>,
     cache: HashMap<Uuid, AvatarName>,
     /// Names looked up while missing or expired: requested at the next poll.
     ask: Mutex<HashSet<Uuid>>,
@@ -337,13 +407,32 @@ impl AvatarNames {
         }
     }
 
+    /// The avatars of the regions around, while names are private.
+    pub fn set_rlva_nearby(&mut self, nearby: HashSet<Uuid>) {
+        if self.rlva_nearby != nearby {
+            self.rlva_nearby = nearby;
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    /// `scope` shows the real name of `id` (see `NameScope`).
+    pub fn shows(&self, scope: NameScope, id: &Uuid) -> bool {
+        !self.rlva_private || scope.shows(id, self.rlva_allowed.contains(id), || self.rlva_nearby.contains(id))
+    }
+
     /// Canonical data for privacy filtering; never a display accessor.
     pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
         self.cache.get(id)
     }
     /// The cached name (even expired, which queues a refresh); a missing
-    /// one is queued for the next request.
+    /// one is queued for the next request. The name of someone met in the
+    /// world (`NameScope::World`): `get_in` for the other cases.
     pub fn get(&self, id: &Uuid) -> Option<&AvatarName> {
+        self.get_in(NameScope::World, id)
+    }
+
+    /// `get` for a name shown in `scope`.
+    pub fn get_in(&self, scope: NameScope, id: &Uuid) -> Option<&AvatarName> {
         if id.is_nil() {
             return None;
         }
@@ -351,10 +440,21 @@ impl AvatarNames {
         if n.is_none_or(|n| n.expires < now()) && !self.is_pending(id) {
             self.ask.lock().insert(*id);
         }
-        if self.rlva_private && !self.rlva_allowed.contains(id) {
-            return Some(super::rlva::privacy::anonymous(*id));
+        if !self.shows(scope, id) {
+            return Some(self.anonymous(id));
         }
         n.map(|n| self.aliased.get(id).unwrap_or(n))
+    }
+
+    /// The stand-in of a resident whose name RLVa hides
+    /// (RlvStrings::getAnonym, rlvcommon.h: by the legacy name of the cached
+    /// record, never by a contact set's alias); by the id until the name is
+    /// cached. Queues nothing.
+    pub fn anonymous(&self, id: &Uuid) -> &'static AvatarName {
+        match self.cache.get(id) {
+            Some(n) => super::rlva::privacy::anonymous_named(&n.legacy_name()),
+            None => super::rlva::privacy::anonymous(*id),
+        }
     }
 
     /// New contact set aliases: every name is rewritten again.
@@ -407,7 +507,12 @@ impl AvatarNames {
 
     /// Complete name ("Jane Doe (janedoe)") if known.
     pub fn complete(&self, id: &Uuid) -> Option<String> {
-        self.get(id).map(|n| n.complete(&self.options))
+        self.complete_in(NameScope::World, id)
+    }
+
+    /// `complete` for a name shown in `scope`.
+    pub fn complete_in(&self, scope: NameScope, id: &Uuid) -> Option<String> {
+        self.get_in(scope, id).map(|n| n.complete(&self.options))
     }
 
     fn is_pending(&self, id: &Uuid) -> bool {

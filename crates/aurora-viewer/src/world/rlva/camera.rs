@@ -14,6 +14,26 @@ pub fn vector(text: &str) -> Option<Vec3> {
     (parts.next().is_none() && p.is_finite()).then_some(p)
 }
 
+/// What RLVa holds of the avatar's own view. The camera reads it once a
+/// frame and keeps it, so that whatever zooms or changes the mode between
+/// two frames (wheel, keys, joystick, a forced mode) works on the values the
+/// view is placed with: LLAgentCamera::getCameraOffsetInitial,
+/// getFocusOffsetInitial and getCameraOffsetScale under
+/// CAMERA_RLV_SETCAM_VIEW (indra/newview/llagentcamera.cpp).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CameraView {
+    /// `@setcam_eyeoffset`, `@setcam_focusoffset` and
+    /// `@setcam_eyeoffsetscale`: None leaves the user's own value.
+    pub eye_offset: Option<Vec3>,
+    pub focus_offset: Option<Vec3>,
+    pub eye_offset_scale: Option<f32>,
+    /// RlvActions::canChangeToMouselook refuses mouselook.
+    pub no_mouselook: bool,
+    /// RlvActions::isCameraPresetLocked: the user's offsets are not theirs
+    /// to change for now.
+    pub preset_locked: bool,
+}
+
 /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: a UUID defaults to its object's
 /// scale length; a region-local position defaults to zero distance.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,7 +109,11 @@ impl Rlva {
     pub fn camera_texture(&self) -> Option<Uuid> {
         self.camera_value("setcam_textures").and_then(|value| {
             if value.is_empty() {
-                Some(aurora_prim::te::DEFAULT_TEXTURE)
+                // RlvBehaviourModifier's default is IMG_DEFAULT (addModifier
+                // RLV_BHVR_SETCAM_TEXTURES, rlvhelper.cpp), the flat grey the
+                // Legacy Viewer paints locally. The plywood texture is a
+                // different id.
+                Some(aurora_prim::te::IMG_DEFAULT)
             } else {
                 Uuid::parse_str(value).ok()
             }
@@ -97,6 +121,27 @@ impl Rlva {
     }
     pub fn camera_owner(&self) -> Option<Uuid> {
         self.rules_for("setcam", Uuid::nil()).next().map(|(id, _)| id)
+    }
+
+    /// Something holds the camera (@setcam) or bounds it (where it may be,
+    /// what it looks at, how wide): a view of the viewer's own making (the
+    /// Avatar Studio's, the Director's track) is not allowed to replace it.
+    pub fn camera_restricted(&self) -> bool {
+        self.camera_owner().is_some()
+            || [
+                "setcam_unlock",
+                "setcam_avdistmin",
+                "setcam_avdistmax",
+                "setcam_origindistmin",
+                "setcam_origindistmax",
+                "setcam_eyeoffset",
+                "setcam_focusoffset",
+                "setcam_mouselook",
+                "setcam_fovmin",
+                "setcam_fovmax",
+            ]
+            .iter()
+            .any(|name| self.has(name))
     }
 
     pub fn camera_value(&self, name: &str) -> Option<&str> {
@@ -149,9 +194,26 @@ impl Rlva {
 
     /// RlvReplyCamMinMaxModifierHandler returns an empty reply for an
     /// inactive modifier, even when normal camera limits have defaults.
+    /// An option these queries do not take fails them, and a failed query
+    /// still answers, with nothing, so that the script does not wait
+    /// (RlvCommandHandlerBaseImpl<RLV_TYPE_REPLY>::processCommand,
+    /// rlvhandler.cpp).
     pub fn camera_reply(&self, command: &Command, distance: f32, fov: f32) -> Option<String> {
-        if !command.option.is_empty() || !matches!(command.param, Param::Reply(_)) {
+        if !matches!(command.param, Param::Reply(_)) {
             return None;
+        }
+        if !command.option.is_empty() {
+            return matches!(
+                command.behaviour.as_str(),
+                "getcam_avdist"
+                    | "getcam_avdistmin"
+                    | "getcam_avdistmax"
+                    | "getcam_fov"
+                    | "getcam_fovmin"
+                    | "getcam_fovmax"
+                    | "getcam_textures"
+            )
+            .then(String::new);
         }
         if command.behaviour == "getcam_textures" {
             return Some(self.camera_texture().map(|id| id.to_string()).unwrap_or_default());
@@ -173,6 +235,30 @@ impl Rlva {
             || ["setcam_eyeoffset", "setcam_eyeoffsetscale", "setcam_focusoffset"]
                 .iter()
                 .any(|name| self.has(name))
+    }
+
+    /// RlvActions::canChangeToMouselook (indra/newview/rlvactions.cpp): not
+    /// under `@setcam_mouselook`, nor while a minimum distance to the avatar
+    /// above zero is set (`@setcam_avdistmin`, `@camdistmin`). Under an
+    /// exclusive `@setcam` only its owner's restrictions count.
+    pub fn can_mouselook(&self) -> bool {
+        self.camera_value("setcam_mouselook").is_none() && self.camera_limit("setcam_avdistmin", 0.0, true) <= 0.0
+    }
+
+    pub fn camera_view(&self) -> CameraView {
+        if !self.enabled() {
+            return CameraView::default();
+        }
+        CameraView {
+            eye_offset: self.camera_value("setcam_eyeoffset").and_then(vector),
+            focus_offset: self.camera_value("setcam_focusoffset").and_then(vector),
+            eye_offset_scale: self
+                .camera_value("setcam_eyeoffsetscale")
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| v.is_finite()),
+            no_mouselook: !self.can_mouselook(),
+            preset_locked: self.camera_preset_locked(Uuid::nil()),
+        }
     }
 
     pub fn preserve_camera_settings(&self, requested: &mut CameraSettings, before: &CameraSettings) {
@@ -237,13 +323,14 @@ impl Rlva {
 
     pub fn camera_settings(&self, original: &CameraSettings, aspect: f32) -> CameraSettings {
         let mut s = original.clone();
-        if let Some(v) = self.camera_value("setcam_eyeoffset").and_then(vector) {
+        let view = self.camera_view();
+        if let Some(v) = view.eye_offset {
             s.camera_offset = v.to_array();
         }
-        if let Some(v) = self.camera_value("setcam_focusoffset").and_then(vector) {
+        if let Some(v) = view.focus_offset {
             s.focus_offset = v.to_array();
         }
-        if let Some(v) = self.camera_value("setcam_eyeoffsetscale").and_then(|v| v.parse::<f32>().ok()) {
+        if let Some(v) = view.eye_offset_scale {
             s.offset_scale = v;
         }
         if let Some(v) = self.camera_value("setcam_fov").and_then(|v| v.parse::<f32>().ok()) {

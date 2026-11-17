@@ -321,8 +321,8 @@ fn filters_tip(st: &InventoryUi) -> &'static str {
 }
 
 /// The main window's button for the additional inventory window, lit while
-/// that window is open (the Legacy Viewer's `new_inv_btn`); the other
-/// windows have none.
+/// that window is open (the Legacy Viewer's `new_inv_btn`), then the
+/// dual-panel button, lit in that layout; the other windows have neither.
 fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if !st.is_main() {
         return;
@@ -338,6 +338,9 @@ fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if button.clicked() {
         st.toggle_additional_window(ui.ctx());
     }
+    let dual = tool_button(ui, p, DUAL_ICON, aurora_i18n::tr!("inventory-dual-panel"), st.dual_layout);
+    dual_button_drawn(ui, dual.rect);
+    st.dual_clicked |= dual.clicked();
 }
 
 /// Direct counterparts of LLPanelMainInventory's collapse_btn / expand_btn.
@@ -958,6 +961,7 @@ mod tests {
                 ))
             };
             for tab in [RECEIVED_TAB, 2, 0] {
+                let original_order = prefs.sort_for(tab);
                 let other_orders: Vec<_> = [0, 2, RECEIVED_TAB]
                     .into_iter()
                     .filter(|other| *other != tab)
@@ -1009,8 +1013,14 @@ mod tests {
                 let order = prefs.sort_for(tab);
                 assert!(!order.by_date);
                 assert_eq!(order.folders_by_name, tab != 0);
-                assert!(!order.system_first);
-                assert_eq!(sort_text(&prefs, tab), aurora_i18n::tr!("inventory-sort-name"));
+                assert_eq!(order.system_first, !original_order.system_first);
+                let name_order = aurora_i18n::tr!("inventory-sort-name");
+                let expected_label = if tab == 2 {
+                    aurora_i18n::tr!("inventory-sort-folders-first", order = name_order)
+                } else {
+                    name_order.to_owned()
+                };
+                assert_eq!(sort_text(&prefs, tab), expected_label);
             }
         }
     }

@@ -25,12 +25,18 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "CopyInventoryFromNotecard",
     // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
     "CreateInventoryCategory",
+    // a new script or notecard made in an object's contents
+    // (LLPanelContents::createTaskInventoryItemHelper)
+    "CreateTaskInventoryItem",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
     // the General panel's "Apply", the estate lists, the Estate panel's
     // "Apply", the region's experiences and its restart schedule
     "DispatchRegionInfo",
+    // the "Region settings" tab of Aurora-Sim based grids
+    // (LLPanelRegionOpenSettingsInfo, buildCapabilityNames)
+    "DispatchOpenRegionSettings",
     "EnvironmentSettings",
     "EstateAccess",
     "EstateChangeInfo",
@@ -50,6 +56,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
+    // the experience profile's Edit (LLFloaterExperienceProfile::
+    // experienceIsAdmin, LLExperienceCache::updateExperience)
+    "IsExperienceAdmin",
+    "UpdateExperience",
     "GetMesh",
     "GetMesh2",
     "GetMetadata",
@@ -69,6 +79,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
     // buildCapabilityNames)
     "IncrementCOFVersion",
+    // the 360° snapshot's "send everything" mode
+    // (LLViewerRegion::setInterestListMode)
+    "InterestList",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
     // the scripts of a parcel (LLFloaterScriptLimits)
@@ -163,6 +176,11 @@ pub fn maturity_preference_body(maturity: u8) -> Llsd {
     llsd_map! { "access_prefs" => llsd_map! { "max" => crate::search::access_short_string(maturity) } }
 }
 
+/// LLViewerRegion::setInterestListMode: the InterestList capability's body.
+pub fn interest_list_body(mode: crate::InterestListMode) -> Llsd {
+    llsd_map! { "mode" => mode.as_str() }
+}
+
 /// LLAgent::processMaturityPreferenceFromServer: the preference the server
 /// kept, `access_prefs.max` ("PG", "M", "A"); SIM_ACCESS_MIN when missing.
 pub fn maturity_preference_reply(reply: &Llsd) -> u8 {
@@ -214,6 +232,7 @@ mod language_tests {
     fn the_region_estate_capabilities_are_requested() {
         for cap in [
             "DispatchRegionInfo",
+            "DispatchOpenRegionSettings",
             "EstateAccess",
             "EstateChangeInfo",
             "RegionExperiences",

@@ -39,6 +39,7 @@ mod mixer;
 mod output;
 mod playlist;
 mod processing;
+mod record;
 mod resample;
 mod reverb;
 mod stream;
@@ -52,9 +53,10 @@ use parking_lot::Mutex;
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
 pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
-pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
+pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE, MAX_RATE, MIN_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use record::{Block as RecordBlock, RECORD_BLOCK, RecordTap};
 pub use reverb::ReverbParams;
 pub use stream::{StreamError, StreamStatus};
 pub use wind::WindTarget;
@@ -280,11 +282,35 @@ impl AudioEngine {
         let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
     }
 
+    /// Playback rate of a world sound, its Doppler shift: above 1 higher
+    /// (coming closer), below 1 lower (going away), within
+    /// [`MIN_RATE`]..[`MAX_RATE`]. Glides over a buffer; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_rate(&self, id: u64, rate: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldRate(id, rate));
+    }
+
     /// The reverb of the surroundings on with these parameters (they glide
     /// there), or off (`None`: its output fades out, then the mix is the dry
     /// one, bit for bit).
     pub fn set_reverb(&self, params: Option<ReverbParams>) {
         let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
+    }
+
+    /// The Director's film takes the viewer's own mix of `channels` from
+    /// now on (record.rs): what the user hears of them, at their volumes and
+    /// mutes. A second call replaces the first; `stop_recording` ends it.
+    pub fn start_recording(&self, channels: &[Channel]) -> RecordTap {
+        let (sink, tap) = record::pair(channels);
+        if self.inner.cmd_tx.try_send(Command::Record(Some(Box::new(sink)))).is_err() {
+            log::warn!("audio: the film's sound could not be started (command queue full)");
+        }
+        tap
+    }
+
+    /// The film no longer takes the mix.
+    pub fn stop_recording(&self) {
+        let _ = self.inner.cmd_tx.try_send(Command::Record(None));
     }
 
     /// Fades a world sound out and removes it.

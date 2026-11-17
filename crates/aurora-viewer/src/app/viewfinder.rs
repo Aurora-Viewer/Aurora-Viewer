@@ -26,10 +26,13 @@ impl App {
     /// The HUDs show (and take clicks): Preferences' switch and, in
     /// immersive mode, its button (#1190); a HUD locked by RLVa keeps them
     /// shown; in the viewfinder the photo's own, so that the screen shows
-    /// what the photo will hold.
+    /// what the photo will hold; none while the Director's track plays
+    /// with "Hide HUDs" (a HUD locked by RLVa still shows).
     pub(super) fn huds_shown(&self) -> bool {
         let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
-        (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (wanted || self.world.rlva_has_locked_hud())
+            && (!self.viewfinder_on() || self.settings.snapshot.huds)
+            && !self.director_hides_huds()
     }
 
     fn vf_now(&self) -> f64 {
@@ -62,10 +65,20 @@ impl App {
             log::info!("viewfinder: depth of field on (first opening)");
         }
         match (self.viewfinder_on(), self.snapshots.fov_before) {
-            (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
+            (true, None) => {
+                self.snapshots.fov_before = Some(self.settings.camera.fov);
+                // the tilt it had when it closed, unless the camera controls
+                // tilted the view meanwhile (theirs is kept)
+                if self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
+                    self.camera.roll = self.snapshots.roll_kept;
+                    log::info!("viewfinder: tilt back to {:.1}°", self.camera.roll.to_degrees());
+                }
+            }
             (false, Some(fov)) => {
-                // Only closing the viewfinder resets its roll; ordinary camera
-                // controls also own roll while the viewfinder is closed.
+                // Only closing the viewfinder levels the view; ordinary camera
+                // controls also own roll while the viewfinder is closed. Its
+                // tilt is kept for the next opening.
+                self.snapshots.roll_kept = self.camera.roll;
                 self.camera.roll = 0.0;
                 self.snapshots.fov_before = None;
                 if (self.settings.camera.fov - fov).abs() > 1e-6 {

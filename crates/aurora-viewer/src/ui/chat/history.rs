@@ -416,6 +416,9 @@ impl HistoryUi {
             emoji,
             pics,
             world,
+            // a transcript read again: the names of those around stay
+            // hidden in its text, whichever conversation it was
+            names: crate::world::names::NameScope::World,
             want_names,
             wanted: &mut no_pictures,
             own_name: &own_name,
@@ -426,6 +429,7 @@ impl HistoryUi {
             menu: Some(menu),
             bubbles: None,
             previews: None,
+            moderators: None,
         };
         let wash = find::wash(p);
         let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
@@ -447,6 +451,7 @@ impl HistoryUi {
                     find: &needle,
                     layout: super::view::Layout::Classic,
                     first_unread: None,
+                    blocked: Default::default(),
                 },
                 width,
             );
@@ -471,6 +476,7 @@ impl HistoryUi {
                 lines,
                 first: clock.first,
                 world,
+                names: crate::world::names::NameScope::World,
                 own_name: &own_name,
             };
             // (no field here: what is typed goes nowhere)

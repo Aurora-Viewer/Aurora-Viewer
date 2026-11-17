@@ -102,6 +102,11 @@ pub struct Palette {
     pub warn: Color32,
     pub danger_dim: Color32,
     pub indigo_light: Color32,
+    /// The Z axis of the build tools: the skin's light indigo, which the
+    /// interface accent does not recolour (X and Y are `danger`, `success`).
+    /// The Legacy Viewer keeps red, green and blue whatever the skin
+    /// (LLManipTranslate::renderArrow, indra/newview/llmaniptranslate.cpp).
+    pub axis_z: Color32,
     /// Text and icons on a face filled with the accent (primary button,
     /// selected tool, checked box): `ink` belongs to the panels, and a skin
     /// may give them a dark one.
@@ -180,6 +185,7 @@ impl Theme {
             warn: hex(&self.warn),
             danger_dim: hex(&self.danger_dim),
             indigo_light: hex(&self.indigo_light),
+            axis_z: hex(&self.indigo_light),
             on_accent: hex(&self.on_accent),
             panel_alpha: self.panel_alpha,
             high_contrast: false,

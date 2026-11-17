@@ -491,6 +491,9 @@ impl Editor {
                 if menu::item(ui, p, "folder-filled", aurora_i18n::text("poser-open-file")) {
                     self.poser.storage.job = Some(storage::Job::Load(None, LoadMode::All, self.poser.subject));
                 }
+                if menu::item(ui, p, "file-import", aurora_i18n::text("poser-import-legacy")) {
+                    self.poser.storage.job = Some(storage::Job::ImportLegacyFolder(None));
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if widgets::action_button_if(
@@ -585,6 +588,10 @@ impl Editor {
                 }
                 if widgets::icon_button(ui, p, "refresh", aurora_i18n::text("poser-library-refresh"), true) {
                     self.poser.storage.ready = false;
+                }
+                let idle = !self.poser.storage.busy;
+                if widgets::icon_button(ui, p, "file-import", aurora_i18n::text("poser-import-legacy"), idle) {
+                    self.poser.storage.job = Some(storage::Job::ImportLegacyFolder(None));
                 }
             });
         });

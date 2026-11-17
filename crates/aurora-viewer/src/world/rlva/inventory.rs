@@ -11,20 +11,42 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use uuid::Uuid;
 
-type LockedFolders = HashMap<(Uuid, String), Vec<Uuid>>;
+/// The folders of every "…this" lock, and the folders of the links under
+/// #RLV, by the item they point to.
+#[derive(Default)]
+pub(crate) struct LockedFolders {
+    rules: HashMap<(Uuid, String), Vec<Uuid>>,
+    links: HashMap<Uuid, Vec<Uuid>>,
+}
 
 /// The folders of every "…this" lock, shared by the checks of one pass (the
-/// watchdog's attachments, a folder tree). Resolving them walks the whole
-/// inventory, so the result is kept across passes while what it reads stays
+/// watchdog's attachments, a folder tree). Resolving them walks the shared
+/// folder, so the result is kept across passes while what it reads stays
 /// the same ([`LockInputs`]), as RlvFolderLocks keeps its lookups until
 /// onNeedsLookupRefresh marks them dirty (rlvlocks.cpp).
 #[derive(Default)]
 pub(crate) struct FolderLocks(std::cell::OnceCell<Arc<LockedFolders>>);
 
 impl FolderLocks {
+    fn resolved(&self, world: &World) -> &LockedFolders {
+        self.0.get_or_init(|| world.rlva_locked_folders())
+    }
+
     fn folders(&self, world: &World, source: Uuid, option: &str) -> &[Uuid] {
-        let all = self.0.get_or_init(|| world.rlva_locked_folders());
-        all.get(&(source, option.to_owned())).map_or(&[], Vec::as_slice)
+        self.resolved(world)
+            .rules
+            .get(&(source, option.to_owned()))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The (folded) folders of the links to `item` under #RLV.
+    fn link_folders(&self, world: &World, item: Uuid) -> &[Uuid] {
+        self.resolved(world).links.get(&item).map_or(&[], Vec::as_slice)
+    }
+
+    /// Every folder a "…this" lock or exception names.
+    pub(super) fn roots(&self, world: &World) -> Vec<Uuid> {
+        self.resolved(world).rules.values().flatten().copied().collect()
     }
 }
 
@@ -65,8 +87,8 @@ impl World {
         {
             return folders.clone();
         }
-        let folders = Arc::new(
-            self.rlva_context_folders_of(
+        let folders = Arc::new(LockedFolders {
+            rules: self.rlva_context_folders_of(
                 self.rlva
                     .rules
                     .iter()
@@ -74,9 +96,66 @@ impl World {
                     .filter(|(_, r)| r.behaviour.contains("this"))
                     .map(|(source, r)| (source, r.option.as_str())),
             ),
-        );
+            links: self.rlva_shared_link_folders(),
+        });
         *cache.lock().unwrap_or_else(PoisonError::into_inner) = Some((inputs, folders.clone()));
         folders
+    }
+
+    /// Every link under #RLV, by the item it points to: the folded folders
+    /// holding a link to it. The walk of RlvFolderLocks::getLockedItems
+    /// (collectDescendentsIf from the shared root, LLLinkedItemIDMatches),
+    /// done once for every item.
+    fn rlva_shared_link_folders(&self) -> HashMap<Uuid, Vec<Uuid>> {
+        let mut links = HashMap::<Uuid, Vec<Uuid>>::new();
+        let Some(root) = shared_root(&self.inventory) else {
+            return links;
+        };
+        let legacy = self.rlva.preferences.legacy_naming;
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(f) = self.inventory.folders.get(&id) else { continue };
+            stack.extend(f.children.iter().copied());
+            for it in f.items.iter().filter_map(|id| self.inventory.items.get(id)) {
+                if it.asset_type == 24 && it.asset_id != it.id {
+                    links
+                        .entry(it.asset_id)
+                        .or_default()
+                        .push(folded_parent(&self.inventory, it.parent, legacy));
+                }
+            }
+        }
+        for folders in links.values_mut() {
+            folders.sort_unstable();
+            folders.dedup();
+        }
+        links
+    }
+
+    /// The folder remove locks of a worn item, `except` one issuer's:
+    /// RlvFolderLocks::getLockedItems (rlvlocks.cpp) locks a worn item when
+    /// the folder of the item itself is locked, or the folder of any of its
+    /// links under #RLV. An item worn from a link in a locked folder stays on.
+    /// Every check of a worn item asks here (taking it off, the watchdog,
+    /// the locked HUDs, Release Keys, the presence queries), so that none
+    /// forgets the links.
+    ///
+    /// Deliberately stricter than the Legacy Viewer: an item whose own
+    /// record is not loaded yet is still held by its links under #RLV. The
+    /// reference only walks the worn items its inventory holds, and would
+    /// let such an item go until its folder arrives.
+    pub(super) fn rlva_item_folders_removable_in(&self, locks: &FolderLocks, item: Uuid, except: Uuid) -> bool {
+        if !self.rlva_has_folder_rule() {
+            return true;
+        }
+        let own = self.inventory.items.get(&item).map(|it| it.parent);
+        own.iter()
+            .chain(locks.link_folders(self, item))
+            .all(|folder| self.rlva_folder_signature_in(locks, *folder, false, except).is_empty())
     }
 }
 
@@ -191,13 +270,18 @@ pub fn layer(name: &str) -> Option<u8> {
 pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
     // RlvInventory::getSharedRootID prefers the first populated #RLV root,
     // otherwise the last empty one, in native inventory child order.
-    let candidates = inv.folders.get(&inv.root).map(|f| f.children.clone()).unwrap_or_else(|| {
-        let mut ids: Vec<_> = inv.folders.keys().copied().collect();
-        ids.sort();
-        ids
-    });
+    let sorted;
+    let candidates = match inv.folders.get(&inv.root) {
+        Some(f) => f.children.as_slice(),
+        None => {
+            let mut ids: Vec<_> = inv.folders.keys().copied().collect();
+            ids.sort();
+            sorted = ids;
+            sorted.as_slice()
+        }
+    };
     let mut empty = None;
-    for id in candidates {
+    for id in candidates.iter().copied() {
         if let Some(f) = inv
             .folders
             .get(&id)
@@ -220,11 +304,16 @@ fn folded(name: &str, legacy: bool) -> bool {
     super::naming::folded(name, legacy)
 }
 
+/// The locks that go by where a folder is (under #RLV or not), whatever the
+/// folder: they reach the whole inventory.
+fn placement_rule(name: &str) -> bool {
+    matches!(name, "sharedwear" | "sharedunwear" | "unsharedwear" | "unsharedunwear")
+}
+
 /// The rules `rlva_folder_signature_in` can match: the global shared and
 /// unshared wear locks, and the `attach…this` / `detach…this` folder locks.
 fn folder_rule(name: &str) -> bool {
-    matches!(name, "sharedwear" | "sharedunwear" | "unsharedwear" | "unsharedunwear")
-        || ((name.starts_with("attach") || name.starts_with("detach")) && name.contains("this"))
+    placement_rule(name) || ((name.starts_with("attach") || name.starts_with("detach")) && name.contains("this"))
 }
 
 fn folded_parent(inv: &Inventory, mut id: Uuid, legacy: bool) -> Uuid {
@@ -362,8 +451,8 @@ impl World {
     /// An option naming items (none: the issuer's own; a point, a layer, an
     /// object) locks the folders of those items: shared originals can live
     /// elsewhere, so every shared link counts, and attachment-point folders
-    /// fold into their parent. Finding the links walks the whole inventory:
-    /// one walk for all the keys.
+    /// fold into their parent. Finding the links walks #RLV: one walk for all
+    /// the keys.
     fn rlva_context_folders_of<'a>(&self, keys: impl IntoIterator<Item = (Uuid, &'a str)>) -> HashMap<(Uuid, String), Vec<Uuid>> {
         let worn = self.rlva_worn_attachment_points();
         let mut cof = None;
@@ -401,27 +490,31 @@ impl World {
             }
             out.insert(key, Vec::new());
         }
-        if !wanted.is_empty() {
-            // a few items among the whole inventory: a sorted list tells most
-            // of them apart faster than hashing every id
-            let mut targets: Vec<_> = wanted.keys().copied().collect();
-            targets.sort_unstable();
-            for it in self.inventory.items.values() {
-                let mut add = |item: &Uuid| {
-                    if targets.binary_search(item).is_err() {
-                        return;
-                    }
-                    let Some(keys) = wanted.get(item) else { return };
-                    let folder = folded_parent(&self.inventory, it.parent, self.rlva.preferences.legacy_naming);
-                    if path(&self.inventory, folder).is_some() {
+        // Only what is under #RLV counts (RlvFolderLocks::getLockedItems
+        // collects from the shared root): the walk stays in that subtree and
+        // never reads the rest of the inventory.
+        if !wanted.is_empty()
+            && let Some(root) = shared_root(&self.inventory)
+        {
+            let legacy = self.rlva.preferences.legacy_naming;
+            let mut stack = vec![root];
+            let mut seen = HashSet::new();
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(f) = self.inventory.folders.get(&id) else { continue };
+                stack.extend(f.children.iter().copied());
+                // resolved for the folders that hold a wanted item only
+                let mut folder = None;
+                for it in f.items.iter().filter_map(|item| self.inventory.items.get(item)) {
+                    let link = (it.asset_type == 24 && it.asset_id != it.id).then_some(it.asset_id);
+                    for keys in [Some(it.id), link].into_iter().flatten().filter_map(|item| wanted.get(&item)) {
+                        let folder = *folder.get_or_insert_with(|| folded_parent(&self.inventory, id, legacy));
                         for key in keys {
                             out.entry(key.clone()).or_default().push(folder);
                         }
                     }
-                };
-                add(&it.id);
-                if it.asset_type == 24 && it.asset_id != it.id {
-                    add(&it.asset_id);
                 }
             }
         }
@@ -487,6 +580,9 @@ impl World {
             .collect()
     }
 
+    /// One folder check alone; the item checks go through
+    /// `rlva_item_folders_removable_in`, which counts the item's links too.
+    #[cfg(test)]
     pub(super) fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
         self.rlva_folder_allowed_in(&FolderLocks::default(), folder, add, actor)
     }
@@ -813,6 +909,9 @@ impl World {
                         || target == Some(**id)
                         || (group && self.rlva_attachment_group(**at) == Some(c.option.as_str()))
                 })
+                // RlvForceWear::isForceDetachable: a script never takes
+                // the viewer's own bridge off.
+                .filter(|(id, at)| !crate::world::bridge::viewer_bridge(self, **id, **at))
                 .map(|(id, _)| *id)
                 .filter(|id| self.rlva_can_remove(*id, source))
                 .collect();
@@ -886,9 +985,15 @@ impl World {
                     let it = &self.inventory.items[&item];
                     let point = points.get(&item).copied().unwrap_or(0);
                     let key = (it.asset_type, if it.asset_type == 6 { point as u32 } else { it.flags & 0xff });
+                    // RlvForceWear::addAttachment (rlvhelper.cpp): replacing
+                    // attachments share a slot only on a point that is known.
+                    // With none (the default point, 0) each one replaces
+                    // what its own point holds when it arrives; taking them
+                    // for one slot left all but the first as additions.
+                    let slot_known = it.asset_type != 6 || point != 0;
                     let replace_item = it.asset_type != 21
                         && (modes.get(&item).copied().unwrap_or(replace) || it.asset_type == 13)
-                        && !replaced.contains(&key);
+                        && !(slot_known && replaced.contains(&key));
                     if !self.rlva_can_add(item, point, source) {
                         continue;
                     }
@@ -938,7 +1043,9 @@ impl World {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor);
+            // no record of its own: its links under #RLV still hold it
+            return (self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor))
+                && self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil());
         };
         // Nostrip is the user's override of scripted undressing. It does not
         // prevent the user manually removing an item.
@@ -961,7 +1068,7 @@ impl World {
         } else if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("remoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
         }
-        self.rlva_folder_allowed(it.parent, false, actor)
+        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil())
     }
 
     pub fn rlva_can_add(&self, item: Uuid, at: u8, actor: Uuid) -> bool {
@@ -992,6 +1099,11 @@ impl World {
             return false;
         }
         self.rlva_folder_allowed_in(locks, it.parent, true, actor)
+    }
+
+    /// The avatar's `#RLV` folder (RlvInventory::getSharedRootID), if it has one.
+    pub fn rlva_shared_root(&self) -> Option<Uuid> {
+        shared_root(&self.inventory)
     }
 
     pub fn rlva_attachment_item(&self, object: Uuid) -> Option<Uuid> {
@@ -1044,6 +1156,13 @@ impl World {
             .rules
             .values()
             .any(|rules| rules.iter().any(|r| folder_rule(&r.behaviour)))
+    }
+    /// A lock on every shared or every unshared folder (`placement_rule`) is set.
+    pub(super) fn rlva_has_placement_rule(&self) -> bool {
+        self.rlva
+            .rules
+            .values()
+            .any(|rules| rules.iter().any(|r| placement_rule(&r.behaviour)))
     }
 
     /// LLAppearanceMgr::updateCOF and removeItemsFromAvatar with RLVa
@@ -1158,10 +1277,7 @@ impl World {
         {
             return false;
         }
-        self.inventory
-            .items
-            .get(&item)
-            .is_none_or(|it| self.rlva_folder_signature_except(it.parent, false, except).is_empty())
+        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, except)
     }
 
     pub fn rlva_inventory_query(&mut self, c: &Command, source: Uuid) -> Option<String> {
@@ -1206,9 +1322,15 @@ impl World {
                         })
                     }))
         };
+        // RlvHandler::onGetAttach and onGetAttachNames leave the viewer's
+        // own bridge out of the Center 2 count, and it is never force
+        // detachable (RlvForceWear::isForceDetachable).
+        let counted = |item: &Uuid, at: u8| !crate::world::bridge::viewer_bridge(self, *item, at);
         let visible_point = |point: u8| {
             worn_points.iter().any(|(item, at)| {
-                *at == point && (!self.rlva.preferences.hide_locked_attachments || self.rlva_query_removable(*item, source, &worn_points))
+                *at == point
+                    && counted(item, *at)
+                    && (!self.rlva.preferences.hide_locked_attachments || self.rlva_query_removable(*item, source, &worn_points))
             })
         };
         match c.behaviour.as_str() {
@@ -1246,11 +1368,11 @@ impl World {
                             !GROUPS.contains(&c.option.as_str()) || group == Some(c.option.as_str())
                         })
                         .filter(|(i, _)| match c.behaviour.as_str() {
-                            "getattachnames" => worn_points.values().any(|p| *p == *i as u8),
+                            "getattachnames" => worn_points.iter().any(|(id, p)| *p == *i as u8 && counted(id, *p)),
                             "getaddattachnames" => self.rlva_point_addable(*i as u8),
                             _ => worn_points
                                 .iter()
-                                .any(|(id, at)| *at == *i as u8 && self.rlva_can_remove(*id, source)),
+                                .any(|(id, at)| *at == *i as u8 && counted(id, *at) && self.rlva_can_remove(*id, source)),
                         })
                         .map(|(i, name)| self.avatar_lib.attach_names.get(&(i as u8)).map_or(*name, String::as_str))
                         .collect::<Vec<_>>()

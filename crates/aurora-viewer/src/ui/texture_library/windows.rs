@@ -11,6 +11,19 @@ pub(super) struct PreviewWindow {
     pub(super) editor: Option<material_editor::Editor>,
     pub(super) texture: texture_view::ImageView,
     description: Option<String>,
+    /// The 360° view of a 2:1 texture: None follows the item's name (an
+    /// Aurora 360° upload opens as a panorama), Some is the user's choice.
+    pano: Option<bool>,
+    pano_view: Option<crate::ui::panorama::PanoView>,
+}
+
+/// Whether a texture can be looked into as a panorama, and whether it is:
+/// 2:1 and wide enough (`capture_360::is_equirect`); on when the user chose it,
+/// or, with no choice made, when the item's name is an Aurora 360° upload's.
+pub(super) fn panorama_state(dimensions: Option<(u32, u32)>, name: &str, choice: Option<bool>) -> (bool, bool) {
+    let eligible = dimensions.is_some_and(crate::snapshot::capture_360::is_equirect);
+    let on = eligible && choice.unwrap_or_else(|| crate::snapshot::capture_360::is_marked(name));
+    (eligible, on)
 }
 
 pub(super) struct BatchExport {
@@ -188,6 +201,17 @@ impl LibraryUi {
             }
         }
     }
+    /// `panorama-switch` turns the 360° switch on, `panorama-full` enlarges.
+    pub(crate) fn demo_panorama(&mut self, mode: &str) {
+        for window in &mut self.windows {
+            if mode == "panorama-switch" {
+                window.pano = Some(true);
+            }
+            if mode == "panorama-full" {
+                window.pano_view.get_or_insert_with(|| crate::ui::panorama::PanoView::new(0.0)).full = true;
+            }
+        }
+    }
     pub(crate) fn track_map_upload(&mut self, entry: Uuid, item: Uuid, slot: usize) {
         self.map_uploads.retain(|_, target| *target != (item, slot));
         self.map_uploads.insert(entry, (item, slot));
@@ -296,6 +320,8 @@ impl LibraryUi {
                 editor: None,
                 texture: Default::default(),
                 description: None,
+                pano: None,
+                pano_view: None,
             });
         }
         widgets::open_floater(ctx, &window_id(item.id), &mut existing);
@@ -393,6 +419,10 @@ impl LibraryUi {
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
+                // a 2:1 texture can be looked into as a panorama; an Aurora
+                // 360° upload (by its name) opens that way
+                let (eligible, mut pano_on) = panorama_state(dimensions, &item.name, window.pano);
+                let was_on = pano_on;
                 texture_view::toolbar(
                     ui,
                     p,
@@ -401,16 +431,34 @@ impl LibraryUi {
                     copy_uuid,
                     dimensions,
                     &mut window.texture.display,
+                    eligible.then_some(&mut pano_on),
                     actions,
                 );
+                if pano_on != was_on {
+                    window.pano = Some(pano_on);
+                }
+                if !pano_on && let Some(view) = &mut window.pano_view {
+                    view.full = false;
+                }
                 // the picture in exactly the room the description, the
                 // buttons and the notes leave
                 let (mut view, foot) = widgets::above_footer(ui);
-                texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
+                if pano_on {
+                    if let Some(shown) = window.texture.shown.clone() {
+                        let pano_view = window.pano_view.get_or_insert_with(|| crate::ui::panorama::PanoView::new(0.0));
+                        texture_view::panorama_picture(&mut view, p, egui::Id::unique(("texture_panorama", item.id)), pano_view, &shown);
+                    } else {
+                        view.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+                    }
+                } else {
+                    texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
+                }
                 if window.texture.display != before {
                     prefs.texture_display = window.texture.display;
                 }
-                if window.texture.display.actual_size || window.texture.export.is_some() {
+                // (a panorama magnifies part of the image: it needs the
+                // finest level)
+                if window.texture.display.actual_size || window.texture.export.is_some() || pano_on {
                     scene.textures.note_usage_fixed(&asset, 16384.0);
                 }
                 scene.textures.note_usage_boosted(
@@ -503,6 +551,10 @@ impl LibraryUi {
             }
         });
         open &= !close_clicked;
+        // the enlarged panorama, over the whole window
+        if let (Some(view), Some(shown)) = (&mut window.pano_view, &window.texture.shown) {
+            view.show_full(ctx, p, egui::Id::unique(("texture_panorama", item.id)), shown);
+        }
         if let Some(editor) = &mut window.editor {
             if editor.close_ready {
                 return false;

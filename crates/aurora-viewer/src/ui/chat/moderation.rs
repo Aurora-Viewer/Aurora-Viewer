@@ -266,7 +266,7 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, world: &World, c: &Confirm) -> 
     let (agent, text, ok, icon) = match *c {
         Confirm::BanAll { agent, ban } => {
             groups = group_ban_all::ban_groups(&world.groups.groups);
-            let (name, count) = (world.social.name_of(&agent), groups.len());
+            let (name, count) = (world.social.name_in(crate::world::names::NameScope::Roster, &agent), groups.len());
             if ban {
                 (
                     agent,
@@ -285,13 +285,19 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, world: &World, c: &Confirm) -> 
         }
         Confirm::Eject { agent, .. } => (
             agent,
-            aurora_i18n::tr!("ui-group-admin-eject-one", name = world.social.name_of(&agent)),
+            aurora_i18n::tr!(
+                "ui-group-admin-eject-one",
+                name = world.social.name_in(crate::world::names::NameScope::Roster, &agent)
+            ),
             aurora_i18n::tr!("ui-group-admin-eject"),
             "user-x",
         ),
         Confirm::Ban { agent, .. } => (
             agent,
-            aurora_i18n::tr!("ui-group-admin-ban-one", name = world.social.name_of(&agent)),
+            aurora_i18n::tr!(
+                "ui-group-admin-ban-one",
+                name = world.social.name_in(crate::world::names::NameScope::Roster, &agent)
+            ),
             aurora_i18n::tr!("ui-group-admin-ban"),
             "ban",
         ),

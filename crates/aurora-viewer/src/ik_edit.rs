@@ -22,7 +22,7 @@ mod animations;
 mod authoring;
 mod bindings;
 mod clip;
-mod gizmo;
+pub(crate) mod gizmo;
 mod graph;
 mod links;
 mod object_data;
@@ -96,6 +96,9 @@ pub struct Editor {
     control: Control,
     pole: Option<Vec3>,
     pole_orbit: Option<poles::Orbit>,
+    /// The session base the edits and contacts were last carried to
+    /// (`follow_edit_base`).
+    edit_base: Option<std::sync::Arc<ik::EditBase>>,
 }
 
 #[derive(Clone, Copy)]
@@ -1013,6 +1016,7 @@ impl Editor {
             self.clip.finish_auto_key_on_release(ctx.input(|i| i.pointer.primary_down()));
             self.capture_clip(world, &frame);
         } else {
+            self.follow_edit_base(world);
             self.update_bindings(world, &frame);
             self.update_graph(world, &frame);
         }
