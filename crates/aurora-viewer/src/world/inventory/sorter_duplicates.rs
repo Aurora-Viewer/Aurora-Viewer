@@ -96,6 +96,27 @@ fn delivery_mark(inv: &Inventory, folder: Uuid) -> Option<(String, Vec<Key>)> {
     Some((same_name(&inv.folders.get(&folder)?.info.name), keys))
 }
 
+/// A delivery the user's choices let in: no no-copy item unless asked,
+/// and at least one thing of a kind chosen.
+fn delivery_wanted(inv: &Inventory, folder: Uuid, cleanup: &Cleanup) -> bool {
+    let mut wanted = false;
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
+            if !cleanup.no_copy_duplicates && it.owner_mask & PERM_COPY == 0 && !matches!(it.asset_type, 24 | 25) {
+                return false;
+            }
+            wanted |= Kind::of(it.asset_type).is_some_and(|k| cleanup.kinds.contains(&k));
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    wanted
+}
+
 /// The doubles under `source` (My Inventory for `cleanup.whole`): for each
 /// thing held more than once, every copy but one. The one kept is a copy
 /// already filed (in the sort folder or one of the user's own folders),
@@ -180,6 +201,10 @@ pub fn plan_duplicates(
                 if movable(inv, *sub, protected, &holds_worn)
                     && !holds_closed(inv, *sub, &prefs.excluded)
                     && let Some(mark) = delivery_mark(inv, *sub)
+                    // (the same switches as loose items: a no-copy item
+                    // inside keeps it out unless asked, and one of its
+                    // things must be of a kind chosen)
+                    && delivery_wanted(inv, *sub, cleanup)
                 {
                     deliveries.entry(mark).or_default().push((*sub, id, filed));
                 }

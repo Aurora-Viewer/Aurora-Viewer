@@ -557,7 +557,16 @@ struct PurgeJob {
     answered: Option<bool>,
     paused: bool,
     next_at: Option<Instant>,
+    /// Stop was pressed: nothing more is sent, not even a refused piece's
+    /// smaller parts.
+    stopping: bool,
+    /// Pieces refused in a row: past [`PURGE_REFUSALS`] the purge stops.
+    refused_in_row: u32,
 }
+
+/// Pieces refused in a row before a purge stops (a server or a network
+/// that refuses everything is never asked again and again).
+const PURGE_REFUSALS: u32 = 20;
 
 /// A pause between two pieces: the server is never asked faster.
 const PURGE_GAP: std::time::Duration = std::time::Duration::from_millis(400);
@@ -565,7 +574,7 @@ const PURGE_GAP: std::time::Duration = std::time::Duration::from_millis(400);
 const PURGE_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The next piece of a purge, or the answer of the one on its way.
-fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>, free: bool) {
+fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>, actions: &mut Vec<InvAction>, free: bool) {
     use aurora_net::inventory::operations::{Mutation, Operation};
     let free = free
         && st.pending.is_none()
@@ -584,7 +593,9 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<Inv
             // never taken (another change went first): asked again
             None if job.request.is_none() && *frames > 120 => {
                 let piece = piece.clone();
-                job.pieces.push_front(piece);
+                if !job.stopping {
+                    job.pieces.push_front(piece);
+                }
                 job.in_flight = None;
                 return;
             }
@@ -600,42 +611,71 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<Inv
         job.next_at = Some(now + PURGE_GAP);
         if accepted {
             job.done += count;
-        } else if let Some(parts) = sorter::purge::split_piece(inv, &piece) {
+            job.refused_in_row = 0;
+            return;
+        }
+        job.refused_in_row += 1;
+        match sorter::purge::split_piece(inv, &piece) {
             // refused (a 403 for too large a piece): smaller, at once
-            for part in parts.into_iter().rev() {
-                job.pieces.push_front(part);
+            Some(parts) if !job.stopping => {
+                for part in parts.into_iter().rev() {
+                    job.pieces.push_front(part);
+                }
             }
-        } else {
-            job.failed += count;
+            _ => job.failed += count,
+        }
+        if job.refused_in_row >= PURGE_REFUSALS {
+            job.stopping = true;
+            job.failed += job.pieces.iter().map(|p| p.entries(inv)).sum::<usize>();
+            job.pieces.clear();
         }
         return;
     }
     if job.pieces.is_empty() {
-        st.sorter.status = aurora_i18n::tr!("inventory-purge-done", count = job.done, failed = job.failed);
+        st.sorter.status = if job.refused_in_row >= PURGE_REFUSALS {
+            aurora_i18n::tr!("inventory-purge-refused", count = job.done, failed = job.failed)
+        } else {
+            aurora_i18n::tr!("inventory-purge-done", count = job.done, failed = job.failed)
+        };
         st.sorter.purge = None;
+        st.sorter.journal.release(st.sorter.window);
         return;
     }
     if job.paused || !free || job.next_at.is_some_and(|at| now < at) {
         return;
     }
-    // what is gone already is skipped
+    // Checked again now, never only when planned: what is gone, moved out
+    // of the folder being emptied (by hand, by an Undo) or worn since is
+    // skipped, never deleted.
+    let root = job.folder;
+    let inside = |id: Uuid| id != root && rules::under(inv, id, root);
+    let holds_worn = |id: Uuid| worn.iter().any(|w| *w == id || rules::under(inv, *w, id));
     let piece = loop {
         let Some(piece) = job.pieces.pop_front() else { return };
         let piece = match piece {
-            sorter::purge::Piece::Folder(id) if inv.folders.contains_key(&id) => sorter::purge::Piece::Folder(id),
+            sorter::purge::Piece::Folder(id) | sorter::purge::Piece::Emptied(id)
+                if inv.folders.contains_key(&id) && inside(id) && !holds_worn(id) =>
+            {
+                piece
+            }
             sorter::purge::Piece::Items(ids) => {
-                let ids: Vec<Uuid> = ids.into_iter().filter(|id| inv.items.contains_key(id)).collect();
+                let ids: Vec<Uuid> = ids
+                    .into_iter()
+                    .filter(|id| inv.items.contains_key(id) && inside(*id) && !worn.contains(id))
+                    .collect();
                 if ids.is_empty() {
                     continue;
                 }
                 sorter::purge::Piece::Items(ids)
             }
-            sorter::purge::Piece::Folder(_) => continue,
+            sorter::purge::Piece::Folder(_) | sorter::purge::Piece::Emptied(_) => continue,
         };
         break piece;
     };
     let (operations, removed): (Vec<Operation>, Vec<Uuid>) = match &piece {
-        sorter::purge::Piece::Folder(id) => (vec![Operation::Delete { id: *id, folder: true }], vec![*id]),
+        sorter::purge::Piece::Folder(id) | sorter::purge::Piece::Emptied(id) => {
+            (vec![Operation::Delete { id: *id, folder: true }], vec![*id])
+        }
         sorter::purge::Piece::Items(ids) => (
             ids.iter().map(|id| Operation::Delete { id: *id, folder: false }).collect(),
             ids.clone(),
@@ -1232,11 +1272,11 @@ impl State {
     }
 
     pub(super) fn active(&self) -> bool {
-        self.open || self.job.is_some() || self.submitted || self.requested.is_some() || self.trash.is_some()
+        self.open || self.job.is_some() || self.submitted || self.requested.is_some() || self.trash.is_some() || self.purge.is_some()
     }
 
     fn busy(&self) -> bool {
-        self.job.is_some() || self.submitted || self.trash.is_some()
+        self.job.is_some() || self.submitted || self.trash.is_some() || self.purge.is_some()
     }
 
     fn set_source(&mut self, source: Source) {
@@ -1845,7 +1885,7 @@ pub(super) fn show(
         }
     }
     send_trash_batch(inv, st, prefs, worn, actions, free && !hold);
-    send_purge_piece(inv, st, actions, free && !hold);
+    send_purge_piece(inv, st, worn, actions, free && !hold);
     let state = &mut st.sorter;
     if !state.open {
         return;
@@ -2237,7 +2277,9 @@ pub(super) fn show(
             job.paused = !job.paused;
         }
         if stop {
-            // the piece on its way finishes; nothing after it is sent
+            // the piece on its way finishes; nothing after it is sent, not
+            // even its smaller parts if it is refused
+            job.stopping = true;
             job.pieces.clear();
         }
     }
@@ -3198,6 +3240,8 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
             }
             let pieces: VecDeque<_> = sorter::purge::purge_pieces(inv, folder).into();
             let total = sorter::purge::entries_below(inv, folder);
+            // one run at a time per account, like a sort or a Trash run
+            st.sorter.journal.claim(st.sorter.window);
             st.sorter.purge = Some(PurgeJob {
                 folder,
                 pieces,
@@ -3209,6 +3253,8 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
                 answered: None,
                 paused: false,
                 next_at: None,
+                stopping: false,
+                refused_in_row: 0,
             });
         }
         Confirm::PreTrash(ids) => {

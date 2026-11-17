@@ -14614,6 +14614,7 @@ inventory-purge-text = { $count ->
 inventory-purge-go = Supprimer définitivement
 inventory-purge-progress = Suppression définitive : { $done } / { $total }
 inventory-purge-done = { $count } supprimés définitivement, { $failed } refusés.
+inventory-purge-refused = Le serveur a refusé 20 morceaux d’affilée : arrêt après { $count } supprimés définitivement, { $failed } restants. Réessayez plus tard.
 inventory-purge-worn = { $folder } contient un élément porté : enlevez-le d’abord.
 inventory-cleanup-locked = { $count ->
     [one] 1 objet des dossiers par défaut verrouillés (Habits, Parties du corps…) n’est pas examiné.

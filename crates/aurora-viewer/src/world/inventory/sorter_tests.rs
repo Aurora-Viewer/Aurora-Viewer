@@ -3927,3 +3927,17 @@ fn a_delivery_named_for_nothing_follows_its_items() {
     assert!(dress.label.contains(Category::Dresses.folder()), "{}", dress.label);
     assert!(!plan.moves.iter().any(|m| m.id == id(901)), "a mixed one stays");
 }
+
+/// Two identical deliveries of no-copy things (gacha doubles kept to
+/// trade) stay unless the no-copy switch takes them.
+#[test]
+fn identical_no_copy_deliveries_stay_unless_asked() {
+    let mut inv = fixture(&[]);
+    for at in [300u128, 310] {
+        add_folder(&mut inv, at, OBJECTS, "Velmora - Gacha Plush");
+        add_copy(&mut inv, at + 1, at, "Velmora Gacha Plush RARE", 950, at as i64, false);
+        add_copy(&mut inv, at + 2, at, "Velmora Gacha Plush Card", 951, at as i64, true);
+    }
+    assert!(duplicates_of(&inv, false).rows.is_empty(), "kept to trade");
+    assert_eq!(duplicates_of(&inv, true).whole_deliveries, 1, "when asked, the second goes whole");
+}

@@ -23,6 +23,10 @@ pub const PURGE_ITEMS: usize = 20;
 pub enum Piece {
     /// A folder deleted whole, with all it holds.
     Folder(Uuid),
+    /// A folder deleted once its contents went piece by piece: never split
+    /// again (a folder the server keeps refusing is counted as failed, not
+    /// asked for in a loop).
+    Emptied(Uuid),
     /// Items deleted one by one, in one request.
     Items(Vec<Uuid>),
 }
@@ -31,7 +35,7 @@ impl Piece {
     /// The entries it removes, as the inventory holds them now.
     pub fn entries(&self, inv: &Inventory) -> usize {
         match self {
-            Piece::Folder(id) => 1 + entries_below(inv, *id),
+            Piece::Folder(id) | Piece::Emptied(id) => 1 + entries_below(inv, *id),
             Piece::Items(ids) => ids.len(),
         }
     }
@@ -39,7 +43,7 @@ impl Piece {
     /// Its first entry: how its request is known again.
     pub fn first(&self) -> Option<Uuid> {
         match self {
-            Piece::Folder(id) => Some(*id),
+            Piece::Folder(id) | Piece::Emptied(id) => Some(*id),
             Piece::Items(ids) => ids.first().copied(),
         }
     }
@@ -87,7 +91,7 @@ fn pieces_of(inv: &Inventory, id: Uuid, out: &mut Vec<Piece>) {
         out.push(Piece::Items(chunk.to_vec()));
     }
     // (empty by now)
-    out.push(Piece::Folder(id));
+    out.push(Piece::Emptied(id));
 }
 
 /// A refused piece in smaller ones: a folder's own folders and its items a
@@ -102,14 +106,14 @@ pub fn split_piece(inv: &Inventory, piece: &Piece) -> Option<Vec<Piece>> {
             }
             let mut out: Vec<Piece> = f.children.iter().map(|c| Piece::Folder(*c)).collect();
             out.extend(f.items.chunks(5).map(|c| Piece::Items(c.to_vec())));
-            out.push(Piece::Folder(*id));
+            out.push(Piece::Emptied(*id));
             Some(out)
         }
         Piece::Items(ids) if ids.len() > 1 => {
             let (a, b) = ids.split_at(ids.len() / 2);
             Some(vec![Piece::Items(a.to_vec()), Piece::Items(b.to_vec())])
         }
-        Piece::Items(_) => None,
+        Piece::Items(_) | Piece::Emptied(_) => None,
     }
 }
 
@@ -179,7 +183,7 @@ mod tests {
         assert_eq!(pieces[1], Piece::Folder(id(21)), "the large folder's small one first");
         let big = pieces
             .iter()
-            .position(|p| *p == Piece::Folder(id(20)))
+            .position(|p| *p == Piece::Emptied(id(20)))
             .expect("the large folder, once empty");
         assert!(
             pieces[2..big]
@@ -191,14 +195,15 @@ mod tests {
             .iter()
             .map(|p| match p {
                 Piece::Items(v) => v.len(),
-                Piece::Folder(_) => 0,
+                Piece::Folder(_) | Piece::Emptied(_) => 0,
             })
             .sum();
         assert_eq!(loose, 45, "then the loose items");
         assert!(!pieces.contains(&Piece::Folder(id(1))), "never the Trash itself");
         // refused: smaller, down to one item
         let parts = split_piece(&inv, &Piece::Folder(id(10))).expect("splits");
-        assert_eq!(parts.last(), Some(&Piece::Folder(id(10))));
+        assert_eq!(parts.last(), Some(&Piece::Emptied(id(10))));
+        assert!(split_piece(&inv, &Piece::Emptied(id(10))).is_none(), "split once, never in a loop");
         let halves = split_piece(&inv, &Piece::Items(vec![id(1), id(2), id(3)])).expect("halves");
         assert_eq!(halves.len(), 2);
         assert!(split_piece(&inv, &Piece::Items(vec![id(1)])).is_none());
