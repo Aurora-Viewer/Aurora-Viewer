@@ -15904,3 +15904,10 @@ game-control-action-truck-right = トラック →
 game-control-action-boom-up = ブーム ↑
 game-control-action-boom-down = ブーム ↓
 game-control-action-escape = ESC
+
+phototools-environment-settings = 環境設定
+phototools-quick-environments = クイック環境
+phototools-environment-presets = 環境プリセット
+phototools-general-render = 一般描画設定
+phototools-render-options = 描画オプション
+phototools-pause-clouds-photo-only = 写真ウィンドウが開いている間のみ使えます。写真だけの設定です。

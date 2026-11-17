@@ -496,14 +496,16 @@ impl<'a> Cx<'a> {
         self.end_block();
         self.end_line();
         let before = std::mem::replace(&mut self.group, title.to_owned());
-        if self.mode == Mode::Show {
+        // an untitled group (Phototools' collapsing sections name theirs)
+        // draws no title bar
+        if self.mode == Mode::Show && !title.is_empty() {
             self.group_title(title);
         }
         self.group_untitled = matches!(self.mode, Mode::Search | Mode::Modified);
         body(self);
         self.end_block();
         self.end_line();
-        if self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled) {
+        if !title.is_empty() && (self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled)) {
             self.ui.add_space(14.0);
         }
         self.group = before;

@@ -16027,3 +16027,10 @@ game-control-action-truck-right = Truck →
 game-control-action-boom-up = Boom ↑
 game-control-action-boom-down = Boom ↓
 game-control-action-escape = ESC
+
+phototools-environment-settings = Environment settings
+phototools-quick-environments = Quick environments
+phototools-environment-presets = Environment presets
+phototools-general-render = General render settings
+phototools-render-options = Render options
+phototools-pause-clouds-photo-only = Available while the photo window is open: it is the photo's own setting.
