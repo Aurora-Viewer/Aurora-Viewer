@@ -4056,5 +4056,27 @@ fn a_stores_bracketed_name_never_decides_the_category() {
         path("[REBORN] Kitty Dress").starts_with("Reborn"),
         "{}",
         path("[REBORN] Kitty Dress")
+    ); // a tag that names the kind, a head's tag, a wearable's layer,
+    // decorated marks
+    assert!(
+        path("[Hair] Mia Bow").contains(Category::Hair.folder()),
+        "{}",
+        path("[Hair] Mia Bow")
+    );
+    assert!(
+        path("[LeLutka] Bento Addon").contains(Category::Heads.folder()),
+        "{}",
+        path("[LeLutka] Bento Addon")
+    );
+    assert_eq!(
+        target("[Moon Hair] Ada", 5, 14, None, &[], false)
+            .map(|d| matches!(d, Dest::Path(p) if p.iter().any(|s| s == Category::Hair.folder()))),
+        Some(true),
+        "a tattoo layer named for nothing keeps the whole name's reading"
+    );
+    assert!(
+        path("**Moon Hair** Ada Dress").contains(Category::Dresses.folder()),
+        "{}",
+        path("**Moon Hair** Ada Dress")
     );
 }

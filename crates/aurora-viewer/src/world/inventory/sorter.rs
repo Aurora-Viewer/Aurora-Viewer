@@ -1008,14 +1008,7 @@ pub fn target_by(
         });
     }
     let mut found = classify(name, asset_type, flags);
-    // (a store's own bracketed name never decides the category: `[Moon
-    // Hair] Ada Dress` is a dress; the rest of the name first, the whole
-    // name when the rest says nothing)
-    if let Some(rest) = after_enclosed_tag(name)
-        && let Some(category) = classify(rest, asset_type, flags).category
-    {
-        found.category = Some(category);
-    }
+    found.category = category_past_store(name, asset_type, found.category);
     let by_creator = creator.and_then(|c| hints.iter().find(|h| h.creator == Some(c)));
     let mut shop = (stores || !hints.is_empty()).then(|| store(name)).flatten();
     if let Some(hint) = by_creator {
@@ -1167,16 +1160,40 @@ fn without_number(name: &str) -> &str {
     marked
 }
 
-/// The rest of a name that opens with an enclosed tag (`[Store] rest`,
-/// `{Store} rest`): what the item is, the store's own name aside.
-fn after_enclosed_tag(name: &str) -> Option<&str> {
+/// A name that opens with an enclosed tag (`[Store] rest`, `**Store**
+/// rest`): the tag and the rest of the name.
+fn enclosed_tag(name: &str) -> Option<(&str, &str)> {
     let text = name.trim_start();
     let first = text.chars().next()?;
-    let (_, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
-    let inner = &text[first.len_utf8()..];
+    let (open, close) = VOCABULARY.store_tags.enclosed.iter().find(|(open, _)| *open == first)?;
+    // (the opening run of marks skipped, as `store` does: `..::Store::..`)
+    let inner = text[first.len_utf8()..].trim_start_matches(|c: char| c == *open || (!c.is_alphanumeric() && c != '&'));
     let end = inner.find(*close)?;
-    let rest = inner[end + close.len_utf8()..].trim_start();
-    (!rest.is_empty()).then_some(rest)
+    let rest = inner[end + close.len_utf8()..].trim_start_matches(|c: char| !c.is_alphanumeric());
+    (!rest.is_empty()).then_some((&inner[..end], rest))
+}
+
+/// The category, a store's own bracketed name set aside (`[Moon Hair] Ada
+/// Dress` is a dress): read from the rest's words when the tag reads as a
+/// store, the whole name's otherwise, or when the rest says nothing, or
+/// when the whole name finds a head (`[LeLutka] Bento Addon`).
+fn category_past_store(name: &str, asset_type: i32, whole: Option<Category>) -> Option<Category> {
+    if whole == Some(Category::Heads) {
+        return whole;
+    }
+    // (a texture, a sound… is what its type says, whatever its name)
+    if !matches!(asset_type, -1 | 5 | 6 | 13) {
+        return whole;
+    }
+    let Some((tag, rest)) = enclosed_tag(name) else {
+        return whole;
+    };
+    // (a tag that names the kind, `[Hair] Mia Bow`, is no store's name)
+    if store_tag(tag, true).is_none() {
+        return whole;
+    }
+    // (the rest by its words only: a wearable's layer would always answer)
+    classify(rest, -1, 0).category.or(whole)
 }
 
 /// A bracketed tag says more than a status and what the item is: `[Moon
@@ -3272,7 +3289,8 @@ pub fn creator_hint(inv: &Inventory, id: Uuid, creator_name: &str) -> Option<Sto
     };
     Some(StoreHint {
         store: store(name).unwrap_or_default(),
-        category: classify(name, asset_type, flags).category.unwrap_or(StoreHint::default().category),
+        category: category_past_store(name, asset_type, classify(name, asset_type, flags).category)
+            .unwrap_or(StoreHint::default().category),
         creator: Some(creator),
         creator_name: creator_name.chars().take(64).collect(),
     })
