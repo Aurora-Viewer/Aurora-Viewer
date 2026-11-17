@@ -271,12 +271,15 @@ pub async fn fetch_tree(
     let doc = if depth > 0 {
         // (one answer within TREE_TOTAL, retries and waits included: the
         // walk's deadline never frees a slot while its request still runs)
-        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0))
+        let overloaded = std::sync::atomic::AtomicBool::new(false);
+        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, 0, Some(&overloaded)))
             .await
-            // (only a run of throttles and overloads, 429 or 503 with their
-            // waits, reaches it: answered as an overload, so the walk
-            // waits instead of splitting the read into more of them)
-            .unwrap_or_else(|_| Err(FetchError::new(FetchFailure::Transient, Some(503))))?
+            // (out of time after a throttle or an overload, 429 or 503: an
+            // overload, the walk waits; else a slow subtree, read in parts)
+            .unwrap_or_else(|_| {
+                let status = overloaded.load(std::sync::atomic::Ordering::Relaxed).then_some(503);
+                Err(FetchError::new(FetchFailure::Transient, status))
+            })?
     } else {
         get(http, url).await?
     };
@@ -306,12 +309,18 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
-    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS).await
+    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS, None).await
 }
 
 /// [`get`] with its own timeout, and how many times a timeout is tried
 /// again (a refusal keeps the usual retries).
-async fn get_with(http: &reqwest::Client, url: String, timeout: std::time::Duration, timeout_retries: u32) -> Result<Llsd, FetchError> {
+async fn get_with(
+    http: &reqwest::Client,
+    url: String,
+    timeout: std::time::Duration,
+    timeout_retries: u32,
+    overloaded: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
     let mut timeouts = 0;
     loop {
@@ -356,6 +365,11 @@ async fn get_with(http: &reqwest::Client, url: String, timeout: std::time::Durat
             let gateway = matches!(status, 502 | 504) && timeout_retries < RETRY_ATTEMPTS;
             if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS && !gateway {
                 log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
+                if matches!(status, 429 | 503)
+                    && let Some(flag) = overloaded
+                {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
                 continue;
             }

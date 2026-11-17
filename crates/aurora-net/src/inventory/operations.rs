@@ -521,7 +521,13 @@ where
     EFut: std::future::Future<Output = Result<(), String>>,
     P: FnMut(Progress),
 {
-    if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
+    // (a delete-only change may read nothing back: a long purge's pieces
+    // are settled by their own answers, never by reading the huge folder
+    // they empty)
+    let deletes_only = !change.operations.is_empty()
+        && change.copies.is_empty()
+        && change.operations.iter().all(|op| matches!(op, Operation::Delete { .. }));
+    if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() && !deletes_only {
         return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
     let cap = cap.trim_end_matches('/');
@@ -660,11 +666,14 @@ where
             }
             Operation::Delete { id, folder } => {
                 let kind = if *folder { "category" } else { "item" };
-                // (already gone, 404 or 410: the delete is done. A piece of
-                // a long purge whose answer was lost, or that failed after
-                // deleting part of it, is sent again and settles at once)
+                // (already gone, 410 GONE: the delete is done, as
+                // llaisapi.cpp's AISAPI::InvokeAISCommandCoro takes it. A
+                // piece of a long purge whose answer was lost, or that failed
+                // after deleting part of it, is sent again and settles at
+                // once. A 404 is no proof: a capability gone stale after a
+                // teleport answers it too)
                 match crate::outfits::send_detailed(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await {
-                    Err(refusal) if matches!(refusal.status, Some(404 | 410)) => {
+                    Err(refusal) if refusal.status == Some(410) => {
                         log::debug!("inventory delete of {kind} {id}: already gone");
                     }
                     Err(refusal) => {
