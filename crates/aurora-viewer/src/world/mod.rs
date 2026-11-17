@@ -5919,7 +5919,8 @@ impl World {
                     let from = self.social.name_of(&id);
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
-                self.system_notice(n, notice_topics::Topic::People);
+                // the name is a link to the resident (social::online_chat_line)
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
             }
         }
     }
