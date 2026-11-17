@@ -675,7 +675,13 @@ fn send_purge_piece(inv: &Inventory, st: &mut InventoryUi, worn: &HashSet<Uuid>,
                     // (never an item of a folder not read now: a refresh
                     // since may have moved or changed it)
                     .filter(|id| {
-                        inv.items.get(id).is_some_and(|it| !sorter::purge::blind(inv, it.parent)) && inside(*id) && !worn.contains(id)
+                        // (the folder being emptied excepted: one over the
+                        // server's limit gives up what is known of it)
+                        inv.items
+                            .get(id)
+                            .is_some_and(|it| it.parent == root || !sorter::purge::blind(inv, it.parent))
+                            && inside(*id)
+                            && !worn.contains(id)
                     })
                     .collect();
                 if ids.is_empty() {
