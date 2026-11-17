@@ -162,8 +162,15 @@ pub fn pack_root() -> PathBuf {
     crate::settings::media_plugins_dir().with_file_name("ffmpeg")
 }
 
-/// The pack this viewer can download: `None` until the project publishes
-/// one (`ffmpeg_pack::PACK` is filled in).
+/// `AURORA_DIRECTOR_FFMPEG=pack`: the search ignores the ffmpeg chosen by
+/// hand and those of the PATH and the usual folders, so that the pack's
+/// download can be tried on a computer that has ffmpeg (docs/TESTING.md).
+pub fn pack_only() -> bool {
+    std::env::var("AURORA_DIRECTOR_FFMPEG").is_ok_and(|value| value.trim() == "pack")
+}
+
+/// The pack this viewer can download: `None` for a build whose
+/// `ffmpeg_pack::PACK` names none.
 pub fn pack() -> Option<Published> {
     ffmpeg_pack::published(&ffmpeg_pack::PACK)
 }
@@ -413,8 +420,8 @@ mod tests {
     #[test]
     fn no_download_is_offered_before_a_pack_is_published() {
         let runtime = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
-        // this viewer's own entry is empty
-        assert_eq!(pack(), None);
+        // this viewer names the published pack; one that names none:
+        assert!(pack().is_some());
         let mut download = PackDownload::new(None, false);
         assert_eq!(download.state(), PackState::Unavailable);
         download.ask();
