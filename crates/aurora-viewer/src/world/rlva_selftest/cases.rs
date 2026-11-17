@@ -530,6 +530,18 @@ fn rules() -> Vec<Case> {
                 holds(named(|_| NameScope::Roster), "hidden there too"),
             ),
             Step::Now(
+                "the notice of a message or of a teleport offer names its resident, an inventory offer's does not",
+                holds(
+                    |w, c| {
+                        use crate::world::notifications::Kind;
+                        w.rlva_shows_name(Kind::Message.names(), c.other)
+                            && w.rlva_shows_name(Kind::Teleport.names(), c.other)
+                            && !w.rlva_shows_name(Kind::Inventory.names(), c.other)
+                    },
+                    "the notices do not follow their kind",
+                ),
+            ),
+            Step::Now(
                 "a creator who owns the object is hidden",
                 holds(|w, c| !w.rlva_shows_name(NameScope::Creator { owner: c.other }, c.other), "named"),
             ),

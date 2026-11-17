@@ -144,7 +144,15 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
     ui.add_space(4.0);
     let filter = st.filter.trim().to_lowercase();
     let mut ids = all.ids.clone();
-    ids.retain(|id| super::matches_name(world, NameScope::World, id, &rows::display_name(world, id), &filter));
+    ids.retain(|id| {
+        super::matches_name(
+            world,
+            NameScope::Roster,
+            id,
+            &rows::display_name(world, NameScope::Roster, id),
+            &filter,
+        )
+    });
     let online = online_friends(world);
     if st.sets_online_only {
         ids.retain(|id| online.contains(id));
@@ -154,7 +162,7 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
     ids.sort_by_cached_key(|id| {
         (
             by_status && !online.contains(id),
-            crate::natural_order::key(&rows::display_name(world, id)),
+            crate::natural_order::key(&rows::display_name(world, NameScope::Roster, id)),
         )
     });
     st.sel.retain(|id| ids.contains(id));
@@ -175,7 +183,7 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
                 rows::empty(ui, p, text);
             }
             for id in &ids {
-                row(ui, c, data, st, set, *id, &rows::display_name(world, id), &ids);
+                row(ui, c, data, st, set, *id, &rows::display_name(world, NameScope::Roster, id), &ids);
             }
         });
     carried_card(ui, c, data, st, set);
@@ -253,10 +261,10 @@ fn second_line(world: &World, id: &Uuid) -> String {
     world
         .social
         .avatar_names
-        .get(id)
+        .get_in(NameScope::Roster, id)
         .map(|n| crate::world::social::format_name(&n.legacy_first, &n.legacy_last))
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| world.social.name_of(id))
+        .unwrap_or_else(|| world.social.name_in(NameScope::Roster, id))
 }
 
 /// The member's other sets, highest first: (name, colour).
@@ -362,7 +370,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             == Some(id),
     );
     if !ui.is_rect_visible(rect) {
-        rows::person_menu(&resp, p, world, &st.sel, id);
+        rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
         return;
     }
     if !data.pics.contains_key(&id) {
@@ -371,7 +379,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, world, NameScope::World, rect, data.pics.get(&id), id, name, false);
+    let left = rows::picture(ui, p, world, NameScope::Roster, rect, data.pics.get(&id), id, name, false);
     let mutable = !ContactSets::is_internal(set);
     // under the pointer: take out, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
@@ -434,7 +442,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     if action.activate {
         c.actions.push(super::PeopleAction::OpenIm(id));
     }
-    rows::person_menu(&resp, p, world, &st.sel, id);
+    rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
     let tip = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned());
     rows::contact_tip(resp, tip.as_deref());
 }
@@ -509,7 +517,7 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
         return;
     };
     let id = carry.id;
-    let name = rows::display_name(world, &id);
+    let name = rows::display_name(world, NameScope::Roster, &id);
     let second = second_line(world, &id);
     let chips = other_sets(world, &id, set);
     // as wide as what it shows, never wider than the row: the same lines,
@@ -529,7 +537,7 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
     card.painter().rect_filled(rect, radius, p.raised);
     card.painter()
         .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-    let left = rows::picture(&card, p, world, NameScope::World, rect, data.pics.get(&id), id, &name, false);
+    let left = rows::picture(&card, p, world, NameScope::Roster, rect, data.pics.get(&id), id, &name, false);
     let color = crate::ui::colors::resident_name(world, &id, p.ink);
     member_names(
         &card,
@@ -616,7 +624,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, i
                     AvatarList::Name
                 };
                 menu_open |= menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    context::avatar_list_menu(ui, p, world, id, kind);
+                    context::avatar_roster_menu(ui, p, world, id, kind);
                 });
             }
             _ => {}

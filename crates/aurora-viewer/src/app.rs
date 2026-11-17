@@ -20112,9 +20112,13 @@ impl App {
                 let friend_allowed = prompt_allowed && region_shown.is_none();
                 if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, friend_allowed) {
                     self.notif_ui.wanted_pics.insert(from);
-                    let name = Some(self.world.social.display_name_of(&from))
+                    // an offer of friendship names who makes it whatever
+                    // `@shownames` (process_improved_im tests nothing for
+                    // IM_FRIENDSHIP_OFFERED, llimprocessing.cpp)
+                    let scope = crate::world::names::NameScope::Roster;
+                    let name = Some(self.world.social.display_name_in(scope, &from))
                         .filter(|n| n != "…")
-                        .or_else(|| self.world.avatar_name(&from));
+                        .or_else(|| self.world.person_name_in(scope, &from));
                     if name.is_none() {
                         self.world.social.want_name(from);
                     }
@@ -20185,7 +20189,9 @@ impl App {
                 }
                 match prompt_action {
                     Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
-                    Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    Some(ui::friend_prompt::PromptAction::Profile(id)) => {
+                        self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id)
+                    }
                     None => {}
                 }
                 match region_action {

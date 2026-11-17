@@ -15,7 +15,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
-use crate::world::notifications::{Data, Notification, Notifications, Response};
+use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
@@ -749,6 +749,13 @@ pub(super) fn history_list(
         .filter_map(|(i, e)| {
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
+            // the kinds that name their resident keep its name under
+            // `@shownames` (`Kind::names`)
+            let privacy = if world.rlva.enabled() {
+                world.rlva_filter_in(Kind::of_look(e.look).names())
+            } else {
+                privacy
+            };
             privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
@@ -1037,7 +1044,7 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        super::chat::text_with_links(ui, p, world, &e.body, &e.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, Kind::of_look(e.look).names(), &e.body, &e.name_links, 12.0, p.muted);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()

@@ -32,7 +32,11 @@ impl World {
         if !im.from_name.is_empty() {
             self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
         }
-        let name = self.social.avatar_names.complete(&from).unwrap_or_else(|| im.from_name.clone());
+        let name = self
+            .social
+            .avatar_names
+            .complete_in(super::names::NameScope::Roster, &from)
+            .unwrap_or_else(|| im.from_name.clone());
         self.im_messages.push(ImMessage {
             kind: ImKind::Private,
             session: from,

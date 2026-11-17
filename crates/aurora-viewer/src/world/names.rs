@@ -97,7 +97,8 @@ impl Default for NameOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameScope {
     /// Someone met in the world: name tag, local chat, radar and nearby
-    /// lists, mini-map, hover tip, avatar menus, notices. Hidden unless
+    /// lists, mini-map, hover tip, avatar menus, the notices that are not
+    /// about a conversation (`notifications::Kind::names`). Hidden unless
     /// excepted, wherever they are (canShowName(SNC_DEFAULT, id) alone:
     /// LLVOAvatar::idleUpdateNameTagText, LLNetMap::draw,
     /// LLToolPie::handleTooltipObject…).
@@ -111,10 +112,18 @@ pub enum NameScope {
     /// object or standing in a region around (the same three functions:
     /// `owner == creator || RlvUtil::isNearbyAgent(creator)`).
     Creator { owner: Uuid },
-    /// A list of people known besides the world, and what opens from it:
-    /// friends list, group members and roles, a profile, an IM session.
-    /// Never hidden (FSFloaterContacts, LLPanelGroupMembersSubTab,
-    /// LLPanelProfile and FSFloaterIM have no `@shownames` test).
+    /// Someone known besides the world, and what opens from there: the
+    /// friends list, group members and roles, the recent people, contact
+    /// sets, search results, the blocked list, a profile and its partner,
+    /// an IM session, a group's or a conference's (lines, header,
+    /// participants, transcript, call) and the notices of a message, a
+    /// call, a teleport or friendship offer, a group or a friend going on
+    /// or off line. Never hidden (FSFloaterContacts,
+    /// LLPanelGroupMembersSubTab, LLPanelProfile, FSFloaterIM,
+    /// FSFloaterSearch, LLBlockList and LLConversationLogList have no
+    /// `@shownames` test, nor do the plain LLAvatarList of the recent
+    /// people and of the contact sets, nor process_improved_im for these
+    /// messages, llimprocessing.cpp).
     Roster,
 }
 

@@ -846,7 +846,7 @@ fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>)
                 }
                 None => {
                     if let Some(id) = ids.first() {
-                        let name = world.social.name_of(id);
+                        let name = world.social.name_in(NameScope::Roster, id);
                         world.system_notice(
                             aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()),
                             crate::world::notice_topics::Topic::People,
@@ -1833,7 +1833,7 @@ fn sets_tab(
     let name_of = |id: &Uuid| {
         social
             .avatar_names
-            .get(id)
+            .get_in(NameScope::Roster, id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
             .unwrap_or_else(|| "â€¦".into())
@@ -1841,7 +1841,7 @@ fn sets_tab(
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
     let filter = st.set_filter.trim().to_lowercase();
-    members.retain(|id| super::people::matches_name(world, NameScope::World, id, &name_of(id), &filter));
+    members.retain(|id| super::people::matches_name(world, NameScope::Roster, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
         members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
@@ -2171,7 +2171,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
     let Some(d) = st.dialog.as_mut() else {
         return;
     };
-    let name = |id: &Uuid| world.social.name_of(id);
+    let name = |id: &Uuid| world.social.name_in(NameScope::Roster, id);
     // removing a friend, a set or its members is the destructive answer
     let (icon, kind) = match d {
         Dialog::RemoveFriends(_) | Dialog::RemoveSet(_) | Dialog::RemoveFromSet { .. } => ("trash-filled", widgets::ActionKind::Danger),

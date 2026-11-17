@@ -341,12 +341,13 @@ impl World {
         self.groups.sessions.contains_key(session)
     }
 
-    /// Title of a conversation: group / conference name, else the avatar.
+    /// Title of a conversation: group / conference name, else the avatar,
+    /// named whatever RLVa's `@shownames` (FSFloaterIM has no test of it).
     pub fn session_title(&self, session: &Uuid) -> String {
         match self.groups.sessions.get(session) {
             Some(s) if !s.name.is_empty() => s.name.clone(),
             Some(_) => aurora_i18n::tr!("world-groups-conference").to_owned(),
-            None => self.social.name_of(session),
+            None => self.social.name_in(super::names::NameScope::Roster, session),
         }
     }
 

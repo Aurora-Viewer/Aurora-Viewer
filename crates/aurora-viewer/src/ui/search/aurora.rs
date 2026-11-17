@@ -1042,11 +1042,13 @@ impl SearchUi {
             (Tab::People, Key::Id(id)) => {
                 // LLAvatarActions::showProfile on a double click;
                 // gFSAvatarSearchMenu on a right click
+                // (FSFloaterSearch has no `@shownames` test: its results
+                // name their residents, `NameScope::Roster`)
                 if resp.double_clicked() {
-                    crate::ui::profile::request_open(ui.ctx(), id);
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(id));
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    crate::ui::context::avatar_list_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
+                    crate::ui::context::avatar_roster_menu(ui, p, world, id, crate::ui::context::AvatarList::Name)
                 });
             }
             (Tab::Groups, Key::Id(id)) if resp.double_clicked() => crate::ui::group_profile::request_open(ui.ctx(), id),
