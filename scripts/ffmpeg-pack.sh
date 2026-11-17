@@ -94,9 +94,10 @@ cmd_build() {
             # MinGW has no libssp: no stack protector nor fortify in opus
             opus_args=(-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=$host-gcc -DCMAKE_RC_COMPILER=$host-windres
                 -DCMAKE_FIND_ROOT_PATH=/usr/$host -DOPUS_STACK_PROTECTOR=OFF -DOPUS_FORTIFY_SOURCE=OFF)
-            # static: no libwinpthread or libgcc DLL beside ffmpeg.exe
+            # static: no libwinpthread or libgcc DLL beside ffmpeg.exe; Media
+            # Foundation's encoder (h264_mf) takes its frames through D3D11
             ff_args=(--target-os=mingw32 --arch=x86_64 --cross-prefix=$host- --enable-cross-compile
-                --enable-w32threads --enable-mediafoundation --extra-ldexeflags=-static)
+                --enable-w32threads --enable-d3d11va --enable-mediafoundation --extra-ldexeflags=-static)
             ;;
         macos-arm64 | macos-x64)
             export MACOSX_DEPLOYMENT_TARGET=$MACOS_MIN
