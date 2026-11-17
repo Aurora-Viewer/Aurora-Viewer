@@ -211,11 +211,15 @@ pub struct Renderer {
     /// ray-traced shadows build a skeleton again only when it moved
     /// (rt_shadows.rs).
     rt_palettes: Vec<[[f32; 4]; 4]>,
+    /// Its entries written since the ray tracer last read it.
+    rt_written: Vec<std::ops::Range<usize>>,
     rt_poses: crate::rt_shadows::PoseTracker,
     /// The next frame starts the motion history again (`cut_motion_history`).
     motion_cut: bool,
     /// `shift_world`'s moves not yet sent with a frame.
     world_shift: [f32; 2],
+    /// `rebase_world` was called since the last frame.
+    rt_rebased: bool,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -778,8 +782,10 @@ impl Renderer {
             prev_palette_buffer,
             motion_cut: false,
             world_shift: [0.0; 2],
+            rt_rebased: false,
             palettes_uploaded: 0,
             rt_palettes: Vec::new(),
+            rt_written: Vec::new(),
             rt_poses: Default::default(),
             vertices_uploaded: 0,
             geometry_uploaded: 0,
@@ -993,6 +999,14 @@ impl Renderer {
         self.world_shift[1] += by.y;
     }
 
+    /// The main region changed (a border crossing, a teleport): the scene
+    /// writes every position again, relative to the new one, over the next
+    /// frames. The ray-traced shadows then take a face's new place as an
+    /// arrival and not as a move (rt_shadows.rs `StillTracker::rebase`).
+    pub fn rebase_world(&mut self) {
+        self.rt_rebased = true;
+    }
+
     /// Keeps `mats[a..b]`, just written to the palettes, for the ray-traced
     /// shadows (`rt_palettes`).
     fn mirror_palettes(&mut self, mats: &[[[f32; 4]; 4]], a: usize, b: usize) {
@@ -1004,6 +1018,7 @@ impl Renderer {
             self.rt_palettes.resize(b, glam::Mat4::IDENTITY.to_cols_array_2d());
         }
         self.rt_palettes[a..b].copy_from_slice(&mats[a..b]);
+        self.rt_written.push(a..b);
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -1607,7 +1622,7 @@ impl Renderer {
         self.last_view = params.view;
         let rt_camera = params.camera_pos;
         let rt_far = params.shadow_distance;
-        let rt_shifted = self.world_shift != [0.0; 2];
+        let rt_shifted = std::mem::take(&mut self.rt_rebased) || self.world_shift != [0.0; 2];
         let index = self.frames;
         let packet = FramePacket {
             output,
@@ -1638,9 +1653,10 @@ impl Renderer {
             rt: self.device.features().contains(crate::rt_shadows::FEATURES).then(|| {
                 let mut faces = crate::rt_shadows::Faces::default();
                 crate::rt_shadows::gather(
-                    &self.records,
-                    &self.cull,
+                    &mut self.records,
+                    &mut self.cull,
                     &self.rt_palettes,
+                    &mut self.rt_written,
                     rt_camera,
                     rt_far,
                     rt_shifted,

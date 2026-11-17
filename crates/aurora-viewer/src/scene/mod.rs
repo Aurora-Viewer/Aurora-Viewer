@@ -3152,6 +3152,7 @@ impl Scene {
 
         if self.update_origin(world) {
             renderer.cut_motion_history();
+            renderer.rebase_world();
             self.water.clear(renderer);
         }
 
