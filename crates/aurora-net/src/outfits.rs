@@ -500,7 +500,7 @@ pub(crate) mod tests {
         .await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -548,7 +548,7 @@ pub(crate) mod tests {
         };
         let announced = order.clone();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             Some(&format!("{url}/create")),
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -583,7 +583,7 @@ pub(crate) mod tests {
         let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -704,9 +704,15 @@ pub(crate) mod tests {
                 ],
             )),
         };
-        let result = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::from_u128(5), change)
-            .await
-            .expect("saved outfit");
+        let result = mutate(
+            &crate::test_http_client(),
+            &url,
+            &format!("{url}/fetch"),
+            Uuid::from_u128(5),
+            change,
+        )
+        .await
+        .expect("saved outfit");
         assert_eq!(result[0].folder_id, parent, "parent must be applied before its new child");
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with(&format!("POST /category/{parent}?tid=")));
@@ -725,7 +731,7 @@ pub(crate) mod tests {
             links: Vec::new(),
             cof: None,
         };
-        let error = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
+        let error = mutate(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
             .await
             .expect_err("refused");
         assert!(error.contains("403"));
@@ -776,7 +782,7 @@ pub(crate) mod tests {
                 ),
             ])
             .await;
-            let it = set_favorite(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
+            let it = set_favorite(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
                 .await
                 .expect("favorite");
             assert_eq!(it.favorite, favorite);

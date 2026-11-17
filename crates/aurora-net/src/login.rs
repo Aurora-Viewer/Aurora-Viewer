@@ -969,7 +969,11 @@ mod tests {
 
     #[tokio::test]
     async fn another_server_gets_the_login_only_once_agreed() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // "indeterminate" to another server: nothing sent there, the user is asked
         let (other, other_hits) = login_server(vec![("200 OK", String::new(), wrong_password())]).await;
         let next = answer(&[
@@ -1005,7 +1009,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_http_error_of_the_login_server_is_told_as_the_server_s_problem() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         let (grid, _) = login_server(vec![("500 Internal Server Error", String::new(), String::new())]).await;
         let failed = login(&http, &synthetic_request(&grid, &[])).await;
         assert!(matches!(failed, Err(LoginError::Server(500))), "{failed:?}");
@@ -1016,7 +1024,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_server_is_followed_without_a_question() {
-        let http = reqwest::Client::builder().redirect(redirect_policy()).build().expect("client");
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .expect("client");
         // a 307 to another path, then a relative next_url: the same server
         let (grid, hits) = login_server(vec![
             ("307 Temporary Redirect", "Location: /login2\r\n".into(), String::new()),
