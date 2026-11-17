@@ -39,6 +39,7 @@ mod dev_toolbox;
 mod director;
 mod disk_io;
 mod dof;
+mod editor_sync;
 mod external_url;
 mod fast_hash;
 mod frame_par;
