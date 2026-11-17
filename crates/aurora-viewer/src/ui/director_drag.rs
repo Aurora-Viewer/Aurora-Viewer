@@ -10,12 +10,23 @@
 //! (`widgets::solid_background`), and the app moves nothing while RLVa
 //! restricts the camera (`App::director_move_key`).
 //!
+//! Several keyframes selected (Ctrl or Shift + click, `director/group.rs`)
+//! move as one: a drag of one of their cameras moves them all, and the
+//! selected cameras have the build tools' move and turn handles
+//! (`key_gizmo`): arrows and planes move them, with Ctrl held rings turn
+//! them, the keyframe's own axes when it is alone, about their middle when
+//! they are several (LLManipTranslate / LLManipRotate,
+//! indra/newview/llmanip{translate,rotate}.cpp, through the IK editor's
+//! handles, `ik_edit::gizmo`).
+//!
 //! Aurora's own: the Legacy Viewer has no camera path tool.
 
 use super::director::Action;
 use super::hud::Projector;
 use crate::camera::track::Pose;
-use crate::director::Director;
+use crate::director::group;
+use crate::director::{Director, Mode};
+use crate::ik_edit::gizmo::{self as handles, Geometry, Gizmo, Tool};
 use crate::theme::Palette;
 use egui::{Id, Pos2, Stroke};
 use glam::{Quat, Vec3, Vec4};
@@ -116,12 +127,14 @@ pub fn dragged(proj: &Projector, start: Pose, from: Pos2, to: Pos2, grab: Grab) 
     }
 }
 
-/// The drag under way: the keyframe, its view when it started, where the
-/// pointer was and how it moves it; `cancelled` once Escape put it back.
-#[derive(Debug, Clone, Copy)]
+/// The drag under way: the keyframe, its view when it started, the views
+/// of every keyframe it moves (the selection), where the pointer was and
+/// how it moves them; `cancelled` once Escape put them back.
+#[derive(Debug, Clone)]
 struct Held {
     index: usize,
     start: Pose,
+    starts: Vec<(usize, Pose)>,
     from: Pos2,
     grab: Grab,
     cancelled: bool,
@@ -158,11 +171,12 @@ pub fn key_drag(
     if response.drag_started()
         && let Some(from) = response.interact_pointer_pos()
     {
-        d.select(index);
+        d.focus(index);
         let grab = Grab::of(ctx.input(|i| i.modifiers));
         let held = Held {
             index,
             start: pose,
+            starts: d.selected_poses(),
             from,
             grab,
             cancelled: false,
@@ -182,15 +196,139 @@ pub fn key_drag(
     }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         held.cancelled = true;
+        actions.extend(held.starts.iter().map(|(index, pose)| Action::MoveKey(*index, *pose)));
         ctx.data_mut(|data| data.insert_temp(held_id(), held));
-        actions.push(Action::MoveKey(index, held.start));
         return;
     }
     if let Some(to) = response.interact_pointer_pos()
         && let Some(moved) = dragged(proj, held.start, held.from, to, held.grab)
         && moved != pose
     {
-        actions.push(Action::MoveKey(index, moved));
+        // the others go as this one went: moved by as much, turned about it
+        let shift = moved.position - held.start.position;
+        let turn = (moved.rotation * held.start.rotation.inverse()).normalize();
+        let starts = if held.starts.is_empty() {
+            vec![(index, held.start)]
+        } else {
+            held.starts
+        };
+        for (index, pose) in group::moved(&starts, held.start.position, shift, turn) {
+            actions.push(Action::MoveKey(index, pose));
+        }
+    }
+}
+
+/// Pixels round a keyframe's marker where its own click and drag win over
+/// the handles.
+const MARKER_PICK: f32 = 14.0;
+
+/// What a move with the handles started from: the pivot, its turn, and
+/// the views of the keyframes it moves.
+#[derive(Debug, Clone)]
+struct HandlesStart {
+    pivot: Vec3,
+    rotation: Quat,
+    poses: Vec<(usize, Pose)>,
+}
+
+fn handles_start_id() -> Id {
+    Id::unique("director_handles_start")
+}
+
+/// The area under the pointer while the handles have it: a press there is
+/// theirs, never a walk (`widgets::solid_background`).
+pub fn handles_area_id() -> Id {
+    Id::unique("director_handles")
+}
+
+/// The build tools' move handles on the selected keyframes' cameras, turn
+/// rings while Ctrl is held: on the keyframe's own axes when it is alone,
+/// on the world's about their middle when they are several. A move of the
+/// handles moves every keyframe selected; Escape puts them back. None while
+/// a camera is dragged, the track plays or RLVa restricts the camera;
+/// `markers`: where the keyframes' markers are, whose clicks win.
+#[allow(clippy::too_many_arguments)]
+pub fn key_gizmo(
+    ctx: &egui::Context,
+    p: &Palette,
+    proj: &Projector,
+    d: &Director,
+    gizmo: &mut Gizmo,
+    markers: &[Pos2],
+    restricted: bool,
+    actions: &mut Vec<Action>,
+) {
+    let held = ctx.data(|data| data.get_temp::<Held>(held_id())).is_some();
+    let poses = d.selected_poses();
+    if held || restricted || poses.is_empty() || d.mode != Mode::Editing {
+        if let Some(start) = gizmo
+            .dragging()
+            .then(|| ctx.data(|data| data.get_temp::<HandlesStart>(handles_start_id())))
+            .flatten()
+        {
+            // stopped half way (the track played, RLVa): back where it was
+            actions.extend(start.poses.iter().map(|(index, pose)| Action::MoveKey(*index, *pose)));
+        }
+        gizmo.cancel();
+        ctx.data_mut(|data| data.remove::<HandlesStart>(handles_start_id()));
+        return;
+    }
+    let tool = if ctx.input(|i| i.modifiers.command) {
+        Tool::Rotate
+    } else {
+        Tool::Move
+    };
+    let alone = poses.len() == 1;
+    let (pivot, rotation) = match group::centre(&poses) {
+        Some(_) if alone => (poses[0].1.position, poses[0].1.rotation),
+        Some(centre) => (centre, Quat::IDENTITY),
+        None => return,
+    };
+    let basis = if alone && tool == Tool::Rotate { rotation } else { Quat::IDENTITY };
+    let Some(geometry) = Geometry::new(proj, pivot, basis, tool) else {
+        return;
+    };
+    let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let on_marker = pointer.is_some_and(|at| markers.iter().any(|marker| marker.distance(at) <= MARKER_PICK));
+    let was = gizmo.dragging();
+    let (owns, change) = gizmo.show(
+        ctx,
+        p,
+        geometry,
+        handles::Pose { position: pivot, rotation },
+        !on_marker,
+        handles::DEFAULT_SENSITIVITY,
+    );
+    if gizmo.dragging() && !was {
+        let start = HandlesStart { pivot, rotation, poses };
+        ctx.data_mut(|data| data.insert_temp(handles_start_id(), start));
+    }
+    let start = ctx.data(|data| data.get_temp::<HandlesStart>(handles_start_id()));
+    if let Some(start) = start {
+        if gizmo.dragging() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            gizmo.cancel();
+            actions.extend(start.poses.iter().map(|(index, pose)| Action::MoveKey(*index, *pose)));
+        } else if let Some((moved, _)) = change {
+            let shift = moved.position - start.pivot;
+            let turn = (moved.rotation * start.rotation.inverse()).normalize();
+            for (index, pose) in group::moved(&start.poses, start.pivot, shift, turn) {
+                actions.push(Action::MoveKey(index, pose));
+            }
+        }
+    }
+    if !gizmo.dragging() {
+        ctx.data_mut(|data| data.remove::<HandlesStart>(handles_start_id()));
+    }
+    if owns && let Some(at) = pointer {
+        super::widgets::solid_background(ctx, handles_area_id());
+        egui::Area::new(handles_area_id())
+            .order(egui::Order::Background)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(at)
+            .constrain(false)
+            .show(ctx, |ui| {
+                ui.allocate_response(egui::Vec2::splat(24.0), egui::Sense::click_and_drag())
+            });
     }
 }
 

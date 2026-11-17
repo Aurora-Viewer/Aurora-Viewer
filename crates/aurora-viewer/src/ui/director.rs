@@ -297,8 +297,20 @@ pub fn window(
                             None => aurora_i18n::tr!("director-keyframe-title").to_owned(),
                         };
                         widgets::collapsing(ui, p, "director_keyframe", keyframe, true, |ui| {
+                            let before = d.selected.and_then(|index| d.track.keys().get(index).copied());
+                            let group = d.selection().len();
+                            if group > 1 {
+                                ui.label(
+                                    RichText::new(aurora_i18n::tr!("director-key-group", count = group))
+                                        .size(12.0)
+                                        .color(p.violet_light),
+                                );
+                            }
                             keyframe_section(ui, p, d, actions);
                             super::director_key_rows::keyframe_rows(ui, p, d, &key_rows);
+                            if let Some(before) = before {
+                                d.spread(&before);
+                            }
                         });
                         widgets::collapsing(ui, p, "director_path", aurora_i18n::tr!("director-path"), true, |ui| {
                             path_section(ui, p, d);
@@ -1252,14 +1264,13 @@ fn strip_edits(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, ac
         "",
         ActionKind::FlatDanger,
         STRIP_BUTTON,
-        d.selected.is_some_and(|index| index < d.track.len()),
+        !d.selection().is_empty(),
     )
     .on_hover_text(tip)
     .on_disabled_hover_text(tip)
     .clicked()
-        && let Some(index) = d.selected
     {
-        d.remove(index);
+        d.remove_selection();
     }
     // every keyframe at once, once asked (`clear_prompt`)
     let tip = aurora_i18n::tr!("director-clear-tip");
@@ -1312,6 +1323,19 @@ fn strip_edits(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, ac
     }
 }
 
+/// A click on a keyframe (timeline, thumbnail, camera in the world): alone,
+/// Ctrl + click adds it to the selection or takes it out, Shift + click
+/// selects every keyframe from the one shown to it (`director/group.rs`).
+pub(crate) fn pick(d: &mut Director, index: usize, mods: egui::Modifiers) {
+    if mods.command {
+        d.toggle(index);
+    } else if mods.shift {
+        d.extend_to(index);
+    } else {
+        d.select(index);
+    }
+}
+
 /// Whether the Director has the keyboard (Delete, Ctrl+Z, Ctrl+Y): since the
 /// last press of a mouse button, which gives it when it lands on the
 /// timeline strip, on the window or on a keyframe's camera in the world,
@@ -1323,6 +1347,7 @@ pub fn keys(ctx: &egui::Context, had: bool, keyframes: usize) -> bool {
     let inside = |id: Id| ctx.memory(|m| m.area_rect(id)).is_some_and(|rect| rect.contains(at));
     inside(Id::unique("director_timeline"))
         || inside(Id::unique(WINDOW))
+        || inside(super::director_drag::handles_area_id())
         || (0..keyframes).any(|index| inside(Id::unique(("director_world_key", index))))
 }
 
@@ -1406,10 +1431,13 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
         if let Some(index) = double {
             actions.push(Action::GoTo(index));
         } else if let Some(index) = clicked {
-            d.select(index);
+            pick(d, index, ui.input(|i| i.modifiers));
         }
     }
     let ripple = ui.input(|i| i.modifiers.shift);
+    // the selection's times when a drag of one of them started: they move
+    // together (`Track::move_times`)
+    let group_start = ui.scope_id().with("director_group_times");
     for (index, key) in keys.iter().enumerate() {
         // (a keyframe out of the zoomed view is neither drawn nor clicked)
         if !view.contains(key.time) {
@@ -1420,8 +1448,12 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
         let response = ui.interact(hit, ui.scope_id().with(("director_key", index)), Sense::click_and_drag());
         if response.double_clicked() {
             actions.push(Action::GoTo(index));
-        } else if response.clicked() || response.drag_started() {
-            d.select(index);
+        } else if response.clicked() {
+            pick(d, index, ui.input(|i| i.modifiers));
+        } else if response.drag_started() {
+            d.focus(index);
+            let starts: Vec<(usize, f32)> = d.selection().into_iter().map(|i| (i, keys[i].time)).collect();
+            ui.data_mut(|data| data.insert_temp(group_start, starts));
         }
         if response.dragged()
             && let Some(pointer) = response.interact_pointer_pos()
@@ -1429,7 +1461,14 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
             dragging = true;
             d.selected = Some(index);
             let time = time_at(pointer.x);
-            if ripple && index > 0 {
+            let starts = ui.data(|data| data.get_temp::<Vec<(usize, f32)>>(group_start)).unwrap_or_default();
+            let start = starts.iter().find(|(i, _)| *i == index).map(|(_, t)| *t);
+            if !ripple
+                && starts.len() > 1
+                && let Some(start) = start
+            {
+                d.track.move_times(&starts, time - start);
+            } else if ripple && index > 0 {
                 // Shift: the keyframes after it keep their distance to it
                 d.track.set_span(index, time - keys[index - 1].time);
             } else {
@@ -1439,20 +1478,21 @@ fn ruler(ui: &mut egui::Ui, p: &Palette, d: &mut Director, width: f32, restricte
                 d.time = moved.time;
             }
         }
-        let selected = d.selected == Some(index);
-        let color = if selected {
+        let shown = d.selected == Some(index);
+        let color = if d.is_selected(index) {
             p.violet_light
         } else if response.hovered() {
             p.on_accent
         } else {
             p.ink
         };
-        paint_key(&painter, center, if selected { KEY_HALF + 1.5 } else { KEY_HALF }, color);
+        paint_key(&painter, center, if shown { KEY_HALF + 1.5 } else { KEY_HALF }, color);
         if !dragging {
             response.on_hover_text(format!(
-                "{}\n{}",
+                "{}\n{}\n{}",
                 aurora_i18n::tr!("director-keyframe-at", number = index + 1, time = clock(key.time, true)),
-                aurora_i18n::tr!("director-keyframe-hint")
+                aurora_i18n::tr!("director-keyframe-hint"),
+                aurora_i18n::tr!("director-keyframe-pick-hint")
             ));
         }
     }
@@ -1579,6 +1619,7 @@ pub fn guides(ctx: &egui::Context, p: &Palette, proj: &Projector, d: &Director, 
 /// there), the handles of the selected one and where the playhead is. A
 /// keyframe's camera points at what it looks at (its target, where `aims`
 /// has found it), as it will when the track plays.
+#[allow(clippy::too_many_arguments)]
 pub fn world(
     ctx: &egui::Context,
     p: &Palette,
@@ -1586,9 +1627,13 @@ pub fn world(
     d: &mut Director,
     aspect: f32,
     aims: &HashMap<Aim, Vec3>,
+    gizmo: &mut crate::ik_edit::gizmo::Gizmo,
+    restricted: bool,
     actions: &mut Vec<Action>,
 ) {
     if !d.show_path || d.track.is_empty() || d.mode != Mode::Editing {
+        // (a move of the handles under way is put back)
+        super::director_drag::key_gizmo(ctx, p, proj, d, gizmo, &[], true, actions);
         return;
     }
     let painter = super::hud::world_painter(ctx);
@@ -1624,8 +1669,9 @@ pub fn world(
             }
         }
     }
+    let mut markers = Vec::new();
     for (index, key) in keys.iter().enumerate() {
-        let selected = d.selected == Some(index);
+        let selected = d.is_selected(index);
         let color = if selected { p.violet_light } else { p.ink };
         let stroke = Stroke::new(if selected { 2.0 } else { 1.5 }, color);
         let shown = match d.key_aim(index).and_then(|aim| aims.get(&aim)) {
@@ -1640,7 +1686,8 @@ pub fn world(
         let Some((at, _)) = proj.project(key.pose.position) else {
             continue;
         };
-        painter.circle_filled(at, if selected { 5.0 } else { 4.0 }, color);
+        markers.push(at);
+        painter.circle_filled(at, if d.selected == Some(index) { 5.0 } else { 4.0 }, color);
         let label = (index + 1).to_string();
         let font = FontId::proportional(12.0);
         let above = at - egui::vec2(0.0, 9.0);
@@ -1660,14 +1707,15 @@ pub fn world(
         if response.double_clicked() {
             actions.push(Action::GoTo(index));
         } else if response.clicked() {
-            d.select(index);
+            pick(d, index, ctx.input(|i| i.modifiers));
         }
-        response.on_hover_text(aurora_i18n::tr!(
-            "director-keyframe-at",
-            number = index + 1,
-            time = clock(key.time, true)
+        response.on_hover_text(format!(
+            "{}\n{}",
+            aurora_i18n::tr!("director-keyframe-at", number = index + 1, time = clock(key.time, true)),
+            aurora_i18n::tr!("director-keyframe-pick-hint")
         ));
     }
+    super::director_drag::key_gizmo(ctx, p, proj, d, gizmo, &markers, restricted, actions);
     // where the playhead is on the path
     if d.time <= end
         && end > 0.0
@@ -1772,6 +1820,8 @@ mod tests {
         ctx: egui::Context,
         p: Palette,
         time: f64,
+        /// The keys held during the next frames.
+        modifiers: egui::Modifiers,
     }
 
     impl Bench {
@@ -1783,6 +1833,7 @@ mod tests {
                 ctx,
                 p: theme.palette(),
                 time: 0.0,
+                modifiers: egui::Modifiers::NONE,
             }
         }
 
@@ -1793,7 +1844,10 @@ mod tests {
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
                     time: Some(self.time),
-                    events,
+                    // the keys held first, as the window gives them
+                    events: std::iter::once(egui::Event::ModifiersChanged(self.modifiers))
+                        .chain(events)
+                        .collect(),
                     ..Default::default()
                 },
                 |ui| draw(ui.ctx(), &p),
@@ -1946,6 +2000,87 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_click_picks_cameras_and_the_handles_move_them_together() {
+        let mut bench = Bench::new();
+        let mut d = three();
+        d.select(0);
+        let eye = Vec3::new(6.0, -20.0, 24.0);
+        let view = glam::camera::rh::view::look_to_mat4(eye, Vec3::new(0.0, 1.0, -0.1).normalize(), Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, SCREEN.x / SCREEN.y, 0.1);
+        let projector = Projector {
+            view_proj: proj * view,
+            width: SCREEN.x,
+            height: SCREEN.y,
+            ppp: 1.0,
+        };
+        let mut actions = Vec::new();
+        let mut gizmo = crate::ik_edit::gizmo::Gizmo::default();
+        let mut frame = |bench: &mut Bench, d: &mut Director, actions: &mut Vec<Action>, events: Vec<egui::Event>| {
+            bench.frame(events, |ctx, p| {
+                world(ctx, p, &projector, d, 16.0 / 9.0, &HashMap::new(), &mut gizmo, false, actions)
+            });
+        };
+        for _ in 0..3 {
+            frame(&mut bench, &mut d, &mut actions, vec![]);
+        }
+        // Ctrl + click on the second camera: both selected
+        let (at, _) = projector.project(d.track.keys()[1].pose.position).expect("in view");
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: ctrl,
+            }],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: ctrl,
+            }],
+        ] {
+            bench.modifiers = ctrl;
+            frame(&mut bench, &mut d, &mut actions, events);
+        }
+        bench.modifiers = egui::Modifiers::NONE;
+        assert_eq!((d.selected, d.selection()), (Some(1), vec![0, 1]));
+        // the handles stand at their middle: the X arrow dragged along itself
+        let middle = (d.track.keys()[0].pose.position + d.track.keys()[1].pose.position) / 2.0;
+        let (centre, _) = projector.project(middle).expect("middle in view");
+        let (towards, _) = projector.project(middle + Vec3::X * 0.1).expect("x in view");
+        let along = (towards - centre).normalized();
+        let start = centre + along * 30.0;
+        let end = start + along * 40.0;
+        let before: Vec<Vec3> = d.track.keys().iter().map(|k| k.pose.position).collect();
+        for events in [
+            vec![egui::Event::PointerMoved(start)],
+            vec![egui::Event::PointerMoved(start)],
+            vec![Bench::button(start, true)],
+            vec![egui::Event::PointerMoved(end)],
+            vec![Bench::button(end, false)],
+        ] {
+            frame(&mut bench, &mut d, &mut actions, events);
+            for action in actions.drain(..) {
+                if let Action::MoveKey(index, pose) = action {
+                    d.track.set_pose(index, pose);
+                }
+            }
+        }
+        let after: Vec<Vec3> = d.track.keys().iter().map(|k| k.pose.position).collect();
+        let (first, second) = (after[0] - before[0], after[1] - before[1]);
+        assert!(first.x > 0.1, "moved along X: {first}");
+        assert!(first.distance(second) < 1e-4, "together: {first} {second}");
+        assert!(first.y.abs() < 1e-4 && first.z.abs() < 1e-4);
+        assert_eq!(after[2], before[2], "the third is not selected");
+    }
+
+    #[test]
     fn a_click_on_a_camera_in_the_world_selects_its_keyframe() {
         let mut bench = Bench::new();
         let mut d = three();
@@ -1961,9 +2096,20 @@ mod tests {
             ppp: 1.0,
         };
         let mut actions = Vec::new();
+        let mut gizmo = crate::ik_edit::gizmo::Gizmo::default();
         for _ in 0..3 {
             bench.frame(vec![], |ctx, p| {
-                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+                world(
+                    ctx,
+                    p,
+                    &projector,
+                    &mut d,
+                    16.0 / 9.0,
+                    &HashMap::new(),
+                    &mut gizmo,
+                    false,
+                    &mut actions,
+                )
             });
         }
         let (at, _) = projector.project(d.track.keys()[1].pose.position).expect("in view");
@@ -1973,7 +2119,17 @@ mod tests {
             vec![Bench::button(at, false)],
         ] {
             bench.frame(events, |ctx, p| {
-                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+                world(
+                    ctx,
+                    p,
+                    &projector,
+                    &mut d,
+                    16.0 / 9.0,
+                    &HashMap::new(),
+                    &mut gizmo,
+                    false,
+                    &mut actions,
+                )
             });
         }
         assert_eq!(d.selected, Some(1));
@@ -1984,7 +2140,17 @@ mod tests {
         d.scrub(1.0);
         for events in [vec![Bench::button(at, true)], vec![Bench::button(at, false)]] {
             bench.frame(events, |ctx, p| {
-                world(ctx, p, &projector, &mut d, 16.0 / 9.0, &HashMap::new(), &mut actions)
+                world(
+                    ctx,
+                    p,
+                    &projector,
+                    &mut d,
+                    16.0 / 9.0,
+                    &HashMap::new(),
+                    &mut gizmo,
+                    false,
+                    &mut actions,
+                )
             });
         }
         assert_eq!(d.selected, None);

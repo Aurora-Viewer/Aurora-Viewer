@@ -21,6 +21,7 @@
 //! still hold keyframes that follow the live lock (`KeyAim::Lock`), read
 //! and played as before.
 
+pub mod group;
 pub mod shots;
 
 use crate::camera::track::{self, Pose, Track};
@@ -267,6 +268,9 @@ pub struct Director {
     pub mode: Mode,
     /// The keyframe the window edits.
     pub selected: Option<usize>,
+    /// The other keyframes selected with it (Ctrl or Shift + click), moved,
+    /// deleted and set with it (`director/group.rs`).
+    pub group: Vec<usize>,
     pub looping: bool,
     /// The HUDs go with the interface while the track plays.
     pub hide_huds: bool,
@@ -302,6 +306,7 @@ impl Default for Director {
             time: 0.0,
             mode: Mode::Editing,
             selected: None,
+            group: Vec::new(),
             looping: false,
             hide_huds: true,
             show_path: true,
@@ -354,6 +359,7 @@ impl Director {
         let aim = if self.lock.on { KeyAim::On(self.lock.aim()) } else { KeyAim::Free };
         self.track.set_aim(index, aim);
         self.selected = Some(index);
+        self.group.clear();
         self.time = self.track.keys()[index].time;
         Some(index)
     }
@@ -375,12 +381,19 @@ impl Director {
             Some(s) if s > index => Some(s - 1),
             other => other,
         };
+        self.group.retain(|other| *other != index);
+        for other in &mut self.group {
+            if *other > index {
+                *other -= 1;
+            }
+        }
         self.time = self.time.min(self.track.duration());
     }
 
     pub fn clear(&mut self) {
         self.track.clear();
         self.selected = None;
+        self.group.clear();
         self.time = 0.0;
         self.mode = Mode::Editing;
     }
@@ -389,6 +402,7 @@ impl Director {
     pub fn select(&mut self, index: usize) {
         if let Some(key) = self.track.keys().get(index) {
             self.selected = Some(index);
+            self.group.clear();
             self.time = key.time;
         }
     }
@@ -521,6 +535,7 @@ impl Director {
     pub fn load(&mut self, track: Track) {
         self.track = track;
         self.selected = None;
+        self.group.clear();
         self.time = 0.0;
         self.mode = Mode::Editing;
     }
@@ -555,6 +570,7 @@ impl Snapshot {
     fn restore(&self, d: &mut Director) {
         d.track = self.track.clone();
         d.selected = self.selected.filter(|index| *index < d.track.len());
+        d.group.clear();
         d.time = self.time;
     }
 }

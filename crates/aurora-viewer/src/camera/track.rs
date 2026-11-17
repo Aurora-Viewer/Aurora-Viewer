@@ -601,6 +601,38 @@ impl Track {
         time
     }
 
+    /// Keyframes moved in time together, each from its time in `starts`
+    /// (the drag's start) by `by` seconds, as far as the keyframes that do
+    /// not move let them (`MIN_GAP` from them, the first keyframe staying at
+    /// 0, the last no later than `MAX_TIME`): the seconds they moved.
+    pub fn move_times(&mut self, starts: &[(usize, f32)], by: f32) -> f32 {
+        let moving = |index: usize| index > 0 && starts.iter().any(|(i, _)| *i == index);
+        let (mut low, mut high) = (f32::NEG_INFINITY, f32::INFINITY);
+        for &(index, start) in starts {
+            if !moving(index) || index >= self.keys.len() {
+                continue;
+            }
+            if !moving(index - 1) {
+                low = low.max(self.keys[index - 1].time + MIN_GAP - start);
+            }
+            match self.keys.get(index + 1) {
+                Some(next) if !moving(index + 1) => high = high.min(next.time - MIN_GAP - start),
+                None => high = high.min(MAX_TIME - start),
+                _ => {}
+            }
+        }
+        if !by.is_finite() || low > high {
+            return 0.0;
+        }
+        let by = by.clamp(low, high);
+        for &(index, start) in starts {
+            if moving(index) && index < self.keys.len() {
+                self.keys[index].time = start + by;
+            }
+        }
+        by
+    }
+
     /// The keyframe nearest to `time`, when it is within `within` seconds.
     pub fn nearest(&self, time: f32, within: f32) -> Option<usize> {
         let (index, key) = self
@@ -891,6 +923,25 @@ mod tests {
         track.append(looking(Vec3::new(10.0, 0.0, 20.0), 0.5));
         track.append(looking(Vec3::new(10.0, 10.0, 25.0), 1.0));
         track
+    }
+
+    #[test]
+    fn keyframes_move_in_time_together_between_the_others() {
+        let mut track = three();
+        track.append(looking(Vec3::new(0.0, 10.0, 25.0), 1.0));
+        let times: Vec<f32> = track.keys().iter().map(|k| k.time).collect();
+        let starts = [(1, times[1]), (2, times[2])];
+        // later: as far as the fourth keyframe lets the third go
+        let moved = track.move_times(&starts, 100.0);
+        assert!((moved - (times[3] - MIN_GAP - times[2])).abs() < 1e-4, "{moved}");
+        assert!((track.keys()[2].time - track.keys()[1].time - (times[2] - times[1])).abs() < 1e-4);
+        // earlier, from the same start: as far as the first lets the second go
+        let moved = track.move_times(&starts, -100.0);
+        assert!((track.keys()[1].time - MIN_GAP).abs() < 1e-4 && moved < 0.0);
+        // the first keyframe stays at 0, the others selected still move
+        let moved = track.move_times(&[(0, 0.0), (3, times[3])], 1.0);
+        assert!((moved - 1.0).abs() < 1e-4 && track.keys()[0].time == 0.0);
+        assert!((track.keys()[3].time - times[3] - 1.0).abs() < 1e-4);
     }
 
     #[test]

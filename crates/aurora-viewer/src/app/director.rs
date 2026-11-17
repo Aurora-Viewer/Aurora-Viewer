@@ -86,6 +86,9 @@ pub(super) struct DirectorState {
     lost: bool,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
+    /// The move and turn handles of the selected keyframes' cameras
+    /// (`ui::director_drag::key_gizmo`).
+    pub(super) gizmo: crate::ik_edit::gizmo::Gizmo,
     pub(super) ffmpeg: Ffmpeg,
     /// The file dialog that chooses an ffmpeg, while it is open.
     choosing: Option<Receiver<Option<PathBuf>>>,
@@ -666,7 +669,7 @@ impl App {
         let letter = |wanted: &str| matches!(logical, Key::Character(text) if text.eq_ignore_ascii_case(wanted));
         let undo = mods.ctrl && !mods.alt && !mods.shift && letter("z");
         let redo = mods.ctrl && !mods.alt && (letter("y") || (mods.shift && letter("z")));
-        let delete = code == KeyCode::Delete && !mods.ctrl && !mods.alt && self.director.d.selected.is_some();
+        let delete = code == KeyCode::Delete && !mods.ctrl && !mods.alt && !self.director.d.selection().is_empty();
         if !(undo || redo || delete) {
             return false;
         }
@@ -675,8 +678,8 @@ impl App {
                 self.director.history.undo(&mut self.director.d);
             } else if redo {
                 self.director.history.redo(&mut self.director.d);
-            } else if let Some(index) = self.director.d.selected {
-                self.director.d.remove(index);
+            } else {
+                self.director.d.remove_selection();
             }
         }
         // (the release is the Director's too: it must not reach a shortcut)
@@ -720,7 +723,18 @@ impl App {
         for choice in chosen {
             self.photo_isolate_out(choice, ctx.pixels_per_point());
         }
-        ui::director::world(ctx, p, projector, &mut self.director.d, aspect, &self.director.aims, &mut actions);
+        let restricted = self.director_restricted();
+        ui::director::world(
+            ctx,
+            p,
+            projector,
+            &mut self.director.d,
+            aspect,
+            &self.director.aims,
+            &mut self.director.gizmo,
+            restricted,
+            &mut actions,
+        );
         self.director_actions(actions);
     }
 
