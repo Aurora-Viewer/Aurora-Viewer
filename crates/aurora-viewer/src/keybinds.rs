@@ -2355,7 +2355,10 @@ mod tests {
 
     #[test]
     fn hud_shortcuts_warn_of_conflicts_without_suppressing_other_held_actions() {
-        let mut kb = KeyBindings::default();
+        // A fixed layout, not the PC's: the letter shortcuts follow the
+        // active layout (Quit is Ctrl + the Q letter, the physical A on
+        // AZERTY), so `default()` would give another map on every keyboard.
+        let mut kb = KeyBindings::for_layout(&layout::KeyboardLayout::wasd());
         let ctrl = Mods {
             ctrl: true,
             ..Default::default()
@@ -2377,10 +2380,14 @@ mod tests {
         assert!(kb.rivals(Action::Preferences, &ctrl_p).contains(&Action::ChatWhisper));
         // a letter too, even one a field keeps on some layout: Ctrl + the Q
         // place selects all on AZERTY but quits on QWERTY
-        // (`text_field_keeps_key` judges the letter typed)
-        let ctrl_q = Binding::captured(Input::key(KeyCode::KeyQ), ctrl);
-        kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
-        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit]);
+        // (`text_field_keeps_key` judges the letter typed); Quit sits on the
+        // Q letter's place of each layout
+        for layout in [layout::KeyboardLayout::wasd(), layout::KeyboardLayout::zqsd()] {
+            let mut kb = KeyBindings::for_layout(&layout);
+            let ctrl_q = Binding::captured(Input::key(layout.named_key(KeyCode::KeyQ)), ctrl);
+            kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
+            assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit], "{ctrl_q:?}");
+        }
         // a plain key never meets: the world's do not run while typing
         let f5 = Binding::captured(Input::key(KeyCode::F5), Mods::default());
         kb.set(Action::ChatWhisper, 0, Some(f5.clone()));

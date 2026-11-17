@@ -2763,13 +2763,34 @@ impl BuildTool {
         }
     }
 
-    fn face_mode(&self) -> bool {
+    /// The Edit tool in Select face mode (LLSelectMgr::getTEMode).
+    pub fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
+    /// (The frame gathers the picks once and calls `halo_faces` itself.)
+    #[cfg(test)]
     pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
-        if !self.face_mode() || !s.show_highlight {
+        Self::halo_faces(|| self.face_picks(world), s)
+    }
+
+    /// The faces of `picks` (`face_picks`) that get the selection halo:
+    /// none while "Show highlight" is off. `picks` is called only when
+    /// needed, so a caller that already has the picks can clone them.
+    pub fn halo_faces(picks: impl FnOnce() -> HashMap<usize, u64>, s: &BuildSettings) -> HashMap<usize, u64> {
+        if !s.show_highlight {
+            return HashMap::new();
+        }
+        picks()
+    }
+
+    /// The faces picked in Select face mode, whatever "Show highlight" says:
+    /// the face-select pattern is drawn for them anyway
+    /// (LLPipeline::renderHighlights draws renderSelectedFaces in TE mode;
+    /// RenderHighlightSelections gates only the silhouettes, llselectmgr.cpp).
+    pub fn face_picks(&self, world: &World) -> HashMap<usize, u64> {
+        if !self.face_mode() {
             return HashMap::new();
         }
         self.sel_prims(world)

@@ -11680,10 +11680,23 @@ impl App {
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
-            let mut selected_faces = if self.imports.local_status.revealing() {
+            let revealing = self.imports.local_status.revealing();
+            // (TE mode's faces show the face-select pattern, and the halo
+            // with "Show highlight": the picks are gathered once)
+            let pattern = if revealing {
+                Default::default()
+            } else {
+                self.build.face_picks(&self.world)
+            };
+            let build_faces = if revealing {
+                Default::default()
+            } else {
+                crate::build::BuildTool::halo_faces(|| pattern.clone(), &self.settings.build)
+            };
+            let mut selected_faces = if revealing {
                 self.imports.appearance_status(&self.world.objects).faces
             } else {
-                self.build.face_selection(&self.world, &self.settings.build)
+                build_faces
             };
             if let Some((object, face)) = ui::texture_picker::pipette::highlighted(&self.egui_ctx)
                 && face < 64
@@ -11697,6 +11710,7 @@ impl App {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
+            self.scene.set_face_pattern(&mut self.world, &pattern);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
             }
@@ -12529,6 +12543,10 @@ impl App {
                     .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
+            face_select_texture: {
+                let wanted = self.build.face_mode() || !self.scene.pattern_faces.is_empty();
+                self.scene.face_select_texture(&mut gfx.renderer, wanted)
+            },
             vr_origin: self.world.main_region,
             vr_revision: self.vr_revision,
             view,
@@ -15368,6 +15386,11 @@ impl App {
                                 .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
                         }
                     }
+                    crate::build::demo::Step::TexGenToggle => {
+                        // TEM_TEX_GEN_MASK / TEX_GEN_PLANAR (LLTextureEntry)
+                        self.build.edit_faces(&mut self.world, |f, _, _| f.media_flags ^= 0x02);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::CloseView => {
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
                             && let Some((point, _, _)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
@@ -15395,6 +15418,7 @@ impl App {
                             self.build.toggle_place(&self.world);
                         }
                     }
+                    crate::build::demo::Step::Highlight(on) => self.settings.build.show_highlight = on,
                     crate::build::demo::Step::Linked(on) => {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
@@ -22555,8 +22579,12 @@ impl ApplicationHandler for App {
                     || physics
                     || invisible_manipulation
                     || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let mapping =
+                    std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-mapping,") || v.starts_with("faces-texgen,"));
                 let mut events = if complex {
                     crate::demo::complex_face_selection_events()
+                } else if mapping {
+                    crate::demo::face_mapping_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
