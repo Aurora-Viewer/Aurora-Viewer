@@ -303,6 +303,19 @@ mod tests {
         line
     }
 
+    /// All the viewer sends after `greeting` until it closes the connection.
+    /// The worker records its error before it drops the stream, so once this
+    /// returns the status holds it (reading only the reply raced with it).
+    fn refused(port: u16, greeting: &[u8]) -> String {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+        stream.write_all(greeting).expect("greeting");
+        let mut reply = Vec::new();
+        // A reset counts as a close: the viewer may drop unread bytes.
+        let _ = stream.read_to_end(&mut reply);
+        String::from_utf8_lossy(&reply).into_owned()
+    }
+
     #[test]
     fn only_an_add_on_with_the_session_secret_is_greeted() {
         let secret = token::generate();
@@ -312,15 +325,15 @@ mod tests {
         assert!(hello.contains("\"joints\":[\"mPelvis\"]"), "{hello}");
 
         let other = token::generate();
-        assert_eq!(first_line(port, &[MAGIC.as_slice(), other.as_bytes()].concat()), "");
+        assert_eq!(refused(port, &[MAGIC.as_slice(), other.as_bytes()].concat()), "");
         assert_eq!(
             shared.status.lock().error.as_deref(),
             Some(aurora_i18n::tr!("blender-live-token-refused").as_ref())
         );
 
-        assert_eq!(first_line(port, b"GET / HTTP/1.1\r\n\r\n"), "");
+        assert_eq!(refused(port, b"GET / HTTP/1.1\r\n\r\n"), "");
 
-        let old = first_line(port, OLD_MAGIC);
+        let old = refused(port, OLD_MAGIC);
         let reply: serde_json::Value = serde_json::from_str(&old).expect("JSON reply");
         assert_eq!(
             reply["protocol"],
