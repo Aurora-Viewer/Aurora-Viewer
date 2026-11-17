@@ -3962,6 +3962,38 @@ fn kind_wanted(prefs: &Preferences, asset_type: i32) -> bool {
 
 /// The moves of `entries`, and of `pre_trashed` (what [`pre_trash_scan`]
 /// found), which go to Pre-Trash whatever their name says.
+/// Where a folder whose name says nothing goes, from what it holds: the
+/// destination most of its objects, clothing, body parts, animations and
+/// gestures read as (notecards, landmarks, textures and scripts say nothing
+/// of the product), when at least three in five agree; none otherwise.
+fn target_from_items(inv: &Inventory, folder: Uuid, prefs: &Preferences) -> Option<Dest> {
+    const READ: usize = 200;
+    let mut votes: HashMap<Vec<String>, usize> = HashMap::new();
+    let mut counted = 0;
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    'walk: while let Some(id) = stack.pop() {
+        let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
+            if !matches!(it.asset_type, 5 | 6 | 13 | 20 | 21) {
+                continue;
+            }
+            counted += 1;
+            if let Some(Dest::Path(path)) = target_with(&it.name, it.asset_type, it.flags, None, &[], prefs.stores, &prefs.store_hints) {
+                *votes.entry(path).or_default() += 1;
+            }
+            if counted >= READ {
+                break 'walk;
+            }
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    let (path, best) = votes.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
+    (best * 5 >= counted * 3).then_some(Dest::Path(path))
+}
+
 fn plan_with(
     inv: &Inventory,
     mut entries: Vec<Uuid>,
@@ -4050,6 +4082,10 @@ fn plan_with(
                 Some(Dest::PreTrash)
             } else {
                 target_by(&name, asset_type, flags, created, rules, prefs.stores, &prefs.store_hints, creator)
+                    // a delivery whose name says nothing of what it is
+                    // (`A.TOMO-SUGAR FUZZ-SET4`, `$PD$ TAHARI`): what most of
+                    // its things say
+                    .or_else(|| folder.then(|| target_from_items(inv, id, prefs)).flatten())
             };
             let unpacker = classify(&name, asset_type, flags).unpacker;
             (id, folder, from, name, to, unpacker)

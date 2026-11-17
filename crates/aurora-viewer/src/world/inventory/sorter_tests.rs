@@ -3903,3 +3903,27 @@ fn clean_up_counts_what_the_locked_default_folders_hold() {
     assert_eq!(plan.locked_items, 2);
     assert!(!plan.rows.iter().any(|r| r.id == id(600)), "never read while locked");
 }
+
+/// Real use: a delivery whose name says nothing goes where most of its
+/// things say; a mixed one stays.
+#[test]
+fn a_delivery_named_for_nothing_follows_its_items() {
+    let none = HashSet::new();
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 900, 1, "B.RINDLE-SUGAR FUZZ-SET4");
+    for (n, item) in ["Sugar Fuzz Dress Black", "Sugar Fuzz Dress Pink", "Sugar Fuzz Dress HUD"]
+        .iter()
+        .enumerate()
+    {
+        add_item(&mut inv, 950 + n as u128, 900, item, 0);
+    }
+    add_typed(&mut inv, 954, 900, "Read me", 0, 7);
+    add_folder(&mut inv, 901, 1, "$ZR$ TAHARI");
+    for (n, item) in ["Tahari Boots", "Tahari Lamp", "Tahari Hair"].iter().enumerate() {
+        add_item(&mut inv, 960 + n as u128, 901, item, 0);
+    }
+    let plan = plan_whole(&inv, &Preferences::default(), &none, &none);
+    let dress = plan.moves.iter().find(|m| m.id == id(900)).expect("follows its items");
+    assert!(dress.label.contains(Category::Dresses.folder()), "{}", dress.label);
+    assert!(!plan.moves.iter().any(|m| m.id == id(901)), "a mixed one stays");
+}
