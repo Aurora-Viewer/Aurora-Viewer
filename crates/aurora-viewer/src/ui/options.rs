@@ -342,6 +342,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "history-fade" => row(Page::Chat, 3, tr!("ui-options-history-fade")),
         "script-errors" => row(Page::Chat, 0, tr!("ui-options-script-errors-in-chat")),
         "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
+        "pie-on-press" => row(Page::Layout, 0, tr!("ui-options-context-menu")),
         "joystick-zoom" => row(Page::Controls, 1, tr!("joystick-zoom-mode")),
         "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
@@ -357,7 +358,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
-    if what == "auto-accept" || what == "proxy" {
+    if what == "auto-accept" || what == "proxy" || what == "pie-on-press" {
         st.demo_open_cogs = true;
     }
     if let Some(section) = audio {
