@@ -845,20 +845,27 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
+        // Avatar.Mute: greyed while `@shownames` hides the resident, whose
+        // real name the block list would show (enable_object_mute, and
+        // LLObjectMute returns before blocking or unblocking,
+        // indra/newview/llviewermenu.cpp).
         ui.check(
             "ban",
             aurora_i18n::tr!("common-ignore"),
             f.blocked,
-            true,
+            !f.name_hidden,
             CtxAction::ToggleBlock(id),
         );
         // Local mute of their nearby/call voice only (flagVoiceChat), same as
         // People › Block voice and the menu volume row — not land moderation.
+        // An Aurora entry: it files the resident in the same block list, so
+        // it follows the same rule (stricter than the Legacy Viewer, whose
+        // menu has no such entry).
         ui.check(
             "microphone-off",
             aurora_i18n::tr!("ui-people-block-voice"),
             f.voice_blocked,
-            f.can_block_voice,
+            f.can_block_voice && !f.name_hidden,
             CtxAction::ToggleVoiceMute(id),
         );
         ui.separator();
@@ -2140,9 +2147,23 @@ mod tests {
                     "{key} is greyed while the name is hidden"
                 );
             }
-            // what does not name them stays: look at, zoom, block
-            for key in ["common-look-toward-avatar", "common-zoom-2"] {
+            // what does not name them stays: look at, zoom, report
+            for key in ["common-look-toward-avatar", "common-zoom-2", "common-report"] {
                 assert!(find(world_menu(&target, &hidden, Vec3::ZERO), key).enabled, "{key}");
+            }
+            // blocking would file their real name in the block list
+            // (enable_object_mute, LLObjectMute)
+            let voice = Facts {
+                can_block_voice: true,
+                ..open.clone()
+            };
+            let hidden_voice = Facts {
+                name_hidden: true,
+                ..voice.clone()
+            };
+            for key in ["common-ignore", "ui-people-block-voice"] {
+                assert!(find(world_menu(&target, &voice, Vec3::ZERO), key).enabled, "{key}");
+                assert!(!find(world_menu(&target, &hidden_voice, Vec3::ZERO), key).enabled, "{key}");
             }
             // @startim and @shownames each grey IM and Call on their own
             let startim = Facts {

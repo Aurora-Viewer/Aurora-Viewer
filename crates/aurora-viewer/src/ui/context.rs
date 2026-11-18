@@ -860,6 +860,27 @@ pub fn avatar_roster_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uui
     avatar_menu_reporting(ui, p, world, id, kind, NameScope::Roster, None);
 }
 
+/// "Show profile" and "Zoom in" of the menu of a name (menu_url_agent.xml:
+/// a name in a text or in a name list) are greyed under `@shownames`, for
+/// anyone but oneself, whose menu is not this one
+/// (FSCommon::checkIsActionEnabled, FS_RGSTR_ACT_SHOW_PROFILE and
+/// FS_RGSTR_ACT_ZOOM_IN, indra/newview/fscommon.cpp). A click on the name
+/// still opens the profile where the name is shown, as LLAgentHandler tests
+/// nothing.
+fn name_menu_restricted(kind: AvatarList, shownames: bool) -> bool {
+    kind == AvatarList::Name && shownames
+}
+
+/// "Become friends" is offered to `named`, a resident `@shownames` does not
+/// hide (RlvActions::canShowName): the people lists test it
+/// (PeopleContextMenu "can_add", indra/newview/llpanelpeoplemenus.cpp,
+/// LLPanelPeople::updateButtons); the menu of a name does not
+/// (FS_RGSTR_ACT_ADD_FRIEND of FSCommon::checkIsActionEnabled asks only for
+/// someone else who is not a friend).
+fn offers_friendship(kind: AvatarList, friend: bool, named: bool) -> bool {
+    !friend && (kind == AvatarList::Name || named)
+}
+
 /// The menu of a name shown in `scope`: the nearby chat names the residents
 /// around as `@shownames` allows (`NameScope::World`), a conversation names
 /// its people (`NameScope::Roster`, `chat::conversation_names`).
@@ -930,13 +951,8 @@ fn avatar_menu_reporting(
     // the Legacy Viewer's friends menu (menu_fs_contacts_friends.xml), whose
     // "Zoom in" has no `@shownames` test.
     let unnamed_around = scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, id);
-    // The menu of a name (menu_url_agent.xml) greys "Show profile" and "Zoom
-    // in" under `@shownames` in the Legacy Viewer
-    // (FSCommon::checkIsActionEnabled, fscommon.cpp). Aurora keeps them for a
-    // name that is shown: a conversation or a list names its people, and
-    // only the in-world avatar (its right-click menu, `Facts::name_hidden`)
-    // and a name `@shownames` hides here (the branch below) are restricted.
-    let here = here && !unnamed_around;
+    let name_menu_restricted = name_menu_restricted(kind, world.rlva.has("shownames"));
+    let here = here && !unnamed_around && !name_menu_restricted;
     let travel = travel && !unnamed_around;
     let mappable = if unnamed_around {
         world.social.can_map_friend(id)
@@ -979,7 +995,7 @@ fn avatar_menu_reporting(
         return;
     }
     let profile = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
+        if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), !name_menu_restricted) {
             act(match scope {
                 NameScope::Roster => CtxAction::RosterProfile(id),
                 _ => CtxAction::Profile(id),
@@ -1048,12 +1064,10 @@ fn avatar_menu_reporting(
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
         }
     };
-    // "can_add" of PeopleContextMenu (llpanelpeoplemenus.cpp) tests
-    // canShowName; here the menu is past the hidden-name branch above, so the
-    // name is shown in this list (a conversation or a roster names its
-    // people whoever is around) and the offer stays.
     let add_friend = |ui: &mut egui::Ui| {
-        if friend.is_none() && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
+        if offers_friendship(kind, friend.is_some(), world.rlva_can_name(id))
+            && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends"))
+        {
             act(CtxAction::AddFriend(id));
         }
     };
@@ -2031,13 +2045,34 @@ mod tests {
         }
     }
 
-    /// `@shownames=n` does not reach a conversation or a list that names its
-    /// people (issue #3547): the name menu of an IM, a group member or a name
-    /// shown by an exception keeps the profile, the conversation history, the
-    /// friendship offer and the copies, even for a resident standing nearby.
-    /// Only the in-world avatar's menu and a hidden name are restricted.
+    /// The Legacy Viewer's rules for the entries `@shownames` greys in the
+    /// menus of the lists and of a name (issue #3547).
     #[test]
-    fn a_name_that_is_shown_keeps_its_whole_menu_under_shownames() {
+    fn shownames_greys_the_profile_of_a_name_menu_and_the_friendship_offer_of_the_lists() {
+        // FSCommon::checkIsActionEnabled: the menu of a name alone, and only
+        // under the restriction
+        assert!(name_menu_restricted(AvatarList::Name, true));
+        assert!(!name_menu_restricted(AvatarList::Name, false));
+        for list in [AvatarList::Nearby, AvatarList::MiniMap, AvatarList::Friend] {
+            assert!(!name_menu_restricted(list, true), "{list:?}");
+            // PeopleContextMenu "can_add": a resident who is named, not a friend
+            assert!(offers_friendship(list, false, true), "{list:?}");
+            assert!(!offers_friendship(list, false, false), "{list:?}: hidden by @shownames");
+            assert!(!offers_friendship(list, true, true), "{list:?}: a friend already");
+        }
+        // FS_RGSTR_ACT_ADD_FRIEND: the menu of a name has no `@shownames` test
+        assert!(offers_friendship(AvatarList::Name, false, false));
+        assert!(offers_friendship(AvatarList::Name, false, true));
+        assert!(!offers_friendship(AvatarList::Name, true, true));
+    }
+
+    /// `@shownames=n` hides no name in a conversation (issue #3547): the
+    /// menu of a name there keeps the conversation history, the friendship
+    /// offer and the copies for a resident standing nearby, with "View
+    /// profile" greyed (`name_menu_restricted`). A hidden name of the nearby
+    /// chat has none of them.
+    #[test]
+    fn a_name_shown_in_a_conversation_keeps_its_menu_under_shownames() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         for event in crate::demo::events() {
             world.apply(event);
