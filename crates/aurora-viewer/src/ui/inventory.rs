@@ -991,6 +991,16 @@ impl InventoryUi {
         self.active_smart = id;
         self.fetch_all = true;
     }
+
+    /// Find likely inventory counterparts of an object seen in-world.
+    pub(crate) fn find_world_object(&mut self, name: &str) -> bool {
+        let Some(query) = smart::SmartQuery::for_world_object(name) else {
+            return false;
+        };
+        self.find_similar(query);
+        true
+    }
+
     /// Find similar: like Find all links, the filters in place come back
     /// when its chip is removed.
     pub(crate) fn find_similar(&mut self, query: smart::SmartQuery) {
