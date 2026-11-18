@@ -172,6 +172,11 @@ pub struct BuildSettings {
     pub scale_stretch_textures: bool,
     /// Keep the camera attached to the focused object while editing it.
     pub follow_edit_object: bool,
+    /// Aurora: the wheel steps a number field while the pointer is over it,
+    /// as LLSpinCtrl::handleScrollWheel does. Off by default: the wheel
+    /// steps only the field being typed in, and scrolls the panel over the
+    /// others, so scrolling down the window edits nothing by accident.
+    pub wheel_on_hover: bool,
     /// RenderHighlightSelections.
     pub show_highlight: bool,
     /// RenderHiddenSelections (off): the outline edges on the far side of
@@ -742,6 +747,7 @@ impl Default for BuildSettings {
             scale_uniform: false,
             scale_stretch_textures: true,
             follow_edit_object: false,
+            wheel_on_hover: false,
             show_highlight: true,
             show_hidden_selection: false,
             show_light_radius: false,

@@ -65,14 +65,14 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub(crate) use workspace::{
+    INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
+    organization_typography, overlay, overlay_frame, paint_world_label,
+};
 pub use workspace::{
     Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
     navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
-};
-pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
-    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
-    organization_typography, overlay, overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -387,12 +387,14 @@ impl WheelSteps {
 /// winit reports that roll as a positive delta.y. Each whole notch is scaled
 /// like onUpBtn. While the pointer stays on an enabled field the smoothed
 /// scroll is eaten, including the frames after the notch, so the build panel
-/// does not creep. A disabled field leaves the wheel to the panel. `apply`
+/// does not creep. A disabled field leaves the wheel to the panel, and so
+/// does a field that does not `take` it (the build window's fields that are
+/// not being typed in, unless its "wheel on hover" option is on). `apply`
 /// is false while a typed draft or a drag owns the value: the wheel is still
 /// eaten, and it does not change the number.
-pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, apply: bool) -> WheelSteps {
+pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take: bool, apply: bool) -> WheelSteps {
     let key = id.with("spinner_wheel_remainder");
-    let hovered = ui.is_enabled() && ui.rect_contains_pointer(rect);
+    let hovered = take && ui.is_enabled() && ui.rect_contains_pointer(rect);
     if !hovered {
         ui.data_mut(|d| d.remove::<WheelRemainder>(key));
         return WheelSteps::none();

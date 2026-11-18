@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod autotune;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
@@ -709,6 +710,13 @@ pub struct Settings {
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
+    /// Autotune, the Performance window's target frame rate
+    /// (settings/autotune.rs; off).
+    pub autotune: autotune::Config,
+    /// The user's draw distance and avatars in full while Autotune holds the
+    /// live ones: never saved, they are what is written in their place.
+    #[serde(skip)]
+    pub autotune_hold: Option<autotune::Hold>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -1595,6 +1603,15 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
+    /// The rigged meshes with a touch script or a click action that a left
+    /// click acts on: animated objects (animesh; on), rigged attachments we
+    /// wear (off) and those of other avatars (off). Off, the click passes
+    /// through them as in the Legacy Viewer, which has none of the three
+    /// (scene/drawn.rs; Preferences › Mouse and keyboard, "Left click on
+    /// rigged objects").
+    pub rigged_click_animesh: bool,
+    pub rigged_click_own: bool,
+    pub rigged_click_others: bool,
     /// RenderVolumeSAProtection: prims and sculpts with a very large surface
     /// stop being drawn past a total each frame (scene/surface_area.rs; off).
     pub large_surface_protection: bool,
@@ -1725,6 +1742,9 @@ pub struct Settings {
     /// by another program), a new window and device instead of closing
     /// (app/gpu_recovery.rs). On by default; the Legacy Viewer closes.
     pub gpu_recovery: bool,
+    /// Gaming mode (app/gaming_mode.rs) ends by itself when the window
+    /// comes back in front. On by default; not in the Legacy Viewer.
+    pub gaming_mode_leave_on_focus: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// RenderAttachedParticles: the particles of what avatars wear (on;
@@ -1844,6 +1864,11 @@ pub struct Settings {
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
     pub no_neighbour_regions: bool,
+    /// Preferences › Network and cache › Proxy (the Legacy Viewer's
+    /// floater_preferences_proxy.xml): read at startup (`proxy.rs`), applied
+    /// at the next start. The SOCKS 5 user name and password are in the
+    /// credential store (`credentials::store_proxy`), never here.
+    pub proxy: aurora_proxy::ProxySettings,
     pub parcel_visibility: crate::world::parcel_visibility::Settings,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
@@ -2338,6 +2363,8 @@ impl Default for Settings {
             draw_distance_stepping: false,
             draw_distance_stepping_interval: 20,
             draw_stepping: None,
+            autotune: Default::default(),
+            autotune_hold: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -2664,6 +2691,9 @@ impl Default for Settings {
             fly_override_warned: false,
             avatar_align_mini: false,
             block_click_sit: false,
+            rigged_click_animesh: true,
+            rigged_click_own: false,
+            rigged_click_others: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
             large_surface_sculpt_threshold: 150.0,
@@ -2702,6 +2732,7 @@ impl Default for Settings {
             background_fps_limit: 15,
             background_gpu_pause: true,
             gpu_recovery: true,
+            gaming_mode_leave_on_focus: true,
             max_particles: 4096,
             attached_particles: true,
             tracker_beacon: true,
@@ -2747,6 +2778,7 @@ impl Default for Settings {
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
+            proxy: Default::default(),
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
@@ -3467,6 +3499,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.autotune.sanitize();
         self.local_light_count = self.local_light_count.min(crate::scene::lights::MAX_LIGHTS as u32);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
@@ -3725,6 +3758,11 @@ impl Settings {
         if let Some(steps) = copy.draw_stepping.take() {
             copy.draw_distance = steps.user;
         }
+        // the values Autotune holds: the user's (after the two above, whose
+        // own values the hold leaves alone)
+        if let Some(hold) = copy.autotune_hold.take() {
+            hold.restore(&mut copy);
+        }
         if !copy.remember_username {
             copy.username.clear();
             copy.last_login = None;
@@ -3804,6 +3842,15 @@ impl Settings {
             volume_threshold: self.large_surface_prim_threshold,
             sculpt_threshold: self.large_surface_sculpt_threshold,
             frame_max: self.large_surface_frame_max,
+        }
+    }
+
+    /// The rigged meshes a left click acts on (scene/drawn.rs).
+    pub fn rigged_clicks(&self) -> crate::scene::drawn::RiggedClicks {
+        crate::scene::drawn::RiggedClicks {
+            animesh: self.rigged_click_animesh,
+            own: self.rigged_click_own,
+            others: self.rigged_click_others,
         }
     }
 
@@ -4554,6 +4601,24 @@ mod tests {
         let saved = serde_json::to_value(&changed).expect("save preference");
         let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
         assert!(!loaded.double_click_scripted);
+    }
+
+    #[test]
+    fn only_animesh_take_a_left_click_by_default_and_each_choice_round_trips() {
+        use crate::scene::drawn::RiggedClicks;
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without the preferences");
+        assert_eq!(missing.rigged_clicks(), RiggedClicks::default());
+        assert!(missing.rigged_click_animesh && !missing.rigged_click_own && !missing.rigged_click_others);
+
+        for (animesh, own, others) in [(false, false, false), (true, true, false), (true, false, true)] {
+            let mut changed = missing.clone();
+            changed.rigged_click_animesh = animesh;
+            changed.rigged_click_own = own;
+            changed.rigged_click_others = others;
+            let saved = serde_json::to_value(&changed).expect("save the preferences");
+            let loaded: Settings = serde_json::from_value(saved).expect("reload the preferences");
+            assert_eq!(loaded.rigged_clicks(), RiggedClicks { animesh, own, others }, "each switch alone");
+        }
     }
 
     #[test]

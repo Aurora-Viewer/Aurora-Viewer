@@ -37,10 +37,21 @@ mod demo;
 mod destination_guide;
 mod dev_toolbox;
 mod director;
+mod director_anim;
+mod director_capture;
+mod director_ffmpeg;
+mod director_keys;
+mod director_library;
+mod director_montage;
+mod director_render;
+mod director_thumbs;
+mod director_titles;
 mod disk_io;
 mod dof;
+mod editor_sync;
 mod external_url;
 mod fast_hash;
+mod film_sound;
 mod frame_par;
 mod frame_profile;
 mod gestures;
@@ -88,6 +99,7 @@ mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod pose_stand;
+mod proxy;
 mod raw_mouse;
 mod recorder;
 mod report_abuse;
@@ -194,6 +206,9 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // Preferences › Network › Proxy: before the first connection of the
+    // viewer (LLStartUp::startLLProxy, at startup)
+    proxy::install(&settings::Settings::load().proxy);
     splash::settings();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers

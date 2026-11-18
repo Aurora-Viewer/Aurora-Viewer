@@ -412,6 +412,7 @@ pub fn show(
     }
     workspace::prepare(ctx, env.demo, s);
     tool.ui.legacy_window = s.legacy_window;
+    common::set_wheel_on_hover(ctx, s.wheel_on_hover);
     let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
     if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
         ctx.data_mut(|d| d.insert_temp(preview, true));

@@ -44,6 +44,13 @@ pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
 pub mod director;
+pub mod director_capture;
+pub mod director_drag;
+pub mod director_key_rows;
+pub mod director_library;
+pub mod director_look;
+pub mod director_output;
+pub mod director_ruler;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -71,6 +78,7 @@ pub mod icons;
 pub mod inspect;
 pub mod interface;
 pub mod inventory;
+pub mod keyboard_focus;
 pub mod land;
 pub mod landmark_create;
 pub mod layout;
@@ -197,6 +205,9 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    /// Inventory's dual-panel layout (`InventoryPreferences::dual_panel`,
+    /// saved by the app when it changes).
+    pub inventory_dual: bool,
     pub texture_library: bool,
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
@@ -296,6 +307,7 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            inventory_dual: settings.inventory.dual_panel,
             texture_library: false,
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,

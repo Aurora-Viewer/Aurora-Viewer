@@ -472,10 +472,47 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         } else {
             response.rect.center()
         };
-        response
-            .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point));
+        // Whether the row was drawn this frame with its whole height inside
+        // the list's clip, within a pixel: a row scrolled to the bottom ends
+        // on the clip's edge. A wide row runs past the clip sideways.
+        let shown = (
+            response.ctx.cumulative_frame_nr(),
+            response.interact_rect.height() + 1.0 >= response.rect.height(),
+        );
+        response.ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point);
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, item)), shown);
+            if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+                data.insert_temp(egui::Id::unique(("inventory_demo_click_row", st.ui_id, item)), response.rect);
+            }
+        });
     }
+}
+
+pub(super) fn demo_viewport<R>(ctx: &egui::Context, st: &InventoryUi, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+    if demo_mode().is_some_and(|mode| mode.starts_with("keyboard-click-")) {
+        let viewport = (out.id, out.inner_rect, out.state.unclamped_offset());
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)), viewport));
+    }
+}
+
+/// The demo must target the actual scroll area: list() clears scroll_restore
+/// before drawing, since that field belongs to tab/update restoration.
+pub(super) fn position_click_demo(
+    ctx: &egui::Context,
+    st: &mut InventoryUi,
+    row: egui::Rect,
+    viewport: (egui::Id, egui::Rect, egui::Vec2),
+    top: bool,
+) -> f32 {
+    let (area, clip, mut offset) = viewport;
+    let edge = if top { clip.top() } else { clip.bottom() };
+    offset.y = (offset.y + row.top() - edge + row.height() / 2.0).max(0.0);
+    st.scroll_hold = None;
+    super::super::widgets::scroll_offset::set(ctx, area, offset);
+    st.selected = None;
+    st.selection.clear();
+    offset.y
 }
 
 pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uuid) {
@@ -522,6 +559,23 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         }
         return Vec::new();
     }
+    if mode.starts_with("keyboard-click-") {
+        // Prepare a half-visible row at either edge, then leave the actual
+        // click to the human. The long demo folder gives both edges room.
+        if frame == 620 {
+            let geometry = ctx.data(|data| {
+                let row = data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_click_row", st.ui_id, Uuid::from_u128(11000))))?;
+                let viewport =
+                    data.get_temp::<(egui::Id, egui::Rect, egui::Vec2)>(egui::Id::unique(("inventory_demo_click_viewport", st.ui_id)))?;
+                Some((row, viewport))
+            });
+            if let Some((row, viewport)) = geometry {
+                let offset = position_click_demo(ctx, st, row, viewport, mode.ends_with("top"));
+                log::info!("demo inventory click edge: mode={mode}, target=11000, offset={offset}");
+            }
+        }
+        return Vec::new();
+    }
     if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
         if matches!(frame, 650 | 651)
             && let Some(pos) =
@@ -556,6 +610,30 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             };
             return vec![egui::Event::Key {
                 key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        // Down from the object, past the bottom of the list: it scrolls so
+        // the selected row is drawn whole, at any font scale.
+        if mode.ends_with("keyboard-down") {
+            if frame == 720 {
+                let shown = st.selected.and_then(|id| {
+                    ctx.data(|data| data.get_temp::<(u64, bool)>(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, id))))
+                });
+                log::info!(
+                    "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
+                    st.selected,
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                );
+            }
+            if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {
+                return Vec::new();
+            }
+            return vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
@@ -848,6 +926,7 @@ mod tests {
                         &Icons::default(),
                         &mut self.world,
                         &mut self.st,
+                        None,
                         &mut self.prefs,
                         &mut true,
                         false,

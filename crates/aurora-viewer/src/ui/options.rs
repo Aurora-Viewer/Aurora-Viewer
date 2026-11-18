@@ -310,6 +310,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
+        "proxy" => row(Page::Network, 0, tr!("ui-options-proxy-direct-voice")),
         _ => None,
     };
     let audio = match what {
@@ -318,7 +319,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
-    if what == "auto-accept" {
+    if what == "auto-accept" || what == "proxy" {
         st.demo_open_cogs = true;
     }
     if let Some(section) = audio {
@@ -530,6 +531,9 @@ pub struct OptionsUi {
     pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// Preferences › Network › Proxy: the credentials being typed and the
+    /// direct voice confirmation.
+    proxy: pages::proxy::ProxyPage,
     /// Entries of the conversation log of the account logged in.
     pub conversation_log_entries: usize,
     confirm_clear_conversation_log: bool,
@@ -818,18 +822,10 @@ fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<
     .changed()
 }
 
-/// Stepped slider with a named level shown next to it.
-fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
-    ui.spacing_mut().slider_width = SLIDER_W - 30.0;
+/// Stepped slider with a named level shown next to it; narrower than
+/// Preferences' width where the row is (the photo's Light panel).
+pub(super) fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     let max = labels.len().saturating_sub(1) as u8;
-    let r = ui.add(
-        egui::Slider::new(v, 0..=max)
-            .custom_parser(aurora_i18n::parse_number)
-            .step_by(1.0)
-            .trailing_fill(true)
-            .show_value(false),
-    );
-    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     let font = egui::FontId::proportional(12.0);
     let width = labels
         .iter()
@@ -840,6 +836,16 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
                 .x
         })
         .fold(0.0, f32::max);
+    let available = ui.available_width() - width - ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width = available.clamp(40.0, SLIDER_W - 30.0);
+    let r = ui.add(
+        egui::Slider::new(v, 0..=max)
+            .custom_parser(aurora_i18n::parse_number)
+            .step_by(1.0)
+            .trailing_fill(true)
+            .show_value(false),
+    );
+    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     ui.add_sized(
         vec2(width, ui.spacing().interact_size.y),
         egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),
@@ -1361,6 +1367,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    pages::proxy::frame(ctx, p, s, st, *open);
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
@@ -1659,14 +1666,7 @@ fn sidebar(
     ui.add_space(12.0);
     let width = ui.available_width();
     ui.horizontal(|ui| {
-        let clear_w = if st.query.is_empty() { 0.0 } else { 26.0 };
-        let field = super::widgets::search_box(
-            ui,
-            p,
-            &mut st.query,
-            aurora_i18n::tr!("ui-options-search-settings"),
-            width - clear_w,
-        );
+        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), width);
         if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
             st.focus_search = false;
             field.request_focus();
@@ -1674,9 +1674,6 @@ fn sidebar(
         if field.changed() {
             st.modified_view = false;
             st.cancel_capture();
-        }
-        if !st.query.is_empty() && super::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-clear"), true) {
-            st.query.clear();
         }
         if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             st.query.clear();

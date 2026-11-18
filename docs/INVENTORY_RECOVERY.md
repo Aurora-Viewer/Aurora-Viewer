@@ -128,6 +128,15 @@ zero failures, 59 existing ignored tests; script checks, formatting and Clippy
 also passed. This integration has local regression coverage; the live-grid
 human evidence above remains specific to the 5ce3791 executable.
 
+The follow-up integration of upstream
+`c7d1756d9c2375a2bee17367b6a245f94fe0a0b4` retains Director's render-clock
+conversion when dispatching events, then acknowledges accepted inventory data.
+Network profiling still uses the real receipt timestamp, and gaming mode keeps
+its upstream event budget. The complete `scripts/check.ps1` passed with pinned
+Rust 1.100.0 on Windows MSVC: 10,668 tests, zero failures, 61 existing ignored
+tests; script checks, formatting and Clippy also passed. This is local
+integration validation, not an additional live-grid test.
+
 The reporter manually validated the original candidate on a large account:
 four partial/warm-cache sessions completed with no terminal item/folder failure
 notifications and a reported smooth experience. See

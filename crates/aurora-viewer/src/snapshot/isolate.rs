@@ -247,6 +247,10 @@ pub(crate) fn studio_seat(world: &crate::world::World) -> Option<(usize, Uuid)> 
 
 pub(crate) fn studio_roots(world: &crate::world::World) -> Vec<Uuid> {
     let mut roots = vec![world.agent_id];
+    // the animation editor's couple partner stands on the stage with us
+    roots.extend(world.couple_partner);
+    // and the mirror of us that is becoming Person B
+    roots.extend(world.mirror());
     if let Some((_, seat)) = studio_seat(world) {
         roots.push(seat);
         roots.extend(
@@ -271,7 +275,7 @@ pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
         let Some((root_index, root)) = root_including_huds(world, index, true) else {
             return false;
         };
-        if root == world.agent_id {
+        if root == world.agent_id || Some(root) == world.couple_partner || world.is_mirror(&root) {
             return true;
         }
         let Some((_, seat)) = studio_seat(world) else {
@@ -348,6 +352,25 @@ mod tests {
         assert_eq!(world.photo_isolation.version, version);
         assert_eq!(world.photo_isolation.chosen(), &[id(99)]);
         assert_eq!((world.agent.position, world.agent.yaw), (position, yaw));
+    }
+
+    #[test]
+    fn studio_shows_the_couple_partner_beside_the_live_avatar() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::poser::peer()],
+        });
+        let partner = world.objects.index_of_uuid(&crate::demo::poser::PEER).expect("partner");
+        world.avatar_studio = true;
+        assert!(!object_visible(&world, partner));
+        world.couple_partner = Some(crate::demo::poser::PEER);
+        assert!(object_visible(&world, partner));
+        assert!(studio_roots(&world).contains(&crate::demo::poser::PEER));
     }
 
     #[test]
