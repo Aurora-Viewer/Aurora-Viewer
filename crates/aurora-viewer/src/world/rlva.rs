@@ -30,6 +30,7 @@ mod groups;
 mod im_queries;
 mod interaction;
 mod inventory;
+pub mod land_gate;
 pub(crate) mod legacy_strings;
 pub mod login;
 pub mod modifiers;
