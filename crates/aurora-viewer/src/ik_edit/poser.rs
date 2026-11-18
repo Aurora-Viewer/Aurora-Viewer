@@ -461,8 +461,17 @@ impl Editor {
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.poser.requests)
     }
+    /// A consent action asked from another window (the animation editor's
+    /// couple mode), sent the poser's way.
+    pub(in crate::ik_edit) fn push_poser_request(&mut self, request: Request) {
+        self.poser.requests.push(request);
+    }
     pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
         self.poser.bridge = state;
+    }
+    /// The bridge's request state, for the couple mode's Ask list.
+    pub(in crate::ik_edit) fn poser_bridge(&self) -> crate::world::bridge::QueryState {
+        self.poser.bridge
     }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);

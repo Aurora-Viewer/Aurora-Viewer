@@ -83,6 +83,7 @@ pub use view::InventoryPreferences;
 
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.
 const RECEIVED_TAB: usize = 1;
+const RECENT_TAB: usize = 2;
 
 /// Size of the window before the user resizes it: one folder tree, like
 /// Firestorm's (floater_my_inventory.xml, 333 x 570 with its smaller font).
@@ -563,6 +564,9 @@ pub struct InventoryUi {
     pub active_smart: Option<u64>,
     /// Find similar: the chip that undoes it restores `saved_filters`.
     similar: bool,
+    /// The Recent tab's filters last written to the preferences
+    /// (`remember_recent_filters`): only this window's own edits write.
+    recent_remembered: Option<view::Filters>,
     view: view::ViewCache,
     plain: rows::PlainTree,
     result_tree: view::TreeState,
@@ -1309,6 +1313,7 @@ fn item_response(
     st.hover.record(&r, id, permissions);
     if r.clicked() || r.secondary_clicked() {
         st.select(ui, id, r.secondary_clicked());
+        reveal_clicked_row(ui, &r, st, id);
     }
     if st.reveal == Some(it.id) {
         scroll_to_row(ui, &r, egui::Align::Center);
@@ -1426,6 +1431,7 @@ fn folder_response(
     state.hover.record(&r, id, None);
     if r.clicked() || r.secondary_clicked() {
         state.select(ui, id, r.secondary_clicked());
+        reveal_clicked_row(ui, &r, state, id);
     }
     if state.reveal == Some(id) {
         scroll_to_row(ui, &r, egui::Align::Center);
@@ -1542,6 +1548,26 @@ fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
     // view. Aligning a whole, potentially very wide label would also pan right.
     let rect = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), row.rect.y_range());
     ui.scroll_to_rect(rect, Some(align));
+}
+
+/// LLFolderViewItem::handleMouseUp selects on release; like
+/// LLFolderView::scrollToShowItem, reveal only what the viewport clips and
+/// never interrupt a drag. Aurora also does this for an ordinary row click,
+/// without panning horizontally or centring an already visible selection.
+fn reveal_clicked_row(ui: &egui::Ui, row: &egui::Response, st: &mut InventoryUi, id: Uuid) {
+    if !row.clicked() || !st.selection.contains(&id) {
+        return;
+    }
+    let clip = ui.clip_rect();
+    let delta = if row.rect.top() < clip.top() {
+        clip.top() - row.rect.top()
+    } else if row.rect.bottom() > clip.bottom() {
+        clip.bottom() - row.rect.bottom()
+    } else {
+        return;
+    };
+    st.scroll_hold = None;
+    ui.scroll_with_delta_animation(egui::vec2(0.0, delta), egui::style::ScrollAnimation::none());
 }
 
 /// Breakdown of LLPanelMainInventory::updateItemcountText's tooltip
@@ -1728,7 +1754,7 @@ fn search_scroll(
     if let Some(offset) = st.scroll_restore.take() {
         scroll = scroll.vertical_scroll_offset(offset);
     }
-    let row_height = rows::row_height(st);
+    let row_height = rows::row_height(ui, p, st);
     if navigated {
         st.scroll_hold = None;
     }
@@ -1774,6 +1800,7 @@ fn search_rows(
     range: std::ops::Range<usize>,
 ) {
     tree_spacing(ui);
+    let row_height = rows::row_height(ui, p, st);
     // Keep the complete order for Shift selection, while drawing only rows
     // intersecting the viewport. No arbitrary 500-item result limit.
     let rows = st.result_tree.rows[range].to_vec();
@@ -1795,8 +1822,12 @@ fn search_rows(
             );
             st.result_width = st.result_width.max(width);
         }
-        ui.horizontal(|ui| {
-            ui.set_min_height(rows::row_height(st));
+        // A Legacy row's own row centres its contents; this one places it at
+        // the top, so the row is as tall as it. Centred here, a row that starts
+        // at the theme's interact height sits lower and grows past `row_height`.
+        let legacy = st.aurora.is_none();
+        let draw = |ui: &mut egui::Ui| {
+            ui.set_min_height(row_height);
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.depth.min(24) as f32 * ui.spacing().indent);
             if row.folder {
@@ -1808,7 +1839,12 @@ fn search_rows(
             } else {
                 item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions);
             }
-        });
+        };
+        if legacy {
+            ui.horizontal_top(draw);
+        } else {
+            ui.horizontal(draw);
+        }
     }
 }
 
@@ -1971,6 +2007,38 @@ fn set_tab(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: usize) {
     }
 }
 
+/// The Recent tab keeps its filters between sessions on its own, as the
+/// Legacy Viewer keeps its "Recent Items" filter in filters.xml
+/// (LLPanelMainInventory::postBuild and ~LLPanelMainInventory,
+/// indra/newview/llpanelmaininventory.cpp): the filters it shows become its
+/// saved defaults, which the next session starts from (`init_filters`). Its
+/// sort order and period are preferences already (`recent_sort`,
+/// `recent_hours`). The other tabs keep "Keep by default", as the Legacy
+/// Viewer's All Items filter does not persist.
+///
+/// A window writes only when its own Recent filters change, so two windows
+/// (dual pane, extra inventory windows) never overwrite each other every
+/// frame: the last one edited wins, like the last panel closed in the Legacy
+/// Viewer. A tab never shown has nothing to write.
+fn remember_recent_filters(st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+    let live = if st.tab == RECENT_TAB {
+        st.filters_initialized.then_some(&st.filters)
+    } else {
+        let tab = &st.tab_filters[RECENT_TAB];
+        tab.filters_initialized.then_some(&tab.filters)
+    };
+    let Some(live) = live else {
+        return;
+    };
+    if st.recent_remembered.as_ref() == Some(live) {
+        return;
+    }
+    if prefs.filters_for(RECENT_TAB) != live {
+        prefs.filters_for_mut(RECENT_TAB).clone_from(live);
+    }
+    st.recent_remembered = Some(live.clone());
+}
+
 /// The combined Received view has no writable background folder. Individual
 /// real folder rows still accept the ordinary inventory actions.
 fn list_destination(st: &InventoryUi, root: Uuid) -> Uuid {
@@ -2107,6 +2175,7 @@ struct ScrollHold {
 const SCROLL_HOLD_SECONDS: f64 = 5.0;
 
 fn record_list_shown<R>(ui: &egui::Ui, st: &mut InventoryUi, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+    clipboard::demo_viewport(ui.ctx(), st, out);
     let bar = ui.spacing().scroll.allocated_width();
     st.list_shown = Some(ListShown {
         offset: out.state.unclamped_offset().y,
@@ -2595,6 +2664,7 @@ pub fn show(
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
         dual.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+        remember_recent_filters(dual, prefs);
         context_notecards::show(ctx, p, &mut world.inventory, dual, prefs, &mut dual_actions);
         actions.extend(dual_actions.into_iter().map(|action| InvAction::Panel {
             editor: dual.ui_id,
@@ -2765,6 +2835,7 @@ pub fn show(
         if w.id != listings::PANEL {
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
+        remember_recent_filters(&mut w.state, prefs);
         spawned.append(&mut w.state.windows);
     }
     // Documents and confirmations outlive the inventory window which opened
@@ -2795,6 +2866,7 @@ pub fn show(
         }
     }
     st.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+    remember_recent_filters(st, prefs);
     context_notecards::show(ctx, p, &mut world.inventory, st, prefs, &mut actions);
     actions
 }
@@ -2854,6 +2926,78 @@ mod tests {
             set_tab(&mut second, &prefs, 2);
             assert_eq!(&second.filters, prefs.filters_for(2));
         }
+    }
+
+    #[test]
+    fn inventory_recent_filters_survive_a_new_session() {
+        let mut prefs = InventoryPreferences::default();
+        prefs.filters_for_mut(RECENT_TAB).hours = 48;
+        let saved = prefs.clone();
+        let mut st = InventoryUi::default();
+        controls::init_filters(&mut st, &prefs);
+        st.filters.permissions = rules::COPY;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs, saved, "a Recent tab never shown and the main tab's edits write nothing");
+
+        set_tab(&mut st, &prefs, RECENT_TAB);
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs, saved, "showing Recent writes nothing either");
+        st.filters.types = 1 << 6;
+        st.filters.age = view::Age::Newer;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB), &st.filters, "an edit on Recent is kept");
+        set_tab(&mut st, &prefs, 3);
+        st.filters.hours = 5;
+        remember_recent_filters(&mut st, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB).types, 1 << 6, "from its slot while another tab shows");
+        assert_eq!(prefs.filters_for(3), saved.filters_for(3), "Worn keeps Keep by default");
+        assert_eq!(prefs.filter_defaults, saved.filter_defaults, "the main tab keeps Keep by default");
+
+        // Next session: the preferences come back from disk.
+        let json = serde_json::to_string(&prefs).expect("preferences serialize");
+        let restored: InventoryPreferences = serde_json::from_str(&json).expect("preferences deserialize");
+        let mut next = InventoryUi::default();
+        controls::init_filters(&mut next, &restored);
+        set_tab(&mut next, &restored, RECENT_TAB);
+        assert_eq!(next.filters.types, 1 << 6);
+        assert_eq!(next.filters.age, view::Age::Newer);
+        assert_eq!(next.filters.hours, 48);
+        assert_eq!(next.filters.permissions, 0, "the main tab's live edit stayed in its session");
+
+        // Reset on Recent is kept too.
+        next.filters = view::Filters::default();
+        let mut prefs = restored;
+        remember_recent_filters(&mut next, &mut prefs);
+        assert_eq!(prefs.filters_for(RECENT_TAB), &view::Filters::default());
+    }
+
+    #[test]
+    fn inventory_recent_filters_two_windows_never_overwrite_each_other() {
+        let mut prefs = InventoryPreferences::default();
+        let (mut a, mut b) = (InventoryUi::default(), InventoryUi::default());
+        set_tab(&mut a, &prefs, RECENT_TAB);
+        set_tab(&mut b, &prefs, RECENT_TAB);
+        remember_recent_filters(&mut a, &mut prefs);
+        remember_recent_filters(&mut b, &mut prefs);
+        a.filters.creator = view::Creator::Me;
+        for _ in 0..3 {
+            remember_recent_filters(&mut a, &mut prefs);
+            remember_recent_filters(&mut b, &mut prefs);
+            assert_eq!(
+                prefs.filters_for(RECENT_TAB).creator,
+                view::Creator::Me,
+                "b's untouched filters never win"
+            );
+        }
+        b.filters.links = view::Links::Exclude;
+        remember_recent_filters(&mut a, &mut prefs);
+        remember_recent_filters(&mut b, &mut prefs);
+        let kept = prefs.filters_for(RECENT_TAB);
+        assert_eq!(
+            (kept.creator, kept.links),
+            (view::Creator::All, view::Links::Exclude),
+            "the last edited wins"
+        );
     }
 
     #[test]
@@ -5546,6 +5690,326 @@ mod tests {
         assert!(st.visible.contains(&lib));
         assert_eq!(inv.folders[&lib].info.parent, Uuid::nil());
         assert!(inv.folders[&lib].library);
+    }
+
+    /// Real row responses inside the production virtualized lists. The target
+    /// is clipped deliberately, so a test cannot pass with a wholly visible row.
+    struct ClickScroll {
+        ctx: egui::Context,
+        inv: Inventory,
+        st: InventoryUi,
+        prefs: InventoryPreferences,
+        filtered: bool,
+        time: f64,
+        area: Option<(egui::Id, egui::Rect, Vec2)>,
+        actions: Vec<InvAction>,
+    }
+
+    impl ClickScroll {
+        fn new(filtered: bool, aurora: bool, scale: f32) -> Self {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            crate::ui::fonts::set_scale(&ctx, scale);
+            let mut inv = Inventory {
+                root: Uuid::from_u128(1),
+                ..Default::default()
+            };
+            inv.created_folders(vec![aurora_net::inventory::InvFolder {
+                id: inv.root,
+                type_default: 8,
+                ..Default::default()
+            }]);
+            inv.created_folders(
+                (100..140)
+                    .map(|n| aurora_net::inventory::InvFolder {
+                        id: Uuid::from_u128(n),
+                        parent: inv.root,
+                        name: format!("Folder {n} {}", "wide label ".repeat(12)),
+                        type_default: -1,
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+            for folder in inv.folders.values_mut() {
+                folder.state = FetchState::Fetched;
+            }
+            inv.add_items(
+                (200..240)
+                    .map(|n| aurora_net::inventory::InvItem {
+                        id: Uuid::from_u128(n),
+                        parent: inv.root,
+                        name: format!("Item {n} {}", "wide label ".repeat(12)),
+                        asset_type: 6,
+                        inv_type: 6,
+                        owner: Uuid::from_u128(2),
+                        owner_mask: rules::COPY | rules::MODIFY | rules::TRANSFER,
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+            let mut st = InventoryUi {
+                ui_id: Uuid::from_u128(900),
+                ..Default::default()
+            };
+            if filtered {
+                st.search = "wide".into();
+            }
+            if aurora {
+                st.aurora = Some(aurora::Frame {
+                    layout: aurora::Layout::Compact,
+                    rights: permissions::Rights::default(),
+                    columns: view::ExplorerPreferences::default(),
+                    explorer: false,
+                });
+            }
+            let mut fixture = Self {
+                ctx,
+                inv,
+                st,
+                prefs: InventoryPreferences::default(),
+                filtered,
+                time: 0.0,
+                area: None,
+                actions: vec![],
+            };
+            fixture.settle();
+            fixture
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 0.05;
+            self.st.visible.clear();
+            let root = self.inv.root;
+            let facts = Facts {
+                agent: Uuid::from_u128(2),
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(440.0, 240.0))),
+                    time: Some(self.time),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(420.0);
+                    let p = crate::theme::Theme::default().palette();
+                    if self.filtered {
+                        self.st.view.search(
+                            &self.inv,
+                            root,
+                            &self.st.search,
+                            &self.prefs,
+                            &self.st.filters,
+                            0,
+                            None,
+                            &facts,
+                            facts.agent,
+                            view::now(),
+                        );
+                    }
+                    let out = list(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        &mut self.inv,
+                        &mut self.st,
+                        &mut self.prefs,
+                        &facts,
+                        &mut self.actions,
+                        130.0,
+                        root,
+                        self.filtered,
+                        false,
+                    );
+                    self.area = Some((out.id, out.inner_rect, out.state.unclamped_offset()));
+                },
+            );
+            output.textures_delta.clear();
+        }
+
+        fn settle(&mut self) {
+            for _ in 0..8 {
+                self.frame(vec![]);
+            }
+        }
+
+        fn row(&self, id: Uuid) -> egui::Rect {
+            assert!(self.st.visible.contains(&id), "target must actually be drawn");
+            self.ctx
+                .data(|d| d.get_temp(egui::Id::unique(("inventory_drag_row", self.st.ui_id, id))))
+                .expect("drawn row")
+        }
+
+        fn place(&mut self, id: Uuid, edge: Option<bool>) -> egui::Pos2 {
+            self.st.reveal = Some(id);
+            self.settle();
+            let (area, clip, offset) = self.area.expect("list");
+            let row = self.row(id);
+            let top = match edge {
+                Some(true) => clip.top() - row.height() / 2.0,
+                Some(false) => clip.bottom() - row.height() / 2.0,
+                None => clip.center().y - row.height() / 2.0,
+            };
+            let x = if self.st.aurora.is_none() { 30.0 } else { 0.0 };
+            crate::ui::widgets::scroll_offset::set(&self.ctx, area, egui::vec2(x, offset.y + row.top() - top));
+            self.settle();
+            let (_, clip, _) = self.area.expect("list");
+            let row = self.row(id);
+            match edge {
+                Some(true) => assert!(row.top() < clip.top() && row.bottom() > clip.top(), "top must be clipped"),
+                Some(false) => assert!(row.bottom() > clip.bottom() && row.top() < clip.bottom(), "bottom must be clipped"),
+                None => assert!(clip.y_range().contains(row.top()) && clip.y_range().contains(row.bottom())),
+            }
+            row.intersect(clip).center()
+        }
+
+        fn pointer(&mut self, pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) {
+            self.frame(vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                },
+            ]);
+        }
+    }
+
+    #[test]
+    fn inventory_click_demo_places_its_target_half_outside_each_edge() {
+        for filtered in [false, true] {
+            for aurora in [false, true] {
+                for top in [false, true] {
+                    let mut f = ClickScroll::new(filtered, aurora, 1.46);
+                    let id = Uuid::from_u128(220);
+                    f.place(id, None);
+                    let viewport = f.area.expect("list");
+                    let row = f.row(id);
+                    f.st.selection = HashSet::from([id]);
+                    clipboard::position_click_demo(&f.ctx, &mut f.st, row, viewport, top);
+                    f.settle();
+                    let (_, clip, after) = f.area.expect("list");
+                    let row = f.row(id);
+                    let edge = if top { clip.top() } else { clip.bottom() };
+                    assert!(
+                        (row.center().y - edge).abs() < 1.0,
+                        "target must straddle the requested edge: {row:?}, {clip:?}"
+                    );
+                    assert_eq!(after.x, viewport.2.x, "demo preserves horizontal position");
+                    assert!(f.st.selection.is_empty() && f.st.selected.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_click_reveals_both_clipped_edges_in_each_list_and_style() {
+        for filtered in [false, true] {
+            for aurora in [false, true] {
+                for scale in [1.0, 1.46, 2.0] {
+                    let mut f = ClickScroll::new(filtered, aurora, scale);
+                    for id in [Uuid::from_u128(120), Uuid::from_u128(220)] {
+                        for edge in [Some(true), Some(false), None] {
+                            let pos = f.place(id, edge);
+                            let before = f.area.expect("list").2;
+                            f.pointer(pos, true, egui::Modifiers::NONE);
+                            assert_eq!(f.area.expect("list").2, before, "press must not move the row under the pointer");
+                            f.pointer(pos, false, egui::Modifiers::NONE);
+                            f.settle();
+                            assert_eq!(f.st.selection, HashSet::from([id]));
+                            let (_, clip, after) = f.area.expect("list");
+                            let row = f.row(id);
+                            assert!(
+                                row.top() >= clip.top() - 0.5 && row.bottom() <= clip.bottom() + 0.5,
+                                "whole row after click: {row:?}, {clip:?}"
+                            );
+                            assert_eq!(after.x, before.x, "click must not scroll horizontally");
+                            match edge {
+                                Some(true) => assert!(after.y < before.y),
+                                Some(false) => assert!(after.y > before.y),
+                                None => assert_eq!(after.y, before.y, "whole rows must stay put"),
+                            }
+                            let settled = after;
+                            f.settle();
+                            assert_eq!(f.area.expect("list").2, settled, "reveal only once");
+                            let (area, _, _) = f.area.expect("list");
+                            let manual = settled + egui::vec2(0.0, 12.0);
+                            crate::ui::widgets::scroll_offset::set(&f.ctx, area, manual);
+                            f.settle();
+                            assert_eq!(f.area.expect("list").2, manual, "later manual scrolling must not snap back");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_click_reveal_keeps_multiselection_deselection_and_drag() {
+        for filtered in [false, true] {
+            for aurora in [false, true] {
+                let mut f = ClickScroll::new(filtered, aurora, 1.46);
+                let (first, target) = (Uuid::from_u128(219), Uuid::from_u128(220));
+                let ctrl = egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                };
+                for modifiers in [ctrl, egui::Modifiers::SHIFT] {
+                    let pos = f.place(target, Some(false));
+                    f.st.selected = Some(first);
+                    f.st.anchor = Some(first);
+                    f.st.selection = HashSet::from([first]);
+                    f.pointer(pos, true, modifiers);
+                    f.pointer(pos, false, modifiers);
+                    f.settle();
+                    assert_eq!(f.st.selection, HashSet::from([first, target]));
+                }
+                let pos = f.place(target, Some(true));
+                let before = f.area.expect("list").2;
+                f.pointer(pos, true, ctrl);
+                f.pointer(pos, false, ctrl);
+                f.settle();
+                assert_eq!(f.st.selection, HashSet::from([first]));
+                assert_eq!(f.area.expect("list").2, before, "deselection must not reveal the row");
+                // A sideways drag of a fully visible row keeps the viewport;
+                // the existing edge-auto-scroll tests cover actual edge drags.
+                let pos = f.place(target, None);
+                let before = f.area.expect("list").2;
+                f.pointer(pos, true, egui::Modifiers::NONE);
+                f.frame(vec![egui::Event::PointerMoved(pos + egui::vec2(45.0, 0.0))]);
+                f.pointer(pos + egui::vec2(45.0, 0.0), false, egui::Modifiers::NONE);
+                f.settle();
+                assert_eq!(f.area.expect("list").2, before, "drag is not a click-to-reveal");
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_click_reveal_keeps_double_click_on_the_same_item() {
+        for filtered in [false, true] {
+            for aurora in [false, true] {
+                for top in [false, true] {
+                    let mut f = ClickScroll::new(filtered, aurora, 1.46);
+                    let id = Uuid::from_u128(220);
+                    let pos = f.place(id, Some(top));
+                    f.pointer(pos, true, egui::Modifiers::NONE);
+                    f.pointer(pos, false, egui::Modifiers::NONE);
+                    f.frame(vec![]);
+                    assert!(f.row(id).contains(pos), "reveal keeps the next click over the same row");
+                    f.pointer(pos, true, egui::Modifiers::NONE);
+                    f.pointer(pos, false, egui::Modifiers::NONE);
+                    assert_eq!(f.st.selected, Some(id));
+                    assert!(
+                        matches!(f.actions.as_slice(), [InvAction::Appearance(crate::world::appearance::Action::WearItem { item, .. })] if *item == id)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

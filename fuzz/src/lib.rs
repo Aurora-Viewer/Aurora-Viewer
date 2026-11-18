@@ -81,6 +81,11 @@ pub const TARGETS: &[Target] = &[
         run: misc,
         seeds: misc_seeds,
     },
+    Target {
+        name: "editor",
+        run: aurora_editor_sync::fuzz_input,
+        seeds: editor_seeds,
+    },
 ];
 
 pub fn target(name: &str) -> Option<&'static Target> {
@@ -660,6 +665,23 @@ fn misc_seeds() -> Vec<Vec<u8>> {
     ]
 }
 
+// ---- the external script editor sync: JSON-RPC messages from a local
+// editor, an upgrade's Origin and Host, compiler lines and the chat of a
+// followed script
+
+fn editor_seeds() -> Vec<Vec<u8>> {
+    vec![
+        br#"{"jsonrpc":"2.0","id":1,"method":"script.subscribe","params":{"script_id":"0123456789abcdef0123456789abcdef"}}"#.to_vec(),
+        br#"{"jsonrpc":"2.0","id":"rpc_1000","result":{"challenge_response":"00000000-0000-0000-0000-000000000001","client_name":"editor","languages":["lsl","luau"],"features":{"live_sync":true}}}"#.to_vec(),
+        br#"{"jsonrpc":"2.0","method":"language.syntax.get","params":{"filename":"lua_keywords.xml","as_json":true}}"#.to_vec(),
+        b"
+127.0.0.1:9020
+".to_vec(),
+        b"(12, 4) : ERROR : Syntax error".to_vec(),
+        b"Box [script:door] Script run-time error (3, 7) : ERROR : Math Error Stack: state_entry".to_vec(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +750,13 @@ mod tests {
         aurora_assets::wearable::Wearable::parse(&misc[2]).expect("wearable");
         aurora_assets::gesture::Gesture::decode(&misc[3]).expect("gesture");
         aurora_assets::parse_llm(&misc[4]).expect("llm");
+        let editor = editor_seeds();
+        for s in &editor[..3] {
+            let text = std::str::from_utf8(s).expect("utf-8");
+            assert!(
+                matches!(aurora_editor_sync::rpc::decode(text), aurora_editor_sync::rpc::Decoded::Message(_)),
+                "editor seed"
+            );
+        }
     }
 }

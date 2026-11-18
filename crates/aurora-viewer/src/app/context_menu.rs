@@ -125,11 +125,23 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // the animation editor's mirror of us is no one: no menu on it nor
+        // on what it wears
+        if picked
+            .and_then(|idx| ui::context::wearer(&self.world, idx).or_else(|| self.world.objects.get(idx).map(|o| o.full_id)))
+            .is_some_and(|id| self.world.is_mirror(&id))
+        {
+            return;
+        }
         // LLToolPie::handleRightClickPick shows no menu on what @interact or
-        // @fartouch keeps out of the selection
+        // @fartouch keeps out of the selection, with UISndInvalidOp on an
+        // avatar or an object (not on the land)
         if !picked.map_or(self.world.rlva_can_designate_land(), |idx| {
             self.world.rlva_can_designate(idx, Some(point))
         }) {
+            if picked.is_some() {
+                self.world.ui_sounds.push(UiSound::InvalidOp);
+            }
             return;
         }
         if let Some(source) = picked
