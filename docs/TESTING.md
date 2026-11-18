@@ -6662,8 +6662,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `silhouette`, `self` and `head` exercise forced world textures, distant
   avatar silhouettes and own-avatar visibility. `textures` substitutes the
   demo gradient. `textures-grey` (`@setcam_textures=n`, the same as
-  `@camtextures=n`) paints world surfaces and particles the flat grey of
-  `IMG_DEFAULT` and leaves the avatar and its attachments textured (#3365).
+  `@camtextures=n`) paints world surfaces, particles and the region's ground
+  the flat grey of `IMG_DEFAULT` and leaves the avatar and its attachments
+  textured (#3365).
   Releasing (`textures-grey-released`) restores the surfaces. An explicit
   texture id, and the restore on a grid, still need a grid: there is no
   fake region for that. `resolution` sets the real 3D resolution divisor
