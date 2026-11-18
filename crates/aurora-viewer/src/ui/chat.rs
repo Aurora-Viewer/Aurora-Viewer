@@ -1382,7 +1382,7 @@ pub(crate) fn text_with_links(
                         ui,
                         p,
                         world,
-                        scope,
+                        wording.mentions,
                         id,
                         &world.rlva_filter_text_in(wording, &label),
                         size,
@@ -1395,9 +1395,11 @@ pub(crate) fn text_with_links(
                     let label = app_links::label(world, &mut wanted, u, &link);
                     app_links::link(ui, p, world, u, &link, &label, size);
                 }
-                // a dialog has no mention highlight: the name, as a link (a
-                // mention is rewritten, a bare avatar link shows the name of
-                // its resident: LLUrlEntryAgent has no RLVa test)
+                // a dialog has no mention highlight: the name, as a link. A
+                // bare avatar link shows the name of its resident
+                // (LLUrlEntryAgent has no RLVa test); a mention is rewritten
+                // where RlvUtil::filterMentions runs, so not in a script's
+                // prompt (`TextScope::mentions`)
                 Seg::Agent(id) => {
                     wanted.insert(id);
                     agent_link(
@@ -1413,7 +1415,17 @@ pub(crate) fn text_with_links(
                 }
                 Seg::Mention(id) => {
                     wanted.insert(id);
-                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, false.into());
+                    let names = wording.mentions;
+                    agent_link(
+                        ui,
+                        p,
+                        world,
+                        names,
+                        id,
+                        &format!("@{}", world.social.name_in(names, &id)),
+                        size,
+                        false.into(),
+                    );
                 }
             }
         }
@@ -1854,10 +1866,12 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 /// A message as plain text, for a system notification or a short preview:
 /// agents by their name (a mention with its "@"), places by their label,
 /// app commands by `app` (their label, `app_links::label`), labelled links
-/// by their text, web links as written.
+/// by their text, web links as written. `name` is told whether the link is
+/// a mention: RLVa rewrites a mention where it leaves a bare avatar link
+/// alone (`TextScope::mentions`).
 pub(crate) fn plain_text(
     text: &str,
-    name: impl Fn(&uuid::Uuid) -> Option<String>,
+    name: impl Fn(&uuid::Uuid, bool) -> Option<String>,
     app: impl Fn(&str, &crate::slapp::AppLink) -> String,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1868,9 +1882,9 @@ pub(crate) fn plain_text(
             Seg::Place(_, place) => out.push_str(&place.label),
             Seg::Mention(id) => {
                 out.push('@');
-                out.push_str(&name(&id).unwrap_or_else(|| id.to_string()));
+                out.push_str(&name(&id, true).unwrap_or_else(|| id.to_string()));
             }
-            Seg::Agent(id) => out.push_str(&name(&id).unwrap_or_else(|| id.to_string())),
+            Seg::Agent(id) => out.push_str(&name(&id, false).unwrap_or_else(|| id.to_string())),
             Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
@@ -1894,9 +1908,13 @@ pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) 
 /// for the text of a line.
 pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text: &str) -> String {
     let scope = scope.into();
-    let name = |id: &uuid::Uuid| {
+    // as the text is drawn (`chat_text_marked`): a bare avatar link names
+    // its resident (LLUrlEntryAgent has no RLVa test), a mention follows
+    // `TextScope::mentions`
+    let name = |id: &uuid::Uuid, mention: bool| {
         app_links::want_agents([*id]);
-        Some(world.social.name_in(scope.names, id))
+        let names = if mention { scope.mentions } else { NameScope::Roster };
+        Some(world.social.name_in(names, id))
     };
     let text = plain_text(text, name, |u, link| app_label(world, u, link));
     world.rlva_filter_text_in(scope, &text).into_owned()
@@ -2434,8 +2452,9 @@ pub(crate) fn chat_text_marked(
     // and filterLocation run on the raw text of an object's line; `wording`
     // is as written for a resident's). A bare avatar link shows the name of
     // its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
-    // test); a `/mention` link is rewritten (RlvUtil::filterMentions).
-    let (scope, wording) = (scope.names, scope);
+    // test); a `/mention` link is rewritten where RlvUtil::filterMentions
+    // runs (`TextScope::mentions`).
+    let wording = scope;
     let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
     let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
@@ -2457,7 +2476,7 @@ pub(crate) fn chat_text_marked(
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &hide(&label), size, emphasis),
                     Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &hide(&label), size, emphasis),
-                    Seg::Mention(id) => agent_link(ui, p, world, scope, id, &hide(&label), size, emphasis),
+                    Seg::Mention(id) => agent_link(ui, p, world, wording.mentions, id, &hide(&label), size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
                             ui,
@@ -2477,6 +2496,7 @@ pub(crate) fn chat_text_marked(
                     want_names.insert(id);
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
+                    let scope = wording.mentions;
                     let label = format!(" @{} ", world.social.name_in(scope, &id));
                     let r = action_marker::link(
                         ui,
@@ -2727,6 +2747,7 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 /// The text a line shows, as a copy of it gives it: links as written,
 /// places, names and mentions as shown.
 fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, name: &str) -> String {
+    let wording = line.kind.text_in(scope);
     let body = match line.kind {
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => line.text.clone(),
         _ => line_body(line, name).0,
@@ -2737,12 +2758,13 @@ fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, na
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
             Seg::Labelled(label, _) => label.into_owned(),
             Seg::Place(_, place) => place.label,
-            Seg::Mention(id) => format!(" @{} ", world.social.name_in(scope, &id)),
-            Seg::Agent(id) => world.social.name_in(scope, &id),
+            Seg::Mention(id) => format!(" @{} ", world.social.name_in(wording.mentions, &id)),
+            // a bare avatar link names its resident, as it is drawn
+            Seg::Agent(id) => world.social.name_in(NameScope::Roster, &id),
             Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
         .collect();
-    world.rlva_filter_text_in(line.kind.text_in(scope), &text).into_owned()
+    world.rlva_filter_text_in(wording, &text).into_owned()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -6011,7 +6033,7 @@ mod tests {
         assert!(mentions(&t, &me));
         assert!(!mentions(&t, &jane), "an about link is not a mention");
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
-        let name = |id: &uuid::Uuid| (*id == me).then(|| "Aurora Demo".to_owned());
+        let name = |id: &uuid::Uuid, _: bool| (*id == me).then(|| "Aurora Demo".to_owned());
         let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
         assert_eq!(
             plain_text(&t, name, app),
