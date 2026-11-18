@@ -30,7 +30,8 @@ pub fn content(
     progress: Option<(&str, f32)>,
 ) -> bool {
     let grids_open = crate::ui::grids::is_open(ui.ctx());
-    let enter = !grids_open && !egui::Popup::is_any_open(ui.ctx()) && widgets::enter_pressed(ui);
+    // the keys typed in the sign-up page reach egui too: its Enter is not ours
+    let enter = !grids_open && !form.signup_open && !egui::Popup::is_any_open(ui.ctx()) && widgets::enter_pressed(ui);
     let can = ui
         .add_enabled_ui(!form.busy && !grids_open, |ui| {
             ui.label(

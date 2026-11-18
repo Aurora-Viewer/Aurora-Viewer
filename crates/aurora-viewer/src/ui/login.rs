@@ -56,6 +56,9 @@ pub struct LoginForm {
     /// "Create an account" was pressed: the page the app opens
     /// (`ui/signup.rs`).
     pub create_account: Option<super::signup::SignupPage>,
+    /// The sign-up window is open over the form: the keys typed in its page
+    /// reach egui too, so the form's Enter and arrow shortcuts wait.
+    pub signup_open: bool,
     pub mfa_token: String,
     pub show_mfa: bool,
     pub tos_message: Option<String>,
@@ -985,8 +988,10 @@ pub fn show(
                     if hot {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    let enter =
-                        (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    // the keys typed in the sign-up page reach egui too
+                    let enter = !form.signup_open
+                        && (user.lost_focus() || pass.lost_focus() || resp.has_focus())
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (resp.clicked() || enter) && can && enabled {
                         action = LoginAction::Login;
                     }
@@ -1652,5 +1657,43 @@ mod tests {
         assert!(!has_mask(&draw(REMEMBERED_PASSWORD_MASK, vec![])));
         assert_eq!(password, "replacement");
         assert!(!show_password);
+    }
+    #[test]
+    fn the_new_account_from_the_sign_up_page_fills_the_form() {
+        // the first account: the form shown fills in place
+        let mut settings = Settings::default();
+        let mut form = LoginForm {
+            accounts_loaded: true,
+            error: Some("old".into()),
+            mfa_token: "123456".into(),
+            ..Default::default()
+        };
+        form.stored_for = Some((settings.login_uri(), "someone else".into()));
+        fill_from_signup(&mut settings, &mut form, "synthetic.resident".into(), "synthetic-input".into());
+        assert_eq!(settings.username, "synthetic.resident");
+        assert_eq!(form.password, "synthetic-input");
+        assert!(settings.remember_username && settings.remember_password);
+        assert!(!form.adding);
+        assert_eq!(form.error, None);
+        assert!(form.mfa_token.is_empty());
+        // the remembered password of another name no longer clears it
+        assert_eq!(form.stored_for, Some((settings.login_uri(), "synthetic.resident".into())));
+        assert_eq!(form.stored, None);
+        // on the cards: the "Add an account" form opens for it
+        let mut settings = Settings::default();
+        settings.username = "saved.resident".into();
+        let mut form = LoginForm {
+            accounts_loaded: true,
+            accounts: vec![crate::login_accounts::Account::from_settings(&settings, false, None)],
+            ..Default::default()
+        };
+        fill_from_signup(&mut settings, &mut form, "synthetic.resident".into(), "synthetic-input".into());
+        assert!(form.adding && form.editing);
+        assert_eq!(form.add_return, Some((settings.login_uri(), "saved.resident".into())));
+        assert_eq!(
+            (settings.username.as_str(), form.password.as_str()),
+            ("synthetic.resident", "synthetic-input")
+        );
+        assert!(settings.remember_password);
     }
 }

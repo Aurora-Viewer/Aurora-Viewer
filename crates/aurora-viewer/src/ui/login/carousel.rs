@@ -173,6 +173,7 @@ pub fn show(
     let mut arrow_direction = 0;
     let mut centred = None;
     let enter_shortcut = !grids_open
+        && !form.signup_open
         && !egui::Popup::is_any_open(&ctx)
         && ctx.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
     let available_height = (screen.height() - if first_account { 84.0 } else { 148.0 }).max(100.0);
@@ -636,6 +637,7 @@ pub fn show(
         }
     }
     if !grids_open
+        && !form.signup_open
         && !form.busy
         && !form.editing
         && !form.managing
