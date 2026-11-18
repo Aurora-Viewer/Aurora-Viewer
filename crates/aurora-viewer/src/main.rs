@@ -210,6 +210,8 @@ fn main() -> anyhow::Result<()> {
     // Preferences › Network › Proxy: before the first connection of the
     // viewer (LLStartUp::startLLProxy, at startup)
     proxy::install(&settings::Settings::load().proxy);
+    // the interface language file, read with the settings before the log
+    language_file::report();
     splash::settings();
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers

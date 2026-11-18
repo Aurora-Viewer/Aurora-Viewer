@@ -40,7 +40,9 @@ pub fn chosen(enabled: bool, file: &str) -> Option<&str> {
 }
 
 /// Reads and installs the chosen file, once per process; the later calls
-/// change nothing (the file applies at the next launch).
+/// change nothing (the file applies at the next launch). The first read
+/// comes before the log starts (crash recovery loads the settings): `report`
+/// writes its outcome once the log is there.
 pub fn start(file: Option<&str>) {
     let Some(file) = file else {
         return;
@@ -48,19 +50,26 @@ pub fn start(file: Option<&str>) {
     LOADED.get_or_init(|| {
         let path = PathBuf::from(file);
         let result = read(&path);
-        let name = display_name(&path);
-        match &result {
-            Ok(info) if info.errors > 0 => log::warn!(
-                "Interface language file {name}: {} messages ({}), {} entries not readable, left out",
-                info.messages,
-                info.code,
-                info.errors
-            ),
-            Ok(info) => log::info!("Interface language file {name}: {} messages ({})", info.messages, info.code),
-            Err(failure) => log::warn!("Interface language file {name} not used: {failure:?}"),
-        }
         Loaded { path, result }
     });
+}
+
+/// Writes what came of the file read at startup to the log, by its name.
+pub fn report() {
+    let Some(loaded) = loaded() else {
+        return;
+    };
+    let name = display_name(&loaded.path);
+    match &loaded.result {
+        Ok(info) if info.errors > 0 => log::warn!(
+            "Interface language file {name}: {} messages ({}), {} entries not readable, left out",
+            info.messages,
+            info.code,
+            info.errors
+        ),
+        Ok(info) => log::info!("Interface language file {name}: {} messages ({})", info.messages, info.code),
+        Err(failure) => log::warn!("Interface language file {name} not used: {failure:?}"),
+    }
 }
 
 fn read(path: &Path) -> Result<UserCatalog, Failure> {
