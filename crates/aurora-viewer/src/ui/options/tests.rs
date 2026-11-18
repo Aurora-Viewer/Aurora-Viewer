@@ -248,6 +248,7 @@ const BEFORE: &[&str] = &[
     "log_im",
     "log_nearby",
     "log_show_history",
+    "chat_service_history",
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",

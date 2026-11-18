@@ -392,6 +392,29 @@ impl Kind {
         }
     }
 
+    /// A script's prompt: its dialog or text box, its permission question,
+    /// its link prompt. The Legacy Viewer has no RLVa test on what they
+    /// show (process_script_dialog, process_script_question and
+    /// process_load_url, indra/newview/llviewermessage.cpp): the message,
+    /// the object's name and its owner's name stay as the simulator sent
+    /// them under `@shownames` and `@showloc`. A click on the owner's name
+    /// still follows `names`: the Legacy Viewer writes it as plain text.
+    pub fn as_received(self) -> bool {
+        matches!(self, Kind::Script | Kind::Permissions | Kind::Url)
+    }
+
+    /// The body of a notice of this kind under `@shownames` and `@showloc`
+    /// (`names::TextScope`): shown as written when a resident typed it (the
+    /// card of a message) or a script sent it (`as_received`), rewritten for
+    /// the other kinds.
+    pub fn text(self) -> super::names::TextScope {
+        if self.as_received() || self == Kind::Message {
+            super::names::TextScope::verbatim(self.names())
+        } else {
+            self.names().into()
+        }
+    }
+
     pub fn look(self) -> Look {
         match self {
             Kind::Info | Kind::Presence => Look::Info,

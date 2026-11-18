@@ -1219,6 +1219,10 @@ pub struct Settings {
     pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
+    /// The Chat Service's history of the private conversations, fetched
+    /// from the region and shown with the transcripts (the LL viewer's
+    /// ChatServiceEnabled, on). Read at login only.
+    pub chat_service_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
     /// Import the Legacy Viewer's transcripts at each login. On by default
@@ -2558,6 +2562,7 @@ impl Default for Settings {
             conversation_log: Default::default(),
             reopen_ims: false,
             log_show_history: true,
+            chat_service_history: true,
             log_dated_names: false,
             log_import_at_login: true,
             log_legacy_layout: false,
