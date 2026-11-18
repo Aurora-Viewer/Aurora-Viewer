@@ -4,6 +4,10 @@ Every release of Aurora Viewer comes with a Linux build: an archive to
 extract and run, with nothing to install as root. It is tested on Arch Linux
 and CachyOS; other recent distributions work the same way.
 
+The same viewer also comes as a **Flatpak** bundle, which needs no system
+package at all: see [Flatpak](#flatpak) below. The steps 1 to 3 are for the
+archive.
+
 ## Requirements
 
 - A 64-bit PC (x86-64) and a graphics card with a **Vulkan** driver.
@@ -152,6 +156,59 @@ links, Preferences names that program instead.
 space or a symbol such as `'`, `&` or `(`: it then opens the link in
 another viewer. Keep the viewer's folder path plain, or open links through
 your desktop (GNOME, KDE and other GLib desktops read such paths).
+
+## Flatpak
+
+Each release also has `Aurora-Viewer-vX.Y.Z-linux-x64.flatpak`: the viewer
+of the archive, in a sandbox, with the libraries of the Freedesktop runtime.
+Nothing else needs installing (GStreamer, the browser's libraries and the
+Vulkan loader come with the runtime; the graphics driver comes from the
+system, as for any Flatpak). Download it and its `.sha256` file, then:
+
+```bash
+sha256sum -c Aurora-Viewer-vX.Y.Z-linux-x64.flatpak.sha256
+flatpak install --user Aurora-Viewer-vX.Y.Z-linux-x64.flatpak
+flatpak run org.aurora_viewer.AuroraViewer
+```
+
+The first install also downloads the Freedesktop runtime from Flathub. The
+viewer then shows in your desktop's menu, with its icon. To update, install
+the new version's bundle the same way: the viewer's update window says so.
+To remove it: `flatpak uninstall org.aurora_viewer.AuroraViewer` (add
+`--delete-data` to remove your settings and cache too).
+
+What changes from the archive:
+
+- **Your files** live under `~/.var/app/org.aurora_viewer.AuroraViewer/`
+  (`config/auroraviewer`, `cache/auroraviewer`, `data/auroraviewer`), not
+  in the folders of the table above. To keep the settings of the archive,
+  copy `~/.config/auroraviewer` to
+  `~/.var/app/org.aurora_viewer.AuroraViewer/config/` before the first
+  start.
+- **Second Life links** are declared by the Flatpak's desktop entry, so
+  Preferences does not show the "Open SLURL and Hypergrid links in Aurora"
+  choice. Your desktop's default applications settings choose which viewer
+  opens them.
+- **Photos** are saved to your pictures folder, the only folder the sandbox
+  can write without asking; the file dialogs go through the desktop portal
+  and reach any folder you pick.
+- **Devices**: the graphics card, gamepads, the microphone and the sound are
+  allowed. A SpaceMouse reads `/dev/hidraw*`, which needs
+  `flatpak override --user --device=all org.aurora_viewer.AuroraViewer`.
+- **Not in the Flatpak**: VR (the OpenXR runtime lives outside the sandbox)
+  and the Blender bridge (the sandbox cannot find or start the system's
+  Blender). The external script editor is not tested there yet.
+
+To build the bundle yourself, from a packaged viewer (the release archive,
+or the folder `scripts/package.ps1` makes):
+
+```bash
+scripts/package-flatpak.sh Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz vX.Y.Z aurora.flatpak
+```
+
+It needs `flatpak` and `flatpak-builder`, and installs the runtime and SDK
+of `packaging/flatpak/org.aurora_viewer.AuroraViewer.yml` for your user if
+they are missing.
 
 ## Not on Linux yet
 

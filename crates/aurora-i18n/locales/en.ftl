@@ -9975,6 +9975,7 @@ update-error-package = The package is incomplete or invalid. The current install
 update-error-unsupported = This release cannot be installed automatically from this folder. Download it from its page and extract it into a dedicated folder.
 update-error-drive-root = Aurora cannot update itself in a folder at the root of a drive, like E:\Aurora Viewer. Move the folder one level down, for example to E:\Games\Aurora Viewer, start Aurora from there, then update.
 update-error-unsupported-macos = On macOS, a new version is installed by hand. Download it from its page, then replace Aurora Viewer in your Applications folder with the new one.
+update-error-unsupported-flatpak = This Aurora runs as a Flatpak. Download the new .flatpak file from its page, then open it with your software center or install it with “flatpak install --user”. Your settings are kept.
 update-error-startup = The update helper could not start. The current installation is preserved.
 update-rollback = The new version did not start correctly. The previous installation was restored.
 update-rollback-install = The new version could not be installed. The previous installation was kept.

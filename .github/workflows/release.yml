@@ -3,7 +3,7 @@ name: Release
 # A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
 # viewer and publishes the release with notes grouped by PR label: the
 # Windows zip (the one the updater installs) and its crash symbols, then the
-# Linux archive and the macOS application. A pull request that changes these
+# Linux archive, its Flatpak bundle and the macOS application. A pull request that changes these
 # release files gets a dry run of the three jobs (the version Git describes,
 # the symbols, the Linux archive and the macOS application kept as the run's
 # artifacts, nothing published): no agent can try the Linux or macOS build
@@ -29,6 +29,8 @@ on:
       - .github/workflows/release.yml
       - scripts/package.ps1
       - packaging/linux/**
+      - packaging/flatpak/**
+      - scripts/package-flatpak.sh
       - packaging/macos/**
       - scripts/package-macos.ps1
       - assets/branding/aurora.icns
@@ -207,6 +209,19 @@ jobs:
           $hash = (Get-FileHash -LiteralPath "$dir.tar.gz" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $dir.tar.gz" | Set-Content -LiteralPath "$dir.tar.gz.sha256" -Encoding utf8NoBOM
           "ARCHIVE=$dir.tar.gz" >> $env:GITHUB_ENV
+      # The Flatpak bundle: the same viewer, repackaged with its desktop
+      # entry, AppStream data and sandbox permissions (packaging/flatpak/).
+      # The version is the binary's own, so a dry run gets the one Git
+      # describes.
+      - name: Flatpak tools
+        run: sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils
+      - name: Flatpak bundle
+        run: |
+          version=$(target/release/aurora-viewer --version | sed 's/^Aurora Viewer //')
+          bundle="Aurora-Viewer-$TAG-linux-x64.flatpak"
+          ./scripts/package-flatpak.sh "$ARCHIVE" "$version" "$bundle"
+          sha256sum "$bundle" > "$bundle.sha256"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Release files
         if: env.TAG != 'dry-run'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -215,6 +230,8 @@ jobs:
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
+            ${{ env.BUNDLE }}
+            ${{ env.BUNDLE }}.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -226,6 +243,8 @@ jobs:
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
+            ${{ env.BUNDLE }}
+            ${{ env.BUNDLE }}.sha256
           compression-level: 0
 
   publish-linux:
@@ -246,7 +265,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           archive="Aurora-Viewer-$TAG-linux-x64.tar.gz"
-          gh release upload "$TAG" "$archive" "$archive.sha256"
+          bundle="Aurora-Viewer-$TAG-linux-x64.flatpak"
+          gh release upload "$TAG" "$archive" "$archive.sha256" "$bundle" "$bundle.sha256"
 
   # The macOS application (Apple Silicon) joins the release like the Linux
   # archive: "Aurora Viewer.app" in a disk image, next to a link to
