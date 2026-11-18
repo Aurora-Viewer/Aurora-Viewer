@@ -13486,9 +13486,10 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::None;
             full.platform_output.cursor_image = None;
         }
-        if self.cursor_hold.held() {
-            // the camera holds the hidden cursor: a cursor change from egui
-            // would show it again in the middle of the drag
+        if self.cursor_hold.hidden() {
+            // the camera holds the hidden cursor (or waits to show it at its
+            // new place, on Wayland): a cursor change from egui would show
+            // it again in the middle of the drag, or where it was pressed
             full.platform_output.cursor_icon = egui::CursorIcon::None;
             full.platform_output.cursor_image = None;
         }
@@ -25119,6 +25120,7 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = (position.x as f32, position.y as f32);
                 self.recenter_mouselook_cursor();
+                self.show_released_cursor(Instant::now());
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();

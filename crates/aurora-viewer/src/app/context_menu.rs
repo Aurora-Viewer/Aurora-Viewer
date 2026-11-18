@@ -208,14 +208,26 @@ impl App {
         }
         let ppp = self.egui_ctx.pixels_per_point().max(0.1);
         self.world.ui_sounds.push(UiSound::PieMenuAppear);
+        let mut pos = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        let held = self.settings.use_pie_menu && self.settings.pie_menu_on_press;
+        if held {
+            // PieMenu::show (indra/newview/piemenu.cpp): a pie moved inside
+            // the window takes the cursor to its centre, so that the release
+            // does not land on a slice and the next move starts from the hub
+            let center = ui::context::pie_center(self.egui_ctx.content_rect(), pos);
+            if (center - pos).length() > 0.5 {
+                self.warp_cursor((center.x * ppp, center.y * ppp));
+                pos = center;
+            }
+        }
         self.context_menu = Some(ui::context::ContextMenu {
-            pos: egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp),
+            pos,
             point,
             target,
             pie_path: Vec::new(),
             pie_input_frame: None,
             // the pie drops it on its first frame if the press is over
-            held: self.settings.use_pie_menu && self.settings.pie_menu_on_press,
+            held,
         });
     }
 

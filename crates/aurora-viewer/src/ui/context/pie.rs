@@ -2,7 +2,9 @@
 //! (Firestorm indra/newview/piemenu.cpp, originally LGPL 2.1) and menu_pie_*.xml.
 //! Eight fixed directions, clockwise screen coordinates reversed to match SL,
 //! disabled slices, click-through submenus. Aurora keeps its extra actions in
-//! "More" and adds a center back button; it does not warp the system pointer.
+//! "More" and adds a center back button. The system pointer is moved to the
+//! centre only for a pie opened on the press that an edge of the window
+//! pushed aside (`center`, app/cursor_hold.rs `warp_cursor`).
 //! At the user's request, right-click goes back instead of selecting a slice.
 
 use super::entries::{Entry, Kind};
@@ -178,6 +180,12 @@ fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
         pos.y.clamp(screen.top() + radius, screen.bottom() - radius),
     );
     (center, radius)
+}
+
+/// Where the disc of a pie asked at `pos` is drawn: moved inside `screen`
+/// near its edges (PieMenu::show).
+pub fn center(screen: Rect, pos: Pos2) -> Pos2 {
+    geometry(screen, pos).0
 }
 
 fn sector(offset: Vec2, inner: f32, outer: f32) -> Option<usize> {
@@ -592,6 +600,17 @@ mod tests {
         click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Secondary);
         assert!(menu.is_none());
         assert!(super::super::take_requests(&ctx).is_empty());
+    }
+
+    #[test]
+    fn a_pie_asked_near_an_edge_is_moved_inside_the_window() {
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
+        // away from the edges it opens under the pointer: nothing to move
+        assert_eq!(center(screen, egui::pos2(400.0, 400.0)), egui::pos2(400.0, 400.0));
+        // near them the disc keeps its whole radius inside (PieMenu::show);
+        // the pointer is taken to this centre (app/cursor_hold.rs)
+        assert_eq!(center(screen, egui::pos2(5.0, 400.0)), egui::pos2(OUTER, 400.0));
+        assert_eq!(center(screen, egui::pos2(1275.0, 890.0)), egui::pos2(1280.0 - OUTER, 900.0 - OUTER));
     }
 
     #[test]
