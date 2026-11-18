@@ -187,11 +187,83 @@ fn button_input_name(index: usize) -> String {
     name.to_owned()
 }
 
-/// The axis inputs an action may take, as saved: the four stick axes, both
-/// triggers as one, none (axis_input_selector).
 /// The width of a live value in the Device Options rows.
 const VALUE_W: f32 = 80.0;
 
+/// The pictogram of a canonical input (promptFontGlyph,
+/// llpanelpreferencegamecontrol.cpp): PromptFont's codepoints, its generic
+/// gamepad, D-pad and stick sets first, its Xbox set for the shoulders and
+/// triggers, which have no generic one. `None` for the inputs without one
+/// (buttons 21 to 31, none): they keep their name alone.
+fn glyph(input: &str) -> Option<&'static str> {
+    Some(match input {
+        "BUTTON_SOUTH" => "\u{21A7}",
+        "BUTTON_EAST" => "\u{21A6}",
+        "BUTTON_WEST" => "\u{21A4}",
+        "BUTTON_NORTH" => "\u{21A5}",
+        "BUTTON_DPAD_UP" => "\u{219F}",
+        "BUTTON_DPAD_DOWN" => "\u{21A1}",
+        "BUTTON_DPAD_LEFT" => "\u{219E}",
+        "BUTTON_DPAD_RIGHT" => "\u{21A0}",
+        "BUTTON_LEFT_SHOULDER" => "\u{2198}",
+        "BUTTON_RIGHT_SHOULDER" => "\u{2199}",
+        "BUTTON_LEFT_STICK" => "\u{21BA}",
+        "BUTTON_RIGHT_STICK" => "\u{21BB}",
+        "BUTTON_SELECT" => "\u{21F7}",
+        "BUTTON_HOME" => "\u{21F9}",
+        "BUTTON_START" => "\u{21F8}",
+        "BUTTON_MISC1" => "\u{2212}",
+        "BUTTON_PADDLE1" => "\u{2277}",
+        "BUTTON_PADDLE2" => "\u{2276}",
+        "BUTTON_PADDLE3" => "\u{2279}",
+        "BUTTON_PADDLE4" => "\u{2278}",
+        "BUTTON_TOUCHPAD" => "\u{21E7}",
+        "AXIS_LEFTX" => "\u{21C4}",
+        "AXIS_LEFTY" => "\u{21C5}",
+        "AXIS_RIGHTX" => "\u{21C6}",
+        "AXIS_RIGHTY" => "\u{21F5}",
+        "AXIS_LEFT_TRIGGER" => "\u{2196}",
+        "AXIS_RIGHT_TRIGGER" => "\u{2197}",
+        // both triggers side by side
+        AXIS_TRIGGERS => "\u{2196}\u{2197}",
+        _ => return None,
+    })
+}
+
+/// The pictograms are drawn larger than the text, as the LL viewer's
+/// "Huge" cells, so that they read clearly.
+const GLYPH_SIZE: f32 = 18.0;
+
+/// An input's pictogram then its name, in the text colour of the widget
+/// that shows it (a combo, an item, a label), or in `color`.
+fn with_glyph(ui: &egui::Ui, input: &str, name: &str, color: Option<egui::Color32>) -> egui::WidgetText {
+    let mut job = egui::text::LayoutJob::default();
+    let paint = |text: egui::RichText| match color {
+        Some(c) => text.color(c),
+        None => text,
+    };
+    let append = |job: &mut egui::text::LayoutJob, text: egui::RichText| {
+        text.append_to(job, ui.style(), egui::FontSelection::Default, egui::Align::Center);
+    };
+    if let (Some(g), Some(family)) = (glyph(input), crate::ui::fonts::game_control(ui.ctx())) {
+        append(&mut job, paint(egui::RichText::new(g).family(family).size(GLYPH_SIZE)));
+        append(&mut job, egui::RichText::new(" "));
+    }
+    append(&mut job, paint(egui::RichText::new(name)));
+    job.into()
+}
+
+/// The saved name of an axis output of the Device Mappings.
+fn output_input(code: u8) -> &'static str {
+    match code {
+        AXIS_OUTPUT_TRIGGER_PAIR => AXIS_TRIGGERS,
+        AXIS_OUTPUT_NONE => AXIS_NONE,
+        n => AXIS_NAMES.get(usize::from(n)).copied().unwrap_or(AXIS_NONE),
+    }
+}
+
+/// The axis inputs an action may take, as saved: the four stick axes, both
+/// triggers as one, none (axis_input_selector).
 const AXIS_INPUTS: [(&str, usize); 6] = [
     ("AXIS_LEFTX", 0),
     ("AXIS_LEFTY", 1),
@@ -408,13 +480,17 @@ fn binding_row(cx: &mut Cx, mode: Mode, axis: bool, action: Action) {
                 Some(input) => button_input_label(input),
                 None => tr!("common-none").to_owned(),
             };
+            let text = with_glyph(ui, current.as_deref().unwrap_or(none), &text, None);
             egui::ComboBox::from_id_salt(("game-control-binding", mode as u8, axis, label))
                 .selected_text(text)
                 .show_ui(ui, |ui| {
                     if axis {
                         for (name, index) in AXIS_INPUTS {
                             if ui
-                                .selectable_label(current.as_deref().unwrap_or(AXIS_NONE) == name, axis_input_name(index))
+                                .selectable_label(
+                                    current.as_deref().unwrap_or(AXIS_NONE) == name,
+                                    with_glyph(ui, name, axis_input_name(index), None),
+                                )
                                 .clicked()
                             {
                                 chosen = Some(name.to_owned());
@@ -424,7 +500,10 @@ fn binding_row(cx: &mut Cx, mode: Mode, axis: bool, action: Action) {
                         for i in 0..NUM_BUTTONS {
                             let name = gc::button_name(i);
                             if ui
-                                .selectable_label(current.as_deref() == Some(name.as_str()), button_input_name(i))
+                                .selectable_label(
+                                    current.as_deref() == Some(name.as_str()),
+                                    with_glyph(ui, &name, &button_input_name(i), None),
+                                )
                                 .clicked()
                             {
                                 chosen = Some(name);
@@ -583,10 +662,11 @@ fn device_mappings_tab(cx: &mut Cx) {
                     let current = o.axis_map[phys];
                     let mut choice = current;
                     egui::ComboBox::from_id_salt(("game-control-axis-map", phys))
-                        .selected_text(output_name(current))
+                        .selected_text(with_glyph(ui, output_input(current), output_name(current), None))
                         .show_ui(ui, |ui| {
                             for out in AXIS_OUTPUTS {
-                                ui.selectable_value(&mut choice, out, output_name(out));
+                                let text = with_glyph(ui, output_input(out), output_name(out), None);
+                                ui.selectable_value(&mut choice, out, text);
                             }
                         });
                     if choice == current {
@@ -611,10 +691,11 @@ fn device_mappings_tab(cx: &mut Cx) {
                     let current = usize::from(o.button_map[phys]);
                     let mut choice = current;
                     egui::ComboBox::from_id_salt(("game-control-button-map", phys))
-                        .selected_text(button_input_name(current))
+                        .selected_text(with_glyph(ui, &gc::button_name(current), &button_input_name(current), None))
                         .show_ui(ui, |ui| {
                             for out in 0..NUM_BUTTONS {
-                                ui.selectable_value(&mut choice, out, button_input_name(out));
+                                let text = with_glyph(ui, &gc::button_name(out), &button_input_name(out), None);
+                                ui.selectable_value(&mut choice, out, text);
                             }
                         });
                     if choice == current {
@@ -729,8 +810,8 @@ fn device_options_tab(cx: &mut Cx) {
             ui.horizontal_wrapped(|ui| {
                 for b in 0..NUM_BUTTONS {
                     let down = live.buttons & (1 << b) != 0;
-                    let text = egui::RichText::new(button_input_name(b));
-                    ui.label(if down { text.color(p.violet).strong() } else { text.color(p.muted) });
+                    let color = if down { p.violet } else { p.muted };
+                    ui.label(with_glyph(ui, &gc::button_name(b), &button_input_name(b), Some(color)));
                 }
             });
             false
@@ -795,4 +876,36 @@ fn server_tab(cx: &mut Cx) {
         });
         false
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_named_input_has_a_pictogram_in_the_font() {
+        let face = ttf_parser::Face::parse(crate::ui::fonts::PROMPTFONT_TTF, 0).expect("embedded font");
+        let names = gc::BUTTON_NAMES.iter().chain(AXIS_NAMES.iter()).chain([&AXIS_TRIGGERS]);
+        for name in names {
+            let g = glyph(name).unwrap_or_else(|| panic!("{name} has no pictogram"));
+            assert!(g.chars().all(|c| face.glyph_index(c).is_some()), "{name}: {g:?} missing");
+        }
+        // the extra buttons and none keep their name alone
+        for name in [
+            gc::button_name(21),
+            gc::button_name(31),
+            BUTTON_NONE.to_owned(),
+            AXIS_NONE.to_owned(),
+        ] {
+            assert_eq!(glyph(&name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn axis_outputs_name_their_input() {
+        assert_eq!(output_input(0), "AXIS_LEFTX");
+        assert_eq!(output_input(5), "AXIS_RIGHT_TRIGGER");
+        assert_eq!(output_input(AXIS_OUTPUT_TRIGGER_PAIR), AXIS_TRIGGERS);
+        assert_eq!(output_input(AXIS_OUTPUT_NONE), AXIS_NONE);
+    }
 }
