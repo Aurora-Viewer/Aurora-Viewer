@@ -146,6 +146,9 @@ pub struct SignupUi {
     legal_web: WebView,
     /// When the last command sent without a click ran.
     last_unclicked: Option<Instant>,
+    /// Browsers closed this frame: their page was drawn, so its texture
+    /// lives until the next frame (`drop_retired`).
+    retired: Vec<WebView>,
 }
 
 impl SignupUi {
@@ -178,13 +181,18 @@ impl SignupUi {
         self.page = Some(SignupPage::SecondLife);
     }
 
-    /// Close the window and stop its browsers.
+    /// Close the window; its browsers stop at the next frame.
     pub fn close(&mut self) {
         self.page = None;
-        self.web = WebView::default();
         self.legal = None;
-        self.legal_web = WebView::default();
         self.last_unclicked = None;
+        let (web, legal) = (std::mem::take(&mut self.web), std::mem::take(&mut self.legal_web));
+        self.retired.extend([web, legal]);
+    }
+
+    /// Stop the browsers closed by the frame before.
+    pub fn drop_retired(&mut self) {
+        self.retired.clear();
     }
 
     pub fn is_open(&self) -> bool {
@@ -214,6 +222,7 @@ impl SignupUi {
     /// Draw the window (and the Terms window over it); returns the new
     /// account's name and password once the page sends them.
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, env: &SignupWeb) -> Option<Credentials> {
+        self.drop_retired();
         let page = self.page.clone()?;
         let screen = ctx.content_rect().size();
         let view = fit(JOIN_VIEW, screen);
@@ -270,7 +279,8 @@ impl SignupUi {
                 });
             if close_legal {
                 self.legal = None;
-                self.legal_web = WebView::default();
+                let legal = std::mem::take(&mut self.legal_web);
+                self.retired.push(legal);
             }
         }
         if close {
@@ -288,7 +298,8 @@ impl SignupUi {
                 plugin.focus(false);
             }
         }
-        self.legal_web = WebView::default();
+        let previous = std::mem::take(&mut self.legal_web);
+        self.retired.push(previous);
         self.legal_web.navigate(url);
         self.legal = Some(url);
     }

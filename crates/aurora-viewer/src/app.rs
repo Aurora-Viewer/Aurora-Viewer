@@ -3310,8 +3310,9 @@ impl App {
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
-        // the sign-up window is the login screen's: its browser stops
+        // the sign-up window is the login screen's: its browser stops now
         self.signup_ui.close();
+        self.signup_ui.drop_retired();
         // a previous session of this account may still be on the grid
         if self.hold_login() {
             return;
@@ -17249,6 +17250,7 @@ impl App {
             self.signup_ui.open(page);
         }
         if !self.signup_ui.is_open() {
+            self.signup_ui.drop_retired();
             return;
         }
         let paths = self.media.plugins(&self.settings.media).cloned();
