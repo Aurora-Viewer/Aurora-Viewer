@@ -767,6 +767,7 @@ impl App {
             }
         }
         self.clicks.held.clear();
+        self.build.drop_press();
     }
 
     /// The build tools' release of a demo script, behind its press.

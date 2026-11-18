@@ -315,7 +315,12 @@ impl Panels {
             avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
-            contacts: false,
+            // FSFloaterContacts::onOpen: torn off, Contacts is its own window
+            // (ContactsTornOff). Closing that window puts the flag back to
+            // false (contacts.rs), so the flag alone says the window was
+            // open: keeping it while always starting closed left a torn-off
+            // Contacts with no way back to its tab.
+            contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
             places: false,
@@ -425,6 +430,18 @@ mod tests {
                 "the mini-map window is open: the radar does not repeat it"
             );
         }
+    }
+
+    /// A Contacts torn off at the last exit comes back as its own window: it
+    /// is where its tab went, and the settings record it.
+    #[test]
+    fn a_torn_off_contacts_comes_back_as_its_own_window() {
+        let mut settings = Settings::default();
+        settings.contacts.torn_off = true;
+        let panels = Panels::from_settings(&settings);
+        assert!(panels.contacts, "the torn-off Contacts window is open");
+        settings.contacts.torn_off = false;
+        assert!(!Panels::from_settings(&settings).contacts);
     }
 
     /// The radar in the top left corner, the mini-map in the top right one

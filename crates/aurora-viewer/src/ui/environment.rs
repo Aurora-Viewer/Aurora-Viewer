@@ -302,8 +302,9 @@ impl EnvironmentUi {
         }
         ui.add_space(6.0);
         widgets::divider(ui, p);
-        ui.horizontal(|ui| {
-            ui.add_space(label_w + 4.0);
+        // Actions use the whole width, and wrap as the text grows (#3613).
+        // Indenting them by the labels' width clipped Aurora Weather.
+        ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(free, |ui| {
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
                     .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
@@ -327,8 +328,7 @@ impl EnvironmentUi {
             // with its own way back to the region's: it turns "Let regions
             // set the weather" on, still an opt in, by my own hand. One way,
             // as the sky's: greyed once the region's is followed (turned off
-            // again in the Weather window). On the same row: a row of its
-            // own made the Quick preferences too tall at the largest text
+            // again in the Weather window).
             let Some((open, weather)) = weather else {
                 return;
             };

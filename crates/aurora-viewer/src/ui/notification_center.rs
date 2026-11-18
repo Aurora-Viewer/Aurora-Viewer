@@ -750,13 +750,24 @@ pub(super) fn history_list(
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
             // the kinds that name their resident keep its name under
-            // `@shownames` (`Kind::names`)
+            // `@shownames` (`Kind::names`), and the bodies shown as written
+            // stay as written (`Kind::text`); a script's prompt stays as
+            // received, its owner's name included (`Kind::as_received`)
+            let kind = Kind::of_look(e.look);
+            let text = kind.text();
             let privacy = if world.rlva.enabled() {
-                world.rlva_filter_in(Kind::of_look(e.look).names())
+                world.rlva_filter_in(text.names)
             } else {
                 privacy
             };
-            privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
+            if !kind.as_received() {
+                privacy.redact_notice(
+                    &world.social.avatar_names,
+                    &mut e.title,
+                    text.rewritten.then_some(&mut e.body),
+                    &mut e.name_links,
+                );
+            }
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();
@@ -916,7 +927,7 @@ fn presence_toasts(
                                     super::presence::Status::Offline
                                 };
                                 super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false);
+                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false, n.kind.names());
                             });
                         })
                         .response
@@ -935,7 +946,7 @@ fn presence_toasts(
                     if click.clicked()
                         && let Some(target) = name_hover
                     {
-                        cards::text::open(ctx, target);
+                        cards::text::open(ctx, n.kind.names(), target);
                     }
                     continue;
                 }
@@ -1039,12 +1050,22 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                         let time = hhmm(e.time);
                         let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
+                            cards::text::show(
+                                ui,
+                                p,
+                                &e.title,
+                                &e.name_links,
+                                12.5,
+                                p.ink,
+                                true,
+                                true,
+                                Kind::of_look(e.look).names(),
+                            );
                         });
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        super::chat::text_with_links(ui, p, world, Kind::of_look(e.look).names(), &e.body, &e.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, Kind::of_look(e.look).text(), &e.body, &e.name_links, 12.0, p.muted);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()
