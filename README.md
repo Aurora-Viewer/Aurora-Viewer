@@ -111,36 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.10 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.11 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>The Director</h3>
-      Film in the world: keep camera views as keyframes on a timeline,
-      play them back as one smooth shot with the world alone, and record
-      it to a video file with your own ffmpeg.
+      <h3>A complete Director</h3>
+      Ready-made shots, renders up to 4K, films with their sound, montages
+      of several tracks, the photo looks and LUTs, and move and turn
+      handles on the cameras. No ffmpeg yet? The Director downloads it in
+      one click.
     </td>
     <td width="50%" valign="top">
-      <h3>Transparency in its true order</h3>
-      Glass, curtains and the layers of mesh hair show in the right order
-      at every pixel, even when they cross. Choose it in Preferences ›
-      Graphics, "Order of transparent surfaces"; the Stochastic choice
-      is thanks to Anne Skydancer.
+      <h3>Gaming mode</h3>
+      Aurora steps back while you play a game: the world stops drawing
+      and gives the video memory and RAM back, while chat, sounds and
+      notifications keep working. Coming back to the window ends it.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Weather and water</h3>
-      Aurora Weather reaches farther, with puddles and lying snow up to
-      256 m away and much steadier snow. Water and ambient occlusion cost
-      less for the same image.
+      <h3>360° pictures and better photos</h3>
+      Take a 360° picture and view it as a panorama, keep the camera's
+      tilt in presets, let you and others look at the camera, and tune
+      shadows and ambient occlusion in the viewfinder.
     </td>
     <td valign="top">
       <h3>More like the Legacy Viewer</h3>
-      The Conversation log, draw distance up to 1024 m, the Animation
-      Speed menu, beacons, radar marks, Doppler on moving sounds, and
-      objects saved as Collada or OBJ.
+      The Omnifilter, the pose stand, Favorite wearables, a target frame
+      rate (Autotune), proxy settings, script sync with outside editors,
+      saved poses from the Legacy Viewer and Alchemy, and the missing
+      interface sounds.
     </td>
   </tr>
 </table>
