@@ -7408,7 +7408,8 @@ failure. Grid validation and any paid upload are performed by the human.
   selection, each with its keys). By hand: Alt+← / → / ↑ and the mouse's
   side buttons, Backspace (Preferences › Inventory › Explorer), a right-click
   on Back; a chevron's subfolders; Ctrl+L, typing `Cl`, Tab, Enter; a drag
-  from the empty space (the band, Ctrl adds, near the bottom it scrolls);
+  from the empty space or a row's Type / Rights / Date columns (the band, Ctrl
+  adds, near the bottom it scrolls; from a name the item is dragged);
   Home / End / Page keys, Ctrl+A, Ctrl+Shift+A, Esc, letters typed; Ctrl+↑ /
   ↓ then Ctrl+Space; F2 then Tab; Ctrl+Shift+N; Alt+Enter; Shift+F10; a
   drag with Ctrl (Copy badge), with Alt (Link badge), with the right button

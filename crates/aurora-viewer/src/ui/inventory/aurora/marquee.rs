@@ -65,7 +65,9 @@ pub(crate) fn begin(ui: &mut egui::Ui, st: &mut InventoryUi, list: Rect) {
         .scroll
         .and_then(|id| egui::scroll_area::State::load(ui.ctx(), id))
         .map_or(0.0, |state| state.unclamped_offset().y);
-    let r = ui.interact(list, ui.scope_id().with("inventory_marquee"), Sense::drag());
+    // click as well as drag: a drag-only widget's drag would start at the
+    // press and take the click from the row above it (egui)
+    let r = ui.interact(list, ui.scope_id().with("inventory_marquee"), Sense::click_and_drag());
     if r.drag_started()
         && let Some(pos) = r.interact_pointer_pos()
     {

@@ -837,6 +837,52 @@ mod tests {
         }
     }
 
+    /// Press at `from`, move to `to` in steps, and report what was carried
+    /// before the release.
+    fn press_and_move(h: &mut Harness, from: egui::Pos2, to: egui::Pos2) -> bool {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.run(vec![egui::Event::PointerMoved(from)]);
+        h.run(vec![button(from, true)]);
+        for step in 1..=6 {
+            h.run(vec![egui::Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
+        }
+        let carried = drag::carried_ids(&h.ctx).is_some();
+        h.run(vec![button(to, false)]);
+        h.frames(2);
+        carried
+    }
+
+    #[test]
+    fn a_row_drags_by_its_name_and_its_other_columns_draw_the_band() {
+        let mut h = Harness::new(WIDE_SIZE);
+        h.st.show_original(&h.inv, Uuid::from_u128(8100));
+        h.frames(4);
+        let row = h.row(8100);
+        // from the date column, down over the next rows: a band, no cargo
+        let from = egui::pos2(row.right() - 12.0, row.center().y);
+        let to = egui::pos2(from.x, row.bottom() + 70.0);
+        assert!(!press_and_move(&mut h, from, to), "the other columns do not carry the item");
+        assert!(
+            h.st.selection.len() >= 3,
+            "the band selects the rows it crossed: {:?}",
+            h.st.selection.len()
+        );
+        // a click there still selects the row alone
+        h.click(from, Default::default());
+        assert_eq!(h.st.selection, HashSet::from([Uuid::from_u128(8100)]));
+        // from its name: the item is carried, nothing banded
+        let name = egui::pos2(row.left() + 40.0, row.center().y);
+        assert!(
+            press_and_move(&mut h, name, egui::pos2(name.x + 10.0, row.bottom() + 70.0)),
+            "the name carries the item"
+        );
+    }
+
     #[test]
     fn folder_buttons_fold_each_view_and_search_has_its_own_row() {
         for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
