@@ -24,12 +24,15 @@
 //! - `import`: a Legacy Viewer's transcripts brought into the account's
 //!   folder, adding only;
 //! - `conversations`: the conversation log (`conversation.log` in the same
-//!   folder), who we talked with and when.
+//!   folder), who we talked with and when;
+//! - `service`: the Chat Service's direct-IM history (the LL viewer 26.5
+//!   archive per resident) stitched with the transcript and the live rows.
 
 pub mod conversations;
 pub mod format;
 pub mod import;
 pub mod names;
+pub mod service;
 pub mod store;
 pub mod transcript;
 
