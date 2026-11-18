@@ -15,8 +15,10 @@
 //!   a change notice is a later step (TASKS.md).
 //!
 //! A colour the user chose in Preferences wins over the system's (`colors`).
-//! Dark keeps the skin's own background and text; a system with no
-//! preference counts as dark, the viewer's own look.
+//! Dark keeps the skin's own background and text; on Windows and macOS a
+//! system with no preference counts as dark, the viewer's own look, but on
+//! Linux the portal's "no preference" is GNOME's light style
+//! (`scheme_from_portal`).
 
 use crate::interface_colors::InterfaceColors;
 use crate::settings::Rgba;
@@ -175,14 +177,15 @@ pub fn window_theme(theme: Option<winit::window::Theme>) {
     update(|look| look.scheme = scheme);
 }
 
-/// The portal's `color-scheme`; an unknown value counts as no preference,
-/// as its documentation asks.
+/// The portal's `color-scheme`: only "prefer dark" (1) is dark. GNOME's
+/// light style sends "no preference" (0), never "prefer light" (2), and
+/// the GTK apps beside the viewer draw light on it; an unknown value counts
+/// as no preference, as the portal's documentation asks.
 #[cfg(any(target_os = "linux", test))]
 fn scheme_from_portal(value: u32) -> Scheme {
     match value {
         1 => Scheme::Dark,
-        2 => Scheme::Light,
-        _ => Scheme::NoPreference,
+        _ => Scheme::Light,
     }
 }
 
@@ -260,9 +263,14 @@ fn parse_demo(raw: &str) -> DemoLooks {
                 "light" => look.scheme = Scheme::Light,
                 "dark" => look.scheme = Scheme::Dark,
                 other => {
+                    // `theme::hex` reads a bad digit as 255: such an accent
+                    // is no accent rather than a white one
                     if let Some(hex) = other.strip_prefix("accent:") {
-                        let [r, g, b, _] = crate::theme::hex(hex).to_array();
-                        look.accent = Some([r, g, b]);
+                        let digits = hex.trim().trim_start_matches('#');
+                        if digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+                            let [r, g, b, _] = crate::theme::hex(digits).to_array();
+                            look.accent = Some([r, g, b]);
+                        }
                     }
                 }
             }

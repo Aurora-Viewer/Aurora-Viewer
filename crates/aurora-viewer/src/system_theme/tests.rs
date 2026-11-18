@@ -65,10 +65,11 @@ fn the_light_pair_needs_no_readability_adjustment() {
 
 #[test]
 fn the_portals_scheme_values() {
-    assert_eq!(scheme_from_portal(0), Scheme::NoPreference);
+    // GNOME's light style is "no preference"
+    assert_eq!(scheme_from_portal(0), Scheme::Light);
     assert_eq!(scheme_from_portal(1), Scheme::Dark);
     assert_eq!(scheme_from_portal(2), Scheme::Light);
-    assert_eq!(scheme_from_portal(3), Scheme::NoPreference);
+    assert_eq!(scheme_from_portal(3), Scheme::Light);
 }
 
 #[test]
@@ -97,6 +98,10 @@ fn a_demo_scenario_lists_its_looks_and_pace() {
     // a stray separator is no look of its own
     assert_eq!(parse_demo("dark;").looks, parse_demo("dark").looks);
     assert_eq!(parse_demo("dark; ;light").looks.len(), 2);
+    // a malformed accent is none, not white
+    assert_eq!(parse_demo("light,accent:#25ZZEB").looks, vec![light(None)]);
+    assert_eq!(parse_demo("light,accent:#2563").looks, vec![light(None)]);
+    assert_eq!(parse_demo("light,accent:2563eb").looks, vec![light(Some([0x25, 0x63, 0xEB]))]);
 }
 
 /// Counts, selected rows and initials are text in the lighter accents.
