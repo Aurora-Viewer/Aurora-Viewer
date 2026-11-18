@@ -82,6 +82,21 @@ pub struct DirectView {
     placed: Option<Messages>,
     /// Snapshot::service_work_active at the last snapshot.
     work_active: bool,
+    /// A stitched read was placed in the conversation.
+    read_once: bool,
+    /// The first history is shown, its fetch over: the later refreshes
+    /// (an IM's quiet delay, the hourly list) run without the loading line.
+    /// The LL viewer shows its loading panel on every pass; a small
+    /// overlay there, a line over the box here (human choice, 2026-11-18).
+    settled: bool,
+}
+
+impl DirectView {
+    fn settle(&mut self) {
+        if self.read_once && !self.loading && !self.work_active {
+            self.settled = true;
+        }
+    }
 }
 
 /// The service's state in the World. Kept across logouts, like the
@@ -150,9 +165,15 @@ impl ChatService {
     }
 
     /// The IM window's loading panel: a read in flight, or remote, name or
-    /// storage work for the resident (Snapshot::service_work_active).
+    /// storage work for the resident (Snapshot::service_work_active), only
+    /// while the history is shown (LogShowHistory, LLFloaterIMSession::draw).
     pub fn loading(&self, resident: Uuid) -> bool {
-        self.running() && (self.views.get(&resident).is_some_and(|v| v.loading || v.work_active))
+        self.running()
+            && self.show_history != Some(false)
+            && self
+                .views
+                .get(&resident)
+                .is_some_and(|v| !v.settled && (v.loading || v.work_active))
     }
 
     /// The outcome of the last delete, once.
@@ -638,6 +659,8 @@ impl World {
         }
         v.archive_serial = result.archive_serial;
         v.history.set_loaded(result.messages);
+        v.read_once = true;
+        v.settle();
         self.direct_place(id);
     }
 
@@ -648,6 +671,7 @@ impl World {
         let snapshot = self.chat_service.manager.snapshot(id);
         if let Some(v) = self.chat_service.views.get_mut(&id) {
             v.work_active = snapshot.service_work_active;
+            v.settle();
         }
         if self.chat_service.manager.history_suppressed() {
             return;

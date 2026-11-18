@@ -136,8 +136,10 @@ pub(super) fn show(
             {
                 // the Chat Service's history is read or fetched (the IM
                 // window's loading panel, Snapshot::service_work_active)
+                // painted, not placed: `ui.put` would move the cursor up to
+                // the spinner's bottom and lift the box under the line
                 let spin = egui::Rect::from_center_size(egui::pos2(line.left() + 10.0, line.center().y), egui::vec2(12.0, 12.0));
-                ui.put(spin, egui::Spinner::new().size(12.0).color(p.violet_light));
+                egui::Spinner::new().size(12.0).color(p.violet_light).paint_at(ui, spin);
                 let galley = ui.painter().layout_no_wrap(
                     aurora_i18n::tr!("ui-chat-history-loading").to_string(),
                     egui::FontId::proportional(11.0),

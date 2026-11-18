@@ -196,3 +196,40 @@ fn a_delete_runs_every_step_through_the_transcript_thread() {
     assert!(w.chat_service.close_preview);
     clean(&w, &root);
 }
+
+#[test]
+fn the_loading_line_waits_for_the_first_read_and_the_first_fetch() {
+    let mut v = DirectView {
+        loading: true,
+        ..Default::default()
+    };
+    v.settle();
+    assert!(!v.settled, "the read is in flight");
+    v.loading = false;
+    v.read_once = true;
+    v.work_active = true;
+    v.settle();
+    assert!(!v.settled, "the first fetch runs");
+    v.work_active = false;
+    v.settle();
+    assert!(v.settled);
+    v.work_active = true;
+    v.settle();
+    assert!(v.settled, "a later refresh keeps it settled");
+}
+
+#[test]
+fn a_refresh_after_the_first_history_shows_no_loading_line() {
+    let root = temp();
+    archive(&root, &[row(1, "from the service")]);
+    let mut w = world(&root);
+    w.on_im(im("hello", false, 0));
+    w.chat_service_settle();
+    w.poll_transcripts();
+    w.chat_service_settle();
+    assert!(!w.chat_service.loading(JANE));
+    // an IM's quiet-delay refresh starts a pass
+    w.chat_service.views.get_mut(&JANE).expect("the session's view").work_active = true;
+    assert!(!w.chat_service.loading(JANE));
+    clean(&w, &root);
+}
