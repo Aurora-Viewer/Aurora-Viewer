@@ -35,11 +35,25 @@ use uuid::Uuid;
 /// Ask to open a profile from anywhere in the interface (names and agent
 /// links in text); the app reads it once per frame (LLAgentHandler).
 pub fn request_open(ctx: &egui::Context, id: Uuid) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), id));
+    request_open_in(ctx, NameScope::World, id);
 }
 
+/// `request_open` from a place that shows names in `scope` (a conversation
+/// names its people whoever is around: `ProfileUi::open_in`).
+pub fn request_open_in(ctx: &egui::Context, scope: NameScope, id: Uuid) {
+    // only the two places that name people in a text matter here; any other
+    // scope asks as the world does, the stricter one
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), (scope == NameScope::Roster, id)));
+}
+
+#[cfg(test)]
 pub fn take_open_request(ctx: &egui::Context) -> Option<Uuid> {
-    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("aurora_open_profile")))
+    take_open_request_in(ctx).map(|(_, id)| id)
+}
+
+pub fn take_open_request_in(ctx: &egui::Context) -> Option<(NameScope, Uuid)> {
+    ctx.data_mut(|d| d.remove_temp::<(bool, Uuid)>(egui::Id::unique("aurora_open_profile")))
+        .map(|(roster, id)| (if roster { NameScope::Roster } else { NameScope::World }, id))
 }
 
 pub enum ProfileAction {
@@ -1769,7 +1783,7 @@ fn overflow_menu(
 fn copy_menu(ui: &mut egui::Ui, p: &Palette, world: &World, scope: NameScope, id: Uuid) {
     let names = &world.social.avatar_names;
     let display = names.get_in(scope, &id).map(|n| n.display(&names.options));
-    let legacy = world.legacy_name(&id);
+    let legacy = world.legacy_name_in(scope, &id);
     widgets::icon_menu(ui, p, "link-filled", aurora_i18n::tr!("common-copy-2"), |ui| {
         let display_name = aurora_i18n::tr!("ui-profile-copy-display-name");
         if menu::item_if(ui, p, "id-filled", display_name, display.is_some()) {
@@ -1866,7 +1880,7 @@ fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
     }
-    world.legacy_name(id).map(|n| {
+    world.legacy_name_in(scope, id).map(|n| {
         let mut it = n.split_whitespace();
         let first = it.next().unwrap_or("");
         match it.next() {

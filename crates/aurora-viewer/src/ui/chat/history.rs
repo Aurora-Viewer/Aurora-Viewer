@@ -484,7 +484,7 @@ impl HistoryUi {
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+                super::super::context::chat_sender_menu(ui, p, world, avatar, crate::world::names::NameScope::World, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);

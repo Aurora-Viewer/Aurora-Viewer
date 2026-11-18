@@ -19587,7 +19587,11 @@ impl App {
                             self.panels.people = true;
                             self.panels.people_tab = tab;
                         }
-                        ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        // a conversation's header, members and participants name their people
+                        // whoever is around (`chat::conversation_names`)
+                        ui::chat::ConvAction::Profile(id) => {
+                            self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id)
+                        }
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
@@ -20473,8 +20477,8 @@ impl App {
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
-                if let Some(id) = ui::profile::take_open_request(&ctx) {
-                    self.profile_ui.open(&mut self.world, id);
+                if let Some((scope, id)) = ui::profile::take_open_request_in(&ctx) {
+                    self.profile_ui.open_in(&mut self.world, scope, id);
                 }
                 // the "Feed" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();

@@ -242,6 +242,11 @@ pub struct Facts {
     pub friend: bool,
     /// RLVa `@startim` forbids an IM with this resident (RlvActions::canStartIM).
     pub im_blocked: bool,
+    /// RLVa `@shownames` hides this resident's name (RlvActions::canShowName
+    /// (SNC_DEFAULT, id) is false): the entries that name or address them
+    /// are greyed (menu_avatar_other.xml, menu_attachment_other.xml:
+    /// `RLV.CanShowName`).
+    pub name_hidden: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
@@ -855,16 +860,24 @@ pub fn avatar_roster_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uui
     avatar_menu_reporting(ui, p, world, id, kind, NameScope::Roster, None);
 }
 
-/// The menu of the sender of a chat line: its "Report abuse" carries the
-/// line (menu_avatar_icon.xml report_abuse, LLFloaterReporter::showFromChat).
-pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, line: &crate::world::ChatLine) {
+/// The menu of a name shown in `scope`: the nearby chat names the residents
+/// around as `@shownames` allows (`NameScope::World`), a conversation names
+/// its people (`NameScope::Roster`, `chat::conversation_names`).
+pub fn avatar_name_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, scope: NameScope) {
+    avatar_menu_reporting(ui, p, world, id, AvatarList::Name, scope, None);
+}
+
+/// The menu of the sender of a chat line shown in `scope`: its "Report
+/// abuse" carries the line (menu_avatar_icon.xml report_abuse,
+/// LLFloaterReporter::showFromChat).
+pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, scope: NameScope, line: &crate::world::ChatLine) {
     avatar_menu_reporting(
         ui,
         p,
         world,
         id,
         AvatarList::Name,
-        NameScope::World,
+        scope,
         Some(crate::report_abuse::chat_target(id, line)),
     );
 }
@@ -917,11 +930,13 @@ fn avatar_menu_reporting(
     // the Legacy Viewer's friends menu (menu_fs_contacts_friends.xml), whose
     // "Zoom in" has no `@shownames` test.
     let unnamed_around = scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, id);
-    // The menu of a name (menu_url_agent.xml: names in a text and in a name
-    // list) greys "Show profile" and "Zoom in" under `@shownames`, for
-    // anyone but oneself (FSCommon::checkIsActionEnabled, fscommon.cpp).
-    let name_menu_restricted = kind == AvatarList::Name && id != world.agent_id && world.rlva.has("shownames");
-    let here = here && !unnamed_around && !name_menu_restricted;
+    // The menu of a name (menu_url_agent.xml) greys "Show profile" and "Zoom
+    // in" under `@shownames` in the Legacy Viewer
+    // (FSCommon::checkIsActionEnabled, fscommon.cpp). Aurora keeps them for a
+    // name that is shown: a conversation or a list names its people, and
+    // only the in-world avatar (its right-click menu, `Facts::name_hidden`)
+    // and a name `@shownames` hides here (the branch below) are restricted.
+    let here = here && !unnamed_around;
     let travel = travel && !unnamed_around;
     let mappable = if unnamed_around {
         world.social.can_map_friend(id)
@@ -932,17 +947,23 @@ fn avatar_menu_reporting(
     if !world.rlva_shows_name(scope, id) {
         // RLVa's restricted nearby/name menu exposes no profile, identity
         // clipboard or conversation-history routes (RlvActions::canShowName).
-        if menu::item_if(
-            ui,
-            p,
-            "send-filled",
-            aurora_i18n::tr!("common-offer-teleport"),
-            online && world.rlva_can_offer_teleport(id),
-        ) {
-            act(CtxAction::OfferTeleport(id));
-        }
-        if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
-            act(CtxAction::RequestTeleport(id));
+        // The teleport offer and request stay in the people lists, as in the
+        // Legacy Viewer's PeopleContextMenu; the menu of a name in the
+        // nearby chat (a speaker the restriction hides) has neither, which is
+        // stricter than the Legacy Viewer.
+        if kind != AvatarList::Name {
+            if menu::item_if(
+                ui,
+                p,
+                "send-filled",
+                aurora_i18n::tr!("common-offer-teleport"),
+                online && world.rlva_can_offer_teleport(id),
+            ) {
+                act(CtxAction::OfferTeleport(id));
+            }
+            if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
+                act(CtxAction::RequestTeleport(id));
+            }
         }
         if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
             act(CtxAction::ZoomAvatar(id));
@@ -958,7 +979,7 @@ fn avatar_menu_reporting(
         return;
     }
     let profile = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), !name_menu_restricted) {
+        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
             act(match scope {
                 NameScope::Roster => CtxAction::RosterProfile(id),
                 _ => CtxAction::Profile(id),
@@ -1027,11 +1048,12 @@ fn avatar_menu_reporting(
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/mention"));
         }
     };
-    // "can_add" of PeopleContextMenu (llpanelpeoplemenus.cpp): no
-    // friendship offer to a resident `@shownames` hides, from a list that
-    // names them either
+    // "can_add" of PeopleContextMenu (llpanelpeoplemenus.cpp) tests
+    // canShowName; here the menu is past the hidden-name branch above, so the
+    // name is shown in this list (a conversation or a roster names its
+    // people whoever is around) and the offer stays.
     let add_friend = |ui: &mut egui::Ui| {
-        if friend.is_none() && world.rlva_can_name(id) && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
+        if friend.is_none() && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
             act(CtxAction::AddFriend(id));
         }
     };
@@ -2002,8 +2024,84 @@ mod tests {
             aurora_i18n::tr!("common-copy-url"),
             aurora_i18n::tr!("common-copy-mention-uri"),
             aurora_i18n::tr!("common-view-conversation-history"),
+            aurora_i18n::tr!("common-offer-teleport"),
+            aurora_i18n::tr!("common-request-teleport"),
         ] {
             assert!(!texts.iter().any(|t| t.contains(label)), "unexpected identity route: {label}");
+        }
+    }
+
+    /// `@shownames=n` does not reach a conversation or a list that names its
+    /// people (issue #3547): the name menu of an IM, a group member or a name
+    /// shown by an exception keeps the profile, the conversation history, the
+    /// friendship offer and the copies, even for a resident standing nearby.
+    /// Only the in-world avatar's menu and a hidden name are restricted.
+    #[test]
+    fn a_name_that_is_shown_keeps_its_whole_menu_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Menu fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let texts_of = |scope: NameScope| {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, 1.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| avatar_menu_reporting(ui, &p, &world, id, AvatarList::Name, scope, None),
+            );
+            output.textures_delta.clear();
+            fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texts)),
+                    _ => {}
+                }
+            }
+            let mut texts = Vec::new();
+            for shape in output.shapes {
+                collect(&shape.shape, &mut texts);
+            }
+            texts
+        };
+        let routes = [
+            aurora_i18n::tr!("common-view-profile"),
+            aurora_i18n::tr!("common-copy-name"),
+            aurora_i18n::tr!("common-copy-url"),
+            aurora_i18n::tr!("common-view-conversation-history"),
+            aurora_i18n::tr!("common-become-friends"),
+        ];
+        let roster = texts_of(NameScope::Roster);
+        for label in routes {
+            assert!(
+                roster.iter().any(|t| t.contains(label)),
+                "a conversation's name menu lacks: {label}"
+            );
+        }
+        let world_names = texts_of(NameScope::World);
+        for label in routes {
+            assert!(!world_names.iter().any(|t| t.contains(label)), "a hidden name offers: {label}");
         }
     }
 

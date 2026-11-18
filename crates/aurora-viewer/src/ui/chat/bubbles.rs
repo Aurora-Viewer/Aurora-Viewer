@@ -241,12 +241,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             if object && !line.source.is_nil() {
                 super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
             } else if !avatar.is_nil() {
-                line_name_menu(&r, p, world, avatar, line, env.menu);
+                line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()
                 {
-                    super::super::profile::request_open(ui.ctx(), avatar);
+                    super::super::profile::request_open_in(ui.ctx(), env.names, avatar);
                 }
                 crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &avatar), 9.0);
             }
@@ -259,7 +259,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
     let emphasis = super::line_emphasis(env, line, italics);
-    let text = world.rlva_filter_text_in(env.names, &text).into_owned();
+    let text = world.rlva_filter_chat_in(env.names, &text).into_owned();
     let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
@@ -341,13 +341,13 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
             if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
-                line_name_menu(&resp, p, world, avatar, line, env.menu);
+                line_name_menu(&resp, p, world, avatar, env.names, line, env.menu);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(name.as_str())
                     .clicked()
                 {
-                    super::super::profile::request_open(ui.ctx(), avatar);
+                    super::super::profile::request_open_in(ui.ctx(), env.names, avatar);
                 }
             }
         }

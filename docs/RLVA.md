@@ -219,7 +219,20 @@ script authors; the command lists below describe this branch specifically.
   shownearby. Display names, rich chat, notifications, hover text, maps and
   radar use privacy projections while canonical identities and transcript
   filenames stay intact. Hidden-name avatar menus expose the reference's
-  limited actions. Application links and place details filter labels and
+  limited actions. The right-click menu of an avatar in the world (and of what
+  they wear) greys View profile, Become friends, Add to contact set, Send IM,
+  Give my calling card, Voice call, Invite to group and Offer teleport while
+  `@shownames` hides that resident (`RLV.CanShowName`, menu_avatar_other.xml);
+  a name-plate click that would run one of them does nothing. Only that
+  in-world menu is restricted: a conversation (an IM, a group chat, its
+  members and header) and the friends, group and search lists name their
+  people whoever is around, so their menus and clicks keep the profile,
+  teleport offers and requests, friendship offer, history and copies. A
+  speaker the restriction hides in the nearby chat gets none of them, teleport
+  offer and request included. A link to
+  a resident in chat keeps the name it shows, as the Legacy Viewer does not
+  test it (LLUrlEntryAgent): `@shownames` rewrites the names of the text around
+  the link and a `/mention` link, not the link's label. Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure

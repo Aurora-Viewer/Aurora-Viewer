@@ -315,12 +315,12 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
     if who.avatar.is_nil() {
         return;
     }
-    line_name_menu(&r, env.p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, env.p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -498,9 +498,9 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         ui.scope_id().with(("thread_pic", line.time, line.source)),
         egui::Sense::click(),
     );
-    line_name_menu(&r, p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -658,7 +658,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
     }
     if !who.avatar.is_nil() {
         crate::ui::menu::separator(ui, p);
-        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
+        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, env.names, line);
     }
 }
 
