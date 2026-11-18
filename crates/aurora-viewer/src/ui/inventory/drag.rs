@@ -52,6 +52,8 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
     }
     st.selected = Some(id);
     super::clipboard::request_focus(ui, st);
+    let right = r.drag_started_by(egui::PointerButton::Secondary);
+    ui.ctx().data_mut(|d| d.insert_temp(right_drag_id(), right));
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
         r.dnd_set_drag_payload(SelectionDrag(ids));
@@ -66,6 +68,7 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
 struct Cached {
     ids: Vec<Uuid>,
     folder: Uuid,
+    mode: DropMode,
     generation: u64,
     protected: HashSet<Uuid>,
     worn: HashSet<Uuid>,
@@ -74,11 +77,157 @@ struct Cached {
 #[derive(Clone, Default)]
 struct Cache(Option<Cached>);
 
+/// What a drop does. A plain drag moves, as in the Legacy Viewer
+/// (LLFolderBridge::dragOrDrop); held keys copy or link as Windows
+/// Explorer and Dolphin do: Ctrl copies, Alt or Ctrl+Shift makes links
+/// (on a Mac, Finder's Option copies and Cmd+Option makes links). Aurora
+/// difference. The Second Life rules still decide: a no-copy item is not
+/// copied, the Trash and the Library are not linked from, as Paste and
+/// Paste as link refuse them (`rules::paste`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum DropMode {
+    Move,
+    Copy,
+    Link,
+}
+
+pub(crate) fn mode_for(m: egui::Modifiers, mac: bool) -> DropMode {
+    if mac {
+        match (m.alt, m.mac_cmd || m.command) {
+            (true, true) => DropMode::Link,
+            (true, false) => DropMode::Copy,
+            _ => DropMode::Move,
+        }
+    } else if m.alt || (m.ctrl && m.shift) {
+        DropMode::Link
+    } else if m.ctrl {
+        DropMode::Copy
+    } else {
+        DropMode::Move
+    }
+}
+
+/// The change a drop of `ids` into `to` makes.
+fn mutation(
+    inv: &Inventory,
+    ids: &[Uuid],
+    to: Uuid,
+    mode: DropMode,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+) -> Result<Mutation, String> {
+    match mode {
+        DropMode::Move => rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn),
+        DropMode::Copy => rules::paste(inv, ids, to, false, false, &prefs.protected, &facts.worn),
+        DropMode::Link => rules::paste(inv, ids, to, false, true, &prefs.protected, &facts.worn),
+    }
+}
+
+fn right_drag_id() -> egui::Id {
+    egui::Id::unique("inventory_right_drag")
+}
+
+/// The drag in progress was started with the right button: its drop asks
+/// what to do (Windows Explorer and Dolphin).
+fn right_drag(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(right_drag_id())).unwrap_or(false)
+}
+
+/// The mode the drag in progress would drop with.
+fn current_mode(ctx: &egui::Context) -> DropMode {
+    if right_drag(ctx) {
+        DropMode::Move
+    } else {
+        mode_for(ctx.input(|i| i.modifiers), cfg!(target_os = "macos"))
+    }
+}
+
+/// A right-button drag released over a folder: Move here, Copy here,
+/// Create links here, Cancel.
+#[derive(Clone, Debug)]
+pub(super) struct DropMenu {
+    ids: Vec<Uuid>,
+    to: Uuid,
+    at: egui::Pos2,
+}
+
+/// Draws the menu of a right-button drop, if one waits, and does what is
+/// chosen in it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drop_menu(
+    ui: &egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let Some(menu) = st.drop_menu.clone() else { return };
+    let mut open = true;
+    let mut chosen = None;
+    let allowed =
+        |mode| st.pending.is_none() && mutation(inv, &menu.ids, menu.to, mode, prefs, facts).is_ok_and(|m| !m.operations.is_empty());
+    let entries = [
+        (
+            DropMode::Move,
+            "hand-move",
+            aurora_i18n::tr!("inventory-drop-move-here"),
+            allowed(DropMode::Move),
+        ),
+        (
+            DropMode::Copy,
+            "copy",
+            aurora_i18n::tr!("inventory-drop-copy-here"),
+            allowed(DropMode::Copy),
+        ),
+        (
+            DropMode::Link,
+            "link-filled",
+            aurora_i18n::tr!("inventory-drop-link-here"),
+            allowed(DropMode::Link),
+        ),
+    ];
+    crate::ui::menu::popup_at(
+        ui.ctx(),
+        egui::Id::unique(("inventory_drop_menu", st.ui_id)),
+        menu.at,
+        &mut open,
+        p,
+        |ui| {
+            for (mode, icon, label, enabled) in entries {
+                if crate::ui::menu::item_tip(ui, p, icon, label, enabled, "") {
+                    chosen = Some(mode);
+                }
+            }
+            crate::ui::menu::separator(ui, p);
+            if crate::ui::menu::item(ui, p, "x", aurora_i18n::tr!("common-cancel")) {
+                chosen = None;
+                ui.close();
+            }
+        },
+    );
+    if let Some(mode) = chosen {
+        match mutation(inv, &menu.ids, menu.to, mode, prefs, facts) {
+            Ok(change) if !change.operations.is_empty() => {
+                st.message.clear();
+                actions.push(InvAction::Drop(change));
+            }
+            Ok(_) => {}
+            Err(reason) => st.message = reason,
+        }
+        st.drop_menu = None;
+    } else if !open {
+        st.drop_menu = None;
+    }
+}
+
 fn plan(
     ctx: &egui::Context,
     inv: &Inventory,
     ids: &[Uuid],
     to: Uuid,
+    mode: DropMode,
     prefs: &InventoryPreferences,
     facts: &Facts,
 ) -> Arc<Result<Mutation, String>> {
@@ -87,6 +236,7 @@ fn plan(
         if let Some(c) = cache
             && c.ids == ids
             && c.folder == to
+            && c.mode == mode
             && c.generation == inv.generation
             && c.protected == prefs.protected
             && c.worn == facts.worn
@@ -94,10 +244,11 @@ fn plan(
             return c.result.clone();
         }
         // Avoid reconstructing a large move mutation on every hover frame.
-        let result = Arc::new(rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn));
+        let result = Arc::new(mutation(inv, ids, to, mode, prefs, facts));
         *cache = Some(Cached {
             ids: ids.to_vec(),
             folder: to,
+            mode,
             generation: inv.generation,
             protected: prefs.protected.clone(),
             worn: facts.worn.clone(),
@@ -111,6 +262,8 @@ fn plan(
 struct Feedback {
     pass: u64,
     cursor: egui::CursorIcon,
+    /// Given by an inventory folder (not a conversation or an object).
+    folder: bool,
 }
 fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
@@ -133,7 +286,16 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
 /// held over it this pass (an object's Contents tab).
 pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
     let pass = ctx.cumulative_pass_nr();
-    ctx.data_mut(|d| d.insert_temp(feedback_id(), Feedback { pass, cursor }));
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            feedback_id(),
+            Feedback {
+                pass,
+                cursor,
+                folder: false,
+            },
+        )
+    });
 }
 
 /// The cargo of `AURORA_DEMO_CONV_GIVE`: one item, or a selection of several.
@@ -167,6 +329,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
             Feedback {
                 pass,
                 cursor: egui::CursorIcon::Copy,
+                folder: false,
             },
         )
     });
@@ -198,22 +361,45 @@ pub(super) fn target(
     {
         return;
     }
-    let plan = plan(ui.ctx(), inv, cargo.ids(), to, prefs, facts);
-    let allowed = st.pending.is_none() && plan.as_ref().as_ref().is_ok_and(|p| !p.operations.is_empty());
+    let right = right_drag(ui.ctx());
+    let mode = current_mode(ui.ctx());
+    let plan = plan(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts);
+    // a right-button drop asks first: a folder that takes any of the three
+    let allowed = st.pending.is_none()
+        && if right {
+            [DropMode::Move, DropMode::Copy, DropMode::Link]
+                .into_iter()
+                .any(|mode| plan_allows(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts))
+        } else {
+            plan.as_ref().as_ref().is_ok_and(|p| !p.operations.is_empty())
+        };
     ui.ctx().data_mut(|d| {
         d.insert_temp(
             feedback_id(),
             Feedback {
                 pass,
-                cursor: if allowed {
-                    egui::CursorIcon::Move
-                } else {
-                    egui::CursorIcon::NotAllowed
+                cursor: match (allowed, mode) {
+                    (false, _) => egui::CursorIcon::NotAllowed,
+                    (true, DropMode::Move) => egui::CursorIcon::Move,
+                    (true, DropMode::Copy) => egui::CursorIcon::Copy,
+                    (true, DropMode::Link) => egui::CursorIcon::Alias,
                 },
+                folder: true,
             },
         );
     });
     tree::drop_outline(ui, p, r.rect, allowed);
+    if right && ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        if allowed && let Some(at) = ui.input(|i| i.pointer.interact_pos()) {
+            st.drop_menu = Some(DropMenu {
+                ids: cargo.ids().to_vec(),
+                to,
+                at,
+            });
+        }
+        return;
+    }
     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
         egui::DragAndDrop::clear_payload(ui.ctx());
         // Revalidate on release: permissions, pending requests and inventory
@@ -221,7 +407,7 @@ pub(super) fn target(
         if st.pending.is_some() {
             st.message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
         } else {
-            match rules::move_selection(inv, cargo.ids(), to, &prefs.protected, &facts.worn) {
+            match mutation(inv, cargo.ids(), to, mode, prefs, facts) {
                 Ok(change) if !change.operations.is_empty() => {
                     st.message.clear();
                     actions.push(InvAction::Drop(change));
@@ -233,9 +419,24 @@ pub(super) fn target(
     }
 }
 
+fn plan_allows(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    ids: &[Uuid],
+    to: Uuid,
+    mode: DropMode,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+) -> bool {
+    plan(ctx, inv, ids, to, mode, prefs, facts)
+        .as_ref()
+        .as_ref()
+        .is_ok_and(|p| !p.operations.is_empty())
+}
+
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
 pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !ctx.input(|i| i.pointer.primary_down()) {
+    if !ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx))) {
         return None;
     }
     let pass = ctx.cumulative_pass_nr();
@@ -246,18 +447,39 @@ pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
 }
 
 pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
-    let Some(cargo) = egui::DragAndDrop::payload::<SelectionDrag>(ctx) else {
+    let Some(cargo) = Cargo::carried(ctx) else {
         return;
     };
-    let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| i.pointer.primary_down())) else {
+    // Esc drops nothing: the drag ends where it is (Windows Explorer)
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        egui::DragAndDrop::clear_payload(ctx);
         return;
+    }
+    let held = ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx)));
+    let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| held)) else {
+        return;
+    };
+    let count = cargo.ids().len();
+    // what the drop will do, as Explorer's "+ Copy" / "Create link" badge;
+    // a single entry moved says nothing, as before
+    // over an inventory folder that takes it only: elsewhere (the world, a
+    // conversation) the keys mean what that place says
+    let pass = ctx.cumulative_pass_nr();
+    let over_folder = ctx
+        .data(|d| d.get_temp::<Feedback>(feedback_id()))
+        .is_some_and(|f| f.pass == pass && f.folder && f.cursor != egui::CursorIcon::NotAllowed);
+    let mode = match current_mode(ctx) {
+        DropMode::Copy | DropMode::Link if !over_folder => DropMode::Move,
+        mode => mode,
+    };
+    let label = match mode {
+        DropMode::Move if count > 1 => aurora_i18n::tr!("inventory-move-selection-count", count = count),
+        DropMode::Move => return,
+        DropMode::Copy => aurora_i18n::tr!("inventory-copy-selection-count", count = count),
+        DropMode::Link => aurora_i18n::tr!("inventory-link-selection-count", count = count),
     };
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_drag_count")));
-    let text = painter.layout_no_wrap(
-        aurora_i18n::tr!("inventory-move-selection-count", count = cargo.0.len()),
-        tree::font(),
-        p.ink,
-    );
+    let text = painter.layout_no_wrap(label, tree::font(), p.ink);
     let size = text.size() + Vec2::new(16.0, 10.0);
     let area = ctx.content_rect();
     let pos = (pointer + Vec2::new(16.0, 20.0)).min(area.max - size).max(area.min);

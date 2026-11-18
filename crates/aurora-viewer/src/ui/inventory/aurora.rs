@@ -415,6 +415,7 @@ fn compact(
     });
     ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 /// The medium and wide window: the column at the left, the explorer, and
@@ -586,6 +587,7 @@ fn explorer_list(
     });
     ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 #[cfg(test)]

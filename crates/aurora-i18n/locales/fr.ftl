@@ -1377,6 +1377,17 @@ inventory-move-to = Déplacer vers…
 inventory-move-filter = Filtrer les dossiers par nom…
 inventory-move-selection-name = Déplacer « { $name } »
 inventory-move-selection-count = Déplacer { $count } éléments
+inventory-copy-selection-count = { $count ->
+    [one] Copier 1 élément
+   *[other] Copier { $count } éléments
+}
+inventory-link-selection-count = { $count ->
+    [one] Lier 1 élément
+   *[other] Lier { $count } éléments
+}
+inventory-drop-move-here = Déplacer ici
+inventory-drop-copy-here = Copier ici
+inventory-drop-link-here = Créer des liens ici
 inventory-move-no-folders = Aucun dossier disponible pour ce filtre.
 inventory-widen = Élargir la fenêtre
 inventory-additional-window = Fenêtre d’inventaire supplémentaire

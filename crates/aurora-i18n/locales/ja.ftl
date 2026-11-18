@@ -1350,6 +1350,17 @@ inventory-move-to = 移動先…
 inventory-move-filter = フォルダを名前で絞り込む…
 inventory-move-selection-name = 「{ $name }」を移動
 inventory-move-selection-count = { $count }個のアイテムを移動
+inventory-copy-selection-count = { $count ->
+    [one] { $count }個のアイテムをコピー
+   *[other] { $count }個のアイテムをコピー
+}
+inventory-link-selection-count = { $count ->
+    [one] { $count }個のアイテムのリンクを作成
+   *[other] { $count }個のアイテムのリンクを作成
+}
+inventory-drop-move-here = ここに移動
+inventory-drop-copy-here = ここにコピー
+inventory-drop-link-here = ここにリンクを作成
 inventory-move-no-folders = このフィルタで利用できるフォルダはありません。
 inventory-widen = ウィンドウを広げる
 inventory-additional-window = 追加のインベントリウィンドウ

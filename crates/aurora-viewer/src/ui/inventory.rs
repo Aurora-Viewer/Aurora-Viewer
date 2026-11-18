@@ -709,6 +709,8 @@ pub struct InventoryUi {
     /// `row_menu` is the menu of the explorer's empty space, for the folder
     /// it shows (a right-click there, or Shift+F10 with nothing selected).
     background_menu: bool,
+    /// A right-button drop waiting for its choice (`drag::drop_menu`).
+    drop_menu: Option<drag::DropMenu>,
     /// Where the selected row was drawn last frame, for Shift+F10.
     selected_rect: Option<egui::Rect>,
     /// The folder a folder window shows (nil: the whole inventory). Its
@@ -1603,6 +1605,7 @@ fn folder_window_contents(
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 use tree::spacing as tree_spacing;
@@ -2401,6 +2404,7 @@ fn inventory_contents(
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 /// Full fetches requested by mutation dialogs must keep running even when

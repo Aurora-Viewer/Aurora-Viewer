@@ -4,7 +4,7 @@
 use super::*;
 
 fn active(ctx: &egui::Context) -> bool {
-    ctx.input(|i| i.pointer.primary_down())
+    ctx.input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
         && (egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx)
             || egui::DragAndDrop::has_payload_of_type::<FolderDrag>(ctx)
             || egui::DragAndDrop::has_payload_of_type::<SelectionDrag>(ctx)
