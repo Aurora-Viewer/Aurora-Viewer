@@ -4,6 +4,7 @@
 //! of a drop target. One look for every inventory tree.
 
 use super::super::icons::Icons;
+use super::category::{self, Category};
 use crate::theme::Palette;
 use egui::Vec2;
 
@@ -25,15 +26,20 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
     resp
 }
 
-/// The icon of a folder by its preferred type.
+/// The icon of a folder by its preferred type: a system folder shows its
+/// category's symbol (llviewerfoldertype.cpp, see `category`).
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     match type_default {
         14 => "Inv_TrashClosed",
         // FT_MY_SUITCASE (llviewerfoldertype.cpp: Inv_SuitcaseOpen / Closed)
         100 if open => "Inv_SuitcaseOpen",
         100 => "Inv_SuitcaseClosed",
-        _ if open => "Inv_FolderOpen",
-        _ => "Inv_FolderClosed",
+        _ => match Category::of_folder(type_default) {
+            Some(category) if open => category.row().open,
+            Some(category) => category.row().closed,
+            None if open => "Inv_FolderOpen",
+            None => "Inv_FolderClosed",
+        },
     }
 }
 
@@ -41,7 +47,7 @@ pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
 /// `tint` when given (a state the row shows by its icon).
 pub fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette, tint: Option<egui::Color32>) {
     if let Some(t) = icons.get(name) {
-        let tint = tint.unwrap_or(if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink });
+        let tint = tint.unwrap_or(if category::is_folder_icon(name) { p.violet_light } else { p.ink });
         ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
     } else {
         ui.add_space(16.0);

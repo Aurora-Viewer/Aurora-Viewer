@@ -664,19 +664,37 @@ pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st
 /// One active filter: its text, and how to take it off.
 pub(super) struct Chip {
     pub text: String,
+    /// Type filters whose symbols lead the chip (the type chip naming them).
+    pub types: Vec<i32>,
     remove: fn(&mut InventoryUi),
 }
 
-fn type_names(types_mask: u32) -> String {
-    let names: Vec<&str> = types()
+/// The types a type filter keeps.
+fn kept_types(types_mask: u32) -> Vec<(i32, &'static str)> {
+    types()
         .iter()
         .filter(|(kind, _)| types_mask & (1_u32 << kind) != 0)
-        .map(|(_, name)| *name)
-        .collect();
+        .copied()
+        .collect()
+}
+
+fn type_names(types_mask: u32) -> String {
+    let names: Vec<&str> = kept_types(types_mask).into_iter().map(|(_, name)| name).collect();
     if names.len() > 3 {
         aurora_i18n::tr!("inventory-chip-types", count = names.len())
     } else {
         names.join(", ")
+    }
+}
+
+/// The symbols the type chip shows: one per type it names (none when it
+/// only counts them).
+fn type_symbols(types_mask: u32) -> Vec<i32> {
+    let kept = kept_types(types_mask);
+    if kept.len() > 3 {
+        Vec::new()
+    } else {
+        kept.into_iter().map(|(kind, _)| kind).collect()
     }
 }
 
@@ -687,6 +705,7 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
     if st.links_filter.is_some() {
         chips.push(Chip {
             text: aurora_i18n::tr!("inventory-chip-links-of").to_owned(),
+            types: Vec::new(),
             remove: |st| {
                 st.links_filter = None;
                 st.restore_saved_filters();
@@ -697,6 +716,7 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
     if f.types != u32::MAX {
         chips.push(Chip {
             text: aurora_i18n::tr!("inventory-chip-type", types = type_names(f.types)),
+            types: type_symbols(f.types),
             remove: |st| st.filters.types = u32::MAX,
         });
     }
@@ -716,6 +736,7 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
         if f.permissions & bit != 0 {
             chips.push(Chip {
                 text: label.to_owned(),
+                types: Vec::new(),
                 remove,
             });
         }
@@ -724,10 +745,12 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
         Links::Include => {}
         Links::Only => chips.push(Chip {
             text: aurora_i18n::tr!("ui-inventory-controls-links-only").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.links = Links::Include,
         }),
         Links::Exclude => chips.push(Chip {
             text: aurora_i18n::tr!("ui-inventory-controls-hide-links").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.links = Links::Include,
         }),
     }
@@ -735,10 +758,12 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
         Creator::All => {}
         Creator::Me => chips.push(Chip {
             text: aurora_i18n::tr!("ui-inventory-controls-created-by-me").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.creator = Creator::All,
         }),
         Creator::Others => chips.push(Chip {
             text: aurora_i18n::tr!("ui-inventory-controls-created-by-others").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.creator = Creator::All,
         }),
     }
@@ -751,18 +776,21 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
     if let Some(text) = age {
         chips.push(Chip {
             text,
+            types: Vec::new(),
             remove: |st| st.filters.age = Age::Any,
         });
     }
     if f.always_folders {
         chips.push(Chip {
             text: aurora_i18n::tr!("inventory-chip-all-folders").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.always_folders = false,
         });
     }
     if f.coalesced {
         chips.push(Chip {
             text: aurora_i18n::tr!("ui-inventory-controls-coalesced-objects-only").to_owned(),
+            types: Vec::new(),
             remove: |st| st.filters.coalesced = false,
         });
     }
@@ -770,16 +798,24 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
 }
 
 /// A chip: its text, and a cross that takes the filter off.
-fn chip(ui: &mut egui::Ui, p: &Palette, text: &str) -> bool {
+fn chip(ui: &mut egui::Ui, p: &Palette, text: &str, types: &[i32]) -> bool {
+    const GLYPH: f32 = 13.0;
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.0), p.ink);
-    let size = Vec2::new(10.0 + galley.size().x + 6.0 + 14.0 + 6.0, 24.0);
+    let glyphs: Vec<_> = types.iter().filter_map(|kind| category::filter_glyph(*kind, p)).collect();
+    // the types' symbols before the text, as the filter list shows them
+    let lead = glyphs.len() as f32 * (GLYPH + 3.0);
+    let size = Vec2::new(10.0 + lead + galley.size().x + 6.0 + 14.0 + 6.0, 24.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let hot = response.hovered();
     let fill = if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised };
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    widgets::paint_row_text(ui.painter(), galley, rect.left() + 10.0, rect.center().y, p.ink);
+    for (n, (glyph, tint)) in glyphs.into_iter().enumerate() {
+        let x = rect.left() + 10.0 + n as f32 * (GLYPH + 3.0) + GLYPH / 2.0;
+        widgets::paint_glyph(ui.painter(), glyph, Pos2::new(x, rect.center().y), GLYPH, tint);
+    }
+    widgets::paint_row_text(ui.painter(), galley, rect.left() + 10.0 + lead, rect.center().y, p.ink);
     widgets::paint_glyph(
         ui.painter(),
         "x",
@@ -833,7 +869,7 @@ pub(super) fn chips(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs:
                 |ui| {
                     ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
                     for chip_entry in chip_list(st) {
-                        if chip(ui, p, &chip_entry.text) {
+                        if chip(ui, p, &chip_entry.text, &chip_entry.types) {
                             removed = Some(chip_entry.remove);
                         }
                     }
@@ -1094,6 +1130,31 @@ mod tests {
             (chip.remove)(&mut st);
         }
         assert!(!st.filters.active(), "every chip removed its filter");
+    }
+
+    #[test]
+    fn the_type_chip_shows_the_symbols_of_the_types_it_names() {
+        let mut st = InventoryUi::default();
+        st.filters.types = (1 << 0) | (1 << 6) | (1 << 19);
+        let chips = chip_list(&st);
+        assert_eq!(chips[0].types, vec![19, 6, 0], "in the filter list's order");
+        let p = crate::theme::Theme::default().palette();
+        let glyphs: Vec<_> = chips[0]
+            .types
+            .iter()
+            .filter_map(|kind| category::filter_glyph(*kind, &p))
+            .map(|(g, _)| g)
+            .collect();
+        assert_eq!(glyphs, ["run", "box", "photo-filled"]);
+        // more than three: the chip counts them, without symbols
+        st.filters.types |= (1 << 1) | (1 << 2);
+        assert!(chip_list(&st)[0].types.is_empty());
+        // the other chips have none
+        st.filters = Filters {
+            coalesced: true,
+            ..Filters::default()
+        };
+        assert!(chip_list(&st).iter().all(|chip| chip.types.is_empty()));
     }
 
     #[test]

@@ -5,6 +5,9 @@
 //! skins can override any icon with a PNG or SVG of the same name.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use super::inventory::category;
 
 macro_rules! svg_list {
     ($dir:literal, $suffix:literal: $($name:literal),* $(,)?) => {
@@ -102,6 +105,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "hand-click",
     "hand-finger",
     "hand-stop",
+    "hanger",
     "heart-handshake",
     "heart-rate-monitor",
     "history",
@@ -116,6 +120,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "layers-subtract",
     "layers-union",
     "layout-columns",
+    "library-photo",
     "license",
     "link",
     "loader-2",
@@ -187,6 +192,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "stack-2",
     "stopwatch",
     "stretching",
+    "sun-moon",
 
     "swimming",
     "terminal-2",
@@ -512,7 +518,9 @@ const BRAND_SVGS: &[(&str, &[u8])] = &[("wolf", include_bytes!("../../../../asse
 /// Raster images kept as PNG (brand logo).
 const PNGS: &[(&str, &[u8])] = &[("phoenix_18", include_bytes!("../../assets/icons/phoenix_18.png"))];
 
-/// Firestorm icon names used by skins / layouts -> Tabler icon.
+/// Legacy Viewer icon names used by skins / layouts -> Tabler icon. The
+/// inventory's category symbols (`Inv_Texture`…) and the pending clothing
+/// icons are in `inventory::category`; see `alias_target`.
 const ALIASES: &[(&str, &str)] = &[
     ("Command_Chat_Icon", "messages-filled"),
     ("Command_Speak_Icon", "microphone-filled"),
@@ -541,39 +549,26 @@ const ALIASES: &[(&str, &str)] = &[
     ("Stop_Off", "player-stop-filled"),
     ("Inv_FolderClosed", "folder-filled"),
     ("Inv_FolderOpen", "folder-open-filled"),
-    ("Inv_Object", "box"),
     ("Inv_Object_Multi", "packages"),
-    ("Inv_Texture", "photo-filled"),
-    ("Inv_Notecard", "file-text-filled"),
-    ("Inv_Landmark", "map-pin-filled"),
-    ("Inv_Clothing", "shirt-filled"),
-    ("Inv_BodyShape", "man-filled"),
     ("Inv_Skin", "fingerprint"),
     ("Inv_Hair", "scissors"),
     ("Inv_Eye", "eye-filled"),
     ("Inv_Shirt", "shirt-filled"),
-    ("Inv_Pants", "walk"),
     ("Inv_Shoe", "shoe"),
     ("Inv_Socks", "sock"),
     ("Inv_Jacket", "jacket"),
     ("Inv_Gloves", "hand-stop"),
     ("Inv_Undershirt", "shirt-sport"),
-    ("Inv_Underpants", "diaper"),
-    ("Inv_Skirt", "woman-filled"),
     ("Inv_Alpha", "layers-subtract"),
     ("Inv_Tattoo", "needle"),
     ("Inv_Physics", "wave-sine"),
     ("Inv_Universal", "layers-union"),
-    ("Inv_Script", "code"),
     ("Inv_Script_Luau", "luau-filled"),
-    ("Inv_Sound", "file-music-filled"),
-    ("Inv_Animation", "run"),
-    ("Inv_Gesture", "hand-move"),
     ("Inv_Snapshot", "camera-filled"),
-    ("Inv_Mesh", "cube-3d-sphere"),
-    ("Inv_Material", "droplet-filled"),
-    ("Inv_Settings", "sun-filled"),
-    ("Inv_CallingCard", "id-filled"),
+    // settings items by kind (LLSettingsType, llinventoryicon.cpp)
+    ("Inv_SettingsSky", "cloud-filled"),
+    ("Inv_SettingsWater", "ripple"),
+    ("Inv_SettingsDay", "sun-moon"),
     ("Inv_LinkItem", "link-filled"),
     ("Inv_LinkFolder", "link-filled"),
     ("Inv_TrashClosed", "trash-filled"),
@@ -715,11 +710,23 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Material_Link",
-        include_bytes!("../../../../assets/tabler-icons/filled/droplet-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/sphere-link.svg"),
     ),
     (
         "Inv_Settings_Link",
         include_bytes!("../../../../assets/tabler-icons/filled/sun-link.svg"),
+    ),
+    (
+        "Inv_SettingsSky_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/cloud-filled-link.svg"),
+    ),
+    (
+        "Inv_SettingsWater_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/ripple-link.svg"),
+    ),
+    (
+        "Inv_SettingsDay_Link",
+        include_bytes!("../../../../assets/icons/aurora/links/sun-moon-link.svg"),
     ),
     (
         "Inv_CallingCard_Link",
@@ -775,21 +782,59 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_Mesh" => "Inv_Mesh_Link",
         "Inv_Material" => "Inv_Material_Link",
         "Inv_Settings" => "Inv_Settings_Link",
+        "Inv_SettingsSky" => "Inv_SettingsSky_Link",
+        "Inv_SettingsWater" => "Inv_SettingsWater_Link",
+        "Inv_SettingsDay" => "Inv_SettingsDay_Link",
         "Inv_CallingCard" => "Inv_CallingCard_Link",
         "Inv_TrashClosed" => "Inv_TrashClosed_Link",
         "Inv_SysClosed" => "Inv_SysClosed_Link",
         "Inv_Invalid" => "Inv_Invalid_Link",
-        _ => "Inv_LinkItem",
+        _ => category::folder_link(base).unwrap_or("Inv_LinkItem"),
     }
 }
 
 /// Whether `name` is an embedded icon or one of the skin's aliases.
 pub(crate) fn embedded(name: &str) -> bool {
-    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
+    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name)
+        || alias_target(name).is_some()
+        || generated_folder(name).is_some()
+}
+
+/// The embedded icon an alias stands for: the Legacy Viewer's names of `ALIASES`,
+/// the inventory's item icons by category and the pending clothing icons.
+pub(crate) fn alias_target(name: &str) -> Option<&'static str> {
+    ALIASES
+        .iter()
+        .copied()
+        .chain(category::PENDING_CLOTHING.iter().map(|pending| (pending.item, pending.stand_in)))
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, target)| target)
+        .or_else(|| category::ROWS.iter().find(|row| row.item == Some(name)).map(|row| row.symbol))
+}
+
+/// A system folder's generated SVG and whether it carries the shortcut
+/// corner (a link to the folder), by icon name.
+fn generated_folder(name: &str) -> Option<(&'static [u8], bool)> {
+    category::ROWS.iter().find_map(|row| {
+        [
+            (row.closed, row.svgs[0], false),
+            (row.open, row.svgs[1], false),
+            (row.link, row.svgs[2], true),
+        ]
+        .into_iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, svg, shortcut)| (svg, shortcut))
+    })
 }
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
 const RASTER_PX: u32 = 64;
+
+/// Raster size of the large copies of inventory icons (`Icons::large`):
+/// the gallery draws a tile's icon up to 92 points, 184 pixels at 200%.
+/// The UI renderer has no mipmaps, so the small icons keep `RASTER_PX`
+/// rather than one raster for both sizes.
+const LARGE_RASTER_PX: u32 = 192;
 
 /// Raster size of the brand wolf, drawn at 18 px (twice that at most with the
 /// UI scale). Sampled down from far larger without mipmaps, its thin aurora
@@ -808,6 +853,19 @@ pub fn global(name: &str) -> Option<egui::TextureHandle> {
 #[derive(Default)]
 pub struct Icons {
     map: HashMap<String, egui::TextureHandle>,
+    /// SVG of each icon by name (aliases included, a skin's files over the
+    /// embedded ones), for `large`.
+    sources: HashMap<String, Source>,
+    /// Large copies made so far (`None`: the icon has no SVG).
+    large: Arc<Mutex<HashMap<String, Option<egui::TextureHandle>>>>,
+}
+
+#[derive(Clone)]
+enum Source {
+    Svg(Arc<[u8]>),
+    Shortcut(&'static [u8]),
+    /// A skin's PNG: no larger copy.
+    Png,
 }
 
 fn rasterize_svg(bytes: &[u8], px: u32) -> Option<egui::ColorImage> {
@@ -881,7 +939,9 @@ impl Icons {
     pub fn load(ctx: &egui::Context, override_dir: Option<&std::path::Path>) -> Icons {
         let mut map: HashMap<String, egui::TextureHandle> = HashMap::new();
         let opts = egui::TextureOptions::LINEAR;
+        let mut sources: HashMap<String, Source> = HashMap::new();
         for (name, bytes) in OUTLINE.iter().chain(FILLED) {
+            sources.insert((*name).to_owned(), Source::Svg(Arc::from(*bytes)));
             match rasterize_svg(bytes, RASTER_PX) {
                 Some(ci) => {
                     map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
@@ -889,11 +949,26 @@ impl Icons {
                 None => log::warn!("icon {name}: invalid SVG"),
             }
         }
-        for (name, bytes) in INVENTORY_LINKS {
-            if let Some(ci) = rasterize_mask(bytes, RASTER_PX, true) {
-                map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
+        let folders = category::ROWS.iter().flat_map(|row| {
+            [
+                (row.closed, row.svgs[0], false),
+                (row.open, row.svgs[1], false),
+                (row.link, row.svgs[2], true),
+            ]
+        });
+        for (name, bytes, shortcut) in INVENTORY_LINKS.iter().map(|(name, bytes)| (*name, *bytes, true)).chain(folders) {
+            sources.insert(
+                name.to_owned(),
+                if shortcut {
+                    Source::Shortcut(bytes)
+                } else {
+                    Source::Svg(Arc::from(bytes))
+                },
+            );
+            if let Some(ci) = rasterize_mask(bytes, RASTER_PX, shortcut) {
+                map.insert(name.to_owned(), ctx.load_texture(name, ci, opts));
             } else {
-                log::warn!("icon {name}: invalid shortcut SVG");
+                log::warn!("icon {name}: invalid SVG");
             }
         }
         for (name, bytes) in BRAND_SVGS {
@@ -906,9 +981,23 @@ impl Icons {
                 map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
             }
         }
-        for (alias, target) in ALIASES {
-            if let Some(t) = map.get(*target).cloned() {
-                map.insert((*alias).to_owned(), t);
+        let items = category::ROWS.iter().filter_map(|row| row.item.map(|item| (item, row.symbol)));
+        let pending = category::PENDING_CLOTHING.iter().map(|pending| (pending.item, pending.stand_in));
+        for (alias, target) in ALIASES.iter().copied().chain(pending).chain(items) {
+            if let Some(t) = map.get(target).cloned() {
+                map.insert(alias.to_owned(), t);
+            }
+            if let Some(source) = sources.get(target).cloned() {
+                sources.insert(alias.to_owned(), source);
+            }
+        }
+        // hand-drawn clothing icons replace their stand-ins
+        for pending in category::PENDING_CLOTHING {
+            if let Some(bytes) = pending.drawing
+                && let Some(ci) = rasterize_svg(bytes, RASTER_PX)
+            {
+                map.insert(pending.item.to_owned(), ctx.load_texture(pending.item, ci, opts));
+                sources.insert(pending.item.to_owned(), Source::Svg(Arc::from(bytes)));
             }
         }
         if let Some(dir) = override_dir
@@ -930,17 +1019,60 @@ impl Icons {
                 };
                 if let Some(ci) = ci {
                     map.insert(stem.to_owned(), ctx.load_texture(stem, ci, opts));
+                    let source = if ext.as_deref() == Some("svg") {
+                        Source::Svg(Arc::from(bytes))
+                    } else {
+                        Source::Png
+                    };
+                    sources.insert(stem.to_owned(), source);
                 }
             }
         }
         if let Ok(mut g) = GLOBAL.write() {
             *g = Some(map.clone());
         }
-        Icons { map }
+        Icons {
+            map,
+            sources,
+            large: Arc::default(),
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&egui::TextureHandle> {
         self.map.get(name)
+    }
+
+    /// The icon for drawing `points` wide: past the usual raster's pixels,
+    /// its large raster (`large`); below, the usual one, which is not
+    /// shrunk as far (the UI renderer has no mipmaps).
+    pub fn sized(&self, ctx: &egui::Context, name: &str, points: f32) -> Option<egui::TextureHandle> {
+        if points * ctx.pixels_per_point() > RASTER_PX as f32 {
+            self.large(ctx, name)
+        } else {
+            self.get(name).cloned()
+        }
+    }
+
+    /// The icon rasterized for drawing large (the gallery's tiles), made the
+    /// first time it is asked for; the usual one when it has no SVG.
+    pub fn large(&self, ctx: &egui::Context, name: &str) -> Option<egui::TextureHandle> {
+        let made = self.large.lock().ok().and_then(|large| large.get(name).cloned());
+        let texture = match made {
+            Some(texture) => texture,
+            None => {
+                let image = match self.sources.get(name) {
+                    Some(Source::Svg(bytes)) => rasterize_svg(bytes, LARGE_RASTER_PX),
+                    Some(Source::Shortcut(bytes)) => rasterize_mask(bytes, LARGE_RASTER_PX, true),
+                    Some(Source::Png) | None => None,
+                };
+                let texture = image.map(|ci| ctx.load_texture(format!("{name}@large"), ci, egui::TextureOptions::LINEAR));
+                if let Ok(mut large) = self.large.lock() {
+                    large.insert(name.to_owned(), texture.clone());
+                }
+                texture
+            }
+        };
+        texture.or_else(|| self.get(name).cloned())
     }
 }
 
@@ -985,6 +1117,50 @@ mod tests {
         for (alias, target) in ALIASES {
             assert!(names.contains(target), "{alias} -> {target} is not embedded");
         }
+        for pending in category::PENDING_CLOTHING {
+            assert!(
+                names.contains(&pending.stand_in),
+                "{} -> {} is not embedded",
+                pending.item,
+                pending.stand_in
+            );
+        }
+        for row in category::ROWS {
+            assert!(names.contains(&row.symbol), "{:?} -> {} is not embedded", row.category, row.symbol);
+        }
+    }
+
+    #[test]
+    fn generated_folder_icons_load_with_a_hole_and_a_large_copy() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for row in category::ROWS {
+            for name in [row.closed, row.open, row.link] {
+                assert!(icons.get(name).is_some(), "missing {name}");
+                assert!(icons.large(&ctx, name).is_some_and(|t| t.size() == [192, 192]), "no large {name}");
+            }
+            // the symbol is cut out of the folder: the middle of the
+            // folder's body is see-through somewhere, unlike a plain folder
+            let (svg, _) = generated_folder(row.closed).expect("generated");
+            let image = rasterize_svg(svg, 96).expect("folder SVG");
+            let plain = rasterize_svg(include_bytes!("../../assets/icons/tabler/filled/folder.svg"), 96).expect("folder");
+            let holes = |ci: &egui::ColorImage| {
+                (36..68)
+                    .flat_map(|y| (30..66).map(move |x| (x, y)))
+                    .filter(|(x, y)| ci.pixels[y * 96 + x].a() < 128)
+                    .count()
+            };
+            assert_eq!(holes(&plain), 0);
+            assert!(holes(&image) > 20, "{:?}: no symbol cut out", row.category);
+        }
+        // drawn small, the usual raster; past its pixels, the large one
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 16.0).map(|t| t.size()), Some([64, 64]));
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 92.0).map(|t| t.size()), Some([192, 192]));
+        // aliases share their target's SVG
+        assert_eq!(icons.large(&ctx, "Inv_Texture").map(|t| t.size()), Some([192, 192]));
+        // icons with no SVG of their own fall back on the usual raster
+        assert!(icons.large(&ctx, "phoenix_18").is_some());
+        assert!(icons.large(&ctx, "no-such-icon").is_none());
     }
 
     #[test]
@@ -993,7 +1169,7 @@ mod tests {
         for kind in 0..=16 {
             let asset_type = if kind < 4 { 13 } else { 5 };
             let name = crate::ui::inventory::item_icon(asset_type, 18, kind);
-            let target = ALIASES.iter().find(|(alias, _)| *alias == name).expect("wearable icon alias").1;
+            let target = alias_target(name).expect("wearable icon alias");
             assert!(targets.insert(target), "wearable type {kind} repeats {target}");
             assert!(OUTLINE.iter().chain(FILLED).any(|(name, _)| *name == target));
             assert_eq!(crate::ui::inventory::item_icon(asset_type, 18, kind | 0xffff_ff00), name);

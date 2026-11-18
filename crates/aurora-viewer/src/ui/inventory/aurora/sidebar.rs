@@ -432,12 +432,7 @@ pub(super) fn show(
             let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
             let selected = st.tab == 0 && st.browse == row.id;
             let name = folder_name(inv, row.id);
-            let icon = match tree::folder_icon(folder.info.type_default, row.open) {
-                "Inv_TrashClosed" => "trash-filled",
-                "Inv_SuitcaseOpen" | "Inv_SuitcaseClosed" => "briefcase-filled",
-                "Inv_FolderOpen" => "folder-open-filled",
-                _ => "folder-filled",
-            };
+            let icon = tree::folder_icon(folder.info.type_default, row.open);
             let color = folder_colors::tint(prefs, row.id);
             let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color);
             #[cfg(test)]
