@@ -31,6 +31,7 @@ mod notecards;
 mod pathfinding;
 pub use pathfinding::PathfindingUi;
 mod pie;
+pub use pie::center as pie_center;
 
 #[cfg(test)]
 mod group_link_tests;
