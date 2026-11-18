@@ -25,9 +25,14 @@ pub enum Handler {
     None,
 }
 
-/// Whether this system lets Aurora register itself.
+/// Whether this system lets Aurora register itself. Not inside a Flatpak:
+/// the sandbox sees its own `$XDG_DATA_HOME` and `$XDG_CONFIG_HOME`, not the
+/// host's, and the host could not run its `/app/bin` path anyway. The
+/// Flatpak's desktop entry declares the schemes instead
+/// (`packaging/flatpak/`), and the desktop's default applications settings
+/// choose between it and another viewer.
 pub fn supported() -> bool {
-    cfg!(any(windows, target_os = "linux"))
+    cfg!(any(windows, target_os = "linux")) && crate::cli::flatpak_id().is_none()
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -716,7 +721,7 @@ pub fn refresh() {
 /// At start, published builds outside demo mode only: a registration left
 /// on a moved Aurora is pointed at this one (test builds never take it).
 pub fn repair_at_start() {
-    if env!("AURORA_BUILD_PROFILE") == "release" && std::env::var_os("AURORA_DEMO").is_none() {
+    if env!("AURORA_BUILD_PROFILE") == "release" && std::env::var_os("AURORA_DEMO").is_none() && supported() {
         #[cfg(windows)]
         win::repair();
         #[cfg(target_os = "linux")]

@@ -222,14 +222,35 @@ pub fn window_title() -> String {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub const DESKTOP_ID: &str = "aurora-viewer";
 
-/// Window attributes with the [`DESKTOP_ID`] on Linux; elsewhere unchanged.
+/// The Flatpak application id (`org.aurora_viewer.AuroraViewer`) when the
+/// viewer runs inside a Flatpak sandbox: `flatpak run` sets `FLATPAK_ID`.
+/// The Flatpak's desktop entry is named after it
+/// (`packaging/flatpak/`), so the window takes it as its identity, and the
+/// sandbox cannot register link handlers in the host's files.
+pub fn flatpak_id() -> Option<String> {
+    flatpak_id_from(std::env::var("FLATPAK_ID").ok())
+}
+
+fn flatpak_id_from(var: Option<String>) -> Option<String> {
+    var.map(|id| id.trim().to_owned()).filter(|id| !id.is_empty())
+}
+
+/// The name the desktop matches the window to its entry with: the Flatpak
+/// id inside a Flatpak, else [`DESKTOP_ID`].
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn desktop_id() -> String {
+    flatpak_id().unwrap_or_else(|| DESKTOP_ID.to_owned())
+}
+
+/// Window attributes with the [`desktop_id`] on Linux; elsewhere unchanged.
 pub fn with_desktop_id(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
     #[cfg(target_os = "linux")]
     {
         // one field behind both traits: the Wayland app_id is `general`,
         // the X11 WM_CLASS is (`instance`, `general`)
         use winit::platform::wayland::WindowAttributesExtWayland;
-        attrs.with_name(DESKTOP_ID, DESKTOP_ID)
+        let id = desktop_id();
+        attrs.with_name(id.clone(), id)
     }
     #[cfg(not(target_os = "linux"))]
     attrs
@@ -275,6 +296,17 @@ pub fn title_slug() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flatpak_id_is_the_variable_when_set() {
+        assert_eq!(flatpak_id_from(None), None);
+        assert_eq!(flatpak_id_from(Some(String::new())), None);
+        assert_eq!(flatpak_id_from(Some("  ".into())), None);
+        assert_eq!(
+            flatpak_id_from(Some("org.aurora_viewer.AuroraViewer".into())).as_deref(),
+            Some("org.aurora_viewer.AuroraViewer")
+        );
+    }
 
     #[test]
     fn uninstall_is_a_flag_and_a_link_cannot_carry_it() {

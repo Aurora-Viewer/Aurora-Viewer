@@ -1928,6 +1928,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots (`screenshots/`), README buttons and "Soon" pill (`readme/`)
 ├─ fuzz/                        fuzzing of the readers of untrusted data (its own workspace, outside the build): targets (`src/lib.rs`), stable runner `fuzz-local` (`src/main.rs`), libFuzzer binaries (`fuzz_targets/`), run nightly by `.github/workflows/fuzz.yml`
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)
+├─ packaging/flatpak/          Flatpak manifest, desktop entry and AppStream data (`org.aurora_viewer.AuroraViewer.*`): the Linux archive repackaged, by `scripts/package-flatpak.sh` in the release
 ├─ packaging/licenses/         cargo-about configuration and template of THIRD-PARTY-LICENSES.md
 ├─ packaging/linux/            desktop entry of the Linux archive (`aurora-viewer.desktop`; its icon is the colour logo of `assets/branding/`)
 ├─ packaging/macos/            `Info.plist` of `Aurora Viewer.app` (its texts translated in `*.lproj/InfoPlist.strings`) and the entitlements of its hardened runtime; `scripts/package-macos.ps1` builds the bundle, the release signs it

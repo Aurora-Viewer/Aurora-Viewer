@@ -551,6 +551,8 @@ fn failure_text(kind: aurora_updater::Failure) -> &'static str {
         Failure::Package => aurora_i18n::tr!("update-error-package"),
         // macOS: an application to replace, not a folder to extract
         Failure::Unsupported if cfg!(target_os = "macos") => aurora_i18n::tr!("update-error-unsupported-macos"),
+        // a Flatpak: a new bundle to install, not a folder to extract
+        Failure::Unsupported if crate::cli::flatpak_id().is_some() => aurora_i18n::tr!("update-error-unsupported-flatpak"),
         Failure::Unsupported => aurora_i18n::tr!("update-error-unsupported"),
         Failure::DriveRoot => aurora_i18n::tr!("update-error-drive-root"),
         Failure::Protected => aurora_i18n::tr!("update-error-protected"),
