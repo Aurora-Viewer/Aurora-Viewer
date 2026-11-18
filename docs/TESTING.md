@@ -7383,7 +7383,12 @@ failure. Grid validation and any paid upload are performed by the human.
   entries; `sorter-run` starts the sort by itself (capture after about 900
   frames). What to look for: `Sorted` and `Reborn` reused, not doubled; each
   folder created once; worn, locked or linked entries kept; Objects left with
-  only the names nothing can read; the FATPACK folder moved whole. A Pre-Trash
+  only the names nothing can read; the FATPACK folder moved whole. In Options,
+  verify the current sort destination. Take a layout snapshot, export its private
+  backup, sort the demo inventory and import the backup. Confirm that the preview
+  returns the moved entries to their original folders. Import a shared JSON from
+  this same demo inventory and check the name-matching summary and confirmation.
+  A Pre-Trash
   word rule fills a root `Pre-Trash` folder that only its own confirmation sends
   to the Trash; Whole inventory asks twice. `AURORA_DEMO_SORTER_TAB` (with one of these
   modes) fills the demo's own Auto-sort settings with three rules (a path, one of my

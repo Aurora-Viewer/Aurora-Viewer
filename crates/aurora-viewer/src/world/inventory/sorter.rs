@@ -185,6 +185,13 @@ pub struct Preferences {
     /// The folder at the root of My Inventory that receives the sorted
     /// folders; empty uses the translated default name.
     pub base: String,
+    /// The existing destination in this account, even if renamed.
+    #[serde(skip)]
+    pub base_id: Option<Uuid>,
+    /// Remembered destinations keyed by account. These IDs are local
+    /// preferences and are omitted from shared Auto-sort settings.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub base_ids: HashMap<Uuid, Uuid>,
     /// Sort folders too (an unpacked delivery arrives as a folder), as a
     /// whole: their contents are never split.
     pub folders: bool,
@@ -218,6 +225,8 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             base: String::new(),
+            base_id: None,
+            base_ids: HashMap::new(),
             folders: true,
             rules: Vec::new(),
             stores: false,
@@ -233,6 +242,16 @@ impl Default for Preferences {
 }
 
 impl Preferences {
+    pub fn select_account_base(&mut self, inv: &Inventory, account: Uuid) {
+        self.base_id = self.base_ids.get(&account).copied();
+        if !account.is_nil()
+            && let Some(id) = base_folder(inv, self)
+        {
+            self.base_ids.insert(account, id);
+            self.base_id = Some(id);
+        }
+    }
+
     /// The folders the hands-off rule opens for the user: the unlocked
     /// ones that may be, and Lost and Found when its switch is on.
     pub fn unlocked_set(&self, inv: &Inventory) -> HashSet<Uuid> {
@@ -399,18 +418,40 @@ pub fn pre_trash_folders(inv: &Inventory) -> HashSet<Uuid> {
     found
 }
 
-/// The sort folder, when it exists: by its name; for the default name, in
-/// the language in use, else in another one the viewer speaks (a folder
-/// named by the user is only ever that name).
+/// A remembered destination must still be an ordinary folder at the root.
+fn valid_base(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders
+        .get(&id)
+        .is_some_and(|f| f.info.parent == inv.root && f.info.type_default == -1 && !base_refused(&f.info.name) && folder_open(inv, id))
+}
+
+/// The sort folder by ID first, then by its configured or translated name.
 pub fn base_folder(inv: &Inventory, prefs: &Preferences) -> Option<Uuid> {
-    child(inv, inv.root, &prefs.base_name()).or_else(|| {
-        prefs
-            .base
-            .trim()
-            .is_empty()
-            .then(|| default_base_names().iter().find_map(|name| child(inv, inv.root, name)))
-            .flatten()
-    })
+    if let Some(id) = prefs.base_id.filter(|id| valid_base(inv, *id)) {
+        return Some(id);
+    }
+    if let Some(id) = child(inv, inv.root, &prefs.base_name()) {
+        return Some(id);
+    }
+    if !prefs.base.trim().is_empty() {
+        return None;
+    }
+    if let Some(id) = default_base_names().iter().find_map(|name| child(inv, inv.root, name)) {
+        return Some(id);
+    }
+    // Older versions saved only the name. Recover a single decorated
+    // default name when the exact default does not exist.
+    let mut decorated = inv.folders.get(&inv.root)?.children.iter().copied().filter(|id| {
+        valid_base(inv, *id)
+            && default_base_names().iter().any(|name| {
+                inv.folders[id]
+                    .info
+                    .name
+                    .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+                    .eq_ignore_ascii_case(name)
+            })
+    });
+    decorated.next().filter(|_| decorated.next().is_none())
 }
 
 /// The sort folder's name as the inventory has it (an existing one made in
@@ -1600,6 +1641,8 @@ pub struct Plan {
     /// Folders a Pre-Trash rule would read that are not loaded yet: the
     /// window asks for them and the preview fills in.
     pub unfetched: Vec<Uuid>,
+    /// Restore details shown above the file's proposed moves.
+    pub layout_summary: Option<String>,
 }
 
 impl Plan {
@@ -1882,9 +1925,9 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 }
 
 /// A shelf of the user's holding other products, whose own name says
-/// nothing Auto-sort knows (`floorplan` holding `floorplan. cemetery sign
-/// [box]` and `floorplan. rude bouquet [box]`; `Eternus` holding only
-/// `[Eternus] Glossy Dress (unpacked)`). Kept whole, it could only stay as
+/// nothing Auto-sort knows (`Nookery` holding `Nookery. cemetery sign
+/// [box]` and `Nookery. rude bouquet [box]`; `Velmira` holding only
+/// `[Velmira] Glossy Dress (unpacked)`). Kept whole, it could only stay as
 /// not recognized with everything in it: it is opened instead, and each
 /// product in it still moves whole.
 ///
@@ -1895,10 +1938,18 @@ fn judge_product_folder(inv: &Inventory, folder: Uuid, reserved: &HashSet<String
 /// its products differ by more than a colour or a finish (`Aphrodite`
 /// holding `Aphrodite Black` and `Aphrodite Red` is one product's colours
 /// and stays whole). A lone product counts when the shelf is named for its
-/// store (`Eternus`, `Aurun`), and a lone shelf of the user's is opened
+/// store, and a lone shelf of the user's is opened
 /// (`!! miscellaneous` holding `blog brands`).
 fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &HashSet<String>) -> bool {
-    if !f.items.is_empty() || store_tagged(name).is_some() || target(name, -1, 0, None, &[], false).is_some() {
+    let tag = store_tagged(name);
+    // A tag by itself is a label for a store's shelf. A tag followed by
+    // product words belongs to the delivery and keeps it together.
+    let bare_tag = tag.as_deref().is_some_and(|tag| same_store(name, tag));
+    if !f.items.is_empty()
+        || tag.is_some() && !bare_tag
+        || matches!(delivery_mark(name), Some(Mark::Strong))
+        || target(name, -1, 0, None, &[], false).is_some()
+    {
         return false;
     }
     let subs: Vec<&super::Folder> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
@@ -1921,7 +1972,9 @@ fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &
     if subs.iter().any(|s| part(s.info.name.trim())) {
         return false;
     }
-    let own: HashSet<String> = product_words(name).into_iter().collect();
+    let own: HashSet<String> = if bare_tag { joined_words(name) } else { product_words(name) }
+        .into_iter()
+        .collect();
     let products: Vec<&&super::Folder> = subs.iter().filter(|s| product_folder_in(inv, s.info.id, reserved)).collect();
     let rest = |sub: &str| -> Vec<String> {
         let mut rest: Vec<String> = product_words(sub)
@@ -1939,14 +1992,32 @@ fn shelf_of_products(inv: &Inventory, f: &super::Folder, name: &str, reserved: &
             // (a delivery's inner folder carries its name again)
             return !sub_words.iter().any(|w| own.contains(w));
         }
-        return !own.is_empty() && own.iter().all(|w| sub_words.contains(w)) && !rest(sub).is_empty();
+        // The product may have only a kind and finish after its store tag:
+        // `[Velmira] Glossy Dress Black (unpacked)` has no distinct word
+        // left after stripping kinds, finishes, and delivery markers.
+        let marked_product = store_tagged(sub).is_some_and(|store| same_store(name, &store))
+            && matches!(delivery_mark(sub), Some(Mark::Strong))
+            && target(sub, -1, 0, None, &[], false).is_some();
+        return !own.is_empty() && own.iter().all(|w| sub_words.contains(w)) && (!rest(sub).is_empty() || marked_product);
     }
     if products.is_empty() {
         return false;
     }
     let named: Vec<Vec<String>> = products
         .iter()
-        .map(|s| rest(s.info.name.trim()))
+        .map(|s| {
+            let sub = s.info.name.trim();
+            let mut signature = rest(sub);
+            if store_tagged(sub).is_some_and(|store| same_store(name, &store))
+                && matches!(delivery_mark(sub), Some(Mark::Strong))
+                && let Some(category) = classify(sub, -1, 0).category
+            {
+                // A dress and a skirt are distinct products even if they
+                // have no name except the kind and finish.
+                signature.push(category.key().to_owned());
+            }
+            signature
+        })
         .filter(|r| !r.is_empty())
         .collect();
     let distinct: HashSet<&Vec<String>> = named.iter().collect();
@@ -2385,7 +2456,7 @@ fn loose_plural(w: &str) -> bool {
 
 /// Folders a user marks a shelf of their own with: a folder of folders so
 /// named is never kept whole as one product.
-const SHELF_MARKERS: [&str; 23] = [
+const SHELF_MARKERS: [&str; 27] = [
     "stuff",
     "misc",
     "my",
@@ -2395,6 +2466,10 @@ const SHELF_MARKERS: [&str; 23] = [
     "unboxed",
     "temp",
     "sorted",
+    "unsorted",
+    "unorganized",
+    "unorganised",
+    "unfiled",
     "backup",
     "inventory",
     "saved",
@@ -2745,7 +2820,7 @@ const DELIVERY_PARTS: [&str; 10] = [
 ];
 
 /// Words a user names a shelf of their own with, never a product.
-const SHELF_WORDS: [&str; 54] = [
+const SHELF_WORDS: [&str; 58] = [
     "my",
     "old",
     "new",
@@ -2768,6 +2843,10 @@ const SHELF_WORDS: [&str; 54] = [
     "unpacked",
     "temp",
     "sorted",
+    "unsorted",
+    "unorganized",
+    "unorganised",
+    "unfiled",
     "favorite",
     "favourite",
     "gacha",
@@ -2865,92 +2944,59 @@ fn names_a_product(name: &str) -> bool {
     })
 }
 
-/// How deep a whole-inventory sort opens the user's own folders of folders
-/// (`Clothes/Winter/…`): below that, a folder moves whole or stays.
-const OPEN_DEPTH: usize = 4;
-
 /// What a whole-inventory sort reads, in an open place only: the loose
 /// items of My Inventory, the contents of Objects, and the contents of the
 /// user's own folders (not excluded, not the sort folder nor Pre-Trash),
-/// their folders of folders a few levels down. A product's folder moves
+/// including nested shelves. A product's folder moves
 /// whole, never opened. No other default folder is read (see
 /// [`folder_open`]).
 #[cfg(test)]
 pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
     let places = Places::of(inv, prefs);
-    whole_sources_in(inv, prefs, &places)
+    whole_sources_in(inv, prefs, &places, &HashSet::new())
 }
 
-fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places) -> Vec<Uuid> {
+fn whole_sources_in(inv: &Inventory, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
     let mut seen = HashSet::from([inv.root]);
-    open_levels(inv, prefs, places, vec![inv.root], 0, &mut sources, &mut seen);
-    // a folder listed as the user's own is opened at any depth, with its own
-    // folders of folders below it (the same depth wherever it lies)
-    let mut listed: Vec<Uuid> = prefs.own.iter().copied().filter(|id| places.own.opens(id)).collect();
-    listed.sort_unstable();
-    listed.dedup();
-    for id in listed {
-        let Some(f) = inv.folders.get(&id) else { continue };
-        if prefs.excludes(inv, id) || places.reserved.contains(&f.info.name.trim().to_lowercase()) {
+    let mut pending = vec![inv.root];
+    // User-designated shelves are opened even inside a delivery.
+    for id in prefs.own.iter().copied().filter(|id| places.own.opens(id)) {
+        if !folder_open(inv, id) || prefs.excludes(inv, id) || actions::ancestors(inv, id).any(|a| protected.contains(&a)) {
             continue;
         }
         if seen.insert(id) {
             sources.push(id);
+            pending.push(id);
         }
-        if f.state == FetchState::Fetched {
-            open_levels(inv, prefs, places, vec![id], 1, &mut sources, &mut seen);
+    }
+    // Only the actual sort tree is reserved. A folder named after a body
+    // or category elsewhere is a shelf, even several levels down.
+    while let Some(parent) = pending.pop() {
+        let Some(folder) = inv.folders.get(&parent).filter(|f| f.state == FetchState::Fetched) else {
+            continue;
+        };
+        for id in folder.children.iter().copied() {
+            let Some(f) = inv.folders.get(&id) else { continue };
+            if seen.contains(&id)
+                || Some(id) == places.base
+                || places.pre_trash.contains(&id)
+                || !folder_open(inv, id)
+                || prefs.excludes(inv, id)
+                || protected.contains(&id)
+                || (parent != inv.root && f.info.type_default != -1)
+            {
+                continue;
+            }
+            if f.state == FetchState::Fetched && !places.own.opens(&id) && product_folder_in(inv, id, &places.reserved) {
+                continue;
+            }
+            seen.insert(id);
+            sources.push(id);
+            pending.push(id);
         }
     }
     sources
-}
-
-/// The open folders below `level` (`first` levels down from My Inventory),
-/// then the user's own folders of folders below them (`Clothes/Winter`):
-/// each is opened, its products move whole. A folder not loaded yet is
-/// read first (it is judged once its contents are known).
-fn open_levels(
-    inv: &Inventory,
-    prefs: &Preferences,
-    places: &Places,
-    mut level: Vec<Uuid>,
-    first: usize,
-    sources: &mut Vec<Uuid>,
-    seen: &mut HashSet<Uuid>,
-) {
-    for depth in first..=OPEN_DEPTH {
-        let mut next = Vec::new();
-        for parent in &level {
-            let Some(folder) = inv.folders.get(parent) else { continue };
-            for id in folder.children.iter().copied() {
-                let Some(f) = inv.folders.get(&id) else { continue };
-                let open = Some(id) != places.base
-                    && Some(id) != places.waiting
-                    && !places.pre_trash.contains(&id)
-                    && folder_open(inv, id)
-                    && !prefs.excludes(inv, id)
-                    && (depth == 0 || f.info.type_default == -1 && !places.reserved.contains(&f.info.name.trim().to_lowercase()));
-                let own = f.info.type_default != -1
-                    || f.state != FetchState::Fetched
-                    || places.own.opens(&id)
-                    || !product_folder_in(inv, id, &places.reserved);
-                if open && own {
-                    if seen.insert(id) {
-                        sources.push(id);
-                    }
-                    // (Objects and an unlocked default folder too: their
-                    // folders of folders are the user's own)
-                    if f.state == FetchState::Fetched {
-                        next.push(id);
-                    }
-                }
-            }
-        }
-        if next.is_empty() || depth == OPEN_DEPTH {
-            break;
-        }
-        level = next;
-    }
 }
 
 /// What every folder of a plan is compared with, worked out once: the sort
@@ -2984,7 +3030,7 @@ impl Places {
 /// listed as kept, so the preview names what is never touched.
 pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
     let places = Places::of(inv, prefs);
-    let sources = whole_sources_in(inv, prefs, &places);
+    let sources = whole_sources_in(inv, prefs, &places, protected);
     let mut entries = Vec::new();
     for source in &sources {
         // the root's own folders are sources, products or hands-off: only
@@ -3125,7 +3171,7 @@ pub fn unlockable(kind: i32) -> bool {
 /// The move has happened: the entry is in the folder `m` sends it to
 /// (its path resolved below the sort folder `base`), not where it was. A
 /// batch the server applied late, or in part, is known by this.
-pub fn arrived(inv: &Inventory, base: &str, m: &Move) -> bool {
+pub fn arrived(inv: &Inventory, base: SortBase<'_>, m: &Move) -> bool {
     let Some(parent) = actions::parent(inv, m.id) else { return false };
     if parent == m.from {
         return false;
@@ -3133,16 +3179,7 @@ pub fn arrived(inv: &Inventory, base: &str, m: &Move) -> bool {
     match &m.to {
         Dest::Folder(target) => parent == *target,
         Dest::PreTrash => Some(parent) == pre_trash(inv),
-        Dest::Path(path) => {
-            let mut at = inv.root;
-            for part in std::iter::once(base).chain(path.iter().map(String::as_str)) {
-                match child(inv, at, part) {
-                    Some(id) => at = id,
-                    None => return false,
-                }
-            }
-            parent == at
-        }
+        Dest::Path(path) => base.existing(inv).and_then(|id| resolve_existing(inv, id, path)) == Some(parent),
     }
 }
 
@@ -3560,7 +3597,9 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
 /// the whole of `source` at any depth, and the sort folder's tree
 /// ([`pre_trash_scan`]).
 pub fn plan(inv: &Inventory, source: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
-    let entries = contents(inv, source, prefs, prefs.folders);
+    let places = Places::of(inv, prefs);
+    let entries = contents_in(inv, source, prefs.folders, &places);
+    let entries = open_store_shelves(inv, entries, prefs, &places, protected);
     let scan = pre_trash_scan(inv, prefs, source, protected, worn);
     let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
     // both lists of folders to load: the plan's own and the scan's
@@ -4179,10 +4218,6 @@ fn folder_items(inv: &Inventory, folder: Uuid) -> (usize, i64) {
 
 /// The direct contents of `source` a sort reads: its items, and its folders
 /// when `folders`, less the sorted folders themselves.
-fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -> Vec<Uuid> {
-    contents_in(inv, source, folders, &Places::of(inv, prefs))
-}
-
 fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) -> Vec<Uuid> {
     let Some(folder) = inv.folders.get(&source) else {
         return Vec::new();
@@ -4194,7 +4229,13 @@ fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) ->
         // product's folder lying loose at the root goes whole
         if folders {
             entries.extend(folder.children.iter().copied().filter(|id| {
-                Some(*id) != base && Some(*id) != places.waiting && !places.own.contains(id) && product_folder_in(inv, *id, reserved)
+                Some(*id) != base
+                    && Some(*id) != places.waiting
+                    && !places.own.contains(id)
+                    && inv
+                        .folders
+                        .get(id)
+                        .is_some_and(|f| product_folder_in(inv, *id, reserved) || shelf_of_products(inv, f, f.info.name.trim(), reserved))
             }));
         }
         return entries;
@@ -4214,10 +4255,41 @@ fn contents_in(inv: &Inventory, source: Uuid, folders: bool, places: &Places) ->
     entries
 }
 
+/// Open recognized store shelves in a scoped sort, preserving deliveries
+/// and all the normal exclusions. Explicitly selected items count once.
+fn open_store_shelves(inv: &Inventory, entries: Vec<Uuid>, prefs: &Preferences, places: &Places, protected: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut pending = entries;
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let shelf = inv.folders.get(&id).is_some_and(|f| {
+            f.state == FetchState::Fetched
+                && f.info.type_default == -1
+                && Some(id) != places.base
+                && !places.pre_trash.contains(&id)
+                && folder_open(inv, id)
+                && !prefs.excludes(inv, id)
+                && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+                && shelf_of_products(inv, f, f.info.name.trim(), &places.reserved)
+        });
+        if shelf {
+            let folder = &inv.folders[&id];
+            pending.extend(folder.items.iter().chain(&folder.children).copied());
+        } else {
+            result.push(id);
+        }
+    }
+    result
+}
+
 /// The moves of chosen entries, wherever they are: the selection a
-/// right-click sorts at once. A folder goes as a whole, by its own name.
+/// right-click sorts at once. Deliveries remain whole.
 pub fn plan_entries(inv: &Inventory, entries: &[Uuid], prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
-    plan_with(inv, entries.to_vec(), Vec::new(), prefs, protected, worn, false)
+    let entries = open_store_shelves(inv, entries.to_vec(), prefs, &Places::of(inv, prefs), protected);
+    plan_with(inv, entries, Vec::new(), prefs, protected, worn, false)
 }
 
 /// The sort's type filter takes `asset_type` (a folder, or an item of no
@@ -4365,9 +4437,36 @@ fn plan_with(
     let base_name = base_name_in(inv, prefs);
     let pre_trash_at = pre_trash(inv);
     let pre_trash_label = format!("{} / {}", folder_path(inv, inv.root), pre_trash_name());
+    let mut explained = HashSet::new();
+    let mut unknown = |names: &mut Vec<String>, id, folder: bool, name| {
+        names.push(name);
+        if !folder {
+            return;
+        }
+        // A protected or unreadable delivery was rejected above. List its
+        // eligible contents here without proposing to split the delivery.
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            let Some(f) = inv.folders.get(&id).filter(|_| explained.insert(id)) else {
+                continue;
+            };
+            names.extend(
+                f.items
+                    .iter()
+                    .filter(|id| !known.contains(id) && !forced.contains(id))
+                    .filter_map(|id| {
+                        inv.items
+                            .get(id)
+                            .filter(|it| !matches!(it.asset_type, 24 | 25) && (!filtered || kind_wanted(prefs, it.asset_type)))
+                            .map(|it| it.name.clone())
+                    }),
+            );
+            pending.extend(f.children.iter().copied());
+        }
+    };
     for (id, folder, from, name, to, unpacker) in read {
         let Some(to) = to else {
-            plan.unknown.push(name);
+            unknown(&mut plan.unknown, id, folder, name);
             continue;
         };
         let label = match &to {
@@ -4391,7 +4490,7 @@ fn plan_with(
             }
             Dest::Folder(target) if !target_allowed(inv, *target) || actions::under(inv, *target, id) => {
                 // the rule's folder is gone or cannot receive it
-                plan.unknown.push(name);
+                unknown(&mut plan.unknown, id, folder, name);
                 continue;
             }
             Dest::Path(path) => std::iter::once(base_name.as_str())
@@ -4436,6 +4535,22 @@ pub enum Step {
     Done,
 }
 
+/// The identity of an existing sort folder, and the name to create it with
+/// when a run starts without one.
+#[derive(Clone, Copy)]
+pub struct SortBase<'a> {
+    pub id: Option<Uuid>,
+    pub name: &'a str,
+}
+
+impl SortBase<'_> {
+    fn existing(self, inv: &Inventory) -> Option<Uuid> {
+        self.id
+            .filter(|id| valid_base(inv, *id))
+            .or_else(|| child(inv, inv.root, self.name))
+    }
+}
+
 /// The next mutation of a sort: at most [`BATCH`] moves from the front of
 /// `queue`, with the folders they need. A folder that exists (any case) is
 /// reused; a missing one is created in the same mutation under a new id
@@ -4450,7 +4565,15 @@ pub fn step(
     worn: &HashSet<Uuid>,
     skipped: &mut usize,
 ) -> Step {
-    step_with(inv, base_name, queue, protected, worn, skipped, &|_, _| false)
+    step_with(
+        inv,
+        SortBase { id: None, name: base_name },
+        queue,
+        protected,
+        worn,
+        skipped,
+        &|_, _| false,
+    )
 }
 
 /// [`step`], with what the window refuses since the run was planned (a
@@ -4458,7 +4581,7 @@ pub fn step(
 /// the batch takes is checked, however many stale ones it skips first.
 pub fn step_with(
     inv: &mut Inventory,
-    base_name: &str,
+    base: SortBase<'_>,
     queue: &mut VecDeque<Move>,
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
@@ -4471,10 +4594,12 @@ pub fn step_with(
     let mut made: HashMap<(Uuid, String), Uuid> = HashMap::new();
     let mut fresh: HashSet<Uuid> = HashSet::new();
     let mut sent: Vec<Move> = Vec::new();
-    let base_path = [base_name.to_owned()];
+    let base_id = base.existing(inv);
+    let base_name = base_id.map_or(base.name, |id| &inv.folders[&id].info.name).to_owned();
+    let base_path = [base_name.clone()];
     // a sort folder name read back from disk (a resumed run) is checked
     // again: never a viewer folder, a system folder or Pre-Trash
-    let base_ok = !base_refused(base_name);
+    let base_ok = !base_refused(&base_name);
     // the nearest existing folder above each folder made in this batch
     let mut anchor: HashMap<Uuid, Uuid> = HashMap::new();
     // what this batch moves and where it sends, for the moves after
@@ -4562,7 +4687,7 @@ pub fn step_with(
                 } else {
                     target_allowed(inv, *target)
                 };
-                if !allowed {
+                if !allowed || next.restore && actions::ancestors(inv, *target).any(|id| protected.contains(&id)) {
                     queue.pop_front();
                     *skipped += 1;
                     continue;
@@ -4574,6 +4699,7 @@ pub fn step_with(
                 *skipped += 1;
                 continue;
             }
+            Dest::Path(path) if base_id.is_some() => path.clone(),
             Dest::Path(path) => base_path.iter().chain(path).cloned().collect(),
             // the Pre-Trash folder as it is named, in any language
             Dest::PreTrash => vec![
@@ -4585,7 +4711,8 @@ pub fn step_with(
         let to_pre_trash = matches!(next.to, Dest::PreTrash);
         let mut parent = match next.to {
             Dest::Folder(target) => target,
-            Dest::Path(_) | Dest::PreTrash => inv.root,
+            Dest::Path(_) => base_id.unwrap_or(inv.root),
+            Dest::PreTrash => inv.root,
         };
         // The folders this move would create: kept apart until the whole
         // path resolves, so a wait leaves no half-made path in `change`.
@@ -4666,7 +4793,7 @@ pub fn step_with(
             && inv.folders.get(&m.id).is_some_and(|f| {
                 let name = f.info.name.trim();
                 base_refused(name)
-                    || name.eq_ignore_ascii_case(base_name)
+                    || name.eq_ignore_ascii_case(&base_name)
                     || default_base_names().iter().any(|n| n.eq_ignore_ascii_case(name))
             })
         {

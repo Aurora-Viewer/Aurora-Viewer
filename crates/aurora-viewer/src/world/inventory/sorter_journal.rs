@@ -14,6 +14,7 @@
 use super::{Dest, Inventory, Move, actions, folder_path, holds_closed, restorable, restore_target_allowed};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -432,6 +433,87 @@ pub struct RestoreSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OtherAccount;
 
+/// Resolve an anonymized export using exact, unique names and unchanged
+/// destination paths. Its numbered identifiers are only local to the file.
+/// Folder moves and duplicate item names cannot be recovered this way.
+pub fn match_shared_layout(inv: &Inventory, shared: &Snapshot, account: Uuid) -> (Snapshot, usize) {
+    let mut result = Snapshot {
+        at: shared.at,
+        account,
+        ..Default::default()
+    };
+    let mut used_folders = HashSet::new();
+    let mut branches: HashMap<Uuid, Vec<(Uuid, &str, i32)>> = HashMap::new();
+    for (id, parent, name, kind) in &shared.folders {
+        branches.entry(*parent).or_default().push((*id, name, *kind));
+        used_folders.insert(*id);
+    }
+    let mut roots = shared
+        .folders
+        .iter()
+        .filter(|(_, parent, _, kind)| *kind == 8 && !used_folders.contains(parent));
+    let Some((root, ..)) = roots.next().filter(|_| roots.next().is_none()) else {
+        return (result, shared.items.len());
+    };
+    let unread: HashSet<Uuid> = shared.unread.iter().copied().collect();
+    let mut matched: HashMap<Uuid, Uuid> = HashMap::new();
+    let mut pending = vec![(*root, inv.root)];
+    while let Some((old, live)) = pending.pop() {
+        let Some(folder) = inv.folders.get(&live) else { continue };
+        if matched.contains_key(&old) || unread.contains(&old) || folder.state != super::super::FetchState::Fetched {
+            continue;
+        }
+        matched.insert(old, live);
+        let Some(children) = branches.get(&old) else { continue };
+        let mut unique = HashMap::new();
+        for (id, name, kind) in children {
+            unique.entry((*name, *kind)).and_modify(|entry| *entry = None).or_insert(Some(*id));
+        }
+        let mut current = HashMap::new();
+        for child in folder
+            .children
+            .iter()
+            .filter_map(|id| inv.folders.get(id))
+            .filter(|f| !f.library && f.info.parent == live)
+        {
+            current
+                .entry((child.info.name.as_str(), child.info.type_default))
+                .and_modify(|entry| *entry = None)
+                .or_insert(Some(child.info.id));
+        }
+        for (key, old) in unique {
+            if let (Some(old), Some(Some(live))) = (old, current.get(&key)) {
+                pending.push((old, *live));
+            }
+        }
+    }
+    let mut saved_names = HashMap::new();
+    for (_, parent, name) in &shared.items {
+        saved_names
+            .entry(name.as_str())
+            .and_modify(|entry| *entry = None)
+            .or_insert(Some(*parent));
+    }
+    let mut current_names = HashMap::new();
+    for item in inv
+        .items
+        .values()
+        .filter(|it| inv.folders.get(&it.parent).is_some_and(|folder| !folder.library))
+    {
+        current_names
+            .entry(item.name.as_str())
+            .and_modify(|entry| *entry = None)
+            .or_insert(Some(item.id));
+    }
+    for (name, parent) in saved_names {
+        if let (Some(to), Some(Some(id))) = (parent.and_then(|p| matched.get(&p)), current_names.get(name)) {
+            result.items.push((*id, *to, name.to_owned()));
+        }
+    }
+    let unmatched = shared.items.len() - result.items.len();
+    (result, unmatched)
+}
+
 /// The moves that put entries back where a snapshot saw them. Only the
 /// user's own folders and items whose snapshot folder still exists and is
 /// open; nothing out of the Trash (Undo only), nothing worn, linked, locked
@@ -478,7 +560,11 @@ pub fn restore_moves(
         // a layout puts nothing back into Pre-Trash: what the user took
         // out of it stays out (only Undo of a Trash run goes back there)
         let into_pre_trash = targets.pre_trash.contains(&was_in);
-        if !inv.folders.contains_key(&was_in) || into_pre_trash || !targets.allowed(was_in) {
+        if !inv.folders.contains_key(&was_in)
+            || into_pre_trash
+            || !targets.allowed(was_in)
+            || actions::ancestors(inv, was_in).any(|id| protected.contains(&id))
+        {
             summary.folder_gone += 1;
             return;
         }
@@ -583,6 +669,28 @@ pub fn load<T: for<'de> Deserialize<'de>>(path: &Path) -> std::io::Result<T> {
     let file = std::fs::File::open(path)?;
     let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(file));
     serde_json::from_reader(gz).map_err(std::io::Error::other)
+}
+
+/// Read a user-picked private backup (.json.gz) or older shared layout
+/// (.json). Limit the decoded size as well as the compressed input.
+pub fn load_layout_file(path: &Path) -> std::io::Result<Snapshot> {
+    const LIMIT: u64 = 256 * 1024 * 1024;
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > LIMIT {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "layout file is too large"));
+    }
+    let mut file = std::io::BufReader::new(file);
+    let mut decoded: Box<dyn Read> = if file.fill_buf()?.starts_with(&[0x1f, 0x8b]) {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut bytes = Vec::new();
+    decoded.by_ref().take(LIMIT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "decoded layout is too large"));
+    }
+    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
 }
 
 pub fn journal_path(account: &Path) -> PathBuf {

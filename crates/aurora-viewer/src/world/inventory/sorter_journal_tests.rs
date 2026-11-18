@@ -671,3 +671,51 @@ fn a_shared_layout_carries_no_account_ids_trash_or_calling_cards() {
     let shared = Snapshot::take_to_share(&inv, 1);
     assert_eq!(shared.unread.len(), 1);
 }
+
+#[test]
+fn an_old_shared_layout_restores_survivors_with_unique_names_in_existing_folders() {
+    let mut inv = fixture();
+    let layout = Snapshot::take_to_share(&inv, 42);
+    sort(&mut inv);
+    inv.items.remove(&id(101));
+    add_item(&mut inv, 103, 12, "Brass floor lamp");
+    add_item(&mut inv, 104, 12, "A newly acquired item");
+
+    let (snapshot, unmatched) = match_shared_layout(&inv, &layout, id(AGENT));
+    assert_eq!(unmatched, 2, "one deleted entry and one ambiguous name");
+    assert!(snapshot.folders.is_empty(), "numbered IDs cannot identify folders to move");
+    let none = HashSet::new();
+    let (moves, _) = restore_moves(&inv, &snapshot, id(AGENT), &none, &none, &none, &Preferences::default()).expect("restore");
+    assert_eq!(moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(100)]);
+    assert_eq!(moves[0].to, Dest::Folder(id(10)));
+    send(&mut inv, moves);
+    assert_eq!(actions::parent(&inv, id(100)), Some(id(10)));
+    assert!(actions::parent(&inv, id(101)).is_none());
+    assert_eq!(actions::parent(&inv, id(104)), Some(id(12)));
+}
+
+#[test]
+fn a_shared_layout_does_not_guess_between_equal_folder_paths() {
+    let mut inv = fixture();
+    add_folder(&mut inv, 80, 12, "Storage / archive", -1);
+    add_item(&mut inv, 200, 80, "Old box");
+    let layout = Snapshot::take_to_share(&inv, 42);
+    add_folder(&mut inv, 81, 12, "Storage / archive", -1);
+    let (matched, _) = match_shared_layout(&inv, &layout, id(AGENT));
+    assert!(matched.items.iter().all(|(matched, _, _)| *matched != id(200)));
+}
+
+#[test]
+fn the_layout_file_reader_accepts_private_gzip_and_shared_json() {
+    let inv = fixture();
+    let dir = std::env::temp_dir().join(format!("aurora-layout-{}", Uuid::new_v4()));
+    let private = dir.join("inventory.json.gz");
+    let shared = dir.join("inventory.json");
+    let exact = Snapshot::take(&inv, 42, id(AGENT));
+    let anonymized = Snapshot::take_to_share(&inv, 42);
+    save(&private, &exact).expect("save backup");
+    save_shared(&shared, &anonymized).expect("save shared layout");
+    assert_eq!(load_layout_file(&private).expect("read backup"), exact);
+    assert_eq!(load_layout_file(&shared).expect("read shared layout"), anonymized);
+    std::fs::remove_dir_all(dir).expect("clean test files");
+}

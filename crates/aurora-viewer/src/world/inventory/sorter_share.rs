@@ -291,8 +291,10 @@ impl Imported {
         }
         if pick.base
             && let Some(base) = &self.base
+            && prefs.base != *base
         {
             prefs.base.clone_from(base);
+            prefs.base_id = None;
         }
         if pick.stores
             && let Some(stores) = self.stores

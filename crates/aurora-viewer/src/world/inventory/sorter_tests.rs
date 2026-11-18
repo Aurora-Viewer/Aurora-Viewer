@@ -1982,14 +1982,14 @@ fn a_creator_hint_beats_the_store_read_from_the_name() {
     };
     // the creator's store wins over the tag in the name
     assert_eq!(
-        by("[Birch Hollow] Lantern", Some(maker)),
+        by("[Birch Hollow] Vesper", Some(maker)),
         format!("{}/Mossworks", cat(Category::Decor))
     );
     // a name with its own category keeps it, under the creator's store
     assert_eq!(by("Velvet Sofa", Some(maker)), format!("{}/Mossworks", cat(Category::Furniture)));
     // someone else's item keeps the name's store
     assert_eq!(
-        by("[Birch Hollow] Lantern", Some(id(8702))),
+        by("[Birch Hollow] Vesper", Some(id(8702))),
         format!("{}/Birch Hollow", cat(Category::Furniture))
     );
     // a creator hint without a store name only gives the category
@@ -3068,7 +3068,15 @@ fn a_refused_folder_move_is_skipped_before_its_tree_loads() {
     }]);
     let none = HashSet::new();
     let mut skipped = 0;
-    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, m| m.id == id(700));
+    let step = step_with(
+        &mut inv,
+        SortBase { id: None, name: "Sorted" },
+        &mut queue,
+        &none,
+        &none,
+        &mut skipped,
+        &|_, m| m.id == id(700),
+    );
     assert!(!matches!(step, Step::Loading), "never loaded only to be skipped");
     assert_eq!((skipped, queue.len()), (1, 0));
     assert_eq!(inv.folders[&id(701)].state, FetchState::Unknown, "nothing asked for");
@@ -3129,7 +3137,15 @@ fn refused_moves_are_skipped_a_few_batches_a_frame() {
     let mut queue: VecDeque<Move> = std::iter::repeat_n(one, 4 * BATCH + 5).collect();
     let none = HashSet::new();
     let mut skipped = 0;
-    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| true);
+    let step = step_with(
+        &mut inv,
+        SortBase { id: None, name: "Sorted" },
+        &mut queue,
+        &none,
+        &none,
+        &mut skipped,
+        &|_, _| true,
+    );
     assert!(matches!(step, Step::Wait));
     assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
 }
@@ -3155,7 +3171,15 @@ fn stale_moves_are_skipped_a_few_batches_a_frame() {
     let mut queue: VecDeque<Move> = std::iter::repeat_n(gone, 4 * BATCH + 5).collect();
     let none = HashSet::new();
     let mut skipped = 0;
-    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| false);
+    let step = step_with(
+        &mut inv,
+        SortBase { id: None, name: "Sorted" },
+        &mut queue,
+        &none,
+        &none,
+        &mut skipped,
+        &|_, _| false,
+    );
     assert!(matches!(step, Step::Wait));
     assert_eq!((skipped, queue.len()), (4 * BATCH, 5));
 }
@@ -3365,7 +3389,15 @@ fn a_folder_that_failed_to_load_is_unknown_never_empty() {
         snapshot: false,
     }]);
     let mut skipped = 0;
-    let step = step_with(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped, &|_, _| false);
+    let step = step_with(
+        &mut inv,
+        SortBase { id: None, name: "Sorted" },
+        &mut queue,
+        &none,
+        &none,
+        &mut skipped,
+        &|_, _| false,
+    );
     assert!(!matches!(step, Step::Change(..)) && skipped == 1);
     // Clean up's empty folders never take it
     let cleanup = Cleanup {
@@ -4301,7 +4333,16 @@ fn a_whole_sort_opens_an_unnamed_store_shelf() {
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     let moved = |at: u128| plan.moves.iter().find(|m| m.id == id(at)).map(|m| m.label.clone());
     let base = prefs.base_name();
-    assert_eq!(moved(82), Some(format!("{base} / {}", cat(Category::Decor))));
+    assert_eq!(
+        moved(82),
+        Some(format!("{base} / {}", cat(Category::Decor))),
+        "sources {:?}; unknown {:?}",
+        whole_sources(&inv, &prefs)
+            .iter()
+            .map(|s| &inv.folders[s].info.name)
+            .collect::<Vec<_>>(),
+        plan.unknown,
+    );
     assert_eq!(moved(83), Some(format!("{base} / {}", cat(Category::Decor))));
     assert_eq!(moved(85), Some(format!("{base} / {}", cat(Category::Dresses))));
     // the shelves stay, the products' items stay in their products
@@ -4337,4 +4378,96 @@ fn a_products_colours_and_parts_are_no_shelf() {
     for at in [82, 83, 85, 86, 200, 201, 202, 203] {
         assert!(plan.moves.iter().all(|m| m.id != id(at)), "{at}");
     }
+}
+
+#[test]
+fn a_folder_sort_and_selected_shelf_keep_the_delivery_whole() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "My Archive");
+    add_folder(&mut inv, 81, 80, "[Velmira]");
+    add_folder(&mut inv, 82, 81, "[Velmira] Glossy Dress Black (unpacked)");
+    add_item(&mut inv, 200, 82, "Glossy Dress Black", 0);
+    add_folder(&mut inv, 83, 81, "[Velmira] Matte Skirt Blue (unpacked)");
+    add_item(&mut inv, 201, 83, "Matte Skirt Blue", 0);
+    let prefs = Preferences::default();
+    let none = HashSet::new();
+    for planned in [
+        plan(&inv, id(80), &prefs, &none, &none),
+        plan_entries(&inv, &[id(81), id(82)], &prefs, &none, &none),
+    ] {
+        assert_eq!(
+            planned.moves.iter().map(|m| m.id).collect::<HashSet<_>>(),
+            HashSet::from([id(82), id(83)])
+        );
+        assert!(planned.moves.iter().all(|m| m.folder));
+        assert!(planned.unknown.is_empty());
+    }
+}
+
+#[test]
+fn a_whole_sort_opens_deep_category_shelves_but_reports_intact_unknown_deliveries() {
+    let mut inv = fixture(&[]);
+    let mut parent = 1;
+    for (child, name) in (70..).zip(["My Stuff", "More", "Misc", "Older", "Faves", "Reborn", "Dresses"]) {
+        add_folder(&mut inv, child, parent, name);
+        parent = child;
+    }
+    add_item(&mut inv, 200, parent, "Gold Dress", 0);
+    add_item(&mut inv, 201, parent, "Unknown Widget", 0);
+    add_folder(&mut inv, 90, parent, "[Velmira] Vesper [box]");
+    add_item(&mut inv, 202, 90, "Vesper", 0);
+    let none = HashSet::new();
+    let planned = plan_whole(&inv, &Preferences::default(), &none, &none);
+    assert!(planned.moves.iter().any(|m| m.id == id(200)));
+    assert!(planned.moves.iter().all(|m| ![id(90), id(202)].contains(&m.id)));
+    for name in ["Unknown Widget", "[Velmira] Vesper [box]", "Vesper"] {
+        assert!(planned.unknown.iter().any(|row| row == name), "{name}");
+    }
+}
+
+#[test]
+fn the_remembered_sort_folder_keeps_its_identity_after_a_rename() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 80, 1, "!!!!!SORTED!!!!!!");
+    let mut prefs = Preferences::default();
+    assert_eq!(base_folder(&inv, &prefs), Some(id(80)), "recognize the single decorated default");
+    prefs.base = "!!!!!SORTED!!!!!!".into();
+    assert_eq!(prefs.base_name(), "!!!!!SORTED!!!!!!");
+    assert_eq!(base_folder(&inv, &prefs), Some(id(80)));
+    prefs.select_account_base(&inv, id(AGENT));
+    prefs.base.clear();
+    let mut prefs: Preferences = serde_json::from_str(&serde_json::to_string(&prefs).expect("serialize")).expect("deserialize");
+
+    add_folder(&mut inv, 79, 1, "My renamed destination");
+    add_folder(&mut inv, 81, 1, "Sorted");
+    inv.folders.get_mut(&id(80)).expect("destination").info.name = "My renamed destination".into();
+    add_item(&mut inv, 200, 1, "Gold Dress", 0);
+    prefs.select_account_base(&inv, id(42));
+    assert_eq!(prefs.base_id, Some(id(81)), "another account falls back to the default");
+    prefs.select_account_base(&inv, id(AGENT));
+    let none = HashSet::new();
+    let mut queue = VecDeque::from(plan_whole(&inv, &prefs, &none, &none).moves);
+    assert_eq!(base_folder(&inv, &prefs), Some(id(80)));
+    let base = SortBase {
+        id: prefs.base_id,
+        name: &prefs.base_name(),
+    };
+    let Step::Change(change, moves) = step_with(&mut inv, base, &mut queue, &none, &none, &mut 0, &|_, _| false) else {
+        panic!("the item should be sorted");
+    };
+    assert!(
+        change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Folder { parent, .. } if *parent == id(80)))
+    );
+    actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo mutation");
+    assert!(moves.iter().any(|m| m.id == id(200) && arrived(&inv, base, m)));
+
+    inv.folders.get_mut(&id(80)).expect("destination").info.parent = id(79);
+    assert_eq!(
+        base_folder(&inv, &prefs),
+        Some(id(81)),
+        "a destination moved off the root falls back to its name"
+    );
 }

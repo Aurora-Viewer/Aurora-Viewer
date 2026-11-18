@@ -31,6 +31,13 @@ enum Source {
     Whole,
     /// Saved moves: Undo, a snapshot's layout, a run to resume.
     Saved(std::sync::Arc<Vec<Move>>, Restoring),
+    Layout(std::sync::Arc<sorter::journal::Snapshot>),
+}
+
+impl Source {
+    fn shared_layout(&self) -> bool {
+        matches!(self, Self::Layout(layout) if layout.account.is_nil())
+    }
 }
 
 /// Where saved moves come from.
@@ -52,6 +59,7 @@ fn unix_now() -> i64 {
 #[derive(Debug, Clone, PartialEq)]
 enum Confirm {
     Whole,
+    SharedLayout,
     /// Pre-Trash's entries and the folder they wait in.
     /// Shared, never copied per frame while the confirmation is open.
     PreTrash(std::sync::Arc<[(Uuid, Uuid)]>),
@@ -206,13 +214,8 @@ pub(super) struct State {
     /// never what Undo picks.
     worn_now: HashSet<Uuid>,
     protected_now: HashSet<Uuid>,
-    /// A snapshot being read off the frame (a whole inventory's layout is a
-    /// large file): its date and the file once read.
-    snapshot_loading: Option<(
-        i64,
-        std::path::PathBuf,
-        std::sync::mpsc::Receiver<std::io::Result<sorter::journal::Snapshot>>,
-    )>,
+    /// The local layout read, import, or export in progress.
+    snapshot_loading: Option<std::sync::mpsc::Receiver<std::io::Result<LayoutFile>>>,
     /// Whether all a saved or whole-inventory source reads is loaded, at an
     /// inventory generation: checked again only when the inventory changes.
     source_loaded: Option<(u64, bool)>,
@@ -1004,6 +1007,10 @@ impl Job {
         }
         self.settled_at = Some(inv.generation);
         let base = self.base.clone();
+        let base = sorter::SortBase {
+            id: self.base_id,
+            name: &base,
+        };
         let flying: HashSet<Uuid> = self.in_flight.iter().flat_map(|b| b.moves.iter().map(|m| m.id)).collect();
         let mut arrived = Vec::new();
         self.unsure.retain(|(m, failed, since)| {
@@ -1016,7 +1023,7 @@ impl Job {
             if flying.contains(&m.id) {
                 return true;
             }
-            let here = sorter::arrived(inv, &base, m);
+            let here = sorter::arrived(inv, base, m);
             if here {
                 arrived.push((m.clone(), *failed));
             }
@@ -1096,6 +1103,7 @@ impl State {
         if self.account == Some(agent) {
             return;
         }
+        self.snapshot_loading = None;
         self.account = Some(agent);
         let dir = crate::settings::account_dir(&agent);
         use sorter::journal as j;
@@ -1682,6 +1690,8 @@ pub(super) fn show(
     }
     if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
         st.sorter.load_account(agent);
+        prefs.sorter.select_account_base(inv, agent);
+        poll_layout_file(&mut st.sorter);
         // the stopped run, once read; a run started meanwhile replaced it
         if let Some(read) = &st.sorter.unfinished_loading
             && let Ok(unfinished) = read.try_recv()
@@ -1710,6 +1720,7 @@ pub(super) fn show(
             .iter()
             .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_) | InvAction::Drop(_)));
     let now = Instant::now();
+    let previous_base = prefs.sorter.base.clone();
     let state = &mut st.sorter;
     // A batch the app never took (another inventory change went first in
     // that frame): back at the front of the queue, never counted.
@@ -1813,7 +1824,7 @@ pub(super) fn show(
             Default::default()
         };
         // (the sort folder the moves really go into, as `step` finds it)
-        let base = sorter::child(inv, inv.root, &job.base);
+        let base = job.base_id;
         let options = &prefs.sorter;
         // (each destination path read once a frame)
         let paths: std::cell::RefCell<std::collections::HashMap<Vec<String>, bool>> = Default::default();
@@ -1849,7 +1860,8 @@ pub(super) fn show(
                         .any(|e| crate::world::inventory::actions::under(inv, *e, m.id))
                 || into_excluded()
         };
-        match sorter::step_with(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped, &refused) {
+        let destination = sorter::SortBase { id: base, name: &job.base };
+        match sorter::step_with(inv, destination, &mut job.queue, &prefs.protected, worn, &mut job.skipped, &refused) {
             Step::Change(change, moves) => {
                 job.in_flight = Some(InFlight {
                     moves,
@@ -1997,6 +2009,25 @@ pub(super) fn show(
             loaded
         }
         Source::Entries(_) => true,
+        Source::Layout(_) if busy => true,
+        Source::Layout(_) => {
+            if state.source_checked.is_none_or(|at| at.elapsed() >= SHARE_CHECK) {
+                let progress = sorter::read_progress(inv);
+                let ready = !inv.walk_busy && progress.pending == 0 && (!source.shared_layout() || progress.failed == 0);
+                state.source_loaded = Some((inv.generation, ready));
+                state.source_checked = Some(now);
+                if !inv.walk_busy && progress.pending > 0 {
+                    let tops = sorter::unread_tops(inv, 400);
+                    if !tops.is_empty() {
+                        actions.push(InvAction::FetchSubtrees(tops));
+                    }
+                }
+                if source.shared_layout() && progress.pending == 0 && progress.failed > 0 {
+                    state.status = aurora_i18n::tr!("inventory-sorter-layout-incomplete", count = progress.failed);
+                }
+            }
+            state.source_loaded.is_some_and(|(_, ready)| ready)
+        }
         // saved moves (Undo, a layout, a run to resume) are read where their
         // entries were: each such folder is loaded first, else a move whose
         // entry is not known yet would be dropped from the run
@@ -2098,12 +2129,17 @@ pub(super) fn show(
         state.planned_at = Some(now);
         let make = {
             let (source, options, protected, worn) = (source.clone(), prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
+            let by_runs = match &source {
+                Source::Layout(layout) => state.journal.with(|j| sorter::journal::moved_since(j, layout.at)),
+                _ => HashSet::new(),
+            };
             move |inv: &Inventory| {
                 let mut plan = match &source {
                     Source::Folder(id) => sorter::plan(inv, *id, &options, &protected, &worn),
                     Source::Entries(ids) => sorter::plan_entries(inv, ids, &options, &protected, &worn),
                     Source::Whole => sorter::plan_whole(inv, &options, &protected, &worn),
                     Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &options, &protected, &worn),
+                    Source::Layout(layout) => layout_preview(inv, layout, agent, &by_runs, &protected, &worn, &options),
                 };
                 plan.order();
                 plan
@@ -2128,7 +2164,7 @@ pub(super) fn show(
     // folder arriving included), choice, source or day.
     let cleanup_source = match &source {
         Source::Folder(id) => *id,
-        Source::Entries(_) | Source::Whole | Source::Saved(..) => inv.root,
+        Source::Entries(_) | Source::Whole | Source::Saved(..) | Source::Layout(_) => inv.root,
     };
     if let Some((task, plan)) = Planning::take(&mut state.cleaning)
         && let Some((choices, from, day)) = task.cleanup
@@ -2376,10 +2412,13 @@ pub(super) fn show(
     }
     let state = &mut st.sorter;
     if go && state.job.is_none() {
-        if source == Source::Whole {
-            // the second step: nothing moves before the confirmation
+        if source == Source::Whole || source.shared_layout() {
             state.understood = false;
-            state.confirm = Some(Confirm::Whole);
+            state.confirm = Some(if source.shared_layout() {
+                Confirm::SharedLayout
+            } else {
+                Confirm::Whole
+            });
         } else {
             start(state, inv, prefs);
         }
@@ -2430,6 +2469,10 @@ pub(super) fn show(
     import_window(ctx, p, st, &mut prefs.sorter);
     vocab_window(ctx, p, st);
     confirm(ctx, p, inv, st, prefs);
+    if prefs.sorter.base != previous_base {
+        prefs.sorter.base_ids.remove(&agent);
+        prefs.sorter.select_account_base(inv, agent);
+    }
 }
 
 /// The vocabulary check (`sorter-vocab` demo): each corpus name, where it
@@ -3178,17 +3221,31 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
         ui.set_max_width(400.0);
         let size = Vec2::new(0.0, 26.0);
         match &asked {
-            Confirm::Whole => {
+            Confirm::Whole | Confirm::SharedLayout => {
+                let shared = matches!(asked, Confirm::SharedLayout);
                 ui.label(
-                    RichText::new(aurora_i18n::tr!("inventory-sorter-whole-title"))
-                        .size(15.0)
-                        .strong()
-                        .color(p.ink),
+                    RichText::new(if shared {
+                        aurora_i18n::tr!("inventory-sorter-layout-confirm")
+                    } else {
+                        aurora_i18n::tr!("inventory-sorter-whole-title")
+                    })
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
                 );
                 ui.add_space(8.0);
-                ui.label(aurora_i18n::tr!("inventory-sorter-whole-text", count = moves));
+                ui.label(if shared {
+                    aurora_i18n::tr!("inventory-sorter-layout-by-name").to_owned()
+                } else {
+                    aurora_i18n::tr!("inventory-sorter-whole-text", count = moves)
+                });
                 ui.add_space(8.0);
-                crate::ui::widgets::checkbox(ui, p, &mut st.sorter.understood, aurora_i18n::tr!("inventory-sorter-whole-check"));
+                let check = if shared {
+                    aurora_i18n::tr!("inventory-sorter-layout-check")
+                } else {
+                    aurora_i18n::tr!("inventory-sorter-whole-check")
+                };
+                crate::ui::widgets::checkbox(ui, p, &mut st.sorter.understood, check);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let label = aurora_i18n::tr!("inventory-sorter-start", count = moves);
@@ -3341,7 +3398,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
         return;
     }
     match asked {
-        Confirm::Whole => start(&mut st.sorter, inv, prefs),
+        Confirm::Whole | Confirm::SharedLayout => start(&mut st.sorter, inv, prefs),
         Confirm::Unlock(Some(id), _) => {
             if !prefs.sorter.unlocked.contains(&id) {
                 prefs.sorter.unlocked.push(id);
@@ -3427,10 +3484,16 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     if busy_elsewhere(state) {
         return;
     }
-    let Some((_, options, plan)) = state.preview.as_ref() else { return };
+    let Some((generation, options, plan)) = state.preview.as_ref() else {
+        return;
+    };
     // never a run from a preview of other options, or while a newer one is
     // being made: the user sorts what they saw
-    if state.planning.is_some() || *options != prefs.sorter {
+    if state.planning.is_some()
+        || *options != prefs.sorter
+        || (matches!(state.source, Some(Source::Layout(_)))
+            && (*generation != inv.generation || inv.walk_busy || !state.source_loaded.is_some_and(|(_, ready)| ready)))
+    {
         state.status = aurora_i18n::tr!("inventory-sorter-updating").into();
         return;
     }
@@ -3458,6 +3521,9 @@ fn start(state: &mut State, inv: &Inventory, prefs: &InventoryPreferences) {
     let moves = state.preview.take().map(|(_, _, plan)| plan.moves).unwrap_or_default();
     let mut job = Job::new(moves.into(), sorter::base_name_in(inv, &prefs.sorter));
     job.base_id = sorter::base_folder(inv, &prefs.sorter);
+    if let Some(Source::Layout(layout)) = &state.source {
+        job.restoring = Some(Restoring::Snapshot(layout.at));
+    }
     if let Some(Source::Saved(_, restoring)) = &state.source {
         job.restoring = Some(*restoring);
         if *restoring == Restoring::Undo {
@@ -3534,6 +3600,10 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
                                 let date = snapshot_date(*at);
                                 aurora_i18n::tr!("inventory-sorter-snapshot-source", date = date.as_str())
                             }
+                            Source::Layout(layout) => {
+                                let date = snapshot_date(layout.at);
+                                aurora_i18n::tr!("inventory-sorter-snapshot-source", date = date.as_str())
+                            }
                         };
                         let shown = fit_path(ui, p.ink, &text);
                         let label = ui.add(egui::Label::new(RichText::new(shown.as_str()).strong()).truncate());
@@ -3544,7 +3614,9 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
                 });
             });
         });
-        let intro = if *source == Source::Whole {
+        let intro = if source.shared_layout() {
+            aurora_i18n::tr!("inventory-sorter-layout-by-name")
+        } else if *source == Source::Whole {
             aurora_i18n::tr!("inventory-sorter-whole-intro")
         } else {
             aurora_i18n::tr!("inventory-sorter-intro")
@@ -4055,13 +4127,22 @@ fn cleanup_tab(
 
 fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, options: &mut sorter::Preferences) {
     crate::ui::widgets::section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-sorter-base"));
-    ui.add(
-        egui::TextEdit::singleline(&mut options.base)
-            .char_limit(63)
-            .hint_text(aurora_i18n::tr!("inventory-sorter-default-base"))
-            .desired_width(240.0),
-    );
+    if ui
+        .add(
+            egui::TextEdit::singleline(&mut options.base)
+                .char_limit(63)
+                .hint_text(aurora_i18n::tr!("inventory-sorter-default-base"))
+                .desired_width(240.0),
+        )
+        .changed()
+    {
+        options.base_id = None;
+    }
     ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-base-hint")).small().color(p.muted));
+    if let Some(id) = sorter::base_folder(inv, options) {
+        let path = sorter::folder_path(inv, id);
+        ui.label(aurora_i18n::tr!("inventory-sorter-current-base", path = path));
+    }
     ui.add_space(10.0);
     crate::ui::widgets::switch_labeled(ui, p, &mut options.folders, aurora_i18n::tr!("inventory-sorter-folders"));
     ui.add_space(4.0);
@@ -4127,7 +4208,7 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
     default_folders(ui, p, inv, state, options);
     ui.add_space(10.0);
     let worn = std::mem::take(&mut state.worn_now);
-    undo_and_snapshots(ui, p, inv, state, &worn, options);
+    undo_and_snapshots(ui, p, inv, state, &worn);
     state.worn_now = worn;
     ui.add_space(10.0);
     crate::ui::widgets::section_header(ui, p, "share", aurora_i18n::tr!("inventory-share-section"));
@@ -4455,14 +4536,7 @@ fn share_row(ui: &mut egui::Ui, p: &Palette, state: &mut State) {
 
 /// Undo the last run, put a snapshot's layout back, resume a stopped run,
 /// take a snapshot: each opens its preview; nothing moves before Sort.
-fn undo_and_snapshots(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    inv: &Inventory,
-    state: &mut State,
-    worn: &HashSet<Uuid>,
-    options: &sorter::Preferences,
-) {
+fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>) {
     use crate::ui::widgets::{ActionKind, action_button};
     let size = Vec2::new(0.0, 26.0);
     let protected = state.protected_now.clone();
@@ -4585,69 +4659,163 @@ fn undo_and_snapshots(
         }
     });
     share_row(ui, p, state);
-    let mut restore = None;
+    let can_read = !busy && state.snapshot_loading.is_none();
+    let mut job = None;
+    if ui
+        .add_enabled_ui(can_read, |ui| {
+            action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("inventory-sorter-layout-import"),
+                ActionKind::Flat,
+                size,
+            )
+        })
+        .inner
+        .clicked()
+    {
+        job = Some(LayoutFileJob::Import);
+    }
     for (at, path) in &state.snapshots {
         ui.horizontal(|ui| {
             ui.label(snapshot_date(*at));
-            if ui
-                .add_enabled_ui(!busy && state.snapshot_loading.is_none(), |ui| {
-                    crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-snapshot-restore"))
-                })
-                .inner
-                .clicked()
-            {
-                restore = Some((*at, path.clone()));
-            }
+            ui.add_enabled_ui(can_read, |ui| {
+                let restore = crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-snapshot-restore"));
+                if restore.clicked() {
+                    job = Some(LayoutFileJob::Read(path.clone()));
+                }
+                let export = crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-layout-export"));
+                if export.clicked() {
+                    job = Some(LayoutFileJob::Export(path.clone()));
+                }
+            });
         });
     }
-    // the file is read on a thread; the restore is planned once it is
-    if let Some((at, path)) = restore {
+    if let Some(job) = job {
         let (send, read) = std::sync::mpsc::channel();
-        let file = path.clone();
-        let load = move || {
-            let _ = send.send(sorter::journal::load::<sorter::journal::Snapshot>(&file));
-        };
-        match std::thread::Builder::new().name("auto-sort snapshot".into()).spawn(load) {
+        let ctx = ui.ctx().clone();
+        match std::thread::Builder::new().name("auto-sort layout".into()).spawn(move || {
+            let _ = send.send(job.run());
+            ctx.request_repaint();
+        }) {
             Ok(_) => {
-                state.snapshot_loading = Some((at, path, read));
+                state.snapshot_loading = Some(read);
                 state.status = aurora_i18n::tr!("inventory-sorter-snapshot-loading").to_owned();
             }
-            Err(error) => log::warn!("auto-sort: the snapshot could not be read ({error})"),
+            Err(error) => log::warn!("auto-sort: could not start the layout file worker: {error}"),
         }
     }
-    let arrived = state.snapshot_loading.as_ref().and_then(|(_, _, read)| read.try_recv().ok());
-    if let Some(result) = arrived
-        && let Some((at, path, _)) = state.snapshot_loading.take()
-    {
+}
+
+fn poll_layout_file(state: &mut State) {
+    if state.busy() {
+        return;
+    }
+    let arrived = state.snapshot_loading.as_ref().and_then(|read| match read.try_recv() {
+        Ok(result) => Some(result),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(std::io::Error::other("layout worker stopped"))),
+    });
+    if let Some(result) = arrived {
+        state.snapshot_loading = None;
+        state.status.clear();
         match result {
-            Ok(snapshot) => {
-                let account = state.account.unwrap_or_default();
-                let by_runs = state.journal.with(|j| sorter::journal::moved_since(j, snapshot.at));
-                match sorter::journal::restore_moves(inv, &snapshot, account, &by_runs, &protected, worn, options) {
-                    Ok((moves, summary)) => {
-                        state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));
-                        state.tab = PREVIEW;
-                        // what stays, said before anything moves
-                        state.status = aurora_i18n::tr!(
-                            "inventory-sorter-restore-summary",
-                            new = summary.new_since,
-                            hand = summary.by_hand,
-                            trashed = summary.trashed,
-                            gone = summary.gone + summary.folder_gone,
-                            kept = summary.kept
-                        );
-                    }
-                    Err(sorter::journal::OtherAccount) => {
-                        state.status = aurora_i18n::tr!("inventory-sorter-snapshot-other-account").to_owned();
-                    }
+            Ok(LayoutFile::Ready(layout)) if !layout.account.is_nil() && Some(layout.account) != state.account => {
+                state.status = aurora_i18n::tr!("inventory-sorter-snapshot-other-account").to_owned();
+            }
+            Ok(LayoutFile::Ready(layout)) => {
+                state.set_source(Source::Layout(std::sync::Arc::new(layout)));
+                state.tab = PREVIEW;
+            }
+            Ok(LayoutFile::Exported) => state.status = aurora_i18n::tr!("inventory-sorter-layout-exported").to_owned(),
+            Ok(LayoutFile::Cancelled) => {}
+            Err(error) => {
+                log::warn!("auto-sort: layout file operation failed: {error}");
+                state.status = aurora_i18n::tr!("inventory-sorter-layout-file-error").to_owned();
+            }
+        }
+    }
+}
+
+enum LayoutFileJob {
+    Import,
+    Read(std::path::PathBuf),
+    Export(std::path::PathBuf),
+}
+
+enum LayoutFile {
+    Ready(sorter::journal::Snapshot),
+    Exported,
+    Cancelled,
+}
+
+impl LayoutFileJob {
+    fn run(self) -> std::io::Result<LayoutFile> {
+        match self {
+            Self::Read(path) => sorter::journal::load(&path).map(LayoutFile::Ready),
+            Self::Import => {
+                let path = rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("inventory-sorter-layout-import"))
+                    .add_filter("JSON / GZIP", &["json", "gz"])
+                    .pick_file();
+                match path {
+                    Some(path) => sorter::journal::load_layout_file(&path).map(LayoutFile::Ready),
+                    None => Ok(LayoutFile::Cancelled),
                 }
             }
-            Err(error) => {
-                log::warn!("auto-sort: the snapshot {} could not be read: {error}", path.display());
-                state.status = aurora_i18n::tr!("inventory-sorter-snapshot-unreadable").to_owned();
+            Self::Export(source) => {
+                let file = source.file_name().and_then(|s| s.to_str()).unwrap_or("inventory-snapshot.json.gz");
+                let path = rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("inventory-sorter-layout-export"))
+                    .set_file_name(file)
+                    .add_filter("GZIP", &["gz"])
+                    .save_file();
+                match path {
+                    Some(path) => {
+                        crate::atomic_file::write(&path, &std::fs::read(source)?)?;
+                        Ok(LayoutFile::Exported)
+                    }
+                    None => Ok(LayoutFile::Cancelled),
+                }
             }
         }
     }
+}
+
+fn layout_preview(
+    inv: &Inventory,
+    layout: &sorter::journal::Snapshot,
+    account: Uuid,
+    by_runs: &HashSet<Uuid>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    options: &sorter::Preferences,
+) -> Plan {
+    let shared = layout
+        .account
+        .is_nil()
+        .then(|| sorter::journal::match_shared_layout(inv, layout, account));
+    let target = shared.as_ref().map_or(layout, |(layout, _)| layout);
+    let Ok((moves, summary)) = sorter::journal::restore_moves(inv, target, account, by_runs, protected, worn, options) else {
+        return Plan::default();
+    };
+    let mut plan = sorter::plan_saved(inv, &moves, options, protected, worn);
+    plan.layout_summary = Some(match shared {
+        Some((_, unmatched)) => aurora_i18n::tr!(
+            "inventory-sorter-layout-matches",
+            count = unmatched + summary.kept + summary.folder_gone + summary.trashed
+        ),
+        None => aurora_i18n::tr!(
+            "inventory-sorter-restore-summary",
+            new = summary.new_since,
+            hand = summary.by_hand,
+            trashed = summary.trashed,
+            gone = summary.gone + summary.folder_gone,
+            kept = summary.kept
+        ),
+    });
+    plan
 }
 
 /// The folders the user lists as their own: opened and sorted, never moved
@@ -4952,6 +5120,9 @@ const PREVIEW_ROWS: usize = 300;
 /// The preview: how many entries move and where, each by name, then what
 /// stays and why. Nothing moves before it is shown.
 fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
+    if let Some(summary) = &plan.layout_summary {
+        ui.label(RichText::new(summary).color(p.muted));
+    }
     if plan.moves.is_empty() && plan.unknown.is_empty() && plan.kept == 0 {
         ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-nothing")).color(p.muted));
     }
@@ -4989,10 +5160,16 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
     if !plan.unknown.is_empty() {
         let title = format!("{}  ({})", aurora_i18n::tr!("inventory-sorter-not-recognised"), plan.unknown.len());
         crate::ui::widgets::collapsing(ui, p, "inventory_sorter_unknown", title, false, |ui| {
-            for name in plan.unknown.iter().take(PREVIEW_ROWS) {
-                ui.label(RichText::new(name).color(p.muted));
-            }
-            more(ui, p, plan.unknown.len());
+            let row_height = ui.text_style_height(&egui::TextStyle::Body);
+            egui::ScrollArea::vertical()
+                .id_salt("inventory_sorter_unknown_rows")
+                .max_height(240.0)
+                .show_rows(ui, row_height, plan.unknown.len(), |ui, rows| {
+                    for name in &plan.unknown[rows] {
+                        ui.add(egui::Label::new(RichText::new(name).color(p.muted)).truncate())
+                            .on_hover_text(name);
+                    }
+                });
         });
     }
     // what stays, by reason: worn, links, locked, excluded, protected
