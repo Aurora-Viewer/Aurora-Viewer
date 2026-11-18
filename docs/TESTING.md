@@ -3979,6 +3979,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
+| `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
@@ -4174,6 +4175,24 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
+- **`AURORA_DEMO_COUPLE=1|leave|clip|hover|mirror`**: Nova stands beside you from frame 400
+  and accepts an Ask 1.5 s later, as a resident would. Open the animation
+  editor (Avatar Studio › Animate), Clip page: Ask Nova, then Use as B. The
+  timeline shows Person A (violet) and Person B (amber) lanes; a click on the
+  other person's name or lanes edits them, and each keeps their own keys and
+  undo. Save or Export BVH writes `<name> A`, `<name> B` and `<name>
+  placement.txt` in the folder chosen. `leave`: 10 s after Nova becomes
+  Person B her avatar is killed, as on a teleport; she must stay drawn and
+  posable until couple mode ends, then go.
+  `clip` and `hover`, with `AURORA_DEMO_AVATAR_STUDIO=animation-editor`, need
+  no clicks, for screenshots: Nova is asked from frame 860 and becomes Person
+  B face to face, with the Clip page and the timeline open (both people's
+  lanes, B's amber joint dots, the Move Person B fields); `hover` also gives
+  B a hover of their own and opens the Hover menu on Person B at frame 1300.
+  `mirror` presses Mirror yourself instead: a copy of your avatar, with what
+  you wear but not your HUDs, stands 1 m in front of you facing you as Person
+  B, with no name tag, and goes when couple mode ends. The scripted modes turn
+  the view to the side once B is there. Capture from frame 1400.
 - **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
