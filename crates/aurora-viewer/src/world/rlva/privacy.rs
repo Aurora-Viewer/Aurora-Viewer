@@ -1252,4 +1252,95 @@ mod tests {
         assert_eq!(said.text, "hello everyone");
         assert!(!said.from.contains("Tester"), "{}", said.from);
     }
+
+    /// The rule behind the greyed entries of an avatar's menu
+    /// (`Facts::name_hidden`): RlvActions::canShowName(SNC_DEFAULT, id),
+    /// where only oneself and a `@shownames:<uuid>` exception are named.
+    #[test]
+    fn the_name_of_a_resident_is_shown_only_to_oneself_and_exceptions() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (stranger, excepted) = (Uuid::from_u128(0x35471), Uuid::from_u128(0x35472));
+        world.rlva.configure(true);
+        assert!(world.rlva_can_name(stranger), "no restriction: every name is shown");
+        restrict(&mut world, "shownames=n");
+        assert!(!world.rlva_can_name(stranger));
+        assert!(!world.rlva_can_name(excepted));
+        assert!(world.rlva_can_name(world.agent_id), "never ourselves");
+        restrict(&mut world, &format!("shownames:{excepted}=add"));
+        assert!(world.rlva_can_name(excepted));
+        assert!(!world.rlva_can_name(stranger));
+    }
+
+    /// The label of an avatar link is text someone wrote: `@shownames` and
+    /// `@showloc` filter it like the text around it (RlvUtil::filterNames and
+    /// filterLocation run on the raw text of the chat, rlvcommon.cpp). The
+    /// address of the link stays, so a bare link still resolves to its
+    /// resident (LLUrlEntryAgent has no RLVa test).
+    #[test]
+    fn the_label_of_an_avatar_link_is_filtered_like_the_text_around_it() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        // someone around us: only the residents in the scene are rewritten
+        let agent = world.agent_id;
+        let id = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != agent).unwrap();
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Jane Doe".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n,showloc=n");
+        world.refresh_rlva_privacy();
+        let address = format!("secondlife:///app/agent/{id}/about");
+        for verb in ["about", "inspect", "im", "mention"] {
+            let link = format!("[secondlife:///app/agent/{id}/{verb} Jane Doe in Secret Region]");
+            let filtered = world.rlva_filter_text_in(NameScope::World, &link);
+            assert!(
+                !filtered.contains("Jane Doe"),
+                "{verb}: the name of the label is hidden: {filtered}"
+            );
+            assert!(
+                !filtered.contains("Secret Region"),
+                "{verb}: the place of the label is hidden: {filtered}"
+            );
+            assert!(filtered.contains(&id.to_string()), "{verb}: the address stays: {filtered}");
+        }
+        let text = format!("Jane Doe points at {address} from Secret Region");
+        let filtered = world.rlva_filter_text_in(NameScope::World, &text);
+        assert!(filtered.contains(&address), "a bare link stays: {filtered}");
+        assert!(!filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
+        // a conversation names its people and still hides the places
+        let said = format!("[{address} Jane Doe in Secret Region]");
+        let filtered = world.rlva_filter_text_in(NameScope::Roster, &said);
+        assert!(filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
+    }
+
+    /// A profile opened from a conversation names its resident
+    /// (`NameScope::Roster`): the line under the display name keeps the
+    /// legacy name while `@shownames` swaps it for the stand-in in the world.
+    #[test]
+    fn a_profile_opened_from_a_conversation_keeps_the_legacy_name() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let stranger = Uuid::from_u128(0x35473);
+        world.social.names.insert(stranger, "Jane Doe".into());
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        assert_ne!(world.legacy_name_in(NameScope::World, &stranger).as_deref(), Some("Jane Doe"));
+        assert_eq!(world.legacy_name_in(NameScope::Roster, &stranger).as_deref(), Some("Jane Doe"));
+        assert_eq!(
+            world.legacy_name(&stranger).as_deref(),
+            Some("Jane Doe"),
+            "the cached name wins, as before"
+        );
+    }
 }
