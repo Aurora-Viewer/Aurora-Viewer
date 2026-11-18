@@ -218,36 +218,35 @@ pub fn folder_link(name: &str) -> Option<&'static str> {
     ROWS.iter().find(|row| row.closed == name).map(|row| row.link)
 }
 
-/// A clothing icon still drawn with a Tabler stand-in.
-pub struct Pending {
+/// A clothing icon Tabler has no symbol for, drawn by hand (Zakka, for
+/// Aurora; assets/icons/aurora/clothing/, a BRANDING.md exception).
+pub struct ClothingDrawing {
     pub item: &'static str,
-    /// The Tabler icon shown meanwhile.
+    /// The Tabler icon shown when `drawing` is `None` (a new kind waiting
+    /// for its drawing).
     pub stand_in: &'static str,
-    /// The hand-drawn icon, once it exists: it replaces the stand-in.
+    /// The hand-drawn icon: it replaces the stand-in.
     pub drawing: Option<&'static [u8]>,
 }
 
-/// Pending clothing icons: Pants, Skirt and Underpants have no Tabler
-/// symbol of their own, so they show stand-ins until the hand-drawn icons
-/// arrive. To use one, put it in assets/icons/aurora/ (pants.svg…) and set
-/// its `drawing`, e.g.
-/// `drawing: Some(include_bytes!("../../../../../assets/icons/aurora/pants.svg"))`.
-/// (Its link icon keeps the stand-in's until a `-link` version is made.)
-pub const PENDING_CLOTHING: &[Pending] = &[
-    Pending {
+/// Pants, Skirt and Underpants have no Tabler symbol of their own: their
+/// icons are drawn by hand. Their link icons are made by
+/// scripts/generate-inventory-icons.py (`LINKS`).
+pub const CLOTHING_DRAWINGS: &[ClothingDrawing] = &[
+    ClothingDrawing {
         item: "Inv_Pants",
         stand_in: "walk",
-        drawing: None,
+        drawing: Some(include_bytes!("../../../../../assets/icons/aurora/clothing/pants.svg")),
     },
-    Pending {
+    ClothingDrawing {
         item: "Inv_Skirt",
         stand_in: "woman-filled",
-        drawing: None,
+        drawing: Some(include_bytes!("../../../../../assets/icons/aurora/clothing/skirt.svg")),
     },
-    Pending {
+    ClothingDrawing {
         item: "Inv_Underpants",
         stand_in: "diaper",
-        drawing: None,
+        drawing: Some(include_bytes!("../../../../../assets/icons/aurora/clothing/underpants.svg")),
     },
 ];
 

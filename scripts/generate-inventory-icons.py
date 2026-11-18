@@ -51,9 +51,10 @@ FOLDERS = {
     "textures": "photo-filled",
 }
 
-# Tabler icons of items that get a link variant here (the older ones were
-# made by hand in assets/tabler-icons/*/*-link.svg).
-LINKS = ["cloud-filled", "ripple", "sun-moon", "sphere"]
+# Icons of items that get a link variant here (the older ones were made by
+# hand in assets/tabler-icons/*/*-link.svg): Tabler names, or `clothing/x`
+# for the hand-drawn clothing icons of assets/icons/aurora/clothing/.
+LINKS = ["cloud-filled", "ripple", "sun-moon", "sphere", "clothing/pants", "clothing/skirt", "clothing/underpants"]
 
 # The symbol's size against the folder (24 units), and where its centre
 # goes: the middle of the folder's body below the tab (closed), the middle
@@ -67,7 +68,10 @@ OUTLINE_CUT = 3.6
 
 
 def tabler(name):
-    """The file of a Tabler icon: `x-filled` is filled/x.svg, `x` outline/x.svg."""
+    """The file of a Tabler icon: `x-filled` is filled/x.svg, `x` outline/x.svg
+    (`clothing/x`: a hand-drawn icon of assets/icons/aurora/clothing/)."""
+    if name.startswith("clothing/"):
+        return OUT / (name + ".svg")
     if name.endswith("-filled"):
         return TABLER / "filled" / (name[: -len("-filled")] + ".svg")
     return TABLER / "outline" / (name + ".svg")
@@ -112,9 +116,11 @@ def shortcut():
 
 
 def header(comment, root_attrs):
+    source = (
+        "drawn by Zakka for Aurora" if comment.startswith("clothing/") else "Tabler icons, MIT, assets/tabler-icons/LICENSE"
+    )
     return (
-        f"<!-- aurora-generated: {comment} (scripts/generate-inventory-icons.py; "
-        "Tabler icons, MIT, assets/tabler-icons/LICENSE) -->\n"
+        f"<!-- aurora-generated: {comment} (scripts/generate-inventory-icons.py; {source}) -->\n"
         f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" {root_attrs}>\n'
     )
 
@@ -150,7 +156,7 @@ def folder(state, symbol, link):
 
 def linked(name):
     root = ET.parse(tabler(name)).getroot()
-    keep = ("fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin")
+    keep = ("fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "style")
     attrs = " ".join(f'{k}="{root.get(k)}"' for k in keep if root.get(k) is not None)
     svg = header(f"{name} + shortcut", attrs)
     svg += f"{indent(shapes(tabler(name)), 2)}\n  {shortcut()}\n</svg>\n"
@@ -174,7 +180,7 @@ def main():
         write(OUT / "folders" / f"{name}-open.svg", folder("open", symbol, False))
         write(OUT / "folders" / f"{name}-closed-link.svg", folder("closed", symbol, True))
     for name in LINKS:
-        write(OUT / "links" / f"{name}-link.svg", linked(name))
+        write(OUT / "links" / f"{name.rsplit('/', 1)[-1]}-link.svg", linked(name))
     print(f"{len(FOLDERS) * 3} folder icons, {len(LINKS)} link icons in {OUT.relative_to(ROOT)}")
 
 

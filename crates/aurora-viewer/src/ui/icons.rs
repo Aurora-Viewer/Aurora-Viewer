@@ -520,7 +520,7 @@ const BRAND_SVGS: &[(&str, &[u8])] = &[("wolf", include_bytes!("../../../../asse
 const PNGS: &[(&str, &[u8])] = &[("phoenix_18", include_bytes!("../../assets/icons/phoenix_18.png"))];
 
 /// Legacy Viewer icon names used by skins / layouts -> Tabler icon. The
-/// inventory's category symbols (`Inv_Texture`…) and the pending clothing
+/// inventory's category symbols (`Inv_Texture`…) and the hand-drawn clothing
 /// icons are in `inventory::category`; see `alias_target`.
 const ALIASES: &[(&str, &str)] = &[
     ("Command_Chat_Icon", "messages-filled"),
@@ -635,7 +635,7 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Pants_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/walk-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/pants-link.svg"),
     ),
     (
         "Inv_Shoe_Link",
@@ -659,11 +659,11 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Underpants_Link",
-        include_bytes!("../../../../assets/tabler-icons/outline/diaper-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/underpants-link.svg"),
     ),
     (
         "Inv_Skirt_Link",
-        include_bytes!("../../../../assets/tabler-icons/filled/woman-link.svg"),
+        include_bytes!("../../../../assets/icons/aurora/links/skirt-link.svg"),
     ),
     (
         "Inv_Alpha_Link",
@@ -802,12 +802,16 @@ pub(crate) fn embedded(name: &str) -> bool {
 }
 
 /// The embedded icon an alias stands for: the Legacy Viewer's names of `ALIASES`,
-/// the inventory's item icons by category and the pending clothing icons.
+/// the inventory's item icons by category and the clothing icons' stand-ins.
 pub(crate) fn alias_target(name: &str) -> Option<&'static str> {
     ALIASES
         .iter()
         .copied()
-        .chain(category::PENDING_CLOTHING.iter().map(|pending| (pending.item, pending.stand_in)))
+        .chain(
+            category::CLOTHING_DRAWINGS
+                .iter()
+                .map(|clothing| (clothing.item, clothing.stand_in)),
+        )
         .find(|(alias, _)| *alias == name)
         .map(|(_, target)| target)
         .or_else(|| category::ROWS.iter().find(|row| row.item == Some(name)).map(|row| row.symbol))
@@ -983,8 +987,10 @@ impl Icons {
             }
         }
         let items = category::ROWS.iter().filter_map(|row| row.item.map(|item| (item, row.symbol)));
-        let pending = category::PENDING_CLOTHING.iter().map(|pending| (pending.item, pending.stand_in));
-        for (alias, target) in ALIASES.iter().copied().chain(pending).chain(items) {
+        let clothing = category::CLOTHING_DRAWINGS
+            .iter()
+            .map(|clothing| (clothing.item, clothing.stand_in));
+        for (alias, target) in ALIASES.iter().copied().chain(clothing).chain(items) {
             if let Some(t) = map.get(target).cloned() {
                 map.insert(alias.to_owned(), t);
             }
@@ -993,12 +999,12 @@ impl Icons {
             }
         }
         // hand-drawn clothing icons replace their stand-ins
-        for pending in category::PENDING_CLOTHING {
-            if let Some(bytes) = pending.drawing
+        for clothing in category::CLOTHING_DRAWINGS {
+            if let Some(bytes) = clothing.drawing
                 && let Some(ci) = rasterize_svg(bytes, RASTER_PX)
             {
-                map.insert(pending.item.to_owned(), ctx.load_texture(pending.item, ci, opts));
-                sources.insert(pending.item.to_owned(), Source::Svg(Cow::Borrowed(bytes)));
+                map.insert(clothing.item.to_owned(), ctx.load_texture(clothing.item, ci, opts));
+                sources.insert(clothing.item.to_owned(), Source::Svg(Cow::Borrowed(bytes)));
             }
         }
         if let Some(dir) = override_dir
@@ -1119,12 +1125,12 @@ mod tests {
         for (alias, target) in ALIASES {
             assert!(names.contains(target), "{alias} -> {target} is not embedded");
         }
-        for pending in category::PENDING_CLOTHING {
+        for clothing in category::CLOTHING_DRAWINGS {
             assert!(
-                names.contains(&pending.stand_in),
+                names.contains(&clothing.stand_in),
                 "{} -> {} is not embedded",
-                pending.item,
-                pending.stand_in
+                clothing.item,
+                clothing.stand_in
             );
         }
         for row in category::ROWS {
@@ -1140,13 +1146,28 @@ mod tests {
             .iter()
             .flat_map(|row| [Some(row.closed), Some(row.open), Some(row.link), row.item])
             .flatten()
-            .chain(category::PENDING_CLOTHING.iter().map(|pending| pending.item))
+            .chain(category::CLOTHING_DRAWINGS.iter().map(|clothing| clothing.item))
             .collect();
         for (alias, _) in ALIASES {
             assert!(!rows.contains(alias), "{alias} is both an alias and a category icon");
         }
         for (name, _) in INVENTORY_LINKS {
             assert!(!rows.contains(name), "{name} is both a link and a category icon");
+        }
+    }
+
+    #[test]
+    fn hand_drawn_clothing_icons_replace_their_stand_ins() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for clothing in category::CLOTHING_DRAWINGS {
+            let drawing = clothing.drawing.expect("drawn");
+            let image = rasterize_svg(drawing, RASTER_PX).expect("clothing SVG");
+            assert!(image.pixels.iter().any(|p| p.a() > 0), "{} is empty", clothing.item);
+            let item = icons.get(clothing.item).expect("loaded");
+            let stand_in = icons.get(clothing.stand_in).expect("stand-in");
+            assert_ne!(item.id(), stand_in.id(), "{} still shows its stand-in", clothing.item);
+            assert!(icons.large(&ctx, clothing.item).is_some_and(|t| t.size() == [192, 192]));
         }
     }
 
