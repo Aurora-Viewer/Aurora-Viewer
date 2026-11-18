@@ -5891,7 +5891,7 @@ keybinds-strafe-left = 左へ平行移動
 ui-land-general-not-for-sale = 販売対象外
 keybinds-move-above = 上昇
 ui-options-become-away-after-this-time-without-keyboard-or-mouse = キーボードやマウスの入力がないままこの時間が経過すると一時退席になります（0 = しない）
-keybinds-move-below = 下降／しゃがみボタン
+keybinds-move-below = 下降
 demo-mountain-enthusiast = 山好き。
 ui-media-pause = 一時停止
 keybinds-numpad-6 = { "テンキーの" }{ $d }
