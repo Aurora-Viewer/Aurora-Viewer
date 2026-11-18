@@ -4957,7 +4957,7 @@ impl World {
             return;
         }
         let mut c = c;
-        if let std::borrow::Cow::Owned(text) = self.rlva_filter_chat_in(names::NameScope::World, &c.message) {
+        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
             c.message = text;
         }
         let own_attachment = self.rlva.enabled()

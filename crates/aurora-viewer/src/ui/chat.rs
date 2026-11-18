@@ -1357,7 +1357,19 @@ pub(crate) fn text_with_links(
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, false.into()),
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size, false.into()),
-                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &label, size, false.into()),
+                    // the label is text someone wrote: filtered like the
+                    // text around it (RlvUtil::filterNames and filterLocation
+                    // run on the raw text, the labels included)
+                    Seg::Agent(id) => agent_link(
+                        ui,
+                        p,
+                        world,
+                        NameScope::Roster,
+                        id,
+                        &world.rlva_filter_text_in(scope, &label),
+                        size,
+                        false.into(),
+                    ),
                     Seg::Mention(id) => agent_link(
                         ui,
                         p,
@@ -1376,7 +1388,8 @@ pub(crate) fn text_with_links(
                     app_links::link(ui, p, world, u, &link, &label, size);
                 }
                 // a dialog has no mention highlight: the name, as a link (a
-                // mention is rewritten, an avatar link keeps its name)
+                // mention is rewritten, a bare avatar link shows the name of
+                // its resident: LLUrlEntryAgent has no RLVa test)
                 Seg::Agent(id) => {
                     wanted.insert(id);
                     agent_link(
@@ -1486,7 +1499,8 @@ fn line_job(
     let filtered;
     let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
         let mut copy = line.clone();
-        copy.text = world.rlva_filter_chat_in(scope, &copy.text).into_owned();
+        // (the whole text, the labels of its links included)
+        copy.text = world.rlva_filter_text_in(scope, &copy.text).into_owned();
         copy.from = sender_name(world, scope, &world.own_name(), &copy);
         filtered = copy;
         &filtered
@@ -1593,7 +1607,8 @@ fn line_job(
     let mut badges = Vec::new();
     let mut at = job.text.chars().count();
     let name_of = |s: &Seg| match s {
-        // an avatar link keeps its name, a mention is rewritten
+        // a bare avatar link shows the name of its resident
+        // (LLUrlEntryAgent has no RLVa test), a mention is rewritten
         Seg::Agent(id) => {
             want_names.insert(*id);
             world.social.name_in(NameScope::Roster, id)
@@ -1621,7 +1636,8 @@ fn line_job(
         {
             world.social.name_in(scope, id)
         } else if matches!(link, Some(Link::Agent(_))) {
-            // an avatar link keeps the name it was written with
+            // the name of a bare avatar link, or a label the filter of the
+            // whole text above has already read
             piece
         } else {
             world.rlva_filter_text_in(scope, &piece).into_owned()
@@ -2386,10 +2402,11 @@ pub(crate) fn chat_text_marked(
     mark: Option<Mark>,
 ) {
     let emphasis = emphasis.into();
-    // `@shownames` rewrites the names in the text around the links, never
-    // the label of an avatar link: it shows the name it was written with,
-    // as the Legacy Viewer's LLUrlEntryAgent does (no RLVa test); a
-    // `/mention` link is rewritten (RlvUtil::filterMentions).
+    // `@shownames` and `@showloc` rewrite the text and the labels someone
+    // wrote, those of an avatar link included (RlvUtil::filterNames and
+    // filterLocation run on the raw text). A bare avatar link shows the name
+    // of its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
+    // test); a `/mention` link is rewritten (RlvUtil::filterMentions).
     let hide = |t: &str| world.rlva_filter_text_in(scope, t).into_owned();
     let filtered = world.rlva_filter_text_in(scope, text);
     let segs = segments(text);
@@ -2410,7 +2427,7 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &hide(&label), size, emphasis),
-                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &label, size, emphasis),
+                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &hide(&label), size, emphasis),
                     Seg::Mention(id) => agent_link(ui, p, world, scope, id, &hide(&label), size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
@@ -2418,9 +2435,6 @@ pub(crate) fn chat_text_marked(
                             emphasis.rich_text(ui.ctx(), hide(&label), size, super::colors::text(k.chat_slurl)),
                         )
                         .on_hover_text(u);
-                    }
-                    Seg::App(u, link) if matches!(link, crate::slapp::AppLink::Agent { .. }) => {
-                        app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis);
                     }
                     Seg::App(u, link) => app_links::link_emphasized(ui, p, world, u, &link, &hide(&label), size, emphasis),
                     _ => marked_run(ui, emoji, &hide(&label), size, color, emphasis, mark),

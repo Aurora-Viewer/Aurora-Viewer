@@ -482,36 +482,6 @@ impl World {
         }
     }
 
-    /// `rlva_filter_text_in` for a chat text: the label of an avatar link
-    /// (`[secondlife:///app/agent/<id>/about Name]`) keeps the name it was
-    /// written with, as the Legacy Viewer's LLUrlEntryAgent has no RLVa test;
-    /// the text around it, and a `/mention` link (RlvUtil::filterMentions),
-    /// are filtered.
-    pub fn rlva_filter_chat_in<'a>(&self, scope: NameScope, text: &'a str) -> Cow<'a, str> {
-        const AGENT_LINK: &str = "[secondlife:///app/agent/";
-        if !self.rlva.enabled() || !text.contains(AGENT_LINK) {
-            return self.rlva_filter_text_in(scope, text);
-        }
-        let filter = self.rlva_filter_in(scope);
-        let mut out = String::with_capacity(text.len());
-        let mut at = 0;
-        while let Some(found) = text[at..].find(AGENT_LINK) {
-            let start = at + found;
-            let Some(len) = text[start..].find(']') else { break };
-            let end = start + len + 1;
-            out.push_str(&filter.apply(&text[at..start]));
-            let link = &text[start..end];
-            if link.contains("/mention") {
-                out.push_str(&filter.apply(link));
-            } else {
-                out.push_str(link);
-            }
-            at = end;
-        }
-        out.push_str(&filter.apply(&text[at..]));
-        if out == text { Cow::Borrowed(text) } else { Cow::Owned(out) }
-    }
-
     /// The filter of the texts shown in `scope`: the places alone where the
     /// residents are named (`NameScope::Roster`; a notice's scope is
     /// `notifications::Kind::names`).
@@ -1301,11 +1271,13 @@ mod tests {
         assert!(!world.rlva_can_name(stranger));
     }
 
-    /// An avatar link of a chat keeps the name it was written with while
-    /// `@shownames` rewrites that name in the text around it
-    /// (LLUrlEntryAgent has no RLVa test); a `/mention` link is rewritten.
+    /// The label of an avatar link is text someone wrote: `@shownames` and
+    /// `@showloc` filter it like the text around it (RlvUtil::filterNames and
+    /// filterLocation run on the raw text of the chat, rlvcommon.cpp). The
+    /// address of the link stays, so a bare link still resolves to its
+    /// resident (LLUrlEntryAgent has no RLVa test).
     #[test]
-    fn an_avatar_link_keeps_its_name_in_a_hidden_chat() {
+    fn the_label_of_an_avatar_link_is_filtered_like_the_text_around_it() {
         use crate::world::names::NameScope;
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         for event in crate::demo::events() {
@@ -1323,25 +1295,33 @@ mod tests {
             ..Default::default()
         };
         world.social.avatar_names.on_display_names(&[name], &[], None);
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
         world.rlva.configure(true);
-        restrict(&mut world, "shownames=n");
+        restrict(&mut world, "shownames=n,showloc=n");
         world.refresh_rlva_privacy();
-        let link = format!("[secondlife:///app/agent/{id}/about Jane Doe]");
-        let text = format!("Jane Doe says look at {link} and Jane Doe again");
-        let filtered = world.rlva_filter_chat_in(NameScope::World, &text);
-        assert!(filtered.contains(&link), "the link keeps its name: {filtered}");
-        assert_eq!(
-            filtered.matches("Jane Doe").count(),
-            1,
-            "the text around it is rewritten: {filtered}"
-        );
-        let mention = format!("[secondlife:///app/agent/{id}/mention Jane Doe]");
-        assert!(!world.rlva_filter_chat_in(NameScope::World, &mention).contains("Jane Doe"));
-        assert_eq!(
-            world.rlva_filter_chat_in(NameScope::Roster, &text),
-            text,
-            "a conversation names its people"
-        );
+        let address = format!("secondlife:///app/agent/{id}/about");
+        for verb in ["about", "inspect", "im", "mention"] {
+            let link = format!("[secondlife:///app/agent/{id}/{verb} Jane Doe in Secret Region]");
+            let filtered = world.rlva_filter_text_in(NameScope::World, &link);
+            assert!(
+                !filtered.contains("Jane Doe"),
+                "{verb}: the name of the label is hidden: {filtered}"
+            );
+            assert!(
+                !filtered.contains("Secret Region"),
+                "{verb}: the place of the label is hidden: {filtered}"
+            );
+            assert!(filtered.contains(&id.to_string()), "{verb}: the address stays: {filtered}");
+        }
+        let text = format!("Jane Doe points at {address} from Secret Region");
+        let filtered = world.rlva_filter_text_in(NameScope::World, &text);
+        assert!(filtered.contains(&address), "a bare link stays: {filtered}");
+        assert!(!filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
+        // a conversation names its people and still hides the places
+        let said = format!("[{address} Jane Doe in Secret Region]");
+        let filtered = world.rlva_filter_text_in(NameScope::Roster, &said);
+        assert!(filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
     }
 
     /// A profile opened from a conversation names its resident
