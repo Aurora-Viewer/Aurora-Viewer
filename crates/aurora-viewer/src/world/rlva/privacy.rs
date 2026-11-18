@@ -231,6 +231,10 @@ impl World {
         places.sort();
         places.reuse_matcher(&self.rlva_place_privacy);
         for notification in &mut self.notifications.list {
+            // a script's prompt stays as received, its owner's name included
+            if notification.kind.as_received() {
+                continue;
+            }
             let text = notification.kind.text();
             let filter = if text.names == NameScope::Roster { &places } else { &filter };
             filter.redact_notice(
@@ -1218,20 +1222,22 @@ mod tests {
         assert!(!said.text.contains("Tester") && !said.text.contains(&region), "{}", said.text);
     }
 
-    /// What a script wrote in its dialog, its text box or its link prompt is
-    /// shown as written (process_script_dialog and process_load_url have no
-    /// RLVa test, indra/newview/llviewermessage.cpp), like the text of a
-    /// message on its card. The owner the title names stays hidden: stricter
-    /// than the Legacy Viewer, which shows it.
+    /// A script's prompt (its dialog or text box, its permission question,
+    /// its link prompt) is shown as the simulator sent it, the name of the
+    /// object's owner included: process_script_dialog,
+    /// process_script_question and process_load_url have no RLVa test on
+    /// what they show (indra/newview/llviewermessage.cpp). The text of a
+    /// message on its card is as typed too.
     #[test]
-    fn a_script_s_dialog_shows_its_message_as_written_and_keeps_its_owner_hidden() {
+    fn a_script_s_prompt_is_shown_as_received_with_its_owner_s_name() {
         use crate::world::notifications::{Data, Kind};
         let (mut world, near) = shownames_world();
         restrict(&mut world, "showloc=n");
         world.refresh_rlva_privacy();
         let region = world.region_name();
         let body = format!("Pick someone in {region}:\n1. Near Tester");
-        for kind in [Kind::Script, Kind::Url] {
+        for kind in [Kind::Script, Kind::Permissions, Kind::Url] {
+            assert!(kind.as_received(), "{kind:?}");
             assert_eq!(kind.text(), TextScope::verbatim(NameScope::World), "{kind:?}");
             let id = world.notifications.push(kind, "Box (Near Tester)", body.clone(), Data::None);
             world
@@ -1247,16 +1253,23 @@ mod tests {
             world.refresh_rlva_privacy();
             let n = world.notifications.list.iter().find(|n| n.id == id).unwrap();
             assert_eq!(n.body, body, "{kind:?}");
-            assert!(n.title.starts_with("Box (") && !n.title.contains("Tester"), "{kind:?}: {}", n.title);
-            assert!(!n.name_links[0].name.contains("Tester"), "{kind:?}");
+            assert_eq!(n.title, "Box (Near Tester)", "{kind:?}");
+            assert_eq!(n.name_links[0].name, "Near Tester", "{kind:?}");
+            // a click on that name still follows the world's rule: the
+            // Legacy Viewer writes it as plain text
+            assert_eq!(kind.names(), NameScope::World, "{kind:?}");
+            assert!(!world.rlva_shows_name(kind.names(), near));
         }
         // the card of a message names its sender and keeps what they typed
+        assert!(!Kind::Message.as_received());
         assert_eq!(Kind::Message.text(), TextScope::verbatim(NameScope::Roster));
         // the other notices are rewritten, by the names they show
-        for kind in [Kind::Info, Kind::Alert, Kind::Inventory, Kind::Permissions] {
+        for kind in [Kind::Info, Kind::Alert, Kind::Inventory] {
+            assert!(!kind.as_received(), "{kind:?}");
             assert_eq!(kind.text(), NameScope::World.into(), "{kind:?}");
         }
         for kind in [Kind::Teleport, Kind::Friendship, Kind::Group, Kind::Presence, Kind::Call] {
+            assert!(!kind.as_received(), "{kind:?}");
             assert_eq!(kind.text(), NameScope::Roster.into(), "{kind:?}");
         }
     }
@@ -1273,7 +1286,7 @@ mod tests {
             Kind::Group,
             Kind::Presence,
         ];
-        let hidden = [Kind::Inventory, Kind::Info, Kind::Alert, Kind::Script, Kind::Permissions, Kind::Url];
+        let hidden = [Kind::Inventory, Kind::Info, Kind::Alert];
         let link = || crate::world::notification_history::NameLink {
             name: "Near Tester".into(),
             target: crate::world::notification_history::NameTarget::Avatar(near),

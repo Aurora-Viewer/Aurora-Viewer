@@ -249,9 +249,11 @@ script authors; the command lists below describe this branch specifically.
   the viewer's notices. What a resident typed, in the nearby chat or in an
   IM session, ours included, is shown as typed
   (LLFloaterIMNearbyChatHandler::processChat filters only when the source is
-  not an avatar), and so is the message of a script's dialog, text box or
-  link prompt (process_script_dialog has no RLVa test); the owner named in a
-  dialog's title stays hidden (stricter than the Legacy Viewer). Application links and place details filter labels and
+  not an avatar). A script's prompt (its dialog or text box, its permission
+  question, its link prompt) is shown as the simulator sent it, the name of
+  the object's owner included (process_script_dialog and
+  process_script_question have no RLVa test); a click on that name opens no
+  profile while the restriction hides the resident. Application links and place details filter labels and
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure
