@@ -23361,6 +23361,10 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-explorer"
+                        | "aurora-explorer-path"
+                        | "aurora-explorer-menu"
+                        | "aurora-explorer-medium"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -23468,6 +23472,14 @@ impl ApplicationHandler for App {
                             // the type filters' symbols in the list and on
                             // the chip naming them
                             self.inventory_ui.demo_type_filters((1 << 0) | (1 << 6) | (1 << 19));
+                            self.panels.camera_controls = false;
+                        }
+                        if view.starts_with("aurora-explorer") {
+                            // Back, Up, the breadcrumb's chevrons and two
+                            // folders pinned to Quick access
+                            self.inventory_ui.demo_explorer(&view);
+                            // the column lists a pin once its folder is there
+                            self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];
                             self.panels.camera_controls = false;
                         }
                         if view.starts_with("aurora-folder-window") {

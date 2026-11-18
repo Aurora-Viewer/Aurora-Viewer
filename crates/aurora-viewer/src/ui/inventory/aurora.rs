@@ -23,7 +23,7 @@ mod smart_bar;
 mod toolbar;
 
 pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
-pub(super) use history::History;
+pub(super) use history::{History, Place};
 pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
@@ -117,15 +117,21 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" | "aurora-gallery-medium" => {
-                egui::vec2(800.0, 640.0)
-            }
+            "aurora-medium"
+            | "aurora-sidebar-medium"
+            | "aurora-worn-medium"
+            | "aurora-delete-confirm-medium"
+            | "aurora-gallery-medium"
+            | "aurora-explorer-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-gallery"
             | "aurora-system-folders"
             | "aurora-gallery-system-folders"
             | "aurora-filtered"
             | "aurora-gallery-large"
+            | "aurora-explorer"
+            | "aurora-explorer-path"
+            | "aurora-explorer-menu"
             | "aurora-combination"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
@@ -283,6 +289,7 @@ pub(super) fn contents(
         st.browse = base;
     }
     if layout != Layout::Compact {
+        st.demo_explorer_now(inv);
         st.history.retain(|id| inv.folders.contains_key(&id));
         st.history.observe(history::Place::of(st));
     }

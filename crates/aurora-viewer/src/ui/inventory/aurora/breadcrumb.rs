@@ -264,7 +264,11 @@ fn chevron(ui: &mut egui::Ui, p: &Palette, folder: Uuid) -> egui::Response {
         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_crumb_chevron", folder)), rect));
     let hot = response.hovered() || response.has_focus();
     if hot {
-        ui.painter().rect_filled(rect, 3.0, p.raised.lerp_to_gamma(p.ink, 0.16));
+        ui.painter().rect_filled(
+            rect,
+            ui.visuals().widgets.inactive.corner_radius,
+            p.raised.lerp_to_gamma(p.ink, 0.16),
+        );
     }
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     widgets::paint_glyph(
@@ -281,7 +285,7 @@ fn chevron(ui: &mut egui::Ui, p: &Palette, folder: Uuid) -> egui::Response {
 fn segment_menu(link: &egui::Response, p: &Palette, inv: &Inventory, st: &mut InventoryUi, folder: Uuid) {
     let mut chosen = 0;
     menu::context_menu(link, p, |ui| {
-        if menu::item(ui, p, "copy", aurora_i18n::tr!("inventory-copy-path")) {
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("inventory-copy-path")) {
             chosen = 1;
         }
         let keys = shortcuts::label(ui.ctx(), Command::EditPath).unwrap_or_default();
@@ -353,9 +357,10 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
         edit.pick = None;
     }
     let mut chosen = None;
-    if r.has_focus() && !options.is_empty() {
+    let mut popup = None;
+    if !options.is_empty() {
         let below = egui::pos2(r.rect.left(), r.rect.bottom() + 2.0);
-        egui::Area::new(ui.scope_id().with("inventory_path_completions"))
+        let shown = egui::Area::new(ui.scope_id().with("inventory_path_completions"))
             .order(egui::Order::Foreground)
             .fixed_pos(below)
             .show(ui.ctx(), |ui| {
@@ -369,6 +374,7 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
                     }
                 });
             });
+        popup = Some(shown.response.rect);
     }
     if escape {
         st.path_edit = None;
@@ -392,9 +398,17 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
         st.path_edit = None;
         enter(st, folder);
         clipboard::request_focus(ui, st);
-    } else if r.lost_focus() && !enter_key && !tab {
-        // a click elsewhere leaves the path as it was
+    } else if ui.input(|i| i.pointer.any_pressed())
+        && !r.contains_pointer()
+        && !popup.is_some_and(|rect| ui.rect_contains_pointer(rect) || ui.ctx().pointer_hover_pos().is_some_and(|pos| rect.contains(pos)))
+    {
+        // a click elsewhere leaves the path as it was (the completions'
+        // clicks are read above, before this)
         st.path_edit = None;
+    } else if !r.has_focus() && !enter_key {
+        // the field keeps the keyboard while it is open (the list asks for
+        // it back when it is revealed)
+        r.request_focus();
     }
 }
 

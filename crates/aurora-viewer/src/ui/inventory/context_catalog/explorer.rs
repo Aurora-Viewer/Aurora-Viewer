@@ -62,7 +62,7 @@ pub(super) fn build(
         c.add(
             "copy-path",
             TEXT,
-            "copy",
+            "copy-filled",
             aurora_i18n::tr!("inventory-copy-path"),
             single,
             Command::Explorer(ExplorerCommand::CopyPath(id)),
@@ -85,7 +85,7 @@ pub(super) fn build(
             c.add(
                 "pin",
                 TEXT,
-                if pinned { "pinned" } else { "pin" },
+                if pinned { "pinned-filled" } else { "pin-filled" },
                 if pinned {
                     aurora_i18n::tr!("inventory-unpin")
                 } else {
@@ -103,23 +103,28 @@ pub(super) fn build(
     let view = c.group(
         "explorer-view",
         TEXT,
-        "layout-grid",
+        "layout-grid-filled",
         aurora_i18n::tr!("inventory-view-menu"),
         true,
         Direction::Horizontal,
         false,
     );
     for (key, icon, label, mode) in [
-        ("view-list", "list", aurora_i18n::tr!("inventory-view-list"), ExplorerView::List),
+        (
+            "view-list",
+            "list-filled",
+            aurora_i18n::tr!("inventory-view-list"),
+            ExplorerView::List,
+        ),
         (
             "view-gallery",
-            "layout-grid",
+            "layout-grid-filled",
             aurora_i18n::tr!("inventory-view-gallery"),
             ExplorerView::Gallery,
         ),
         (
             "view-combination",
-            "layout-board-split",
+            "layout-board-split-filled",
             aurora_i18n::tr!("inventory-view-combination"),
             ExplorerView::Combination,
         ),
@@ -148,7 +153,7 @@ pub(super) fn build(
     c.add(
         "sort-date",
         &sort,
-        "calendar",
+        "calendar-filled",
         aurora_i18n::tr!("ui-inventory-controls-newest-first"),
         true,
         Command::Explorer(ExplorerCommand::ByDate(true)),
@@ -185,7 +190,7 @@ pub(super) fn build(
     c.add(
         "invert-selection",
         TEXT,
-        "square-check",
+        "square-check-filled",
         aurora_i18n::tr!("inventory-invert-selection"),
         true,
         Command::Explorer(ExplorerCommand::Invert),

@@ -120,8 +120,9 @@ pub(crate) fn end(ui: &egui::Ui, p: &Palette, st: &mut InventoryUi, list: Rect, 
     let from = Pos2::new(start.x, start.y + st.marquee.top - st.marquee.offset);
     let band = Rect::from_two_pos(from, pos).intersect(list);
     let painter = ui.painter().with_clip_rect(list.intersect(ui.clip_rect()));
-    painter.rect_filled(band, 2.0, p.violet.gamma_multiply(0.14));
-    painter.rect_stroke(band, 2.0, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
+    let radius = ui.visuals().window_corner_radius;
+    painter.rect_filled(band, radius, p.violet.gamma_multiply(0.14));
+    painter.rect_stroke(band, radius, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
     ctx.request_repaint();
 }
 

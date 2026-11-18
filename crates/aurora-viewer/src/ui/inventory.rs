@@ -709,6 +709,8 @@ pub struct InventoryUi {
     /// `row_menu` is the menu of the explorer's empty space, for the folder
     /// it shows (a right-click there, or Shift+F10 with nothing selected).
     background_menu: bool,
+    /// `AURORA_DEMO_INVENTORY=aurora-explorer…`, waiting for its folder.
+    demo_explorer: Option<String>,
     /// A right-button drop waiting for its choice (`drag::drop_menu`).
     drop_menu: Option<drag::DropMenu>,
     /// Where the selected row was drawn last frame, for Shift+F10.
@@ -876,6 +878,40 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu]`): the
+    /// explorer in the demo folder, come from the root (Back and Up lit),
+    /// with the path being typed or the menu of its empty space open.
+    pub fn demo_explorer(&mut self, mode: &str) {
+        // applied once the demo folder has arrived (`demo_explorer_now`)
+        self.demo_explorer = Some(mode.to_owned());
+    }
+
+    fn demo_explorer_now(&mut self, inv: &Inventory) {
+        let here = Uuid::from_u128(8000);
+        let Some(mode) = self.demo_explorer.take_if(|_| inv.folders.contains_key(&here)) else {
+            return;
+        };
+        let mode = mode.as_str();
+        self.history.observe(aurora::Place { tab: 0, folder: inv.root });
+        self.history.observe(aurora::Place { tab: 0, folder: here });
+        self.browse = here;
+        match mode {
+            "aurora-explorer-path" => {
+                let base = inv.root;
+                let mut text = aurora::path_text(inv, base, base);
+                text.push(aurora::PATH_SEPARATOR);
+                self.path_edit = Some(aurora::PathEdit::new(text));
+            }
+            "aurora-explorer-menu" => {
+                self.selection.clear();
+                self.selected = None;
+                self.row_menu = Some((here, egui::pos2(760.0, 420.0)));
+                self.background_menu = true;
+            }
+            _ => {}
+        }
+    }
+
     /// Demo (`AURORA_DEMO_INVENTORY=aurora-system-folders`): Aurora's
     /// explorer on the root, nothing selected.
     pub fn demo_browse_root(&mut self, inv: &Inventory) {
