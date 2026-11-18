@@ -1680,8 +1680,10 @@ mod tests {
         assert_eq!(form.stored_for, Some((settings.login_uri(), "synthetic.resident".into())));
         assert_eq!(form.stored, None);
         // on the cards: the "Add an account" form opens for it
-        let mut settings = Settings::default();
-        settings.username = "saved.resident".into();
+        let mut settings = Settings {
+            username: "saved.resident".into(),
+            ..Default::default()
+        };
         let mut form = LoginForm {
             accounts_loaded: true,
             accounts: vec![crate::login_accounts::Account::from_settings(&settings, false, None)],
