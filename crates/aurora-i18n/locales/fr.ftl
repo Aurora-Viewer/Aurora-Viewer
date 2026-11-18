@@ -1991,6 +1991,30 @@ ui-options-content-rated = Accéder au contenu classé
 ui-options-content-rated-help = Les régions, lieux et résultats de recherche au-dessus de ce classement sont masqués ou bloqués. Votre compte peut limiter le choix.
 ui-options-content-general = Général
 language-help = Le changement est immédiat. Les traductions absentes utilisent l'anglais.
+language-file = Fichier de langue
+language-file-help = Utiliser un fichier de traduction Fluent (.ftl) à la place de la liste, au format des catalogues du viewer. Il est lu au démarrage du viewer ; les textes qui lui manquent s'affichent en anglais.
+language-file-use = Utiliser un fichier de langue (.ftl)
+language-file-instead = Le fichier de langue est utilisé à la place.
+language-file-browse = Parcourir…
+language-file-choose = Choisir un fichier de langue
+language-file-filter = Fichier de langue Fluent
+language-file-none = Aucun fichier choisi : la langue de la liste est utilisée.
+language-file-in-use = Utilisé : { $name } ({ $count ->
+    [one] { $count } texte
+   *[other] { $count } textes
+    })
+language-file-errors = { $count ->
+    [one] { $count } entrée est illisible et s'affiche en anglais.
+   *[other] { $count } entrées sont illisibles et s'affichent en anglais.
+    }
+language-file-unnamed = Le nom du fichier n'est pas un code de langue (comme de.ftl ou pt-BR.ftl) : les pluriels suivent l'anglais.
+language-file-next = Au prochain démarrage : { $name }
+language-file-failed = { $name } n'est pas utilisé ({ $reason }) : la langue de la liste est utilisée.
+language-file-missing = fichier introuvable
+language-file-unreadable = le fichier est illisible
+language-file-too-large = le fichier est trop gros
+language-file-not-text = ce n'est pas du texte UTF-8
+language-file-empty = il ne contient aucun message
 language-item-count = { $count ->
     [one] { $count } élément
    *[other] { $count } éléments

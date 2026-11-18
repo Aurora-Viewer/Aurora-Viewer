@@ -748,6 +748,9 @@ pub enum Folder {
     ChatLogs,
     /// A Legacy Viewer's transcripts, to import.
     LegacyLogs,
+    /// The interface language file (Language and updates): a file, asked
+    /// for the same way.
+    LanguageFile,
 }
 
 /// The window that shows what will be imported.

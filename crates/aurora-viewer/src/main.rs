@@ -71,6 +71,7 @@ mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
+mod language_file;
 mod legacy_profile;
 mod link_preview;
 mod link_trust;

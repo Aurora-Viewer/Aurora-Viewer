@@ -1964,6 +1964,24 @@ ui-options-content-rated = アクセスしたいコンテンツ
 ui-options-content-rated-help = このレーティングを超えるリージョン、場所、検索結果は非表示またはブロックされます。アカウントによって選択が制限される場合があります。
 ui-options-content-general = 一般
 language-help = 変更はすぐに適用されます。翻訳がない項目は英語で表示されます。
+language-file = 言語ファイル
+language-file-help = リストの代わりにFluentの翻訳ファイル（.ftl）を使います。ビューアに内蔵の翻訳と同じ形式です。ビューアの起動時に読み込まれ、ファイルにないテキストは英語で表示されます。
+language-file-use = 言語ファイル（.ftl）を使用
+language-file-instead = 代わりに言語ファイルが使用されています。
+language-file-browse = 参照…
+language-file-choose = 言語ファイルを選択
+language-file-filter = Fluent言語ファイル
+language-file-none = ファイルがまだ選択されていません。リストの言語が使用されます。
+language-file-in-use = 使用中：{ $name }（{ $count }件のテキスト）
+language-file-errors = { $count }件の項目を読み込めなかったため、英語で表示されます。
+language-file-unnamed = ファイル名が言語コード（de.ftl、pt-BR.ftlなど）ではありません。複数形は英語のルールに従います。
+language-file-next = 次回の起動時：{ $name }
+language-file-failed = { $name }は使用されていません（{ $reason }）。リストの言語が使用されます。
+language-file-missing = ファイルが見つかりません
+language-file-unreadable = ファイルを読み込めません
+language-file-too-large = ファイルが大きすぎます
+language-file-not-text = ＵＴＦ－８のテキストではありません
+language-file-empty = メッセージが含まれていません
 language-item-count = { $count ->
     [one] { $count }項目
    *[other] { $count }項目

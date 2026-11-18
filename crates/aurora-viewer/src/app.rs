@@ -1688,7 +1688,7 @@ impl App {
         {
             settings.audio.mute_when_minimized = mode != "off";
         }
-        aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
+        crate::language_file::select(&settings.language, settings.custom_language);
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
@@ -13493,7 +13493,7 @@ impl App {
         crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
         self.demo_gains_tick(Instant::now());
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
-            aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
+            crate::language_file::select(&self.settings.language, self.settings.custom_language);
             crate::crash::update(&self.skin.theme, &self.settings);
             self.net
                 .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);

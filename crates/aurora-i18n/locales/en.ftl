@@ -1988,6 +1988,30 @@ ui-options-content-rated = I want to access content rated
 ui-options-content-rated-help = Regions, places and search results above this rating are hidden or blocked. Your account may limit the choice.
 ui-options-content-general = General
 language-help = Changes apply immediately. Missing translations use English.
+language-file = Language file
+language-file-help = Use a Fluent translation file (.ftl) instead of the list, in the format of the viewer's own catalogs. It is read when the viewer starts; the texts it lacks are shown in English.
+language-file-use = Use a language file (.ftl)
+language-file-instead = The language file is used instead.
+language-file-browse = Browse…
+language-file-choose = Choose a language file
+language-file-filter = Fluent language file
+language-file-none = No file chosen yet: the language of the list is used.
+language-file-in-use = In use: { $name } ({ $count ->
+    [one] { $count } text
+   *[other] { $count } texts
+    })
+language-file-errors = { $count ->
+    [one] { $count } entry could not be read and is shown in English.
+   *[other] { $count } entries could not be read and are shown in English.
+    }
+language-file-unnamed = The file name is not a language code (such as de.ftl or pt-BR.ftl): plurals follow English.
+language-file-next = At the next start: { $name }
+language-file-failed = { $name } is not used ({ $reason }): the language of the list is used.
+language-file-missing = file not found
+language-file-unreadable = the file cannot be read
+language-file-too-large = the file is too large
+language-file-not-text = not UTF-8 text
+language-file-empty = no message in it
 language-item-count = { $count ->
     [one] { $count } item
    *[other] { $count } items
