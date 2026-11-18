@@ -281,6 +281,13 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
         }
     });
+    if o.owned && !o.local_preview && !o.name.trim().is_empty() {
+        ui.item(
+            "search-filled",
+            aurora_i18n::tr!("ui-context-find-in-inventory"),
+            CtxAction::FindInInventory(id),
+        );
+    }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.item(
         "list-details-filled",

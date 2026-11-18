@@ -101,6 +101,8 @@ pub struct ObjectFacts {
     /// Local meshes use the ordinary object menu and build selection, with
     /// only actions that can be carried out without a simulator identity.
     pub local_preview: bool,
+    /// Whether this resident owns the rezzed linkset.
+    pub owned: bool,
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
     pub hud_move_locked: bool,
@@ -314,6 +316,8 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// Search inventory for an object seen in-world.
+    FindInInventory(Uuid),
     /// "View profile" from a list of people known besides the world
     /// (friends list, group members): it opens under RLVa's `@shownames`
     /// too, as these lists name their residents (`NameScope::Roster`).

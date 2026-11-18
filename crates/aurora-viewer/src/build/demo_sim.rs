@@ -201,6 +201,7 @@ impl DemoSim {
                 sale_price: 10,
                 category: 0,
                 inventory_serial: 1,
+                item_id: Uuid::nil(),
                 folder_id,
                 from_task_id,
                 name,

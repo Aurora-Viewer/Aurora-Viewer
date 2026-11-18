@@ -399,6 +399,10 @@ impl App {
         f.edit = crate::build::selectable_within(w, idx)
             && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
         f.id = o.full_id;
+        f.owned = w
+            .objects
+            .get(root)
+            .is_some_and(|root| root.owner_id == w.agent_id || root.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0);
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
@@ -514,6 +518,35 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::FindInInventory(id) => {
+                // Resolve the clicked prim to its linkset root.
+                let props = self
+                    .world
+                    .objects
+                    .index_of_uuid(&id)
+                    .map(|idx| linkset_root(&self.world, idx))
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .filter(|root| {
+                        root.owner_id == self.world.agent_id || root.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                    })
+                    .and_then(|root| {
+                        self.build
+                            .props
+                            .get(&root.full_id)
+                            .or_else(|| self.interactions.props.get(&root.full_id))
+                    });
+
+                if let Some(props) = props {
+                    if !props.item_id.is_nil() && self.world.inventory.items.contains_key(&props.item_id) {
+                        // The simulator identified an exact inventory item.
+                        self.inventory_ui.show_notified(&self.world.inventory, props.item_id);
+                        self.panels.inventory = true;
+                    } else if self.inventory_ui.find_world_object(&props.name) {
+                        // Search by name and creator instead.
+                        self.panels.inventory = true;
+                    }
+                }
+            }
             CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
