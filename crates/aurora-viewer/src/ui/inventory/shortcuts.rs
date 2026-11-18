@@ -37,6 +37,15 @@ pub(crate) enum Command {
     Purge,
     /// F3, beside the search field's Ctrl+F.
     Search,
+    // Shown in the menus only: the list handles these keys itself
+    // (keyboard::open_shortcut, the rename, delete::shortcut, egui's
+    // clipboard events).
+    Open,
+    Rename,
+    Delete,
+    Cut,
+    Copy,
+    Paste,
 }
 
 /// One key of a command. `mac` limits it to one kind of system: `Some(true)`
@@ -80,7 +89,33 @@ const BINDINGS: &[Binding] = &[
     bind(Command::ContextMenu, Modifiers::SHIFT, Key::F10, None),
     bind(Command::Purge, Modifiers::SHIFT, Key::Delete, None),
     bind(Command::Search, NONE, Key::F3, None),
+    bind(Command::Open, NONE, Key::Enter, None),
+    bind(Command::Rename, NONE, Key::F2, None),
+    bind(Command::Delete, NONE, Key::Delete, None),
+    bind(Command::Cut, Modifiers::COMMAND, Key::X, None),
+    bind(Command::Copy, Modifiers::COMMAND, Key::C, None),
+    bind(Command::Paste, Modifiers::COMMAND, Key::V, None),
 ];
+
+/// The command whose keys an inventory menu entry shows, by the entry's id
+/// (`context_catalog`).
+pub(crate) fn for_menu_entry(id: &str) -> Option<Command> {
+    Some(match id {
+        "open" => Command::Open,
+        "rename" => Command::Rename,
+        "delete" => Command::Delete,
+        "cut" => Command::Cut,
+        "copy" => Command::Copy,
+        "paste" => Command::Paste,
+        "properties" => Command::Properties,
+        "purge" => Command::Purge,
+        "new-folder" => Command::NewFolder,
+        "reload" => Command::Refresh,
+        "select-all" => Command::SelectAll,
+        "invert-selection" => Command::InvertSelection,
+        _ => return None,
+    })
+}
 
 fn applies(binding: &Binding, mac: bool) -> bool {
     binding.mac.is_none_or(|only| only == mac)
@@ -173,9 +208,10 @@ mod tests {
         assert_eq!(command(Key::N, CTRL.plus(Modifiers::SHIFT), false, true), Some(Command::NewFolder));
         assert_eq!(command(Key::N, CTRL, false, true), None);
         assert_eq!(command(Key::Delete, Modifiers::SHIFT, false, true), Some(Command::Purge));
-        assert_eq!(command(Key::Delete, NONE, false, true), None);
+        assert_eq!(command(Key::Delete, NONE, false, true), Some(Command::Delete));
         assert_eq!(command(Key::Enter, Modifiers::ALT, false, true), Some(Command::Properties));
-        assert_eq!(command(Key::Enter, NONE, false, true), None);
+        // shown in menus, handled by the list itself
+        assert_eq!(command(Key::Enter, NONE, false, true), Some(Command::Open));
     }
 
     #[test]
@@ -203,6 +239,12 @@ mod tests {
             Command::ContextMenu,
             Command::Purge,
             Command::Search,
+            Command::Open,
+            Command::Rename,
+            Command::Delete,
+            Command::Cut,
+            Command::Copy,
+            Command::Paste,
         ];
         for mac in [false, true] {
             for command in all {

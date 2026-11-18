@@ -622,7 +622,13 @@ impl View<'_> {
                             Kind::Group { direction, .. } => Some(direction == Direction::Vertical),
                             _ => None,
                         };
-                        let response = menu::editable_row(
+                        // the entry's shortcut, from the inventory's one table
+                        let keys = (!self.scope.starts_with("scene:"))
+                            .then(|| super::shortcuts::for_menu_entry(&entry.id))
+                            .flatten()
+                            .and_then(|command| super::shortcuts::label(ui.ctx(), command))
+                            .unwrap_or_default();
+                        let response = menu::editable_row_keys(
                             ui,
                             self.p,
                             self.entry_icon(entry),
@@ -635,6 +641,7 @@ impl View<'_> {
                             },
                             down,
                             !self.profile.locked,
+                            &keys,
                         );
                         self.interact(ui, &response, entry, zone, depth, false);
                     }

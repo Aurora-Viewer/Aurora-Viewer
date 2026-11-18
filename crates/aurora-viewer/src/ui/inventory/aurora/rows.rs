@@ -309,6 +309,7 @@ pub(super) fn show_quick(
                 {
                     st.select(ui, id, true);
                     st.row_menu = Some((id, rect.left_bottom()));
+                    st.background_menu = false;
                 }
             }
         }
@@ -392,6 +393,9 @@ pub(in super::super) fn item(
     tests::record(ui, id, rect);
     if frame.explorer {
         super::marquee::record(st, id, rect);
+    }
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
     }
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);
@@ -534,6 +538,9 @@ pub(in super::super) fn folder(
     tests::record(ui, id, rect);
     if frame.explorer {
         super::marquee::record(st, id, rect);
+    }
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
     }
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);

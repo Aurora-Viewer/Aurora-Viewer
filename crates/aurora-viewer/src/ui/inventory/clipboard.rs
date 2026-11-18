@@ -169,6 +169,18 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
     // a click in the explorer's empty space selects nothing, as in a file
     // manager (Ctrl or Shift keep the selection)
+    // its right-click: the menu of the folder shown (Windows Explorer's
+    // and Dolphin's menu of the empty space)
+    if response.secondary_clicked()
+        && st
+            .aurora
+            .is_some_and(|frame| frame.explorer && frame.layout != super::aurora::Layout::Compact)
+        && st.tab == 0
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        st.row_menu = Some((st.browse, pos));
+        st.background_menu = true;
+    }
     if response.clicked()
         && st.aurora.is_some_and(|frame| frame.explorer)
         && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)

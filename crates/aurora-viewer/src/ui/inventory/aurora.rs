@@ -22,7 +22,7 @@ mod sidebar;
 mod smart_bar;
 mod toolbar;
 
-pub(super) use breadcrumb::PathEdit;
+pub(super) use breadcrumb::{PathEdit, SEPARATOR as PATH_SEPARATOR, path_text};
 pub(super) use history::History;
 pub(super) use marquee::Marquee;
 pub(super) use rights::button as rights_button;
@@ -316,10 +316,17 @@ fn row_menu(
         pos,
         &mut open,
         p,
-        |ui| context::show(ui, p, inv, id, st, prefs, facts, actions),
+        |ui| {
+            if st.background_menu {
+                context::show_background(ui, p, inv, id, st, prefs, facts, actions);
+            } else {
+                context::show(ui, p, inv, id, st, prefs, facts, actions);
+            }
+        },
     );
     if !open || !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) {
         st.row_menu = None;
+        st.background_menu = false;
     }
 }
 

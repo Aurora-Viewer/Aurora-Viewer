@@ -87,7 +87,7 @@ pub(super) fn commands(
     let wanted = |c: shortcuts::Command| {
         matches!(
             c,
-            shortcuts::Command::NewFolder | shortcuts::Command::Properties | shortcuts::Command::Purge
+            shortcuts::Command::NewFolder | shortcuts::Command::Properties | shortcuts::Command::Purge | shortcuts::Command::ContextMenu
         )
     };
     for command in shortcuts::take(ui, false, wanted) {
@@ -114,6 +114,23 @@ pub(super) fn commands(
                 if let Some(id) = st.selected.filter(|id| st.selection.contains(id)) {
                     st.property_edit = None;
                     st.dialog = Some(EditDialog::Properties(id));
+                }
+            }
+            // Shift+F10: the selection's menu at its row, else the menu of
+            // the explorer's empty space (Windows' keyboard menu)
+            shortcuts::Command::ContextMenu => {
+                let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact);
+                match st.selected.filter(|id| st.selection.contains(id)) {
+                    Some(id) => {
+                        let at = st.selected_rect.map_or_else(|| ui.max_rect().center(), |rect| rect.left_bottom());
+                        st.row_menu = Some((id, at));
+                        st.background_menu = false;
+                    }
+                    None if explorer && st.tab == 0 => {
+                        st.row_menu = Some((root, ui.max_rect().center()));
+                        st.background_menu = true;
+                    }
+                    None => {}
                 }
             }
             shortcuts::Command::Purge => {

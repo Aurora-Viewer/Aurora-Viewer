@@ -706,6 +706,11 @@ pub struct InventoryUi {
     counts: aurora::Counts,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,
+    /// `row_menu` is the menu of the explorer's empty space, for the folder
+    /// it shows (a right-click there, or Shift+F10 with nothing selected).
+    background_menu: bool,
+    /// Where the selected row was drawn last frame, for Shift+F10.
+    selected_rect: Option<egui::Rect>,
     /// The folder a folder window shows (nil: the whole inventory). Its
     /// lists, searches, column and breadcrumb stay under it.
     scope: Uuid,

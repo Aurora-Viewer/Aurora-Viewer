@@ -1,4 +1,5 @@
 //! Native inventory commands and their current availability, before presentation.
+mod explorer;
 mod extra;
 use super::menu_layout::{Direction, Entry, Kind, LOCK, TEXT, children};
 use super::*;
@@ -39,6 +40,7 @@ pub(super) enum Command {
     Favorite(Vec<Uuid>, bool),
     Worn(crate::ui::context::CtxAction),
     Marketplace(Vec<Uuid>, bool),
+    Explorer(explorer::ExplorerCommand),
 }
 
 #[derive(Default)]
@@ -274,7 +276,16 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false)
+    build_mode(inv, id, st, prefs, facts, false, false)
+}
+
+/// The menu of the explorer's empty space, showing `folder`: what acts on
+/// the folder shown rather than on the folder itself
+/// (`explorer::kept_in_background`).
+pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
+    let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
+    c.entries.retain(explorer::kept_in_background);
+    c
 }
 
 /// Reuse the native definitions, independent of inventory contents and selection.
@@ -290,6 +301,7 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
                 &InventoryPreferences::default(),
                 &Facts::default(),
                 true,
+                false,
             )
             .entries
         })
@@ -323,7 +335,16 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
     entries
 }
 
-fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) -> Catalog {
+#[allow(clippy::too_many_arguments)]
+fn build_mode(
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    all: bool,
+    background: bool,
+) -> Catalog {
     let mut c = Catalog {
         editing: all,
         ..Default::default()
@@ -1002,6 +1023,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
+    explorer::build(&mut c, inv, id, st, prefs, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }
@@ -1301,6 +1323,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs),
     }
 }
 
@@ -1427,7 +1450,11 @@ mod tests {
         let prefs = InventoryPreferences::default();
         let state = InventoryUi::default();
         assert_eq!(build(&inv, folder, &state, &prefs, &facts()).prepare_outfit, Some(folder));
-        assert!(build_mode(&inv, folder, &state, &prefs, &facts(), true).prepare_outfit.is_none());
+        assert!(
+            build_mode(&inv, folder, &state, &prefs, &facts(), true, false)
+                .prepare_outfit
+                .is_none()
+        );
         let mut multi = InventoryUi::default();
         multi.selection.extend([folder, Uuid::from_u128(8100)]);
         assert!(build(&inv, folder, &multi, &prefs, &facts()).prepare_outfit.is_none());
@@ -1458,6 +1485,7 @@ mod tests {
             &prefs,
             &Facts::default(),
             true,
+            false,
         );
         assert!(metadata.commands.is_empty());
         assert!(
