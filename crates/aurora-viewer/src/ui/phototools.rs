@@ -141,6 +141,10 @@ pub struct PhototoolsUi {
     pub tab: usize,
     /// A setting changed and waits for the button to be released to be saved.
     unsaved: bool,
+    /// The window shows over the full-frame photo view, whose controls
+    /// (guide, day, hints) sit above the windows: it goes up with them, as
+    /// the poser does (`ik_edit::Editor::over_viewfinder`).
+    pub over_viewfinder: bool,
 }
 
 impl PhototoolsUi {
@@ -171,6 +175,9 @@ impl PhototoolsUi {
             Vec2::new(WIDTH, (screen.height() - 120.0).clamp(260.0, 680.0)),
         );
         floater.min_size = Vec2::new(400.0, 260.0);
+        if self.over_viewfinder {
+            floater.order = egui::Order::Foreground;
+        }
         floater.show(ctx, p, open, |ui| {
             self.body(ui, p, settings, &mut env, &mut out);
         });

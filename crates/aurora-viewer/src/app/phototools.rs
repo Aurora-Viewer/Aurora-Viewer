@@ -85,7 +85,9 @@ impl App {
         }
         self.env_ui.rlva_locked = self.world.rlva.has("setenv") || self.world.rlva.has("setsphere");
         let mut lighting = self.panels.personal_lighting;
+        self.phototools_ui.over_viewfinder = true;
         let actions = self.phototools_window(ctx, p, &mut lighting);
+        self.phototools_ui.over_viewfinder = false;
         self.panels.personal_lighting = lighting;
         self.env_actions(actions);
     }
