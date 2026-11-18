@@ -1534,23 +1534,24 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     return 1.0 - textureLoad(contact_tex, p, 0).r;
 }
 
-// What arrives of the point lights' light at a pixel of the main view: the
-// traced lights' share (rt_lights.wgsl, `.b` of the traced mask). 1
-// elsewhere: other views, blended faces, without the traced lights.
-fn local_share(frag: vec2<f32>) -> f32 {
+// What arrives of the point lights' red, green and blue at a pixel of the
+// main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
+// mask). 1 elsewhere: other views, blended faces, without the traced
+// lights.
+fn local_share(frag: vec2<f32>) -> vec3<f32> {
     if ((frame.light_mode.z & LOCAL_TRACED) == 0u || !contact_surface || in_reflection_pass()) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
     let p = vec2<i32>(frag);
     let size = vec2<i32>(textureDimensions(contact_tex));
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
-        return 1.0;
+        return vec3<f32>(1.0);
     }
-    return textureLoad(contact_tex, p, 0).b;
+    return textureLoad(contact_tex, p, 0).gba;
 }
 
 // Point light `i` of the frame with its colour times `share` (local_share).
-fn shared_light(i: i32, share: f32) -> Light {
+fn shared_light(i: i32, share: vec3<f32>) -> Light {
     var lt = frame.lights[i];
     lt.color_falloff = vec4<f32>(lt.color_falloff.rgb * share, lt.color_falloff.w);
     return lt;

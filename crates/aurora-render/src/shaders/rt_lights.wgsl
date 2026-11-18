@@ -19,11 +19,16 @@
 // neighbour's light is the one the pixel traced, the neighbour's
 // visibility counts only within the penumbra the rays found there (another
 // point of the same soft edge); further than that the pixel's own replaces
-// it, so a shadow stays sharp where it is sharp. The share,
+// it, so a shadow stays sharp where it is sharp. The same samples give
+// the share of each colour (the tint): each visibility weighed by its
+// light's red, green and blue in place of its luminance, so where a warm
+// lamp is hidden and a blue one is not, the blue arrives whole and the
+// warm does not, whatever their number. The tint,
 // blended with last frame's reprojected as rt_gi.wgsl's history, is what
 // the shading multiplies its point lights by (common.wgsl `local_share`),
-// whose light stays the Legacy Viewer's where nothing is in the way. Its
-// guide keeps the second moment beside, for the denoiser (rt_denoise.wgsl).
+// whose light stays the Legacy Viewer's where nothing is in the way. The
+// share is what the denoiser measures the noise by (rt_denoise.wgsl): its
+// guide keeps the second moment beside.
 // The samples merged become the choice the next frame starts from.
 // The sun's soft shadow shares this history: `cs_lights_reuse` averages
 // the sun's ray of each frame (rt_shadows.wgsl) beside the share, and where
@@ -31,9 +36,10 @@
 // keeps the history within what this frame's rays found around the pixel,
 // as AMD's FidelityFX shadow denoiser does, so the floor clears at once
 // instead of holding a trail.
-// `cs_lights_filter`: the denoised share and sun, written with the contact
+// `cs_lights_filter`: the denoised tint and sun, written with the contact
 // shadows into the mask the frame binds: `.r` the sun's shadow (1 in
-// shadow, the darker of the traced and the contact shadow), `.b` the share.
+// shadow, the darker of the traced and the contact shadow), `.gba` the
+// tint (the share, where the lights are not traced: 1).
 //
 // The lights are weighed by the mesh's smooth normal where the prepass drew
 // it (rt_history.wgsl `smooth_normal`), as the shading lights them; the
@@ -52,7 +58,8 @@ struct Params {
     world_from_clip: mat4x4<f32>,
     prev_clip_from_world: mat4x4<f32>,
     // xyz the eye, this frame's and last frame's; the first's w: 1 when
-    // `motion_tex` is the prepass's.
+    // `motion_tex` is the prepass's, the second's: 1 when the tint is kept
+    // (`prev_tint`, `out_tint`, `tint_tex`: one pixel each otherwise).
     camera: vec4<f32>,
     prev_camera: vec4<f32>,
     // width, height, 1 / width, 1 / height
@@ -124,8 +131,8 @@ const MID_DRAWN: u32 = 0x200u;
 // A pixel's sample, from cs_lights to cs_lights_reuse: x the light's index
 // with `MID_SEEN` when its ray found it and `MID_DRAWN` when there is one,
 // and its confidence, y its weight, z the width of the penumbra where its
-// ray was stopped (m, 0 where it was not), or on a frame with no history
-// the share its rays found (all three f32 bits), w the normal
+// ray was stopped (m, 0 where it was not; y and it f32 bits), or on a
+// frame with no history what its rays found (`pack_reset`), w the normal
 // (rt_history.wgsl `pack_normal`, pack2x16snorm).
 @group(0) @binding(15) var out_mid: texture_storage_2d<rgba32uint, write>;
 @group(0) @binding(16) var mid: texture_2d<u32>;
@@ -137,6 +144,12 @@ const MID_DRAWN: u32 = 0x200u;
 // r the share, g the sun's light
 @group(0) @binding(9) var share_tex: texture_2d<f32>;
 @group(0) @binding(11) var out_mask: texture_storage_2d<rgba8unorm, write>;
+// The tint: rgb what arrives of the local lights' red, green and blue. Its
+// history beside the share's (cs_lights_reuse), and denoised
+// (cs_lights_filter).
+@group(0) @binding(17) var prev_tint: texture_2d<f32>;
+@group(0) @binding(18) var out_tint: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(19) var tint_tex: texture_2d<f32>;
 
 // common.wgsl `ll_light_atten`.
 fn light_atten(d: f32, falloff: f32) -> f32 {
@@ -164,6 +177,48 @@ fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
     }
     let lum = dot(lt.color_falloff.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     return lum * light_atten(dist / radius, lt.color_falloff.w) * nl;
+}
+
+// Point light `i`'s colour over its luminance: `light_target` times it is
+// the red, green and blue the light gives.
+fn light_tint(i: u32) -> vec3<f32> {
+    let c = lights[i].color_falloff.rgb;
+    return c / max(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)), 1e-6);
+}
+
+// What a frame with no history found (`mid`'s z): how many of its
+// `RESET_RAYS` arrived (4 bits), then the tint (9 bits a colour: the mask
+// keeps 8).
+fn pack_reset(arrived: f32, tint: vec3<f32>) -> u32 {
+    let t = vec3<u32>(round(clamp(tint, vec3<f32>(0.0), vec3<f32>(1.0)) * 511.0));
+    return u32(arrived) | (t.r << 4u) | (t.g << 13u) | (t.b << 22u);
+}
+
+// xyz the tint, w the share.
+fn unpack_reset(z: u32) -> vec4<f32> {
+    let t = vec3<u32>(z >> 4u, z >> 13u, z >> 22u) & vec3<u32>(0x1FFu);
+    return vec4<f32>(vec3<f32>(t) / 511.0, f32(z & 0xFu) / f32(RESET_RAYS));
+}
+
+// The light ray `r` of a frame with no history goes to: the lights reaching
+// the pixel (`total` their light in all) drawn in proportion to their light
+// at even steps from `start` (systematic sampling).
+fn reset_light(r: u32, start: f32, total: f32, listed: u32, world: vec3<f32>, n: vec3<f32>) -> u32 {
+    let goal = (f32(r) + start) / f32(RESET_RAYS) * total;
+    var reached = 0.0;
+    var to = 0u;
+    for (var i = 0u; i < listed; i++) {
+        let p = light_target(i, world, n);
+        if (p <= 0.0) {
+            continue;
+        }
+        reached += p;
+        to = i;
+        if (goal < reached) {
+            break;
+        }
+    }
+    return to;
 }
 
 fn light_size(i: u32) -> f32 {
@@ -341,8 +396,8 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     var word = 0u;
     var w = 0.0;
-    // the penumbra's width, or on a frame with no history the share
-    var found = 0.0;
+    // the penumbra's width, or on a frame with no history `pack_reset`
+    var found = 0u;
     if (chosen_target > 0.0 && confidence > 0.0) {
         w = sum / (confidence * chosen_target);
         word = chosen | MID_DRAWN | (u32(min(confidence, 255.0) * 256.0) << 16u);
@@ -354,38 +409,42 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         let reset = params.mode.w < 0.5;
         let rays = select(1u, RESET_RAYS, reset);
         let start = turn(id.xy, u32(params.mode.z));
-        var arrived = 0.0;
+        // which of the rays arrived (a bit each)
+        var arrived = 0u;
+        var penumbra = 0.0;
         for (var r = 0u; r < rays; r++) {
             var to = chosen;
             if (reset) {
-                let goal = (f32(r) + start) / f32(RESET_RAYS) * total;
-                var reached = 0.0;
-                for (var i = 0u; i < listed; i++) {
-                    let p = light_target(i, world, n);
-                    if (p <= 0.0) {
-                        continue;
-                    }
-                    reached += p;
-                    to = i;
-                    if (goal < reached) {
-                        break;
-                    }
-                }
+                to = reset_light(r, start, total, listed, world, n);
             }
             let blocked = light_blocked(to, origin, flat, fract(at + f32(r) * vec2<f32>(0.7548777, 0.5698403)));
             if (blocked < 0.0) {
-                arrived += 1.0;
+                arrived |= 1u << r;
             } else {
-                found = blocked;
+                penumbra = blocked;
             }
         }
+        found = bitcast<u32>(penumbra);
         if (reset) {
-            found = arrived / f32(RESET_RAYS);
-        } else if (arrived > 0.0) {
+            // the colours the rays set out for and those that arrived, from
+            // their lights drawn again: sums carried through the rays would
+            // be more for every traced frame to keep across them
+            var sent = vec3<f32>(0.0);
+            var got = vec3<f32>(0.0);
+            for (var r = 0u; r < RESET_RAYS; r++) {
+                let tint = light_tint(reset_light(r, start, total, listed, world, n));
+                sent += tint;
+                got += select(vec3<f32>(0.0), tint, (arrived & (1u << r)) != 0u);
+            }
+            // (a colour none of the lights drawn has takes the share)
+            let count = f32(countOneBits(arrived));
+            let share = count / f32(RESET_RAYS);
+            found = pack_reset(count, select(vec3<f32>(share), got / max(sent, vec3<f32>(1e-6)), sent > vec3<f32>(0.0)));
+        } else if (arrived != 0u) {
             word |= MID_SEEN;
         }
     }
-    textureStore(out_mid, pixel, vec4<u32>(word, bitcast<u32>(w), bitcast<u32>(found), pack2x16snorm(pack_normal(n))));
+    textureStore(out_mid, pixel, vec4<u32>(word, bitcast<u32>(w), found, pack2x16snorm(pack_normal(n))));
 }
 
 @compute @workgroup_size(8, 8)
@@ -396,10 +455,14 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let depth = textureLoad(depth_tex, pixel, 0);
+    let tinted = params.prev_camera.w > 0.5;
     if (depth <= 0.0) {
         textureStore(out_choice, pixel, vec4<f32>(0.0));
         textureStore(out_share, pixel, vec4<f32>(1.0, 1.0, 0.0, 0.0));
         textureStore(out_guide, pixel, vec4<f32>(0.0));
+        if (tinted) {
+            textureStore(out_tint, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
+        }
         return;
     }
     let world = unproject(pixel, depth);
@@ -428,11 +491,14 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // with no light reaching it, nothing to shadow
     var sample = 1.0;
+    var tint = vec3<f32>(1.0);
     var choice = vec4<f32>(0.0);
     if (total > 0.0 && params.mode.w < 0.5) {
         // a frame with no history: cs_lights traced its share at once
         if ((own.x & MID_DRAWN) != 0u) {
-            sample = bitcast<f32>(own.z);
+            let found = unpack_reset(own.z);
+            sample = found.w;
+            tint = found.xyz;
             choice = vec4<f32>(f32(own.x & 0xFFu), bitcast<f32>(own.y), f32(own.x >> 16u) / 256.0, 0.0);
         }
     } else if (total > 0.0) {
@@ -518,13 +584,24 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         let soft = 0.5 * penumbra / max(pixel_size, 1e-6);
         var arrived = 0.0;
         var reached = 0.0;
+        // the same of each colour: a sample's weight is its light's
+        // luminance here, which its light's colour over its luminance
+        // turns into its red, green and blue
+        var arrived_by = vec3<f32>(0.0);
+        var reached_by = vec3<f32>(0.0);
         for (var k = 0u; k < samples; k++) {
             let v = select(seen[k], own_seen, light[k] == own_light && away[k] > soft);
             arrived += weight[k] * v;
             reached += weight[k];
+            let by = weight[k] * light_tint(light[k]);
+            arrived_by += by * v;
+            reached_by += by;
         }
         if (reached > 0.0) {
             sample = arrived / reached;
+            // (a colour none of the samples' lights has takes the share)
+            let has = reached_by > vec3<f32>(1e-6 * reached);
+            tint = select(vec3<f32>(sample), arrived_by / max(reached_by, vec3<f32>(1e-30)), has);
         }
     }
     textureStore(out_choice, pixel, choice);
@@ -545,6 +622,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         frames = min(h.a + 1.0, longest);
         share = mix(h.r, sample, 1.0 / frames);
         moment = mix(textureLoad(prev_guide, back.xy, 0).w, moment, 1.0 / frames);
+        if (tinted) {
+            tint = mix(textureLoad(prev_tint, back.xy, 0).rgb, tint, 1.0 / frames);
+        }
 
         var was = h.g;
         sun_frames = min(h.b + 1.0, longest);
@@ -578,6 +658,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     textureStore(out_share, pixel, vec4<f32>(share, sun, sun_frames, frames));
     textureStore(out_guide, pixel, vec4<f32>(pack_normal(n), dist, moment));
+    if (tinted) {
+        textureStore(out_tint, pixel, vec4<f32>(tint, 0.0));
+    }
 }
 
 @compute @workgroup_size(8, 8)
@@ -589,5 +672,9 @@ fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
     let ray = textureLoad(sun_tex, pixel, 0);
     let light = clamp(textureLoad(share_tex, pixel, 0).rg, vec2<f32>(0.0), vec2<f32>(1.0));
     let shadow = 1.0 - light.y;
-    textureStore(out_mask, pixel, vec4<f32>(max(shadow, ray.r), shadow, light.x, ray.a));
+    var tint = vec3<f32>(light.x);
+    if (params.prev_camera.w > 0.5) {
+        tint = clamp(textureLoad(tint_tex, pixel, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    textureStore(out_mask, pixel, vec4<f32>(max(shadow, ray.r), tint));
 }

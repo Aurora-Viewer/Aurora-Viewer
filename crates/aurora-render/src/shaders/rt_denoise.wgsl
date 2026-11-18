@@ -29,12 +29,16 @@
 // (g, its frames in b; a ray is stopped or is not, so its second moment is
 // its mean). Between the passes b and a are their variances. One pass's
 // reads serve both, and a shadow's sharp edge is not blurred by the noise
-// of the other light's penumbra across it.
+// of the other light's penumbra across it. Beside the pair,
+// `cs_atrous_pair` filters the share by colour (rt_lights.wgsl's tint) with
+// the share's weights, where `params.mode.x` says there is one.
 
 struct Params {
     // width, height of the image, z: this pass's step (pixels), w: the
     // variance under which a pixel has no noise worth filtering
     size: vec4<f32>,
+    // x: 1 when the pair has a tint beside (`input_tint`)
+    mode: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -43,6 +47,10 @@ struct Params {
 @group(0) @binding(3) var output: texture_storage_2d<rgba16float, write>;
 // one per 8×8 tile, row by row: 1 when a pixel of it has variance
 @group(0) @binding(4) var<storage, read_write> tiles: array<u32>;
+// `cs_atrous_pair` alone: rgb the share by colour, read and written only
+// with `params.mode.x`
+@group(0) @binding(5) var input_tint: texture_2d<f32>;
+@group(0) @binding(6) var output_tint: texture_storage_2d<rgba16float, write>;
 
 var<workgroup> tile_noisy: atomic<u32>;
 
@@ -326,6 +334,14 @@ fn cs_variance_pair(
     }
 }
 
+// A pixel of the pair's image, and of its tint's where there is one.
+fn store_pair(p: vec2<i32>, c: vec4<f32>, tint: vec4<f32>) {
+    textureStore(output, p, c);
+    if (params.mode.x > 0.5) {
+        textureStore(output_tint, p, tint);
+    }
+}
+
 @compute @workgroup_size(8, 8)
 fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) tile: vec3<u32>) {
     let p = vec2<i32>(id.xy);
@@ -333,13 +349,18 @@ fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgro
         return;
     }
     let c = textureLoad(input, p, 0);
+    let tinted = params.mode.x > 0.5;
+    var t = vec4<f32>(0.0);
+    if (tinted) {
+        t = textureLoad(input_tint, p, 0);
+    }
     if (calm(vec2<i32>(tile.xy))) {
-        textureStore(output, p, c);
+        store_pair(p, c, t);
         return;
     }
     let g = textureLoad(guide, p, 0);
     if (g.z <= 0.0) {
-        textureStore(output, p, c);
+        store_pair(p, c, t);
         return;
     }
     var v = vec2<f32>(0.0);
@@ -356,7 +377,7 @@ fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgro
     }
     let noisy = v > vec2<f32>(params.size.w * v_w);
     if (!any(noisy)) {
-        textureStore(output, p, c);
+        store_pair(p, c, t);
         return;
     }
     let sigma = SIGMA_LUMA * sqrt(max(v / v_w, vec2<f32>(0.0))) + vec2<f32>(1e-4);
@@ -367,6 +388,7 @@ fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgro
     var sum = vec2<f32>(0.0);
     var variance = vec2<f32>(0.0);
     var w_sum = vec2<f32>(0.0);
+    var tint = vec3<f32>(0.0);
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let q = p + vec2<i32>(x, y) * step;
@@ -381,9 +403,17 @@ fn cs_atrous_pair(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgro
             sum += cq.rg * w;
             variance += cq.ba * w * w;
             w_sum += w;
+            // the colours are the share's own samples: its weights are theirs
+            if (tinted && noisy.x) {
+                tint += textureLoad(input_tint, q, 0).rgb * w.x;
+            }
         }
     }
     let filtered = vec2<bool>(noisy.x && w_sum.x > 1e-6, noisy.y && w_sum.y > 1e-6);
     let safe = max(w_sum, vec2<f32>(1e-6));
-    textureStore(output, p, vec4<f32>(select(c.rg, sum / safe, filtered), select(c.ba, variance / (safe * safe), filtered)));
+    store_pair(
+        p,
+        vec4<f32>(select(c.rg, sum / safe, filtered), select(c.ba, variance / (safe * safe), filtered)),
+        vec4<f32>(select(t.rgb, tint / safe.x, filtered.x), t.a),
+    );
 }
