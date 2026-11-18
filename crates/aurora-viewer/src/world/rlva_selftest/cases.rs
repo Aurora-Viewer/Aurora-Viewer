@@ -386,6 +386,24 @@ const RULES: &[Rule] = &[
             |w, _| worn_layer(w).is_some_and(|(item, _)| w.rlva_can_remove(item, Uuid::nil())),
         )
     },
+    // RlvActions::canChangeToMouselook: what the camera asks before it
+    // enters mouselook (#3357)
+    rule(
+        "A33",
+        "@setcam_mouselook",
+        "@setcam_mouselook=n",
+        "@setcam_mouselook=y",
+        "mouselook refused",
+        |w, _| w.rlva.can_mouselook(),
+    ),
+    rule(
+        "A34",
+        "@camdistmin above zero",
+        "@camdistmin:1=n",
+        "@camdistmin:1=y",
+        "mouselook refused",
+        |w, _| w.rlva.can_mouselook(),
+    ),
 ];
 
 fn case(id: &'static str, title: &'static str, steps: Vec<Step>) -> Case {
@@ -510,6 +528,18 @@ fn rules() -> Vec<Case> {
             Step::Now(
                 "named in the friends list and a group's members",
                 holds(named(|_| NameScope::Roster), "hidden there too"),
+            ),
+            Step::Now(
+                "the notice of a message or of a teleport offer names its resident, an inventory offer's does not",
+                holds(
+                    |w, c| {
+                        use crate::world::notifications::Kind;
+                        w.rlva_shows_name(Kind::Message.names(), c.other)
+                            && w.rlva_shows_name(Kind::Teleport.names(), c.other)
+                            && !w.rlva_shows_name(Kind::Inventory.names(), c.other)
+                    },
+                    "the notices do not follow their kind",
+                ),
             ),
             Step::Now(
                 "a creator who owns the object is hidden",

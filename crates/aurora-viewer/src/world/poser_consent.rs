@@ -191,6 +191,11 @@ impl State {
             Status::Ask
         }
     }
+    /// The avatars whose owners accepted our request, nearby or not
+    /// (`can_pose` says whether one may be posed now).
+    pub fn accepted_peers(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.accepted.keys().copied()
+    }
     pub fn can_pose(&self, world: &World, peer: Uuid) -> bool {
         self.accepted.contains_key(&peer) && nearby(world, peer)
     }

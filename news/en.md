@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-18 — Aurora 0.9.11: a complete Director, Gaming mode and 360° pictures
+The Director becomes a full machinima tool: ready-made shots, renders up to 4K, films with their sound, montages, the photo looks and LUTs, handles on the cameras, and ffmpeg downloaded in one click. Gaming mode lets Aurora step back while you play: the world stops drawing and gives the video memory and RAM back, while chat and sounds go on. The photo window takes 360° pictures. Versions before 0.9.11 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.11)
+
+## 2026-11-18 — Photos, inventory and chat
+The photo window keeps its tilt in presets, lets you and others look at the camera, and has shadow and ambient occlusion controls; 360° pictures open as panoramas. The inventory can show two panels side by side, Favorite wearables get picture rows and a Wear button, and sounds play locally or in-world. The Omnifilter hides, replaces or answers unwanted chat. The chat bar can be always shown, shown when typing or left to the Conversations window, and the chat keys can be changed.
+
+## 2026-11-18 — More like the Legacy Viewer
+The pose stand, a target frame rate (Autotune), proxy settings, script sync with outside editors, saved poses from the Legacy Viewer and Alchemy, the missing interface sounds and many RLVa fixes. Thanks to anne-skydancer, Bruica, chrzang, circuskid, ClifHofmann, dash-sl, Diviniity, emmelinedevere, Gaalrauch, Glychd, iGao, Izusl, KanikaBreed, lambskin, Marakiinfinity, Memekiller, MilkIsPrettyGood, Nowalski, nybyl, Odessa-Draekavik, RheaMercury, tasia-ai, vexxbyte, wolfosbournesl, Xevian and zdub0is.
+
 ## 2026-11-16 — Aurora 0.9.10: the Director, transparency in its true order, and weather that reaches farther
 The Director lets you film in the world: keep camera views as keyframes on a timeline, play them back as one smooth shot with the world alone, and record a video with your own ffmpeg. Glass, curtains and the layers of mesh hair now show in their true order at every pixel (Preferences › Graphics, Order of transparent surfaces); thanks to Anne Skydancer for the Stochastic choice. Aurora Weather reaches farther, with steadier snow. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)

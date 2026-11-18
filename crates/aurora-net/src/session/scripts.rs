@@ -290,9 +290,9 @@ mod tests {
         let neighbour_addr = neighbour.local_addr().expect("object address");
         let (events, received) = crossbeam_channel::unbounded();
         let sh = Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -331,7 +331,7 @@ mod tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
@@ -353,6 +353,7 @@ mod tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,

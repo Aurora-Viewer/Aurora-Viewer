@@ -74,6 +74,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                             emoji: &mut emoji,
                             pics: &pics,
                             world: &world,
+                            names: crate::world::names::NameScope::World,
                             want_names: &mut names,
                             wanted: &mut wanted,
                             own_name: "Speaker",

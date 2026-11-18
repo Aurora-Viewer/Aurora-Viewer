@@ -392,6 +392,38 @@ pub struct LookAts {
     /// Our avatar looks straight ahead, head and eyes: no target at all
     /// (PrivateLocalLookAtTarget), set by the app each frame (`gaze`).
     pub own_ahead: bool,
+    /// The photo window's look at the camera, drawn on our viewer only
+    /// (`PhotoLook`), set by the app each frame.
+    pub photo: PhotoLook,
+}
+
+/// The avatars our viewer turns to the camera for a photo ("Look at
+/// camera", "Others look at camera"), whatever they send: their head and
+/// eyes take the camera over every animation (an AO stand), within a
+/// natural reach (`scene::anim::Controller::look_over_animations`). Only
+/// our viewer draws it so; nothing is sent for the others, and what is
+/// sent for us still follows the privacy settings (`own`, `outgoing`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct PhotoLook {
+    /// The camera, a global point; None: nobody looks.
+    pub camera: Option<DVec3>,
+    /// Our own avatar looks, even with "no look-at target, even for me":
+    /// the switch is a choice made for the photo.
+    pub own: bool,
+    /// The other avatars that look: those whose owners allowed posing.
+    pub others: std::collections::HashSet<Uuid>,
+    /// How much of the turn is left to the eyes (0 the head faces the
+    /// camera, 1 a side glance): 1 − the photo window's "Look intensity".
+    pub glance: f32,
+}
+
+impl PhotoLook {
+    /// The point `avatar` looks at for the photo, if it does (`me`: our
+    /// own avatar).
+    pub fn at(&self, avatar: Uuid, me: Uuid) -> Option<DVec3> {
+        let looks = if avatar == me { self.own } else { self.others.contains(&avatar) };
+        self.camera.filter(|_| looks)
+    }
 }
 
 impl Default for LookAts {
@@ -402,6 +434,7 @@ impl Default for LookAts {
             requests: Vec::new(),
             last_chatter: None,
             own_ahead: false,
+            photo: PhotoLook::default(),
         }
     }
 }
@@ -437,6 +470,25 @@ pub fn gaze(target: Option<Target>, ahead: bool) -> Gaze {
 }
 
 impl LookAts {
+    /// An avatar's target on our viewer and whether it looks ahead
+    /// (`gaze`; `me`: our own avatar): the photo's camera first
+    /// (`PhotoLook`), even over "no look-at target, even for me"; otherwise
+    /// ours as we send it, or the one its owner sent (None: none yet).
+    pub fn gaze_of(&self, avatar: Uuid, me: Uuid) -> (Option<Target>, bool) {
+        match self.photo.at(avatar, me) {
+            Some(at) => (
+                Some(Target {
+                    kind: FOCUS,
+                    object: None,
+                    offset: at,
+                }),
+                false,
+            ),
+            None if avatar == me => (Some(self.own.target), self.own_ahead),
+            None => (self.remote.get(&avatar).copied(), false),
+        }
+    }
+
     /// A look-at received from the simulator (LLHUDEffectLookAt::unpackData).
     pub fn receive(&mut self, effect: Uuid, source: Uuid, target: Uuid, offset: [f64; 3], kind: u8) {
         if effect == self.own.effect {
@@ -499,6 +551,50 @@ mod tests {
         assert_eq!(eyes.request(false), Some(false));
         eyes.on_arrival();
         assert_eq!(eyes.request(false), None);
+    }
+
+    /// The photo's camera turns our head even with "no look-at target, even
+    /// for me", and the heads of those who allowed posing, on our viewer
+    /// only: what is sent stays "none", and nobody else turns.
+    #[test]
+    fn the_photo_camera_wins_on_our_viewer_only() {
+        let t0 = Instant::now();
+        let me = Uuid::from_u128(1);
+        let (friend, stranger) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut l = LookAts {
+            own_ahead: true,
+            ..Default::default()
+        };
+        assert!(l.own.set(NONE, Some(me), DVec3::ZERO, t0));
+        let sent = Target {
+            kind: FREELOOK,
+            object: Some(friend),
+            offset: DVec3::X,
+        };
+        l.remote.insert(friend, sent);
+        let (target, ahead) = l.gaze_of(me, me);
+        assert_eq!(gaze(target, ahead), Gaze::Ahead);
+        let camera = DVec3::new(130.0, 120.0, 25.0);
+        let at_camera =
+            |(t, ahead): (Option<Target>, bool)| !ahead && t.is_some_and(|t| (t.kind, t.object, t.offset) == (FOCUS, None, camera));
+        // a camera alone turns nobody
+        l.photo.camera = Some(camera);
+        assert_eq!(l.gaze_of(friend, me), (Some(sent), false));
+        // ours, even with "no look-at target, even for me"
+        l.photo.own = true;
+        assert!(at_camera(l.gaze_of(me, me)));
+        // those who allowed posing, and nobody else
+        l.photo.others.insert(friend);
+        assert!(at_camera(l.gaze_of(friend, me)));
+        assert_eq!(l.gaze_of(stranger, me), (None, false));
+        // the others still get nothing of ours
+        assert_eq!(outgoing(l.own.target, me, true, true), None);
+        assert_eq!(outgoing(l.own.target, me, false, true).map(|t| t.kind), Some(NONE));
+        // no camera: everyone takes back their own
+        l.photo.camera = None;
+        assert_eq!(l.gaze_of(friend, me), (Some(sent), false));
+        let (target, ahead) = l.gaze_of(me, me);
+        assert_eq!((target.map(|t| t.kind), ahead), (Some(NONE), true));
     }
 
     #[test]

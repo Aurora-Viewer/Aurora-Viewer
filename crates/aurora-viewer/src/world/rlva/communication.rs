@@ -26,6 +26,9 @@ impl World {
         if recipients.iter().all(|recipient| self.rlva_can_start_im(*recipient)) {
             true
         } else {
+            // LLAvatarActions::startIM / startCall / startConference and
+            // LLGroupActions::startIM / startCall: UISndInvalidOp
+            self.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             self.system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             false
         }

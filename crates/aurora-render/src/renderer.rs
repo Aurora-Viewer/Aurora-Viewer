@@ -40,6 +40,9 @@ use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
+/// Index in `FrameU::features` of the face-select pattern's texture slot
+/// (common.wgsl FEATURE_FACE_SELECT_SLOT).
+const FEATURE_FACE_SELECT_SLOT: usize = 2;
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -1009,6 +1012,8 @@ struct Pipelines {
     hud_debug_red: wgpu::RenderPipeline,
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
+    /// The volumetric clouds' weather map (env.wgsl `fs_cloud_weather`).
+    clouds_weather: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     /// PBR terrain (vs_terrain_pbr / fs_terrain_pbr), masked or not.
     terrain_pbr: wgpu::RenderPipeline,
@@ -1103,6 +1108,11 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
+    /// The face-select pattern over the selected HUD faces (selection.rs).
+    selection_pattern: wgpu::RenderPipeline,
+    /// The face-select pattern over the selected world faces, blended into
+    /// the HDR scene with the debug overlays (selection.rs).
+    selection_pattern_hdr: wgpu::RenderPipeline,
     /// The poser's hovered part on the subject's skinned faces.
     part_mask: wgpu::RenderPipeline,
     /// The visible part of the subject's faces (part_pick.rs).
@@ -1203,6 +1213,8 @@ struct GpuTimer {
     last_ssao: Option<f32>,
     /// Last time of the contact shadows (ms).
     last_contact: Option<f32>,
+    /// Last time of the volumetric clouds' compute (ms).
+    last_clouds: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
@@ -1283,7 +1295,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 37;
+const GPU_MARKS: u32 = 38;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1368,6 +1380,9 @@ const MARK_ST_ALPHA_END: u32 = 35;
 const MARK_ST_DEPTH_END: u32 = 36;
 const MARK_ST_ACCUM_END: u32 = 37;
 const MARK_ST_COMPOSITE_END: u32 = 38;
+/// After the volumetric clouds' compute (clouds.rs), which follow
+/// `MARK_DEPTH_MSAA_END`; inside the terrain and sky element's range.
+const MARK_CLOUDS_END: u32 = 39;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1480,6 +1495,7 @@ impl GpuTimer {
             last_depth: None,
             last_ssao: None,
             last_contact: None,
+            last_clouds: None,
             last_bloom: None,
             st_sum: [0.0; 4],
             st_n: 0,
@@ -1514,6 +1530,7 @@ impl GpuTimer {
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
+                            self.last_clouds = Some(ms(MARK_DEPTH_MSAA_END, MARK_CLOUDS_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_st = None;
                             if self.slot_st[slot].get() {
@@ -1912,6 +1929,22 @@ pub(crate) struct Backend {
     part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
+    /// The 360° snapshot's panorama pass (equirect.rs), made on first use.
+    equirect: Option<crate::equirect::Equirect>,
+    /// The faces of the 360° capture in progress, on the GPU (equirect.rs).
+    cube: Option<crate::equirect::CubeTarget>,
+    /// The panoramas being read back, asked in order (equirect.rs).
+    equirect_reads: crate::equirect::Readbacks,
+    /// The Director's film frames on their way back (film_readback.rs).
+    film_reads: crate::film_readback::FilmReads,
+    /// The six faces of a 360° capture are drawn one after the other: the
+    /// snapshot size stays (the render targets are made once, not twice per
+    /// face) from the first face to the frame after the last.
+    cube_hold: bool,
+    /// The frame in hand draws a face that is not the last: the hold goes on.
+    cube_keep: bool,
+    /// The capture camera (its step) of the face the frame in hand draws.
+    cube_step: Option<usize>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1934,6 +1967,10 @@ pub(crate) struct Backend {
     /// The Milky Way map (stars.rs milky_way_texels), made once.
     milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
+    /// The volumetric clouds (clouds.rs), made while the setting is on.
+    clouds: Option<crate::clouds::Clouds>,
+    /// This frame draws the volumetric clouds over the sky.
+    clouds_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -1951,6 +1988,8 @@ pub(crate) struct Backend {
     exposure: crate::exposure::Exposure,
     /// The photo viewfinder's luminance histogram (histogram.rs).
     histogram: crate::histogram::Histogram,
+    /// The small pictures of the view asked for (thumbnail.rs).
+    thumbnails: crate::thumbnail::Thumbnails,
     /// The glow was drawn last frame: its image is there for the exposure.
     glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
@@ -3071,6 +3110,39 @@ fn extra<T>(
     (!first_use(oom, what, false, refused && !lost)).then_some(made)
 }
 
+/// Whether the volumetric clouds are asked for this frame: over the sky of
+/// the main view when it is drawn (not hidden by the debug filter), not
+/// under the water (the sky is seen through its fog), nor in a cut-out
+/// photo (no sky).
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
+    !cutout && !hide_sky && camera_z >= water_level
+}
+
+/// The clouds' size-bound targets for `size` (and a still's) are made,
+/// checked: false while refused or waiting (the frame draws the Legacy
+/// layer, like `dof_targets`).
+fn cloud_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    clouds: &mut crate::clouds::Clouds,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    still: bool,
+    lost: bool,
+) -> bool {
+    if clouds.has_targets(size, still) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || clouds.ensure_targets(device, size, still));
+    if first_use(oom, "volumetric clouds", false, refused && !lost) {
+        clouds.release_targets();
+        return false;
+    }
+    true
+}
+
 /// The depth of field's targets for `size` are made, checked: false while
 /// refused or waiting (the frame goes without the effect).
 fn dof_targets(
@@ -3576,6 +3648,7 @@ struct Ranges {
     physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    select_pattern: (u64, u32),
     part_faces: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
@@ -4331,6 +4404,13 @@ impl Backend {
             previews: Default::default(),
             selection: None,
             cutout: None,
+            equirect: None,
+            cube: None,
+            equirect_reads: Default::default(),
+            film_reads: Default::default(),
+            cube_hold: false,
+            cube_keep: false,
+            cube_step: None,
             hud_selection: None,
             part: None,
             part_depth: None,
@@ -4350,6 +4430,8 @@ impl Backend {
             stars,
             milky_way,
             contact,
+            clouds: None,
+            clouds_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -4357,6 +4439,7 @@ impl Backend {
             bloom,
             exposure,
             histogram,
+            thumbnails: crate::thumbnail::Thumbnails::new(),
             glow_drawn: false,
             frame_buffer,
             refl_buffers,
@@ -4843,6 +4926,17 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Always,
             gbuf: ssr,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
+        });
+        let clouds_weather = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            depth_format: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
             gbuf: ssr,
@@ -5452,6 +5546,36 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
+        // The face-select pattern (LLPipeline::renderSelectedFaces) of the
+        // world's faces: blended into the HDR scene like the debug overlays,
+        // before exposure, tone mapping and gamma, as LL's renderHighlights
+        // runs in renderGeomPostDeferred, before renderFinalize. The scene
+        // alpha (the glow) is left alone.
+        let selection_pattern_hdr = pipe(PipeDesc {
+            cull: None,
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            ..base("selected face pattern", "vs_main", "fs_selection_pattern_hdr")
+        });
+        // The HUDs' pattern: blended over the finished HUD image in the
+        // surface format (LL draws the HUDs after renderFinalize), with the
+        // coverage pass's depth state.
+        let selection_pattern = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: Some(surface_format),
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            depth_write: false,
+            depth_bias: wgpu::DepthBiasState {
+                constant: 1,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+            constants: &hud_constants,
+            ..base("selected HUD face pattern", "vs_main", "fs_selection_pattern")
+        });
         // The poser's hovered part: the subject's skinned faces kept where
         // their weights are the part's joints (`vs_part_mask`)
         let part_mask = pipe(part_desc(
@@ -5817,6 +5941,7 @@ impl Backend {
             hud_debug_red,
             hud_debug_blue,
             sky,
+            clouds_weather,
             terrain,
             terrain_pbr,
             pre_terrain,
@@ -5871,6 +5996,8 @@ impl Backend {
             select_root_wire,
             select_child_wire,
             selection_mask,
+            selection_pattern,
+            selection_pattern_hdr,
             part_mask,
             part_pick,
             ssr: ssr_pipe,
@@ -7324,6 +7451,8 @@ impl Backend {
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
+        // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
+        u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
         u.part_joints = [
             [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
             [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
@@ -7531,7 +7660,17 @@ impl Backend {
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
     fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
-        let snapshot = self.end_snapshot();
+        let cube_face = std::mem::take(&mut self.cube_step).is_some();
+        // (a face of a 360° capture is answered by nothing: it stays on the
+        // GPU, and the main thread did not wait for it)
+        // (a film frame drawn at its size is no photo: its pixels come back
+        // in `films`, a later frame's result once the GPU is done)
+        let film = self.film_reads.end_frame();
+        let snapshot = self.end_snapshot() && !cube_face && !film;
+        if self.film_reads.busy() {
+            self.lost.poll(&self.device);
+        }
+        let films = self.film_reads.answers();
         FrameResult {
             index,
             stats,
@@ -7542,32 +7681,81 @@ impl Backend {
             cull: self.cull.last,
             captured,
             snapshot,
+            equirect: None,
             histogram: self.histogram.take(),
+            thumbnails: self.thumbnails.take(),
+            films,
             spent,
         }
     }
 
     /// A photo frame draws every pass at the photo's size: the render size
     /// (`config`, which every pass reads) takes it for this frame, the
-    /// swapchain keeps the window's (it is not reconfigured).
+    /// swapchain keeps the window's (it is not reconfigured). The faces of a
+    /// 360° capture (`SnapshotSpec::cube`) share one set of targets: they are
+    /// made for the first face and kept until the frame after the last.
     fn begin_snapshot(&mut self, s: SnapshotSpec) {
-        self.snapshot_window = Some((self.config.width, self.config.height));
+        let held = self.cube_hold && self.snapshot_window.is_some();
+        if !held {
+            self.snapshot_window = Some((self.config.width, self.config.height));
+        }
+        let same = held && (self.config.width, self.config.height) == (s.width, s.height);
         // the stochastic transparency's targets go before the photo's memory
-        // is taken: its tiles draw the sorted order
+        // is taken: its tiles (and the 360° faces) draw the sorted order
         if let Some(st) = &mut self.st {
             st.release();
         }
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
-        self.rebuild_targets();
+        self.cube_step = s.cube.map(usize::from);
+        if self.cube_step == Some(0)
+            && let Some(cube) = &mut self.cube
+        {
+            // (a face lost before it was drawn must not pass for the last
+            // capture's)
+            cube.reset();
+        }
+        self.cube_keep = s
+            .cube
+            .is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
+        if same {
+            // the face before left its images in the history of the passes
+            // that remember the last frame: each face starts afresh (the
+            // targets made again do that by themselves)
+            self.occlusion.invalidate();
+            self.depth_pick.scene_changed();
+            self.prev_view_proj = None;
+            self.prev_motion_view = None;
+            if let Some(taa) = &mut self.taa {
+                taa.reset = true;
+            }
+        } else {
+            self.rebuild_targets();
+        }
     }
 
-    /// Back to the window's size after a photo frame, however it ended.
-    /// True when the frame was one.
+    /// Back to the window's size after a photo frame, however it ended; a
+    /// face of a 360° capture that is not the last keeps the targets for the
+    /// next one. True when the frame was a photo's.
     fn end_snapshot(&mut self) -> bool {
-        let Some((w, h)) = self.snapshot_window.take() else {
+        if self.snapshot_window.is_none() {
             return false;
+        }
+        if std::mem::take(&mut self.cube_keep) {
+            self.cube_hold = true;
+            return true;
+        }
+        self.release_snapshot();
+        true
+    }
+
+    /// The window's size again, the targets made for it.
+    fn release_snapshot(&mut self) {
+        self.cube_hold = false;
+        self.cube_keep = false;
+        let Some((w, h)) = self.snapshot_window.take() else {
+            return;
         };
         // the video memory at the photo's peak (its targets still alive)
         let live = self.device.get_internal_counters().hal;
@@ -7583,7 +7771,6 @@ impl Backend {
         self.config.height = h;
         self.gtao.photo = None;
         self.rebuild_targets();
-        true
     }
 
     /// End of a frame that cannot be drawn (no swapchain image, or its
@@ -7770,7 +7957,9 @@ impl Backend {
             picks: Vec::new(),
             drawn: Vec::new(),
             capture: None,
+            equirect: None,
             histogram: None,
+            thumbnail: None,
             motion_cut: packet.motion_cut,
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
@@ -7847,7 +8036,29 @@ impl Backend {
         Ok(first)
     }
 
-    pub fn render(&mut self, packet: FramePacket) -> FrameResult {
+    pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
+        // the 360° snapshot's panorama, before the frame: projected from the
+        // cube the faces filled, its readback begun and answered by a later
+        // frame (equirect.rs). The cube is let go once the GPU has the job.
+        if let Some(job) = packet.equirect.take() {
+            let pass = self.equirect.get_or_insert_with(|| crate::equirect::Equirect::new(&self.device));
+            pass.start(
+                &self.device,
+                &self.queue,
+                &self.lost,
+                packet.index,
+                self.cube.as_ref(),
+                *job,
+                &mut self.equirect_reads,
+            );
+            self.cube = None;
+        }
+        let mut result = self.render_frame(packet);
+        result.equirect = self.equirect_reads.poll();
+        result
+    }
+
+    fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
             self.vr.finish(false);
@@ -7990,12 +8201,19 @@ impl Backend {
             picks,
             drawn,
             capture: wanted,
+            // (taken by `render` before the frame)
+            equirect: _,
             histogram,
+            thumbnail,
             motion_cut,
             world_shift,
             input_at,
         } = packet;
         let external_output = output.is_some();
+        self.film_reads.begin(match wanted {
+            Some(Capture::Film(tag, _)) => Some(tag),
+            _ => None,
+        });
         self.motion_cut |= motion_cut;
         self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
@@ -8027,8 +8245,21 @@ impl Backend {
             self.last_inv_vp,
             picks,
         );
+        // a 360° capture's faces share the snapshot targets; any other frame
+        // ends the hold (the capture was given up, or it is over)
+        let cube_face = matches!(&wanted, Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 && s.cube.is_some());
+        if self.cube_hold && !cube_face {
+            // the capture was given up between its faces: no projection will
+            // come for these
+            self.release_snapshot();
+            self.cube = None;
+        }
         // the window and the settings as the main thread had them for this frame
-        self.apply_surface(surface);
+        // (the window's size and the swapchain are as they were: the faces
+        // draw at their own size until the hold ends)
+        if !self.cube_hold {
+            self.apply_surface(surface);
+        }
         if self.rlva_resolution_divisor != params.rlva_resolution_divisor {
             self.rlva_resolution_divisor = params.rlva_resolution_divisor;
             self.rebuild_targets();
@@ -8053,7 +8284,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -8702,6 +8933,56 @@ impl Backend {
         if specular_aa_now(self.settings.specular_aa) {
             main.light_sets.mode[2] |= 0x8000;
         }
+        // ---- volumetric clouds (clouds.rs): over the sky of the main view
+        // when the setting is on and the Legacy layer would draw something;
+        // not under the water (the sky is seen through its fog), nor in a
+        // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
+        // is traced once in full (clouds.rs `StillSpec`), with no history.
+        // Until the noise is made the sky shader keeps the Legacy layer.
+        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+            let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
+            crate::clouds::StillSpec {
+                origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
+            }
+        });
+        let cloud_params = f
+            .clouds
+            .as_ref()
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
+            .and_then(|c| {
+                let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
+                crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
+            });
+        match (&f.clouds, &mut self.clouds) {
+            (None, clouds) => *clouds = None,
+            (Some(_), clouds @ None) => {
+                // (checked: refused, the Legacy layer stays and it is tried
+                // again later; the noise file is read once it is made)
+                *clouds = extra(
+                    &mut self.oom,
+                    &self.device,
+                    self.lost.get(),
+                    "volumetric clouds",
+                    crate::clouds::Clouds::new,
+                );
+                if let Some(c) = clouds {
+                    c.start_noise_read();
+                }
+            }
+            _ => {}
+        }
+        // (the targets are made before the decision: refused, this frame
+        // draws the Legacy layer)
+        let cloud_size = (self.targets.color_tex.width().max(2), self.targets.color_tex.height().max(2));
+        let cloud_targets_ok = match (&mut self.clouds, &cloud_params) {
+            (Some(c), Some(_)) if c.ready() => cloud_targets(&mut self.oom, c, &self.device, cloud_size, still.is_some(), self.lost.get()),
+            _ => false,
+        };
+        self.clouds_now = cloud_params.is_some() && cloud_targets_ok;
+        if self.clouds_now {
+            // (env.wgsl, features.w: the sky pass leaves the clouds to clouds.rs)
+            main.features[3] = 1;
+        }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -9269,6 +9550,7 @@ impl Backend {
         let hud_debug_red_range = push(cpu, &lists.hud_debug_red);
         let hud_debug_blue_range = push(cpu, &lists.hud_debug_blue);
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
+        let hud_select_pattern_range = push(cpu, &lists.hud_select_pattern);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.land_overlay = push(cpu, &lists.land_overlay);
         rg.debug_blue = push(cpu, &lists.debug_blue);
@@ -9279,6 +9561,7 @@ impl Backend {
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.select_pattern = push(cpu, &lists.select_pattern);
         rg.part_faces = push(cpu, &lists.part_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
@@ -10362,6 +10645,53 @@ impl Backend {
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_prepass[slot].set(prepass_wanted);
         }
+        // ---- volumetric clouds: the weather map when its parameters changed,
+        // the noise slice, the trace and the reconstruction (clouds.rs)
+        let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
+        let scene_gbuf = self.targets.gbuf.is_some();
+        // (until the noise is made `encode` generates it and allocates
+        // nothing; after, it needs the targets made above)
+        let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
+        if let (Some(clouds), Some(p), true) = (&mut self.clouds, &cloud_params, clouds_encode) {
+            if clouds.weather_stale(p.weather_key) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("cloud weather"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: clouds.weather_target(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipelines.clouds_weather);
+                pass.set_bind_group(0, &self.groups.a, &[]);
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.draw(0..3, 0..1);
+                drop(pass);
+                clouds.weather_drawn(p.weather_key);
+            }
+            clouds.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                p,
+                &self.targets.depth_ss,
+                cloud_size,
+                still,
+            );
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+        } else if let Some(clouds) = &mut self.clouds {
+            clouds.skipped(still.is_some());
+        }
+        mark(&mut encoder, MARK_CLOUDS_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -10436,6 +10766,14 @@ impl Backend {
             if !f.cutout && !f.hide_sky {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
+                // the clouds over the sky: dst * T + L
+                if self.clouds_now
+                    && let Some(clouds) = &self.clouds
+                {
+                    clouds.draw(&mut pass, scene_samples, scene_gbuf);
+                    // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
@@ -10852,6 +11190,10 @@ impl Backend {
                 }
                 blended(pass, blend_pipe, rest_from, bn);
             }
+            // the face-select pattern, whatever "Show highlight" gives the
+            // halo: LL's renderHighlights calls renderSelectedFaces without
+            // reading RenderHighlightSelections, right before renderDebug
+            draw(pass, &self.pipelines.selection_pattern_hdr, rg.select_pattern);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -10998,6 +11340,8 @@ impl Backend {
                 draw_sided(&mut pass, &pipes.alpha[0], rigged, 0);
                 draw_sided(&mut pass, &pipes.alpha[1], others, n_depth);
             }
+            // (the tiles with a blended face: what follows runs on those)
+            st.mark_tiles(&mut encoder, resolve);
             mark(&mut encoder, MARK_ST_ALPHA_END);
             // 3 and 4: the stochastic depth, then the accumulation
             st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
@@ -11962,6 +12306,24 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
+        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+            // a live film's frame: the same view, read back without a wait
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            let bgra = matches!(
+                source.format(),
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+            self.film_reads.encode(&self.device, &mut encoder, source, bgra, f.cutout);
+        }
+        // the Director's keyframe thumbnail: the same view, read back later
+        if let Some(tag) = thumbnail
+            && snapshot.is_none()
+            && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            let (width, height, format) = (self.config.width, self.config.height, source.format());
+            self.thumbnails
+                .encode(&self.device, &mut encoder, source, width, height, format, tag);
         }
         let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
@@ -12002,6 +12364,20 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
             draw(&mut pass, &self.pipelines.hud_debug_red, hud_debug_red_range);
             draw(&mut pass, &self.pipelines.hud_debug_blue, hud_debug_blue_range);
+        }
+        // the HUD faces' pattern, whatever "Show highlight" says (as the world's
+        // in the scene pass); only when
+        // the HUD pass ran, which clears the HUD depth. With the halo off this pass
+        // carries no timestamp, so its time is not in the GPU total.
+        if draw_huds
+            && hud_select_pattern_range.1 > 0
+            && let Some((_, _, depth)) = &self.hud_depth
+        {
+            let mut pass = crate::selection::begin_pattern(&mut encoder, &surface_view, depth);
+            bind_mesh(&mut pass, &self.groups.refl[5]);
+            draw(&mut pass, &self.pipelines.selection_pattern, hud_select_pattern_range);
+            drop(pass);
+            calls.set(calls.get() + 1);
         }
         if hud_select_faces_range.1 > 0
             && let (Some(selection), Some((_, _, depth))) = (&self.hud_selection, &self.hud_depth)
@@ -12054,6 +12430,25 @@ impl Backend {
         }
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
+        } else if let (Some(step), Some(_)) = (self.cube_step, snapshot) {
+            // a face of a 360° capture stays on the GPU: copied into its
+            // layer of the cube, never read back
+            let (size, format) = (self.config.width, surface_tex.texture().format());
+            if self.cube.as_ref().is_none_or(|cube| !cube.fits(size, format)) {
+                self.cube = crate::equirect::CubeTarget::new(&self.device, size, format);
+            }
+            if let Some(cube) = &mut self.cube {
+                cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
+        } else if snapshot.is_some() && self.film_reads.carried() {
+            // an offline render's frame, drawn at its size: read back
+            // without a wait, answered by a later frame
+            let texture = surface_tex.texture();
+            let bgra = matches!(
+                texture.format(),
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+            self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
         } else if snapshot.is_some() {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), true);
         }
@@ -12108,7 +12503,10 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
+        // (a face of a 360° capture is on the GPU, with nothing to read)
         let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
+        // a film frame's copy is submitted: its mapping can begin
+        self.film_reads.map();
 
         if let (Some(t), Some(slot)) = (&mut self.timer, timer_slot) {
             let ready = t.readback[slot].1.clone();
@@ -12125,8 +12523,12 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        if let Some(st) = &self.st {
+            st.after_submit();
+        }
         self.exposure.after_submit();
         self.histogram.after_submit();
+        self.thumbnails.after_submit();
         self.drawn_pick.after_submit();
         self.part_pick.after_submit();
         prof.mark("submit");
@@ -12175,6 +12577,7 @@ impl Backend {
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
+        stats.gpu_clouds = self.timer.as_ref().and_then(|t| t.last_clouds).filter(|_| self.clouds_now);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
@@ -12585,6 +12988,7 @@ mod tests {
         MARK_SCENE_BEGIN,
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
+        MARK_CLOUDS_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,
@@ -12652,6 +13056,15 @@ mod tests {
             inside(part, GpuElement::Effects);
         }
         inside(&[(MARK_BLOOM_BEGIN, MARK_BLOOM_END)], GpuElement::Post);
+    }
+
+    #[test]
+    fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
+        assert!(clouds_wanted(false, false, 30.0, 20.0));
+        assert!(clouds_wanted(false, false, 20.0, 20.0));
+        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
     }
 
     /// The occlusion's table is read by index against the main view's

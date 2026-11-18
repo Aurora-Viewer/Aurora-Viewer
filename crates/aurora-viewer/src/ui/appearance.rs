@@ -102,6 +102,7 @@ pub struct AppearanceUi {
     closed_groups: HashSet<Uuid>,
     closed_version: u64,
     pub wanted_images: HashSet<Uuid>,
+    pub wanted_outfit_portrait: Option<Uuid>,
     /// What `prepare` walked at the last inventory change.
     prepared: Option<Prepared>,
     /// The outfits shown, filtered and sorted, and what they came from.

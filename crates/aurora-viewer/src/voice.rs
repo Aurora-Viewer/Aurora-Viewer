@@ -86,6 +86,9 @@ pub struct Voice {
     muted: HashSet<Uuid>,
     /// Volumes sent to the current session, per resident.
     volumes: HashMap<Uuid, f32>,
+    /// The viewer's own volume on the received voice given to the current
+    /// session; `None` = never set (0.5, heard as sent).
+    receive_volume: Option<f32>,
 }
 
 impl Voice {
@@ -95,6 +98,7 @@ impl Voice {
         self.mic = None;
         self.muted.clear();
         self.volumes.clear();
+        self.receive_volume = None;
         self.connected = false;
         self.own_level = 0.0;
         self.status.clear();
@@ -103,6 +107,15 @@ impl Voice {
     fn wanted(v: &VoiceInputs, current: Option<&ChannelKey>) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
         if !v.enabled {
             return Err(aurora_i18n::tr!("common-voice-disabled").into());
+        }
+        // Voice (WebRTC) cannot go through the proxy of Preferences › Network
+        // › Proxy and shows the real address to the voice servers and the
+        // other speakers: off while a proxy is on, unless the user allowed
+        // direct voice after its warning. Stricter than the Legacy Viewer,
+        // whose voice always connects directly (llvoicewebrtc.cpp has no
+        // proxy).
+        if !aurora_proxy::rule().voice_allowed() {
+            return Err(aurora_i18n::tr!("voice-off-proxy").into());
         }
         if !v.in_world {
             return Err(String::new());
@@ -248,6 +261,7 @@ impl Voice {
                         self.session = Some((key, s));
                         self.muted.clear();
                         self.volumes.clear();
+                        self.receive_volume = None;
                     }
                 }
             }
@@ -328,10 +342,22 @@ impl Voice {
     /// Each resident's volume (0..1, 0.5 as sent) for the participants of
     /// the session (LLSpeakerVolumeStorage, setUserVolume); only changes are
     /// sent, a resident without a saved volume is heard at 0.5.
-    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>) {
-        let Some((_, s)) = &self.session else {
+    ///
+    /// `p2p_peer` is the other resident of the private call in progress. The
+    /// server ignores `setUserVolume` on a private call's channel, in the
+    /// Legacy Viewer too (issue #2874), so the viewer also scales what it
+    /// receives there, which is that resident's voice alone: better than the
+    /// Legacy Viewer, where the slider does nothing. The request is still
+    /// sent as the Legacy Viewer sends it.
+    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>, p2p_peer: Option<Uuid>) {
+        let Some((key, s)) = &self.session else {
             return;
         };
+        let receive = receive_volume(key, p2p_peer, saved);
+        if (receive - self.receive_volume.unwrap_or(0.5)).abs() > f32::EPSILON {
+            s.set_receive_volume(receive);
+            self.receive_volume = Some(receive);
+        }
         if !self.connected {
             return;
         }
@@ -414,6 +440,16 @@ impl Voice {
     }
 }
 
+/// The viewer's own volume on what `key`'s channel sends: the private
+/// call's other resident's saved volume on that call's channel, 0.5 (as
+/// sent) on a channel that mixes several voices (nearby, conferences).
+fn receive_volume(key: &ChannelKey, p2p_peer: Option<Uuid>, saved: &std::collections::BTreeMap<Uuid, f32>) -> f32 {
+    match (key, p2p_peer) {
+        (ChannelKey::Call(_), Some(peer)) => saved.get(&peer).copied().unwrap_or(0.5),
+        _ => 0.5,
+    }
+}
+
 /// Why the region or the parcel forbids nearby voice, `None` when it allows
 /// it or is not known yet (LLViewerParcelMgr::allowAgentVoice,
 /// indra/newview/llviewerparcelmgr.cpp, originally LGPL 2.1).
@@ -462,6 +498,21 @@ pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_private_call_takes_its_peer_volume() {
+        let (peer, other) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let saved = std::collections::BTreeMap::from([(peer, 0.1), (other, 0.9)]);
+        let call = ChannelKey::Call("call".into());
+        let nearby = ChannelKey::Local { region: 7, parcel: None };
+        assert_eq!(receive_volume(&call, Some(peer), &saved), 0.1);
+        // no saved volume: heard as sent
+        assert_eq!(receive_volume(&call, Some(Uuid::from_u128(4)), &saved), 0.5);
+        // a conference mixes several voices: the server's gain only
+        assert_eq!(receive_volume(&call, None, &saved), 0.5);
+        // still on nearby voice while the call connects
+        assert_eq!(receive_volume(&nearby, Some(peer), &saved), 0.5);
+    }
 
     fn inputs(http: &reqwest::Client) -> VoiceInputs<'_> {
         VoiceInputs {
