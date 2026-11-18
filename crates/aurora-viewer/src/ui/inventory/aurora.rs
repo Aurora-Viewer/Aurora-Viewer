@@ -10,15 +10,19 @@
 //! (`details`). The tree, the search, the drag and drop, the menus and the
 //! dialogs are the inventory's own, shared with the Legacy window.
 
+mod breadcrumb;
 mod columns;
 mod details;
 mod gallery;
+mod history;
 mod rights;
 pub(super) mod rows;
 mod sidebar;
 mod smart_bar;
 mod toolbar;
 
+pub(super) use breadcrumb::PathEdit;
+pub(super) use history::History;
 pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
 
@@ -276,6 +280,10 @@ pub(super) fn contents(
     if st.browse.is_nil() || !inv.folders.contains_key(&st.browse) || (base != inv.root && !rules::under(inv, st.browse, base)) {
         st.browse = base;
     }
+    if layout != Layout::Compact {
+        st.history.retain(|id| inv.folders.contains_key(&id));
+        st.history.observe(history::Place::of(st));
+    }
     match layout {
         Layout::Compact => compact(ui, p, icons, inv, st, prefs, facts, images, actions),
         Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
@@ -415,7 +423,9 @@ fn explorer(
     actions: &mut Vec<InvAction>,
     layout: Layout,
 ) {
-    toolbar::explorer_row(ui, p, inv, st, prefs, layout, actions);
+    let window = ui.max_rect();
+    history::input(ui, inv, st, prefs, actions, window);
+    toolbar::explorer_row(ui, p, inv, st, prefs, facts, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
     let pane_w = if layout == Layout::Wide && prefs.show_details { 300.0 } else { 0.0 };
@@ -468,7 +478,7 @@ fn explorer_list(
 ) {
     match layout {
         Layout::Wide => toolbar::chips(ui, p, st, prefs),
-        _ => toolbar::breadcrumb_row(ui, p, inv, st),
+        _ => toolbar::breadcrumb_row(ui, p, inv, st, prefs, facts, actions),
     }
     let list_id = ui.scope_id().with("aurora_inventory_list");
     let Some(mut frame) = st.aurora else { return };

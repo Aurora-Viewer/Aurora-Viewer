@@ -77,6 +77,14 @@ pub fn page(cx: &mut Cx) {
             &field!(inventory.separate_searches),
         );
     });
+    // the explorer of Aurora's window (medium and wide widths)
+    cx.group(tr!("inventory-explorer-group"), |cx| {
+        cx.toggle(
+            tr!("inventory-backspace-up"),
+            tr!("inventory-backspace-up-help"),
+            &field!(inventory.explorer.backspace_up),
+        );
+    });
     cx.group(tr!("ui-options-double-click"), |cx| {
         cx.toggle(
             tr!("ui-inventory-controls-double-click-add-objects"),

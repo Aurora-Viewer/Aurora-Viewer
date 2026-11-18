@@ -32,7 +32,7 @@ pub struct Sidebar {
     pub(super) rows: Vec<Row>,
     /// The explorer's folder last shown: a new one opens its ancestors and
     /// scrolls into sight.
-    shown: Uuid,
+    pub(super) shown: Uuid,
     #[cfg(test)]
     pub(super) drawn: std::collections::HashMap<Uuid, Rect>,
     #[cfg(test)]

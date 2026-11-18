@@ -58,6 +58,7 @@ pub(crate) mod properties;
 mod received;
 mod replace_links;
 mod rows;
+mod shortcuts;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
@@ -690,6 +691,10 @@ pub struct InventoryUi {
     /// The explorer's rows of `browse`: its folders never open in place.
     flat: rows::PlainTree,
     side: aurora::Sidebar,
+    /// Where the explorer has been: Back, Forward (`aurora::history`).
+    history: aurora::History,
+    /// The breadcrumb while a path is typed in it (`aurora::breadcrumb`).
+    path_edit: Option<aurora::PathEdit>,
     counts: aurora::Counts,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,

@@ -461,6 +461,10 @@ pub struct ExplorerPreferences {
     /// The height of the tiles above the rows in the combination view; 0
     /// shares the room between them.
     pub gallery_height: u16,
+    /// Backspace goes up one folder, as in Dolphin (Windows Explorer's
+    /// Backspace went back). Never on a Mac, where Backspace deletes as in
+    /// the Legacy Viewer. On by default.
+    pub backspace_up: bool,
 }
 
 impl Default for ExplorerPreferences {
@@ -476,6 +480,7 @@ impl Default for ExplorerPreferences {
             view: ExplorerView::List,
             tile_size: 0,
             gallery_height: 0,
+            backspace_up: true,
         }
     }
 }
