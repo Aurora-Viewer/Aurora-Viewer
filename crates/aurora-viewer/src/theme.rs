@@ -313,6 +313,7 @@ impl Theme {
         ctx.replace_widget_theme::<egui::widget_style::TextEditStyle>(FieldSize);
         // every interface context goes through here
         crate::ui::click_away_focus::install(ctx);
+        crate::ui::keyboard_focus::install(ctx, &p);
     }
 }
 

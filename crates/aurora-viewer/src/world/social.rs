@@ -178,7 +178,9 @@ impl Social {
             let known = self.avatar_names.get(&id).is_some() || self.names.contains_key(&id);
             if known || since.elapsed().as_secs() >= 10 {
                 self.online_notices.remove(i);
-                out.push((id, online_text(&self.name_of(&id), online), online));
+                // the notice names the friend whatever `@shownames`
+                // (LLFloaterIMNearbyChatHandler leaves ONLINE_STATUS alone)
+                out.push((id, online_text(&self.name_in(NameScope::Roster, &id), online), online));
             } else {
                 i += 1;
             }

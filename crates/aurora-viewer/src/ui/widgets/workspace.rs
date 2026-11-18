@@ -3,10 +3,13 @@
 use super::*;
 use egui::AtomExt;
 
+/// The padding around a row's label in the user tree and object contents.
+pub(crate) const INVENTORY_LABEL_PADDING: egui::Vec2 = egui::vec2(2.0, 1.0);
+
 /// The user tree and object contents share row density and interaction styling.
 pub(crate) fn inventory_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
+    ui.spacing_mut().button_padding = INVENTORY_LABEL_PADDING;
     ui.spacing_mut().interact_size.y = 20.0;
 }
 

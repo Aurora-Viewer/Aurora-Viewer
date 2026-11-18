@@ -1441,7 +1441,7 @@ fn second_life_tab(
                     world.social.avatar_names.want(&partner);
                     let r = ui.add(
                         egui::Label::new(
-                            RichText::new(world.social.name_of(&partner))
+                            RichText::new(world.social.name_in(NameScope::Roster, &partner))
                                 .size(12.0)
                                 .color(super::colors::text(super::colors::get().chat_slurl)),
                         )
@@ -1451,7 +1451,7 @@ fn second_life_tab(
                         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                         .clicked()
                     {
-                        request_open(ui.ctx(), partner);
+                        super::context::request(ui.ctx(), super::context::CtxAction::RosterProfile(partner));
                     }
                 }
                 Some(_) => {

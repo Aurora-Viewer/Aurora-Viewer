@@ -98,6 +98,8 @@ impl Editor {
                     response
                 })
                 .inner;
+            // a press on a pole is the editor's, not Avatar Studio's camera
+            self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
             if response.clicked() || response.drag_started() {
                 if !selected {
                     self.select(limb.end, rig, frame);
