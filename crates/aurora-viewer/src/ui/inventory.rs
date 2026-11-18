@@ -856,7 +856,6 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
-    /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     /// Demo (`AURORA_DEMO_INVENTORY=aurora-system-folders`): Aurora's
     /// explorer on the root, nothing selected.
     pub fn demo_browse_root(&mut self, inv: &Inventory) {
@@ -879,6 +878,7 @@ impl InventoryUi {
         self.filters_open = true;
     }
 
+    /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
     }

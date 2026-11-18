@@ -365,6 +365,15 @@ shortcuts), because Tabler has none. It is tinted like the other script
 icons (`teal`): only the shape tells an SLua script from an LSL one. It is
 the one hand-drawn icon allowed next to Tabler (decision on PR #2802).
 
+**System folder icons are Tabler combined, not drawn.** Each system folder
+(Textures, Sounds… Settings, Materials) is Tabler's `folder-filled` /
+`folder-open-filled` with its category's Tabler symbol cut out of the
+middle, written by `scripts/generate-inventory-icons.py` into
+`assets/icons/aurora/folders/` (and the link corner of the hand-made links
+added for shortcuts). The symbols are those of the items
+(`ui/inventory/category.rs`): change a symbol there and in the script, then
+run it again.
+
 Do not force a filled icon that does not express the function. Two icons
 that go as a pair (link / unlink, plus / minus) stay in the same style.
 A function keeps the same icon everywhere (script = `code`, object = `box`,

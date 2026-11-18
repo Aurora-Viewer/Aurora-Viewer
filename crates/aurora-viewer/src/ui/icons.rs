@@ -4,8 +4,9 @@
 //! the filled one. Legacy Firestorm icon names are mapped onto Tabler ones;
 //! skins can override any icon with a PNG or SVG of the same name.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use super::inventory::category;
 
@@ -857,12 +858,12 @@ pub struct Icons {
     /// embedded ones), for `large`.
     sources: HashMap<String, Source>,
     /// Large copies made so far (`None`: the icon has no SVG).
-    large: Arc<Mutex<HashMap<String, Option<egui::TextureHandle>>>>,
+    large: Mutex<HashMap<String, Option<egui::TextureHandle>>>,
 }
 
 #[derive(Clone)]
 enum Source {
-    Svg(Arc<[u8]>),
+    Svg(Cow<'static, [u8]>),
     Shortcut(&'static [u8]),
     /// A skin's PNG: no larger copy.
     Png,
@@ -941,7 +942,7 @@ impl Icons {
         let opts = egui::TextureOptions::LINEAR;
         let mut sources: HashMap<String, Source> = HashMap::new();
         for (name, bytes) in OUTLINE.iter().chain(FILLED) {
-            sources.insert((*name).to_owned(), Source::Svg(Arc::from(*bytes)));
+            sources.insert((*name).to_owned(), Source::Svg(Cow::Borrowed(*bytes)));
             match rasterize_svg(bytes, RASTER_PX) {
                 Some(ci) => {
                     map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
@@ -962,7 +963,7 @@ impl Icons {
                 if shortcut {
                     Source::Shortcut(bytes)
                 } else {
-                    Source::Svg(Arc::from(bytes))
+                    Source::Svg(Cow::Borrowed(bytes))
                 },
             );
             if let Some(ci) = rasterize_mask(bytes, RASTER_PX, shortcut) {
@@ -997,7 +998,7 @@ impl Icons {
                 && let Some(ci) = rasterize_svg(bytes, RASTER_PX)
             {
                 map.insert(pending.item.to_owned(), ctx.load_texture(pending.item, ci, opts));
-                sources.insert(pending.item.to_owned(), Source::Svg(Arc::from(bytes)));
+                sources.insert(pending.item.to_owned(), Source::Svg(Cow::Borrowed(bytes)));
             }
         }
         if let Some(dir) = override_dir
@@ -1020,7 +1021,7 @@ impl Icons {
                 if let Some(ci) = ci {
                     map.insert(stem.to_owned(), ctx.load_texture(stem, ci, opts));
                     let source = if ext.as_deref() == Some("svg") {
-                        Source::Svg(Arc::from(bytes))
+                        Source::Svg(Cow::Owned(bytes))
                     } else {
                         Source::Png
                     };
@@ -1034,7 +1035,7 @@ impl Icons {
         Icons {
             map,
             sources,
-            large: Arc::default(),
+            large: Mutex::default(),
         }
     }
 
@@ -1042,11 +1043,12 @@ impl Icons {
         self.map.get(name)
     }
 
-    /// The icon for drawing `points` wide: past the usual raster's pixels,
-    /// its large raster (`large`); below, the usual one, which is not
-    /// shrunk as far (the UI renderer has no mipmaps).
+    /// The icon for drawing `points` wide: well past the usual raster's
+    /// pixels, its large raster (`large`); below, the usual one. The UI
+    /// renderer has no mipmaps, so the switch sits at 1.5x: neither raster is
+    /// shrunk more than 2x nor stretched more than 1.5x up to 288 pixels.
     pub fn sized(&self, ctx: &egui::Context, name: &str, points: f32) -> Option<egui::TextureHandle> {
-        if points * ctx.pixels_per_point() > RASTER_PX as f32 {
+        if points * ctx.pixels_per_point() > RASTER_PX as f32 * 1.5 {
             self.large(ctx, name)
         } else {
             self.get(name).cloned()
@@ -1131,6 +1133,34 @@ mod tests {
     }
 
     #[test]
+    fn category_icons_and_legacy_aliases_do_not_overlap() {
+        // one name, one source: `alias_target` and `Icons::load` would
+        // otherwise disagree on which wins
+        let rows: Vec<&str> = category::ROWS
+            .iter()
+            .flat_map(|row| [Some(row.closed), Some(row.open), Some(row.link), row.item])
+            .flatten()
+            .chain(category::PENDING_CLOTHING.iter().map(|pending| pending.item))
+            .collect();
+        for (alias, _) in ALIASES {
+            assert!(!rows.contains(alias), "{alias} is both an alias and a category icon");
+        }
+        for (name, _) in INVENTORY_LINKS {
+            assert!(!rows.contains(name), "{name} is both a link and a category icon");
+        }
+    }
+
+    #[test]
+    fn generated_folder_links_keep_the_shortcut_outline_as_a_gap() {
+        // the same corner as the hand-made links (see the test above)
+        for row in category::ROWS {
+            let image = rasterize_mask(row.svgs[2], 240, true).expect("link SVG");
+            assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {}", row.link);
+            assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {}", row.link);
+        }
+    }
+
+    #[test]
     fn generated_folder_icons_load_with_a_hole_and_a_large_copy() {
         let ctx = egui::Context::default();
         let icons = Icons::load(&ctx, None);
@@ -1155,7 +1185,8 @@ mod tests {
         }
         // drawn small, the usual raster; past its pixels, the large one
         assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 16.0).map(|t| t.size()), Some([64, 64]));
-        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 92.0).map(|t| t.size()), Some([192, 192]));
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 90.0).map(|t| t.size()), Some([64, 64]));
+        assert_eq!(icons.sized(&ctx, "Inv_TexturesClosed", 100.0).map(|t| t.size()), Some([192, 192]));
         // aliases share their target's SVG
         assert_eq!(icons.large(&ctx, "Inv_Texture").map(|t| t.size()), Some([192, 192]));
         // icons with no SVG of their own fall back on the usual raster

@@ -256,7 +256,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn system_folders_follow_firestorm_folder_types() {
+    fn system_folders_follow_legacy_folder_types() {
         // llfoldertype.h values, checked against the Legacy Viewer's sources
         for (folder_type, category) in [
             (0, Category::Textures),

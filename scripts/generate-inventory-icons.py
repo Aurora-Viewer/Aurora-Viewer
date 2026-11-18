@@ -57,9 +57,10 @@ LINKS = ["cloud-filled", "ripple", "sun-moon", "sphere"]
 
 # The symbol's size against the folder (24 units), and where its centre
 # goes: the middle of the folder's body below the tab (closed), the middle
-# of the front flap (open).
-SCALE = 0.42
-CENTER = {"closed": (12.0, 13.0), "open": (13.0, 14.75)}
+# of the front flap (open). The open folder's flap is only about 10 units
+# tall, so its symbol is a little smaller, clear of the gap above the flap.
+SCALE = {"closed": 0.42, "open": 0.37}
+CENTER = {"closed": (12.0, 13.0), "open": (13.4, 15.5)}
 # Width of an outline symbol's cut, in the symbol's units before scaling
 # (Tabler draws at 2: thicker, so the cut stays open at 16 px).
 OUTLINE_CUT = 3.6
@@ -129,7 +130,7 @@ def folder(state, symbol, link):
             f'fill="none" stroke="#000000" stroke-width="{OUTLINE_CUT}" '
             'stroke-linecap="round" stroke-linejoin="round"'
         )
-    transform = f"translate({cx} {cy}) scale({SCALE}) translate(-12 -12)"
+    transform = f"translate({cx} {cy}) scale({SCALE[state]}) translate(-12 -12)"
     svg = header(f"{base}-filled + {symbol}", 'fill="currentColor"')
     svg += (
         '  <defs>\n'
