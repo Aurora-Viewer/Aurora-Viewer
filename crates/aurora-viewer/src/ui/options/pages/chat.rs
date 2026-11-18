@@ -1147,6 +1147,13 @@ fn history(cx: &mut Cx) {
             tr!("ui-options-chat-logs-show-help"),
             &field!(log_show_history),
         );
+        // ChatServiceEnabled (LL viewer 26.5), beside the transcripts it
+        // completes; read at login
+        cx.toggle(
+            tr!("ui-options-chat-service-history"),
+            tr!("ui-options-chat-service-history-help"),
+            &field!(chat_service_history),
+        );
         // FSIMChatHistoryFade, adapted (`conversation_options::faded`)
         cx.slider(
             tr!("ui-options-history-fade"),
