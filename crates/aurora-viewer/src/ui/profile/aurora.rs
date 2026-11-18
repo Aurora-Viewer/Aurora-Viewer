@@ -1745,7 +1745,8 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
     let (p, world) = (env.p, env.world);
     world.social.avatar_names.want(&partner);
     env.wanted_pics.insert(partner);
-    let name = display_name(world, NameScope::World, &partner);
+    // LLPanelProfileSecondLife names the partner whatever `@shownames`
+    let name = display_name(world, NameScope::Roster, &partner);
     let font = semibold(ui, 12.5);
     let galley = ui.painter().layout_no_wrap(name.clone(), font, p.ink);
     let size = Vec2::new(2.0 + 20.0 + 6.0 + galley.size().x + 9.0, 24.0);
@@ -1760,7 +1761,7 @@ fn partner_chip(ui: &mut egui::Ui, env: &mut Env, partner: Uuid) {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        super::request_open(ui.ctx(), partner);
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(partner));
     }
 }
 

@@ -900,6 +900,9 @@ pub struct Scene {
     /// Every skeleton holds its pose: the photo mode's frozen world.
     pub pause_all_skeletons: bool,
     pub ik_edit: ik::EditRequest,
+    /// The animation editor's requests on other avatars than ours: Person B
+    /// of its couple mode.
+    pub ik_edit_others: HashMap<Uuid, ik::EditRequest>,
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
@@ -1083,6 +1086,8 @@ pub struct Scene {
     /// surface protection that reads it (surface_area.rs).
     grid_area: HashMap<GeomKey, f32>,
     pub surface_protection: surface_area::Protection,
+    /// The rigged meshes a left click acts on (drawn.rs; none by default).
+    pub rigged_clicks: drawn::RiggedClicks,
     surface_measured: HashMap<usize, surface_area::Measure>,
     surface_hidden: std::collections::HashSet<usize>,
     /// How many geometries were measured at the last look for objects not
@@ -1490,6 +1495,14 @@ fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
     }
 }
 
+/// Move a displayed skeleton and its worn attachment anchors by `local`
+/// (skeleton space): the couple partner the animation editor placed.
+fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
+    for matrix in out.iter_mut().take(anim::ANCHOR_BASE) {
+        *matrix = (local * Mat4::from_cols_array_2d(matrix)).to_cols_array_2d();
+    }
+}
+
 impl Scene {
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
@@ -1699,6 +1712,7 @@ impl Scene {
             paused_skeletons: HashSet::new(),
             pause_all_skeletons: false,
             ik_edit: ik::EditRequest::default(),
+            ik_edit_others: HashMap::new(),
             poser: HashMap::new(),
             synchronize_animations: false,
             animation_speed: 1.0,
@@ -1792,6 +1806,7 @@ impl Scene {
             sculpt_area: HashMap::new(),
             grid_area: HashMap::new(),
             surface_protection: Default::default(),
+            rigged_clicks: Default::default(),
             surface_measured: HashMap::new(),
             surface_hidden: Default::default(),
             surface_scanned: 0,
@@ -4846,7 +4861,15 @@ impl Scene {
                 renderer.records.set_placement(f.record, record_model, anchor);
             }
         }
-        let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, pos);
+        // the couple partner the animation editor moved (or held while they
+        // walk in the world) is drawn away from their place: their body is
+        // checked against where it is drawn, or it would be culled there
+        let drawn = world
+            .avatar_models
+            .get(&o.full_id)
+            .and_then(|model| world.couple_shift(o.full_id, *model))
+            .map_or(pos, |shift| shift.transform_point3(pos));
+        let posed = self.posed_avatar_sphere(o.full_id, palette, system_binds, avatar_model, drawn);
         let g = &mut self.gpu[idx];
         g.center = pos;
         g.radius = 1.2;
@@ -5969,13 +5992,16 @@ impl Scene {
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
             motions.set_paused(
-                self.pause_all_skeletons || self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
+                self.pause_all_skeletons
+                    || self.paused_skeletons.contains(&owner)
+                    || (owner == world.agent_id && self.ik_edit.active)
+                    || self.ik_edit_others.get(&owner).is_some_and(|edit| edit.active),
                 now,
             );
             motions.ik.edit = if owner == world.agent_id {
                 self.ik_edit.clone()
             } else {
-                ik::EditRequest::default()
+                self.ik_edit_others.get(&owner).cloned().unwrap_or_default()
             };
             motions.ground = self.grounding_frame(world, idx, now);
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
@@ -6091,6 +6117,13 @@ impl Scene {
             .copied()
             .map(|model| (model, model.transform_point3(world.avatar_lib.pelvis).z + self.studio_floor_offset));
         let physics_rig = self.physics_rig.clone();
+        // the animation editor's couple partner drawn where it moved them
+        // (`World::couple_shift`), in their skeleton's space
+        let couple_local = world.couple_partner.and_then(|id| {
+            let model = *world.avatar_models.get(&id)?;
+            let shift = world.couple_shift(id, model)?;
+            Some((id, model.inverse() * shift * model))
+        });
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
             for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
@@ -6117,6 +6150,9 @@ impl Scene {
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                     *dst = matrix.to_cols_array_2d();
                 }
+            }
+            if let Some((_, local)) = couple_local.filter(|(id, _)| id == owner) {
+                shift_display_pose(local, chunk);
             }
             if *owner == world.agent_id {
                 avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
@@ -6174,6 +6210,9 @@ impl Scene {
                     for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                         *dst = matrix.to_cols_array_2d();
                     }
+                }
+                if let Some((_, local)) = couple_local.filter(|(id, _)| id == owner) {
+                    shift_display_pose(local, chunk);
                 }
                 if *owner == world.agent_id {
                     avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);

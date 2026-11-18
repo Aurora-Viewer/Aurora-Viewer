@@ -53,7 +53,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
     let title = match kind {
         sidebar::Kind::Private => {
             let names = &world.social.avatar_names;
-            let cached = names.get(&id);
+            let cached = names.get_in(crate::world::names::NameScope::Roster, &id);
             if let Some(user) = cached.and_then(|n| n.chat_username(&names.options)) {
                 parts.push(user);
             }

@@ -1146,9 +1146,9 @@ fn members(
     let names = &world.social.avatar_names;
     let name_of = |id: &Uuid| {
         names
-            .get(id)
+            .get_in(NameScope::Roster, id)
             .map(|n| n.display(&names.options))
-            .unwrap_or_else(|| world.social.name_of(id))
+            .unwrap_or_else(|| world.social.name_in(NameScope::Roster, id))
     };
     let mut ids: Vec<Uuid> = cfg.friends.iter().copied().collect();
     ids.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
