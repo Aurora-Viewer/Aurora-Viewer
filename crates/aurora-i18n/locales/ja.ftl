@@ -4967,7 +4967,6 @@ ui-sound-movelock-toggle = 位置のロックのオン／オフ
 world-mod-invitation-to-join-a-group = グループへの参加招待
 world-notifications-group-fee = 参加費：L$ { $fee }
 ui-context-invite-to-group = グループに招待
-ui-profile-invite-to-group-coming-soon = グループに招待（近日公開）
 ui-contacts-invite = 招待…
 ui-contacts-invite-help = このグループに住人を招待します。
 ui-login-i-accept-the-terms-and-want-to-log-in = 利用規約に同意してログインします
