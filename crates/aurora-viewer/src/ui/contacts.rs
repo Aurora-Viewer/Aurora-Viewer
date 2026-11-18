@@ -102,6 +102,21 @@ impl Default for ContactsSettings {
     }
 }
 
+/// Where Contacts shows, as FSFloaterContacts::onOpen decides it
+/// (indra/newview/fsfloatercontacts.cpp): its own window while
+/// ContactsTornOff, the first tab of the Conversations window otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// The first tab of the Conversations window (LLMultiFloater::addFloater).
+    Docked,
+    /// Its own window (ContactsTornOff).
+    TornOff,
+}
+
+pub fn placement(torn_off: bool) -> Placement {
+    if torn_off { Placement::TornOff } else { Placement::Docked }
+}
+
 pub enum ContactsAction {
     Im(Uuid),
     /// Call the friends chosen: one directly, several in a conference
@@ -846,7 +861,7 @@ fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>)
                 }
                 None => {
                     if let Some(id) = ids.first() {
-                        let name = world.social.name_of(id);
+                        let name = world.social.name_in(NameScope::Roster, id);
                         world.system_notice(
                             aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()),
                             crate::world::notice_topics::Topic::People,
@@ -1833,7 +1848,7 @@ fn sets_tab(
     let name_of = |id: &Uuid| {
         social
             .avatar_names
-            .get(id)
+            .get_in(NameScope::Roster, id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
             .unwrap_or_else(|| "â€¦".into())
@@ -1841,7 +1856,7 @@ fn sets_tab(
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
     let filter = st.set_filter.trim().to_lowercase();
-    members.retain(|id| super::people::matches_name(world, NameScope::World, id, &name_of(id), &filter));
+    members.retain(|id| super::people::matches_name(world, NameScope::Roster, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
         members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
@@ -2171,7 +2186,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
     let Some(d) = st.dialog.as_mut() else {
         return;
     };
-    let name = |id: &Uuid| world.social.name_of(id);
+    let name = |id: &Uuid| world.social.name_in(NameScope::Roster, id);
     // removing a friend, a set or its members is the destructive answer
     let (icon, kind) = match d {
         Dialog::RemoveFriends(_) | Dialog::RemoveSet(_) | Dialog::RemoveFromSet { .. } => ("trash-filled", widgets::ActionKind::Danger),
@@ -2457,6 +2472,12 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn a_torn_off_contacts_stays_in_its_window() {
+        assert_eq!(placement(false), Placement::Docked);
+        assert_eq!(placement(true), Placement::TornOff);
     }
 
     #[test]

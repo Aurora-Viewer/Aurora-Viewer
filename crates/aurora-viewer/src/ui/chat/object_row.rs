@@ -184,7 +184,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         let tint = if script_error(line) { p.danger } else { p.muted_dim };
         super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, tint);
         if !notice {
-            let name = sender_name(world, env.own_name, line);
+            let name = sender_name(world, env.names, env.own_name, line);
             // the cube names its object under the pointer and inspects it
             // like the name, for nearby chat and an object's IM alike (the
             // IM's line belongs to the object, its session id)
@@ -235,6 +235,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 p,
                 env.emoji,
                 world,
+                line.kind.text_in(env.names),
                 env.want_names,
                 text,
                 size,
@@ -339,6 +340,7 @@ pub(super) mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -474,6 +476,7 @@ pub(super) mod tests {
                                 emoji: &mut emoji,
                                 pics: &pics,
                                 world: &world,
+                                names: crate::world::names::NameScope::World,
                                 want_names: &mut names,
                                 wanted: &mut wanted,
                                 own_name: "Aurora Demo",

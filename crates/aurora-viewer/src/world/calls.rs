@@ -387,7 +387,11 @@ impl World {
             (target, CallKind::AdHoc, self.session_title(&target))
         } else {
             let session = Uuid::from_u128(self.agent_id.as_u128() ^ target.as_u128());
-            (session, CallKind::P2p { other: target }, self.social.name_of(&target))
+            (
+                session,
+                CallKind::P2p { other: target },
+                self.social.name_in(super::names::NameScope::Roster, &target),
+            )
         };
         log::info!("call: starting {kind:?} {session}");
         let mut wait_session = false;
@@ -639,8 +643,10 @@ impl World {
         let mut known: Vec<(String, String)> = arrived
             .iter()
             .filter_map(|id| {
-                let n = names.get(id)?;
-                Some((n.username.clone(), names.complete(id)?))
+                // a conference's participants, named whatever `@shownames`
+                let scope = super::names::NameScope::Roster;
+                let n = names.get_in(scope, id)?;
+                Some((n.username.clone(), names.complete_in(scope, id)?))
             })
             .collect();
         if known.is_empty() {
@@ -897,7 +903,7 @@ impl World {
         }
         let text = invite_text(&inv, group);
         let title = if inv.from_name.is_empty() {
-            self.social.name_of(&inv.from)
+            self.social.name_in(super::names::NameScope::Roster, &inv.from)
         } else {
             inv.from_name.clone()
         };
@@ -1193,7 +1199,7 @@ mod tests {
             result: Err(403),
         });
         assert!(w.calls.active.is_none());
-        let name = w.social.name_of(&other);
+        let name = w.social.name_in(crate::world::names::NameScope::Roster, &other);
         let last = w
             .social
             .ims

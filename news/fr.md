@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-18 — Aurora 0.9.11 : un Director complet, le Mode jeu et les photos à 360°
+Le Director devient un vrai outil de machinima : plans prêts à l'emploi, rendus jusqu'en 4K, films avec leur son, montages, looks et LUT du mode photo, poignées sur les caméras, et ffmpeg téléchargé en un clic. Le Mode jeu met Aurora en retrait pendant que vous jouez : le monde n'est plus dessiné, la mémoire vidéo et la RAM reviennent au jeu, le chat et les sons continuent. La fenêtre photo prend des photos à 360°. Les versions avant la 0.9.11 doivent se mettre à jour, sous 12 heures. Le cache est vidé une fois au premier lancement ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.11)
+
+## 2026-11-18 — Photos, inventaire et chat
+La fenêtre photo garde son inclinaison dans les préréglages, fait regarder la caméra à vous et aux autres, et règle les ombres et l'occlusion ambiante ; les photos à 360° s'ouvrent en panorama. L'inventaire peut afficher deux panneaux côte à côte, les Vêtements préférés ont des lignes avec image et un bouton Porter, et les sons se jouent en local ou dans le monde. L'Omnifiltre cache, remplace ou répond aux messages indésirables. La barre de chat peut rester affichée, n'apparaître qu'à la saisie ou laisser la place aux Conversations, et ses touches se changent.
+
+## 2026-11-18 — Encore plus comme le Legacy Viewer
+Le Support de pose, une fréquence cible (Autotune), le proxy, la synchronisation des scripts avec des éditeurs externes, les poses du Legacy Viewer et d'Alchemy, les sons d'interface manquants et de nombreux correctifs RLVa. Merci à anne-skydancer, Bruica, chrzang, circuskid, ClifHofmann, dash-sl, Diviniity, emmelinedevere, Gaalrauch, Glychd, iGao, Izusl, KanikaBreed, lambskin, Marakiinfinity, Memekiller, MilkIsPrettyGood, Nowalski, nybyl, Odessa-Draekavik, RheaMercury, tasia-ai, vexxbyte, wolfosbournesl, Xevian et zdub0is.
+
 ## 2026-11-16 — Aurora 0.9.10 : le Director, la transparence dans le bon ordre et une météo qui porte plus loin
 Le Director permet de filmer dans le monde : gardez des vues de la caméra comme images clés sur une ligne de temps, rejouez-les en un seul plan fluide avec le monde seul, et enregistrez une vidéo avec votre propre ffmpeg. Le verre, les rideaux et les couches des cheveux mesh s'affichent dans leur vrai ordre à chaque pixel (Préférences › Graphismes, Ordre des surfaces transparentes) ; merci à Anne Skydancer pour le choix Stochastique. La Météo Aurora porte plus loin, avec une neige plus stable. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.10)

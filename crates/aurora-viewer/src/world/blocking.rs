@@ -367,6 +367,17 @@ impl World {
     pub fn legacy_name(&self, id: &Uuid) -> Option<String> {
         self.social.names.get(id).cloned().or_else(|| self.avatar_name(id))
     }
+
+    /// `legacy_name` of a name shown in `scope`: a place that names its
+    /// resident (a profile opened from a conversation, `NameScope::Roster`)
+    /// gets the real name while `@shownames` hides it in the world, never
+    /// the stand-in.
+    pub fn legacy_name_in(&self, scope: super::names::NameScope, id: &Uuid) -> Option<String> {
+        if !id.is_nil() && !self.rlva_shows_name(scope, *id) {
+            return Some(self.rlva_anonymous(*id).display_name.clone());
+        }
+        self.social.names.get(id).cloned().or_else(|| self.scene_name(id))
+    }
 }
 
 #[cfg(test)]

@@ -122,6 +122,22 @@ pub(super) fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
     !g.rigged && !g.is_avatar && g.owner_avatar.is_some() && o.visual_volume().is_mesh()
 }
 
+/// Where an avatar's click box stands: where its body is drawn. The
+/// animation editor's couple partner is drawn away from their place
+/// (`World::couple_shift`), and a click on them where they show picks them.
+fn avatar_center(world: &World, idx: usize, g: &ObjGpu) -> Vec3 {
+    world
+        .objects
+        .get(idx)
+        .and_then(|o| {
+            world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+        })
+        .map_or(g.center, |shift| shift.transform_point3(g.center))
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -593,7 +609,7 @@ impl Scene {
                 || g.rigged
                 || o.extra.reflection_probe.is_some()
                 || !self.first_person_object_visible(idx, g)
-                || !ray_may_hit(g, ray)
+                || (!g.is_avatar && !ray_may_hit(g, ray))
             {
                 return None;
             }
@@ -604,8 +620,8 @@ impl Scene {
                     ray_box(
                         ray.0,
                         ray.1,
-                        g.center - Vec3::new(0.35, 0.35, 1.0),
-                        g.center + Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                        avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                     )?,
                     None,
                 )
@@ -750,8 +766,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
                 self.face_hit_mode(world, idx, ray, now, false, FacePick::Inventory).map(|h| h.t)
@@ -1549,8 +1565,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if mode == FacePick::Left {
                 self.face_hit_mode(world, idx, ray, now, false, mode).map(|h| h.t)
@@ -1598,6 +1614,7 @@ impl Scene {
     /// What a left click finds behind a rigged mesh it passes through
     /// (drawn.rs): nothing before that mesh's face is a surface (the GPU
     /// drew it nearest), not even a box of our avatar the ray grazes.
+    /// Among the objects of `among` (None: all).
     pub(super) fn point_behind_rigged(
         &self,
         world: &World,
@@ -1605,11 +1622,12 @@ impl Scene {
         from: f32,
         limit: f32,
         wearer: Option<usize>,
+        among: Option<&[usize]>,
     ) -> Option<Vec3> {
         let now = Instant::now();
         let mut nearest = limit;
         let mut found = false;
-        for (idx, g) in self.pick_objects(None) {
+        for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.hud
                 || g.rigged
@@ -1633,8 +1651,8 @@ impl Scene {
                 ray_box(
                     ray.0,
                     ray.1,
-                    g.center - Vec3::new(0.35, 0.35, 1.0),
-                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) - Vec3::new(0.35, 0.35, 1.0),
+                    avatar_center(world, idx, g) + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
                 self.face_hit_mode(world, idx, ray, now, clicker, FacePick::Left).map(|h| h.t)
@@ -2141,7 +2159,9 @@ pub(crate) mod tests {
         world.objects.get_mut(front).unwrap().update_flags = 1 << 7;
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::TOUCH;
         scene.gpu[front].rigged = true;
-        // another resident's: a rigged mesh we wear never takes the touch
+        // another resident's, which takes the touch only with "Rigged
+        // attachments of other avatars"
+        scene.rigged_clicks.others = true;
         scene.gpu[front].owner_avatar = world
             .objects
             .avatars()
@@ -3013,7 +3033,7 @@ pub(crate) mod tests {
                             scene.point_behind_ignored(&world, ray, 100.0, Instant::now(), None),
                             Some(back_point)
                         );
-                        assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(back_point));
+                        assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None, None), Some(back_point));
                         // Foreground depth still occludes the scripted cube.
                         let occluder = Vec3::new(1.0, 0.0, 50.0);
                         assert_eq!(scene.action_point(&world, Some(ray), Some(occluder), false, 100.0), Some(occluder));
@@ -3525,6 +3545,20 @@ pub(crate) mod tests {
             .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
             .unwrap();
         assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
+    }
+
+    #[test]
+    fn the_couple_partner_is_clicked_where_the_animation_editor_draws_them() {
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let id = world.objects.get(front).unwrap().full_id;
+        scene.gpu[front].is_avatar = true;
+        scene.gpu[front].center = Vec3::new(10.0, 10.0, 1.0);
+        world.avatar_models.insert(id, Mat4::from_translation(Vec3::new(10.0, 10.0, 0.0)));
+        assert_eq!(avatar_center(&world, front, &scene.gpu[front]), Vec3::new(10.0, 10.0, 1.0));
+        world.couple_partner = Some(id);
+        world.couple_place = (Vec3::new(0.0, 2.0, 0.0), 0.0);
+        let at = avatar_center(&world, front, &scene.gpu[front]);
+        assert!(at.abs_diff_eq(Vec3::new(10.0, 12.0, 1.0), 1e-4), "{at}");
     }
 
     #[test]
@@ -4152,7 +4186,7 @@ pub(crate) mod tests {
                         None
                     },
                 );
-                assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
+                assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None, None), Some(expected));
                 assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
                 // the build face tool clicks through the same texels
                 assert_eq!(scene.edit_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);

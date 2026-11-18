@@ -560,9 +560,12 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-window"
         | "keyboard"
         | "keyboard-fold"
+        | "keyboard-down"
         | "aurora-keyboard"
         | "aurora-keyboard-fold"
+        | "aurora-keyboard-down"
         | "aurora-keyboard-wide" => 8100,
+        "keyboard-click-top" | "keyboard-click-bottom" | "aurora-keyboard-click-top" | "aurora-keyboard-click-bottom" => 11000,
         "animation"
         | "animation-open"
         | "animation-play-local"
@@ -786,6 +789,35 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     }
     inv.add_items(items);
     inv.sort_all();
+}
+
+/// The pictures of the gallery scenarios (`AURORA_DEMO_INVENTORY=aurora-
+/// gallery…`, `aurora-combination`): the demo's own textures on some of the
+/// right-click tests' entries, a folder among them, and on every item of the
+/// large folder; the others keep their type's icon.
+pub fn seed_gallery(inv: &mut Inventory) {
+    use crate::demo::{TEX_FRAMES, TEX_GRADIENT, TEX_ORM_DISC, TEX_SNAPSHOT, TEX_TILES};
+    let pictures = [TEX_SNAPSHOT, TEX_TILES, TEX_GRADIENT, TEX_FRAMES, TEX_ORM_DISC];
+    for (n, picture) in [
+        (8100, TEX_SNAPSHOT),
+        (8106, TEX_FRAMES),
+        (8107, TEX_GRADIENT),
+        (8108, TEX_ORM_DISC),
+        (8111, TEX_TILES),
+    ] {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(n)) {
+            it.thumbnail = picture;
+        }
+    }
+    for n in 0..1500u128 {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(10000 + n)) {
+            it.thumbnail = pictures[(n % pictures.len() as u128) as usize];
+        }
+    }
+    if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(8001)) {
+        folder.info.thumbnail = TEX_TILES;
+    }
+    inv.generation += 1;
 }
 
 /// Hundreds of empty top folders, as some residents keep: still a long list

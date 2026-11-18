@@ -1021,7 +1021,15 @@ pub fn tab(
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
                 if !anonymous {
-                    super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                    super::rows::list_menu(
+                        &resp,
+                        p,
+                        world,
+                        crate::world::names::NameScope::World,
+                        &st.radar_selected,
+                        row.id,
+                        AvatarList::Nearby,
+                    );
                 }
                 continue;
             }
@@ -1059,7 +1067,15 @@ pub fn tab(
             }
             // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
             if !anonymous {
-                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
+                super::rows::list_menu(
+                    &resp,
+                    p,
+                    world,
+                    crate::world::names::NameScope::World,
+                    &st.radar_selected,
+                    row.id,
+                    AvatarList::Nearby,
+                );
             }
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);

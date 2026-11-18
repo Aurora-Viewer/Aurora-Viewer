@@ -96,11 +96,12 @@ pub struct TextFilter {
 
 impl TextFilter {
     /// `names`: the name cache, for the stand-in of each hidden resident.
+    /// `body`: none for a body shown as written (`notifications::Kind::text`).
     pub fn redact_notice(
         &self,
         names: &AvatarNames,
         title: &mut String,
-        body: &mut String,
+        body: Option<&mut String>,
         links: &mut [super::super::notification_history::NameLink],
     ) {
         if !self.private_names && self.replacements.is_empty() {
@@ -133,10 +134,13 @@ impl TextFilter {
         if let Cow::Owned(text) = filter.apply(title) {
             *title = text;
         }
-        if let Cow::Owned(text) = filter.apply(body) {
+        if let Some(body) = body
+            && let Cow::Owned(text) = filter.apply(body)
+        {
             *body = text;
         }
     }
+
     fn add(&mut self, original: &str, replacement: &str) {
         if original.chars().count() > 2 && !original.eq_ignore_ascii_case(replacement) {
             let needle = original.to_lowercase();
@@ -151,6 +155,13 @@ impl TextFilter {
         // application links escape every non-ASCII UTF-8 byte.
         self.add(&original.replace(' ', "%20"), replacement);
         self.add(&aurora_net::land::uri_escape(original), replacement);
+    }
+
+    /// Longest first, so that a name is replaced before a part of it.
+    fn sort(&mut self) {
+        self.replacements
+            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        self.replacements.dedup();
     }
 
     fn reuse_matcher(&mut self, previous: &Self) {
@@ -215,15 +226,26 @@ impl World {
         self.social.avatar_names.set_rlva_nearby(nearby);
         let mut filter = self.rlva_text_filter(false);
         filter.reuse_matcher(&self.rlva_privacy);
+        let mut places = TextFilter::default();
+        self.rlva_hide_places(&mut places);
+        places.sort();
+        places.reuse_matcher(&self.rlva_place_privacy);
         for notification in &mut self.notifications.list {
+            // a script's prompt stays as received, its owner's name included
+            if notification.kind.as_received() {
+                continue;
+            }
+            let text = notification.kind.text();
+            let filter = if text.names == NameScope::Roster { &places } else { &filter };
             filter.redact_notice(
                 &self.social.avatar_names,
                 &mut notification.title,
-                &mut notification.body,
+                text.rewritten.then_some(&mut notification.body),
                 &mut notification.name_links,
             );
         }
         self.rlva_privacy = filter;
+        self.rlva_place_privacy = places;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
             let mut filter = self.rlva_text_filter(true);
             filter.reuse_matcher(&self.rlva_hover_privacy);
@@ -427,12 +449,23 @@ impl World {
                     filter.add_identity(&name, &replacement);
                 }
                 if let Some(name) = self.social.avatar_names.raw(&id) {
+                    // the whole legacy name first, "Resident" included, as
+                    // RlvUtil::filterNames replaces LLAvatarName::getLegacyName:
+                    // "Jane Resident" is one stand-in, not "<stand-in> Resident"
+                    filter.add_identity(&name.legacy_name(), &replacement);
                     filter.add_identity(&name.display_name, &replacement);
                     filter.add_identity(&name.user_name(), &replacement);
                     filter.add_identity(&name.username, &replacement);
                 }
             }
         }
+        self.rlva_hide_places(&mut filter);
+        filter.sort();
+        filter
+    }
+
+    /// What `@showloc` hides of a text: the regions around and the parcel.
+    fn rlva_hide_places(&self, filter: &mut TextFilter) {
         if self.rlva.has("showloc") {
             for region in self.regions.values() {
                 filter.add(&region.name, aurora_i18n::tr!("rlva-hidden-region"));
@@ -440,23 +473,40 @@ impl World {
             }
             filter.add(&self.parcel_name, aurora_i18n::tr!("rlva-hidden-parcel"));
         }
-        filter
-            .replacements
-            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
-        filter.replacements.dedup();
-        filter
     }
 
     pub fn rlva_filter_text<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if self.rlva.enabled() {
-            self.rlva_privacy.apply(text)
+        self.rlva_filter_text_in(NameScope::World, text)
+    }
+
+    /// `rlva_filter_text` for a text shown in `scope`: a place that names
+    /// its residents (`NameScope::Roster`: a notice about a conversation)
+    /// keeps the names of the people around, and hides the regions and the
+    /// parcel like the others. A text shown as written
+    /// (`TextScope::verbatim`: what a resident typed, a script's dialog) is
+    /// left alone.
+    pub fn rlva_filter_text_in<'a>(&self, scope: impl Into<TextScope>, text: &'a str) -> Cow<'a, str> {
+        let scope = scope.into();
+        if self.rlva.enabled() && scope.rewritten {
+            self.rlva_filter_in(scope.names).apply(text)
         } else {
             Cow::Borrowed(text)
         }
     }
+
+    /// The filter of the texts shown in `scope`: the places alone where the
+    /// residents are named (`NameScope::Roster`; a notice's scope is
+    /// `notifications::Kind::names`).
+    pub fn rlva_filter_in(&self, scope: NameScope) -> &TextFilter {
+        if scope == NameScope::Roster {
+            &self.rlva_place_privacy
+        } else {
+            &self.rlva_privacy
+        }
+    }
 }
 
-pub use super::super::names::NameScope;
+pub use super::super::names::{NameScope, TextScope};
 
 /// `@shownames` by the place a name is shown in (issue #3547): the Legacy
 /// Viewer hides the residents of the world around and the owners and
@@ -476,7 +526,7 @@ impl World {
     /// (RlvUtil::isNearbyAgent over LLWorld::getAvatars, rlvcommon.cpp):
     /// the loaded ones and the coarse locations, whatever their distance.
     fn rlva_nearby_avatars(&self) -> std::collections::HashSet<Uuid> {
-        let loaded = self.objects.avatars().map(|(_, o)| o.full_id);
+        let loaded = self.objects.avatars().map(|(_, o)| o.full_id).filter(|id| !self.is_mirror(id));
         let coarse = self.coarse.values().flatten().map(|(id, _)| *id);
         loaded.chain(coarse).filter(|id| !id.is_nil() && *id != self.agent_id).collect()
     }
@@ -609,7 +659,7 @@ mod tests {
         }];
         world
             .rlva_privacy
-            .redact_notice(&world.social.avatar_names, &mut title, &mut body, &mut links);
+            .redact_notice(&world.social.avatar_names, &mut title, Some(&mut body), &mut links);
         assert!(is_anonym(&title, jane) && is_anonym(&links[0].name, jane), "{title}");
         assert!(!body.contains("Janey"));
         // not cached: by the id, until the name comes
@@ -1023,5 +1073,436 @@ mod tests {
         let me = world.agent_id;
         profiles.open(&mut world, me);
         assert_eq!(profiles.opened().last(), Some(&(me, NameScope::World)));
+    }
+
+    // ---- the places that name their resident besides the lists: IM
+    // sessions, the notices of messages and offers (follow-up of #3547)
+
+    fn line(kind: crate::world::ChatKind, source: Uuid, from: &str, text: &str) -> crate::world::ChatLine {
+        crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: from.into(),
+            text: text.into(),
+            kind,
+            source,
+            origin: crate::world::Origin::Live,
+            blocked: false,
+            beyond_range: false,
+        }
+    }
+
+    #[test]
+    fn shownames_names_those_around_in_an_im_session_and_hides_them_in_the_nearby_chat() {
+        use crate::ui::chat::{conversation_names, line_names, resolved_text_in, sender_name};
+        use crate::world::ChatKind;
+        let (world, near) = shownames_world();
+        let session = Some(near);
+        assert_eq!(conversation_names(None), NameScope::World);
+        assert_eq!(conversation_names(session.as_ref()), NameScope::Roster);
+        // the sender of a line, by the conversation it is read in
+        let said = line(ChatKind::Im, near, "Near Tester", "Near Tester is here");
+        assert_eq!(sender_name(&world, NameScope::Roster, "Me", &said), "Near Tester");
+        assert!(!sender_name(&world, NameScope::World, "Me", &said).contains("Tester"));
+        // its text: the session keeps the names it was written with
+        assert_eq!(resolved_text_in(&world, NameScope::Roster, &said.text), said.text);
+        assert!(!resolved_text_in(&world, NameScope::World, &said.text).contains("Tester"));
+        assert_eq!(world.rlva_filter_text_in(NameScope::Roster, &said.text), said.text);
+        assert_eq!(
+            world.rlva_filter_text_in(NameScope::Owner, &said.text),
+            world.rlva_filter_text(&said.text)
+        );
+        // the conversation itself, in the list and on its window
+        assert_eq!(world.session_title(&near), "Near Tester");
+        assert_eq!(
+            world.social.display_name_in(conversation_names(session.as_ref()), &near),
+            "Near Tester"
+        );
+        // outside its conversation (the on-screen chat), by the line's kind
+        assert_eq!(line_names(&ChatKind::Im), NameScope::Roster);
+        assert_eq!(line_names(&ChatKind::Invite(1)), NameScope::Roster);
+        for kind in [
+            ChatKind::Local(aurora_net::ChatType::Normal),
+            ChatKind::Object(aurora_net::ChatType::Normal),
+            ChatKind::OWN,
+            ChatKind::System,
+            ChatKind::ObjectIm,
+            ChatKind::InventoryOffer(1),
+            ChatKind::Payment(1),
+        ] {
+            assert_eq!(line_names(&kind), NameScope::World, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn shownames_leaves_the_places_hidden_in_a_notice_that_names_its_resident() {
+        let (mut world, _) = shownames_world();
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let region = world.region_name();
+        assert!(!region.is_empty());
+        let text = format!("Near Tester waits in {region}");
+        let nearby = world.rlva_filter_text(&text);
+        assert!(!nearby.contains("Tester") && !nearby.contains(&region), "{nearby}");
+        // a notice about a conversation (a teleport offer, a group's notice):
+        // the places alone. The lines of the conversation itself are shown as
+        // typed (the next test).
+        let notice = world.rlva_filter_text_in(NameScope::Roster, &text);
+        assert!(notice.starts_with("Near Tester waits in ") && !notice.contains(&region), "{notice}");
+        // `@showloc` alone: the names are no one's to hide
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        assert_eq!(world.rlva_filter_text(&text), notice);
+    }
+
+    /// `@shownames` and `@showloc` rewrite what an object or the system
+    /// says, never what a resident typed: LLFloaterIMNearbyChatHandler::
+    /// processChat runs RlvUtil::filterNames and filterLocation only when
+    /// `CHAT_SOURCE_AGENT != mSourceType`, process_chat_from_simulator
+    /// anonymises the name of an avatar's line alone, and no IM window
+    /// filters anything. A `/mention` is rewritten whoever wrote it
+    /// (RlvUtil::filterMentions).
+    #[test]
+    fn what_a_resident_typed_is_shown_as_typed_and_what_an_object_says_is_rewritten() {
+        use crate::ui::chat::resolved_text_in;
+        use crate::world::ChatKind;
+        use aurora_net::ChatType::Normal;
+        let (mut world, near) = shownames_world();
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let region = world.region_name();
+        assert!(!region.is_empty());
+        let text = format!("Near Tester waits in {region}");
+        // a resident's line, ours included, in the nearby chat and in a session
+        for (kind, names) in [
+            (ChatKind::Local(Normal), NameScope::World),
+            (ChatKind::Own(Normal), NameScope::World),
+            (ChatKind::Im, NameScope::Roster),
+            (ChatKind::OWN, NameScope::Roster),
+        ] {
+            let scope = kind.text_in(names);
+            assert_eq!(scope, TextScope::verbatim(names), "{kind:?}");
+            assert_eq!(world.rlva_filter_text_in(scope, &text), text, "{kind:?}");
+            assert_eq!(resolved_text_in(&world, scope, &text), text, "{kind:?}");
+        }
+        // what no resident typed: an object's line and IM, the notices, the cards
+        for kind in [
+            ChatKind::Object(Normal),
+            ChatKind::ObjectIm,
+            ChatKind::System,
+            ChatKind::Invite(1),
+            ChatKind::InventoryOffer(1),
+            ChatKind::Payment(1),
+        ] {
+            let scope = kind.text_in(NameScope::World);
+            assert_eq!(scope, NameScope::World.into(), "{kind:?}");
+            let shown = world.rlva_filter_text_in(scope, &text);
+            assert!(!shown.contains("Tester") && !shown.contains(&region), "{kind:?}: {shown}");
+        }
+        // a mention a resident typed still gives the stand-in
+        let mention = format!("hello secondlife:///app/agent/{near}/mention");
+        let shown = resolved_text_in(&world, ChatKind::Local(Normal).text_in(NameScope::World), &mention);
+        assert!(shown.starts_with("hello ") && !shown.contains("Tester"), "{shown}");
+        // as the lines arrive: the speaker of a resident's line is hidden,
+        // its text kept; an object's text is rewritten for good
+        let chat = |source_type, source: Uuid, from: &str| {
+            aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: from.into(),
+                source_id: source,
+                owner_id: source,
+                source_type,
+                chat_type: Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.clone(),
+            })
+        };
+        world.apply(chat(aurora_net::ChatSourceType::Agent, near, "Near Tester"));
+        let said = world.chat.back().expect("the resident's line");
+        assert_eq!(said.text, text);
+        assert!(!said.from.contains("Tester"), "{}", said.from);
+        world.apply(chat(aurora_net::ChatSourceType::Object, Uuid::from_u128(0xB0C5), "Box"));
+        let said = world.chat.back().expect("the object's line");
+        assert!(matches!(said.kind, ChatKind::Object(_)), "{:?}", said.kind);
+        assert!(!said.text.contains("Tester") && !said.text.contains(&region), "{}", said.text);
+    }
+
+    /// A resident whose last name is "Resident", named in full by an object
+    /// (llKey2Name gives "Jane Resident"): the whole legacy name is one
+    /// stand-in, as RlvUtil::filterNames replaces
+    /// LLAvatarName::getLegacyName before the display name. The filter knew
+    /// "Jane" alone and left "<stand-in> Resident" (seen on the grid,
+    /// 2026-11-18, for residents known by their name only).
+    #[test]
+    fn a_resident_named_in_full_is_one_stand_in() {
+        let (mut world, near) = shownames_world();
+        world.social.avatar_names.on_legacy(near, "Solo", "Resident");
+        world.refresh_rlva_privacy();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        assert_eq!(
+            world.rlva_filter_text("Here:\nSolo Resident\nSolo waves"),
+            format!("Here:\n{stand_in}\n{stand_in} waves")
+        );
+    }
+
+    /// A script's prompt (its dialog or text box, its permission question,
+    /// its link prompt) is shown as the simulator sent it, the name of the
+    /// object's owner included: process_script_dialog,
+    /// process_script_question and process_load_url have no RLVa test on
+    /// what they show (indra/newview/llviewermessage.cpp). The text of a
+    /// message on its card is as typed too.
+    #[test]
+    fn a_script_s_prompt_is_shown_as_received_with_its_owner_s_name() {
+        use crate::world::notifications::{Data, Kind};
+        let (mut world, near) = shownames_world();
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let region = world.region_name();
+        let body = format!("Pick someone in {region}:\n1. Near Tester");
+        for kind in [Kind::Script, Kind::Permissions, Kind::Url] {
+            assert!(kind.as_received(), "{kind:?}");
+            assert_eq!(kind.text(), TextScope::verbatim(NameScope::World), "{kind:?}");
+            let id = world.notifications.push(kind, "Box (Near Tester)", body.clone(), Data::None);
+            world
+                .notifications
+                .list
+                .last_mut()
+                .unwrap()
+                .name_links
+                .push(crate::world::notification_history::NameLink {
+                    name: "Near Tester".into(),
+                    target: crate::world::notification_history::NameTarget::Avatar(near),
+                });
+            world.refresh_rlva_privacy();
+            let n = world.notifications.list.iter().find(|n| n.id == id).unwrap();
+            assert_eq!(n.body, body, "{kind:?}");
+            assert_eq!(n.title, "Box (Near Tester)", "{kind:?}");
+            assert_eq!(n.name_links[0].name, "Near Tester", "{kind:?}");
+            // a click on that name still follows the world's rule: the
+            // Legacy Viewer writes it as plain text
+            assert_eq!(kind.names(), NameScope::World, "{kind:?}");
+            assert!(!world.rlva_shows_name(kind.names(), near));
+        }
+        // the card of a message names its sender and keeps what they typed
+        assert!(!Kind::Message.as_received());
+        assert_eq!(Kind::Message.text(), TextScope::verbatim(NameScope::Roster));
+        // the other notices are rewritten, by the names they show
+        for kind in [Kind::Info, Kind::Alert, Kind::Inventory] {
+            assert!(!kind.as_received(), "{kind:?}");
+            assert_eq!(kind.text(), NameScope::World.into(), "{kind:?}");
+        }
+        for kind in [Kind::Teleport, Kind::Friendship, Kind::Group, Kind::Presence, Kind::Call] {
+            assert!(!kind.as_received(), "{kind:?}");
+            assert_eq!(kind.text(), NameScope::Roster.into(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn shownames_names_the_sender_of_a_message_or_an_offer_and_hides_a_giver_around() {
+        use crate::world::notifications::{Data, Kind};
+        let (mut world, near) = shownames_world();
+        let named = [
+            Kind::Message,
+            Kind::Call,
+            Kind::Teleport,
+            Kind::Friendship,
+            Kind::Group,
+            Kind::Presence,
+        ];
+        let hidden = [Kind::Inventory, Kind::Info, Kind::Alert];
+        let link = || crate::world::notification_history::NameLink {
+            name: "Near Tester".into(),
+            target: crate::world::notification_history::NameTarget::Avatar(near),
+        };
+        let mut ids = Vec::new();
+        for kind in named.into_iter().chain(hidden) {
+            let id = world
+                .notifications
+                .push(kind, "Near Tester", "Near Tester has something for you.", Data::None);
+            world.notifications.list.last_mut().unwrap().name_links.push(link());
+            ids.push((kind, id));
+        }
+        world.refresh_rlva_privacy();
+        for (kind, id) in ids {
+            let n = world.notifications.list.iter().find(|n| n.id == id).unwrap();
+            let shown = named.contains(&kind);
+            assert_eq!(kind.names() == NameScope::Roster, shown, "{kind:?}");
+            assert_eq!(n.title == "Near Tester", shown, "{kind:?}: {}", n.title);
+            // (a body shown as written keeps what it was written with)
+            assert_eq!(
+                n.body.contains("Near Tester"),
+                shown || !kind.text().rewritten,
+                "{kind:?}: {}",
+                n.body
+            );
+            assert_eq!(n.name_links[0].name == "Near Tester", shown, "{kind:?}");
+            // what the notification centre keeps of it follows the same rule
+            let mut kept = (n.title.clone(), n.body.clone(), [link()]);
+            world
+                .rlva_filter_in(kind.names())
+                .redact_notice(&world.social.avatar_names, &mut kept.0, Some(&mut kept.1), &mut kept.2);
+            assert_eq!(kept.2[0].name == "Near Tester", shown, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn shownames_names_who_offers_a_teleport_and_hides_who_gives_or_pays_in_the_same_conversation() {
+        let (world, near) = shownames_world();
+        // the cards of a conversation: an invitation's sender is named,
+        // an inventory offer's giver and a payment's other side follow the
+        // world's rule
+        assert_eq!(world.person_name_in(NameScope::Roster, &near).as_deref(), Some("Near Tester"));
+        let told = world.person_name_in(NameScope::World, &near).unwrap();
+        assert!(!told.contains("Tester"), "{told}");
+        assert_eq!(world.person_name(&near), Some(told));
+        // a resident away, whose name is not cached yet: the name they
+        // wrote with, never a stand-in
+        let away = Uuid::from_u128(0xF9);
+        assert_eq!(world.person_name_in(NameScope::Roster, &away), None);
+    }
+
+    /// A message of `dialog` from `from`, as the simulator sends it.
+    fn message(world: &World, from: Uuid, dialog: u8, text: &str) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: from,
+            from_name: "Near Tester".into(),
+            to_agent_id: world.agent_id,
+            dialog,
+            session_id: Uuid::from_u128(0x5e55),
+            message: text.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn shownames_names_who_writes_or_offers_friendship_as_their_message_arrives() {
+        use crate::world::notifications::{Kind, im};
+        let (mut world, near) = shownames_world();
+        // an instant message: its line, its conversation and its toast
+        world.apply(message(&world, near, 0, "hello there"));
+        let line = |world: &World| {
+            let session = world.social.ims.iter().find(|s| s.other == near).expect("the conversation");
+            session.lines.back().expect("its line").clone()
+        };
+        assert_eq!(line(&world).from, "Near Tester");
+        assert_eq!(world.session_title(&near), "Near Tester");
+        for m in std::mem::take(&mut world.im_messages) {
+            world.notify_message(&m, false);
+        }
+        // a friendship offer
+        world.apply(message(&world, near, im::FRIENDSHIP_OFFERED, "be my friend"));
+        world.refresh_rlva_privacy();
+        for kind in [Kind::Message, Kind::Friendship] {
+            let n = world.notifications.list.iter().find(|n| n.kind == kind).expect("the notice");
+            assert!(n.title.contains("Near Tester"), "{kind:?}: {}", n.title);
+            assert!(n.name_links.iter().any(|l| l.name == "Near Tester"), "{kind:?}");
+        }
+        // the nearby chat of the same resident stays anonymous
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Near Tester".into(),
+            source_id: near,
+            owner_id: near,
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "hello everyone".into(),
+        }));
+        let said = world.chat.back().expect("the nearby line");
+        assert_eq!(said.text, "hello everyone");
+        assert!(!said.from.contains("Tester"), "{}", said.from);
+    }
+
+    /// The rule behind the greyed entries of an avatar's menu
+    /// (`Facts::name_hidden`): RlvActions::canShowName(SNC_DEFAULT, id),
+    /// where only oneself and a `@shownames:<uuid>` exception are named.
+    #[test]
+    fn the_name_of_a_resident_is_shown_only_to_oneself_and_exceptions() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (stranger, excepted) = (Uuid::from_u128(0x35471), Uuid::from_u128(0x35472));
+        world.rlva.configure(true);
+        assert!(world.rlva_can_name(stranger), "no restriction: every name is shown");
+        restrict(&mut world, "shownames=n");
+        assert!(!world.rlva_can_name(stranger));
+        assert!(!world.rlva_can_name(excepted));
+        assert!(world.rlva_can_name(world.agent_id), "never ourselves");
+        restrict(&mut world, &format!("shownames:{excepted}=add"));
+        assert!(world.rlva_can_name(excepted));
+        assert!(!world.rlva_can_name(stranger));
+    }
+
+    /// The label of an avatar link is text someone wrote: `@shownames` and
+    /// `@showloc` filter it like the text around it (RlvUtil::filterNames and
+    /// filterLocation run on the raw text of the chat, rlvcommon.cpp). The
+    /// address of the link stays, so a bare link still resolves to its
+    /// resident (LLUrlEntryAgent has no RLVa test).
+    #[test]
+    fn the_label_of_an_avatar_link_is_filtered_like_the_text_around_it() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        // someone around us: only the residents in the scene are rewritten
+        let agent = world.agent_id;
+        let id = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != agent).unwrap();
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: "jane.doe".into(),
+            display_name: "Jane Doe".into(),
+            legacy_first: "Jane".into(),
+            legacy_last: "Doe".into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n,showloc=n");
+        world.refresh_rlva_privacy();
+        let address = format!("secondlife:///app/agent/{id}/about");
+        for verb in ["about", "inspect", "im", "mention"] {
+            let link = format!("[secondlife:///app/agent/{id}/{verb} Jane Doe in Secret Region]");
+            let filtered = world.rlva_filter_text_in(NameScope::World, &link);
+            assert!(
+                !filtered.contains("Jane Doe"),
+                "{verb}: the name of the label is hidden: {filtered}"
+            );
+            assert!(
+                !filtered.contains("Secret Region"),
+                "{verb}: the place of the label is hidden: {filtered}"
+            );
+            assert!(filtered.contains(&id.to_string()), "{verb}: the address stays: {filtered}");
+        }
+        let text = format!("Jane Doe points at {address} from Secret Region");
+        let filtered = world.rlva_filter_text_in(NameScope::World, &text);
+        assert!(filtered.contains(&address), "a bare link stays: {filtered}");
+        assert!(!filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
+        // a conversation names its people and still hides the places
+        let said = format!("[{address} Jane Doe in Secret Region]");
+        let filtered = world.rlva_filter_text_in(NameScope::Roster, &said);
+        assert!(filtered.contains("Jane Doe") && !filtered.contains("Secret Region"), "{filtered}");
+    }
+
+    /// A profile opened from a conversation names its resident
+    /// (`NameScope::Roster`): the line under the display name keeps the
+    /// legacy name while `@shownames` swaps it for the stand-in in the world.
+    #[test]
+    fn a_profile_opened_from_a_conversation_keeps_the_legacy_name() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let stranger = Uuid::from_u128(0x35473);
+        world.social.names.insert(stranger, "Jane Doe".into());
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        assert_ne!(world.legacy_name_in(NameScope::World, &stranger).as_deref(), Some("Jane Doe"));
+        assert_eq!(world.legacy_name_in(NameScope::Roster, &stranger).as_deref(), Some("Jane Doe"));
+        assert_eq!(
+            world.legacy_name(&stranger).as_deref(),
+            Some("Jane Doe"),
+            "the cached name wins, as before"
+        );
     }
 }

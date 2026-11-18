@@ -3,6 +3,7 @@
 //! a separate process because Windows keeps the running executable mapped.
 
 pub mod feed;
+pub mod ffmpeg_pack;
 pub mod install;
 pub mod media_pack;
 pub mod package;
