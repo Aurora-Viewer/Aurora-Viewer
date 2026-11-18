@@ -33,10 +33,12 @@ fn spans(text: &str, links: &[NameLink]) -> Vec<(Range<usize>, NameTarget)> {
     candidates
 }
 
-pub(crate) fn open(ctx: &egui::Context, target: NameTarget) {
+/// A name clicked in a notice shown in `scope` (`Kind::names`: the kinds that
+/// name their resident open it whoever is around).
+pub(crate) fn open(ctx: &egui::Context, scope: crate::world::names::NameScope, target: NameTarget) {
     use crate::ui::context::{CtxAction, request};
     match target {
-        NameTarget::Avatar(id) => crate::ui::profile::request_open(ctx, id),
+        NameTarget::Avatar(id) => crate::ui::profile::request_open_in(ctx, scope, id),
         NameTarget::Group(id) => request(ctx, CtxAction::AppLink(crate::slapp::AppLink::Group(id))),
         NameTarget::Experience(id) => request(ctx, CtxAction::AppLink(crate::slapp::AppLink::Experience(id))),
         NameTarget::Object(id) => request(ctx, CtxAction::Inspect(id)),
@@ -49,6 +51,7 @@ pub(super) fn person_body(
     emoji: &mut crate::ui::emoji::Emoji,
     text: &str,
     links: &[NameLink],
+    scope: crate::world::names::NameScope,
 ) -> Option<NameTarget> {
     let spans = spans(text, links);
     if spans.is_empty() {
@@ -73,6 +76,7 @@ pub(super) fn person_body(
                 p.muted,
                 false,
                 false,
+                scope,
             ));
             at = range.end;
         }
@@ -93,6 +97,7 @@ pub(crate) fn show(
     color: Color32,
     truncate: bool,
     activate: bool,
+    scope: crate::world::names::NameScope,
 ) -> Option<NameTarget> {
     let spans = spans(text, links);
     if spans.is_empty() {
@@ -152,7 +157,7 @@ pub(crate) fn show(
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(aurora_i18n::tr!("common-view-profile"));
         if activate && response.clicked() {
-            open(ui.ctx(), target);
+            open(ui.ctx(), scope, target);
         }
     }
     hovered
@@ -161,7 +166,21 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::names::NameScope;
     use uuid::Uuid;
+
+    /// A name clicked in a notice opens in the scope of its kind: the kinds
+    /// that name their resident (an IM, an offer of friendship) open it
+    /// whoever is around, under RLVa's `@shownames` too (issue #3547).
+    #[test]
+    fn a_name_clicked_in_a_notice_opens_in_the_scope_of_its_kind() {
+        let ctx = egui::Context::default();
+        let id = Uuid::from_u128(0x35476);
+        for scope in [NameScope::Roster, NameScope::World] {
+            open(&ctx, scope, NameTarget::Avatar(id));
+            assert_eq!(crate::ui::profile::take_open_request_in(&ctx), Some((scope, id)));
+        }
+    }
 
     #[test]
     fn names_match_whole_unicode_names_and_prefer_the_longest_identity() {
@@ -215,7 +234,17 @@ mod tests {
                         },
                         |ui| {
                             ui.set_width(190.0);
-                            show(ui, &p, value, &links, 12.0, p.ink, truncate, true);
+                            show(
+                                ui,
+                                &p,
+                                value,
+                                &links,
+                                12.0,
+                                p.ink,
+                                truncate,
+                                true,
+                                crate::world::names::NameScope::Roster,
+                            );
                         },
                     );
                     out.textures_delta.clear();
@@ -306,9 +335,11 @@ mod tests {
                             emoji: &mut emoji,
                             hidden: false,
                             message_seconds: 30.0,
+                            tip_seconds: 10.0,
                             restart: None,
                             presence_at: Default::default(),
                             classic_bars: false,
+                            toast_gap: crate::settings::TOAST_GAP,
                         };
                         answer = person_card(ui, &p, &icons, &world, &mut env, &mut wanted, &list.list[0], false);
                     },

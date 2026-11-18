@@ -6,6 +6,9 @@
 //! and forward in its history. The search tab's browser is a private one
 //! (`WebView::private`): its cache, history and log go to a profile of its
 //! own that is deleted with the browser (`media/private_profile.rs`).
+//! A trusted browser (`WebView::trust`, LLMediaCtrl's `trusted_content`,
+//! the Avatar Welcome Pack's) may also wear folders: the folder commands its
+//! own page sends are handed to its window (`folder_commands`).
 
 use crate::media::pack::PackState;
 use crate::media::private_profile::PrivateProfile;
@@ -22,17 +25,78 @@ pub fn set_plugins_status(ctx: &egui::Context, state: PackState) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_STATUS), state));
 }
 
-/// What a page without plugins shows while the pack is on its way; `None`
-/// when no pack is coming.
-fn waiting_for_plugins(ctx: &egui::Context) -> Option<String> {
-    match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
-        PackState::Downloading(p) if p.preparing => Some(aurora_i18n::tr!("media-plugins-installing").to_owned()),
-        PackState::Downloading(p) => Some(aurora_i18n::tr!(
+const PLUGINS_DOWNLOAD: &str = "media_plugins_pack_download";
+
+/// What a place without plugins shows instead of the web or the media.
+enum Waiting {
+    /// The pack is on its way, or its download failed.
+    Text(String),
+    /// Not downloaded (never asked, or "Not now"): a Download button.
+    Offer,
+}
+
+/// `None` when no pack is coming nor can be downloaded.
+fn waiting_for_plugins(ctx: &egui::Context) -> Option<Waiting> {
+    let text = match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
+        PackState::Idle => return Some(Waiting::Offer),
+        PackState::Downloading(p) if p.preparing => aurora_i18n::tr!("media-plugins-installing").to_owned(),
+        PackState::Downloading(p) => aurora_i18n::tr!(
             "media-plugins-page-waiting",
             percent = (p.received * 100 / p.total.max(1)).to_string()
-        )),
-        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Idle | PackState::Ready => None,
-        PackState::Failed(_) => Some(aurora_i18n::tr!("media-plugins-page-failed").to_owned()),
+        ),
+        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Ready => return None,
+        PackState::Failed(_) => aurora_i18n::tr!("media-plugins-page-failed").to_owned(),
+    };
+    Some(Waiting::Text(text))
+}
+
+/// A Download button was pressed this frame (taken by the app, which
+/// records the answer and starts the download).
+pub fn take_plugins_download(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(PLUGINS_DOWNLOAD)))
+        .unwrap_or(false)
+}
+
+/// The pack's size in whole megabytes, as the consent card says it.
+pub fn pack_megabytes() -> String {
+    aurora_i18n::integer(aurora_updater::media_pack::PACK.size.div_ceil(1024 * 1024) as i64)
+}
+
+/// "Web pages and media need …" and its Download button, where the web or a
+/// media would show without plugins.
+fn plugins_offer(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(aurora_i18n::tr!("media-plugins-page-offer", size = pack_megabytes()))
+                .size(12.0)
+                .color(pal.muted),
+        )
+        .wrap(),
+    );
+    let download = super::widgets::action_button(
+        ui,
+        pal,
+        "download-filled",
+        aurora_i18n::tr!("media-plugins-download"),
+        super::widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    );
+    if download.clicked() {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_DOWNLOAD), true));
+    }
+}
+
+/// The line of the media controls (`ui/media.rs`) when no plugins are
+/// found: where the pack stands, or its Download button.
+pub fn plugins_notice(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    match waiting_for_plugins(ui.ctx()) {
+        Some(Waiting::Offer) => {
+            ui.horizontal(|ui| plugins_offer(ui, pal));
+        }
+        Some(Waiting::Text(text)) => {
+            ui.label(egui::RichText::new(text).size(11.0).color(pal.muted));
+        }
+        None => {}
     }
 }
 
@@ -58,6 +122,8 @@ pub struct WebView {
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,
+    /// The sign-in cookie was handed to the running browser.
+    cookie_set: bool,
     /// Address of the page shown, as the browser reports it (it follows the
     /// links clicked in the page).
     pub location: String,
@@ -70,6 +136,16 @@ pub struct WebView {
     pub status: String,
     /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
     pub progress: i32,
+    /// The origin (scheme, host, port) of the trusted page, if any.
+    trusted: Option<String>,
+    /// The origin of the top document the browser has committed
+    /// (NavigateComplete or LocationChanged), cleared while a navigation to
+    /// another origin is under way: a command is trusted by the page that
+    /// sends it, not by the address that was asked. A frame inside that
+    /// document is not told apart from it.
+    document: Option<String>,
+    /// The folder commands the trusted page sent, for its window to take.
+    pub folder_commands: Vec<crate::slapp::FolderCommand>,
 }
 
 impl WebView {
@@ -87,6 +163,20 @@ impl WebView {
         }
     }
 
+    /// LLMediaCtrl `trusted_content`: the pages of `page`'s site may send
+    /// the folder commands an untrusted page cannot (UNTRUSTED_BLOCK), clicked
+    /// or not (LLViewerMediaImpl::handleMediaEvent dispatches them with the
+    /// browser's trust and any nav type). Their other links follow the
+    /// usual rules.
+    pub fn trust(&mut self, page: &str) {
+        let trusted = origin(page);
+        if trusted != self.trusted {
+            // commands of the previous trust must not outlive it
+            self.folder_commands.clear();
+            self.trusted = trusted;
+        }
+    }
+
     pub fn navigate(&mut self, url: &str) {
         if self.url != url {
             self.url = url.to_owned();
@@ -101,6 +191,9 @@ impl WebView {
         self.profile = None;
         self.texture = None;
         self.focused = false;
+        self.cookie_set = false;
+        self.document = None;
+        self.folder_commands.clear();
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
@@ -162,17 +255,33 @@ impl WebView {
         if self.plugin.is_none()
             && self.failed.is_none()
             && paths.is_none()
-            && let Some(text) = waiting_for_plugins(ui.ctx())
+            && let Some(waiting) = waiting_for_plugins(ui.ctx())
         {
             // the page starts by itself once the pack is installed
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(12.0),
-                pal.muted,
-            );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            match waiting {
+                Waiting::Text(text) => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        egui::FontId::proportional(12.0),
+                        pal.muted,
+                    );
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                }
+                Waiting::Offer => {
+                    // the text and its button, in the middle of the page
+                    let room = rect.shrink(16.0);
+                    let width = room.width().min(360.0);
+                    let block = egui::Rect::from_center_size(room.center(), Vec2::new(width, room.height().min(72.0)));
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(block)
+                            .layout(egui::Layout::top_down(egui::Align::Center)),
+                        |ui| plugins_offer(ui, pal),
+                    );
+                }
+            }
             return resp;
         }
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
@@ -206,6 +315,7 @@ impl WebView {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
                             p.set_cookie(c);
+                            self.cookie_set = true;
                         }
                         self.plugin = Some(p);
                         self.size = px;
@@ -241,16 +351,32 @@ impl WebView {
             p.set_size(px.0, px.1);
             self.size = px;
         }
+        // a cookie that arrived after the browser started (the sign-in takes a
+        // moment): install it, and reload the page that went out without it
+        let late_cookie = !self.cookie_set && cookie.is_some();
+        if let Some(c) = cookie.filter(|_| late_cookie) {
+            p.set_cookie(c);
+            self.cookie_set = true;
+            if !self.nav_pending && !self.url.is_empty() {
+                p.browse_reload(false);
+            }
+        }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
             self.location = self.url.clone();
             self.loading = true;
+            // the old document is going away: nothing is trusted until the new one commits
+            self.document = None;
         }
         p.idle();
         for ev in p.take_events() {
-            if let Some(url) = clicked_url(&ev) {
+            if let Some(command) = trusted_folder_command(&ev, self.trusted.as_deref(), self.document.as_deref()) {
+                self.folder_commands.push(command);
+                continue;
+            }
+            if let Some(url) = ev.clicked_url() {
                 super::context::request(ui.ctx(), clicked_link_action(url));
                 continue;
             }
@@ -261,17 +387,27 @@ impl WebView {
                         self.load_secs = Some(t.elapsed().as_secs_f32());
                     }
                     if !uri.is_empty() {
+                        self.document = origin(&uri);
                         self.location = uri;
                     }
                     self.loading = false;
                 }
                 MediaEvent::NavigateBegin(uri) => {
                     if !uri.is_empty() {
+                        // a navigation to another origin: the page that is
+                        // leaving no longer speaks for the browser
+                        if origin(&uri) != self.document {
+                            self.document = None;
+                        }
                         self.location = uri;
                     }
                     self.loading = true;
                 }
-                MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
+                MediaEvent::LocationChanged(uri) if !uri.is_empty() => {
+                    // reported when the navigation commits
+                    self.document = origin(&uri);
+                    self.location = uri;
+                }
                 MediaEvent::CursorChanged(c) => self.cursor = c,
                 MediaEvent::NameChanged(name) => self.title = name,
                 MediaEvent::StatusText(text) => self.status = text,
@@ -389,18 +525,31 @@ impl WebView {
     }
 }
 
-/// Links from the browser are actionable only after a user click. CEF sends
-/// custom schemes separately and records whether navigation had a gesture;
-/// a redirect or script navigation must never trigger a SLURL action.
-fn clicked_url(event: &MediaEvent) -> Option<&str> {
-    match event {
-        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
-        _ => None,
-    }
+/// `scheme://host:port` of a web address.
+fn origin(url: &str) -> Option<String> {
+    reqwest::Url::parse(url)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .map(|u| u.origin().ascii_serialization())
 }
 
-/// Follow the same SLURL and app-link rules as a clicked link in chat.
-fn clicked_link_action(url: &str) -> super::context::CtxAction {
+/// A folder command sent while the top document's origin (`document`) is the
+/// trusted one, with or without a click: the welcome pack's script wears the
+/// body, then adds the clothing a moment later, without a gesture. A frame
+/// inside the trusted document is not told apart from it (still stricter than
+/// the Legacy Viewer, which trusts the whole browser).
+fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, document: Option<&str>) -> Option<crate::slapp::FolderCommand> {
+    let MediaEvent::ClickLinkNoFollow { url, .. } = event else {
+        return None;
+    };
+    let trusted = trusted?;
+    let command = crate::slapp::folder_command(url)?;
+    (document == Some(trusted)).then_some(command)
+}
+
+/// Follow the same SLURL and app-link rules as a clicked link in chat
+/// (also used for a link clicked in a page shown on a prim, `media/update.rs`).
+pub(crate) fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
     if let Some(place) = crate::slurl::place_link(url) {
         let location = place.location;
@@ -423,26 +572,62 @@ mod tests {
     #[test]
     fn custom_scheme_links_require_a_click_gesture() {
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "clicked".into(),
             }),
             Some("secondlife:///app/teleport/Aurora/12/34/56")
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
                 nav_type: "navigated".into(),
             }),
             None
         );
         assert_eq!(
-            clicked_url(&MediaEvent::ClickLinkNoFollow {
+            MediaEvent::clicked_url(&MediaEvent::ClickLinkNoFollow {
                 url: String::new(),
                 nav_type: "clicked".into(),
             }),
             None
         );
+    }
+
+    #[test]
+    fn only_the_trusted_page_sends_folder_commands() {
+        let wear = |nav: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife://app/wear_folder/?folder_name=Female%20body%20-%20A".into(),
+            nav_type: nav.into(),
+        };
+        let page = "https://pages.example/v3.0/agni/vawp/index.html";
+        let trusted = origin(page);
+        let trusted = trusted.as_deref();
+        let doc = |url: &str| origin(url);
+        // clicked or run by the page's script, from the trusted site
+        for nav in ["clicked", "navigated"] {
+            let command = trusted_folder_command(&wear(nav), trusted, doc(page).as_deref()).expect("trusted page");
+            assert_eq!(command.name.as_deref(), Some("Female body - A"));
+        }
+        // another site, or an untrusted browser: nothing worn
+        assert_eq!(
+            trusted_folder_command(&wear("clicked"), trusted, doc("https://other.example/").as_deref()),
+            None
+        );
+        assert_eq!(
+            trusted_folder_command(&wear("clicked"), trusted, doc("http://pages.example/").as_deref()),
+            None
+        );
+        assert_eq!(trusted_folder_command(&wear("clicked"), None, doc(page).as_deref()), None);
+        // no committed document (navigation under way): nothing is trusted
+        assert_eq!(trusted_folder_command(&wear("navigated"), trusted, None), None);
+        // any other link takes the usual path
+        let teleport = MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+            nav_type: "clicked".into(),
+        };
+        assert_eq!(trusted_folder_command(&teleport, trusted, doc(page).as_deref()), None);
+        assert_eq!(origin("file:///c:/page.html"), None);
     }
 
     #[test]

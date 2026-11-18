@@ -6,7 +6,7 @@
 //! chunked transfer encoding; every blocking read honours a stop flag.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -41,12 +41,15 @@ pub(crate) enum HttpError {
     Status(u16),
     #[error("too many redirects")]
     Redirects,
+    #[error("radio playlist links must stay on the same HTTP(S) origin")]
+    PlaylistOrigin,
     #[error("stopped")]
     Stopped,
 }
 
 /// Body + interesting headers of a successful response.
 pub(crate) struct HttpResponse {
+    pub url: Url,
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
@@ -242,27 +245,15 @@ fn connect(url: &Url) -> Result<Conn, HttpError> {
         other => return Err(HttpError::Scheme(other.to_string())),
     };
     let port = url.port_or_known_default().unwrap_or(if https { 443 } else { 80 });
-    let addrs: Vec<SocketAddr> = match url.host() {
-        Some(Host::Domain(d)) => (d, port)
-            .to_socket_addrs()
-            .map_err(|e| HttpError::Connect(e.to_string()))?
-            .collect(),
-        Some(Host::Ipv4(ip)) => vec![SocketAddr::from((ip, port))],
-        Some(Host::Ipv6(ip)) => vec![SocketAddr::from((ip, port))],
+    let host = match url.host() {
+        Some(Host::Domain(d)) => d.to_owned(),
+        Some(Host::Ipv4(ip)) => ip.to_string(),
+        Some(Host::Ipv6(ip)) => ip.to_string(),
         None => return Err(HttpError::Url("missing host".into())),
     };
-    let mut last_err = String::from("no address");
-    let mut tcp = None;
-    for addr in addrs {
-        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
-            Ok(s) => {
-                tcp = Some(s);
-                break;
-            }
-            Err(e) => last_err = e.to_string(),
-        }
-    }
-    let tcp = tcp.ok_or(HttpError::Connect(last_err))?;
+    // Direct, or through the proxy of Preferences › Network, which resolves
+    // the name (aurora_proxy::connect). TLS below stays end to end.
+    let tcp = aurora_proxy::connect::tcp_connect(&host, port, CONNECT_TIMEOUT).map_err(|e| HttpError::Connect(e.to_string()))?;
     tcp.set_read_timeout(Some(READ_POLL))?;
     tcp.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     let _ = tcp.set_nodelay(true);
@@ -332,10 +323,24 @@ fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
 
 /// Opens `url` for streaming, following redirects. Sends `Icy-MetaData: 1`.
 pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, HttpError> {
+    open_with_origin(url, stop, None)
+}
+
+/// Discovered playlist links cannot acquire access to another site, including
+/// through a redirect. Ordinary stream redirects retain their existing policy.
+pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
+        }
+        if origin.is_some_and(|base| {
+            !matches!(url.scheme(), "http" | "https")
+                || url.origin() != base.origin()
+                || !url.username().is_empty()
+                || url.password().is_some()
+        }) {
+            return Err(HttpError::PlaylistOrigin);
         }
         let mut conn = connect(&url)?;
         let req = format!(
@@ -370,6 +375,7 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
                     Box::new(reader)
                 };
                 return Ok(HttpResponse {
+                    url,
                     content_type,
                     metaint,
                     body,

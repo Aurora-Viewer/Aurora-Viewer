@@ -14,6 +14,7 @@
 use super::menu;
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
@@ -31,6 +32,8 @@ mod pathfinding;
 pub use pathfinding::PathfindingUi;
 mod pie;
 
+#[cfg(test)]
+mod radar_menu_tests;
 #[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
@@ -52,6 +55,7 @@ pub mod flags {
     /// FLAGS_AFFECTS_NAVMESH: flagObjectPermanent.
     pub const AFFECTS_NAVMESH: u32 = 1 << 12;
     pub const OBJECT_TRANSFER: u32 = 1 << 17;
+    pub const OBJECT_GROUP_OWNED: u32 = 1 << 18;
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +130,9 @@ pub struct ObjectFacts {
     pub delete: bool,
     /// LLSelectMgr::enableUnlinkObjects: a linkset we can modify.
     pub unlink: bool,
+    /// enable_save_into_task_inventory: Build › Save back to object
+    /// contents applies to the menu's selection.
+    pub save_to_contents: bool,
     /// Blocked (LLMuteList), for "Ignore" / "Stop ignoring".
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
@@ -193,8 +200,29 @@ pub struct Facts {
     pub ground_sit_blocked: bool,
     pub stand_blocked: bool,
     pub object_sit_blocked: bool,
+    /// No takeoff from here: RLVa's @fly or a land that refuses flight
+    /// (enable_fly_land, indra/newview/llviewermenu.cpp). "Fly" is greyed;
+    /// "Land" never is.
+    pub fly_blocked: bool,
+    /// RLVa keeps the build window closed (@edit and @rez together,
+    /// LLToolMgr::canEdit): "Build" is greyed.
+    pub build_blocked: bool,
+    /// RLVa refuses a rezzed object on its default point ("Wear", "Add":
+    /// any attachment lock) and on these points of "Attach to"
+    /// (object_selected_and_point_valid, indra/newview/llviewermenu.cpp).
+    pub wear_default_blocked: bool,
+    pub wear_blocked_points: Vec<u8>,
+    /// RLVa is on for the session: Derender is greyed on our own
+    /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
+    pub rlva_enabled: bool,
+    /// RLVa greys "Pay" on the avatar: @pay, or a name @shownames hides
+    /// (enable_pay_avatar, indra/newview/llviewermenu.cpp).
+    pub pay_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
+    /// Appearance > Export shape XML: the worn shape may be written to a
+    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
+    pub shape_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -214,6 +242,11 @@ pub struct Facts {
     pub friend: bool,
     /// RLVa `@startim` forbids an IM with this resident (RlvActions::canStartIM).
     pub im_blocked: bool,
+    /// RLVa `@shownames` hides this resident's name (RlvActions::canShowName
+    /// (SNC_DEFAULT, id) is false): the entries that name or address them
+    /// are greyed (menu_avatar_other.xml, menu_attachment_other.xml:
+    /// `RLV.CanShowName`).
+    pub name_hidden: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
@@ -236,8 +269,11 @@ pub struct Facts {
     pub removable_clothing: Vec<u8>,
     pub removable_points: Vec<u8>,
 
-    /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
+    /// "Freeze" / "Eject" of the avatar, whether the eject may ban, and the
+    /// estate's "Kick", "Teleport home" and "Ban".
     pub moderation: crate::world::land_moderation::Rights,
+    /// The region gave us a god level: the resident's Admin entries.
+    pub god: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -269,6 +305,13 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// "View profile" from a list of people known besides the world
+    /// (friends list, group members): it opens under RLVa's `@shownames`
+    /// too, as these lists name their residents (`NameScope::Roster`).
+    RosterProfile(Uuid),
+    /// Save as › Collada / OBJ (Object.ExportCollada) of the prim's
+    /// selection.
+    SaveAs(Uuid, crate::build::export::Format),
     Pathfinding {
         id: Uuid,
         characters: bool,
@@ -289,13 +332,29 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// Appearance > Export shape XML: the worn shape, by inventory item,
+    /// to an appearance XML file (`shape_editor::xml_export`).
+    ExportShapeXml(Uuid),
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,
     /// Avatar.Freeze / Avatar.Eject: asked first (LLAvatarActions::
     /// landFreeze / landEject).
     Freeze(Uuid),
+    /// A list's menu is open on a resident standing on group land the
+    /// viewer does not know: its parcel is asked for (selectParcelAt), and
+    /// Freeze / Eject appear once it comes when the group allows them.
+    ModerationParcel(Uuid),
     Eject(Uuid),
+    /// Avatar.Kick / Avatar.TeleportHome / Avatar.EstateBan of the estate's
+    /// owner and managers: asked first (LLAvatarActions::estateKick,
+    /// estateTeleportHome, estateBan).
+    EstateKick(Uuid),
+    EstateTeleportHome(Uuid),
+    EstateBan(Uuid),
+    /// Admin › Kick / Freeze / Unfreeze (LLAvatarActions::kick, freeze,
+    /// unfreeze): asked with its message first; `flags` are GodKickUser's.
+    GodKick(Uuid, u32),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -357,6 +416,29 @@ pub enum CtxAction {
     RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A group chat's moderator allows or forbids a member's text
+    /// (LLIMSpeakerMgr::allowTextChat).
+    ModerateGroupText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
+    /// "Eject from group" / "Ban member" of a group chat's members, asked
+    /// first (`ui::chat::moderation`).
+    GroupChatEject {
+        group: Uuid,
+        agent: Uuid,
+    },
+    GroupChatBan {
+        group: Uuid,
+        agent: Uuid,
+    },
+    /// "Ban from all my groups" / "Unban from all my groups", asked first
+    /// (`world::group_ban_all`).
+    BanFromAllGroups {
+        agent: Uuid,
+        ban: bool,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
@@ -388,6 +470,11 @@ pub enum CtxAction {
         id: Uuid,
         name: String,
     },
+    /// Block the resident or group owning a remote object, never toggle it.
+    BlockObjectOwner {
+        owner: Uuid,
+        group_owned: bool,
+    },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
@@ -412,6 +499,8 @@ pub enum CtxAction {
     RefreshAvatarTextures(Uuid),
     /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
     Rebake,
+    /// "Reload avatar": every refresh of an avatar at once (`app/avatar_reload.rs`).
+    ReloadAvatar(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
@@ -427,6 +516,9 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
+    /// "Save back to object contents" (Tools.SaveToObjectInventory), on
+    /// the menu's selection.
+    SaveToObjectContents,
     /// Link the selected objects (Tools.Link).
     Link(Uuid),
     /// "Take as separate items" / "Take copies as separate items"
@@ -490,6 +582,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
+    OpenUrlExternal(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),
@@ -524,6 +619,18 @@ pub enum CtxAction {
     /// "New contact set…" of an "Add to contact set" submenu: its name
     /// asked (AddNewContactSet), then these residents added to it.
     NewContactSet(Vec<Uuid>),
+    /// Mark ▸ a colour of the radar and mini-map menus
+    /// (Nearby.People.SetAvatarMarkColor, Minimap.Mark).
+    MarkAvatars(Vec<Uuid>, crate::world::avatar_marks::Rgb),
+    /// Mark ▸ Custom color…: the colour picker opens for these residents.
+    MarkCustom {
+        ids: Vec<Uuid>,
+        source: AvatarList,
+    },
+    /// Mark ▸ Clear Mark(s) (Nearby.People.ClearAvatarMarkColor).
+    ClearMarks(Vec<Uuid>),
+    /// Mark ▸ Clear all Marks (Nearby.People.ClearAllAvatarMarkColors).
+    ClearAllMarks,
 }
 
 /// "Add to contact set": one entry per set, then "New contact set…"
@@ -651,8 +758,10 @@ pub fn show(
 /// Firestorm menu, with the same entries in a different order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AvatarList {
-    /// People › Nearby (menu_people_nearby.xml) and the mini-map.
+    /// People › Nearby (menu_people_nearby.xml).
     Nearby,
+    /// The mini-map's More submenu uses the radar entries for a visible dot.
+    MiniMap,
     /// People › Friends (menu_fs_contacts_friends.xml).
     Friend,
     /// A name in the chat or a conversation (menu_url_agent.xml).
@@ -700,6 +809,21 @@ fn voice_control(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVol
     }
 }
 
+/// The display choices of a resident (`CtxAction::SetRender`): always in
+/// full, never fully, by the preferences; the in-world menu's and the
+/// people lists'.
+pub(crate) fn render_choices() -> [(u8, &'static str, &'static str); 3] {
+    [
+        (2, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+        (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
+        (
+            0,
+            "adjustments-filled",
+            aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
+        ),
+    ]
+}
+
 fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     // menu_conversation.xml's moderator entries (ModerateVoiceMuteSelected /
     // UnMuteSelected, ModerateVoiceMute / Unmute)
@@ -725,13 +849,87 @@ fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::Voice
 /// the profile; a resident in our voice channel gets their voice volume
 /// first.
 pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
-    avatar_menu_reporting(ui, p, world, id, kind, None);
+    avatar_menu_reporting(ui, p, world, id, kind, NameScope::World, None);
 }
 
-/// The menu of the sender of a chat line: its "Report abuse" carries the
-/// line (menu_avatar_icon.xml report_abuse, LLFloaterReporter::showFromChat).
-pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, line: &crate::world::ChatLine) {
-    avatar_menu_reporting(ui, p, world, id, AvatarList::Name, Some(crate::report_abuse::chat_target(id, line)));
+/// `avatar_list_menu` for a row of a list of people known besides the
+/// world (friends list, group members): RLVa's `@shownames` restricts
+/// neither their menu nor their profile there (menu_fs_contacts_friends.xml
+/// and the group panels have no RlvActions::canShowName test).
+pub fn avatar_roster_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
+    avatar_menu_reporting(ui, p, world, id, kind, NameScope::Roster, None);
+}
+
+/// "Show profile" and "Zoom in" of the menu of a name (menu_url_agent.xml:
+/// a name in a text or in a name list) are greyed under `@shownames`, for
+/// anyone but oneself, whose menu is not this one
+/// (FSCommon::checkIsActionEnabled, FS_RGSTR_ACT_SHOW_PROFILE and
+/// FS_RGSTR_ACT_ZOOM_IN, indra/newview/fscommon.cpp). A click on the name
+/// still opens the profile where the name is shown, as LLAgentHandler tests
+/// nothing.
+fn name_menu_restricted(kind: AvatarList, shownames: bool) -> bool {
+    kind == AvatarList::Name && shownames
+}
+
+/// "Become friends" is offered to `named`, a resident `@shownames` does not
+/// hide (RlvActions::canShowName): the people lists test it
+/// (PeopleContextMenu "can_add", indra/newview/llpanelpeoplemenus.cpp,
+/// LLPanelPeople::updateButtons); the menu of a name does not
+/// (FS_RGSTR_ACT_ADD_FRIEND of FSCommon::checkIsActionEnabled asks only for
+/// someone else who is not a friend).
+fn offers_friendship(kind: AvatarList, friend: bool, named: bool) -> bool {
+    !friend && (kind == AvatarList::Name || named)
+}
+
+/// A name `@shownames` hides in `scope` has no menu in a chat: the Legacy
+/// Viewer writes the stand-in of a hidden speaker as plain text
+/// (FSChatHistory::appendMessage links a name only when
+/// `!chat.mRlvNamesFiltered`) and its header opens no context menu
+/// (FSChatHistoryHeader: `mShowContextMenu = false`,
+/// indra/newview/fschathistory.cpp); a hidden name inside a text is plain
+/// text too (RlvUtil::filterNames and filterMentions). The people lists keep
+/// their restricted menu (NearbyPeopleContextMenu).
+pub fn name_has_menu(world: &World, scope: NameScope, id: Uuid) -> bool {
+    world.rlva_shows_name(scope, id)
+}
+
+/// The menu of a name shown in `scope`: the nearby chat names the residents
+/// around as `@shownames` allows (`NameScope::World`), a conversation names
+/// its people (`NameScope::Roster`, `chat::conversation_names`).
+pub fn avatar_name_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, scope: NameScope) {
+    avatar_menu_reporting(ui, p, world, id, AvatarList::Name, scope, None);
+}
+
+/// The menu of the sender of a chat line shown in `scope`: its "Report
+/// abuse" carries the line (menu_avatar_icon.xml report_abuse,
+/// LLFloaterReporter::showFromChat).
+pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, scope: NameScope, line: &crate::world::ChatLine) {
+    avatar_menu_reporting(
+        ui,
+        p,
+        world,
+        id,
+        AvatarList::Name,
+        scope,
+        Some(crate::report_abuse::chat_target(id, line)),
+    );
+}
+
+/// RlvActions::canPayAvatar (rlvactions.cpp): under @pay the "Pay" of a
+/// resident is greyed where it is offered (PeopleContextMenu, FSRadarMenu,
+/// FSFloaterContacts::refreshUI, LLInspectAvatar::enablePay), instead of
+/// being refused after the click.
+pub fn can_pay_resident(world: &World) -> bool {
+    world.rlva_can_pay()
+}
+
+/// @showworldmap greys the buttons and entries that open the world map on a
+/// resident or a place (LLPanelProfileSecondLife::updateButtons and
+/// onEnableMenu, LLPanelPlaces::updateVerbs, LLLandmarksPanel::isActionEnabled,
+/// LLTeleportHistoryPanel::updateVerbs and isActionEnabled,
+/// FSFloaterContacts::refreshUI): the map itself does not open.
+pub fn can_show_on_map(world: &World) -> bool {
+    !world.rlva.has("showworldmap")
 }
 
 fn avatar_menu_reporting(
@@ -740,6 +938,7 @@ fn avatar_menu_reporting(
     world: &World,
     id: Uuid,
     kind: AvatarList,
+    scope: NameScope,
     report: Option<crate::report_abuse::ReportTarget>,
 ) {
     let ctx = ui.ctx().clone();
@@ -758,21 +957,41 @@ fn avatar_menu_reporting(
     let travel = !world.agent.is_sitting() && crate::autopilot::avatar_position(world, id).is_some();
     let following = world.following_avatar == Some(id);
     let online = friend.as_ref().is_none_or(|f| f.online);
-    let name = world.social.name_of(&id);
-    if !world.rlva_can_name(id) {
+    // A list of people known besides the world names its resident: while
+    // RLVa hides them around us, nothing of the menu points at them in the
+    // world, or the row would tell which stranger they are. Stricter than
+    // the Legacy Viewer's friends menu (menu_fs_contacts_friends.xml), whose
+    // "Zoom in" has no `@shownames` test.
+    let unnamed_around = scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, id);
+    let name_menu_restricted = name_menu_restricted(kind, world.rlva.has("shownames"));
+    let here = here && !unnamed_around && !name_menu_restricted;
+    let travel = travel && !unnamed_around;
+    let mappable = if unnamed_around {
+        world.social.can_map_friend(id)
+    } else {
+        mappable
+    };
+    let name = world.social.name_in(scope, &id);
+    if !world.rlva_shows_name(scope, id) {
         // RLVa's restricted nearby/name menu exposes no profile, identity
         // clipboard or conversation-history routes (RlvActions::canShowName).
-        if menu::item_if(
-            ui,
-            p,
-            "send-filled",
-            aurora_i18n::tr!("common-offer-teleport"),
-            online && world.rlva_can_offer_teleport(id),
-        ) {
-            act(CtxAction::OfferTeleport(id));
-        }
-        if menu::item_if(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport"), online) {
-            act(CtxAction::RequestTeleport(id));
+        // The teleport offer and request stay in the people lists, as in the
+        // Legacy Viewer's PeopleContextMenu. A chat opens no menu on a
+        // hidden name (`name_has_menu`); another list of names (the bumps)
+        // gets this one without the teleports.
+        if kind != AvatarList::Name {
+            if menu::item_if(
+                ui,
+                p,
+                "send-filled",
+                aurora_i18n::tr!("common-offer-teleport"),
+                online && world.rlva_can_offer_teleport(id),
+            ) {
+                act(CtxAction::OfferTeleport(id));
+            }
+            if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
+                act(CtxAction::RequestTeleport(id));
+            }
         }
         if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
             act(CtxAction::ZoomAvatar(id));
@@ -788,8 +1007,11 @@ fn avatar_menu_reporting(
         return;
     }
     let profile = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
-            act(CtxAction::Profile(id));
+        if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), !name_menu_restricted) {
+            act(match scope {
+                NameScope::Roster => CtxAction::RosterProfile(id),
+                _ => CtxAction::Profile(id),
+            });
         }
     };
     // "can_send_im" of FSNameListAvatarMenu: RLVa @startim greys IM and the
@@ -855,7 +1077,9 @@ fn avatar_menu_reporting(
         }
     };
     let add_friend = |ui: &mut egui::Ui| {
-        if friend.is_none() && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
+        if offers_friendship(kind, friend.is_some(), world.rlva_can_name(id))
+            && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends"))
+        {
             act(CtxAction::AddFriend(id));
         }
     };
@@ -865,7 +1089,7 @@ fn avatar_menu_reporting(
         }
     };
     let request_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport"), online) {
+        if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
             act(CtxAction::RequestTeleport(id));
         }
     };
@@ -883,7 +1107,7 @@ fn avatar_menu_reporting(
         }
     };
     match kind {
-        AvatarList::Nearby => {
+        AvatarList::Nearby | AvatarList::MiniMap => {
             profile(ui);
             navigation(ui);
             im(ui);
@@ -898,6 +1122,11 @@ fn avatar_menu_reporting(
                 world.calls.voice_enabled && can_im,
             ) {
                 act(CtxAction::Call(id));
+            }
+            // menu_fs_radar.xml's ScriptInfo (Avatar.getScriptInfo), as the
+            // avatar's own menu in the world offers it
+            if menu::item(ui, p, "code", aurora_i18n::tr!("ui-context-script-information")) {
+                act(CtxAction::ScriptInfo(id));
             }
             menu::separator(ui, p);
             history(ui);
@@ -914,11 +1143,59 @@ fn avatar_menu_reporting(
             if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), mappable) {
                 act(CtxAction::ShowOnMap(id));
             }
+            // menu_fs_radar.xml's MarkAvatar, before Share
+            crate::ui::avatar_marks::submenu(ui, p, world, &[id], kind);
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
                 act(CtxAction::PayResident(id));
             }
             block(ui);
+            // menu_fs_radar.xml / menu_mini_map.xml: Freeze, Parcel Eject,
+            // then the estate's Teleport Home, Kick and Ban, each only where
+            // we have the right (Avatar.VisibleFreezeEject,
+            // Avatar.VisibleKickTeleportHome); gathered in the same
+            // "Moderation" submenu as the world menu's
+            let rights = world.resident_rights(id);
+            if world.resident_needs_parcel(id) {
+                act(CtxAction::ModerationParcel(id));
+            }
+            if rights.allowed || rights.estate {
+                menu::submenu(
+                    ui,
+                    p,
+                    "shield-filled",
+                    aurora_i18n::tr!("ui-context-moderation-options"),
+                    true,
+                    |ui| {
+                        if rights.allowed {
+                            if menu::item(ui, p, "snowflake", aurora_i18n::tr!("ui-context-freeze")) {
+                                act(CtxAction::Freeze(id));
+                            }
+                            if menu::item(ui, p, "player-eject-filled", aurora_i18n::tr!("ui-context-eject")) {
+                                act(CtxAction::Eject(id));
+                            }
+                        }
+                        if rights.estate {
+                            if rights.allowed {
+                                menu::separator(ui, p);
+                            }
+                            for (icon, label, action) in [
+                                (
+                                    "home-filled",
+                                    aurora_i18n::tr!("ui-context-estate-teleport-home"),
+                                    CtxAction::EstateTeleportHome(id),
+                                ),
+                                ("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id)),
+                                ("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id)),
+                            ] {
+                                if menu::item(ui, p, icon, label) {
+                                    act(action);
+                                }
+                            }
+                        }
+                    },
+                );
+            }
             // menu_fs_radar.xml / menu_mini_map.xml: Avatar.Derender and
             // Avatar.DerenderPermanent (LLAvatarActions::derender), always enabled
             for (icon, label, permanent) in [
@@ -929,6 +1206,16 @@ fn avatar_menu_reporting(
                     act(CtxAction::Derender { id, permanent });
                 }
             }
+            // menu_fs_radar.xml's "Render Settings" (Nearby.People.SetRenderMode,
+            // CheckRenderMode): the in-world menu's display choices
+            let render = world.render_exceptions.get(&id).copied().unwrap_or(0);
+            menu::submenu(ui, p, "gauge-filled", aurora_i18n::tr!("ui-context-display-options"), true, |ui| {
+                for (mode, icon, label) in render_choices() {
+                    if menu::check(ui, p, icon, label, render == mode, true) && render != mode {
+                        act(CtxAction::SetRender(id, mode));
+                    }
+                }
+            });
         }
         AvatarList::Friend => {
             profile(ui);
@@ -942,7 +1229,7 @@ fn avatar_menu_reporting(
             }
             offer_tp(ui);
             request_tp(ui);
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), can_pay_resident(world)) {
                 act(CtxAction::PayResident(id));
             }
             navigation(ui);
@@ -991,6 +1278,31 @@ fn avatar_menu_reporting(
             copy(ui);
         }
     }
+    admin_submenu(ui, p, world, id, act);
+}
+
+/// Admin, while the region keeps our god level, outside the world menus: the
+/// profile's Kick / Freeze / Unfreeze (menu_fs_profile_overflow.xml,
+/// Profile.EnableItem: gAgent.isGodlike()) and the inspector's Kick
+/// (menu_inspect_avatar_gear.xml, InspectAvatar.EnableGod), gathered as in
+/// the world menu. GodKickUser reaches them anywhere on the grid.
+pub fn admin_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, act: impl Fn(CtxAction)) {
+    use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+    if world.god_level == 0 || id == world.agent_id {
+        return;
+    }
+    menu::separator(ui, p);
+    menu::submenu(ui, p, "crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        for (icon, label, flags) in [
+            ("logout", aurora_i18n::tr!("admin-kick-menu"), KICK_DEFAULT),
+            ("snowflake", aurora_i18n::tr!("admin-freeze-menu"), KICK_FREEZE),
+            ("sun-filled", aurora_i18n::tr!("admin-unfreeze-menu"), KICK_UNFREEZE),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                act(CtxAction::GodKick(id, flags));
+            }
+        }
+    });
 }
 
 /// Right-click menu of one of our groups (menu_people_groups.xml), plus
@@ -1002,7 +1314,7 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
         ui,
         p,
         "circle-check-filled",
-        aurora_i18n::tr!("common-enable"),
+        aurora_i18n::tr!("common-activate"),
         world.groups.active != id,
     ) {
         act(CtxAction::ActivateGroup(id));
@@ -1564,6 +1876,115 @@ mod tests {
         }
     }
 
+    /// RlvActions::canPayAvatar: the entry is greyed, not refused after the click.
+    #[test]
+    fn rlva_pay_of_a_residents_list_menu_is_greyed_under_pay() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        assert!(can_pay_resident(&world) && can_show_on_map(&world));
+        for restricted in [false, true] {
+            if restricted {
+                world.rlva.configure(true);
+                assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                    from_name: "Fixture".into(),
+                    source_id: Uuid::from_u128(99),
+                    owner_id: Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::OwnerSay,
+                    region: None,
+                    position: glam::Vec3::ZERO,
+                    message: "@pay=n,showworldmap=n".into(),
+                }));
+                assert!(!can_pay_resident(&world) && !can_show_on_map(&world));
+            }
+            for kind in [AvatarList::Friend, AvatarList::Nearby] {
+                let mut frames = Frames::new();
+                let mut point = egui::Pos2::ZERO;
+                for _ in 0..2 {
+                    let texts = frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                    point = painted(&texts, aurora_i18n::text("common-pay")).rect.center();
+                }
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        |ui| avatar_list_menu(ui, &p, &world, id, kind),
+                    );
+                }
+                let actions = take_requests(&frames.ctx);
+                assert_eq!(actions.len(), usize::from(!restricted), "{kind:?}, restricted {restricted}");
+                assert!(actions.iter().all(|a| matches!(a, CtxAction::PayResident(i) if *i == id)));
+            }
+        }
+    }
+
+    #[test]
+    fn a_god_has_the_admin_submenu_in_every_residents_list_menu_but_its_own() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let other = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let admin = aurora_i18n::text("admin-menu");
+        for kind in [AvatarList::Nearby, AvatarList::Friend, AvatarList::Name] {
+            for (level, id, shown) in [(0, other, false), (200, other, true), (200, world.agent_id, false)] {
+                world.god_level = level;
+                let mut frames = Frames::new();
+                frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                let texts = frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                assert_eq!(texts.iter().any(|t| t.source == admin), shown, "{kind:?}, level {level}");
+                if !shown {
+                    continue;
+                }
+                // its entries send GodKickUser with the Legacy Viewer's flags
+                let heading = painted(&texts, admin).rect.center();
+                let mut entry = None;
+                for _ in 0..30 {
+                    let texts = frames.run(vec![egui::Event::PointerMoved(heading)], |ui| {
+                        avatar_list_menu(ui, &p, &world, id, kind);
+                    });
+                    entry = texts
+                        .iter()
+                        .find(|t| t.source == aurora_i18n::text("admin-freeze-menu"))
+                        .map(|t| t.rect.center());
+                    if entry.is_some() {
+                        break;
+                    }
+                }
+                let at = entry.expect("the Admin submenu opens on hover");
+                let _ = take_requests(&frames.ctx);
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(at),
+                            egui::Event::PointerButton {
+                                pos: at,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        |ui| avatar_list_menu(ui, &p, &world, id, kind),
+                    );
+                }
+                let actions = take_requests(&frames.ctx);
+                assert!(
+                    matches!(actions.as_slice(), [CtxAction::GodKick(i, aurora_net::god::KICK_FREEZE)] if *i == other),
+                    "{kind:?}: {actions:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn rlva_hidden_identity_menu_keeps_zoom_and_block_without_profile_or_clipboard_routes() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1583,6 +2004,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@shownames=n".into(),
         }));
@@ -1628,8 +2050,145 @@ mod tests {
             aurora_i18n::tr!("common-copy-url"),
             aurora_i18n::tr!("common-copy-mention-uri"),
             aurora_i18n::tr!("common-view-conversation-history"),
+            aurora_i18n::tr!("common-offer-teleport"),
+            aurora_i18n::tr!("common-request-teleport"),
         ] {
             assert!(!texts.iter().any(|t| t.contains(label)), "unexpected identity route: {label}");
+        }
+    }
+
+    /// A chat opens no menu on a name `@shownames` hides, as the Legacy
+    /// Viewer writes it as plain text (FSChatHistory::appendMessage) and its
+    /// header refuses the context menu (`mShowContextMenu`). A conversation
+    /// names its people, so their menu stays.
+    #[test]
+    fn a_name_shownames_hides_has_no_menu_in_a_chat() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let me = world.agent_id;
+        assert!(name_has_menu(&world, NameScope::World, id), "no restriction");
+        world.rlva.configure(true);
+        let restrict = |world: &mut World, command: String| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Menu fixture".into(),
+                source_id: Uuid::from_u128(1),
+                owner_id: me,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: command,
+            }));
+            world.refresh_rlva_privacy();
+        };
+        restrict(&mut world, "@shownames=n".into());
+        assert!(!name_has_menu(&world, NameScope::World, id), "a hidden speaker of the nearby chat");
+        assert!(name_has_menu(&world, NameScope::Roster, id), "a conversation names its people");
+        assert!(name_has_menu(&world, NameScope::World, me), "oneself");
+        restrict(&mut world, format!("@shownames:{id}=add"));
+        assert!(name_has_menu(&world, NameScope::World, id), "an exception");
+    }
+
+    /// The Legacy Viewer's rules for the entries `@shownames` greys in the
+    /// menus of the lists and of a name (issue #3547).
+    #[test]
+    fn shownames_greys_the_profile_of_a_name_menu_and_the_friendship_offer_of_the_lists() {
+        // FSCommon::checkIsActionEnabled: the menu of a name alone, and only
+        // under the restriction
+        assert!(name_menu_restricted(AvatarList::Name, true));
+        assert!(!name_menu_restricted(AvatarList::Name, false));
+        for list in [AvatarList::Nearby, AvatarList::MiniMap, AvatarList::Friend] {
+            assert!(!name_menu_restricted(list, true), "{list:?}");
+            // PeopleContextMenu "can_add": a resident who is named, not a friend
+            assert!(offers_friendship(list, false, true), "{list:?}");
+            assert!(!offers_friendship(list, false, false), "{list:?}: hidden by @shownames");
+            assert!(!offers_friendship(list, true, true), "{list:?}: a friend already");
+        }
+        // FS_RGSTR_ACT_ADD_FRIEND: the menu of a name has no `@shownames` test
+        assert!(offers_friendship(AvatarList::Name, false, false));
+        assert!(offers_friendship(AvatarList::Name, false, true));
+        assert!(!offers_friendship(AvatarList::Name, true, true));
+    }
+
+    /// `@shownames=n` hides no name in a conversation (issue #3547): the
+    /// menu of a name there keeps the conversation history, the friendship
+    /// offer and the copies for a resident standing nearby, with "View
+    /// profile" greyed (`name_menu_restricted`). A hidden name of the nearby
+    /// chat has none of them.
+    #[test]
+    fn a_name_shown_in_a_conversation_keeps_its_menu_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Menu fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let texts_of = |scope: NameScope| {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, 1.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| avatar_menu_reporting(ui, &p, &world, id, AvatarList::Name, scope, None),
+            );
+            output.textures_delta.clear();
+            fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texts)),
+                    _ => {}
+                }
+            }
+            let mut texts = Vec::new();
+            for shape in output.shapes {
+                collect(&shape.shape, &mut texts);
+            }
+            texts
+        };
+        let routes = [
+            aurora_i18n::tr!("common-view-profile"),
+            aurora_i18n::tr!("common-copy-name"),
+            aurora_i18n::tr!("common-copy-url"),
+            aurora_i18n::tr!("common-view-conversation-history"),
+            aurora_i18n::tr!("common-become-friends"),
+        ];
+        let roster = texts_of(NameScope::Roster);
+        for label in routes {
+            assert!(
+                roster.iter().any(|t| t.contains(label)),
+                "a conversation's name menu lacks: {label}"
+            );
+        }
+        let world_names = texts_of(NameScope::World);
+        for label in routes {
+            assert!(!world_names.iter().any(|t| t.contains(label)), "a hidden name offers: {label}");
         }
     }
 

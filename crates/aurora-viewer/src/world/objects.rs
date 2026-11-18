@@ -29,6 +29,7 @@ pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
+mod local_duplicates;
 
 /// GPU-side state owned by the scene; kept here so it moves with the object.
 #[derive(Debug, Default)]
@@ -37,6 +38,9 @@ pub struct RenderState {
     /// Client-only local mesh preview; server volume/scale remain authoritative.
     pub local_volume: Option<Box<VolumeParams>>,
     pub local_scale: Option<Vec3>,
+    /// Natural dimensions of a centered static assembly fitted uniformly to
+    /// this prim. Re-evaluated against damped size, never sent to the simulator.
+    pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
     /// Temporary material-inspector display mode; no simulator state changes.
@@ -129,6 +133,9 @@ pub struct Object {
     /// Clock of its region when the simulator last reported its motion
     /// (`ObjectStore::motion_time`); NaN until the store has stamped it.
     motion_time: f64,
+    /// Client-side turn accumulated before the last motion report. The
+    /// simulator's base angle remains in `rotation` for edits and reports.
+    angular_rotation: Quat,
     /// The last report put it elsewhere than where it was drawn: the gap
     /// fades instead of showing at once (motion.rs).
     correction: Option<Correction>,
@@ -235,21 +242,31 @@ impl Object {
     }
     #[inline]
     pub fn visual_scale(&self) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale())
+        self.local_preview_scale(self.damped_scale())
     }
     /// Sample position and size at the same scene/picking instant. The
     /// cached value in visual_scale is for frame scheduling and coarse bounds.
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
+        self.local_preview_scale(self.damped_scale_at(now))
     }
-    /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
-    /// retain their own geometry even if they carry stale flexible parameters.
+    pub(crate) fn local_preview_scale(&self, anchor: Vec3) -> Vec3 {
+        if let Some(size) = self.render.local_fit {
+            size * (anchor / size).min_element()
+        } else {
+            self.render.local_scale.unwrap_or(anchor)
+        }
+    }
+    /// Whether the volume has the flexible path, as LLVOVolume::isFlexible
+    /// (indra/newview/llvovolume.cpp) and isFlexibleFast classify it. This is
+    /// also the build-tool and ARC classification, including sculpt paths.
+    pub fn has_flexible_path(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+    }
+
+    /// Whether Aurora simulates this object as a flexi. Meshes and sculpts
+    /// keep their own geometry even when their volume path is flexible.
     pub fn is_flexible(&self) -> bool {
-        self.pcode == aurora_prim::params::LL_PCODE_VOLUME
-            && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
-            && self.extra.flexible.is_some()
-            && !self.volume.is_sculpt()
-            && !self.visual_volume().is_mesh()
+        self.has_flexible_path() && !self.volume.is_sculpt() && !self.visual_volume().is_mesh()
     }
 
     pub fn from_update(region: RegionHandle, u: ObjectUpdate) -> Object {
@@ -273,6 +290,7 @@ impl Object {
             angular_velocity: u.angular_velocity,
             foot_plane: u.foot_plane,
             motion_time: f64::NAN,
+            angular_rotation: Quat::IDENTITY,
             correction: None,
             scale_correction: None,
             seat: None,
@@ -320,10 +338,24 @@ impl Object {
         })
     }
 
-    pub fn apply_full(&mut self, u: ObjectUpdate) {
+    pub fn apply_full(&mut self, mut u: ObjectUpdate) {
+        // Like LLViewerObject::processUpdateMessage
+        // (indra/newview/llviewerobject.cpp), retain an existing flexi
+        // parameter entry when a later full update omits it while the path
+        // remains flexible. A genuinely changed path or identity does not
+        // carry the old entry forward.
+        if (u.full_id.is_nil() || u.full_id == self.full_id)
+            && self.has_flexible_path()
+            && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && u.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+            && u.extra.flexible.is_none()
+        {
+            u.extra.flexible = self.extra.flexible;
+        }
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
             self.render.local_scale = None;
+            self.render.local_fit = None;
             self.render.local_appearance.clear();
             self.render.blinn_phong_preview = false;
             self.foot_plane = None;
@@ -376,7 +408,12 @@ impl Object {
             self.te = u.texture_entry;
         }
         self.extra = u.extra;
-        self.name_values = u.name_values;
+        // Follow LLViewerObject::processUpdateMessage:
+        // if (nv_size > 0) setNameValueList(...) (indra/newview/llviewerobject.cpp).
+        // Empty NameValues in an update do not clear existing NameValues.
+        if !u.name_values.is_empty() {
+            self.name_values = u.name_values;
+        }
         self.text = u.text;
         self.text_color = u.text_color;
         if self.set_tex_anim(u.texture_anim, Instant::now()) {
@@ -478,6 +515,20 @@ impl Object {
         None
     }
 
+    /// Update the avatar's worn group title in its `name_values`
+    /// (e.g. after receiving `NetEvent::ActiveGroup`).
+    pub fn set_group_title(&mut self, title: Option<&str>) {
+        let mut lines: Vec<&str> = self.name_values.lines().filter(|l| !l.starts_with("Title ")).collect();
+        let new_line = title.filter(|t| !t.trim().is_empty()).map(|t| format!("Title STRING RW SV {t}"));
+        if let Some(ref l) = new_line {
+            lines.push(l);
+        }
+        self.name_values = lines.join("\n");
+        if !self.name_values.is_empty() {
+            self.name_values.push('\n');
+        }
+    }
+
     /// Local position and rotation drawn at `now`, `motion_time` being the
     /// clock of its region (`ObjectStore::motion_time`): where its last
     /// report sends it (motion.rs), and what is left of the gap that report
@@ -511,7 +562,7 @@ impl Object {
         let (velocity, acceleration) = self.linear_motion();
         motion::Reported {
             position: self.position,
-            rotation: self.rotation,
+            rotation: self.angular_rotation * self.rotation,
             velocity,
             acceleration,
             angular_velocity: self.angular_velocity,
@@ -573,6 +624,23 @@ impl Object {
         self.render.needs_records = true;
     }
 
+    /// Port of LLViewerObject::processUpdateMessage / applyAngularVelocity
+    /// (indra/newview/llviewerobject.cpp, originally LGPL 2.1): a repeated
+    /// base angle retains the accumulated llTargetOmega turn. Nonphysical
+    /// speed changes retain it too; physical speed changes start anew.
+    fn retained_angular_rotation(&self, motion_time: f64, rotation: Quat, angular_velocity: Vec3, flags: u32) -> Quat {
+        if self.is_avatar()
+            || self.rotation != rotation
+            || angular_velocity == Vec3::ZERO
+            || (flags & crate::build::edits::FLAGS_USE_PHYSICS != 0 && self.angular_velocity != angular_velocity)
+        {
+            return Quat::IDENTITY;
+        }
+        // Exclude any visual damping: it must never become part of the
+        // permanent spin phase. Rotation here is in the parent's frame.
+        (self.reported_pose(motion_time).1 * self.rotation.inverse()).normalize()
+    }
+
     /// A report was applied at `now`: stamp it with its region's clock and,
     /// when it left the object where `drawn` says it was not, let the gap
     /// fade. True when a correction started. A damped seat needs none: its
@@ -584,7 +652,8 @@ impl Object {
         self.motion_time = motion_time;
         let moving = !self.is_avatar() && self.velocity != Vec3::ZERO;
         let drawn = if self.seat_damping() || moving { None } else { drawn };
-        self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
+        self.correction =
+            drawn.and_then(|drawn| Correction::toward(drawn, self.reported_pose(motion_time), (self.position, self.rotation), now));
         self.correction.is_some()
     }
 }
@@ -640,6 +709,7 @@ impl ChangeFeed {
 /// objects (`take_particle_changes`, `take_sound_changes`).
 #[derive(Default)]
 pub struct ObjectStore {
+    local_duplicates: local_duplicates::LocalDuplicates,
     pub slots: Vec<Option<Object>>,
     free: Vec<usize>,
     by_key: FastMap<ObjKey, usize>,
@@ -1034,20 +1104,24 @@ impl ObjectStore {
             return;
         };
         let clock = self.report_clock(key.region, received);
-        let hud = self.worn_on_hud(idx);
         let reported = Transform {
             position: Some(t.position),
             rotation: Some(t.rotation),
             scale: None,
         };
         let sent = self.sent_edits.filter(key, reported, now);
+        let snap_hud = self.snap_hud_root_report(idx, t.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        // A HUD shows a report at once: pages on the faces of a turning
-        // cube flip instantly in the Legacy Viewer, with no fade.
-        let drawn = (!hud).then(|| o.predicted(now, clock));
+        let drawn = (!snap_hud).then(|| o.predicted(now, clock));
+        if snap_hud {
+            // A terse update can move a still-resizing body attachment onto the HUD.
+            o.scale_correction = None;
+        }
+        let angular_rotation = o.retained_angular_rotation(clock, t.rotation, t.angular_velocity, o.update_flags);
         o.apply_terse(t);
+        o.angular_rotation = angular_rotation;
         if let Some(sent) = sent {
             o.keep_sent(sent);
         }
@@ -1062,7 +1136,6 @@ impl ObjectStore {
         self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
-        let hud = self.worn_on_hud(idx);
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -1078,12 +1151,19 @@ impl ObjectStore {
             };
             self.sent_edits.filter(key, reported, now)
         };
+        let snap_hud = self.snap_hud_root_report(idx, u.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let mut drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
+        let mut drawn = (!moved_frame && !snap_hud).then(|| o.predicted(now, clock));
         let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
+        let angular_rotation = if o.full_id == u.full_id {
+            o.retained_angular_rotation(clock, u.rotation, u.angular_velocity, u.update_flags)
+        } else {
+            Quat::IDENTITY
+        };
         o.apply_full(u);
+        o.angular_rotation = angular_rotation;
         o.parent_region = region;
         if let Some(sent) = sent {
             o.keep_sent(sent);
@@ -1418,6 +1498,7 @@ impl ObjectStore {
                 self.by_uuid.insert(new, idx);
             }
             self.touch(idx);
+            self.apply_local_duplicates(idx, old_uuid != new_uuid);
             return idx;
         }
         // The same UUID under another key: the simulator renumbered it, or
@@ -1450,7 +1531,9 @@ impl ObjectStore {
         if received.is_some() {
             obj.motion_time = self.report_clock(region, received);
         }
-        self.insert(obj)
+        let idx = self.insert(obj);
+        self.apply_local_duplicates(idx, true);
+        idx
     }
 
     /// Insert a render-only attachment with an explicit real avatar parent.
@@ -1630,6 +1713,7 @@ impl ObjectStore {
         obj.render = RenderState {
             local_volume: obj.render.local_volume.take(),
             local_scale: obj.render.local_scale,
+            local_fit: obj.render.local_fit,
             needs_records: true,
             ..Default::default()
         };
@@ -1675,9 +1759,24 @@ impl ObjectStore {
         self.index_of(&o.parent_key()?)
     }
 
+    /// The root of the linkset of `idx`: the prim whose parent is an avatar
+    /// (an attachment) or nothing.
+    pub fn linkset_root(&self, mut idx: usize) -> usize {
+        for _ in 0..16 {
+            let Some(parent) = self.get(idx).and_then(|o| self.parent_of(o)) else {
+                break;
+            };
+            if self.get(parent).is_none_or(Object::is_avatar) {
+                break;
+            }
+            idx = parent;
+        }
+        idx
+    }
+
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
-    fn worn_on_hud(&self, mut idx: usize) -> bool {
+    pub fn worn_on_hud(&self, mut idx: usize) -> bool {
         for _ in 0..16 {
             let Some(o) = self.get(idx) else {
                 return false;
@@ -1692,12 +1791,63 @@ impl ObjectStore {
         }
         false
     }
+
+    /// LLVOAvatar::resetHUDAttachments marks a HUD root undamped every frame.
+    /// Never interpolate between body and HUD coordinates on a change of point,
+    /// even when the avatar stays the parent. Child prims still damp (#3369).
+    fn snap_hud_root_report(&self, idx: usize, state: u8) -> bool {
+        let Some(o) = self.get(idx) else {
+            return false;
+        };
+        let hud_points = 31..=38;
+        (hud_points.contains(&o.attachment_point()) || hud_points.contains(&state.rotate_left(4)))
+            && self.parent_of(o).and_then(|parent| self.get(parent)).is_some_and(Object::is_avatar)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn local_assembly_fits_nonuniform_anchor_sizes_without_changing_the_server_shape() {
+        let mut object = Object::from_update(1, update(5, PRIM, ""));
+        let volume = object.volume;
+        object.render.local_fit = Some(Vec3::new(10.0, 4.0, 2.0));
+        for anchor in [Vec3::ONE, Vec3::new(3.0, 8.0, 1.0), Vec3::new(12.0, 2.0, 7.0)] {
+            object.scale = anchor;
+            let drawn = object.visual_scale();
+            assert!(drawn.cmple(anchor + Vec3::splat(1e-5)).all());
+            let ratios = drawn / object.render.local_fit.expect("assembly size");
+            assert!((ratios.max_element() - ratios.min_element()).abs() < 1e-6);
+            assert!((drawn - anchor).abs().min_element() < 1e-5, "fills at least one axis");
+            assert_eq!(object.visual_scale_at(Instant::now()), drawn);
+            assert_eq!(object.scale, anchor);
+            assert_eq!(object.volume, volume);
+        }
+        object.render.local_fit = None;
+        assert_eq!(object.visual_scale(), object.scale);
+    }
+
+    #[test]
+    fn local_assembly_follows_damped_anchor_resizing_and_does_not_leak_to_a_new_identity() {
+        let now = Instant::now();
+        let mut objects = ObjectStore::default();
+        let mut update = update(5, PRIM, "");
+        let index = objects.upsert_at(1, update.clone(), Some(now));
+        let size = Vec3::new(10.0, 4.0, 2.0);
+        objects.get_mut(index).expect("anchor").render.local_fit = Some(size);
+        update.scale *= 2.0;
+        objects.upsert_at(1, update.clone(), Some(now));
+        let half = now + Duration::from_millis(60);
+        let object = objects.get(index).expect("anchor");
+        assert!(object.visual_scale_at(half).abs_diff_eq(size * 0.15, 1e-5));
+        assert_eq!(object.scale, Vec3::splat(2.0));
+        update.full_id = Uuid::new_v4();
+        objects.upsert_at(1, update, Some(half));
+        assert!(objects.get(index).expect("new object").render.local_fit.is_none());
+    }
 
     fn anim(mode: u8, rate: f32) -> TextureAnim {
         TextureAnim {
@@ -1712,6 +1862,40 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn full_update_with_empty_name_values_keeps_previous() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Follow LLViewerObject::processUpdateMessage: an update with empty name_values preserves existing values.
+        let mut update_empty_nv = update(1, AVATAR, "");
+        update_empty_nv.name_values.clear();
+        avatar.apply_full(update_empty_nv);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+    }
+
+    #[test]
+    fn group_title_name_value_update_and_clear() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nLastName STRING RW SV Resident\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Update to a new title
+        avatar.set_group_title(Some("New Title"));
+        assert_eq!(avatar.group_title().as_deref(), Some("New Title"));
+
+        // Clear title (none)
+        avatar.set_group_title(None);
+        assert_eq!(avatar.group_title(), None);
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+        assert!(avatar.name_values.contains("LastName STRING RW SV Resident"));
+        assert!(!avatar.name_values.contains("Title"));
+    }
 
     #[test]
     fn avatar_contact_plane_survives_absent_blocks_and_accepts_explicit_clears() {
@@ -1765,6 +1949,73 @@ mod tests {
             particles: Default::default(),
             sound: Default::default(),
         }
+    }
+
+    #[test]
+    fn flexible_path_simulates_without_optional_flexible_parameters() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut flexible = update(1, LL_PCODE_VOLUME, "");
+        flexible.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let flexible = Object::from_update(1, flexible);
+        assert!(flexible.has_flexible_path());
+        assert!(flexible.is_flexible());
+
+        let mut rigid = update(2, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        let rigid = Object::from_update(1, rigid);
+        assert!(!rigid.has_flexible_path());
+        assert!(!rigid.is_flexible());
+
+        let mut sculpt = update(3, LL_PCODE_VOLUME, "");
+        sculpt.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        sculpt.volume.sculpt = Some(aurora_prim::params::SculptParams::default());
+        let sculpt = Object::from_update(1, sculpt);
+        assert!(sculpt.has_flexible_path());
+        assert!(!sculpt.is_flexible());
+
+        let mut mesh = update(4, LL_PCODE_VOLUME, "");
+        mesh.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        mesh.volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::nil(),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        let mesh = Object::from_update(1, mesh);
+        assert!(mesh.has_flexible_path());
+        assert!(!mesh.is_flexible());
+    }
+
+    #[test]
+    fn full_update_without_flex_params_keeps_existing_values_only_while_path_stays_flexible() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut initial = update(1, LL_PCODE_VOLUME, "");
+        initial.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        initial.extra.flexible = Some(crate::build::edits::FLEX_DEFAULT);
+        let mut object = Object::from_update(1, initial);
+        let saved = object.extra.flexible;
+
+        let mut omitted = update(1, LL_PCODE_VOLUME, "");
+        omitted.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        object.apply_full(omitted);
+        assert_eq!(object.extra.flexible, saved);
+
+        let mut explicit = update(1, LL_PCODE_VOLUME, "");
+        explicit.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let mut changed = crate::build::edits::FLEX_DEFAULT;
+        changed.tension += 0.5;
+        explicit.extra.flexible = Some(changed);
+        object.apply_full(explicit);
+        assert_eq!(
+            object.extra.flexible,
+            Some(changed),
+            "an explicit update replaces the retained values"
+        );
+
+        let mut rigid = update(1, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        object.apply_full(rigid);
+        assert_eq!(object.extra.flexible, None);
     }
 
     #[test]
@@ -2353,6 +2604,98 @@ mod tests {
     }
 
     #[test]
+    fn target_omega_keeps_turning_through_repeated_full_and_terse_reports() {
+        let start = Instant::now();
+        for point in [0, 0x10, 0xf1] {
+            let mut store = ObjectStore::default();
+            store.upsert(1, update(1, AVATAR, ""));
+            let mut report = update(2, PRIM, "");
+            report.parent_id = if point == 0 { 0 } else { 1 };
+            report.state = point;
+            report.rotation = Quat::from_rotation_x(0.7);
+            report.angular_velocity = Vec3::Z * 1.25;
+            let idx = store.upsert_at(1, report.clone(), Some(start));
+            for step in 1..=80 {
+                store.advance_motion(1, 0.1);
+                let now = start + Duration::from_millis(step * 100);
+                if step % 2 == 0 {
+                    // A colour/text update repeats the simulator's base angle.
+                    report.text = step.to_string();
+                    store.upsert_at(1, report.clone(), Some(now));
+                } else {
+                    let mut terse = terse(2, report.position, Vec3::ZERO);
+                    terse.is_avatar = false;
+                    terse.state = point;
+                    terse.rotation = report.rotation;
+                    terse.angular_velocity = report.angular_velocity;
+                    store.apply_terse_at(idx, &terse, Some(now));
+                }
+                let object = store.get(idx).expect("spinning prim");
+                assert_eq!(object.rotation, report.rotation, "keep the simulator's base angle");
+                let expected = Quat::from_rotation_z(step as f32 * 0.125) * report.rotation;
+                // Also sample after damping would have erased the old phase.
+                for at in [now, now + Duration::from_secs(1)] {
+                    let shown = store.predicted(object, at).1;
+                    assert!(
+                        shown.angle_between(expected) < 0.002,
+                        "point {point}, step {step}: {shown:?} != {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn target_omega_keeps_phase_on_speed_change_and_reparent_but_resets_on_new_base_or_stop() {
+        let start = Instant::now();
+        for physical in [false, true] {
+            let mut store = ObjectStore::default();
+            let mut report = update(2, PRIM, "");
+            report.angular_velocity = Vec3::Z;
+            if physical {
+                report.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+            }
+            let idx = store.upsert_at(1, report.clone(), Some(start));
+            store.advance_motion(1, 1.0);
+            report.angular_velocity = Vec3::X * 2.0;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(1)));
+            store.advance_motion(1, 0.5);
+            let object = store.get(idx).expect("spinning prim");
+            let expected = Quat::from_rotation_x(1.0) * if physical { Quat::IDENTITY } else { Quat::from_rotation_z(1.0) };
+            let shown = store.predicted(object, start + Duration::from_secs(3)).1;
+            assert!(
+                shown.angle_between(expected) < 0.002,
+                "physical {physical}: {shown:?} != {expected:?}"
+            );
+
+            // A genuinely new base angle replaces the accumulated turn.
+            report.rotation = Quat::from_rotation_y(0.8);
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(3)));
+            store.advance_motion(1, 0.5);
+            let shown = store.predicted(store.get(idx).expect("new base"), start + Duration::from_secs(4)).1;
+            assert!(shown.angle_between(Quat::from_rotation_x(1.0) * report.rotation) < 0.002);
+
+            report.angular_velocity = Vec3::ZERO;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(4)));
+            store.advance_motion(1, 0.5);
+            let shown = store.predicted(store.get(idx).expect("stopped"), start + Duration::from_secs(5)).1;
+            assert!(shown.angle_between(report.rotation) < 0.002);
+
+            report.angular_velocity = Vec3::Z;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(5)));
+            store.advance_motion(1, 1.0);
+            report.parent_id = 10;
+            report.state = 0x10;
+            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(6)));
+            store.advance_motion(1, 0.5);
+            let shown = store
+                .predicted(store.get(idx).expect("reparented"), start + Duration::from_secs(7))
+                .1;
+            assert!(shown.angle_between(Quat::from_rotation_z(1.5) * report.rotation) < 0.002);
+        }
+    }
+
+    #[test]
     fn a_report_elsewhere_than_drawn_fades_in_instead_of_jumping() {
         let mut s = ObjectStore::default();
         let mut walker = update(10, AVATAR, "");
@@ -2468,12 +2811,62 @@ mod tests {
     }
 
     #[test]
-    fn a_hud_page_turns_at_once_while_a_worn_object_fades() {
+    fn moving_a_root_between_the_body_and_hud_drops_old_pose_and_scale_corrections() {
+        let now = Instant::now();
+        let half = now + Duration::from_millis(60);
+        for terse_to_hud in [false, true] {
+            let mut store = ObjectStore::default();
+            store.upsert_at(1, update(10, AVATAR, ""), Some(now));
+            let mut root = update(20, PRIM, "");
+            root.parent_id = 10;
+            root.state = 2u8.rotate_left(4);
+            let idx = store.upsert_at(1, root.clone(), Some(now));
+            root.scale = Vec3::splat(2.0);
+            store.upsert_at(1, root.clone(), Some(now));
+            near(store.get(idx).unwrap().visual_scale_at(half), Vec3::splat(1.5));
+
+            // An attachment point can change while the same avatar stays its parent.
+            root.state = 31u8.rotate_left(4);
+            root.position = Vec3::X * 0.2;
+            root.rotation = Quat::from_rotation_z(0.5);
+            if terse_to_hud {
+                let mut report = terse(20, root.position, Vec3::ZERO);
+                report.is_avatar = false;
+                report.state = root.state;
+                report.rotation = root.rotation;
+                store.apply_terse_at(idx, &report, Some(half));
+            } else {
+                store.upsert_at(1, root.clone(), Some(half));
+            }
+            let object = store.get(idx).unwrap();
+            let (position, rotation) = store.predicted(object, half);
+            near(position, root.position);
+            assert!(rotation.abs_diff_eq(root.rotation, 1e-5));
+            near(object.visual_scale_at(half), root.scale);
+
+            root.state = 2u8.rotate_left(4);
+            root.position = Vec3::X * 0.4;
+            store.upsert_at(1, root.clone(), Some(half));
+            near(store.predicted(store.get(idx).unwrap(), half).0, root.position);
+            // Subsequent changes on the body use the ordinary 60 ms half-life.
+            root.position = Vec3::X * 0.6;
+            store.upsert_at(1, root, Some(half));
+            near(
+                store.predicted(store.get(idx).unwrap(), half + Duration::from_millis(60)).0,
+                Vec3::X * 0.5,
+            );
+        }
+    }
+
+    /// A report of a HUD linkset's root prim shows at once; the prims below
+    /// it fade, as they do on the body (#3369).
+    #[test]
+    fn a_report_shows_a_hud_linkset_root_at_once_and_damps_its_children() {
         let mut s = ObjectStore::default();
         s.upsert(1, update(10, AVATAR, ""));
         let now = Instant::now();
         let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        for (point, root_id, fades) in [(31u8, 20, false), (2u8, 40, true)] {
+        for (point, root_id, root_fades) in [(31u8, 20u32, false), (2u8, 40u32, true)] {
             let mut root = update(root_id, PRIM, "");
             root.parent_id = 10;
             root.state = point.rotate_left(4);
@@ -2481,19 +2874,16 @@ mod tests {
             let mut cube = update(root_id + 1, PRIM, "");
             cube.parent_id = root_id;
             let cube_idx = s.upsert(1, cube.clone());
-            // The HUD page changes immediately; body-worn prims damp size
-            // and rotation together (llSetLinkPrimitiveParamsFast).
+            // llSetLinkPrimitiveParamsFast turns the card and grows it at once
             cube.rotation = quarter;
             cube.scale *= 2.0;
-            let reported_scale = cube.scale;
             s.upsert(1, cube);
             let o = s.get(cube_idx).expect("cube");
-            let drawn = s.predicted(o, now).1;
-            assert_eq!(o.correction.is_some(), fades, "point {point}");
-            assert_eq!(o.scale_correction.is_some(), fades, "scale at point {point}");
-            assert_eq!(o.visual_scale_at(now) == reported_scale, !fades, "scale at point {point}");
-            assert_eq!(drawn.abs_diff_eq(quarter, 1e-4), !fades, "point {point}: {drawn:?}");
-            // the HUD root itself turns at once too
+            assert!(o.correction.is_some() && o.scale_correction.is_some(), "point {point}");
+            near(o.visual_scale_at(now), Vec3::ONE);
+            assert!(s.predicted(o, now).1.abs_diff_eq(Quat::IDENTITY, 1e-4), "point {point}");
+            // a terse report that turns the root of the linkset: shown at once
+            // on a HUD, faded on the body
             let root_idx = s
                 .index_of(&ObjKey {
                     region: 1,
@@ -2504,12 +2894,27 @@ mod tests {
                 root_idx,
                 &TerseUpdate {
                     rotation: quarter,
+                    // the wire carries the attachment point on a terse report too
+                    state: point.rotate_left(4),
                     is_avatar: false,
                     ..terse(root_id, Vec3::ZERO, Vec3::ZERO)
                 },
             );
             let root = s.get(root_idx).expect("root");
-            assert_eq!(root.correction.is_some(), fades, "root at point {point}");
+            assert_eq!(root.correction.is_some(), root_fades, "root at point {point}");
+            let shown = if root_fades { Quat::IDENTITY } else { quarter };
+            assert!(s.predicted(root, now).1.abs_diff_eq(shown, 1e-4), "root at point {point}");
+            // the whole report, pose and size, shows at once on a HUD
+            let mut grown = update(root_id, PRIM, "");
+            grown.parent_id = 10;
+            grown.state = point.rotate_left(4);
+            grown.rotation = quarter;
+            grown.scale *= 2.0;
+            s.upsert(1, grown);
+            let root = s.get(root_idx).expect("root");
+            let grown_to = if root_fades { Vec3::ONE } else { Vec3::ONE * 2.0 };
+            near(root.visual_scale_at(now), grown_to);
+            assert_eq!(root.scale_correction.is_some(), root_fades, "size at point {point}");
         }
     }
 

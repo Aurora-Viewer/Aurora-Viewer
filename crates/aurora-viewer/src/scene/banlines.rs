@@ -33,7 +33,7 @@ pub struct BanLines {
     records: Vec<u32>,
     /// Blended draws with their distance to the camera (sorted with the
     /// other alpha faces).
-    pub cmds: Vec<(f32, DrawCmd)>,
+    pub cmds: Vec<(Vec3, DrawCmd)>,
 }
 
 /// 256² band of diagonal stripes in the middle rows, transparent around
@@ -213,6 +213,15 @@ impl BanLines {
                             aurora_render::textures::WHITE,
                         ],
                         flags: [flags::FULLBRIGHT | flags::ALPHA_BLEND, 0, 0, 0],
+                        // the OIT tie-break: a namespace of their own and the
+                        // segment's place on the region's grid (not its rank
+                        // among the visible ones, which changes as you walk)
+                        identity: [
+                            aurora_render::oit_tie(*b"aurora-ban-line!", ((x + y * stride) * 2 + usize::from(dir == WEST)) as u32),
+                            0,
+                            0,
+                            0,
+                        ],
                         ..Default::default()
                     };
                     let record = match self.records.get(used) {
@@ -230,7 +239,7 @@ impl BanLines {
                     // sort point: the wall at the eye's height
                     let mid = p1 + along * 0.5 + Vec3::Z * (eye.z.clamp(p1.z, p1.z + tall) - p1.z);
                     self.cmds.push((
-                        eye.distance(mid),
+                        mid,
                         DrawCmd {
                             index_count: quad.index_count,
                             first_index: quad.index_offset,

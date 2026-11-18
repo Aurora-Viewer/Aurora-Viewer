@@ -15,7 +15,7 @@ pub(super) struct WindowPlan {
 }
 
 impl App {
-    pub(super) fn open_window(&self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
+    pub(super) fn open_window(&mut self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
             // Metal needs a visible layer to present its first drawable.
@@ -31,7 +31,9 @@ impl App {
             attrs = attrs.with_position(position);
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
+        self.current_window = Arc::downgrade(&window);
         crate::window_hold::install(&window);
+        crate::slurl_handoff::window_ready(&window);
         Ok(window)
     }
 
@@ -54,7 +56,11 @@ impl App {
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             return Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()));
         }
-        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)?;
+        // the VR runtime only when VR is wanted from the start: `--vr` (the
+        // restart the VR button offers) or Preferences › Camera › VR (#2309);
+        // never again in a run whose runtime closed (`reopen_without_vr`)
+        self.vr_set_up = !self.vr_runtime_gone && (crate::cli::get().vr || self.settings.camera.vr_at_start);
+        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu, self.vr_set_up)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
@@ -70,7 +76,7 @@ impl App {
     /// own list: here, not with the world's frames, so the login screen has
     /// it too (#894: only "Automatic" was offered before login).
     pub(super) fn note_gpus(&mut self, renderer: &Renderer) {
-        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
+        self.options_ui.vram = (renderer.info.dedicated_mb, renderer.info.shared_mb, renderer.info.integrated);
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
@@ -119,12 +125,35 @@ pub(super) fn loss_step(history: &mut std::collections::VecDeque<Instant>, now: 
     }
 }
 
-/// `AURORA_GPU_RECOVERY=1`: recover from a device loss instead of closing
-/// (work in progress, off by default until it is complete).
-pub(super) fn enabled() -> bool {
+/// Whether a device loss recovers instead of closing: Preferences › Graphics
+/// (`gpu_recovery`, on by default), unless `AURORA_GPU_RECOVERY` forces it
+/// for the launch. Most losses of a card shared with another program are a
+/// driver reset of the whole card, which the other programs survive by
+/// making their device again (#2237).
+pub(super) fn enabled(setting: bool) -> bool {
+    forced().unwrap_or(setting)
+}
+
+/// egui's CPU copy (egui_shadow.rs) is kept unless the recovery is forced
+/// off: the setting can be turned on during the session, and a copy begun
+/// then would miss the textures egui sent before.
+pub(super) fn shadow_kept() -> bool {
+    forced() != Some(false)
+}
+
+/// `AURORA_GPU_RECOVERY`: `1` on, `0` off, whatever the setting.
+fn forced() -> Option<bool> {
     // read every frame: once per run
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("AURORA_GPU_RECOVERY").is_ok_and(|v| v == "1"))
+    static FORCED: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| parse_forced(std::env::var("AURORA_GPU_RECOVERY").ok().as_deref()))
+}
+
+fn parse_forced(value: Option<&str>) -> Option<bool> {
+    match value.map(str::trim) {
+        Some("1") => Some(true),
+        Some("0") => Some(false),
+        _ => None,
+    }
 }
 
 impl App {
@@ -170,9 +199,64 @@ impl App {
     /// stays on screen until the new one has presented (`retired_window`).
     /// False when no new renderer could be made: the caller closes as before.
     pub(super) fn recover_from_gpu_loss(&mut self, event_loop: &ActiveEventLoop, safe: bool) -> bool {
-        let Some(old) = self.gfx.take() else {
+        let Some(started) = self.replace_renderer(event_loop, safe) else {
             return false;
         };
+        crate::crash::gpu_recovered(started.elapsed().as_millis(), safe);
+        log::warn!(
+            "GPU recovery: new window and renderer in {} ms{}",
+            started.elapsed().as_millis(),
+            if safe { ", with the safe graphics level" } else { "" }
+        );
+        self.world.notifications.push(
+            crate::world::notifications::Kind::Alert,
+            aurora_i18n::tr!("app-gpu-recovered-title"),
+            if safe {
+                aurora_i18n::tr!("app-gpu-recovered-safe")
+            } else {
+                aurora_i18n::tr!("app-gpu-recovered")
+            }
+            .to_owned(),
+            crate::world::notifications::Data::None,
+        );
+        true
+    }
+
+    /// The VR runtime is closing (SteamVR quit by the user,
+    /// `Renderer::vr_runtime_lost`): the GPU device was opened through it,
+    /// and SteamVR ends the process a few seconds later while it is open.
+    /// The renderer is made again without the runtime, as after a device
+    /// loss, and the world goes on without VR until the next start. False
+    /// when no new renderer could be made: the caller closes.
+    pub(super) fn reopen_without_vr(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        self.vr_runtime_gone = true;
+        let Some(started) = self.replace_renderer(event_loop, false) else {
+            return false;
+        };
+        log::warn!(
+            "VR runtime closed: new window and renderer without it in {} ms",
+            started.elapsed().as_millis()
+        );
+        self.world.notifications.push(
+            crate::world::notifications::Kind::Alert,
+            aurora_i18n::tr!("app-vr-runtime-closed-title"),
+            if self.settings.camera.vr_at_start {
+                aurora_i18n::tr!("app-vr-runtime-closed-at-start")
+            } else {
+                aurora_i18n::tr!("app-vr-runtime-closed")
+            }
+            .to_owned(),
+            crate::world::notifications::Data::None,
+        );
+        true
+    }
+
+    /// A new window and renderer in place of the current ones, the session
+    /// and the world kept, the scene reloaded on the new device; with the
+    /// safe graphics level when `safe`. When it began, or None when no new
+    /// renderer could be made.
+    fn replace_renderer(&mut self, event_loop: &ActiveEventLoop, safe: bool) -> Option<Instant> {
+        let old = self.gfx.take()?;
         let started = Instant::now();
         let plan = WindowPlan {
             size: old.window.inner_size().into(),
@@ -194,17 +278,17 @@ impl App {
             Ok(w) => w,
             Err(e) => {
                 log::error!("GPU recovery: cannot create a window: {e}");
-                return false;
+                return None;
             }
         };
         let mut renderer = match self.open_renderer(&window) {
             Ok(r) => r,
             Err(e) => {
                 log::error!("GPU recovery: no new renderer: {e}");
-                return false;
+                return None;
             }
         };
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());
@@ -222,26 +306,9 @@ impl App {
         self.crash_kept = Default::default();
         self.crash_swapchain = Default::default();
         self.crash_recent = Default::default();
-        crate::crash::gpu_recovered(started.elapsed().as_millis(), safe);
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
-        log::warn!(
-            "GPU recovery: new window and renderer in {} ms{}",
-            started.elapsed().as_millis(),
-            if safe { ", with the safe graphics level" } else { "" }
-        );
-        self.world.notifications.push(
-            crate::world::notifications::Kind::Alert,
-            aurora_i18n::tr!("app-gpu-recovered-title"),
-            if safe {
-                aurora_i18n::tr!("app-gpu-recovered-safe")
-            } else {
-                aurora_i18n::tr!("app-gpu-recovered")
-            }
-            .to_owned(),
-            crate::world::notifications::Data::None,
-        );
-        true
+        Some(started)
     }
 }
 
@@ -267,5 +334,14 @@ mod tests {
         assert_eq!(loss_step(&mut history, t), LossStep::Recover);
         assert_eq!(loss_step(&mut history, t + m(4)), LossStep::RecoverSafe);
         assert_eq!(loss_step(&mut history, t + m(6)), LossStep::RecoverSafe);
+    }
+
+    #[test]
+    fn the_variable_forces_the_recovery_either_way_and_anything_else_leaves_the_setting() {
+        assert_eq!(parse_forced(Some("1")), Some(true));
+        assert_eq!(parse_forced(Some(" 0 ")), Some(false));
+        assert_eq!(parse_forced(Some("")), None);
+        assert_eq!(parse_forced(Some("yes")), None);
+        assert_eq!(parse_forced(None), None);
     }
 }

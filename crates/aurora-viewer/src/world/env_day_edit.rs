@@ -79,6 +79,7 @@ impl DayDoc {
                 }
                 let mut frame = frame.clone();
                 frame.insert("type", frame_type(t));
+                crate::weather::sky_mark::name_from_mark(&mut frame);
                 let pos = key["key_keyframe"].as_f32();
                 let pos = if pos.is_finite() { pos.clamp(0.0, 1.0) } else { 0.0 };
                 match track.iter_mut().find(|(p, _)| *p == pos) {
@@ -124,6 +125,13 @@ impl DayDoc {
         self.map["flags"].as_u32()
     }
 
+    /// The day's flags with its frames' (`env_edit::source_flags`; none
+    /// without a `flags` key).
+    pub fn source_flags(&self) -> u32 {
+        let frames = self.tracks.iter().flatten().map(|(_, frame)| frame["flags"].as_u32());
+        frames.fold(self.flags(), |f, frame| f | frame)
+    }
+
     pub fn set_flags(&mut self, flags: u32) {
         self.map.insert("flags", flags as i32);
     }
@@ -135,11 +143,13 @@ impl DayDoc {
         for track in &self.tracks {
             let mut keys = Vec::with_capacity(track.len());
             for (pos, frame) in track {
-                let text = aurora_llsd::to_notation(frame);
+                let mut frame = frame.clone();
+                crate::weather::sky_mark::sync_to_name(&mut frame);
+                let text = aurora_llsd::to_notation(&frame);
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 text.hash(&mut h);
                 let name = h.finish().to_string();
-                frames.insert(name.clone(), frame.clone());
+                frames.insert(name.clone(), frame);
                 keys.push(aurora_llsd::llsd_map! {"key_keyframe" => *pos as f64, "key_name" => name});
             }
             tracks.push(Llsd::Array(keys));
@@ -406,9 +416,19 @@ impl DayDoc {
     }
 }
 
-/// Frames carry no name of their own in a day.
+/// A frame as a day keeps it: its name dropped (LLSettingsDay::getSettings
+/// clones its frames without SETTING_NAME), unless the name carries a sky's
+/// Aurora Weather (a code at its end, weather/region.rs), so that the day
+/// editor and a day applied to myself keep it. The server drops the
+/// frames' names of every day it is given, inline or as an asset (its
+/// validation and getSettings): what reaches a parcel or a region is the
+/// mark in the sky's numbers, set from that name (weather/sky_mark.rs).
 fn without_name(mut v: Llsd) -> Llsd {
-    if let Llsd::Map(m) = &mut v {
+    crate::weather::sky_mark::sync_to_name(&mut v);
+    let coded = crate::weather::region::SkyWeather::from_name(v["name"].as_str()).is_some();
+    if let Llsd::Map(m) = &mut v
+        && !coded
+    {
         m.remove("name");
     }
     v
@@ -455,6 +475,39 @@ mod tests {
         DayDoc::from_llsd(v).expect("a day")
     }
 
+    /// A sky with Aurora Weather keeps it in a day: put in from the
+    /// inventory, changed in the panels, and saved, its name and code stay
+    /// with its frame (where the region's weather reads them); a plain
+    /// sky's name goes, as before.
+    #[test]
+    fn a_sky_keeps_its_weather_code_in_a_day() {
+        use crate::weather::region::SkyWeather;
+        let weather = SkyWeather::default();
+        let coded = weather.name_with("Stormy");
+        let mut sky = SettingsDoc::snapshot_sky(&SkyFrame::default(), &coded);
+        let mut d = day();
+        let i = d.put_frame(TRACK_GROUND + 1, 0.75, &sky).expect("put");
+        let frame = |d: &DayDoc, i: usize| d.frame_doc(TRACK_GROUND + 1, i).expect("frame");
+        assert_eq!(SkyWeather::from_name(frame(&d, i).name()), Some(weather));
+        // changed in the panels
+        sky.set_name(&coded);
+        d.set_frame(TRACK_GROUND + 1, i, &sky);
+        assert_eq!(SkyWeather::from_name(frame(&d, i).name()), Some(weather));
+        // saved: the frames of the asset carry it
+        let saved = d.to_llsd();
+        let named = saved["frames"]
+            .as_map()
+            .expect("frames")
+            .values()
+            .filter(|f| f["name"].as_str() == coded)
+            .count();
+        assert_eq!(named, 1, "{saved:?}");
+        // a plain sky's name goes
+        let plain = SettingsDoc::snapshot_sky(&SkyFrame::default(), "Plain");
+        let j = d.put_frame(TRACK_GROUND + 1, 0.9, &plain).expect("put");
+        assert_eq!(frame(&d, j).name(), "");
+    }
+
     #[test]
     fn frames_round_trip_and_mistyped_keys_are_dropped() {
         let d = day();
@@ -467,6 +520,17 @@ mod tests {
         let rendered = d.day();
         assert!((rendered.sky_at(0.5, 0).gamma - 2.0).abs() < 1e-6);
         assert!((rendered.water_at(0.3).fog_density - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_days_source_flags_join_its_frames() {
+        use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
+        let mut d = day();
+        assert_eq!(d.source_flags(), 0, "no flags key: no restriction");
+        d.set_flags(FLAG_NOTRANS);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS);
+        d.tracks[TRACK_GROUND][0].1.insert("flags", FLAG_NOCOPY as i32);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS | FLAG_NOCOPY);
     }
 
     #[test]

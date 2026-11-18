@@ -28,6 +28,7 @@ pub struct Entry {
 struct Playing {
     definition: Gesture,
     step: usize,
+    preloaded: bool,
     wait: Option<Instant>,
     requested: BTreeSet<Uuid>,
     observed: BTreeSet<Uuid>,
@@ -86,6 +87,7 @@ impl Manager {
             Playing {
                 definition,
                 step: 0,
+                preloaded: false,
                 wait: None,
                 requested: BTreeSet::new(),
                 observed: BTreeSet::new(),
@@ -204,7 +206,7 @@ impl Manager {
             })
             .map(|e| (e.definition.trigger.clone(), e.definition.replacement.clone()))
             .collect();
-        found.sort_by_cached_key(|(t, _)| (t.to_lowercase(), t.clone()));
+        found.sort_by_cached_key(|(t, _)| (crate::natural_order::key(t), t.clone()));
         found.dedup_by(|a, b| a.0.to_lowercase() == b.0.to_lowercase());
         found
     }
@@ -274,8 +276,14 @@ impl Manager {
     pub fn tick_ready(&mut self, now: Instant, signaled: &BTreeSet<Uuid>, mut ready: impl FnMut(&Step) -> bool) -> Vec<Effect> {
         let mut effects = Vec::new();
         self.playing.retain(|_, p| {
-            if p.definition.steps.iter().any(|step| !ready(step)) {
-                return true;
+            // LLGestureMgr::playGesture / hasLoadingAssets tracks the batch
+            // requested by this playback. A later retry or sound-cache eviction
+            // must not suspend steps that have already started (#2931).
+            if !p.preloaded {
+                if p.definition.steps.iter().any(|step| !ready(step)) {
+                    return true;
+                }
+                p.preloaded = true;
             }
             p.observed.retain(|id| signaled.contains(id));
             let started: Vec<_> = p.requested.intersection(signaled).copied().collect();

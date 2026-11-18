@@ -16,14 +16,21 @@ use crate::ui::fonts::chat_size;
 use crate::ui::widgets;
 use crate::world::ChatLine;
 use crate::world::inventory_offers::{Answer, Offer, item_label, kind_label};
+use crate::world::names::NameScope;
 use egui::{RichText, Vec2};
 
 /// The icon of giving, the same as the notification centre's offers.
 const ICON: &str = "gift-filled";
 const BUTTON: Vec2 = Vec2::new(88.0, 24.0);
+/// The names an offer shows under `@shownames`, in the conversation that
+/// names its giver too: the Legacy Viewer hides a giver who is around
+/// unless excepted or already talked to (inventory_offer_handler,
+/// llviewermessage.cpp); here whenever the world hides them, which is
+/// stricter.
+const NAMES: NameScope = NameScope::World;
 
 fn title(env: &LineEnv, line: &ChatLine, v: &Offer) -> String {
-    let name = env.world.person_name(&v.from).unwrap_or_else(|| line.from.clone());
+    let name = env.world.person_name_in(NAMES, &v.from).unwrap_or_else(|| line.from.clone());
     aurora_i18n::tr!("world-mod-gives-you", from = name, what = item_label(&v.item))
 }
 
@@ -55,6 +62,7 @@ fn inventory_link(ui: &mut egui::Ui, env: &mut LineEnv, offer: &Offer) {
             env.p,
             env.emoji,
             env.world,
+            NAMES,
             env.want_names,
             &link,
             chat_size(ui.ctx(), 12.0),
@@ -114,6 +122,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
             p,
             env.emoji,
             world,
+            NAMES,
             env.want_names,
             &text,
             chat_size(ui.ctx(), 12.5),
@@ -201,6 +210,7 @@ mod tests {
                     emoji,
                     pics: &pics,
                     world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -210,6 +220,7 @@ mod tests {
                     menu: None,
                     bubbles: Some(false),
                     previews: None,
+                    moderators: None,
                 };
                 if bubbles {
                     draw_card(ui, &mut env, line, offer, 0.0);

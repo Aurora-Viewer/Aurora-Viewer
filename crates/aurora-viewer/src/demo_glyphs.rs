@@ -207,6 +207,7 @@ pub fn events(mode: Mode) -> Vec<NetEvent> {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: aurora_net::ChatType::Normal,
+            region: Some(crate::demo::HANDLE),
             position: Vec3::ZERO,
             message: sample.chat.into(),
         }));

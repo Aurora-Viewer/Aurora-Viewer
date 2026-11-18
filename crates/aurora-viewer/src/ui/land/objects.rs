@@ -246,7 +246,7 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                                     .unwrap_or_else(|| aurora_i18n::tr!("status-loading-4").into())
                             } else {
                                 world.social.want_name(o.id);
-                                world.social.name_of(&o.id)
+                                world.social.name_in(crate::world::names::NameScope::Roster, &o.id)
                             };
                             (o.clone(), name)
                         })
@@ -255,7 +255,7 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                     rows.sort_by(|a, b| {
                         let o = match col {
                             0 => a.0.is_group.cmp(&b.0.is_group),
-                            1 => a.1.to_lowercase().cmp(&b.1.to_lowercase()),
+                            1 => crate::natural_order::cmp(&a.1, &b.1),
                             2 => a.0.count.cmp(&b.0.count),
                             _ => a.0.most_recent.cmp(&b.0.most_recent),
                         };
@@ -322,7 +322,7 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         }
                         if r.double_clicked() && !o.is_group {
                             // onDoubleClickOwner: the profile (groups have no window yet)
-                            super::super::profile::request_open(ui.ctx(), o.id);
+                            super::super::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, o.id);
                         }
                     }
                 }

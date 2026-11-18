@@ -79,6 +79,19 @@ impl HistoryUi {
         }
     }
 
+    /// An import merged these transcripts: a page's place in the file is no
+    /// longer the same, so the one shown is read again from the start.
+    pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        let path = self.file.as_ref().map(|f| f.path.clone());
+        if self.open
+            && let Some(path) = path
+            && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| changed.contains(stem))
+        {
+            let title = std::mem::take(&mut self.title);
+            self.show_file(title, Some(path));
+        }
+    }
+
     fn go_to(&mut self, page: usize) {
         self.page = page;
         if self.loaded != Some(page)
@@ -403,6 +416,9 @@ impl HistoryUi {
             emoji,
             pics,
             world,
+            // a transcript read again: the names of those around stay
+            // hidden in its text, whichever conversation it was
+            names: crate::world::names::NameScope::World,
             want_names,
             wanted: &mut no_pictures,
             own_name: &own_name,
@@ -413,6 +429,7 @@ impl HistoryUi {
             menu: Some(menu),
             bubbles: None,
             previews: None,
+            moderators: None,
         };
         let wash = find::wash(p);
         let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
@@ -434,6 +451,7 @@ impl HistoryUi {
                     find: &needle,
                     layout: super::view::Layout::Classic,
                     first_unread: None,
+                    blocked: Default::default(),
                 },
                 width,
             );
@@ -458,6 +476,7 @@ impl HistoryUi {
                 lines,
                 first: clock.first,
                 world,
+                names: crate::world::names::NameScope::World,
                 own_name: &own_name,
             };
             // (no field here: what is typed goes nowhere)
@@ -465,7 +484,7 @@ impl HistoryUi {
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+                super::super::context::chat_sender_menu(ui, p, world, avatar, crate::world::names::NameScope::World, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);

@@ -83,7 +83,43 @@ enum Job {
         to: PathBuf,
         done: Sender<std::io::Result<usize>>,
     },
+    /// One file of an import (`import::merge_file`).
+    Merge {
+        source: PathBuf,
+        target: PathBuf,
+        done: Sender<std::io::Result<u64>>,
+    },
+    /// A whole small file read (the conversation log); None when it does
+    /// not exist.
+    Read {
+        path: PathBuf,
+        done: Sender<std::io::Result<Option<Vec<u8>>>>,
+    },
+    /// A whole file replaced at once (the conversation log).
+    Publish {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        done: Sender<std::io::Result<()>>,
+    },
+    /// The conversation log's backups of a folder removed
+    /// (LLConversationLog::deleteBackupLogs).
+    RemoveBackups {
+        dir: PathBuf,
+    },
     Sync(Sender<()>),
+}
+
+/// The way in for an import's thread: it waits for each file while the
+/// lines of the conversations take their turn between two files.
+pub struct MergePort(Sender<Job>);
+
+impl MergePort {
+    /// None when the transcript thread is gone.
+    pub fn merge(&self, source: PathBuf, target: PathBuf) -> Option<std::io::Result<u64>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.0.send(Job::Merge { source, target, done }).ok()?;
+        rx.recv().ok()
+    }
 }
 
 /// The transcript thread and its queue.
@@ -155,6 +191,32 @@ impl Worker {
         rx
     }
 
+    /// Read a whole small file, after what is queued; the answer is None
+    /// when it does not exist.
+    pub fn read(&self, path: PathBuf) -> Receiver<std::io::Result<Option<Vec<u8>>>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.send(Job::Read { path, done });
+        rx
+    }
+
+    /// Replace a whole file (written beside it, then renamed), in the order
+    /// of the calls. The answer says whether it is on disk; a job the queue
+    /// refused closes the channel without one.
+    pub fn publish(&self, path: PathBuf, bytes: Vec<u8>) -> Receiver<std::io::Result<()>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.send(Job::Publish { path, bytes, done });
+        rx
+    }
+
+    /// Remove the backups of the conversation log of a folder.
+    pub fn remove_backups(&self, dir: PathBuf) {
+        self.send(Job::RemoveBackups { dir });
+    }
+
+    pub fn merge_port(&self) -> MergePort {
+        MergePort(self.jobs.clone())
+    }
+
     pub fn loaded(&self) -> impl Iterator<Item = Loaded> + '_ {
         self.loaded.try_iter()
     }
@@ -169,11 +231,100 @@ impl Worker {
     }
 }
 
+/// The whole files whose publication was refused, the latest per file,
+/// kept by the thread until one goes through: the conversation log of a
+/// session that ended (a logout, the exit) no longer reads the answer of its
+/// last publication, so the thread tries it again itself, waiting longer
+/// each time (`save_retry`), before an exit's `flush` and when the queue
+/// closes. Until then a read of that file answers with these bytes, so the
+/// next session of the account starts from them.
+#[derive(Default)]
+struct Owed {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    backoff: crate::save_retry::Backoff,
+}
+
+impl Owed {
+    /// The answer of a publication: a refused one is kept, a written one
+    /// replaces what was owed for that file.
+    fn published(&mut self, path: &Path, bytes: Vec<u8>, written: &std::io::Result<()>) {
+        self.files.retain(|(p, _)| p != path);
+        match written {
+            Ok(()) => {
+                if self.files.is_empty() {
+                    self.backoff.succeeded();
+                }
+            }
+            Err(_) => {
+                self.files.push((path.to_owned(), bytes));
+                if self.backoff.due(std::time::Instant::now()) {
+                    self.backoff.failed(std::time::Instant::now());
+                }
+            }
+        }
+    }
+
+    fn read(&self, path: &Path) -> Option<Vec<u8>> {
+        self.files.iter().find(|(p, _)| p == path).map(|(_, b)| b.clone())
+    }
+
+    /// Every owed file tried again; the next try waits longer if one is
+    /// still refused.
+    fn retry(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        let mut refused = None;
+        self.files.retain(|(path, bytes)| match publish(path, bytes) {
+            Ok(()) => false,
+            Err(e) => {
+                refused.get_or_insert(e);
+                true
+            }
+        });
+        match refused {
+            None => {
+                log::info!("conversation log: saved on a later try");
+                self.backoff.succeeded();
+            }
+            Some(e) => {
+                let wait = self.backoff.failed(std::time::Instant::now());
+                log::warn!("conversation log: still not saved ({e}); tried again in {} s", wait.as_secs());
+            }
+        }
+    }
+
+    /// The next job; while files are owed, they are tried again when the
+    /// wait is over, and once more when the queue closes.
+    fn next(&mut self, jobs: &Receiver<Job>) -> Option<Job> {
+        loop {
+            if self.files.is_empty() {
+                return jobs.recv().ok();
+            }
+            match jobs.recv_timeout(self.backoff.left(std::time::Instant::now())) {
+                Ok(job) => return Some(job),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => self.retry(),
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    self.retry();
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    path.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| crate::atomic_file::write(path, bytes))
+}
+
 fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
     // a failure is said once per run, without the file name (it is the name
     // of a resident or a group, and the viewer's log may be shared)
     let mut failed = false;
-    let mut next = jobs.recv().ok();
+    let mut owed = Owed::default();
+    let mut next = owed.next(&jobs);
     while let Some(job) = next.take() {
         match job {
             Job::Append { path, mut text } => {
@@ -218,14 +369,51 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
                 let _ = done.send(erase(&dir));
             }
             Job::Move { from, to, done } => {
+                // the session publishes its log again in the new folder: a
+                // copy owed in the old one would bring the folder back
+                owed.files.retain(|(p, _)| !p.starts_with(&from));
                 let _ = done.send(relocate(&from, &to));
             }
+            Job::Merge { source, target, done } => {
+                let _ = done.send(super::import::merge_file(&source, &target));
+            }
+            Job::Read { path, done } => {
+                let read = match owed.read(&path) {
+                    Some(bytes) => Ok(Some(bytes)),
+                    None => match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+                            Ok(Some(bytes))
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                        Err(e) => Err(e),
+                    },
+                };
+                let _ = done.send(read);
+            }
+            Job::Publish { path, bytes, done } => {
+                let written = publish(&path, &bytes);
+                if let Err(e) = &written {
+                    log::warn!("conversation log: not saved ({e}); it will be tried again");
+                }
+                owed.published(&path, bytes, &written);
+                let _ = done.send(written);
+            }
+            Job::RemoveBackups { dir } => {
+                for backup in log_backups(&dir) {
+                    if let Err(e) = std::fs::remove_file(&backup) {
+                        log::warn!("conversation log: a backup is not removed ({e})");
+                    }
+                }
+            }
             Job::Sync(done) => {
+                // the exit's flush: what is owed is tried once more first
+                owed.retry();
                 let _ = done.send(());
             }
         }
         if next.is_none() {
-            next = jobs.recv().ok();
+            next = owed.next(&jobs);
         }
     }
 }
@@ -317,8 +505,57 @@ fn relocate(from: &Path, to: &Path) -> std::io::Result<usize> {
         }
         moved.push((source, target));
     }
+    // LLConversationLog::moveLog: the log follows, the one already there
+    // kept as a backup
+    // a log that cannot follow fails the whole move: the transcripts go
+    // back, so the log and its transcripts are never split between folders
+    if let Err(e) = move_log(&from.join(super::conversations::FILE), &to.join(super::conversations::FILE)) {
+        log::warn!("conversation log: not moved with the transcripts ({e}); the move is undone");
+        for (source, target) in moved.iter().rev() {
+            let _ = move_file(target, source);
+        }
+        return Err(e);
+    }
     let _ = std::fs::remove_dir(from);
     Ok(moved.len())
+}
+
+/// LLConversationLog::moveLog: `from` becomes `to`; a file already at `to`
+/// is renamed `<to>.backup`, `.backup1`, `.backup2`… first.
+fn move_log(from: &Path, to: &Path) -> std::io::Result<()> {
+    if !from.is_file() {
+        return Ok(());
+    }
+    if to.is_file() {
+        let name = to.file_name().and_then(|n| n.to_str()).unwrap_or(super::conversations::FILE);
+        let mut backup = to.with_file_name(format!("{name}.backup"));
+        let mut n = 0;
+        while backup.exists() {
+            n += 1;
+            backup = to.with_file_name(format!("{name}.backup{n}"));
+        }
+        std::fs::rename(to, &backup)?;
+        if let Err(e) = move_file(from, to) {
+            // the log already there is put back
+            let _ = std::fs::rename(&backup, to);
+            return Err(e);
+        }
+        return Ok(());
+    }
+    move_file(from, to)
+}
+
+/// The backups of the conversation log in a folder
+/// (LLConversationLog::getListOfBackupLogs: `conversation.log.backup*`).
+fn log_backups(dir: &Path) -> Vec<PathBuf> {
+    let prefix = format!("{}.backup", super::conversations::FILE);
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix)))
+        .map(|e| e.path())
+        .collect()
 }
 
 fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -437,6 +674,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aurora-chatlog-store-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The session that published is gone (a logout reads no answer): the
+    /// refused log is read back from memory by the next session and written
+    /// by the exit's flush once the folder takes writes.
+    #[test]
+    fn a_refused_publication_is_kept_read_back_and_written_at_the_flush() {
+        let root = temp();
+        let dir = root.join("account");
+        std::fs::write(&dir, b"in the way").unwrap();
+        let path = dir.join("conversation.log");
+        let worker = Worker::start().expect("thread");
+        let answer = worker.publish(path.clone(), b"session log".to_vec());
+        assert!(answer.recv_timeout(Duration::from_secs(10)).expect("answer").is_err());
+        let read = worker.read(path.clone()).recv_timeout(Duration::from_secs(10)).expect("answer");
+        assert_eq!(read.unwrap().as_deref(), Some(&b"session log"[..]), "read from memory");
+        std::fs::remove_file(&dir).unwrap();
+        assert!(worker.flush(Duration::from_secs(10)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"session log");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -618,6 +875,24 @@ mod tests {
         assert_eq!(std::fs::read(old.join("Bob.txt")).unwrap(), b"d\n");
         assert!(!new.join("Bob.txt").exists());
         assert_eq!(std::fs::read(new.join("Jane Doe.txt")).unwrap(), b"a\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_log_that_cannot_move_undoes_the_move() {
+        let dir = temp();
+        let (old, new) = (dir.join("old"), dir.join("new"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("Jane Doe.txt"), b"a\n").unwrap();
+        std::fs::write(old.join(super::super::conversations::FILE), b"log").unwrap();
+        // a folder where the log should land: it cannot be replaced
+        std::fs::create_dir_all(new.join(super::super::conversations::FILE)).unwrap();
+        let w = Worker::start().unwrap();
+        let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(moved.is_err());
+        assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"a\n");
+        assert_eq!(std::fs::read(old.join(super::super::conversations::FILE)).unwrap(), b"log");
+        assert!(!new.join("Jane Doe.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

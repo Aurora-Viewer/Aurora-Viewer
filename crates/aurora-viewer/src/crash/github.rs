@@ -18,6 +18,9 @@ const TOKEN: &str = "https://github.com/login/oauth/access_token";
 const CLIENT_ID: &str = "Iv23liT7PLWClMLztI1W";
 const SERVICE: &str = "Aurora Viewer GitHub";
 const ACCOUNT: &str = "crash-reports";
+/// The credential store's entry of the authorization (service, account),
+/// for the removal from this computer (`uninstall.rs`).
+pub const STORE_ENTRY: (&str, &str) = (SERVICE, ACCOUNT);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Failure {
@@ -341,14 +344,14 @@ fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
 }
 
 fn client() -> Result<reqwest::Client, Failure> {
-    reqwest::Client::builder()
-        .user_agent(aurora_version::user_agent())
-        .https_only(true)
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|_| Failure::Network)
+    aurora_proxy::http_client(|b| {
+        b.user_agent(aurora_version::user_agent())
+            .https_only(true)
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(20))
+    })
+    .map_err(|_| Failure::Network)
 }
 
 async fn json(mut response: reqwest::Response) -> Result<Value, Failure> {

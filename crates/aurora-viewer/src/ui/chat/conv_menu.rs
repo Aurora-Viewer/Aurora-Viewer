@@ -14,7 +14,7 @@
 use super::sidebar::{self, Kind};
 use super::{ChatUi, ConvAction, close_tip};
 use crate::theme::Palette;
-use crate::ui::context::{self, AvatarList, CtxAction};
+use crate::ui::context::{self, CtxAction};
 use crate::ui::menu;
 use crate::world::World;
 use uuid::Uuid;
@@ -60,7 +60,8 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
     match kind {
         Kind::Private => {
             menu::separator(ui, p);
-            context::avatar_list_menu(ui, p, world, id, AvatarList::Name);
+            // an IM names its person whoever is around
+            context::avatar_name_menu(ui, p, world, id, crate::world::names::NameScope::Roster);
             // the conversation item's rows the name's menu does not have
             // (buildParticipantMenuOptions)
             menu::separator(ui, p);
@@ -69,7 +70,13 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(
+                ui,
+                p,
+                "coin-filled",
+                aurora_i18n::tr!("common-pay"),
+                crate::ui::context::can_pay_resident(world),
+            ) {
                 act(CtxAction::PayResident(id));
             }
         }

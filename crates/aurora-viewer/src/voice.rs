@@ -86,6 +86,9 @@ pub struct Voice {
     muted: HashSet<Uuid>,
     /// Volumes sent to the current session, per resident.
     volumes: HashMap<Uuid, f32>,
+    /// The viewer's own volume on the received voice given to the current
+    /// session; `None` = never set (0.5, heard as sent).
+    receive_volume: Option<f32>,
 }
 
 impl Voice {
@@ -95,14 +98,24 @@ impl Voice {
         self.mic = None;
         self.muted.clear();
         self.volumes.clear();
+        self.receive_volume = None;
         self.connected = false;
         self.own_level = 0.0;
         self.status.clear();
     }
-    /// The channel wanted now, its kind for the server, or why there is none.
-    fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, ChannelKind, String, Option<String>), String> {
+    /// A channel to join, None to keep the current call, or why to leave.
+    fn wanted(v: &VoiceInputs, current: Option<&ChannelKey>) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
         if !v.enabled {
             return Err(aurora_i18n::tr!("common-voice-disabled").into());
+        }
+        // Voice (WebRTC) cannot go through the proxy of Preferences › Network
+        // › Proxy and shows the real address to the voice servers and the
+        // other speakers: off while a proxy is on, unless the user allowed
+        // direct voice after its warning. Stricter than the Legacy Viewer,
+        // whose voice always connects directly (llvoicewebrtc.cpp has no
+        // proxy).
+        if !aurora_proxy::rule().voice_allowed() {
+            return Err(aurora_i18n::tr!("voice-off-proxy").into());
         }
         if !v.in_world {
             return Err(String::new());
@@ -112,6 +125,23 @@ impl Voice {
         }
         if v.engine.is_none() {
             return Err(aurora_i18n::tr!("voice-no-audio-output").into());
+        }
+        Self::connection(v, current)
+    }
+
+    /// Region data is needed to join, not to maintain a non-spatial call.
+    fn connection(
+        v: &VoiceInputs,
+        current: Option<&ChannelKey>,
+    ) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
+        // LLWebRTCVoiceClient::voiceConnectionCoro (indra/newview/llvoicewebrtc.cpp)
+        // changes regional channels only in spatial voice. During a teleport,
+        // region/caps/backend can disappear before the destination is ready;
+        // leaving here logs out of the independent call on both ends.
+        if let Some(ChannelKey::Call(id)) = current
+            && v.call.is_some_and(|call| call.id == *id)
+        {
+            return Ok(None);
         }
         let region = v.region.ok_or_else(String::new)?;
         let caps = v.caps.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
@@ -127,7 +157,7 @@ impl Voice {
         }
         let signaling = caps.get("VoiceSignalingRequest").cloned();
         let (key, channel) = Self::channel(region, v.region_flags, v.parcel, v.call)?;
-        Ok((key, channel, provision, signaling))
+        Ok(Some((key, channel, provision, signaling)))
     }
 
     /// LLWebRTCVoiceClient::voiceConnectionCoro (indra/newview/llvoicewebrtc.cpp):
@@ -206,10 +236,11 @@ impl Voice {
         }
 
         // session for the current channel
-        match Self::wanted(&v) {
-            Ok((key, channel, provision, signaling)) => {
+        match Self::wanted(&v, self.session.as_ref().map(|(key, _)| key)) {
+            Ok(Some((key, channel, provision, signaling))) => {
                 if self.session.as_ref().map(|(k, _)| k) != Some(&key) {
-                    // changing channel: leave the old one first (drop logs out)
+                    // changing channel: leave the old one first (the drop
+                    // detaches the microphone at once, then logs out)
                     self.session = None;
                     if let Some(engine) = v.engine {
                         match &key {
@@ -230,9 +261,11 @@ impl Voice {
                         self.session = Some((key, s));
                         self.muted.clear();
                         self.volumes.clear();
+                        self.receive_volume = None;
                     }
                 }
             }
+            Ok(None) => {}
             Err(why) => {
                 if self.session.take().is_some() {
                     log::info!("voice: leaving ({why})");
@@ -309,10 +342,22 @@ impl Voice {
     /// Each resident's volume (0..1, 0.5 as sent) for the participants of
     /// the session (LLSpeakerVolumeStorage, setUserVolume); only changes are
     /// sent, a resident without a saved volume is heard at 0.5.
-    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>) {
-        let Some((_, s)) = &self.session else {
+    ///
+    /// `p2p_peer` is the other resident of the private call in progress. The
+    /// server ignores `setUserVolume` on a private call's channel, in the
+    /// Legacy Viewer too (issue #2874), so the viewer also scales what it
+    /// receives there, which is that resident's voice alone: better than the
+    /// Legacy Viewer, where the slider does nothing. The request is still
+    /// sent as the Legacy Viewer sends it.
+    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>, p2p_peer: Option<Uuid>) {
+        let Some((key, s)) = &self.session else {
             return;
         };
+        let receive = receive_volume(key, p2p_peer, saved);
+        if (receive - self.receive_volume.unwrap_or(0.5)).abs() > f32::EPSILON {
+            s.set_receive_volume(receive);
+            self.receive_volume = Some(receive);
+        }
         if !self.connected {
             return;
         }
@@ -357,6 +402,16 @@ impl Voice {
             Some((_, s)) if self.connected => tag_levels(s.participants(), agent_id, s.own_level()),
             _ => HashMap::new(),
         }
+    }
+}
+
+/// The viewer's own volume on what `key`'s channel sends: the private
+/// call's other resident's saved volume on that call's channel, 0.5 (as
+/// sent) on a channel that mixes several voices (nearby, conferences).
+fn receive_volume(key: &ChannelKey, p2p_peer: Option<Uuid>, saved: &std::collections::BTreeMap<Uuid, f32>) -> f32 {
+    match (key, p2p_peer) {
+        (ChannelKey::Call(_), Some(peer)) => saved.get(&peer).copied().unwrap_or(0.5),
+        _ => 0.5,
     }
 }
 
@@ -408,6 +463,182 @@ pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_private_call_takes_its_peer_volume() {
+        let (peer, other) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let saved = std::collections::BTreeMap::from([(peer, 0.1), (other, 0.9)]);
+        let call = ChannelKey::Call("call".into());
+        let nearby = ChannelKey::Local { region: 7, parcel: None };
+        assert_eq!(receive_volume(&call, Some(peer), &saved), 0.1);
+        // no saved volume: heard as sent
+        assert_eq!(receive_volume(&call, Some(Uuid::from_u128(4)), &saved), 0.5);
+        // a conference mixes several voices: the server's gain only
+        assert_eq!(receive_volume(&call, None, &saved), 0.5);
+        // still on nearby voice while the call connects
+        assert_eq!(receive_volume(&nearby, Some(peer), &saved), 0.5);
+    }
+
+    fn inputs(http: &reqwest::Client) -> VoiceInputs<'_> {
+        VoiceInputs {
+            enabled: true,
+            in_world: true,
+            offline: false,
+            tuning: false,
+            engine: None,
+            http,
+            agent_id: Uuid::from_u128(1),
+            grid: "test",
+            region: Some(7),
+            region_flags: Some(aurora_net::region_flags::ALLOW_VOICE),
+            caps: None,
+            voice_server: "webrtc",
+            parcel: None,
+            input_device: "",
+            mic_gain: 1.0,
+            processing: Default::default(),
+            ear: crate::settings::VoiceEar::Avatar,
+            transmit: true,
+            avatar: (DVec3::ZERO, Quat::IDENTITY),
+            listener: (DVec3::ZERO, Quat::IDENTITY),
+            call: None,
+        }
+    }
+
+    #[test]
+    fn the_current_call_survives_teleport_region_data_gaps() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: "test-credentials".into(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let caps = HashMap::from([("ProvisionVoiceAccountRequest".into(), "https://voice.invalid/provision".into())]);
+        let empty_caps = HashMap::new();
+        let forbidden_parcel = aurora_net::ParcelInfo::default();
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+
+        // Departure, no main region, arrival before seed caps and simulator
+        // features, and a destination with no spatial voice. None means keep
+        // the exact transport, rather than leave and provision the call again.
+        for (region, caps, backend) in [
+            (Some(7), Some(&caps), "webrtc"),
+            (None, None, ""),
+            (Some(8), None, ""),
+            (Some(8), Some(&empty_caps), ""),
+            (Some(8), Some(&empty_caps), "webrtc"),
+            (Some(8), Some(&caps), ""),
+            (Some(8), Some(&caps), "vivox"),
+            (Some(8), Some(&caps), "webrtc"),
+        ] {
+            v.region = region;
+            v.caps = caps;
+            v.voice_server = backend;
+            v.region_flags = Some(0);
+            v.parcel = Some(&forbidden_parcel);
+            assert!(
+                Voice::connection(&v, Some(&current))
+                    .expect("the call is independent of the destination")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn call_hangup_and_channel_changes_still_require_the_destination() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: "test-credentials".into(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let other_call = ChannelKey::Call("other-call".into());
+        let local = ChannelKey::Local {
+            region: 7,
+            parcel: Some(42),
+        };
+        let caps = HashMap::from([("ProvisionVoiceAccountRequest".into(), "https://voice.invalid/provision".into())]);
+        let parcel = aurora_net::ParcelInfo {
+            local_id: 42,
+            flags: parcel_flags::ALLOW_VOICE_CHAT,
+            ..Default::default()
+        };
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+        for current in [None, Some(&other_call), Some(&local)] {
+            assert!(Voice::connection(&v, current).is_err(), "a new call still needs provisioning");
+        }
+        v.caps = Some(&caps);
+        let (key, kind, _, _) = Voice::connection(&v, Some(&other_call))
+            .expect("the new call can join")
+            .expect("join, not keep");
+        assert_eq!(key, current);
+        assert_eq!(
+            kind,
+            ChannelKind::Multiagent {
+                channel_id: call.id.clone(),
+                credentials: call.credentials.clone()
+            }
+        );
+
+        v.call = None;
+        assert!(
+            Voice::connection(&v, Some(&current)).is_err(),
+            "hangup waits for the destination parcel"
+        );
+        v.parcel = Some(&parcel);
+        v.region = Some(8);
+        let (key, kind, _, _) = Voice::connection(&v, Some(&current))
+            .expect("nearby voice is ready")
+            .expect("leave the call");
+        assert_eq!(
+            key,
+            ChannelKey::Local {
+                region: 8,
+                parcel: Some(42)
+            }
+        );
+        assert_eq!(kind, ChannelKind::Local { parcel_local_id: Some(42) });
+        v.region_flags = Some(0);
+        assert!(Voice::connection(&v, Some(&current)).is_err(), "hangup respects land restrictions");
+        v.region = None;
+        assert!(
+            Voice::connection(&v, Some(&local)).is_err(),
+            "spatial voice must not stay in the old region"
+        );
+    }
+
+    #[test]
+    fn keeping_a_call_never_bypasses_voice_disabled_logout_or_missing_audio() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: String::new(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+        v.enabled = false;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("common-voice-disabled")
+        );
+        v.enabled = true;
+        v.in_world = false;
+        assert_eq!(Voice::wanted(&v, Some(&current)).unwrap_err(), "");
+        v.in_world = true;
+        v.offline = true;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("voice-demo-mode-no-voice-server-the-microphone-drives-the")
+        );
+        v.offline = false;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("voice-no-audio-output")
+        );
+    }
 
     #[test]
     fn nearby_voice_requires_both_region_and_parcel_permission() {

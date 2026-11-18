@@ -35,8 +35,19 @@ pub(super) fn pane(ui: &mut egui::Ui, rect: Rect, id: &str) -> egui::Ui {
     child
 }
 
+/// Across: the 295-point reference over the window's width. Down: the same
+/// up to the default window's width, then no more: a wider window keeps the
+/// top block's height and leaves its room to the tabs below (#3648: the
+/// block grew with the width and squeezed them down to 30 points). The
+/// Legacy Viewer's floater has a fixed size (floater_tools.xml, 295 x 638).
+/// A larger text size raises that limit with the rows it has to hold.
+fn canvas_scale(ui: &egui::Ui, width: f32) -> Vec2 {
+    let across = width / 295.0;
+    vec2(across, across.min(DEFAULT_SIZE.x / 295.0 * common::font_scale(ui)))
+}
+
 fn slot(ui: &mut egui::Ui, canvas: Rect, xy: [f32; 4], id: &str) -> egui::Ui {
-    let scale = canvas.width() / 295.0;
+    let scale = canvas_scale(ui, canvas.width());
     pane(
         ui,
         Rect::from_min_size(canvas.min + vec2(xy[0], xy[1]) * scale, vec2(xy[2], xy[3]) * scale),
@@ -155,7 +166,7 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         }
         if ui
             .add_enabled(
-                !tool.attachment_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2,
+                !s.edit_linked && tool.can_link(world),
                 egui::Button::new(aurora_i18n::tr!("build-legacy-link")).min_size(vec2(50.0 * canvas.width() / 295.0, 20.0)),
             )
             .on_hover_text(aurora_i18n::tr!("build-compact-link"))
@@ -165,7 +176,7 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         }
         if ui
             .add_enabled(
-                !tool.attachment_selected(world) && !tool.selection.is_empty(),
+                !tool.selection.is_empty() && tool.can_unlink(world),
                 egui::Button::new(aurora_i18n::tr!("build-legacy-unlink")).min_size(vec2(90.0 * canvas.width() / 295.0, 20.0)),
             )
             .on_hover_text(aurora_i18n::tr!("build-compact-unlink"))
@@ -229,7 +240,8 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
 
 fn object_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, env: &mut Env) {
     let width = widgets::scrolled_width(ui).max(1.0);
-    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0), egui::Sense::hover());
+    let scale = common::font_scale(ui);
+    let (canvas, _) = ui.allocate_exact_size(vec2(width, 430.0 * scale), egui::Sense::hover());
     let mut left = slot(ui, canvas, [10.0, 5.0, 106.0, 1000.0], "legacy-object-vectors");
     object::show_flags(&mut left, p, tool, world);
     left.add_space(8.0);
@@ -254,9 +266,9 @@ pub(super) fn body(
             ui.spacing_mut().item_spacing = vec2(3.0, 1.0);
             ui.spacing_mut().interact_size.y = 19.0;
             ui.spacing_mut().button_padding = vec2(3.0, 1.0);
-            let scale = ui.available_width() / 295.0;
+            let scale = canvas_scale(ui, ui.available_width());
             let (canvas, _) = ui.allocate_exact_size(
-                vec2(ui.available_width(), (if s.expanded { 237.0 } else { 178.0 }) * scale),
+                vec2(ui.available_width(), (if s.expanded { 237.0 } else { 178.0 }) * scale.y),
                 egui::Sense::hover(),
             );
             toolbar(ui, p, tool, canvas);
@@ -269,7 +281,7 @@ pub(super) fn body(
                     let mut options = slot(ui, canvas, [10.0, 54.0, 275.0, 122.0], "legacy-tool-options");
                     options.spacing_mut().interact_size.y = 16.0;
                     if mode == Tool::Land {
-                        options.spacing_mut().slider_width = 80.0 * scale;
+                        options.spacing_mut().slider_width = 80.0 * scale.x;
                     }
                     match mode {
                         Tool::Focus => tools::focus_panel(&mut options, p, tool, mods, env),
@@ -281,16 +293,10 @@ pub(super) fn body(
                 }
             }
             let mut gear = slot(ui, canvas, [277.0, 77.0, 18.0, 23.0], "legacy-options-button");
-            if widgets::action_button(
-                &mut gear,
-                p,
-                "settings-filled",
-                "",
-                widgets::ActionKind::Flat,
-                vec2(18.0 * scale, 23.0 * scale),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-layout-settings"))
-            .clicked()
+            let gear_size = gear.max_rect().size();
+            if widgets::action_button(&mut gear, p, "settings-filled", "", widgets::ActionKind::Flat, gear_size)
+                .on_hover_text(aurora_i18n::tr!("build-layout-settings"))
+                .clicked()
             {
                 tool.ui.layout.open = !tool.ui.layout.open;
             }
@@ -316,7 +322,7 @@ pub(super) fn body(
                 }
                 let height = (ui.available_height() - 17.0).max(30.0);
                 let width = widgets::scrolled_width(ui).max(1.0);
-                egui::ScrollArea::vertical()
+                let _scrolled = egui::ScrollArea::vertical()
                     .id_salt(("legacy-build-body", tool.tool as u8, tool.tab))
                     .max_height(height)
                     .auto_shrink([false, false])
@@ -347,6 +353,11 @@ pub(super) fn body(
                             });
                         }
                     });
+                // The bar is reserved beside the content (not drawn over it).
+                // Tests wheel that strip: a number field would take the wheel.
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::unique("legacy-build-scroll"), _scrolled.inner_rect));
             }
             let icon = if s.expanded { "caret-up-filled" } else { "caret-down-filled" };
             let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, vec2(ui.available_width(), 14.0))

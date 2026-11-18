@@ -18,6 +18,7 @@ use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
 use crate::world::calls::{Call, CallKind, CallState, InviteAnswer, PendingInvite};
+use crate::world::names::NameScope;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -174,7 +175,7 @@ fn incoming(
 ) {
     let inv = &invite.invite;
     let name = if inv.from_name.is_empty() {
-        world.social.name_of(&inv.from)
+        world.social.name_in(NameScope::Roster, &inv.from)
     } else {
         inv.from_name.clone()
     };
@@ -410,7 +411,7 @@ fn person_tile(
     actions: &mut Vec<ConvAction>,
 ) {
     st.wanted_pics.insert(person.id);
-    let name = world.social.display_name_of(&person.id);
+    let name = world.social.display_name_in(NameScope::Roster, &person.id);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(PERSON_W, PERSON + 22.0), egui::Sense::hover());
     // ourselves: no volume to set
     let sense = if person.me { egui::Sense::hover() } else { egui::Sense::click() };
@@ -547,7 +548,7 @@ fn mini(
             let speakers: Vec<String> = everyone
                 .iter()
                 .filter(|m| m.speaking)
-                .map(|m| first_name(&world.social.display_name_of(&m.id)))
+                .map(|m| first_name(&world.social.display_name_in(NameScope::Roster, &m.id)))
                 .collect();
             let said = match speakers.as_slice() {
                 [] => world.session_title(&call.conversation()),
@@ -568,7 +569,7 @@ fn mini(
                 let r = egui::Rect::from_min_size(egui::pos2(stack.left() + i as f32 * 18.0, stack.top()), egui::Vec2::splat(24.0));
                 let ring = if m.speaking { p.success } else { p.navy };
                 ui.painter().circle_filled(r.center(), 14.0, ring);
-                let name = world.social.display_name_of(&m.id);
+                let name = world.social.display_name_in(NameScope::Roster, &m.id);
                 crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&m.id), &name, m.waiting);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -638,7 +639,7 @@ fn ongoing(
                     .font(egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())))
                     .color(p.ink),
             );
-            let name = world.social.display_name_of(&by);
+            let name = world.social.display_name_in(NameScope::Roster, &by);
             let minutes = since.elapsed().as_secs() / 60;
             let when = if minutes == 0 {
                 aurora_i18n::tr!("ui-chat-call-started-now", name = name.as_str()).to_owned()

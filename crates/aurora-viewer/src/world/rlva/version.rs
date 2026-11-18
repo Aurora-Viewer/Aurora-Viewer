@@ -6,7 +6,9 @@ use aurora_net::inventory::InvItem;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
-pub const VERSION_NEW: &str = "RestrainedLove viewer v3.4.3 (RLVa 2.4.2; Aurora)";
+/// Same text as RlvStrings::getVersion: no viewer name, in the object
+/// replies and in the `@version` IM reply alike.
+pub const VERSION_NEW: &str = "RestrainedLove viewer v3.4.3 (RLVa 2.4.2)";
 
 #[derive(Default)]
 pub struct Version {
@@ -66,7 +68,7 @@ impl Version {
         let compatible = self.compatible.contains(&source);
         match command.behaviour.as_str() {
             "version" | "versionnew" => Some(format!(
-                "{} viewer v{} (RLVa 2.4.2; Aurora)",
+                "{} viewer v{} (RLVa 2.4.2)",
                 if command.behaviour == "version" {
                     "RestrainedLife"
                 } else {
@@ -177,16 +179,15 @@ mod tests {
     fn rlva_version_negotiation_keeps_legacy_new_implementation_and_invalid_option_semantics() {
         let version = Version::default();
         let source = Uuid::from_u128(1);
-        assert!(
-            version
-                .query(source, &Command::parse("version:any=123").unwrap())
-                .unwrap()
-                .starts_with("RestrainedLife viewer v3.4.3")
+        assert_eq!(
+            version.query(source, &Command::parse("version:any=123").unwrap()),
+            Some("RestrainedLife viewer v3.4.3 (RLVa 2.4.2)".into())
         );
         assert_eq!(
             version.query(source, &Command::parse("versionnew:any=123").unwrap()),
             Some(VERSION_NEW.into())
         );
+        assert_eq!(VERSION_NEW, "RestrainedLove viewer v3.4.3 (RLVa 2.4.2)");
         assert_eq!(
             version.query(source, &Command::parse("versionnum=123").unwrap()),
             Some("3040300".into())
@@ -278,6 +279,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@versionnum=123,versionnum:impl=124,version:ignored=125".into(),
         }));
@@ -296,6 +298,6 @@ mod tests {
                 .iter()
                 .any(|command| matches!(command, aurora_net::NetCommand::ChatReply { channel: 124, message } if message == "2040213"))
         );
-        assert!(world.rlva.out.iter().any(|command| matches!(command, aurora_net::NetCommand::ChatReply { channel: 125, message } if message.starts_with("RestrainedLife viewer v2.9.28"))));
+        assert!(world.rlva.out.iter().any(|command| matches!(command, aurora_net::NetCommand::ChatReply { channel: 125, message } if message == "RestrainedLife viewer v2.9.28 (RLVa 2.4.2)")));
     }
 }

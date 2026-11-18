@@ -239,8 +239,14 @@ impl App {
             .get_or_insert_with(|| (crate::cli::window_title(), crate::cli::window_title()));
         let mut want = titled(base, unread, on);
         // (the 3D paused behind on a busy card, busy_pause.rs)
-        if self.busy_pause.paused() {
+        if self.gaming_mode.on {
+            want = aurora_i18n::tr!("gaming-mode-window-title", title = want.as_str());
+        } else if self.busy_pause.paused() {
             want = aurora_i18n::tr!("busy-pause-window-title", title = want.as_str());
+        }
+        // (the render targets waiting for video memory)
+        if self.last_render.video_memory_full {
+            want = aurora_i18n::tr!("video-memory-full-window-title", title = want.as_str());
         }
         if *shown != want {
             g.window.set_title(&want);
@@ -273,11 +279,12 @@ impl App {
                         continue;
                     }
                     self.world.social.session_mut(session);
-                    self.world.social.focus_im = Some(session);
+                    self.world.focus_conversation(session, true);
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::NearbyChat) => {
                     self.world.social.focus_im = Some(uuid::Uuid::nil());
+                    self.world.social.focus_im_to_type = false;
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::Notifications) => self.notif_ui.open = true,

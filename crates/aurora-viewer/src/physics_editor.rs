@@ -9,6 +9,7 @@
 //! physics (`scene/body_physics.rs`): a slider changes the bounce at once,
 //! and nothing reaches the simulator until the layer is saved.
 
+use crate::world::appearance::FT_CLOTHING;
 use crate::{shape_editor::Draft, world::World};
 use aurora_assets::wearable::Wearable;
 use aurora_net::{NetCommand, inventory::InvItem};
@@ -17,9 +18,6 @@ use uuid::Uuid;
 
 /// Wearable type of a physics layer (LLWearableType::WT_PHYSICS).
 pub const KIND: u8 = 15;
-/// Clothing folder, where "New physics" is created
-/// (LLFolderType::assetTypeToFolderType(AT_CLOTHING)).
-const FT_CLOTHING: i32 = 5;
 /// Sex parameter of the shape (above 0.5: male).
 const PARAM_MALE: i32 = 80;
 
@@ -260,6 +258,10 @@ pub struct State {
     edit_when_worn: Option<Uuid>,
     /// AURORA_DEMO_PHYSICS_EDIT=drag: when the sliders start moving.
     pub(crate) demo_drag: Option<std::time::Instant>,
+    /// Import of an appearance XML into the draft.
+    pub xml: crate::shape_editor::xml_import::Import,
+    /// Export of the draft to an appearance XML.
+    pub xml_export: crate::shape_editor::xml_export::Export,
 }
 
 impl State {

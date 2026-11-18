@@ -31,9 +31,10 @@ on:
     branches: [main]
 
 # a push to main that has started is never cancelled: its cache build takes
-# a quarter of an hour, and the next merge would otherwise cancel it again
-# and again. A push still waiting is replaced by the next one all the same
-# (one pending run per group): see the timeouts in ci.yml
+# more than half an hour on GitHub's runner, and the next merge would
+# otherwise cancel it again and again. A push still waiting is replaced by
+# the next one all the same (one pending run per group): see the timeouts
+# in ci.yml
 concurrency:
   group: macos-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -113,8 +114,8 @@ jobs:
           if [ "$free" -ge 1 ]; then rest=$mac; fi
           if [ "$free" -ge 2 ]; then interface=$mac; fi
           if [ "$EVENT" = push ] && [ "$rest" = "$mac" ]; then
-            rustup toolchain install stable --profile minimal --no-self-update > /dev/null 2>&1 || true
-            rustc=$(rustc +stable -V | awk '{ print $2 "-" substr($3, 2) }')
+            rustup toolchain install --profile minimal --no-self-update > /dev/null 2>&1 || true
+            rustc=$(rustc -V | awk '{ print $2 "-" substr($3, 2) }')
             key="cargo-v1-macos-tests-macOS-ARM64-$rustc-${MANIFESTS:0:16}"
             # an error counts as found: the Mac then runs main as usual
             found=$(GH_TOKEN=$CACHE_TOKEN gh api "repos/$REPO/actions/caches?ref=refs/heads/main&key=$key" --jq '.total_count') || found=1
@@ -135,7 +136,11 @@ jobs:
     if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.needed == 'true' }}
     # Apple Silicon (arm64), the only Macs Aurora supports
     runs-on: ${{ needs.mac-runner.outputs.rest && fromJSON(needs.mac-runner.outputs.rest) || 'macos-15' }}
-    timeout-minutes: 60
+    # GitHub's runner (3 cores) building the cache from nothing took 34 to
+    # 44 minutes for the whole job with unoptimised dependencies; optimised
+    # ones add several minutes of build (44 minutes of clippy and build
+    # alone at opt-level 3, measured once)
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,7 +151,7 @@ jobs:
         uses: ./.github/actions/mac-runner
       - name: Rust stable
         run: |
-          rustup update stable --no-self-update
+          rustup toolchain install --profile minimal --no-self-update
           rustup component add clippy
       # caches are written from main only (see ci.yml); one cache for the
       # two macOS jobs, written by this one. The Mac keeps its own build
@@ -184,8 +189,9 @@ jobs:
         # every failure of the run at once: the Apple GPU is reached here only
         run: |
           cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
-      # the offline demo past its loading fade, then quit: a missing image
-      # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails.
+      # the offline demo past its loading fade, then quit: a missing image,
+      # a non-zero exit or a wgpu error in its log (a pipeline Metal
+      # refused, a GPU fault) fails.
       # The build takes about 5 minutes and the frames a few seconds: a
       # viewer that never quits fails here instead of holding the merge
       # queue for an hour. On the way, frame 300 is held 10 s as a GPU that
@@ -202,11 +208,29 @@ jobs:
           AURORA_CAPTURE_FRAMES: '620'
           AURORA_CAPTURE_EXIT: '1'
         run: |
+          # The team's Mac mini has nobody at its keyboard: once its display
+          # sleeps, macOS presents no frame of the window, which then never
+          # shows, and the capture never comes (the step ran into its time
+          # limit on every run from 2026-11-05 17:00 UTC). Wake the display
+          # (a user-activity assertion), then keep it awake while the viewer
+          # runs. A locked screen is the runner owner's setting to change.
+          if [ "${{ runner.environment }}" = self-hosted ]; then
+            caffeinate -u -t 5
+            caffeinate -d -i -w $$ &
+          fi
           cargo run --profile ci --locked -p aurora-viewer -- --title "CI macOS"
           test -s "$AURORA_CAPTURE"
           log="$HOME/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-ci-macos.log"
           if ! grep -q "notice shown" "$log" || ! grep -q "the graphics card answered again" "$log"; then
             echo "::error::the GPU stall and its notice did not happen as expected (see the demo log)"
+            exit 1
+          fi
+          # A module Metal refuses still leaves an image, the interface over
+          # a black world (#3751, from 0.9.10-beta.20261114.2 to the fix):
+          # a clean run writes no wgpu error at all
+          if grep -q "wgpu error" "$log"; then
+            grep -A8 "wgpu error" "$log" | head -60
+            echo "::error::wgpu errors in the demo log (a shader or a pipeline Metal refused?)"
             exit 1
           fi
       - name: Demo image and log
@@ -237,7 +261,7 @@ jobs:
         if: runner.environment == 'self-hosted'
         uses: ./.github/actions/mac-runner
       - name: Rust stable
-        run: rustup update stable --no-self-update
+        run: rustup toolchain install --profile minimal --no-self-update
       - uses: ./.github/actions/rust-cache
         if: runner.environment == 'github-hosted'
         with:
