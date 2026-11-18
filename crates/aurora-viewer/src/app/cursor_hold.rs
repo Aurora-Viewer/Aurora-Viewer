@@ -385,6 +385,24 @@ impl App {
         }
     }
 
+    fn move_cursor_to_center(&mut self) {
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let size = g.window.inner_size();
+        self.move_cursor((size.width as f32 / 2.0, size.height as f32 / 2.0));
+    }
+
+    fn move_cursor(&mut self, (x, y): (f32, f32)) {
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let _ = g
+            .window
+            .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+        self.cursor_pos = (x, y);
+    }
+
     /// Put the shown cursor at `to` (physical pixels): the pie that opens on
     /// the press near an edge of the window is moved inside it, and the
     /// cursor goes to its centre (PieMenu::show → setMousePositionLocal,
@@ -422,24 +440,6 @@ impl App {
             };
             let _ = g.egui_state.on_window_event(&g.window, &moved);
         }
-    }
-
-    fn move_cursor_to_center(&mut self) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        let size = g.window.inner_size();
-        self.move_cursor((size.width as f32 / 2.0, size.height as f32 / 2.0));
-    }
-
-    fn move_cursor(&mut self, (x, y): (f32, f32)) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        let _ = g
-            .window
-            .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
-        self.cursor_pos = (x, y);
     }
 }
 
