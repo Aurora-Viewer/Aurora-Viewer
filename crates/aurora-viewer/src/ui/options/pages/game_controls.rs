@@ -811,7 +811,8 @@ fn device_options_tab(cx: &mut Cx) {
                 for b in 0..NUM_BUTTONS {
                     let down = live.buttons & (1 << b) != 0;
                     let color = if down { p.violet } else { p.muted };
-                    ui.label(with_glyph(ui, &gc::button_name(b), &button_input_name(b), Some(color)));
+                    // one block per button: its pictogram never wraps away from its name
+                    ui.add(egui::Label::new(with_glyph(ui, &gc::button_name(b), &button_input_name(b), Some(color))).extend());
                 }
             });
             false
