@@ -24,7 +24,7 @@ pub struct Effects {
     pub geometry: Option<u8>,
     region: Option<u64>,
     candidates: Vec<usize>,
-    scan_at: f32,
+    scan_at: Option<f32>,
     ground_at: f32,
     ground: WaterGround,
     history: HashMap<(Uuid, u8), Contact>,
@@ -65,6 +65,12 @@ fn water_at(world: &World, p: Vec3) -> Option<f32> {
             .then(|| r.info.as_ref().map(|i| i.water_height))
             .flatten()
     })
+}
+
+/// The objects near the water are looked for again every 0.35 s, whether
+/// the last scan found some or none.
+fn scan_due(last: Option<f32>, time: f32) -> bool {
+    last.is_none_or(|last| time - last > 0.35)
 }
 
 /// The ground grid's 64 x 64 samples at their cells' centres, row by row.
@@ -260,8 +266,8 @@ impl Effects {
             self.history.clear();
             return (Vec::new(), Vec::new(), self.ground.clone());
         }
-        if self.candidates.is_empty() || time - self.scan_at > 0.35 {
-            self.scan_at = time;
+        if scan_due(self.scan_at, time) {
+            self.scan_at = Some(time);
             let mut near: Vec<(f32, usize)> = crate::frame_par::filter_map_indexed(&scene.gpu, SCAN_GRAIN, |i, g| {
                 let object = world.objects.get(i)?;
                 if g.hud || g.owner_avatar.is_some() || object.extra.reflection_probe.is_some() {
@@ -472,6 +478,14 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_scan_that_found_nothing_is_not_run_again_at_the_next_frame() {
+        assert!(scan_due(None, 0.0));
+        assert!(!scan_due(Some(10.0), 10.004));
+        assert!(!scan_due(Some(10.0), 10.3));
+        assert!(scan_due(Some(10.0), 10.4));
+    }
+
     #[test]
     fn the_ground_grid_is_sampled_at_its_cells_centres_row_by_row() {
         let origin = Vec2::new(100.0, -40.0);
