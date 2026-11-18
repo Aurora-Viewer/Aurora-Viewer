@@ -225,7 +225,9 @@ script authors; the command lists below describe this branch specifically.
   `@shownames` hides that resident (`RLV.CanShowName`, menu_avatar_other.xml);
   a name-plate click that would run one of them does nothing. Only that
   in-world menu is restricted: a conversation (an IM, a group chat, its
-  members and header) and the friends, group and search lists name their
+  members and header), the notices about them (an IM, a friendship offer),
+  the friends, group and search lists, the group profile, the inventory
+  properties, About Land and the estate and region windows name their
   people whoever is around, so their menus and clicks keep the profile,
   teleport offers and requests, friendship offer, history and copies. A
   speaker the restriction hides in the nearby chat gets none of them, teleport

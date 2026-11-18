@@ -184,7 +184,7 @@ fn object_place(slurl: &str) -> Option<crate::slurl::PlaceLink> {
 /// The right-click menu of a command, in the order of its menu_url_*.xml.
 pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, link: &AppLink, label: &str) {
     if let AppLink::Agent { id, .. } = link {
-        super::name_menu(r, p, world, *id, crate::world::names::NameScope::World);
+        super::name_menu(r, p, world, *id, crate::world::names::NameScope::Roster);
         return;
     }
     menu::context_menu(r, p, |ui| {

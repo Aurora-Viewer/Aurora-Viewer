@@ -1337,7 +1337,7 @@ pub(crate) fn text_with_links(
     let segs = segments(text);
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
-            super::notifications::text::show(ui, p, t, names, size, color, false, true);
+            super::notifications::text::show(ui, p, t, names, size, color, false, true, scope);
         }
     };
     if segs.iter().all(|s| matches!(s, Seg::Text(_))) {
@@ -1357,7 +1357,7 @@ pub(crate) fn text_with_links(
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, false.into()),
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size, false.into()),
-                    Seg::Agent(id) => agent_link(ui, p, world, scope, id, &label, size, false.into()),
+                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &label, size, false.into()),
                     Seg::Mention(id) => agent_link(
                         ui,
                         p,
@@ -1383,7 +1383,7 @@ pub(crate) fn text_with_links(
                         ui,
                         p,
                         world,
-                        scope,
+                        NameScope::Roster,
                         id,
                         &world.social.name_in(NameScope::Roster, &id),
                         size,
@@ -2410,7 +2410,7 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &hide(&label), size, emphasis),
-                    Seg::Agent(id) => agent_link(ui, p, world, scope, id, &label, size, emphasis),
+                    Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &label, size, emphasis),
                     Seg::Mention(id) => agent_link(ui, p, world, scope, id, &hide(&label), size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
@@ -2455,7 +2455,7 @@ pub(crate) fn chat_text_marked(
                         ui,
                         p,
                         world,
-                        scope,
+                        NameScope::Roster,
                         id,
                         &world.social.name_in(NameScope::Roster, &id),
                         size,

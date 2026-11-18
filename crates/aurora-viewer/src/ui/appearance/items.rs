@@ -473,12 +473,12 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
                     && ui
                         .link(
                             world
-                                .person_name(&id)
+                                .person_name_in(crate::world::names::NameScope::Roster, &id)
                                 .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into()),
                         )
                         .clicked()
                 {
-                    crate::ui::profile::request_open(ctx, id);
+                    crate::ui::profile::request_open_in(ctx, crate::world::names::NameScope::Roster, id);
                 }
             });
         }

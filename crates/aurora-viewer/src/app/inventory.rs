@@ -288,7 +288,8 @@ impl App {
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {
-                    self.profile_ui.open(&mut self.world, avatar);
+                    self.profile_ui
+                        .open_in(&mut self.world, crate::world::names::NameScope::Roster, avatar);
                 }
             }
             1 => {
@@ -705,7 +706,7 @@ impl App {
                         .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                 }
             }
-            InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            InvAction::Profile(id) => self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id),
             InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
             InvAction::CopyLandmarkSlurl(asset) => {
                 self.world

@@ -2375,7 +2375,7 @@ pub fn show(
                     world
                         .social
                         .avatar_names
-                        .complete(&resident)
+                        .complete_in(crate::world::names::NameScope::Roster, &resident)
                         .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into()),
                 );
             }
@@ -2398,7 +2398,9 @@ pub fn show(
         if let Some(EditDialog::Share(_, residents)) = &state.dialog {
             for resident in residents {
                 world.social.want_name(*resident);
-                facts.names.insert(*resident, world.social.name_of(resident));
+                facts
+                    .names
+                    .insert(*resident, world.social.name_in(crate::world::names::NameScope::Roster, resident));
             }
             // Only the first resident's portrait is shown.
             if let Some(first) = residents.first() {
@@ -2420,7 +2422,9 @@ pub fn show(
                 .map(|it| [it.owner, it.creator]);
             for resident in residents.into_iter().flatten().filter(|id| !id.is_nil()) {
                 world.social.want_name(resident);
-                facts.names.insert(resident, world.social.name_of(&resident));
+                facts
+                    .names
+                    .insert(resident, world.social.name_in(crate::world::names::NameScope::Roster, &resident));
             }
         }
     }
@@ -2448,7 +2452,9 @@ pub fn show(
         }
         for id in &st.creators {
             world.social.want_name(*id);
-            facts.names.insert(*id, world.social.name_of(id));
+            facts
+                .names
+                .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
         }
     }
     let inv = &mut world.inventory;

@@ -957,14 +957,14 @@ fn dim(ui: &mut egui::Ui, p: &Palette, s: impl Into<String>) -> egui::Response {
 /// A resident's name that opens the profile (LLSLURL "agent ... inspect").
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
     world.social.want_name(id);
-    let name = world.social.name_of(&id);
+    let name = world.social.name_in(crate::world::names::NameScope::Roster, &id);
     if ui
         .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        super::profile::request_open(ui.ctx(), id);
+        super::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
     }
 }
 

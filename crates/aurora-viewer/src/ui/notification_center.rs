@@ -916,7 +916,7 @@ fn presence_toasts(
                                     super::presence::Status::Offline
                                 };
                                 super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false);
+                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false, n.kind.names());
                             });
                         })
                         .response
@@ -935,7 +935,7 @@ fn presence_toasts(
                     if click.clicked()
                         && let Some(target) = name_hover
                     {
-                        cards::text::open(ctx, target);
+                        cards::text::open(ctx, n.kind.names(), target);
                     }
                     continue;
                 }
@@ -1039,7 +1039,17 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                         let time = hhmm(e.time);
                         let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
+                            cards::text::show(
+                                ui,
+                                p,
+                                &e.title,
+                                &e.name_links,
+                                12.5,
+                                p.ink,
+                                true,
+                                true,
+                                Kind::of_look(e.look).names(),
+                            );
                         });
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
