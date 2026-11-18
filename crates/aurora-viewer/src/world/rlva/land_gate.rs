@@ -1,21 +1,28 @@
-//! `@showloc`: when About Land and Region / Estate may open.
+//! `@showloc`: when About Land and Region / Estate may be shown.
 //!
 //! Port of `RlvUIEnabler::canViewParcelProperties`,
 //! `canViewRegionProperties` and `filterFloaterShowLoc` (indra/newview/
-//! rlvui.cpp, originally LGPL 2.1). The Legacy Viewer asks the question once,
-//! when the floater is about to open (`LLFloaterReg::setValidateCallback`),
-//! and keeps what it answered until the floater closes; it also hides both
-//! floaters at the moment `@showloc` starts. It never re-asks while they are
-//! open.
+//! rlvui.cpp, originally LGPL 2.1). The Legacy Viewer reads a parcel it
+//! already holds, when the floater is asked for. Aurora learns the parcel (or
+//! the region) from the simulator a moment after the window is asked for, so
+//! a third answer exists here: [`LandVerdict::Unknown`], "not known yet".
+//! Treating it as a refusal closed the window of a parcel the agent owns
+//! before its data arrived (the window flashed and closed, and a right click
+//! on the ground did nothing); [`LandGate`] keeps the window hidden until the
+//! answer is known.
 //!
-//! The Legacy Viewer reads a parcel it already holds. Aurora learns the
-//! parcel (or the region) from the simulator a moment after the window is
-//! asked for, so a third answer exists here: [`LandVerdict::Unknown`], "not
-//! known yet". Treating it as a refusal closed the window of a parcel the
-//! agent owns before its data arrived (the window flashed and closed, and a
-//! right click on the ground did nothing); [`LandGate`] keeps the window
-//! hidden and asks again until the answer is known.
+//! Differences from the Legacy Viewer, on purpose:
+//! - the question is asked again every frame for the parcel the window shows,
+//!   not once when it opens: an About Land window open on the agent's land
+//!   would turn into the land of someone else when the ground menu's "About
+//!   Land" selects another parcel, and the Legacy Viewer lets it show;
+//! - `LLParcelSelection::hasOthersSelected` refuses a right click on a
+//!   group's land even for a member with the power (the simulator counts the
+//!   squares of a group as "other"); the button opens that same parcel, so
+//!   Aurora asks only that the selection is one parcel
+//!   (`PARCEL_RESULT_MULTIPLE` is refused), which is what that test is for.
 use super::super::World;
+use aurora_net::land::PARCEL_RESULT_MULTIPLE;
 use aurora_net::{GroupMembership, ParcelInfo, RegionInfo};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -38,19 +45,15 @@ pub enum LandVerdict {
 }
 
 /// `RlvUIEnabler::canViewParcelProperties` under `@showloc`: About Land may
-/// open on a parcel the agent owns, or that a group owns when the agent has
-/// a power of that group to return objects (`GP_LAND_RETURN`). `selected`:
-/// the parcel is an explicit selection (a right click on the ground), not the
-/// agent's own parcel; a selection that holds squares of other residents is
-/// refused (`LLParcelSelection::hasOthersSelected`).
-///
-/// The Legacy Viewer does not use `LLViewerParcelMgr::isParcelOwnedByAgent`,
-/// which lets a god in.
-pub fn parcel_verdict(agent: Uuid, groups: &[GroupMembership], parcel: Option<&ParcelInfo>, selected: bool) -> LandVerdict {
+/// show a parcel the agent owns, or that a group owns when the agent has a
+/// power of that group to return objects (`GP_LAND_RETURN`), and only one
+/// parcel at a time. The Legacy Viewer does not use
+/// `LLViewerParcelMgr::isParcelOwnedByAgent`, which lets a god in.
+pub fn parcel_verdict(agent: Uuid, groups: &[GroupMembership], parcel: Option<&ParcelInfo>) -> LandVerdict {
     let Some(parcel) = parcel else {
         return LandVerdict::Unknown;
     };
-    if selected && parcel.other_count != 0 {
+    if parcel.request_result == PARCEL_RESULT_MULTIPLE {
         return LandVerdict::Refused;
     }
     if parcel.owner_id == agent {
@@ -74,26 +77,15 @@ pub fn region_verdict(agent: Uuid, region: Option<&RegionInfo>) -> LandVerdict {
 }
 
 impl World {
-    /// The verdict for About Land on the parcel it would show: the selection
-    /// when there is one, the agent's parcel otherwise.
-    pub fn rlva_parcel_verdict(&self, selected: bool) -> LandVerdict {
-        let parcel = if selected {
-            self.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
-        } else {
-            self.parcel.as_ref()
+    /// The verdict for About Land on the parcel it shows: the selection when
+    /// there is one, the agent's parcel otherwise (what the window selects
+    /// when it opens).
+    pub fn rlva_parcel_verdict(&self) -> LandVerdict {
+        let parcel = match &self.land.sel {
+            Some(sel) => sel.parcel.as_ref(),
+            None => self.parcel.as_ref(),
         };
-        let verdict = parcel_verdict(self.agent_id, &self.groups.groups, parcel.map(|p| &**p), selected);
-        if let (Some(p), true) = (parcel, verdict != LandVerdict::Unknown) {
-            log::info!(
-                "@showloc About Land: {verdict:?} (parcel {}, {}, selection {selected}, squares self {} other {} public {})",
-                p.local_id,
-                if p.is_group_owned { "group-owned" } else { "owned by a resident" },
-                p.self_count,
-                p.other_count,
-                p.public_count,
-            );
-        }
-        verdict
+        parcel_verdict(self.agent_id, &self.groups.groups, parcel.map(|p| &**p))
     }
 
     pub fn rlva_region_verdict(&self) -> LandVerdict {
@@ -114,74 +106,62 @@ pub enum GateView {
     Refused,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-enum State {
-    #[default]
-    Closed,
-    /// Asked for under `@showloc`; `selected`: the parcel was an explicit
-    /// selection when it was asked for.
-    Waiting {
-        selected: bool,
-        since: Instant,
-    },
-    Open,
-}
-
-/// The open-time check of one window: asks the question once when the window
-/// is requested, keeps the answer until the window closes.
+/// The check of one window, stepped once a frame.
 #[derive(Debug, Default)]
 pub struct LandGate {
-    state: State,
-    was_restricted: bool,
+    /// Since when the answer has been unknown.
+    waiting_since: Option<Instant>,
+    /// The last answer, to log it once when it changes.
+    last: Option<LandVerdict>,
+    /// The window was drawn on the last frame: while its next parcel loads
+    /// it keeps drawing (a window with no parcel shows nothing of it), so
+    /// that closing it for a frame does not drop the selection.
+    shown: bool,
 }
 
 impl LandGate {
-    /// One call per frame. `requested`: the window's panel flag; `restricted`:
-    /// `@showloc` is set; `selected`: read once, when the request starts;
-    /// `verdict`: the question, with that `selected`.
-    pub fn step(
-        &mut self,
-        requested: bool,
-        restricted: bool,
-        selected: impl FnOnce() -> bool,
-        verdict: impl FnOnce(bool) -> LandVerdict,
-        now: Instant,
-    ) -> GateView {
-        // onToggleShowLoc: a window that is open when `@showloc` starts closes
-        let starts = restricted && !self.was_restricted;
-        self.was_restricted = restricted;
+    /// `requested`: the window's panel flag; `restricted`: `@showloc` is
+    /// set; `verdict`: the question, for what the window would show now.
+    pub fn step(&mut self, name: &str, requested: bool, restricted: bool, verdict: impl FnOnce() -> LandVerdict, now: Instant) -> GateView {
+        let view = self.decide(name, requested, restricted, verdict, now);
+        self.shown = view == GateView::Shown;
+        view
+    }
+
+    fn decide(&mut self, name: &str, requested: bool, restricted: bool, verdict: impl FnOnce() -> LandVerdict, now: Instant) -> GateView {
         if !requested {
-            self.state = State::Closed;
+            self.waiting_since = None;
+            self.last = None;
             return GateView::Closed;
         }
         if !restricted {
-            self.state = State::Open;
+            self.waiting_since = None;
             return GateView::Shown;
         }
-        if starts && matches!(self.state, State::Open) {
-            self.state = State::Closed;
-            return GateView::Refused;
+        let verdict = verdict();
+        if self.last != Some(verdict) {
+            self.last = Some(verdict);
+            log::info!("@showloc {name}: {verdict:?}");
         }
-        if matches!(self.state, State::Closed) {
-            self.state = State::Waiting {
-                selected: selected(),
-                since: now,
-            };
-        }
-        match self.state {
-            State::Open => GateView::Shown,
-            State::Waiting { selected, since } => match verdict(selected) {
-                LandVerdict::Allowed => {
-                    self.state = State::Open;
-                    GateView::Shown
-                }
-                LandVerdict::Unknown if now.duration_since(since) < WAIT => GateView::Hidden,
-                LandVerdict::Unknown | LandVerdict::Refused => {
-                    self.state = State::Closed;
+        match verdict {
+            LandVerdict::Allowed => {
+                self.waiting_since = None;
+                GateView::Shown
+            }
+            LandVerdict::Refused => {
+                self.waiting_since = None;
+                GateView::Refused
+            }
+            LandVerdict::Unknown => {
+                let since = *self.waiting_since.get_or_insert(now);
+                if now.duration_since(since) < WAIT {
+                    if self.shown { GateView::Shown } else { GateView::Hidden }
+                } else {
+                    log::info!("@showloc {name}: nothing arrived in {} s, refused", WAIT.as_secs());
+                    self.waiting_since = None;
                     GateView::Refused
                 }
-            },
-            State::Closed => GateView::Closed,
+            }
         }
     }
 }
@@ -238,17 +218,13 @@ mod tests {
 
     #[test]
     fn an_own_parcel_opens_with_no_group_and_no_power() {
-        for selected in [false, true] {
-            assert_eq!(parcel_verdict(ME, &[], Some(&parcel(ME)), selected), LandVerdict::Allowed);
-        }
+        assert_eq!(parcel_verdict(ME, &[], Some(&parcel(ME))), LandVerdict::Allowed);
     }
 
     #[test]
     fn another_residents_parcel_is_refused_even_with_groups() {
         let groups = [group(GROUP, u64::MAX)];
-        for selected in [false, true] {
-            assert_eq!(parcel_verdict(ME, &groups, Some(&parcel(OTHER)), selected), LandVerdict::Refused);
-        }
+        assert_eq!(parcel_verdict(ME, &groups, Some(&parcel(OTHER))), LandVerdict::Refused);
     }
 
     #[test]
@@ -256,43 +232,49 @@ mod tests {
         let land = parcel(GROUP);
         // GP_LAND_RETURN_GROUP_SET, _NON_GROUP and _GROUP_OWNED, each alone
         for power in [1u64 << 33, 1 << 34, 1 << 48] {
-            assert_eq!(parcel_verdict(ME, &[group(GROUP, power)], Some(&land), false), LandVerdict::Allowed);
+            assert_eq!(parcel_verdict(ME, &[group(GROUP, power)], Some(&land)), LandVerdict::Allowed);
         }
-        // other land powers (manage the allowed and banned lists, eject and
-        // freeze, deed, set the landing point, join and subdivide, sell…)
-        // and no power at all do not
+        // the other powers (manage the allowed and banned lists, eject and
+        // freeze, deed, set the landing point, join and subdivide, sell…) and
+        // no power at all do not
         for bit in (0..64).filter(|b| ![33, 34, 48].contains(b)) {
             assert_eq!(
-                parcel_verdict(ME, &[group(GROUP, 1 << bit)], Some(&land), false),
+                parcel_verdict(ME, &[group(GROUP, 1 << bit)], Some(&land)),
                 LandVerdict::Refused,
                 "bit {bit} alone must not unlock About Land"
             );
         }
-        assert_eq!(parcel_verdict(ME, &[group(GROUP, 0)], Some(&land), false), LandVerdict::Refused);
+        assert_eq!(parcel_verdict(ME, &[group(GROUP, 0)], Some(&land)), LandVerdict::Refused);
     }
 
     #[test]
     fn a_group_parcel_of_a_group_the_agent_is_not_in_is_refused() {
         assert_eq!(
-            parcel_verdict(ME, &[group(OTHER_GROUP, u64::MAX)], Some(&parcel(GROUP)), false),
+            parcel_verdict(ME, &[group(OTHER_GROUP, u64::MAX)], Some(&parcel(GROUP))),
             LandVerdict::Refused
         );
-        assert_eq!(parcel_verdict(ME, &[], Some(&parcel(GROUP)), false), LandVerdict::Refused);
+        assert_eq!(parcel_verdict(ME, &[], Some(&parcel(GROUP))), LandVerdict::Refused);
     }
 
     #[test]
-    fn a_selection_that_holds_land_of_others_is_refused() {
+    fn a_group_parcel_counted_as_others_land_still_opens_for_a_member_with_the_power() {
+        // the simulator counts the squares of a group as "other" (other_count
+        // 4096, self_count 0 on the grid): the right click must not read it
+        let mut land = parcel(GROUP);
+        land.other_count = 4096;
+        assert_eq!(parcel_verdict(ME, &[group(GROUP, 1 << 33)], Some(&land)), LandVerdict::Allowed);
+    }
+
+    #[test]
+    fn a_selection_of_several_parcels_is_refused() {
         let mut land = parcel(ME);
-        land.other_count = 1;
-        assert_eq!(parcel_verdict(ME, &[], Some(&land), true), LandVerdict::Refused);
-        // the agent's own parcel is not a selection: its counts are not read
-        assert_eq!(parcel_verdict(ME, &[], Some(&land), false), LandVerdict::Allowed);
+        land.request_result = PARCEL_RESULT_MULTIPLE;
+        assert_eq!(parcel_verdict(ME, &[], Some(&land)), LandVerdict::Refused);
     }
 
     #[test]
     fn a_parcel_that_has_not_arrived_is_unknown_not_refused() {
-        assert_eq!(parcel_verdict(ME, &[], None, false), LandVerdict::Unknown);
-        assert_eq!(parcel_verdict(ME, &[], None, true), LandVerdict::Unknown);
+        assert_eq!(parcel_verdict(ME, &[], None), LandVerdict::Unknown);
     }
 
     #[test]
@@ -305,7 +287,7 @@ mod tests {
 
     /// One frame at `t` seconds after `t0`.
     fn frame(gate: &mut LandGate, t0: Instant, t: u64, requested: bool, restricted: bool, v: LandVerdict) -> GateView {
-        gate.step(requested, restricted, || false, |_| v, t0 + Duration::from_secs(t))
+        gate.step("test", requested, restricted, || v, t0 + Duration::from_secs(t))
     }
 
     #[test]
@@ -327,21 +309,21 @@ mod tests {
     }
 
     #[test]
-    fn the_answer_is_kept_until_the_window_closes() {
+    fn an_open_window_follows_the_parcel_it_shows() {
         let (mut gate, t0) = (LandGate::default(), Instant::now());
         assert_eq!(frame(&mut gate, t0, 0, true, true, LandVerdict::Allowed), GateView::Shown);
-        // the agent walks onto land of someone else: the Legacy Viewer asks
-        // only when the floater opens, so the window stays
-        assert_eq!(frame(&mut gate, t0, 1, true, true, LandVerdict::Refused), GateView::Shown);
-        // closed, then asked again: the new parcel decides
-        assert_eq!(frame(&mut gate, t0, 2, false, true, LandVerdict::Refused), GateView::Closed);
-        assert_eq!(frame(&mut gate, t0, 3, true, true, LandVerdict::Refused), GateView::Refused);
+        // the ground menu selects land of someone else: the window has no
+        // parcel to show while it loads, then closes
+        assert_eq!(frame(&mut gate, t0, 1, true, true, LandVerdict::Unknown), GateView::Shown);
+        assert_eq!(frame(&mut gate, t0, 2, true, true, LandVerdict::Refused), GateView::Refused);
     }
 
     #[test]
-    fn a_refused_window_never_draws_and_drops_its_request() {
+    fn a_refused_window_drops_its_request_and_opens_again_on_land_that_is_allowed() {
         let (mut gate, t0) = (LandGate::default(), Instant::now());
         assert_eq!(frame(&mut gate, t0, 0, true, true, LandVerdict::Refused), GateView::Refused);
+        assert_eq!(frame(&mut gate, t0, 1, false, true, LandVerdict::Allowed), GateView::Closed);
+        assert_eq!(frame(&mut gate, t0, 2, true, true, LandVerdict::Allowed), GateView::Shown);
     }
 
     #[test]
@@ -350,34 +332,7 @@ mod tests {
         assert_eq!(frame(&mut gate, t0, 0, true, true, LandVerdict::Unknown), GateView::Hidden);
         assert_eq!(frame(&mut gate, t0, 4, true, true, LandVerdict::Unknown), GateView::Hidden);
         assert_eq!(frame(&mut gate, t0, 6, true, true, LandVerdict::Unknown), GateView::Refused);
-    }
-
-    #[test]
-    fn a_window_open_when_showloc_starts_closes() {
-        let (mut gate, t0) = (LandGate::default(), Instant::now());
-        assert_eq!(frame(&mut gate, t0, 0, true, false, LandVerdict::Allowed), GateView::Shown);
-        // onToggleShowLoc hides it, even on the agent's own land
-        assert_eq!(frame(&mut gate, t0, 1, true, true, LandVerdict::Allowed), GateView::Refused);
-        // and the agent may open it again on land that is theirs
-        assert_eq!(frame(&mut gate, t0, 2, true, true, LandVerdict::Allowed), GateView::Shown);
-    }
-
-    #[test]
-    fn the_selection_is_read_when_the_request_starts() {
-        let (mut gate, t0) = (LandGate::default(), Instant::now());
-        let mut seen = Vec::new();
-        for (t, selected) in [(0, true), (1, false)] {
-            gate.step(
-                true,
-                true,
-                || selected,
-                |s| {
-                    seen.push(s);
-                    LandVerdict::Unknown
-                },
-                t0 + Duration::from_secs(t),
-            );
-        }
-        assert_eq!(seen, [true, true], "a selection made later does not change what was asked");
+        // a later request waits again from the start
+        assert_eq!(frame(&mut gate, t0, 7, true, true, LandVerdict::Unknown), GateView::Hidden);
     }
 }

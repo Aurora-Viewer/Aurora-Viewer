@@ -134,11 +134,11 @@ permission rule hides it.
   A worn removal-locked HUD cannot be hidden through the HUD switch and
   prevents wireframe rendering. Add-only locks do not impose that condition.
   Transparency highlighting also obeys edit and showloc.
-  Under showloc, About Land opens only on the agent's own parcel or on a
-  group's parcel when the agent holds one of the group's return powers, and
-  Region / Estate only for the region's owner and the estate managers
-  (RlvUIEnabler::canViewParcelProperties and canViewRegionProperties); the
-  question is asked once, when the window is asked for, and a parcel that has
+  Under showloc, About Land shows only the agent's own parcel or a group's
+  parcel when the agent holds one of the group's return powers, and Region /
+  Estate only for the region's owner and the estate managers
+  (RlvUIEnabler::canViewParcelProperties and canViewRegionProperties). The
+  question is asked again for what the window shows, and a parcel that has
   not arrived yet keeps the window hidden instead of closing it
   (`world/rlva/land_gate.rs`).
 - Inventory: detach, addattach/remattach, addoutfit/remoutfit,
