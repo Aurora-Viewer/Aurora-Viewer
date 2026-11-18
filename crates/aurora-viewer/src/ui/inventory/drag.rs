@@ -118,7 +118,13 @@ fn mutation(
 ) -> Result<Mutation, String> {
     match mode {
         DropMode::Move => rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn),
-        DropMode::Copy => rules::paste(inv, ids, to, false, false, &prefs.protected, &facts.worn),
+        // as Paste does it (`clipboard::paste_ids`): an outfit folder by its
+        // rules; never the wearing a paste into the Current Outfit does
+        DropMode::Copy => match crate::world::outfit_paste::plan(inv, ids, to, false, &prefs.protected)? {
+            crate::world::outfit_paste::Paste::Inventory => rules::paste(inv, ids, to, false, false, &prefs.protected, &facts.worn),
+            crate::world::outfit_paste::Paste::Edit(change) => Ok(change),
+            crate::world::outfit_paste::Paste::Wear(_) => Err(aurora_i18n::tr!("world-outfit-paste-cannot-be-used-in-outfits").to_string()),
+        },
         DropMode::Link => rules::paste(inv, ids, to, false, true, &prefs.protected, &facts.worn),
     }
 }
@@ -410,7 +416,11 @@ pub(super) fn target(
         if st.pending.is_some() {
             st.message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
         } else {
-            drop_cargo(inv, cargo.ids(), to, mode, st, prefs, facts, actions);
+            // what the cursor showed is what happens: a copy or links the
+            // place refuses (the Current Outfit) do nothing
+            if allowed || mode == DropMode::Move {
+                drop_cargo(inv, cargo.ids(), to, mode, st, prefs, facts, actions);
+            }
         }
     }
 }

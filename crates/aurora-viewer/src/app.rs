@@ -25012,12 +25012,17 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
                         && ui::inventory::document_save_focused(&self.egui_ctx);
+                    // the focused inventory list's chord is the list's only
+                    // (shortcut_claims_focus gave it to egui)
+                    let inventory_chord =
+                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &ke.logical_key, mods.ctrl, self.shift, self.alt);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat
                         && !find_taken
                         && !script_command
                         && !document_save
+                        && !inventory_chord
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);

@@ -60,6 +60,9 @@ impl InventoryUi {
                 _ => {}
             }
         }
+        for window in &mut self.windows {
+            window.state.cut_cancelled = self.cut_cancelled;
+        }
     }
 
     /// The Windows counter also catches asynchronous image copies and other
