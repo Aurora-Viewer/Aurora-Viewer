@@ -3863,6 +3863,7 @@ dev-toolbox-j6 = ログフォルダを開く
 dev-toolbox-j7 = スクリプトエラー
 dev-toolbox-j8 = ＩＫの状態
 dev-toolbox-j9 = 装着中のアニメッシュの骨格
+dev-toolbox-j10 = 連絡先タブの状態
 dev-toolbox-l1 = カーソルの下
 dev-toolbox-l2 = 対象の装着アイテム
 dev-toolbox-l3 = ライブの問題

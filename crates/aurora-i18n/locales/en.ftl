@@ -3897,6 +3897,7 @@ dev-toolbox-j6 = Open the logs folder
 dev-toolbox-j7 = Script errors
 dev-toolbox-j8 = IK state
 dev-toolbox-j9 = Worn animesh skeleton
+dev-toolbox-j10 = Contacts tab state
 dev-toolbox-l1 = Under the cursor
 dev-toolbox-l2 = Worn items of the target
 dev-toolbox-l3 = Live problems

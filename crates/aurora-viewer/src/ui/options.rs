@@ -701,6 +701,9 @@ pub struct OptionsResult {
     pub restore_layout: Option<String>,
     /// The camera settings went back to their defaults: the view follows.
     pub reset_camera: bool,
+    /// "Show the Contacts tab" turned on: a torn-off Contacts goes back
+    /// into Conversations.
+    pub show_contacts_tab_on: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
     /// Choose another folder for the cache or the transcripts, or go back
