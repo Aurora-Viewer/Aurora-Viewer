@@ -18,6 +18,7 @@
 
 use super::dialog_names;
 use super::inventory::actions;
+use super::names::NameScope;
 use super::notification_history::Outcome;
 use super::notifications::{AT_CATEGORY, Data, Kind, NameLink, NameTarget, Response};
 use super::{ChatKind, World};
@@ -49,13 +50,19 @@ impl TaskOffer {
         format!("{text}\n{}", item_label(&self.item_name))
     }
 
-    /// The owner's name in the offer's text and its link (dialog_names.rs);
-    /// blocking keeps [`TaskOffer::owner_name`].
-    fn shown_owner_name(&self, world: &World, owner: Uuid) -> String {
-        dialog_names::shown(&self.owner_name(world, owner)).into_owned()
+    /// The owner's name in the offer's text and its link (dialog_names.rs),
+    /// as `names` names them (`giver_names`): the owner RLVa's `@shownames`
+    /// hid when the offer arrived is their stand-in. Blocking keeps
+    /// [`TaskOffer::owner_name`].
+    fn shown_owner_name(&self, world: &World, names: NameScope, owner: Uuid) -> String {
+        dialog_names::shown(&self.owner_name_in(world, names, owner)).into_owned()
     }
 
     fn owner_name(&self, world: &World, owner: Uuid) -> String {
+        self.owner_name_in(world, NameScope::World, owner)
+    }
+
+    fn owner_name_in(&self, world: &World, names: NameScope, owner: Uuid) -> String {
         if self.from_group {
             world
                 .search
@@ -65,10 +72,17 @@ impl TaskOffer {
                 .or_else(|| world.groups.groups.iter().find(|g| g.id == owner).map(|g| g.name.clone()))
                 .unwrap_or_else(|| owner.to_string())
         } else {
-            let name = world.social.name_of(&owner);
+            let name = world.social.name_in(names, &owner);
             if name == "…" { owner.to_string() } else { name }
         }
     }
+}
+
+/// The names an offer's notice shows of its giver: everyone's when the
+/// offer names them (`World::rlva_names_giver`, `Notifications::names_of`),
+/// else the world's, which gives the stand-in of a resident RLVa hides.
+fn giver_names(named: bool) -> NameScope {
+    if named { NameScope::Roster } else { NameScope::World }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +105,12 @@ pub struct Offer {
     pub answer: Answer,
     /// Its entry in the notification centre.
     pub notification: u64,
+    /// The card names the giver: what inventory_offer_handler
+    /// (indra/newview/llimprocessing.cpp) decided when the offer arrived
+    /// (`World::rlva_names_giver`). The giver RLVa's `@shownames` hid then
+    /// stays their stand-in on the card, as the `rlvanonym` link of the
+    /// Legacy Viewer's notification does.
+    pub named: bool,
 }
 
 impl Offer {
@@ -153,7 +173,7 @@ impl Default for InventoryOffers {
 }
 
 impl InventoryOffers {
-    fn push(&mut self, from: Uuid, item: String, object: Uuid, asset_type: i8, notification: u64) -> u64 {
+    fn push(&mut self, from: Uuid, item: String, object: Uuid, asset_type: i8, notification: u64, named: bool) -> u64 {
         self.next += 1;
         self.list.push(Offer {
             id: self.next,
@@ -163,6 +183,7 @@ impl InventoryOffers {
             asset_type,
             answer: Answer::Pending,
             notification,
+            named,
         });
         if self.list.len() > MAX_OFFERS
             && let Some(i) = self.list.iter().position(|v| v.answer != Answer::Pending)
@@ -250,7 +271,10 @@ impl World {
                 self.social.want_name(im.from_agent_id);
             }
         }
-        let owner = offer.shown_owner_name(self, im.from_agent_id);
+        // "Only filter if the object owner is a nearby agent"
+        // (inventory_offer_handler): the owner alone, never the object's name
+        let names = giver_names(self.rlva_names_giver(im.from_agent_id, true));
+        let owner = offer.shown_owner_name(self, names, im.from_agent_id);
         let target = if offer.from_group {
             NameTarget::Group(im.from_agent_id)
         } else {
@@ -285,7 +309,34 @@ impl World {
     /// offers retain their explicit confirmation. Use the ordinary answer
     /// so filing, destination folders, history and ShowInInventory agree.
     /// Returns whether the offer was answered without a prompt.
+    /// Decides once whether the notice `id` names the resident `from` it is
+    /// about (`rlva_names_giver`), and returns it: the notice keeps the name
+    /// from then on, or loses it now for their stand-in
+    /// (inventory_offer_handler, indra/newview/llimprocessing.cpp).
+    pub(super) fn name_giver_notice(&mut self, id: u64, from: Uuid, from_object: bool) -> bool {
+        let named = self.rlva_names_giver(from, from_object);
+        if named {
+            self.notifications.name_resident(id);
+        } else {
+            let filter = self.rlva_text_filter(false);
+            if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == id) {
+                filter.redact_notice(&self.social.avatar_names, &mut n.title, Some(&mut n.body), &mut n.name_links);
+            }
+        }
+        named
+    }
+
     pub(super) fn receive_inventory_offer(&mut self, im: &InstantMessage, id: u64) -> bool {
+        // Whether the notice names the giver is decided here, once, before
+        // its card opens the conversation (`rlva_names_giver`): the notice
+        // keeps the name, or loses it now instead of at the next frame's
+        // rewrite (`refresh_rlva_privacy`), which would show it meanwhile.
+        let from_object = self
+            .notifications
+            .list
+            .iter()
+            .any(|n| n.id == id && matches!(n.data, Data::Inventory { task: true, .. }));
+        let named = self.name_giver_notice(id, im.from_agent_id, from_object);
         if !self.rlva_inventory_offer(im, id) {
             self.received_items.offer(im, id);
         }
@@ -304,8 +355,12 @@ impl World {
                 self.system_notice(text.clone(), super::notice_topics::Topic::Items);
             }
             if self.inventory_offers.auto_accept_notify {
-                self.notifications
+                let notice = self
+                    .notifications
                     .push(Kind::Inventory, aurora_i18n::tr!("received-auto-accepted-title"), text, Data::None);
+                if named {
+                    self.notifications.name_resident(notice);
+                }
             }
             self.ui_sounds.push(crate::ui_sound::UiSound::InventoryOffer);
         }
@@ -313,7 +368,12 @@ impl World {
     }
 
     /// InvOfferAutoAcceptUser / InvOfferAutoAcceptObject: use the shared
-    /// application links, which retain inspect actions and RLVa display filtering.
+    /// application links, which retain inspect actions. The giver the offer
+    /// does not name (`rlva_names_giver`, the same test again in
+    /// inventory_offer_handler) is their stand-in in plain text: the Legacy
+    /// Viewer writes the `rlvanonym` link there, which shows the stand-in
+    /// and opens nothing (LLUrlEntryAgentRLVAnonymizedName,
+    /// indra/llui/llurlentry.cpp).
     fn auto_accepted_inventory_text(&self, im: &InstantMessage, id: u64) -> Option<String> {
         let n = self.notifications.list.iter().find(|n| n.id == id)?;
         let Data::Inventory {
@@ -338,9 +398,14 @@ impl World {
                 item = item_label(&offer.item_name)
             )
         } else {
+            let name = if self.notifications.names_resident(id) {
+                super::teleport_invites::agent_link(im.from_agent_id)
+            } else {
+                self.rlva_anonymous(im.from_agent_id).display_name.clone()
+            };
             aurora_i18n::tr!(
                 "received-auto-accepted-resident",
-                name = super::teleport_invites::agent_link(im.from_agent_id),
+                name = name,
                 kind = kind,
                 item = item_label(&im.message)
             )
@@ -363,7 +428,9 @@ impl World {
                 else {
                     return None;
                 };
-                let owner = offer.shown_owner_name(self, *from);
+                // as the offer named them when it arrived
+                let names = self.notifications.names_of(n);
+                let owner = offer.shown_owner_name(self, names, *from);
                 let target = if offer.from_group {
                     NameTarget::Group(*from)
                 } else {
@@ -408,14 +475,25 @@ impl World {
     /// givers were answered before (`im_blocked`): no conversation for them.
     pub(super) fn on_inventory_offer_card(&mut self, im: &InstantMessage, from: &str, asset_type: i8, notification: u64) {
         let object = super::notifications::offered_object(&im.binary_bucket).map_or(Uuid::nil(), |(_, id)| id);
+        // as the entry names the giver (`receive_inventory_offer`, asked
+        // before this card opened their conversation): the Legacy Viewer
+        // shows and logs the one notification text, with the link of the
+        // name or the `rlvanonym` one
+        let named = self.notifications.names_resident(notification);
         let offer = self
             .inventory_offers
-            .push(im.from_agent_id, im.message.clone(), object, asset_type, notification);
-        let title = aurora_i18n::tr!("world-mod-gives-you", from = from.to_string(), what = item_label(&im.message));
+            .push(im.from_agent_id, im.message.clone(), object, asset_type, notification, named);
+        let (giver, logged) = if named {
+            (from.to_string(), super::teleport_invites::agent_link(im.from_agent_id))
+        } else {
+            let stand_in = self.rlva_anonymous(im.from_agent_id).display_name.clone();
+            (stand_in.clone(), stand_in)
+        };
+        let title = aurora_i18n::tr!("world-mod-gives-you", from = giver, what = item_label(&im.message));
         self.add_card(im, ChatKind::InventoryOffer(offer), title);
         let line = self.notice_line(aurora_i18n::tr!(
             "world-inventory-offers-received",
-            name = super::teleport_invites::agent_link(im.from_agent_id),
+            name = logged,
             kind = kind_label(asset_type).to_lowercase(),
             item = im.message.clone()
         ));
@@ -626,6 +704,153 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A world where RLVa's `@shownames` hides Jane.
+    fn hiding_names(root: &Path) -> World {
+        let mut w = world(root);
+        w.rlva.configure(true);
+        w.rlva_console_input("@shownames=n");
+        w.refresh_rlva_privacy();
+        assert!(!w.rlva_can_name(JANE));
+        w
+    }
+
+    /// Jane stands in a region around.
+    fn around(w: &mut World) {
+        w.coarse.entry(1).or_default().push((JANE, glam::Vec3::ONE));
+    }
+
+    /// inventory_offer_handler under `@shownames`: the giver is hidden only
+    /// while they stand around and no conversation with them is open; the
+    /// notice, its card and the entry of the offer agree, and the next
+    /// frame's rewrite keeps what was decided.
+    #[test]
+    fn shownames_hides_a_giver_around_us_unless_we_already_talk() {
+        for (near, talking, named) in [(false, false, true), (true, false, false), (true, true, true)] {
+            let root = temp();
+            let mut w = hiding_names(&root);
+            if near {
+                around(&mut w);
+            }
+            if talking {
+                w.social.session_mut(JANE);
+            }
+            assert_eq!(w.rlva_names_giver(JANE, false), named, "{near}/{talking}");
+            w.on_im(offer(im::INVENTORY_OFFERED, "Welcome note"));
+            for frame in 0..2 {
+                let case = format!("{near}/{talking}, frame {frame}");
+                let n = &w.notifications.list[0];
+                assert_eq!(n.title.contains("Jane"), named, "{case}: {}", n.title);
+                assert_eq!(n.name_links[0].name.contains("Jane"), named, "{case}");
+                assert_eq!(w.notifications.names_of(n), giver_names(named), "{case}");
+                let v = &w.inventory_offers.list[0];
+                assert_eq!(v.named, named, "{case}");
+                let card = w.social.ims[0].lines.back().unwrap();
+                assert!(matches!(card.kind, ChatKind::InventoryOffer(_)), "{case}");
+                assert_eq!(card.text.contains("Jane"), named, "{case}: {}", card.text);
+                w.refresh_rlva_privacy();
+            }
+            clean(&w, &root);
+        }
+    }
+
+    /// IM_INVENTORY_ACCEPTED and IM_INVENTORY_DECLINED: who answered what we
+    /// gave is hidden like a giver, only while they stand around and no
+    /// conversation with them is open, and the next frames keep it.
+    #[test]
+    fn shownames_hides_who_answered_what_we_gave_only_around_us() {
+        for dialog in [im::INVENTORY_ACCEPTED, im::INVENTORY_DECLINED] {
+            for (near, talking, named) in [(false, false, true), (true, false, false), (true, true, true)] {
+                let root = temp();
+                let mut w = hiding_names(&root);
+                if near {
+                    around(&mut w);
+                }
+                if talking {
+                    w.social.session_mut(JANE);
+                }
+                w.on_im(offer(dialog, ""));
+                for frame in 0..2 {
+                    let n = &w.notifications.list[0];
+                    assert_eq!(
+                        n.title.contains("Jane"),
+                        named,
+                        "{dialog} {near}/{talking}, frame {frame}: {}",
+                        n.title
+                    );
+                    assert_eq!(w.notifications.names_of(n), giver_names(named));
+                    w.refresh_rlva_privacy();
+                }
+                clean(&w, &root);
+            }
+        }
+    }
+
+    /// RlvUIEnabler::hasOpenProfile (indra/newview/rlvui.cpp): a giver
+    /// around us whose profile is open is named; the owner of an object
+    /// that gives is not.
+    #[test]
+    fn shownames_names_a_giver_around_us_whose_profile_is_open() {
+        let root = temp();
+        let mut w = hiding_names(&root);
+        around(&mut w);
+        assert!(!w.rlva_names_giver(JANE, false));
+        w.rlva.open_profiles.insert(JANE);
+        assert!(w.rlva_names_giver(JANE, false));
+        assert!(!w.rlva_names_giver(JANE, true));
+        clean(&w, &root);
+    }
+
+    /// An object's offer hides its owner whenever they stand around, the
+    /// conversation with them open or not, and never the object's name.
+    #[test]
+    fn shownames_hides_the_owner_of_an_object_that_gives_only_around_us() {
+        for (near, named) in [(false, true), (true, false)] {
+            let root = temp();
+            let mut w = hiding_names(&root);
+            w.social.session_mut(JANE);
+            if near {
+                around(&mut w);
+            }
+            assert_eq!(w.rlva_names_giver(JANE, true), named);
+            let mut gift = offer(im::TASK_INVENTORY_OFFERED, "Welcome note");
+            gift.from_name = "Gift box".into();
+            w.on_im(gift);
+            for frame in 0..2 {
+                let n = &w.notifications.list[0];
+                assert_eq!(n.title, "Gift box", "{near}, frame {frame}");
+                assert_eq!(n.body.contains("Jane"), named, "{near}, frame {frame}: {}", n.body);
+                assert_eq!(n.name_links[0].name.contains("Jane"), named, "{near}, frame {frame}");
+                // a name that arrives rebuilds the text the same way
+                w.refresh_task_inventory_offers();
+                w.refresh_rlva_privacy();
+            }
+            clean(&w, &root);
+        }
+    }
+
+    /// InvOfferAutoAcceptUser: the link of the giver's name, or the
+    /// stand-in of the giver the offer hides, with no link to their profile.
+    #[test]
+    fn shownames_auto_accept_feedback_hides_a_giver_around_us() {
+        for (near, named) in [(false, true), (true, false)] {
+            let root = temp();
+            let mut w = hiding_names(&root);
+            w.inventory_offers.auto_accept = true;
+            if near {
+                around(&mut w);
+            }
+            w.on_im(offer(im::INVENTORY_OFFERED, "Welcome note"));
+            let text = w.chat.back().unwrap().text.clone();
+            assert!(text.contains("Welcome note"), "{text}");
+            assert_eq!(text.contains(&super::super::teleport_invites::agent_link(JANE)), named, "{text}");
+            assert!(named || (!text.contains("Jane") && !text.contains("/app/agent/")), "{text}");
+            let n = &w.notifications.list[0];
+            assert_eq!(n.body, text);
+            assert_eq!(w.notifications.names_of(n), giver_names(named));
+            clean(&w, &root);
+        }
     }
 
     #[test]

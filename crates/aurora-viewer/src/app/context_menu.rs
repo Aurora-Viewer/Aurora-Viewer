@@ -115,6 +115,10 @@ impl App {
         let particle_only = surface.is_none();
         let (object, point) = surface.or_else(|| particles.first().map(|p| (None, p.point)))?;
         self.object_menu_pick(object, ray, particles, particle_only);
+        self.object_menu.near = object
+            .filter(|_| point.is_finite() && point.distance(self.world.agent.position) <= 1.5)
+            .and_then(|idx| self.world.objects.get(linkset_root(&self.world, idx)))
+            .map(|root| root.key);
         Some((object, point))
     }
 
@@ -367,7 +371,10 @@ impl App {
             for_sale,
         );
         f.open = interaction::allow_open(w, idx);
-        f.edit = crate::build::selectable(w, idx);
+        // (handle_object_edit: the tools open on the menu's selection, and
+        // drop it at once when @fartouch finds the object too far)
+        f.edit = crate::build::selectable_within(w, idx)
+            && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
         f.id = o.full_id;
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.mutes.is_muted_id(&root_id);
@@ -1008,9 +1015,17 @@ impl App {
                 self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
-            CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
+            CtxAction::ActivateGroup(id) => {
+                if self.world.rlva_can_change_group() {
+                    self.send(NetCommand::ActivateGroup(id));
+                }
+            }
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
-            CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
+            CtxAction::LeaveGroup(id) => {
+                if self.world.rlva_can_leave_group(id) {
+                    self.contacts_ui.ask_leave_group(id);
+                }
+            }
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id, true);

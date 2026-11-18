@@ -5418,7 +5418,19 @@ impl App {
             Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
-            Action::Appearance => ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance),
+            // The shortcut of Me › Appearance (menu_viewer.xml's "Outfits"),
+            // which LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp)
+            // greys while RlvActions::canStand refuses: a greyed entry's
+            // shortcut does nothing.
+            Action::Appearance => {
+                let held = self.world.agent.is_sitting()
+                    && !self
+                        .world
+                        .rlva_allows_command(&NetCommand::OneShotControl(control::STAND_UP), uuid::Uuid::nil());
+                if !held {
+                    ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance);
+                }
+            }
             Action::Quit => self.request_exit(),
             Action::TextureLibrary => ui::widgets::toggle_floater(
                 &self.egui_ctx,
@@ -8354,6 +8366,20 @@ impl App {
                 _ => None,
             }
         };
+        // LLToolSelect::handleObjectSelection (lltoolselect.cpp): under
+        // @fartouch, a click on a surface within 1.5 m of an object whose
+        // own place is too far leaves the build tools (leaveBuildMode); on a
+        // farther surface it selects nothing and the tools stay.
+        if let (Some(idx), Some(point)) = (target, hit)
+            && self.build.tool == crate::build::Tool::Edit
+            && crate::build::selectable_within(&self.world, idx)
+            && !self.world.rlva_within_fartouch(idx)
+            && point.distance(self.world.agent.position) <= 1.5
+        {
+            self.build.close(&mut self.world, &mut self.settings.build);
+            self.flush_build();
+            return true;
+        }
         let used = self.build.mouse_down(
             &mut self.world,
             &mut self.settings.build,
@@ -11159,6 +11185,7 @@ impl App {
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
                 follow_joint_offset: None,
+                head_offset: self.scene.head_offset(&self.world, &self.world.agent_id),
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
@@ -17424,7 +17451,11 @@ impl App {
                 }
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
-                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::Activate(group) => {
+                    if self.world.rlva_can_change_group() {
+                        self.send(NetCommand::ActivateGroup(group));
+                    }
+                }
                 GroupAction::SetTitle { group, role } => {
                     if !self.world.rlva.has("setgroup") {
                         self.world.group_data.set_title(group, role);
@@ -20654,6 +20685,7 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                self.profile_ui.open_residents(&mut self.world.rlva.open_profiles);
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
                 self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();

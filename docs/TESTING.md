@@ -6680,18 +6680,22 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   direction with FOV limits. `camera-prefs` opens Camera preferences under
   an exclusive camera lock: preset, offset, distance and viewing-angle
   controls must be disabled while unrelated options remain editable.
-  `camera-zoom-max` sets `setcam_origindistmax:8` on an alt camera 7.6 m
-  from its focus point and scrolls out five clicks from frame 740, then one
-  back in at frame 810; `camera-zoom-min` does the same inward with
-  `setcam_origindistmin:6`. The log gives the camera's distance to the focus
-  at frames 800 and 840: held at the limit at 800, already back inside at
-  840 (the zoom past the limit is not kept). `camera-zoom-both` sets
-  `setcam_avdistmax:7` and `setcam_origindistmin:7.2`, which both hold the
-  camera, then scrolls one click out at frame 760 and one back in at 810;
-  the log gives both distances and the zoom fraction at frames 750, 800 and
-  840: the camera stays held at 7.2 m from the focus, the click out changes
-  the zoom fraction (the zoom is not refused both ways) and the click back
-  in is refused, since the focus limit still holds.
+  The `camera-zoom-*` scenarios start from an alt camera 7.6 m from its
+  focus point, which is over the avatar: 5.2 m from where the avatar's own
+  view would put the camera (its origin) and 7.6 m from the head. They
+  scroll five clicks past the limit from frame 740 and one back at frame
+  810, and the log gives the three distances at frames 730, 800 and 840.
+  `camera-zoom-max` sets `setcam_origindistmax:8`: 8.000 m from the origin
+  at 800 (10.5 m from the head: the origin's limit is not measured from the
+  avatar), 6.7 m at 840 (the zoom past the limit is not kept).
+  `camera-zoom-min` sets `setcam_origindistmin:5` and scrolls in: 5.000 m
+  at 800, 5.3 m at 840. `camera-zoom-both` sets `setcam_avdistmax:5` with
+  `setcam_origindistmax:8`: the same figures as `camera-zoom-max`, 10.5 m
+  from the head at 800, since the origin's limit holds the camera alone
+  while the avatar's two ends differ. `camera-zoom-locked` sets
+  `setcam_avdistmin:5`, `setcam_avdistmax:5` and `setcam_origindistmax:8`:
+  the avatar's limits made equal hold the camera alone, 5.000 m from the
+  head at the three frames, whatever the wheel does.
   `offset-zoom` sets `setcam_eyeoffset:-6/0/1` and
   `setcam_eyeoffsetscale:1.5` on the avatar's own view (9.12 m behind it),
   then scrolls four clicks out from frame 740 and four back in from frame
@@ -6701,14 +6705,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   does not come back. `no-mouselook` sets `camdistmin:1`, presses the
   mouselook key at frame 740 and scrolls nineteen clicks in from frame 752.
   The log at frames 741, 790 and 880 must say `mouselook=false` and
-  `cursor held=false`, the camera about 1.4 m from the avatar at 880 (the
-  closest zoom): mouselook is refused up front instead of entered and left
-  a frame later. `avatar-zoom` sets `camdistmax:5` on the avatar's own
-  view, scrolls four clicks out from frame 740 (the second already reaches
-  the limit) and one back in at frame 800. The log gives the camera's
-  distance to the avatar at frames 730, 790 and 880: about 3.3 m, 5 m (held
-  at the limit) and about 4.3 m (the click in moved the camera at once: no
-  zoom was kept past the limit).
+  `cursor held=false`, the camera 1.000 m from the head at 880 (the limit,
+  measured from the head): mouselook is refused up front
+  (RlvActions::canChangeToMouselook) instead of entered and left a frame
+  later, and the wheel all the way in does not enter it either.
+  `avatar-zoom` sets `camdistmax:5` on the avatar's own view, scrolls four
+  clicks out from frame 740 (the third reaches the limit) and one back in
+  at frame 800. The log gives the camera's distance to the head at frames
+  730, 790 and 880: about 3.0 m, 5.000 m (held at the limit) and about
+  4.2 m (the click in moved the camera at once: no zoom was kept past the
+  limit).
   `sitting` sends a forced object sit at frame 700, then sitground at 740.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;

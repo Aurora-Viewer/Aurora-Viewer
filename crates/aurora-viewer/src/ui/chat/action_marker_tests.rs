@@ -69,7 +69,7 @@ fn pasted_unknown_uri_shows_a_readable_label_and_keeps_its_target() {
     let url = "secondlife:///app/frobnicate/1";
     let sentence = format!("Salut tu vas {url} bien ?");
     let parts = pieces(&sentence, |s| match s {
-        Seg::App(u, link) => app_links::label(&world, &mut HashSet::new(), u, link),
+        Seg::App(u, link) => app_links::label(&world, crate::world::names::NameScope::World.into(), &mut HashSet::new(), u, link),
         _ => unreachable!(),
     });
     assert_eq!(

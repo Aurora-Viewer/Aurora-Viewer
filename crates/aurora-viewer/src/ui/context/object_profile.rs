@@ -18,19 +18,25 @@ pub struct ObjectProfileUi {
     editor: Box<BuildTool>,
 }
 
+/// The owner of a pathfinding row. LLFloaterPathfindingObjects and its
+/// linkset and character lists (indra/newview/llfloaterpathfindingobjects.cpp)
+/// write the owner's name with no RLVa test: it is named under @shownames
+/// too, as the windows that name their people whoever is around
+/// (`NameScope::Roster`), and its link opens the profile the same way.
 pub(super) fn person(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
+    use crate::world::names::NameScope;
     if id.is_nil() {
         ui.label(aurora_i18n::tr!("status-nobody"));
-    } else if !world.rlva_can_name(id) {
-        ui.label(aurora_i18n::tr!("scene-object-hidden-person"));
     } else {
         world.social.want_name(id);
-        let name = world.person_name(&id).unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+        let name = world
+            .person_name_in(NameScope::Roster, &id)
+            .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
         if ui
             .add(egui::Label::new(egui::RichText::new(name).color(p.violet_light)).sense(egui::Sense::click()))
             .clicked()
         {
-            super::request(ui.ctx(), super::CtxAction::Profile(id));
+            crate::ui::profile::request_open_in(ui.ctx(), NameScope::Roster, id);
         }
     }
 }

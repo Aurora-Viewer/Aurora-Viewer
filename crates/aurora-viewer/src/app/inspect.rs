@@ -189,25 +189,12 @@ impl App {
                     row.owner_name = aurora_i18n::tr!("inspect-group-owner", name = group);
                 } else if !props.owner_id.is_nil() {
                     self.world.social.want_name(props.owner_id);
-                    // LLFloaterInspect::refresh and onGetOwnerNameCallback
-                    // (indra/newview/llfloaterinspect.cpp): under RLVa's
-                    // `@shownames` the owner is anonymous, the creator only
-                    // when they also own the object or stand around; the
-                    // profile buttons follow. The creator's button stays off
-                    // while the world hides them (stricter: the Legacy
-                    // Viewer opens that profile).
-                    let scope = NameScope::Owner;
-                    row.owner_name = self.world.social.name_in(scope, &props.owner_id);
-                    row.owner = self.world.rlva_shows_name(scope, props.owner_id).then_some(props.owner_id);
+                    (row.owner_name, row.owner) = owner_shown(&self.world, props.owner_id);
                 }
                 if !props.creator_id.is_nil() {
                     self.world.social.want_name(props.creator_id);
-                    let scope = NameScope::Creator { owner: props.owner_id };
-                    row.creator_name = self.world.social.name_in(scope, &props.creator_id);
-                    row.creator = self
-                        .world
-                        .rlva_shows_name(NameScope::World, props.creator_id)
-                        .then_some(props.creator_id);
+                    (row.creator_name, row.creator) = creator_shown(&self.world, props.owner_id, props.creator_id);
+                    row.creator_named_here_alone = row.creator.is_some() && !self.world.rlva_shows_name(NameScope::World, props.creator_id);
                 }
             }
             rows.push(row);
@@ -215,6 +202,31 @@ impl App {
         totals.textures = textures.len() as u32;
         (rows, totals)
     }
+}
+
+/// The resident who owns a prim as its row names them, and whose profile
+/// "See Owner Profile" opens. Under RLVa's `@shownames` the owner is their
+/// stand-in and the button is off (LLFloaterInspect::refresh,
+/// onSelectObject and onClickOwnerProfile, indra/newview/llfloaterinspect.cpp).
+fn owner_shown(world: &crate::world::World, owner: Uuid) -> (String, Option<Uuid>) {
+    let scope = NameScope::Owner;
+    (
+        world.social.name_in(scope, &owner),
+        world.rlva_shows_name(scope, owner).then_some(owner),
+    )
+}
+
+/// `owner_shown` for the creator of a prim `owner` owns. The same sources:
+/// the creator is hidden only when they also own the object or stand
+/// around, and "See Creator Profile" follows the name, so it opens the
+/// profile of a creator the world hides (`button creator` is enabled by
+/// `(idOwner != idCreator && !isNearbyAgent(idCreator)) || canShowName`).
+fn creator_shown(world: &crate::world::World, owner: Uuid, creator: Uuid) -> (String, Option<Uuid>) {
+    let scope = NameScope::Creator { owner };
+    (
+        world.social.name_in(scope, &creator),
+        world.rlva_shows_name(scope, creator).then_some(creator),
+    )
 }
 
 /// The root prims of what avatar `id` wears, as the world has them.
@@ -230,4 +242,59 @@ pub(super) fn worn_roots(world: &crate::world::World, id: &Uuid) -> Vec<Uuid> {
         .filter(|o| !o.is_avatar())
         .map(|o| o.full_id)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// LLFloaterInspect under `@shownames`: the owner anonymous and without
+    /// a profile; the creator named, with their profile, unless they own
+    /// the object or stand around.
+    #[test]
+    fn shownames_names_the_creator_who_is_away_and_opens_their_profile() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let (maker, owner) = (Uuid::from_u128(0xF3), Uuid::from_u128(0xF1));
+        for (id, first) in [(near, "Near"), (maker, "Maker"), (owner, "Owner")] {
+            world.social.avatar_names.on_legacy(id, first, "Tester");
+        }
+        // no restriction: both named, both profiles
+        assert_eq!(owner_shown(&world, owner), ("Owner Tester".into(), Some(owner)));
+        assert_eq!(creator_shown(&world, owner, near), ("Near Tester".into(), Some(near)));
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Inspect fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let (name, profile) = owner_shown(&world, owner);
+        assert!(!name.contains("Tester") && profile.is_none(), "{name}");
+        // away, on someone else's object
+        assert_eq!(creator_shown(&world, owner, maker), ("Maker Tester".into(), Some(maker)));
+        assert!(!world.rlva_shows_name(NameScope::World, maker), "the world still hides them");
+        // their own object, or around us
+        for (owner, creator) in [(maker, maker), (owner, near)] {
+            let (name, profile) = creator_shown(&world, owner, creator);
+            assert!(!name.contains("Tester") && profile.is_none(), "{name}");
+        }
+        // ourselves, always
+        let me = world.agent_id;
+        assert_eq!(owner_shown(&world, me).1, Some(me));
+        assert_eq!(creator_shown(&world, me, me).1, Some(me));
+    }
 }

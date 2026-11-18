@@ -14289,6 +14289,7 @@ rlva-tools-col-restriction = 制限
 rlva-tools-col-modifier = 修飾子
 rlva-tools-col-value = 値
 rlva-tools-col-object = オブジェクト名
+rlva-tools-child = 子プリム
 rlva-modifier-fartouch = 遠隔タッチの距離
 rlva-modifier-recvim-min = RecvIM の距離（最小）
 rlva-modifier-recvim-max = RecvIM の距離（最大）

@@ -1106,7 +1106,13 @@ pub fn rlva_selectable(world: &World, idx: usize) -> bool {
 /// World objects and what our avatar wears, HUDs included; the attachments
 /// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
-    if !rlva_selectable(world, idx) || !world.rlva_within_fartouch(idx) {
+    world.rlva_within_fartouch(idx) && selectable_within(world, idx)
+}
+
+/// [`selectable`] without @fartouch's distance: what a right click on a
+/// surface within 1.5 m still selects for its menu.
+pub fn selectable_within(world: &World, idx: usize) -> bool {
+    if !rlva_selectable(world, idx) {
         return false;
     }
     let mut i = idx;

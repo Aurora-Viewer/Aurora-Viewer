@@ -349,6 +349,27 @@ pub struct ChatLine {
     pub beyond_range: bool,
 }
 
+impl ChatLine {
+    /// How the text of the line is shown in a conversation that shows the
+    /// names of `names`: as its kind is (`ChatKind::text_in`) when it was
+    /// said during this session, as the transcript gives it when it is read
+    /// back, a mention in it naming its resident. Nothing rewrites a line
+    /// read back under RLVa's `@shownames` and `@showloc`:
+    /// LLLogChat::loadChatHistory (indra/newview/lllogchat.cpp),
+    /// FSFloaterNearbyChat::loadHistory
+    /// (indra/newview/fsfloaternearbychat.cpp) and
+    /// LLIMModel::LLIMSession::chatFromLogFile (indra/newview/llimview.cpp)
+    /// have no RLVa test, and RlvUtil::filterMentions runs on the lines the
+    /// simulator sends. What a restriction hid when the line was said is
+    /// hidden in the file already (`World::transcript_text`).
+    pub fn wording(&self, names: names::NameScope) -> names::TextScope {
+        match self.origin {
+            Origin::Live => self.kind.text_in(names),
+            _ => names::TextScope::as_received(names),
+        }
+    }
+}
+
 /// The name an object speaks under in the nearby chat. A name of nothing but
 /// spaces is an empty one, and with `mark` (FSMarkObjects) it becomes "(no
 /// name)": a script that clears its name can no longer write a line that
@@ -5494,12 +5515,25 @@ impl World {
                 } else {
                     aurora_i18n::tr!("world-mod-declined")
                 };
-                n.push(
+                // Named or not as an offer of theirs would be, decided
+                // now: IM_INVENTORY_ACCEPTED and IM_INVENTORY_DECLINED of
+                // process_improved_im (indra/newview/llimprocessing.cpp)
+                // write RlvStrings::getAnonym in place of the name.
+                let named = self.rlva_names_giver(im.from_agent_id, false);
+                let who = if named {
+                    from.to_string()
+                } else {
+                    self.rlva_anonymous(im.from_agent_id).display_name.clone()
+                };
+                let id = self.notifications.push(
                     Kind::Inventory,
-                    aurora_i18n::tr!("world-mod-has-your-object", from = from.to_string(), verb = verb.to_string()),
+                    aurora_i18n::tr!("world-mod-has-your-object", from = who, verb = verb.to_string()),
                     String::new(),
                     Data::None,
                 );
+                if named {
+                    self.notifications.name_resident(id);
+                }
             }
             d::MESSAGEBOX | d::FROM_TASK_AS_ALERT => {
                 n.push(Kind::Alert, from, im.message.clone(), Data::None);

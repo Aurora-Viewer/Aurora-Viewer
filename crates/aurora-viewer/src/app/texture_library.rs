@@ -981,6 +981,11 @@ impl App {
             });
         }
         let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_refused(&self.world, idx, item));
+        // dad3dApplyToObject asks willObjectAcceptInventory before anything
+        // else (indra/newview/lltooldraganddrop.cpp): the seat the agent is
+        // held on under @unsit or @sittp takes no drop, not even a texture
+        // its faces could show (ACCEPT_NO_LOCKED).
+        let seat_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| self.world.rlva_restrained_seat(idx));
         // dad3dApplyToObject: a texture without copy and transfer has nowhere
         // to go when every face it covers carries a material
         let pbr_refused = !ctrl
@@ -995,6 +1000,8 @@ impl App {
             });
         if worn_refused {
             reason = Some(contents_drop::worn_refusal_text(item, self.world.agent_id));
+        } else if seat_refused {
+            reason = Some(aurora_i18n::tr!("texture-library-locked"));
         } else if pbr_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed

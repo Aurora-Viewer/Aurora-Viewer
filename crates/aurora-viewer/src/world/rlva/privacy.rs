@@ -230,12 +230,12 @@ impl World {
         self.rlva_hide_places(&mut places);
         places.sort();
         places.reuse_matcher(&self.rlva_place_privacy);
-        for notification in &mut self.notifications.list {
+        // (a notice that names its resident keeps them: `name_resident`)
+        for (text, notification) in self.notifications.with_text_scopes() {
             // a script's prompt stays as received, its owner's name included
             if notification.kind.as_received() {
                 continue;
             }
-            let text = notification.kind.text();
             let filter = if text.names == NameScope::Roster { &places } else { &filter };
             filter.redact_notice(
                 &self.social.avatar_names,
@@ -295,12 +295,14 @@ impl World {
         self.rlva_can_name(*id) && self.social.is_friend(id)
     }
 
-    /// The mark of a resident (`world::avatar_marks`) as the world, the maps
-    /// and the lists may show it: none for a resident whose name is hidden,
-    /// whose mark would tell who they are. LLNetMap::draw (llnetmap.cpp)
-    /// drops it from the dot (`canShowName(…) ? color : map_avatar_color`);
-    /// stricter than the Legacy Viewer on the name tag, which keeps the
-    /// mark's colour there (LLVOAvatar::getNameTagColor).
+    /// The mark of a resident (`world::avatar_marks`) as the maps and the
+    /// lists may show it: none for a resident whose name is hidden, whose
+    /// mark would tell who they are. LLNetMap::draw
+    /// (indra/newview/llnetmap.cpp) drops it from the dot
+    /// (`canShowName(…) ? color : map_avatar_color`). The name tag reads
+    /// `avatar_marks` itself: LLVOAvatar::getNameTagColor
+    /// (indra/newview/llvoavatar.cpp) keeps the mark's colour there
+    /// (`ui::colors::tag_color`).
     pub fn rlva_shown_mark(&self, id: &Uuid) -> Option<super::super::avatar_marks::Rgb> {
         self.avatar_marks.get(id).filter(|_| self.rlva_can_name(*id))
     }
@@ -520,6 +522,23 @@ impl World {
     /// it for what goes with a shown name, such as opening a profile.
     pub fn rlva_shows_name(&self, scope: NameScope, id: Uuid) -> bool {
         self.social.avatar_names.shows(scope, &id)
+    }
+
+    /// The notice of what `from` gives us, or of their answer to what we
+    /// gave them, names them. inventory_offer_handler and IM_INVENTORY_ACCEPTED
+    /// / IM_INVENTORY_DECLINED in process_improved_im
+    /// (indra/newview/llimprocessing.cpp) hide a resident RLVa's `@shownames`
+    /// hides only while they stand in a region around (RlvUtil::isNearbyAgent)
+    /// and neither a conversation with them nor their profile is open
+    /// (RlvUIEnabler::hasOpenIM and hasOpenProfile, indra/newview/rlvui.cpp;
+    /// `Rlva::open_profiles`); the owner of an object that gives
+    /// (`from_object`) is hidden whenever they stand around. Asked once,
+    /// when the notice arrives.
+    pub fn rlva_names_giver(&self, from: Uuid, from_object: bool) -> bool {
+        !self.rlva.enabled()
+            || self.rlva_can_name(from)
+            || !self.rlva_nearby_avatars().contains(&from)
+            || (!from_object && (self.social.has_session(&from) || self.rlva.open_profiles.contains(&from)))
     }
 
     /// The avatars of every region around, oneself left out
@@ -962,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn shownames_leaves_a_friend_around_us_named_in_the_list_and_untold_in_the_world() {
+    fn shownames_leaves_a_friend_around_us_named_in_the_list_with_their_status() {
         let (mut world, near) = shownames_world();
         world.social.friends.push(crate::world::social::Friend {
             id: near,
@@ -975,13 +994,12 @@ mod tests {
         world.refresh_rlva_privacy();
         assert!(named(&world, NameScope::Roster, near));
         assert!(!named(&world, NameScope::World, near));
-        // the row tells nothing of where they stand: around us they would
-        // read online, the list knows no status of theirs
+        // the row says of them what it says of anyone: the Legacy Viewer's
+        // friends list has no `@shownames` test (FSFloaterContacts)
         use crate::ui::presence::{self, Status};
         let told = presence::of(&world, &near);
         assert_ne!(told, Status::Unknown);
-        assert_eq!(presence::of_in(&world, NameScope::Roster, &near), Status::Unknown);
-        // once named in the world (an exception), the row says it again
+        assert_eq!(presence::of_in(&world, NameScope::Roster, &near), told);
         restrict(&mut world, &format!("shownames:{near}=add"));
         world.refresh_rlva_privacy();
         assert_eq!(presence::of_in(&world, NameScope::Roster, &near), told);
@@ -1118,18 +1136,20 @@ mod tests {
             "Near Tester"
         );
         // outside its conversation (the on-screen chat), by the line's kind
-        assert_eq!(line_names(&ChatKind::Im), NameScope::Roster);
-        assert_eq!(line_names(&ChatKind::Invite(1)), NameScope::Roster);
+        assert_eq!(line_names(&world, &ChatKind::Im), NameScope::Roster);
+        assert_eq!(line_names(&world, &ChatKind::Invite(1)), NameScope::Roster);
+        // a payment names its resident, as its card does
+        assert_eq!(line_names(&world, &ChatKind::Payment(1)), NameScope::Roster);
         for kind in [
             ChatKind::Local(aurora_net::ChatType::Normal),
             ChatKind::Object(aurora_net::ChatType::Normal),
             ChatKind::OWN,
             ChatKind::System,
             ChatKind::ObjectIm,
+            // (an offer that is not listed, or that hid its giver)
             ChatKind::InventoryOffer(1),
-            ChatKind::Payment(1),
         ] {
-            assert_eq!(line_names(&kind), NameScope::World, "{kind:?}");
+            assert_eq!(line_names(&world, &kind), NameScope::World, "{kind:?}");
         }
     }
 
@@ -1341,7 +1361,7 @@ mod tests {
         ] {
             assert_eq!(scope.mentions, NameScope::World, "{scope:?}");
             let shown = resolved_text_in(&world, scope, &text);
-            assert!(shown.starts_with(&format!("ask @{stand_in} or ")), "{scope:?}: {shown}");
+            assert_eq!(shown, format!("ask @{stand_in} or Near Tester"), "{scope:?}");
         }
         // as a notice draws it
         let ctx = egui::Context::default();

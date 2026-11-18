@@ -6319,6 +6319,12 @@ impl Scene {
         Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
     }
 
+    /// The head joint as last posed, relative to the avatar root (as
+    /// `eyes_offset`).
+    pub fn head_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
+        Some(self.motions.get(id)?.head_pos()? - world.avatar_lib.pelvis)
+    }
+
     /// A posed skeleton joint's displacement from the avatar's own shaped
     /// rest pose, in avatar-local space: only what animation moves. The
     /// shape and the joint offsets of worn meshes are part of the rest pose,
@@ -7393,6 +7399,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
+                head_offset: scene.head_offset(&world, &owner),
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.0,
@@ -7458,6 +7465,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
+            head_offset: scene.head_offset(&world, &owner),
             draw_distance: 128.0,
             region_width: 256.0,
             aspect: 1.0,

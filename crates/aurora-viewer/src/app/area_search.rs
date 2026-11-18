@@ -21,8 +21,9 @@ const TOUCH_SPACING: Duration = Duration::from_millis(200);
 /// fsareasearch.cpp). Nothing with RLVa off, everything under @interact or
 /// for a row whose object is gone; otherwise each word is refused as soon
 /// as one row's object refuses it, with the checks the actions themselves
-/// meet when sent: a touch and a sit without a picked point, a teleport to
-/// where the object is.
+/// meet when sent: a touch and a sit without a picked point. The teleport
+/// is asked as a local one whatever the distance
+/// (`rlva_can_teleport_local`).
 fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
     if !world.rlva.enabled() {
         return MenuLocks::default();
@@ -52,7 +53,7 @@ fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
         );
         locks.teleport |= !Scene::object_transform(world, idx, now, 0).is_some_and(|xf| {
             let (x, y) = crate::ui::minimap::to_global(world, xf.0);
-            world.rlva_can_teleport_global(glam::DVec3::new(x, y, f64::from(xf.0.z)))
+            world.rlva_can_teleport_local(glam::DVec3::new(x, y, f64::from(xf.0.z)))
         });
         if locks == MenuLocks::ALL {
             break;

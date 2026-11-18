@@ -52,6 +52,31 @@ impl World {
                 .is_some_and(|o| o.full_id == self.rlva_sit_id())
     }
 
+    /// derenderObject (llviewermenu.cpp) asked of the seat held by @unsit:
+    /// the prims that still go, or `None` when `index` is not of that seat.
+    /// The prim sat on, the root of its linkset, stays in the world: the
+    /// Legacy Viewer takes it alone out of the selection
+    /// (deselectObjectOnly), and its loop then goes through the prims
+    /// linked to it one by one (getFirstRootObject(true) falls back on
+    /// them). `part`: one prim was asked, not its linkset.
+    pub fn rlva_seat_derender(&self, index: usize, part: bool) -> Option<Vec<uuid::Uuid>> {
+        if !self.rlva.enabled() || !self.rlva_locked_seat(index) {
+            return None;
+        }
+        let root = self.objects.linkset_root(index);
+        let prim = |i: usize| self.objects.get(i).filter(|o| !o.is_avatar()).map(|o| o.full_id);
+        Some(if part {
+            prim(index).filter(|_| index != root).into_iter().collect()
+        } else {
+            self.objects
+                .subtree(root)
+                .into_iter()
+                .filter(|&i| i != root && self.objects.get(i).is_some_and(|o| self.objects.parent_of(o) == Some(root)))
+                .filter_map(prim)
+                .collect()
+        })
+    }
+
     /// RlvActions::canBuild (rlvactions.cpp), asked by LLToolMgr::canEdit
     /// (lltoolmgr.cpp): the build window opens as long as editing or rezzing
     /// is left to the agent; under both @edit and @rez its entries are greyed.
@@ -94,9 +119,10 @@ impl World {
 
     /// LLToolSelect::handleObjectSelection (lltoolselect.cpp): under
     /// @fartouch nothing farther than its distance is selected, what the
-    /// agent wears aside. Stricter than there, where a click on a surface
-    /// within 1.5 m still gives the menu its selection: the build tools do
-    /// not know the clicked point when they ask.
+    /// agent wears aside. The distance is the object's own place; a right
+    /// click on a surface within 1.5 m still gives the menu its selection
+    /// (`ObjectMenu::near`), and such a click with the build tools closes
+    /// them.
     pub fn rlva_within_fartouch(&self, index: usize) -> bool {
         let Some(max) = self.rlva_select_limit() else {
             return true;
@@ -156,14 +182,13 @@ impl World {
     }
 
     /// The contents of `index`'s object are locked: nothing is added to,
-    /// removed from, moved out of or renamed in a locked attachment or the
-    /// restraining seat, whose script holds the restriction
-    /// (LLTaskInvFVBridge::isItemRemovable / isItemMovable / isItemRenameable
-    /// and LLPanelContents::getState, llpanelobjectinventory.cpp and
+    /// removed from or moved out of a locked attachment or the restraining
+    /// seat, whose script holds the restriction
+    /// (LLTaskInvFVBridge::isItemRemovable and isItemMovable, and
+    /// LLPanelContents::getState, llpanelobjectinventory.cpp and
     /// llpanelcontents.cpp; LLToolDragAndDrop::willObjectAcceptInventory,
-    /// lltooldraganddrop.cpp). Stricter than isItemRenameable, which only
-    /// keeps the names of a locked attachment: a rename and a drop are the
-    /// same message here.
+    /// lltooldraganddrop.cpp). The items already inside are another rule:
+    /// `BuildTool::contents_items_editable`.
     pub fn rlva_contents_locked(&self, index: usize) -> bool {
         self.rlva_locked_attachment(index) || self.rlva_restrained_seat(index)
     }
@@ -174,10 +199,17 @@ impl World {
     /// keeps it in place; under @edit or @rez so does whatever the agent
     /// owns, may modify or holds through a group, since it could not be put
     /// back; under @unsit so does the linkset the agent sits on. The menus
-    /// grey their entries on the same answer.
+    /// grey their entries on the same answer. Nothing is asked unless
+    /// @edit, @rez, @unsit or an @editobj lock is in force: @editworld and
+    /// @editattach alone keep no object in place.
     pub fn rlva_can_delete_or_return(&self, index: usize) -> bool {
         use crate::ui::context::flags::{OBJECT_GROUP_OWNED, OBJECT_MODIFY, OBJECT_YOU_OWNER};
         if !self.rlva.enabled() {
+            return true;
+        }
+        let asked = ["edit", "rez", "unsit"].iter().any(|name| self.rlva.has(name))
+            || self.rlva.rules_for("editobj", uuid::Uuid::nil()).next().is_some();
+        if !asked {
             return true;
         }
         let ours = self
@@ -193,6 +225,20 @@ impl World {
         !self.rlva.enabled() || !self.rlva_locked_seat(index)
     }
 
+    /// `index` is a prim of the viewer's own bridge as we wear it.
+    fn rlva_viewer_bridge_object(&self, index: usize) -> bool {
+        let root = self.objects.linkset_root(index);
+        self.objects.get(root).is_some_and(|o| {
+            self.objects
+                .parent_of(o)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|p| p.full_id == self.agent_id)
+                && self
+                    .rlva_attachment_item(o.full_id)
+                    .is_some_and(|item| crate::world::bridge::viewer_bridge(self, item, o.attachment_point()))
+        })
+    }
+
     pub fn rlva_allows_build(&self, command: &BuildCmd) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -203,6 +249,26 @@ impl World {
                 local_id: id,
             })
         };
+        // The viewer shapes its own bridge and writes and starts its script
+        // whatever holds Center 2 or forbids editing: FSLSLBridge sends
+        // those messages itself, past RLVa (indra/newview/fslslbridge.cpp).
+        let bridge = |i: usize| self.rlva_viewer_bridge_object(i);
+        let upkeep = match command {
+            BuildCmd::Transform { handle, updates } => {
+                !updates.is_empty() && updates.iter().all(|u| index(*handle, u.local_id).is_some_and(bridge))
+            }
+            BuildCmd::SetShape { handle, local_ids, .. } => {
+                !local_ids.is_empty() && local_ids.iter().all(|id| index(*handle, *id).is_some_and(bridge))
+            }
+            BuildCmd::SetTextures { handle, local_id, .. } | BuildCmd::RezScript { handle, local_id, .. } => {
+                index(*handle, *local_id).is_some_and(bridge)
+            }
+            BuildCmd::SetScriptRunning { object_id, .. } => self.objects.index_of_uuid(object_id).is_some_and(bridge),
+            _ => false,
+        };
+        if upkeep {
+            return true;
+        }
         let local = |handle: RegionHandle, id| index(handle, id).is_some_and(|i| self.rlva_can_edit(i));
         let uuid = |id: &uuid::Uuid| self.objects.index_of_uuid(id).is_some_and(|i| self.rlva_can_edit(i));
         // The contents of a locked attachment and of the restraining seat
@@ -226,8 +292,17 @@ impl World {
             | BuildCmd::SetExtraParam { handle, local_id, .. } => local(*handle, *local_id),
             BuildCmd::RemoveTaskInventory { handle, local_id, .. }
             | BuildCmd::MoveTaskInventory { handle, local_id, .. }
-            | BuildCmd::UpdateTaskInventory { handle, local_id, .. }
             | BuildCmd::RezScript { handle, local_id, .. } => index(*handle, *local_id).is_some_and(contents),
+            // The same message puts an inventory item into the object (a
+            // drop, refused like the rest) and changes one already inside:
+            // its name, which LLTaskInvFVBridge::renameItem keeps in a
+            // locked attachment only, or its properties, which
+            // LLSidepanelItemInfo changes whatever holds the object. The
+            // windows apply those two rules; here a change is told from a
+            // drop by its item, which is not one of our inventory.
+            BuildCmd::UpdateTaskInventory { handle, local_id, item } => index(*handle, *local_id).is_some_and(|i| {
+                self.rlva_can_edit(i) && (!self.inventory.items.contains_key(&item.item_id) || !self.rlva_contents_locked(i))
+            }),
             BuildCmd::SetName { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
             // LLSelectMgr::enableUnlinkObjects (llselectmgr.cpp): under
             // @unsit the linkset sat on stays whole.
@@ -253,22 +328,22 @@ impl World {
                     derez::TRASH | derez::TAKE_INTO_AGENT_INVENTORY | derez::RETURN_TO_OWNER | derez::RETURN_TO_LAST_OWNER => {
                         self.rlva_can_delete_or_return(i)
                     }
-                    // Stricter than handle_take_copy, which only keeps the
-                    // seat: an edit lock already refused a copy here.
-                    derez::ACQUIRE_TO_AGENT_INVENTORY => self.rlva_can_edit(i) && self.rlva_can_take_copy(i),
+                    // handle_take_copy and enable_object_take_copy
+                    // (llviewermenu.cpp) keep the seat alone: an edit lock
+                    // does not refuse a copy.
+                    derez::ACQUIRE_TO_AGENT_INVENTORY => self.rlva_can_take_copy(i),
                     _ => self.rlva_can_edit(i),
                 })
             }),
-            // LLSelectMgr::selectDuplicate: the copy is a rez, and the
-            // original answers like a delete. A copy placed with the Create
-            // tool is LLToolPlacer::placeObject, which @interact refuses too.
-            BuildCmd::Duplicate { handle, local_ids, .. } | BuildCmd::DuplicateOnRay { handle, local_ids, .. } => {
-                !self.rlva.has("rez")
-                    && (matches!(command, BuildCmd::Duplicate { .. }) || self.rlva_can_rez(None))
-                    && local_ids
-                        .iter()
-                        .all(|id| index(*handle, *id).is_some_and(|i| self.rlva_can_delete_or_return(i)))
-            }
+            // LLSelectMgr::selectDuplicate (Ctrl+D, a shift-drag): the
+            // original answers like a delete, and nothing else is asked.
+            BuildCmd::Duplicate { handle, local_ids, .. } => local_ids
+                .iter()
+                .all(|id| index(*handle, *id).is_some_and(|i| self.rlva_can_delete_or_return(i))),
+            // A copy placed with the Create tool is LLToolPlacer::placeObject,
+            // which @rez and @interact refuse and which asks nothing of the
+            // original (LLSelectMgr::selectDuplicateOnRay).
+            BuildCmd::DuplicateOnRay { .. } => self.rlva_can_rez(None),
             BuildCmd::SpinStart { object_id, .. } | BuildCmd::SpinUpdate { object_id, .. } => uuid(object_id),
             // handle_selected_script_action (llviewermenu.cpp): the scripts
             // of a locked attachment are neither reset nor stopped.

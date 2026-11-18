@@ -170,7 +170,12 @@ impl App {
         let name = |id: &uuid::Uuid, _mention: bool| world.social.avatar_names.complete(id);
         // a label still waiting for its name keeps the address: the
         // notification is not drawn again once it comes (#947)
-        let app = |url: &str, link: &crate::slapp::AppLink| match crate::ui::chat::app_label(world, url, link) {
+        let app = |url: &str, link: &crate::slapp::AppLink| match crate::ui::chat::app_label(
+            world,
+            crate::world::names::NameScope::World,
+            url,
+            link,
+        ) {
             label if label == "…" => crate::slapp::unescape(url),
             label => label,
         };

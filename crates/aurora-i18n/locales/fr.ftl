@@ -14398,6 +14398,7 @@ rlva-tools-col-restriction = Restriction
 rlva-tools-col-modifier = Modificateur
 rlva-tools-col-value = Valeur
 rlva-tools-col-object = Nom de l’objet
+rlva-tools-child = enfant
 rlva-modifier-fartouch = Distance de toucher (fartouch)
 rlva-modifier-recvim-min = Distance RecvIM (min)
 rlva-modifier-recvim-max = Distance RecvIM (max)

@@ -223,24 +223,30 @@ pub fn range_color_in(p: &crate::theme::Palette, range: Option<f32>, r: crate::w
 /// friend, blocked) rather than the match / mismatch one: the Legacy
 /// Viewer's tags colored by distance keep such a color
 /// (`special_color_override` in LLVOAvatar::idleUpdateNameTagText).
-/// A marked resident keeps their mark's color too (hasAvatarMarkColor).
+/// A marked resident keeps their mark's color too, their name hidden by
+/// RLVa or not: `LLNetMap::hasAvatarMarkColor` is the one term of
+/// `special_color_override` that tests no name.
 pub fn relation_tag(world: &World, id: &Uuid, name: &str) -> bool {
     let r = relation(world, id, is_linden(name), false);
-    world.rlva_shown_mark(id).is_some() || (get().relation_names && (r.linden || r.friend || r.blocked))
+    world.avatar_marks.contains(id) || (get().relation_names && (r.linden || r.friend || r.blocked))
 }
 
-/// The colour of a resident's mark (`world::avatar_marks`) as the world and
-/// the maps draw it, daltonised like the other configured colours. None for
-/// a resident whose name RLVa hides (`World::rlva_shown_mark`).
+/// The colour of a resident's mark (`world::avatar_marks`) as the maps draw
+/// it, daltonised like the other configured colours. None for a resident
+/// whose name RLVa hides (`World::rlva_shown_mark`); the name tag keeps it
+/// (`tag_color`).
 pub fn mark_color(world: &World, id: &Uuid) -> Option<Color32> {
     world.rlva_shown_mark(id).map(|[r, g, b]| c([r, g, b, 255]))
 }
 
 /// Name tag color of an avatar (own, Linden, friend while the names are
 /// colored by relation, else match / mismatch); a mark's color over all of
-/// them (LLNetMap::getAvatarMarkColor last in LLVOAvatar::getNameTagColor).
+/// them, for a resident whose name RLVa hides as for any other
+/// (LLVOAvatar::getNameTagColor, indra/newview/llvoavatar.cpp, ends with
+/// LLNetMap::getAvatarMarkColor and tests no name: the relation and the
+/// contact set are dropped before it, the mark is not).
 pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool) -> Color32 {
-    if let Some([r, g, b]) = world.rlva_shown_mark(id) {
+    if let Some([r, g, b]) = world.avatar_marks.get(id) {
         return text([r, g, b, 255]);
     }
     let k = get();
@@ -439,5 +445,32 @@ mod tests {
         rlva(&mut world, &format!("@shownames:{FRIEND}=add"));
         assert_eq!(map_color(&world, &FRIEND, "Teagan Linden"), set);
         assert!(contact_chat_color(&local, &world).is_some());
+    }
+
+    /// LLVOAvatar::getNameTagColor ends with the mark whatever RLVa hides,
+    /// and LLNetMap::draw gives a hidden resident the others' dot.
+    #[test]
+    fn rlva_hidden_names_keep_their_mark_on_the_name_tag_and_lose_it_on_the_map() {
+        let mut world = world();
+        let stranger = Uuid::from_u128(99);
+        let unmarked = tag_color(&world, &stranger, "Somebody Else", false);
+        world.avatar_marks.set(&[FRIEND], [186, 0, 31]);
+        let mark = text([186, 0, 31, 255]);
+        assert_eq!(tag_color(&world, &FRIEND, "Teagan Linden", false), mark);
+        assert_eq!(mark_color(&world, &FRIEND), Some(c([186, 0, 31, 255])));
+        rlva(&mut world, "@shownames=n");
+        // the tag: the mark still, and no distance colour over it
+        assert_eq!(tag_color(&world, &FRIEND, "Teagan Linden", false), mark);
+        assert!(relation_tag(&world, &FRIEND, "Teagan Linden"));
+        // the map: the dot of anyone else
+        assert_eq!(mark_color(&world, &FRIEND), None);
+        assert_eq!(
+            map_color(&world, &FRIEND, "Teagan Linden"),
+            map_color(&world, &stranger, "Somebody Else")
+        );
+        // no mark: a hidden friend's tag tells nothing, as before
+        world.avatar_marks.clear(&[FRIEND]);
+        assert_eq!(tag_color(&world, &FRIEND, "Teagan Linden", false), unmarked);
+        assert!(!relation_tag(&world, &FRIEND, "Teagan Linden"));
     }
 }
