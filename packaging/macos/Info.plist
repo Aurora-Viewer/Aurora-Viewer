@@ -21,6 +21,25 @@
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- the links Aurora can open: Launch Services sends them as kAEGetURL
+	     Apple events (slurl_handoff/macos.rs), and Preferences › Language and
+	     updates makes Aurora their default handler (url_scheme.rs, whose
+	     SCHEMES this list follows) -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>org.aurora-viewer.AuroraViewer.slurl</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>secondlife</string>
+				<string>hop</string>
+				<string>x-grid-location-info</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>

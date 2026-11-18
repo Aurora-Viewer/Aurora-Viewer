@@ -26,6 +26,10 @@
 //! which every viewer of that family owns: a link would otherwise go to
 //! whichever of them started first. Demo mode and `--title` windows add
 //! their own part to the name.
+//!
+//! On macOS nothing is handed over: Launch Services sends the link to the
+//! viewer already running, or to the one it starts, as an Apple event
+//! (`slurl_handoff/macos.rs`), and it joins the same receiver.
 
 use crossbeam_channel::Receiver;
 
@@ -35,7 +39,7 @@ mod windows;
 pub use windows::{focused, hand_off, listen, release, window_ready};
 
 /// Longest link received (a SLURL is far shorter).
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MAX_URL: usize = 8 * 1024;
 
 #[cfg(target_os = "linux")]
@@ -63,7 +67,12 @@ pub fn window_ready(_window: &std::sync::Arc<winit::window::Window>) {}
 #[cfg(not(windows))]
 pub fn focused() {}
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::listen;
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn listen() -> Option<Receiver<String>> {
     None
 }

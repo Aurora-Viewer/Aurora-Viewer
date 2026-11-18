@@ -14,6 +14,16 @@
 //! specifications: `$XDG_DATA_HOME/applications/aurora-viewer-slurl.desktop`
 //! and its `x-scheme-handler/<scheme>` defaults in
 //! `$XDG_CONFIG_HOME/mimeapps.list`, the rest of which it leaves untouched.
+//!
+//! On macOS the application bundle declares the schemes (`CFBundleURLTypes`
+//! of packaging/macos/Info.plist, the three of the Legacy Viewer's bundle,
+//! without its `LSIsAppleDefaultForScheme`: taking the links stays a choice)
+//! and Launch Services holds that choice: Aurora asks NSWorkspace which
+//! application opens them and makes this bundle their default. The link itself arrives as an Apple event
+//! (`slurl_handoff/macos.rs`). Launch Services has no "nobody": turning the
+//! links off gives each one to another application that declares it, and it
+//! stays with Aurora when there is none. A viewer started outside a bundle
+//! (`cargo run`) cannot be registered.
 
 /// Who opens `secondlife:` links.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,10 +37,14 @@ pub enum Handler {
 
 /// Whether this system lets Aurora register itself.
 pub fn supported() -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::bundle().is_some();
+    #[cfg(not(target_os = "macos"))]
     cfg!(any(windows, target_os = "linux"))
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+/// The ones packaging/macos/Info.plist declares too.
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMES: [&str; 3] = ["secondlife", "hop", "x-grid-location-info"];
 
 #[cfg(windows)]
@@ -666,18 +680,156 @@ mod xdg {
 #[cfg(target_os = "linux")]
 pub use xdg::{register, registrations, unregister};
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// The application bundle of an executable
+/// (`<name>.app/Contents/MacOS/<executable>`); None outside one.
+#[cfg(any(target_os = "macos", test))]
+fn bundle_of(exe: &std::path::Path) -> Option<&std::path::Path> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let app = bundle.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"));
+    (app && macos.ends_with("MacOS") && contents.ends_with("Contents")).then_some(bundle)
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use super::{Handler, SCHEMES};
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSError, NSString, NSURL};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The links were turned off and stayed here: no other application
+    /// declares them.
+    static KEPT: AtomicBool = AtomicBool::new(false);
+
+    pub fn kept() -> bool {
+        KEPT.load(Ordering::Relaxed)
+    }
+
+    /// This viewer's bundle, which Launch Services registers; None when the
+    /// executable runs outside one.
+    pub(super) fn bundle() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        super::bundle_of(&exe).map(Path::to_owned)
+    }
+
+    fn same_file(a: &Path, b: &Path) -> bool {
+        match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        }
+    }
+
+    /// A link of the scheme, to ask who opens it.
+    fn link(scheme: &str) -> Option<Retained<NSURL>> {
+        NSURL::URLWithString(&NSString::from_str(&format!("{scheme}:")))
+    }
+
+    fn path(url: &NSURL) -> Option<PathBuf> {
+        url.path().map(|path| PathBuf::from(path.to_string()))
+    }
+
+    fn handler_for(scheme: &str) -> Handler {
+        let app = link(scheme)
+            .and_then(|link| NSWorkspace::sharedWorkspace().URLForApplicationToOpenURL(&link))
+            .and_then(|app| path(&app));
+        let Some(app) = app else {
+            return Handler::None;
+        };
+        if bundle().is_some_and(|bundle| same_file(&app, &bundle)) {
+            return Handler::This;
+        }
+        Handler::Other(
+            app.file_stem()
+                .map_or_else(|| app.display().to_string(), |name| name.to_string_lossy().into_owned()),
+        )
+    }
+
+    pub fn handler() -> Handler {
+        SCHEMES
+            .iter()
+            .map(|scheme| handler_for(scheme))
+            .find(|handler| *handler != Handler::This)
+            .unwrap_or(Handler::This)
+    }
+
+    /// Makes `app` the default application of the scheme
+    /// (setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:,
+    /// macOS 12). Launch Services answers later, on a thread of its own: the
+    /// handler is read again then.
+    fn set_default(app: &Path, scheme: &'static str) {
+        let app = NSURL::fileURLWithPath(&NSString::from_str(&app.to_string_lossy()));
+        let done = block2::RcBlock::new(move |error: *mut NSError| {
+            // SAFETY: nil, or an error alive for the call.
+            match unsafe { error.as_ref() } {
+                Some(error) => log::warn!("{scheme} links: {}", error.localizedDescription()),
+                None => log::info!("{scheme} links: default application changed"),
+            }
+            super::refresh();
+        });
+        NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenURLsWithScheme_completionHandler(
+            &app,
+            &NSString::from_str(scheme),
+            Some(&done),
+        );
+    }
+
+    pub fn register() -> Result<(), String> {
+        let bundle = bundle().ok_or("the viewer runs outside an application bundle")?;
+        KEPT.store(false, Ordering::Relaxed);
+        for scheme in SCHEMES {
+            set_default(&bundle, scheme);
+        }
+        Ok(())
+    }
+
+    /// Gives each scheme this bundle opens to another application that
+    /// declares it (a Legacy Viewer). An error when none does for any of
+    /// them: Launch Services then keeps sending the links here.
+    pub fn unregister() -> Result<(), String> {
+        let Some(bundle) = bundle() else {
+            return Ok(());
+        };
+        let (mut held, mut given) = (false, false);
+        for scheme in SCHEMES {
+            if handler_for(scheme) != Handler::This {
+                continue;
+            }
+            held = true;
+            let other = link(scheme).and_then(|link| {
+                let apps = NSWorkspace::sharedWorkspace().URLsForApplicationsToOpenURL(&link);
+                apps.iter().filter_map(|app| path(&app)).find(|app| !same_file(app, &bundle))
+            });
+            if let Some(other) = other {
+                set_default(&other, scheme);
+                given = true;
+            }
+        }
+        if held && !given {
+            KEPT.store(true, Ordering::Relaxed);
+            return Err("no other application opens these links".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use mac::{kept, register, unregister};
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn register() -> Result<(), String> {
     Err("not supported on this system".into())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn unregister() -> Result<(), String> {
     Ok(())
 }
 
-/// Nothing registered elsewhere (macOS): the bundle declares no scheme yet,
-/// and once it does, Launch Services forgets it with the application.
+/// Nothing registered elsewhere. On macOS the bundle declares the schemes,
+/// and Launch Services forgets them with the application.
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn registrations() -> Vec<String> {
     Vec::new()
@@ -700,7 +852,9 @@ pub fn handler() -> Handler {
     let handler = win::handler();
     #[cfg(target_os = "linux")]
     let handler = xdg::handler();
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    let handler = mac::handler();
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     let handler = Handler::None;
     *cache = Some((std::time::Instant::now(), handler.clone()));
     handler
@@ -721,6 +875,27 @@ pub fn repair_at_start() {
         win::repair();
         #[cfg(target_os = "linux")]
         xdg::repair();
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use std::path::Path;
+
+    #[test]
+    fn only_an_executable_of_a_bundle_has_one() {
+        let bundle = super::bundle_of(Path::new("/Applications/Aurora Viewer.app/Contents/MacOS/aurora-viewer"));
+        assert_eq!(bundle, Some(Path::new("/Applications/Aurora Viewer.app")));
+        // a build run from its target folder, a tool inside a bundle's
+        // resources, a folder that only looks like one
+        for exe in [
+            "/Users/me/aurora/target/release/aurora-viewer",
+            "/Applications/Aurora Viewer.app/Contents/Resources/aurora-viewer",
+            "/Applications/Aurora/Contents/MacOS/aurora-viewer",
+            "aurora-viewer",
+        ] {
+            assert_eq!(super::bundle_of(Path::new(exe)), None, "{exe}");
+        }
     }
 }
 

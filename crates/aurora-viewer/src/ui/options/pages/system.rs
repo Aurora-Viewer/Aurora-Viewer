@@ -81,6 +81,11 @@ pub fn page(cx: &mut Cx) {
             if let Handler::Other(program) = &handler {
                 cx.note(&tr!("ui-options-slurl-links-other", program = program.clone()));
             }
+            // macOS always gives the links to an application that declares them
+            #[cfg(target_os = "macos")]
+            if handler == Handler::This && crate::url_scheme::kept() {
+                cx.note(tr!("ui-options-slurl-links-kept"));
+            }
             cx.row(
                 tr!("ui-options-slurl-links-open"),
                 tr!("ui-options-slurl-links-open-help"),
