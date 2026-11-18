@@ -2263,6 +2263,9 @@ fn line_name_menu(
     line: &crate::world::ChatLine,
     menu: Option<egui::Id>,
 ) {
+    if !super::context::name_has_menu(world, scope, id) {
+        return;
+    }
     if !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         super::contacts::drag::person_source(r, id);
     }
@@ -2275,6 +2278,9 @@ fn line_name_menu(
 
 /// Right click on an avatar name shown in `scope` (menu_url_agent.xml).
 fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, scope: NameScope) {
+    if !super::context::name_has_menu(world, scope, id) {
+        return;
+    }
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| super::context::avatar_name_menu(ui, p, world, id, scope));
     line_menu::inline(r);

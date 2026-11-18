@@ -881,6 +881,18 @@ fn offers_friendship(kind: AvatarList, friend: bool, named: bool) -> bool {
     !friend && (kind == AvatarList::Name || named)
 }
 
+/// A name `@shownames` hides in `scope` has no menu in a chat: the Legacy
+/// Viewer writes the stand-in of a hidden speaker as plain text
+/// (FSChatHistory::appendMessage links a name only when
+/// `!chat.mRlvNamesFiltered`) and its header opens no context menu
+/// (FSChatHistoryHeader: `mShowContextMenu = false`,
+/// indra/newview/fschathistory.cpp); a hidden name inside a text is plain
+/// text too (RlvUtil::filterNames and filterMentions). The people lists keep
+/// their restricted menu (NearbyPeopleContextMenu).
+pub fn name_has_menu(world: &World, scope: NameScope, id: Uuid) -> bool {
+    world.rlva_shows_name(scope, id)
+}
+
 /// The menu of a name shown in `scope`: the nearby chat names the residents
 /// around as `@shownames` allows (`NameScope::World`), a conversation names
 /// its people (`NameScope::Roster`, `chat::conversation_names`).
@@ -964,9 +976,9 @@ fn avatar_menu_reporting(
         // RLVa's restricted nearby/name menu exposes no profile, identity
         // clipboard or conversation-history routes (RlvActions::canShowName).
         // The teleport offer and request stay in the people lists, as in the
-        // Legacy Viewer's PeopleContextMenu; the menu of a name in the
-        // nearby chat (a speaker the restriction hides) has neither, which is
-        // stricter than the Legacy Viewer.
+        // Legacy Viewer's PeopleContextMenu. A chat opens no menu on a
+        // hidden name (`name_has_menu`); another list of names (the bumps)
+        // gets this one without the teleports.
         if kind != AvatarList::Name {
             if menu::item_if(
                 ui,
@@ -2043,6 +2055,46 @@ mod tests {
         ] {
             assert!(!texts.iter().any(|t| t.contains(label)), "unexpected identity route: {label}");
         }
+    }
+
+    /// A chat opens no menu on a name `@shownames` hides, as the Legacy
+    /// Viewer writes it as plain text (FSChatHistory::appendMessage) and its
+    /// header refuses the context menu (`mShowContextMenu`). A conversation
+    /// names its people, so their menu stays.
+    #[test]
+    fn a_name_shownames_hides_has_no_menu_in_a_chat() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let me = world.agent_id;
+        assert!(name_has_menu(&world, NameScope::World, id), "no restriction");
+        world.rlva.configure(true);
+        let restrict = |world: &mut World, command: String| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Menu fixture".into(),
+                source_id: Uuid::from_u128(1),
+                owner_id: me,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: command,
+            }));
+            world.refresh_rlva_privacy();
+        };
+        restrict(&mut world, "@shownames=n".into());
+        assert!(!name_has_menu(&world, NameScope::World, id), "a hidden speaker of the nearby chat");
+        assert!(name_has_menu(&world, NameScope::Roster, id), "a conversation names its people");
+        assert!(name_has_menu(&world, NameScope::World, me), "oneself");
+        restrict(&mut world, format!("@shownames:{id}=add"));
+        assert!(name_has_menu(&world, NameScope::World, id), "an exception");
     }
 
     /// The Legacy Viewer's rules for the entries `@shownames` greys in the
