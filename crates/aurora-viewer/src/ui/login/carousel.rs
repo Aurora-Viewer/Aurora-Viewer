@@ -618,20 +618,7 @@ pub fn show(
                     )
                     .clicked()
                     {
-                        form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
-                        form.adding = true;
-                        settings.username.clear();
-                        settings.remember_username = true;
-                        settings.remember_password = false;
-                        settings.mfa_hash.clear();
-                        form.password.clear();
-                        form.stored = None;
-                        form.stored_for = None;
-                        form.mfa_authorization = None;
-                        form.mfa_for = None;
-                        form.remember_mfa = false;
-                        form.editing = true;
-                        form.focused = false;
+                        begin_adding(settings, form);
                     }
                 });
             });
@@ -741,6 +728,25 @@ pub fn show(
         super::manager::show(&ctx, p, icons, settings, form);
     }
     action
+}
+
+/// "Add an account": an empty form over the cards, which returns to the
+/// selected card when cancelled.
+pub(super) fn begin_adding(settings: &mut Settings, form: &mut LoginForm) {
+    form.add_return = Some((settings.login_uri(), settings.username.trim().to_lowercase()));
+    form.adding = true;
+    settings.username.clear();
+    settings.remember_username = true;
+    settings.remember_password = false;
+    settings.mfa_hash.clear();
+    form.password.clear();
+    form.stored = None;
+    form.stored_for = None;
+    form.mfa_authorization = None;
+    form.mfa_for = None;
+    form.remember_mfa = false;
+    form.editing = true;
+    form.focused = false;
 }
 
 fn reveal(form: &mut LoginForm, index: usize, per_page: usize) {

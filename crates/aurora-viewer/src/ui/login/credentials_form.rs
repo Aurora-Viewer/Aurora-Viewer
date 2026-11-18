@@ -222,6 +222,11 @@ pub fn content(
     )
     .clicked()
         || (can && enter && !egui::Popup::is_any_open(ui.ctx()));
+    // a new account: "Create an account" under the login button
+    if new_account && !grids_open {
+        ui.add_space(4.0);
+        super::create_account_button(ui, p, settings, form, Vec2::new(ui.available_width(), 28.0));
+    }
     if pressed {
         settings.remember_username = true;
         form.show_password = false;

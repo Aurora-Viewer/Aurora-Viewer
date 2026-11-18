@@ -978,6 +978,10 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    /// "Create an account" of the login screen (LLFloaterJoin), and
+    /// whether `AURORA_DEMO_SIGNUP` opened it yet.
+    signup_ui: ui::signup::SignupUi,
+    signup_demo_opened: bool,
     /// The toolbar's `avatar` (LLFloaterAvatarWelcomePack), and the folders
     /// its page asked to wear (app/avatar_welcome.rs).
     avatar_welcome_ui: ui::avatar_welcome::AvatarWelcomeUi,
@@ -2140,6 +2144,8 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            signup_ui: Default::default(),
+            signup_demo_opened: false,
             avatar_welcome_ui: Default::default(),
             welcome_wears: Default::default(),
             destinations_ui: Default::default(),
@@ -3304,6 +3310,8 @@ impl App {
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
+        // the sign-up window is the login screen's: its browser stops
+        self.signup_ui.close();
         // a previous session of this account may still be on the grid
         if self.hold_login() {
             return;
@@ -17224,9 +17232,41 @@ impl App {
         }
     }
 
+    /// "Create an account": the sign-up window over the login screen, on
+    /// the same plugins and browser settings as the other web windows; the
+    /// new account's name and password it hands back go to the login form.
+    /// AURORA_DEMO_SIGNUP=1 (or a page) opens it once in demo.
+    fn signup_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if self.demo && !self.signup_demo_opened {
+            self.signup_demo_opened = true;
+            match std::env::var("AURORA_DEMO_SIGNUP").ok().filter(|v| !v.trim().is_empty()) {
+                Some(page) if page.trim() == "1" => self.signup_ui.open(ui::signup::SignupPage::SecondLife),
+                Some(page) => self.signup_ui.open_demo(page.trim()),
+                None => {}
+            }
+        }
+        if let Some(page) = self.login_form.create_account.take() {
+            self.signup_ui.open(page);
+        }
+        if !self.signup_ui.is_open() {
+            return;
+        }
+        let paths = self.media.plugins(&self.settings.media).cloned();
+        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+        let env = ui::signup::SignupWeb {
+            paths: paths.as_ref(),
+            browser: &browser,
+        };
+        if let Some(account) = self.signup_ui.show(ctx, p, &env) {
+            log::info!("sign-up: the new account's details are in the login form");
+            ui::login::fill_from_signup(&mut self.settings, &mut self.login_form, account.username, account.password);
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
-        self.profile_ui.web_has_focus()
+        self.signup_ui.web_has_focus()
+            || self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
@@ -17237,8 +17277,9 @@ impl App {
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
     /// receives keys before chat, gestures or viewer commands.
     fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
-        self.profile_ui
+        self.signup_ui
             .focused_web()
+            .or_else(|| self.profile_ui.focused_web())
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
@@ -18131,6 +18172,7 @@ impl App {
                 if self.panels.settings {
                     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(ui::options::WINDOW)));
                 }
+                self.signup_window(&ctx, &p);
                 // Keep disconnected script drafts accessible for copying.
                 for action in self
                     .script_editors
