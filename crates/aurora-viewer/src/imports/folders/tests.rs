@@ -314,8 +314,8 @@ fn import_folder_upload_queue_keeps_the_material_and_its_dependencies_in_the_con
     imports.start(&world, &prefs, &Preferences::default(), &prices);
     assert_eq!(imports.queue.len(), 2);
     assert!(imports.queue.iter().all(|step| step.folder == folder));
-    assert_eq!(imports.queue[0].kind, Kind::Texture);
-    assert_eq!(imports.queue[1].kind, Kind::Material);
+    assert_eq!(imports.queue[0].kind, Some(Kind::Texture));
+    assert_eq!(imports.queue[1].kind, Some(Kind::Material));
     assert_eq!(imports.spent, 0, "queueing is not an acknowledged charge");
 }
 
@@ -426,7 +426,7 @@ fn batch_routing_preserves_folder_edits_and_sends_material_dependencies_to_the_c
     };
     imports.sync_destinations(&prefs, &world, &inventory);
     for entry in &imports.entries {
-        let kind = entry.source.as_ref().unwrap().kind();
+        let kind = entry.source.as_ref().unwrap().kind().unwrap();
         assert_eq!(entry.folder, inventory.upload_folders[kind.folder_slot()]);
     }
     let token = Uuid::new_v4();
@@ -492,7 +492,7 @@ fn batch_routing_preserves_folder_edits_and_sends_material_dependencies_to_the_c
     assert!(imports.queue.iter().all(|step| step.folder == common));
     assert_eq!(
         imports.queue[0].kind,
-        Kind::Texture,
+        Some(Kind::Texture),
         "the material dependency also follows the common destination"
     );
 }

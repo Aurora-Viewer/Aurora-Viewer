@@ -18,6 +18,7 @@ mod inspector;
 pub(crate) mod launcher;
 pub(crate) mod local_status;
 mod queue;
+mod script_panel;
 mod source_root;
 
 pub(crate) const WINDOW: &str = "asset_imports_v7";

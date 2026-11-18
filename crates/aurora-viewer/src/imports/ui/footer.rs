@@ -24,6 +24,7 @@ pub(super) fn show(
                 ui.label(RichText::new(&imports.message).color(p.danger));
             });
     }
+    script_receipts(ui, p, &imports.receipts);
     if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
         && !entry.local
         && let Some(Source::Mesh(draft)) = &entry.source
@@ -183,6 +184,51 @@ pub(super) fn show(
         }
     });
     ui.cursor().top() - footer_start
+}
+
+/// What became of the scripts of the last batch: the saved ones in one line,
+/// then each script that has compile errors (it stays in the inventory, as in
+/// the Legacy editor) or was not saved, with its lines.
+fn script_receipts(ui: &mut egui::Ui, p: &Palette, receipts: &[script::Receipt]) {
+    if receipts.is_empty() {
+        return;
+    }
+    let saved = receipts.iter().filter(|receipt| receipt.outcome == script::Outcome::Saved).count();
+    egui::ScrollArea::vertical()
+        .id_salt("import_script_receipts")
+        .max_height(120.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if saved > 0 {
+                ui.label(RichText::new(aurora_i18n::tr!("import-scripts-saved", count = saved)).color(p.success));
+            }
+            for receipt in receipts {
+                match &receipt.outcome {
+                    script::Outcome::Saved => {}
+                    script::Outcome::CompileErrors(errors) => {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("import-script-compile-errors", name = receipt.name.as_str())).color(p.warn),
+                        );
+                        for error in errors {
+                            ui.add(egui::Label::new(RichText::new(error).monospace().small().color(p.warn)).wrap());
+                        }
+                    }
+                    script::Outcome::Failed(reason) => {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(aurora_i18n::tr!(
+                                    "import-script-failed",
+                                    name = receipt.name.as_str(),
+                                    reason = reason.as_str()
+                                ))
+                                .color(p.danger),
+                            )
+                            .wrap(),
+                        );
+                    }
+                }
+            }
+        });
 }
 
 /// The confirmation is a payment check: an upload the account's benefits make

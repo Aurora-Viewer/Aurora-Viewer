@@ -2940,7 +2940,8 @@ impl Session<'_> {
                 name,
                 description,
                 source,
-            } => self.create_script_item(request, parent, name, description, source),
+                permissions,
+            } => self.create_script_item(request, parent, name, description, source, permissions),
             NetCommand::CreateInventoryItem {
                 parent,
                 kind,

@@ -5,6 +5,21 @@ use super::*;
 use std::path::Path;
 
 const BVH: &[u8] = b"HIERARCHY ROOT hip { OFFSET 0 0 0 CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation End Site { OFFSET 0 1 0 } } MOTION Frames: 6 Frame Time: 0.5 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 15 0 0 0 0 0 -15 0 0 0 0 0 15 0 0 0 0 0 0 0 0";
+const HELLO_LSL: &str = "default\n{\n    state_entry()\n    {\n        llSay(0, \"Hello, Avatar!\");\n    }\n}\n";
+/// The last `llSay` lacks its semicolon: the demo grid reports it (`compile_errors`).
+const BROKEN_LSL: &str = "default\n{\n    touch_start(integer total)\n    {\n        llSay(0, \"Touched\")\n    }\n}\n";
+
+/// The demo grid's compiler: it only knows one mistake, an `llSay` call that
+/// does not end with a semicolon, reported like the grid's `(line, column) : ERROR`.
+pub(crate) fn compile_errors(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.trim_start().starts_with("llSay(") && !line.trim_end().ends_with(';'))
+        .map(|(index, line)| format!("({}, {}) : ERROR : Syntax error", index + 1, line.trim_end().chars().count() + 1))
+        .collect()
+}
+
 pub(super) const DAE: &str = r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP</up_axis></asset>
 <library_geometries><geometry id="cube" name="Cube"><mesh>
 <source id="positions"><float_array count="24">-0.5 -0.5 -0.5 0.5 -0.5 -0.5 0.5 0.5 -0.5 -0.5 0.5 -0.5 -0.5 -0.5 0.5 0.5 -0.5 0.5 0.5 0.5 0.5 -0.5 0.5 0.5</float_array><technique_common><accessor count="8" stride="3"/></technique_common></source>
@@ -87,6 +102,11 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
     write("material-demo.gltf", material.to_string().as_bytes())?;
     write("mesh-demo.dae", DAE.as_bytes())?;
     write("mesh-multiple.dae", multiple_dae().as_bytes())?;
+    write("script-hello.lsl", HELLO_LSL.as_bytes())?;
+    write("script-broken.lsl", BROKEN_LSL.as_bytes())?;
+    // a byte order mark and Windows line ends, as an editor on Windows saves it
+    let door = format!("\u{feff}{}", HELLO_LSL.replace('\n', "\r\n").replace("Hello, Avatar!", "Door"));
+    write("script-door.lsl", door.as_bytes())?;
     write("animation-demo.bvh", BVH)?;
     write("tail-preview.dae", tail_dae().as_bytes())?;
     write(
@@ -268,6 +288,12 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("sound-demo.wav", Choice::Bulk),
                         ("animation-demo.bvh", Choice::Bulk),
                         ("material-demo.gltf", Choice::Bulk),
+                    ],
+                    Choice::Bulk if mode.starts_with("script") => &[
+                        ("script-hello.lsl", Choice::Bulk),
+                        ("script-broken.lsl", Choice::Bulk),
+                        ("script-door.lsl", Choice::Bulk),
+                        ("texture-demo.png", Choice::Bulk),
                     ],
                     Choice::Bulk if mode == "bulk-mesh-denied" => &[("mesh-demo.dae", Choice::Bulk), ("texture-demo.png", Choice::Bulk)],
                     Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Local)],

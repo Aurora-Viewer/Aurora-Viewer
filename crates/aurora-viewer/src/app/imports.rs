@@ -8,6 +8,24 @@ use aurora_net::inventory::upload::{Prices, Receipt};
 const SOUND_PREVIEW: u64 = u64::MAX - 10;
 
 impl App {
+    /// The answer to a script's creation (`CreateScriptItem`): the new item
+    /// goes into the inventory, and the receipt in the importer. A script
+    /// that did not compile is in the inventory all the same.
+    pub(super) fn import_script_saved(&mut self, request: uuid::Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        let Some(item) = self.imports.script_saved(request, result) else {
+            return;
+        };
+        let id = item.id;
+        self.world.inventory.add_items(vec![item]);
+        if !self.demo {
+            self.send(NetCommand::FetchItems {
+                items: vec![id],
+                owner: self.world.agent_id,
+            });
+        }
+        self.inventory_ui.show_original(&self.world.inventory, id);
+    }
+
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.demo && !self.imports.demo_started {
             // keep a scenario's own balance (AURORA_DEMO_ACTIONS sets one)
@@ -91,7 +109,15 @@ impl App {
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
         self.save_import_animation_models();
-        for command in commands {
+        for mut command in commands {
+            // A script gets the Scripts creation defaults, like any new script item.
+            if let NetCommand::CreateScriptItem { permissions, .. } = &mut command {
+                *permissions = self
+                    .settings
+                    .inventory
+                    .creation_permissions
+                    .for_item(aurora_net::inventory::operations::NewItem::Script);
+            }
             self.send(command);
         }
         if self.demo && self.frame_count == 500 && matches!(self.imports.demo_mode.as_str(), "sound-confirm" | "material-confirm") {
@@ -120,7 +146,7 @@ impl App {
                 .quote_mesh(id, ctx, &self.scene.jobs, &self.world, &self.settings.inventory, rights);
         }
         if self.demo
-            && matches!(self.imports.demo_mode.as_str(), "bulk-upload" | "folders-upload")
+            && matches!(self.imports.demo_mode.as_str(), "bulk-upload" | "folders-upload" | "script-upload")
             && !self.imports.demo_upload_started
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()

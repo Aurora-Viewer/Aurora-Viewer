@@ -143,6 +143,8 @@ impl App {
                         name: creation_name(&name),
                         description: description.clone(),
                         source: row.source,
+                        // the recovery rule: move and transfer for the next owner
+                        permissions: None,
                     });
                 }
             }
@@ -216,7 +218,15 @@ impl App {
     }
 
     /// The demo's simulator for a recovered script: the item, at once.
-    pub(super) fn demo_create_script(&mut self, request: Uuid, parent: Uuid, name: &str, description: &str, source: &str) {
+    pub(super) fn demo_create_script(
+        &mut self,
+        request: Uuid,
+        parent: Uuid,
+        name: &str,
+        description: &str,
+        source: &str,
+        permissions: Option<aurora_net::inventory::upload::Permissions>,
+    ) {
         let item = aurora_net::inventory::InvItem {
             id: Uuid::new_v4(),
             parent,
@@ -229,7 +239,9 @@ impl App {
             creator: self.world.agent_id,
             base_mask: 0x7fff_ffff,
             owner_mask: 0x7fff_ffff,
-            next_owner_mask: 0x0008_2000,
+            next_owner_mask: permissions.map_or(0x0008_2000, |rights| rights.next_owner),
+            group_mask: permissions.map_or(0, |rights| rights.group),
+            everyone_mask: permissions.map_or(0, |rights| rights.everyone),
             ..Default::default()
         };
         self.demo_script_sources.insert(
@@ -240,6 +252,10 @@ impl App {
             source.to_owned(),
         );
         self.world.inventory.add_items(vec![item.clone()]);
+        let errors = crate::imports::demo::compile_errors(source);
+        if !errors.is_empty() {
+            self.on_app_event(NetEvent::ScriptCompileErrors { request, errors });
+        }
         self.on_app_event(NetEvent::InventoryContentSaved {
             request,
             item: item.id,
