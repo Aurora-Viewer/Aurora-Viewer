@@ -3542,7 +3542,7 @@ a no-copy "Heirloom" and a no-modify "Sealed box". The demo simulator keeps
 what each object item holds: a rez from the chest's contents brings those
 contents along, a save back stores what the copy holds then. Select the
 chest (`AURORA_DEMO_BUILD=contents-ready,object:99760`), open Contents ›
-Permissions (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick "Include
+Rights (`AURORA_DEMO_BUILD_TAB=contents+permissions`), tick "Include
 objects inside objects": the preview counts one object to open and two
 skipped, with their reasons. Apply rezzes each box 2 m above the object
 holding it, deepest last opened first saved, and deletes every copy; nothing
