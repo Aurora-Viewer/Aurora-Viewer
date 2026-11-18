@@ -2949,24 +2949,36 @@ impl Scene {
                 .copied()
                 .filter(|&idx| {
                     world.objects.get(idx).is_some_and(|o| o.is_avatar() || o.parent_id == 0)
-                        && self
-                            .gpu
-                            .get(idx)
-                            .is_some_and(|g| g.parcel_hidden == world.parcel_object_visible(idx))
+                        && self.gpu.get(idx).is_some_and(|g| g.parcel_hidden == world.object_shown(idx))
                 })
                 .collect();
-            let mut visited = std::collections::HashSet::new();
-            let mut stack: Vec<_> = crossings.into_iter().map(|idx| (idx, 0)).collect();
-            while let Some((idx, depth)) = stack.pop() {
-                if depth >= sync_sets::MAX_DEPTH || !visited.insert(idx) {
-                    continue;
-                }
-                if let Some(o) = world.objects.get_mut_untracked(idx) {
-                    o.render.needs_records = true;
-                    let key = o.key;
-                    self.sets.dirty.insert(idx);
-                    stack.extend(world.objects.children_of(&key).iter().map(|&child| (child, depth + 1)));
-                }
+            self.resync_subtrees(world, crossings);
+        }
+    }
+
+    /// The linksets the skyboxes rule (`world::sky_visibility`) hid or
+    /// showed again: synced once more with their riders and what those
+    /// wear, which releases or loads them.
+    fn sync_sky_changes(&mut self, world: &mut World) {
+        let changed = std::mem::take(&mut world.sky_visibility.changed);
+        if !changed.is_empty() {
+            self.resync_subtrees(world, changed);
+        }
+    }
+
+    /// Sync `roots` and everything under them again this frame.
+    fn resync_subtrees(&mut self, world: &mut World, roots: Vec<usize>) {
+        let mut visited = std::collections::HashSet::new();
+        let mut stack: Vec<_> = roots.into_iter().map(|idx| (idx, 0)).collect();
+        while let Some((idx, depth)) = stack.pop() {
+            if depth >= sync_sets::MAX_DEPTH || !visited.insert(idx) {
+                continue;
+            }
+            if let Some(o) = world.objects.get_mut_untracked(idx) {
+                o.render.needs_records = true;
+                let key = o.key;
+                self.sets.dirty.insert(idx);
+                stack.extend(world.objects.children_of(&key).iter().map(|&child| (child, depth + 1)));
             }
         }
     }
@@ -3122,6 +3134,7 @@ impl Scene {
         touched.clear();
         self.touched_tmp = touched;
         self.sync_parcel_crossings(world);
+        self.sync_sky_changes(world);
         step(&mut slow, "touched");
         // a new material generation: the faces using materials are rebuilt
         let mat_gen = self.materials.generation;
@@ -3777,7 +3790,7 @@ impl Scene {
     }
 
     fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView, xf: Option<Xf>) {
-        let parcel_visibility = world.parcel_object_visibility(idx);
+        let parcel_visibility = world.object_shown_state(idx);
         if parcel_visibility != Some(true) {
             if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
                 self.release_obj(renderer, idx, &mut g);

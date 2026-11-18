@@ -291,6 +291,8 @@ pub mod sim_version;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
+#[path = "demo_skyboxes.rs"]
+pub mod skyboxes;
 /// A panel whose texture a script changes every few seconds
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
@@ -6421,6 +6423,9 @@ pub fn events() -> Vec<NetEvent> {
     // AURORA_DEMO_MIRROR: in front of the mirror, facing it
     let (start, look_at) = if mirror::enabled() {
         mirror::start()
+    } else if let Some(sky) = skyboxes::start() {
+        // AURORA_DEMO_SKYBOXES: in a skybox or on the island
+        (sky, Vec3::new(0.8, 0.4, 0.0))
     } else {
         (start, Vec3::new(0.8, 0.4, 0.0))
     };
@@ -6650,6 +6655,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(oit_column::events());
+    ev.extend(skyboxes::events());
     ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());

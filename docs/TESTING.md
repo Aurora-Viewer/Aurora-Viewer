@@ -4859,6 +4859,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TERRAIN_CROSSING=1` | Two render-origin crossings preserving the transition position (#2335) |
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
+| `AURORA_DEMO_SKYBOXES=<start>[,off][,view]` | Skyboxes, a floating island and a vehicle at several heights, for Hide skyboxes at other heights |
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, a worn emitter, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
@@ -4985,6 +4986,22 @@ both open states and the selection count. Capture at frame 620.
   the set is ready; `AURORA_CAPTURE` waits for it. For example
   `AURORA_AA=3`, `AURORA_DEMO_AA_SWITCH=700:4,1000:2,1300:3` and captures at
   650, 900, 1200 and 1500 (MSAA 4x, 8x, 2x, 4x).
+
+- **`AURORA_DEMO_SKYBOXES=ground|skybox|island|below[,off][,view]`**: ahead of the
+  start, a 160 m tower standing on the ground, a violet skybox at 300 m with a
+  resident inside, a resident flying alone at 220 m, an amber physical vehicle
+  hovering at 250 m with a seated rider, and far above a green floating island
+  at 3500 m (a hut and a resident on it) with a blue skybox 200 m under it. The
+  draw distance is 512 m for the run. `ground` starts on the ground, `skybox`
+  in the violet skybox, `island` on the island, `below` in the blue skybox;
+  `off` turns "Hide skyboxes at other heights" off to compare; `view` puts the
+  flycam above our avatar at frame 300, aimed at what that start tests
+  (capture at 620; `AURORA_DEMO_POS=100,100` for the ground). From the ground: the tower, the vehicle and its rider
+  show; the violet skybox, its resident and the flying resident do not, nor
+  their name tags. In the violet skybox: it and its resident show, the flying
+  resident (80 m below) does not. On the island: the blue skybox 200 m under it
+  is hidden; in the blue skybox, the island is. Opening the build tools shows
+  everything.
 
 - **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;

@@ -2756,7 +2756,7 @@ impl BuildTool {
             let Some(probe) = o.extra.reflection_probe else {
                 continue;
             };
-            if !world.parcel_object_visible(idx) {
+            if !world.object_shown(idx) {
                 continue;
             }
             let Some((pos, rot, false)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {

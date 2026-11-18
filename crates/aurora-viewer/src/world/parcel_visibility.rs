@@ -557,8 +557,27 @@ impl World {
         consumed
     }
 
+    /// Whether the viewer's own filters leave the object shown: the parcel
+    /// isolation and the skyboxes hidden from other heights
+    /// (`sky_visibility`). What they leave out is released from the GPU and
+    /// gets no particles, lights, name tag or click.
+    pub fn object_shown(&self, index: usize) -> bool {
+        self.object_shown_state(index).unwrap_or(false)
+    }
+
+    /// [`World::object_shown`]; None waits for parent data without
+    /// preparing visual assets.
+    pub(crate) fn object_shown_state(&self, index: usize) -> Option<bool> {
+        match self.parcel_object_visibility(index) {
+            Some(true) => Some(self.sky_object_visible(index)),
+            other => other,
+        }
+    }
+
     /// Whole linksets follow their root; attachments follow their wearer. Our
     /// avatar and HUDs stay available, including while seated across a boundary.
+    /// (The viewer reads it through `object_shown`.)
+    #[cfg(test)]
     pub fn parcel_object_visible(&self, index: usize) -> bool {
         self.parcel_object_visibility(index).unwrap_or(false)
     }

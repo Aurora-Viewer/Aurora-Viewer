@@ -256,7 +256,7 @@ impl Effects {
                 if scene.too_complex.contains(&idx)
                     || world.derender.contains(&o.full_id)
                     || world.particles_blocked(&o.full_id)
-                    || !world.parcel_object_visible(idx)
+                    || !world.object_shown(idx)
                     || !crate::snapshot::isolate::object_visible(world, idx)
                 {
                     return samples;
@@ -327,7 +327,7 @@ impl Effects {
             if scene.too_complex.contains(&idx)
                 || world.derender.contains(&o.full_id)
                 || world.particles_blocked(&owner)
-                || !world.parcel_object_visible(idx)
+                || !world.object_shown(idx)
                 || !crate::snapshot::isolate::object_visible(world, idx)
             {
                 continue;

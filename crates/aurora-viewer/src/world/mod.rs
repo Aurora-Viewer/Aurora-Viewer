@@ -104,6 +104,7 @@ pub mod script_debug;
 pub mod script_dialog_limit;
 pub mod search;
 pub mod sim_console;
+pub mod sky_visibility;
 pub mod social;
 pub mod sound_parcels;
 pub mod staff;
@@ -698,8 +699,11 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// Skyboxes hidden from other heights (`sky_visibility`), read with the
+    /// parcel filter by `object_shown`.
+    pub sky_visibility: sky_visibility::SkyVisibility,
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
-    /// filter by `parcel_object_visibility`.
+    /// filter by `object_shown`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// Inventory item of the Aurora bridge while its factory sets it up
     /// (`bridge::Bridge::update`), nil otherwise: its worn object is the
@@ -1089,6 +1093,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            sky_visibility: Default::default(),
             photo_isolation: Default::default(),
             concealed_attachment: Uuid::nil(),
             avatar_studio: false,

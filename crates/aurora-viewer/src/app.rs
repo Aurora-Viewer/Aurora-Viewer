@@ -11925,6 +11925,31 @@ impl App {
             if self.world.shape_tweens.active() {
                 self.world.shape_tweens.step(Instant::now());
             }
+            // AURORA_DEMO_SKYBOXES: high up, our avatar hovers (the demo has
+            // no floor in a skybox to stand on)
+            if self.demo && crate::demo::skyboxes::start().is_some() {
+                self.world.agent.flying = true;
+            }
+            // AURORA_DEMO_SKYBOXES=…,view: the flycam aimed for the captures
+            if self.demo
+                && self.frame_count == 300
+                && let Some((eye, target)) = crate::demo::skyboxes::view(self.world.agent.position)
+            {
+                self.camera.flycam = Some(crate::joystick::flycam::Flycam::from_view(
+                    eye,
+                    target,
+                    glam::Vec3::Z,
+                    self.camera.fov_y,
+                ));
+            }
+            // the skyboxes rule measures from the camera and its focus (an
+            // Alt orbit around a skybox keeps it); the build tools show
+            // everything
+            let flycam = self.camera.flycam.is_some();
+            let focus = self.camera.focus_point().filter(|_| !flycam);
+            let focus_object = self.camera.focus_object_id().filter(|_| !flycam);
+            self.world
+                .update_sky_visibility(self.settings.hide_skyboxes && !self.build.open, cull.eye, focus, focus_object);
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -21825,6 +21850,7 @@ impl ApplicationHandler for App {
             crate::demo::contact_markers::apply_preferences(&mut self.settings);
             audio_mute::apply_demo(&mut self.settings.audio);
             crate::demo::floating_text::apply_preferences(&mut self.settings);
+            crate::demo::skyboxes::apply_preferences(&mut self.settings);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }
