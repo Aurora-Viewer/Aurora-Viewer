@@ -149,6 +149,9 @@ pub(super) struct DropMenu {
     ids: Vec<Uuid>,
     to: Uuid,
     at: egui::Pos2,
+    /// Whether each of Move, Copy and Link would go through, read when the
+    /// cargo was dropped.
+    allowed: [bool; 3],
 }
 
 /// Draws the menu of a right-button drop, if one waits, and does what is
@@ -166,26 +169,24 @@ pub(super) fn drop_menu(
     let Some(menu) = st.drop_menu.clone() else { return };
     let mut open = true;
     let mut chosen = None;
-    let allowed =
-        |mode| st.pending.is_none() && mutation(inv, &menu.ids, menu.to, mode, prefs, facts).is_ok_and(|m| !m.operations.is_empty());
     let entries = [
         (
             DropMode::Move,
             "hand-move",
             aurora_i18n::tr!("inventory-drop-move-here"),
-            allowed(DropMode::Move),
+            menu.allowed[0],
         ),
         (
             DropMode::Copy,
-            "copy",
+            "copy-filled",
             aurora_i18n::tr!("inventory-drop-copy-here"),
-            allowed(DropMode::Copy),
+            menu.allowed[1],
         ),
         (
             DropMode::Link,
             "link-filled",
             aurora_i18n::tr!("inventory-drop-link-here"),
-            allowed(DropMode::Link),
+            menu.allowed[2],
         ),
     ];
     crate::ui::menu::popup_at(
@@ -208,15 +209,10 @@ pub(super) fn drop_menu(
         },
     );
     if let Some(mode) = chosen {
-        match mutation(inv, &menu.ids, menu.to, mode, prefs, facts) {
-            Ok(change) if !change.operations.is_empty() => {
-                st.message.clear();
-                actions.push(InvAction::Drop(change));
-            }
-            Ok(_) => {}
-            Err(reason) => st.message = reason,
-        }
         st.drop_menu = None;
+        if st.pending.is_none() {
+            drop_cargo(inv, &menu.ids, menu.to, mode, st, prefs, facts, actions);
+        }
     } else if !open {
         st.drop_menu = None;
     }
@@ -262,8 +258,9 @@ fn plan(
 struct Feedback {
     pass: u64,
     cursor: egui::CursorIcon,
-    /// Given by an inventory folder (not a conversation or an object).
-    folder: bool,
+    /// What an inventory folder would do with the drop (None: a
+    /// conversation, an object or no place that takes it).
+    folder: Option<DropMode>,
 }
 fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
@@ -292,7 +289,7 @@ pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
             Feedback {
                 pass,
                 cursor,
-                folder: false,
+                folder: None,
             },
         )
     });
@@ -329,7 +326,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
             Feedback {
                 pass,
                 cursor: egui::CursorIcon::Copy,
-                folder: false,
+                folder: None,
             },
         )
     });
@@ -361,8 +358,11 @@ pub(super) fn target(
     {
         return;
     }
-    let right = right_drag(ui.ctx());
-    let mode = current_mode(ui.ctx());
+    // Aurora's window only: the Legacy-style window drops as the Legacy
+    // Viewer does, a move with the left button
+    let aurora = st.aurora.is_some();
+    let right = aurora && right_drag(ui.ctx());
+    let mode = if aurora { current_mode(ui.ctx()) } else { DropMode::Move };
     let plan = plan(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts);
     // a right-button drop asks first: a folder that takes any of the three
     let allowed = st.pending.is_none()
@@ -384,7 +384,7 @@ pub(super) fn target(
                     (true, DropMode::Copy) => egui::CursorIcon::Copy,
                     (true, DropMode::Link) => egui::CursorIcon::Alias,
                 },
-                folder: true,
+                folder: allowed.then_some(mode),
             },
         );
     });
@@ -392,10 +392,13 @@ pub(super) fn target(
     if right && ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
         egui::DragAndDrop::clear_payload(ui.ctx());
         if allowed && let Some(at) = ui.input(|i| i.pointer.interact_pos()) {
+            let allowed = [DropMode::Move, DropMode::Copy, DropMode::Link]
+                .map(|mode| plan_allows(ui.ctx(), inv, cargo.ids(), to, mode, prefs, facts));
             st.drop_menu = Some(DropMenu {
                 ids: cargo.ids().to_vec(),
                 to,
                 at,
+                allowed,
             });
         }
         return;
@@ -407,14 +410,35 @@ pub(super) fn target(
         if st.pending.is_some() {
             st.message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
         } else {
-            match mutation(inv, cargo.ids(), to, mode, prefs, facts) {
-                Ok(change) if !change.operations.is_empty() => {
-                    st.message.clear();
-                    actions.push(InvAction::Drop(change));
-                }
-                Ok(_) => {}
-                Err(reason) => st.message = reason,
+            drop_cargo(inv, cargo.ids(), to, mode, st, prefs, facts, actions);
+        }
+    }
+}
+
+/// What a drop does: a move as before, a copy or links by Paste's routes
+/// (the Marketplace's paste, the outfit folders' rules).
+#[allow(clippy::too_many_arguments)]
+fn drop_cargo(
+    inv: &Inventory,
+    ids: &[Uuid],
+    to: Uuid,
+    mode: DropMode,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    match mode {
+        DropMode::Move => match rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn) {
+            Ok(change) if !change.operations.is_empty() => {
+                st.message.clear();
+                actions.push(InvAction::Drop(change));
             }
+            Ok(_) => {}
+            Err(reason) => st.message = reason,
+        },
+        DropMode::Copy | DropMode::Link => {
+            super::clipboard::paste_ids(inv, ids, to, false, mode == DropMode::Link, st, prefs, facts, actions);
         }
     }
 }
@@ -434,6 +458,17 @@ fn plan_allows(
         .is_ok_and(|p| !p.operations.is_empty())
 }
 
+/// The folders a drag that may copy or link carries (Ctrl, Alt, or the
+/// right button, whose menu offers both): their whole tree is loaded for
+/// the copy, as Copy / Paste loads it (`InventoryUi::clipboard_loaded`).
+pub(super) fn copied_folders(ctx: &egui::Context, inv: &Inventory) -> Vec<Uuid> {
+    let copying = right_drag(ctx) || current_mode(ctx) != DropMode::Move;
+    match Cargo::carried(ctx) {
+        Some(cargo) if copying => cargo.ids().iter().copied().filter(|id| inv.folders.contains_key(id)).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
 pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
     if !ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx))) {
@@ -450,11 +485,7 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let Some(cargo) = Cargo::carried(ctx) else {
         return;
     };
-    // Esc drops nothing: the drag ends where it is (Windows Explorer)
-    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        egui::DragAndDrop::clear_payload(ctx);
-        return;
-    }
+    // (Esc ends a drag without dropping: egui's DragAndDrop does it)
     let held = ctx.input(|i| i.pointer.primary_down() || (i.pointer.secondary_down() && right_drag(ctx)));
     let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| held)) else {
         return;
@@ -462,16 +493,14 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let count = cargo.ids().len();
     // what the drop will do, as Explorer's "+ Copy" / "Create link" badge;
     // a single entry moved says nothing, as before
-    // over an inventory folder that takes it only: elsewhere (the world, a
-    // conversation) the keys mean what that place says
+    // over an inventory folder that takes it, what that folder would do;
+    // elsewhere (the world, a conversation) the keys mean what that place says
     let pass = ctx.cumulative_pass_nr();
-    let over_folder = ctx
+    let mode = ctx
         .data(|d| d.get_temp::<Feedback>(feedback_id()))
-        .is_some_and(|f| f.pass == pass && f.folder && f.cursor != egui::CursorIcon::NotAllowed);
-    let mode = match current_mode(ctx) {
-        DropMode::Copy | DropMode::Link if !over_folder => DropMode::Move,
-        mode => mode,
-    };
+        .filter(|f| f.pass == pass)
+        .and_then(|f| f.folder)
+        .unwrap_or(DropMode::Move);
     let label = match mode {
         DropMode::Move if count > 1 => aurora_i18n::tr!("inventory-move-selection-count", count = count),
         DropMode::Move => return,

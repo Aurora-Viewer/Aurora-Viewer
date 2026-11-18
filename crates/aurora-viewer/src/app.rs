@@ -1425,6 +1425,11 @@ fn shortcut_claims_focus(
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
         return false;
     }
+    // a focused inventory list keeps its file manager's chords (Ctrl+Shift+A
+    // inverts there, not People; Ctrl+Shift+N makes a folder, not the sunset)
+    if ui::inventory::list_keeps_chord(ctx, logical, mods.ctrl, shift, alt) {
+        return false;
+    }
     true
 }
 

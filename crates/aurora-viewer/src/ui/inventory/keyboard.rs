@@ -87,7 +87,11 @@ pub(super) fn commands(
     let wanted = |c: shortcuts::Command| {
         matches!(
             c,
-            shortcuts::Command::NewFolder | shortcuts::Command::Properties | shortcuts::Command::Purge | shortcuts::Command::ContextMenu
+            shortcuts::Command::NewFolder
+                | shortcuts::Command::Properties
+                | shortcuts::Command::Purge
+                | shortcuts::Command::ContextMenu
+                | shortcuts::Command::Refresh
         )
     };
     for command in shortcuts::take(ui, false, wanted) {
@@ -118,7 +122,7 @@ pub(super) fn commands(
             }
             // Shift+F10: the selection's menu at its row, else the menu of
             // the explorer's empty space (Windows' keyboard menu)
-            shortcuts::Command::ContextMenu => {
+            shortcuts::Command::ContextMenu if st.aurora.is_some() => {
                 let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact);
                 match st.selected.filter(|id| st.selection.contains(id)) {
                     Some(id) => {
@@ -133,20 +137,34 @@ pub(super) fn commands(
                     None => {}
                 }
             }
-            shortcuts::Command::Purge => {
-                let ids: Vec<Uuid> = st.selection.iter().copied().collect();
-                if ids.is_empty() || st.pending.is_some() || st.pending_delete.is_some() {
-                    continue;
-                }
-                let in_trash = ids.iter().all(|id| rules::in_type(inv, *id, 14));
-                if in_trash && delete::allowed(inv, &ids, prefs, facts) {
-                    st.dialog = Some(EditDialog::Delete(ids, true));
-                } else {
-                    delete::request(inv, st, prefs, facts, actions);
+            // F5 in the tree and the Legacy-style window: "Reload folder" of
+            // the selected folder (the explorer's own F5 reloads the folder
+            // shown, `aurora::history`)
+            shortcuts::Command::Refresh => {
+                let folder = st.selected.filter(|id| inv.folders.contains_key(id)).unwrap_or(root);
+                if folder != inv.root && folder != inv.lib_root && inv.folders.contains_key(&folder) {
+                    st.message.clear();
+                    actions.push(InvAction::Preview(folder, Some(clipboard::focus_id(st))));
                 }
             }
+            shortcuts::Command::Purge => purge(inv, st, prefs, facts, actions),
             _ => {}
         }
+    }
+}
+
+/// Shift+Delete: what is in the Trash is purged after its confirmation,
+/// anything else goes to the Trash as Delete does (see `commands`).
+pub(super) fn purge(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts, actions: &mut Vec<InvAction>) {
+    let ids: Vec<Uuid> = st.selection.iter().copied().collect();
+    if ids.is_empty() || st.pending.is_some() || st.pending_delete.is_some() {
+        return;
+    }
+    let in_trash = ids.iter().all(|id| rules::in_type(inv, *id, 14));
+    if in_trash && delete::allowed(inv, &ids, prefs, facts) {
+        st.dialog = Some(EditDialog::Delete(ids, true));
+    } else {
+        delete::request(inv, st, prefs, facts, actions);
     }
 }
 

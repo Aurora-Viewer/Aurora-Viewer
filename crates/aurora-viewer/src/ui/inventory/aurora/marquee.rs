@@ -43,9 +43,12 @@ fn active_id() -> egui::Id {
     egui::Id::unique("inventory_marquee_active")
 }
 
-/// A band is being drawn in some explorer (the edge scrolling follows it).
+/// A band is being drawn in some explorer (the edge scrolling follows it):
+/// one was drawn in the last frame, so a band whose explorer went away
+/// (closed, narrowed, another shortcut) stops at once.
 pub(crate) fn active(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(active_id())).unwrap_or(false)
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(active_id())).is_some_and(|at| at + 1 >= now)
 }
 
 impl Marquee {
@@ -96,10 +99,10 @@ pub(crate) fn end(ui: &egui::Ui, p: &Palette, st: &mut InventoryUi, list: Rect, 
     if !down {
         st.marquee.start = None;
         st.marquee.seen.clear();
-        ctx.data_mut(|d| d.insert_temp(active_id(), false));
         return;
     }
-    ctx.data_mut(|d| d.insert_temp(active_id(), true));
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(active_id(), frame));
     let now = st.marquee.content(pos);
     if (now - start).length() < THRESHOLD {
         return;

@@ -80,7 +80,8 @@ pub(super) fn build(
             );
         }
         // pinning: a folder in the column's Quick access
-        if all || (single && inv.folders.contains_key(&id)) {
+        // only where the column shows Quick access (Aurora's window)
+        if all || (single && inv.folders.contains_key(&id) && st.aurora.is_some()) {
             let pinned = prefs.pinned.contains(&id);
             c.add(
                 "pin",
@@ -203,19 +204,8 @@ pub(super) fn execute(command: ExplorerCommand, ui: &egui::Ui, inv: &Inventory, 
         ExplorerCommand::ByDate(by_date) => prefs.sort.by_date = by_date,
         ExplorerCommand::FoldersByName => prefs.sort.folders_by_name = !prefs.sort.folders_by_name,
         ExplorerCommand::SystemFirst => prefs.sort.system_first = !prefs.sort.system_first,
-        ExplorerCommand::SelectAll => {
-            let order = super::super::keyboard::shown_order(st).to_vec();
-            st.selection.extend(order.iter().copied());
-            if st.selected.is_none() {
-                st.selected = order.first().copied();
-            }
-        }
-        ExplorerCommand::Invert => {
-            let order = super::super::keyboard::shown_order(st).to_vec();
-            let before = std::mem::take(&mut st.selection);
-            st.selection.extend(order.iter().filter(|id| !before.contains(id)));
-            st.selected = order.iter().find(|id| st.selection.contains(id)).copied();
-        }
+        ExplorerCommand::SelectAll => super::super::select_keys::select_all(st),
+        ExplorerCommand::Invert => super::super::select_keys::invert(st),
         ExplorerCommand::CopyPath(id) => {
             let base = if st.scope.is_nil() { inv.root } else { st.scope };
             let folder = if inv.folders.contains_key(&id) {

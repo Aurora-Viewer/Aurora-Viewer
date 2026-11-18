@@ -291,7 +291,13 @@ pub(super) fn contents(
     if layout != Layout::Compact {
         st.demo_explorer_now(inv);
         st.history.retain(|id| inv.folders.contains_key(&id));
-        st.history.observe(history::Place::of(st));
+        if st.history.observe(history::Place::of(st)) {
+            // the keyboard's place and a typed path belong to the folder left
+            st.focus = None;
+            st.path_edit = None;
+        }
+    } else {
+        st.path_edit = None;
     }
     match layout {
         Layout::Compact => compact(ui, p, icons, inv, st, prefs, facts, images, actions),

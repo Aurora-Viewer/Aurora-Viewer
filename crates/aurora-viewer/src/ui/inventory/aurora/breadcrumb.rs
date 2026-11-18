@@ -45,15 +45,23 @@ impl PathEdit {
     }
 }
 
-/// The folders from `base` down to `folder`, `base` first; empty when
-/// `folder` is not under it.
+/// The top a path from `base` may start at: `base` itself, or the Library
+/// beside the inventory's root.
+fn tops(inv: &Inventory, base: Uuid) -> impl Iterator<Item = Uuid> {
+    [Some(base), (base == inv.root && !inv.lib_root.is_nil()).then_some(inv.lib_root)]
+        .into_iter()
+        .flatten()
+}
+
+/// The folders from `base` (or the Library, from the root) down to
+/// `folder`, the top first; empty when `folder` is under neither.
 pub(crate) fn chain(inv: &Inventory, base: Uuid, folder: Uuid) -> Vec<Uuid> {
     let mut path = Vec::new();
     let mut id = folder;
     let mut seen = HashSet::new();
     while seen.insert(id) && inv.folders.contains_key(&id) {
         path.push(id);
-        if id == base || id == inv.root {
+        if id == base || id == inv.root || id == inv.lib_root {
             break;
         }
         match rules::parent(inv, id) {
@@ -61,7 +69,7 @@ pub(crate) fn chain(inv: &Inventory, base: Uuid, folder: Uuid) -> Vec<Uuid> {
             None => break,
         }
     }
-    if path.last() != Some(&base) {
+    if !path.last().is_some_and(|top| tops(inv, base).any(|t| t == *top)) {
         return Vec::new();
     }
     path.reverse();
@@ -102,11 +110,15 @@ fn strip_name<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 pub(crate) fn resolve(inv: &Inventory, base: Uuid, text: &str) -> Option<Uuid> {
     let text = text.trim();
     let mut rest = text.trim_start_matches(SEPARATOR);
-    let top = folder_name(inv, base);
-    if let Some(after) = strip_name(rest, &top).filter(|after| after.is_empty() || after.starts_with(SEPARATOR)) {
-        rest = after;
-    }
     let mut at = base;
+    // a top's own name may lead the path: the window's top, or the Library
+    for top in tops(inv, base) {
+        if let Some(after) = strip_name(rest, &folder_name(inv, top)).filter(|after| after.is_empty() || after.starts_with(SEPARATOR)) {
+            rest = after;
+            at = top;
+            break;
+        }
+    }
     loop {
         rest = rest.trim_start_matches(SEPARATOR);
         if rest.is_empty() {
@@ -405,7 +417,7 @@ fn typing(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi)
         // a click elsewhere leaves the path as it was (the completions'
         // clicks are read above, before this)
         st.path_edit = None;
-    } else if !r.has_focus() && !enter_key {
+    } else if !r.has_focus() && !enter_key && ui.memory(|m| m.focused().is_none_or(|f| f == clipboard::focus_id(st))) {
         // the field keeps the keyboard while it is open (the list asks for
         // it back when it is revealed)
         r.request_focus();
@@ -478,6 +490,19 @@ mod tests {
         assert_eq!(resolve(&inv, root, "  "), Some(root));
         assert_eq!(resolve(&inv, root, "My Inventory"), Some(root));
         assert_eq!(resolve(&inv, root, "Clothing/Hats"), None);
+    }
+
+    #[test]
+    fn the_library_has_a_path_of_its_own() {
+        let (mut inv, root) = tree();
+        let lib = folder(&mut inv, 50, 0, "Library");
+        inv.lib_root = lib;
+        let clothing = folder(&mut inv, 51, 50, "Clothing");
+        let top = folder_name(&inv, lib);
+        assert_eq!(path_text(&inv, root, clothing), format!("{top}/Clothing"));
+        assert_eq!(resolve(&inv, root, &format!("{top}/clothing")), Some(clothing));
+        // the inventory's own Clothing is still the one without the top
+        assert_eq!(resolve(&inv, root, "Clothing"), Some(Uuid::from_u128(2)));
     }
 
     #[test]

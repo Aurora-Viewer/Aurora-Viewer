@@ -97,6 +97,21 @@ const BINDINGS: &[Binding] = &[
     bind(Command::Paste, Modifiers::COMMAND, Key::V, None),
 ];
 
+/// Whether a chord pressed while an inventory list has the keyboard is one
+/// the list handles (`app::shortcut_claims_focus` leaves it to egui then):
+/// Ctrl+A, Ctrl+Shift+A, Ctrl+Shift+N, Ctrl+L, Ctrl+Space, Ctrl+↑/↓,
+/// Alt+Enter, Alt+D, Alt+arrows, Alt+Home (Cmd on a Mac reads as `ctrl`).
+pub(crate) fn list_chord(logical: &winit::keyboard::Key, ctrl: bool, shift: bool, alt: bool) -> bool {
+    use winit::keyboard::{Key as K, NamedKey as N};
+    let letter = |l: &str| matches!(logical, K::Character(c) if c.eq_ignore_ascii_case(l));
+    match (ctrl, shift, alt) {
+        (true, false, false) => letter("a") || letter("l") || matches!(logical, K::Named(N::Space | N::ArrowUp | N::ArrowDown)),
+        (true, true, false) => letter("a") || letter("n"),
+        (false, false, true) => letter("d") || matches!(logical, K::Named(N::Enter | N::ArrowLeft | N::ArrowRight | N::ArrowUp | N::Home)),
+        _ => false,
+    }
+}
+
 /// The command whose keys an inventory menu entry shows, by the entry's id
 /// (`context_catalog`).
 pub(crate) fn for_menu_entry(id: &str) -> Option<Command> {
@@ -254,6 +269,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_focused_list_keeps_its_chords_from_the_viewer_shortcuts() {
+        use winit::keyboard::{Key as K, NamedKey as N};
+        let c = |s: &str| K::Character(s.into());
+        // People, the sunset, the Texture Library, OOC chat elsewhere
+        assert!(list_chord(&c("A"), true, true, false));
+        assert!(list_chord(&c("n"), true, true, false));
+        assert!(list_chord(&K::Named(N::Space), true, false, false));
+        assert!(list_chord(&K::Named(N::Enter), false, false, true));
+        assert!(list_chord(&K::Named(N::ArrowLeft), false, false, true));
+        // the viewer's own stay with it
+        assert!(!list_chord(&c("t"), true, false, false));
+        assert!(!list_chord(&c("i"), true, true, false));
+        assert!(!list_chord(&c("a"), false, false, false));
     }
 
     #[test]

@@ -96,6 +96,30 @@ fn row_name(inv: &Inventory, id: Uuid) -> String {
     }
 }
 
+/// Selects every row the list shows (Ctrl+A, and the menu's Select all).
+pub(super) fn select_all(st: &mut InventoryUi) {
+    let order = keyboard::shown_order(st).to_vec();
+    st.selection.extend(order.iter().copied());
+    if st.selected.is_none() {
+        st.selected = order.first().copied();
+    }
+    st.focus = None;
+    st.keyboard_selection = true;
+}
+
+/// Selects what was not, and only that (Ctrl+Shift+A, Invert selection).
+pub(super) fn invert(st: &mut InventoryUi) {
+    let order = keyboard::shown_order(st).to_vec();
+    let before = std::mem::take(&mut st.selection);
+    st.selection.extend(order.iter().filter(|id| !before.contains(id)));
+    st.selected = st
+        .selected
+        .filter(|id| st.selection.contains(id))
+        .or_else(|| order.iter().find(|id| st.selection.contains(id)).copied());
+    st.focus = None;
+    st.keyboard_selection = true;
+}
+
 /// The keyboard's place moves with an arrow from where Ctrl+↑/↓ left it:
 /// that row becomes the selection the arrow starts from.
 pub(super) fn adopt_focus(st: &mut InventoryUi) {
@@ -112,7 +136,7 @@ pub(super) fn adopt_focus(st: &mut InventoryUi) {
 /// list; true when the selected row changed (the list then scrolls to it).
 pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explorer: bool) -> bool {
     let commands = shortcuts::take(ui, false, |c| matches!(c, Command::SelectAll | Command::InvertSelection));
-    let cut = st.cut;
+    let cut = st.cut || st.cut_cancelled;
     let anything = !st.selection.is_empty() || st.focus.is_some();
     let mut moves = Vec::new();
     let mut typed = String::new();
@@ -135,7 +159,8 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
                     egui::Key::ArrowUp if explorer && ctrl => Some(Move::Focus(false)),
                     egui::Key::ArrowDown if explorer && ctrl => Some(Move::Focus(true)),
                     egui::Key::Space if explorer && ctrl => Some(Move::Toggle),
-                    // a cut waits for its paste: Esc cancels the cut first (clipboard.rs)
+                    // a cut pending: Esc cancels the cut (clipboard.rs) and
+                    // keeps the selection
                     egui::Key::Escape if modifiers.is_none() && !cut && anything => Some(Move::Clear),
                     _ => None,
                 };
@@ -158,20 +183,8 @@ pub(super) fn handle(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, explo
     let mut changed = false;
     for command in commands {
         match command {
-            Command::SelectAll => {
-                st.selection.extend(order.iter().copied());
-                if st.selected.is_none() {
-                    st.selected = order.first().copied();
-                }
-            }
-            Command::InvertSelection => {
-                let before = std::mem::take(&mut st.selection);
-                st.selection.extend(order.iter().filter(|id| !before.contains(id)));
-                st.selected = st
-                    .selected
-                    .filter(|id| st.selection.contains(id))
-                    .or_else(|| order.iter().find(|id| st.selection.contains(id)).copied());
-            }
+            Command::SelectAll => select_all(st),
+            Command::InvertSelection => invert(st),
             _ => {}
         }
         st.focus = None;

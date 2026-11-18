@@ -51,16 +51,20 @@ pub(crate) struct History {
 
 impl History {
     /// The explorer is at `place` this frame: a new place pushes the last
-    /// one behind and forgets what was ahead.
-    pub(crate) fn observe(&mut self, place: Place) {
+    /// one behind and forgets what was ahead. True when the place changed.
+    pub(crate) fn observe(&mut self, place: Place) -> bool {
         match self.current {
-            Some(current) if current == place => {}
+            Some(current) if current == place => false,
             Some(current) => {
                 push(&mut self.back, current);
                 self.forward.clear();
                 self.current = Some(place);
+                true
             }
-            None => self.current = Some(place),
+            None => {
+                self.current = Some(place);
+                true
+            }
         }
     }
 
@@ -148,8 +152,8 @@ fn go(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, place
         st.search.clear();
         st.browse = place.folder;
     }
-    st.side.shown = st.browse;
     st.selection.clear();
+    st.focus = None;
     st.selected = None;
     if place.tab == 0 && rules::parent(inv, left) == Some(st.browse) {
         st.selection.insert(left);
@@ -193,9 +197,8 @@ pub(crate) fn refresh(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<I
     }
 }
 
-/// The keys and the mouse's side buttons of the explorer, while the
-/// keyboard is in its list or the pointer over its window and no text is
-/// being typed.
+/// The mouse's side buttons over the explorer, and its keys while its list
+/// has the keyboard and no text is being typed.
 pub(crate) fn input(
     ui: &egui::Ui,
     inv: &Inventory,
@@ -207,25 +210,25 @@ pub(crate) fn input(
     if st.dialog.is_some() || st.rename.is_some() || ui.ctx().text_edit_focused() || egui::Popup::is_any_open(ui.ctx()) {
         return;
     }
-    let hovered = ui.rect_contains_pointer(area);
-    if !hovered && !clipboard::list_has_focus(ui, st) {
-        return;
-    }
-    let (back, forward) = if hovered {
-        ui.input(|i| {
+    // the mouse's side buttons over the window, as in a file manager
+    if ui.rect_contains_pointer(area) {
+        let (back, forward) = ui.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Extra1),
                 i.pointer.button_pressed(egui::PointerButton::Extra2),
             )
-        })
-    } else {
-        (false, false)
-    };
-    if back {
-        go_back(inv, st, prefs, 1);
+        });
+        if back {
+            go_back(inv, st, prefs, 1);
+        }
+        if forward {
+            go_forward(inv, st, prefs, 1);
+        }
     }
-    if forward {
-        go_forward(inv, st, prefs, 1);
+    // the keys only while the list has the keyboard: elsewhere Alt+arrows
+    // move the camera and F-keys play gestures
+    if !clipboard::list_has_focus(ui, st) {
+        return;
     }
     let navigation = |c: Command| {
         matches!(

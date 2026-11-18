@@ -479,6 +479,12 @@ fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
 }
 
+/// A Ctrl or Alt chord the focused inventory list handles itself
+/// (`shortcuts::list_chord`), before the viewer's own shortcuts take it.
+pub fn list_keeps_chord(ctx: &egui::Context, logical: &winit::keyboard::Key, ctrl: bool, shift: bool, alt: bool) -> bool {
+    clipboard::list_focused_recently(ctx) && shortcuts::list_chord(logical, ctrl, shift, alt)
+}
+
 /// Inventory cargo shared by world placement and the build contents floater.
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
@@ -636,6 +642,8 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    /// This frame's Esc cancelled a cut (`clipboard_input`).
+    cut_cancelled: bool,
     cut_rows: clipboard::CutRows,
     #[cfg(windows)]
     clipboard_sequence: Option<u32>,
@@ -2668,6 +2676,25 @@ pub fn show(
             }
         }
         st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
+    }
+    // a drag that copies loads its folders' trees the same way (once per
+    // inventory generation)
+    let copied = drag::copied_folders(ctx, inv);
+    if !copied.is_empty() {
+        let key = egui::Id::unique("inventory_drag_copy_loaded");
+        let done = ctx
+            .data(|d| d.get_temp::<(u64, Vec<Uuid>)>(key))
+            .is_some_and(|(generation, ids)| generation == inv.generation && ids == copied);
+        if !done {
+            // every tree asked for, not only up to the first unloaded one
+            let mut loaded = true;
+            for id in &copied {
+                loaded &= rules::request_tree(inv, *id);
+            }
+            if loaded {
+                ctx.data_mut(|d| d.insert_temp(key, (inv.generation, copied)));
+            }
+        }
     }
     let screen = ctx.content_rect();
     let default_size = if dual.is_some() { DUAL_SIZE } else { DEFAULT_SIZE };
@@ -5819,6 +5846,25 @@ mod tests {
         assert_eq!(inv.items[&id].name, old);
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
             [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Renamed object")));
+    }
+
+    #[test]
+    fn tab_while_renaming_goes_on_to_rename_the_next_row() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let (first, next) = (Uuid::from_u128(8100), Uuid::from_u128(8102));
+        assert!(rules::renameable(&inv, next));
+        let mut st = InventoryUi::default();
+        st.plain.order = vec![first, next];
+        st.begin_rename(&inv, first);
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Renamed".into())]);
+        let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+        assert!(matches!(&actions[..], [InvAction::Edit(_)]), "the first name is submitted");
+        assert_eq!(st.rename.as_ref().map(|edit| edit.id), Some(next));
+        assert_eq!(st.selected, Some(next));
+        assert!(st.selection.contains(&next) && !st.selection.contains(&first));
     }
 
     #[test]
