@@ -12743,6 +12743,7 @@ impl App {
             tex_anim_at: hold.map(|h| h.at),
             sun_dir: env.sun_dir,
             sun_visible: env.sun_visible,
+            sky_rays: self.settings.directional_rays(env.sky.sun_dir.z >= 0.0, env.sky.moon_dir.z >= 0.0),
             sun_color: env.sun_color,
             sky_zenith: env.zenith,
             sky_horizon: env.horizon,

@@ -20,6 +20,7 @@ mod clouds;
 pub mod clouds_noise;
 mod contact_shadows;
 mod cutout;
+mod volume_depth;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;

@@ -4133,3 +4133,78 @@ fn fs_snow_mesh(in: SnowMeshOut) -> @location(0) vec4<f32> {
     if (c.a < 0.5) { discard; }
     return vec4<f32>(c.rgb / c.a, 1.0);
 }
+
+fn sky_ray_cascade(world_pos: vec3<f32>, cascade: u32) -> f32 {
+    let matrix = frame.cascade_vp[cascade];
+    let lp = matrix * vec4<f32>(world_pos, 1.0);
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z < 0.0 || ndc.z > 1.0) {
+        return -1.0;
+    }
+    let atlas = vec2<f32>(textureDimensions(shadow_map));
+    let scale = vec2<f32>(0.5, atlas.x / (2.0 * atlas.y));
+    let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    let half_texel = vec2<f32>(1.0 / atlas.x);
+    let compare_uv = (clamp(uv, half_texel, vec2<f32>(1.0) - half_texel) + tile) * scale;
+    let depth_per_metre = length(vec3<f32>(matrix[0].z, matrix[1].z, matrix[2].z));
+    return textureSampleCompareLevel(shadow_map, shadow_sampler, compare_uv, ndc.z - 0.12 * depth_per_metre);
+}
+
+fn sky_ray_visibility(world_pos: vec3<f32>, distance_to_eye: f32) -> f32 {
+    let splits = frame.cascade_splits.xyz;
+    var cascade = select(0u, 1u, distance_to_eye > splits.x);
+    if (distance_to_eye > splits.y) { cascade = 2u; }
+    let visible = sky_ray_cascade(world_pos, cascade);
+    if (cascade == 2u) { return max(visible, 0.0); }
+    let boundary = splits[cascade];
+    let first = select(0.0, splits.x, cascade == 1u);
+    let blend = smoothstep(mix(first, boundary, 0.85), boundary, distance_to_eye);
+    if (visible >= 0.0 && blend <= 0.0) { return visible; }
+    let next = sky_ray_cascade(world_pos, cascade + 1u);
+    if (next < 0.0) { return max(visible, 0.0); }
+    if (visible < 0.0) { return next; }
+    return mix(visible, next, blend);
+}
+
+fn sky_ray_radiance(eye: vec3<f32>, ray: vec3<f32>, reach: f32, pixel: vec2<f32>) -> vec3<f32> {
+    if (frame.sky_rays.x <= 0.0 || frame.params.z < 0.5) { return vec3<f32>(0.0); }
+    let limit = min(frame.cascade_splits.z, 128.0);
+    let distance = min(reach, limit);
+    if (distance <= 0.01) { return vec3<f32>(0.0); }
+    let samples = u32(frame.sky_rays.z);
+    let step = distance / f32(samples);
+    // Stable stratification in full-photo pixels, including across tile seams.
+    let seed = pixel + frame.photo.xy;
+    let jitter = fract(52.9829189 * fract(dot(seed, vec2<f32>(0.06711056, 0.00583715))));
+    let extinction = 0.018;
+    let scatter = 1.0 - exp(-extinction * step);
+    let decay = exp(-extinction * step);
+    let toward_light = max(dot(ray, frame.sun_dir.xyz), 0.0);
+    let phase = 0.2 + 0.8 * pow(toward_light, 4.0);
+    var transmission = 1.0;
+    var sum = 0.0;
+    for (var i = 0u; i < samples; i++) {
+        let t = (f32(i) + jitter) * step;
+        let near = smoothstep(0.0, max(frame.sky_rays.y, 0.01), t);
+        let far = 1.0 - smoothstep(limit * 0.8, limit, t);
+        sum += sky_ray_visibility(eye + ray*t, t) * near * far * transmission;
+        transmission *= decay;
+    }
+    // PBR object lighting does not use the EEP moon brightness multiplier.
+    let moon = frame.sky_sun.z < 0.0;
+    let light = select(frame.sun_color.rgb, frame.sun_color.rgb * frame.sky_misc.z, moon && frame.sky_ll.x == 0.0);
+    return light * (sum * scatter * phase * frame.sky_rays.x);
+}
+
+@fragment
+fn fs_sky_rays(in: SkyOut) -> @location(0) vec4<f32> {
+    let depth = textureLoad(depth_tex, vec2<i32>(in.clip.xy), 0);
+    let far_h = frame.inv_view_proj * vec4<f32>(in.ndc, max(depth, 0.00001), 1.0);
+    let end = far_h.xyz / far_h.w;
+    let delta = end - frame.camera_pos.xyz;
+    let distance_to_surface = min(length(delta), 128.0);
+    let ray = normalize(delta);
+    let light_sum = sky_ray_radiance(frame.camera_pos.xyz, ray, distance_to_surface, in.clip.xy);
+    return vec4<f32>(light_sum, 0.0);
+}

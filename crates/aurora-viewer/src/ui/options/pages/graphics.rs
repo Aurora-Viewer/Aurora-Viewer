@@ -772,6 +772,16 @@ fn light(cx: &mut Cx) {
         cx.track(&field!(shadows));
         let off = cx.s.shadow_quality == 0;
         cx.subs(off, |cx| {
+            cx.toggle(tr!("sky-rays-enabled"), tr!("sky-rays-help"), &field!(sky_rays_enabled));
+            cx.combo(
+                tr!("sky-rays-source"),
+                tr!("sky-rays-help"),
+                &field!(sky_ray_source),
+                &[(0, tr!("sky-rays-auto")), (1, tr!("sky-rays-sun")), (2, tr!("sky-rays-moon"))],
+            );
+            cx.slider(tr!("sky-rays-strength"), "", &field!(sky_ray_strength), 0.0..=4.0, "");
+            cx.slider(tr!("sky-rays-fade"), "", &field!(sky_ray_fade), 0.0..=40.0, " m");
+            cx.slider(tr!("sky-rays-samples"), "", &field!(sky_ray_samples), 16..=256, "");
             cx.toggle(
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),

@@ -1651,6 +1651,11 @@ pub struct Settings {
     pub(crate) former_look_at_range: Option<f32>,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
+    pub sky_rays_enabled: bool,
+    pub sky_ray_source: u8,
+    pub sky_ray_strength: f32,
+    pub sky_ray_fade: f32,
+    pub sky_ray_samples: u32,
     /// Projectors cast shadows within the configured budget
     /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
@@ -2737,6 +2742,11 @@ impl Default for Settings {
             former_look_at: None,
             former_look_at_range: None,
             shadow_quality: 3,
+            sky_rays_enabled: false,
+            sky_ray_source: 0,
+            sky_ray_strength: 0.8,
+            sky_ray_fade: 3.0,
+            sky_ray_samples: 32,
             projector_shadows: true,
             others_attached_lights: true,
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
@@ -2992,6 +3002,23 @@ pub(crate) fn window_starts_maximized(saved_maximized: Option<bool>, saved_size:
 }
 
 impl Settings {
+    pub(crate) fn directional_rays(&self, sun_up: bool, moon_up: bool) -> [f32; 4] {
+        let active = match self.sky_ray_source {
+            1 => sun_up,
+            2 => !sun_up && moon_up,
+            _ => sun_up || moon_up,
+        };
+        if self.sky_rays_enabled && active {
+            [
+                self.sky_ray_strength.clamp(0.0, 4.0),
+                self.sky_ray_fade.clamp(0.0, 40.0),
+                self.sky_ray_samples.clamp(16, 256) as f32,
+                0.0,
+            ]
+        } else {
+            [0.0; 4]
+        }
+    }
     /// Rendering exception of an avatar: 0 none, 1 never render fully,
     /// 2 always render fully.
     pub fn render_exception(&self, id: &uuid::Uuid) -> u8 {
@@ -6252,5 +6279,23 @@ mod tests {
         let loaded = file.sanitized();
         assert!(!loaded.render_scale_auto);
         assert_eq!(loaded.render_scale_percent, 67);
+    }
+}
+
+#[cfg(test)]
+mod directional_ray_tests {
+    use super::Settings;
+
+    #[test]
+    fn follows_the_body_that_casts_shadows() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.directional_rays(true, false)[0], 0.0);
+        settings.sky_rays_enabled = true;
+        assert!(settings.directional_rays(false, true)[0] > 0.0);
+        settings.sky_ray_source = 2;
+        assert_eq!(settings.directional_rays(true, true)[0], 0.0);
+        assert!(settings.directional_rays(false, true)[0] > 0.0);
+        settings.sky_ray_source = 1;
+        assert_eq!(settings.directional_rays(false, true)[0], 0.0);
     }
 }

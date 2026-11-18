@@ -15843,3 +15843,13 @@ ui-options-proxy-direct-media-warning = Media connects directly, around the prox
 ui-options-proxy-direct-media-confirm-title = Play media without the proxy?
 ui-options-proxy-direct-media-confirm-text = Video, and web pages the HTTP proxy does not cover, do not go through the proxy. They connect directly from this computer, so whoever chose the media of a parcel or an object can see your real IP address. Everything else keeps going through the proxy. This takes effect after you restart the viewer.
 ui-options-proxy-direct-media-confirm = Play media directly
+
+sky-rays-enabled = Volumetric Sun & Moon rays
+sky-rays-help = Scatters light from the active shadow-casting sun or moon. Requires shadows.
+sky-rays-source = Ray source
+sky-rays-auto = Automatic
+sky-rays-sun = Sun
+sky-rays-moon = Moon
+sky-rays-strength = Ray strength
+sky-rays-fade = Near fade
+sky-rays-samples = Ray samples

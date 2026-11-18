@@ -10040,9 +10040,24 @@ fn midday_sky() -> Llsd {
 
 /// Day cycle with a single sky frame (and the default water, or the one
 /// `AURORA_DEMO_WATER_EEP` asks for).
-fn demo_day(sky: Llsd) -> Llsd {
+fn demo_day(mut sky: Llsd) -> Llsd {
     use aurora_llsd::llsd_map;
     let mut frames = aurora_llsd::Map::new();
+    if let Ok(mode) = std::env::var("AURORA_DEMO_SKY_RAYS")
+        && let Llsd::Map(ref mut map) = sky
+        && matches!(mode.as_str(), "sun" | "moon")
+    {
+        let rotation = |azimuth, elevation| {
+            let q = crate::ui::environment::rotation_from(azimuth, elevation);
+            Llsd::Array(q.to_array().into_iter().map(|v| Llsd::Real(v as f64)).collect())
+        };
+        let above = rotation(300.0, 26.0);
+        let below = rotation(120.0, -26.0);
+        let (sun, moon) = if mode == "sun" { (above, below) } else { (below, above) };
+        map.insert("sun_rotation".into(), sun);
+        map.insert("moon_rotation".into(), moon);
+        map.insert("moon_brightness".into(), Llsd::Real(0.75));
+    }
     frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)
     let water = std::env::var("AURORA_DEMO_WATER_EEP")
