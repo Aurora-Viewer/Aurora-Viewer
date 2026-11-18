@@ -460,14 +460,16 @@ fn banner(ui: &mut egui::Ui, p: &Palette, env: &mut Env<'_>, state: PhotoState, 
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
         widgets::paint_glyph(ui.painter(), "camera-filled", rect.center(), 14.0, p.violet_light);
         ui.label(RichText::new(tr!("phototools-photo-banner")).size(12.0).color(p.ink));
-        let keep = !env.light.env.is_empty() && !state.loading && !env.ui.rlva_locked;
-        let button = ui
-            .add_enabled_ui(keep, |ui| widgets::flat_button(ui, p, tr!("photo-light-keep")))
-            .inner
-            .on_hover_text(tr!("photo-light-keep-tip"))
-            .on_disabled_hover_text(tr!("photo-light-keep-tip"));
-        out.keep_light |= button.clicked();
     });
+    // on a line of its own: the text takes the width
+    ui.add_space(2.0);
+    let keep = !env.light.env.is_empty() && !state.loading && !env.ui.rlva_locked;
+    let button = ui
+        .add_enabled_ui(keep, |ui| widgets::flat_button(ui, p, tr!("photo-light-keep")))
+        .inner
+        .on_hover_text(tr!("photo-light-keep-tip"))
+        .on_disabled_hover_text(tr!("photo-light-keep-tip"));
+    out.keep_light |= button.clicked();
     if state.boost {
         note(ui, p, tr!("phototools-photo-boost"));
     }
