@@ -1519,6 +1519,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
             super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
         }
+        // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
+        let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
+        if menu::item_keys(ui, p, "camera-cog", aurora_i18n::tr!("toolbar-command-phototools"), &phototools) {
+            super::widgets::toggle_floater(ui.ctx(), super::phototools::WINDOW, &mut panels.phototools);
+        }
         // the Director (camera tracks and films), Aurora's own, beside the
         // photo: it was only on the toolbar
         if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {

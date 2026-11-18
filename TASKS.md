@@ -485,6 +485,7 @@
   - ⬜ Next, in their own changes: the Light and Depth of field & glow tabs with the photo window's values, the Camera tab and the Cameratools window (`phototools_view`), the Aids tab and its tools.
   - Rows the photo window overrides while it is open (Exposure through `light.exposure`, the Sky, Water and Day/Night lists, the quick environments) stay live in this step: while the photo window is open they change the saved settings and take effect when it closes. The next step makes them edit the photo's values.
   - Pause clouds lasts the session (never saved) and is shared with the photo window; while it is on and the photo window is closed, a chip "Clouds paused" in the top bar resumes the clouds on a click. It is greyed under RLVa `@setenv` / `@setsphere` like the presets (FloaterQuickPrefs, quickprefs.cpp). Greying "New day cycle…" under RLVa is stricter than the Legacy Viewer.
+  - Menu and shortcut: World › Phototools (after Photo, before Director) and Alt+P, rebindable in the shortcuts page (the Legacy Viewer's `phototools_item_call`, shortcut="alt|P", menu_viewer.xml); both toggle the window like the toolbar button.
   - Section titles: "Reflections" is Preferences' own title; "Render options" and "Quality" are Aurora's (the Legacy boxes have none).
   - Known limits: Avatar physics detail is greyed while Avatar physics is off, and that switch lives in Preferences; Preferences' 8 s reset Undo can also revert a Phototools edit (as with Quick preferences).
 
