@@ -179,6 +179,14 @@ fn a_script_only_batch_needs_no_balance() {
     assert_eq!(imports.queue.len(), 1, "{}", imports.message);
 }
 
+/// A successful answer: the saved item, None when the request is not the current script's.
+fn saved(imports: &mut Imports, request: Uuid, item: InvItem) -> Option<InvItem> {
+    match imports.script_saved(request, Uuid::nil(), Ok(item)) {
+        Some(Answer::Saved(item)) => Some(*item),
+        _ => None,
+    }
+}
+
 /// The status of a row, None once its upload is acknowledged and the row retired.
 fn status(imports: &Imports, id: Uuid) -> Option<Status> {
     imports
@@ -208,34 +216,34 @@ fn scripts_with_one_name_are_created_one_at_a_time_and_answered_by_request() {
     let stranger = Uuid::new_v4();
     assert!(!imports.owns_script(stranger));
     imports.script_compile_errors(stranger, vec!["(1, 1) ERROR".into()]);
-    assert!(imports.script_saved(stranger, Ok(item("Door"))).is_none());
+    assert!(saved(&mut imports, stranger, item("Door")).is_none());
     assert!(imports.receipts.is_empty());
     assert!(imports.owns_script(first_request));
 
     // ours, with compile errors: kept in the inventory, with its errors
     imports.script_compile_errors(first_request, vec!["(3, 9) : ERROR : Syntax error".into()]);
-    let saved = imports.script_saved(first_request, Ok(item("Door"))).expect("the item");
+    let item_saved = saved(&mut imports, first_request, item("Door")).expect("the item");
     assert_eq!(imports.receipts.len(), 1);
     assert_eq!(
         imports.receipts[0].outcome,
         Outcome::CompileErrors(vec!["(3, 9) : ERROR : Syntax error".into()])
     );
-    assert!(matches!(status(&imports, ids[0]), Some(Status::Done(id)) if id == saved.id));
-    assert!(imports.script_saved(first_request, Ok(item("Door"))).is_none(), "answered once");
+    assert!(matches!(status(&imports, ids[0]), Some(Status::Done(id)) if id == item_saved.id));
+    assert!(saved(&mut imports, first_request, item("Door")).is_none(), "answered once");
 
     // the second has its own request, and the first one's errors do not leak into it
     let second = created(&poll(&mut imports, &world));
     assert_eq!(second.len(), 1);
     assert_ne!(second[0].0, first_request);
     assert!(status(&imports, ids[0]).is_none(), "the acknowledged row is retired");
-    imports.script_saved(second[0].0, Ok(item("Door"))).expect("the item");
+    saved(&mut imports, second[0].0, item("Door")).expect("the item");
     assert_eq!(imports.receipts[1].outcome, Outcome::Saved);
     assert!(matches!(status(&imports, ids[1]), Some(Status::Done(_))));
     assert!(matches!(status(&imports, ids[2]), Some(Status::Preparing)));
 
     let third = created(&poll(&mut imports, &world));
     assert_eq!(third.len(), 1);
-    imports.script_saved(third[0].0, Ok(item("Door"))).expect("the item");
+    saved(&mut imports, third[0].0, item("Door")).expect("the item");
     poll(&mut imports, &world);
     assert!(!imports.busy());
     assert_eq!(imports.receipts.len(), 3);
@@ -253,9 +261,8 @@ fn a_script_that_cannot_be_saved_fails_alone() {
 
     let request = created(&poll(&mut imports, &world))[0].0;
     assert!(
-        imports
-            .script_saved(request, Err("The server did not confirm the save.".into()))
-            .is_none()
+        imports.script_saved(request, Uuid::nil(), Err("The server did not confirm the save.".into()))
+            == Some(Answer::Failed { orphan: None })
     );
     assert!(matches!(status(&imports, ids[0]), Some(Status::Error(reason)) if reason.contains("confirm")));
     assert!(matches!(status(&imports, ids[1]), Some(Status::Preparing)), "the batch goes on");
@@ -269,7 +276,7 @@ fn a_script_that_cannot_be_saved_fails_alone() {
     // the next script is created, and the texture follows it
     let next = created(&poll(&mut imports, &world));
     assert_eq!(next.len(), 1);
-    imports.script_saved(next[0].0, Ok(item("Good"))).expect("the item");
+    saved(&mut imports, next[0].0, item("Good")).expect("the item");
     assert!(matches!(status(&imports, ids[1]), Some(Status::Done(_))));
     poll(&mut imports, &world);
     assert!(imports.current.as_ref().is_some_and(|(_, step)| step.kind == Some(Kind::Texture)));
@@ -300,8 +307,33 @@ fn cancelling_keeps_the_script_in_flight_and_drops_the_rest() {
     imports.cancel_remaining();
     assert!(imports.owns_script(request), "an in-flight creation runs to its answer");
     assert!(imports.queue.is_empty());
-    assert!(imports.script_saved(request, Ok(item("A"))).is_some());
+    assert!(saved(&mut imports, request, item("A")).is_some());
     assert!(matches!(imports.entries[0].status, Status::Done(_)));
     assert!(matches!(imports.entries[1].status, Status::Cancelled));
     assert!(poll(&mut imports, &world).is_empty());
+}
+
+#[test]
+fn a_script_item_the_grid_made_but_could_not_fill_is_reported_as_an_orphan() {
+    let scripts = Uuid::from_u128(2);
+    let world = world(scripts);
+    let mut imports = Imports::default();
+    load(&mut imports, &world, vec![script("Door"), script("Door")]);
+    imports.start(&world, &Default::default(), &Default::default(), &prices());
+    let first = created(&poll(&mut imports, &world))[0].0;
+    let orphan = Uuid::from_u128(500);
+    assert_eq!(
+        imports.script_saved(first, orphan, Err("Saving failed.".into())),
+        Some(Answer::Failed { orphan: Some(orphan) }),
+        "the item the grid created is handed back, to be trashed"
+    );
+    assert!(matches!(&imports.receipts[0].outcome, Outcome::Failed(_)));
+    let second = created(&poll(&mut imports, &world))[0].0;
+    assert_eq!(
+        imports.script_saved(second, Uuid::nil(), Err("No simulator.".into())),
+        Some(Answer::Failed { orphan: None }),
+        "nothing was created, nothing to trash"
+    );
+    // not the current request: nothing is reported, nothing is trashed
+    assert_eq!(imports.script_saved(first, orphan, Err("late".into())), None);
 }

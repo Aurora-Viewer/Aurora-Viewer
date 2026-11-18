@@ -157,6 +157,17 @@ pub fn item_name(path: &Path) -> String {
     if name.is_empty() { DEFAULT_NAME.to_owned() } else { name }
 }
 
+/// The answer to a script's creation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer {
+    Saved(Box<aurora_net::inventory::InvItem>),
+    /// Not saved. `orphan` is the empty script item the grid created for it,
+    /// which the caller moves to the Trash (onSavedScript).
+    Failed {
+        orphan: Option<Uuid>,
+    },
+}
+
 /// What happened to one script of a batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {

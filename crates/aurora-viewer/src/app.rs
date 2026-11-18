@@ -3849,7 +3849,7 @@ impl App {
                 return;
             }
             if self.imports.owns_script(request) {
-                self.import_script_saved(request, result);
+                self.import_script_saved(request, item, result);
                 return;
             }
             if self.ik_editor.project_saving(request) {

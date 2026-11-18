@@ -1105,15 +1105,17 @@ impl Imports {
         }
     }
     /// The answer to a script's creation (`InventoryContentSaved`): its item,
-    /// or why it was not saved. None for any request but the current one.
-    /// A script that did not compile stays, with its errors in the receipt, as
-    /// in the Legacy editor. A failure only fails this script: scripts are
-    /// free, so the rest of the batch goes on.
+    /// or why it was not saved, with the id of the empty item the grid made
+    /// for it (`item`, nil when none). None for any request but the current
+    /// one. A script that did not compile stays, with its errors in the
+    /// receipt, as in the Legacy editor. A failure only fails this script:
+    /// scripts are free, so the rest of the batch goes on.
     pub fn script_saved(
         &mut self,
         request: Uuid,
+        item: Uuid,
         result: Result<aurora_net::inventory::InvItem, String>,
-    ) -> Option<aurora_net::inventory::InvItem> {
+    ) -> Option<script::Answer> {
         if self
             .current
             .as_ref()
@@ -1137,7 +1139,7 @@ impl Imports {
                         script::Outcome::CompileErrors(errors)
                     },
                 });
-                Some(item)
+                Some(script::Answer::Saved(Box::new(item)))
             }
             Err(reason) => {
                 log::warn!("import: script {} was not saved: {reason}", step.name);
@@ -1148,7 +1150,9 @@ impl Imports {
                     name: step.name,
                     outcome: script::Outcome::Failed(reason),
                 });
-                None
+                Some(script::Answer::Failed {
+                    orphan: (!item.is_nil()).then_some(item),
+                })
             }
         }
     }
