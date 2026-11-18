@@ -522,6 +522,16 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Answer of a `NetCommand::ChatServiceRequest`. `status` is the HTTP
+    /// status, 0 for a transport failure (timeout, connection) and 499 for
+    /// an LLSD body that does not parse, as LLCoreHttpUtil reports them.
+    /// `body` is the LLSD of a success only; an array root (the list) is
+    /// given as it is.
+    ChatServiceResponse {
+        id: u64,
+        status: u16,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -1641,6 +1651,17 @@ pub enum NetCommand {
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,
+    /// One request of the grid's direct IM history
+    /// (LLChatServiceHistory::request, LL viewer 26.5): a GET of the
+    /// conversation list when `body` is None, else a POST of one history
+    /// page. `url` is the capability of the context the viewer sampled, so
+    /// that a region change in between does not send it elsewhere. Answered
+    /// by `NetEvent::ChatServiceResponse` with the same `id`.
+    ChatServiceRequest {
+        id: u64,
+        url: String,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// Answer a friendship offer received while offline: by the
     /// AcceptFriendship / DeclineFriendship capability, else by message when
     /// it came with a transaction id.
