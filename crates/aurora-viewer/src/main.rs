@@ -54,6 +54,7 @@ mod fast_hash;
 mod film_sound;
 mod frame_par;
 mod frame_profile;
+mod game_control;
 mod gestures;
 mod gif_search;
 mod gpu_driver;

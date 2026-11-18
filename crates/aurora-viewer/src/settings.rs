@@ -633,6 +633,9 @@ pub struct Settings {
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
+    /// Game Controls: GameControlData and the controller's action mappings
+    /// (the LL viewer's "GameControl" setting).
+    pub game_control: crate::game_control::Settings,
     /// Pre-split profile awaiting device classification after an upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
@@ -2360,6 +2363,7 @@ impl Default for Settings {
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
+            game_control: Default::default(),
             pending_legacy_gamepad: None,
             auto_hover_height: false,
             auto_hover_offset: 0.0,
@@ -3587,6 +3591,7 @@ impl Settings {
         }
         self.snapshot.sanitize();
         self.dof.sanitize();
+        self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
             self.screen_indirect_intensity.clamp(0.0, 4.0)

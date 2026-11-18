@@ -96,6 +96,8 @@ const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+/// LL_SIM_STAT_FPS (llviewerstats.h): the SimStats stat of the frame rate.
+const SIM_STAT_FPS: u32 = 1;
 
 /// The largest region side a grid can announce (Constants.MaximumRegionSize,
 /// OpenSim). The viewer sizes the region's land and parcel grids from it: a
@@ -1104,6 +1106,7 @@ impl Session<'_> {
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     let lua_scripts = v["LuaScriptsEnabled"].as_bool();
                     let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
+                    let game_control = v["GameControlEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1130,6 +1133,7 @@ impl Session<'_> {
                         currency_symbol,
                         export_supported,
                         group_chat_post_links,
+                        game_control,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1655,6 +1659,29 @@ impl Session<'_> {
 
     /// Controls handed over by the viewer because they changed enough to
     /// leave now (`NetCommand::AgentControls`).
+    /// sendGameControlData (llappviewer.cpp): to the agent's region,
+    /// unreliable, before the AgentUpdate of the same frame (the viewer sends
+    /// this command first).
+    fn send_game_control(&mut self, p: crate::types::GameControlPacket) {
+        if self.logout_started.is_some() {
+            return;
+        }
+        let mut m = GameControlData::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        m.agent_data.packet = p.packet;
+        m.agent_data.action_mode = p.action_mode;
+        m.axes = p.axes.into_iter().map(|value| game_control_data::Axes { value }).collect();
+        m.buttons = p.buttons.map(|flags| game_control_data::Buttons { flags }).into_iter().collect();
+        m.mode_axes = p.mode_axes.into_iter().map(|value| game_control_data::ModeAxes { value }).collect();
+        m.mode_buttons = p
+            .mode_buttons
+            .map(|flags| game_control_data::ModeButtons { flags })
+            .into_iter()
+            .collect();
+        self.send_main(&m, false);
+    }
+
     fn on_agent_controls(&mut self, c: AgentControls) {
         self.control_flags = c.control_flags;
         if self.agent_moved && self.logout_started.is_none() {
@@ -3167,6 +3194,7 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::GameControlData(p) => self.send_game_control(p),
             NetCommand::ForceAgentUpdate => {
                 self.agent_update.force();
                 if self.agent_moved && self.logout_started.is_none() {
@@ -4938,6 +4966,11 @@ impl Session<'_> {
             // process_sim_stats: the region flags ride along (an estate manager
             // turning off fly, voice, push... shows without a new handshake)
             let m: SimStats = pkt.decode()?;
+            // LL_SIM_STAT_FPS paces GameControlData, from whichever region
+            // sends it (process_sim_stats)
+            if let Some(fps) = m.stat.iter().find(|s| s.stat_id == SIM_STAT_FPS) {
+                emit(self.sh, NetEvent::SimFrameRate(fps.stat_value));
+            }
             if let Some(handle) = self.sims.get(&from).map(|s| s.handle) {
                 // the flags we use are all in the low 32 bits
                 let flags = m

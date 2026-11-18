@@ -497,6 +497,7 @@ the background still applies outside screenshots.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic controller input and preferences, avatar camera cycling, lens reset gestures or six-axis camera flight |
+| `AURORA_DEMO_GAME_CONTROL=<scenario>` | Game Controls: a synthetic gamepad walks, flies the flycam or moves the cursor, or a Preferences › Game Controls tab opens |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -524,6 +525,21 @@ the desktop swapchain. The saved image must show the scene without egui,
 nameplates, worn HUDs, selection or debug overlays. Other frames follow the
 normal desktop path. This checks the output boundary for VR; it does not connect
 to OpenXR or provide stereo views.
+
+`AURORA_DEMO_GAME_CONTROL`: from frame 600, a synthetic gamepad reaches
+Game Controls through the joystick worker's snapshot, with the Aurora gamepad
+profile off, the Game Controls settings at their defaults and the demo region
+taking GameControlData (nothing leaves the PC in demo mode). `walk` walks
+forward on the left stick, runs past 90 % and turns on the right stick;
+`flycam` clicks the right stick into the flycam at frame 630, then flies
+forward and pans; `cursor` presses Select into the mouse cursor mode at frame
+630 and moves the pointer right and up. `actions`, `device-mappings`,
+`device-options` and `server-data` open that tab of Preferences › Game
+Controls while the left stick, the right trigger and South are held from
+frame 650: the Device Options tab shows the live values, the Server Data tab
+the last packet. Every hundred frames the log has a `game control demo:` line
+with the mode, whether a packet went out, the flycam, the cursor mode and the
+avatar's position.
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device

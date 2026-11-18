@@ -199,6 +199,9 @@ pub struct Region {
     /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
     /// post links in chat applies here, so the role editor shows it.
     pub group_chat_post_links: bool,
+    /// SimulatorFeatures' GameControlEnabled: the region reads
+    /// GameControlData (LLViewerRegion::gameControlEnabled).
+    pub game_control: bool,
     pub max_link_children: Option<u32>,
     /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
     /// window's "Region settings".
@@ -607,6 +610,9 @@ pub struct World {
     pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
+    /// The last LL_SIM_STAT_FPS of a SimStats, from any region: it paces
+    /// GameControlData (`game_control::Engine::set_server_fps`).
+    pub sim_fps: Option<f32>,
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
@@ -1077,6 +1083,7 @@ impl World {
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
+            sim_fps: None,
             frozen: false,
             god_level: 0,
             held_kills: Vec::new(),
@@ -2586,6 +2593,7 @@ impl World {
             currency_symbol: String::new(),
             export_supported: false,
             group_chat_post_links: false,
+            game_control: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -3227,6 +3235,7 @@ impl World {
                 currency_symbol,
                 export_supported,
                 group_chat_post_links,
+                game_control,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
@@ -3238,6 +3247,7 @@ impl World {
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
                 r.group_chat_post_links = group_chat_post_links;
+                r.game_control = game_control;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4427,6 +4437,10 @@ impl World {
                 {
                     self.refresh_region_window(handle, false);
                 }
+                None
+            }
+            NetEvent::SimFrameRate(fps) => {
+                self.sim_fps = Some(fps);
                 None
             }
             NetEvent::Health(health) => {
@@ -6304,6 +6318,12 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in reads GameControlData (gAgent.getRegion()'s
+    /// gameControlEnabled).
+    pub fn game_control_enabled(&self) -> bool {
+        self.main().is_some_and(|r| r.game_control)
     }
 
     /// The region we are in applies the ability to post links in group
@@ -9882,6 +9902,7 @@ mod motion_tests {
                 currency_symbol: String::new(),
                 export_supported: false,
                 group_chat_post_links: false,
+                game_control: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
