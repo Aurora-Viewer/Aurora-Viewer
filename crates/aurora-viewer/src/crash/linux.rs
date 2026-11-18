@@ -992,6 +992,9 @@ mod tests {
 
     #[test]
     fn the_fault_location_and_unknown_frames_are_written() {
+        // Before the first lookup: a test beside this one that names the
+        // binary between two of them would give this stack two names.
+        let _ = EXE.set(Name::new(b"aurora_viewer-test"));
         let here = stacks_are_written_as_module_offsets_with_build_ids as *const () as usize;
         let mut out = Vec::new();
         write_modules(&mut out, &[here, 8], Some(here));
