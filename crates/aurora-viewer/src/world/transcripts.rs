@@ -128,7 +128,7 @@ fn minute(t: SystemTime) -> u64 {
 
 impl World {
     /// The transcript file of a conversation, from what is known now.
-    fn transcript_stem(&self, session: &Uuid) -> Option<String> {
+    pub(super) fn transcript_stem(&self, session: &Uuid) -> Option<String> {
         let group = self.groups.group(session);
         let info = self.groups.sessions.get(session);
         if group.is_some() || info.is_some_and(|i| i.group) {
@@ -195,12 +195,22 @@ impl World {
         if self.social.ims[i].log.stem.is_none() {
             self.social.ims[i].log.stem = self.transcript_stem(&session);
         }
-        let log = &mut self.social.ims[i].log;
+        // a direct conversation under the Chat Service reads its stitched
+        // history (direct_history.rs), not the transcript's tail
+        let direct = self.is_direct(&session);
+        if direct {
+            self.direct_open(session);
+        }
+        let Some(log) = self.social.ims.iter_mut().find(|s| s.other == session).map(|s| &mut s.log) else {
+            return;
+        };
         let Some(stem) = log.stem.clone() else {
             return;
         };
         if log.history == HistoryState::NotAsked {
-            log.history = if self.chat_log.request_history(session, &stem) {
+            log.history = if direct {
+                HistoryState::Done
+            } else if self.chat_log.request_history(session, &stem) {
                 HistoryState::Asked
             } else {
                 HistoryState::Done
@@ -216,7 +226,7 @@ impl World {
     /// nearby chat's transcript hides what the chat hides under RLVa's
     /// `@shownames` (`NameScope::World`), a conversation's names its
     /// residents (`NameScope::Roster`).
-    fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
+    pub(super) fn transcript_text(&self, scope: NameScope, line: &ChatLine) -> (String, String) {
         let names = &self.social.avatar_names;
         let from = match line.kind {
             ChatKind::System => String::new(),
@@ -331,7 +341,7 @@ impl World {
     /// The conversation log's entry of a conversation as it is now
     /// (LLConversation from an LLIMSession): a group chat, a conference or
     /// an instant message with a resident; never with ourselves.
-    fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
+    pub(super) fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
         if key.is_nil() || key == self.agent_id {
             return None;
         }
@@ -467,6 +477,7 @@ impl World {
 
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
+        self.poll_chat_service();
         self.poll_conversation_log();
         if self.chat_log.identity().is_none() {
             return;
@@ -518,7 +529,7 @@ impl World {
     }
 
     /// Our names as a transcript may have them.
-    fn own_log_names(&self) -> Vec<String> {
+    pub(super) fn own_log_names(&self) -> Vec<String> {
         let mut out = vec!["You".to_owned(), self.own_name()];
         if let Some(n) = self.social.avatar_names.complete(&self.agent_id) {
             out.push(n);
