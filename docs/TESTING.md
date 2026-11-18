@@ -46,6 +46,12 @@ login screen, with a larger interface scale and high contrast. A scrolled
 control's outline stays inside its visible pane, a covering window remains
 above it, and a hidden/disabled control or inactive native window has no
 outline. Targeted regressions: `cargo test --workspace keyboard_focus`.
+For an offline visual check without opening a native window or sending
+desktop input, run `cargo test --workspace capture_controls_offscreen --
+--ignored --nocapture`. It draws the real widgets and fonts into
+`.scratch/keyboard-focus-captures/`, in dark and light palettes. Check the
+field, navigation row, button, switch, clickable label and link: the
+outline stays outside the control's content, leaving every glyph readable.
 
 **Search/filter clear buttons**: type a query in People, Conversations and
 Contacts, Places, the resource library, inventory destination/thumbnail

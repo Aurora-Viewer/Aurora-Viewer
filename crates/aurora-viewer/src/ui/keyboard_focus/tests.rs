@@ -112,7 +112,17 @@ impl Bench {
             .viewport(|v| v.prev_pass.widgets.get(id).copied())
             .expect("rendered control");
         assert_eq!(self.ctx.memory(|m| m.focused()), Some(id));
-        assert_eq!(rings(output, self.palette), vec![(widget.rect, widget.interact_rect)]);
+        let painted = rings(output, self.palette);
+        assert_eq!(painted.len(), 1);
+        assert_eq!(painted[0].0, widget.rect);
+        assert!(painted[0].1.intersects(widget.interact_rect));
+        for shape in &output.shapes {
+            if let egui::Shape::Rect(rect) = &shape.shape
+                && rect.stroke == Stroke::new(2.0, self.palette.ink)
+            {
+                assert_eq!(rect.stroke_kind, StrokeKind::Outside, "never cover text inside the control");
+            }
+        }
     }
 }
 
@@ -246,4 +256,88 @@ fn a_skin_reload_updates_the_ring_without_resetting_keyboard_navigation() {
     bench.palette = light.palette();
     let output = bench.frame(Vec::new());
     bench.expect_ring(&output, bench.navigation);
+}
+
+/// A visual check without opening/activating a native window or injecting
+/// input into the human's desktop. Uses Aurora's real fonts, widgets and
+/// software painter (the splash/recovery window), and ordinary Tab events.
+#[test]
+#[ignore = "writes local focus captures to .scratch/keyboard-focus-captures"]
+fn capture_controls_offscreen() {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(".scratch/keyboard-focus-captures");
+    std::fs::create_dir_all(&folder).expect("capture directory");
+    for (look, theme) in [
+        ("dark", Theme::default()),
+        (
+            "light",
+            Theme {
+                ink: "#151515".into(),
+                bar: "#EEEEEE".into(),
+                field: "#FFFFFF".into(),
+                panel: "#FAFAFA".into(),
+                raised: "#D8D8D8".into(),
+                ..Theme::default()
+            },
+        ),
+    ] {
+        let ctx = Context::default();
+        theme.apply(&ctx, 1.0);
+        crate::ui::fonts::apply(&ctx, "");
+        let palette = theme.palette();
+        let mut painter = crate::crash::software::Painter::default();
+        let mut pixels = vec![0u32; 480 * 300];
+        let field = Id::unique("visual_focus_search");
+        let mut text = "Parcelles : glyphes gypé".to_owned();
+        let mut on = false;
+        let mut frame = |events: Vec<Event>, save: Option<&str>| {
+            let mut raw = input(events);
+            raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(480.0, 300.0)));
+            let output = ctx.run_ui(raw, |ui| {
+                egui::Frame::new().inner_margin(20.0).show(ui, |ui| {
+                    ui.set_width(380.0);
+                    ui.heading("Navigation au clavier");
+                    ui.add_space(12.0);
+                    ui.add(TextEdit::singleline(&mut text).id(field).desired_width(380.0));
+                    crate::ui::widgets::navigation(ui, &palette, "search", "Réglages modifiés", false);
+                    crate::ui::widgets::flat_button(ui, &palette, "Enregistrer");
+                    crate::ui::widgets::switch_labeled(ui, &palette, &mut on, "Afficher les lignes");
+                    ui.hyperlink_to("Documentation", "https://example.com");
+                });
+            });
+            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+            painter.paint(
+                &mut pixels,
+                [480, 300],
+                &primitives,
+                &output.textures_delta,
+                output.pixels_per_point,
+                palette.panel,
+            );
+            if let Some(name) = save {
+                let data = pixels
+                    .iter()
+                    .flat_map(|pixel| [(pixel >> 16) as u8, (pixel >> 8) as u8, *pixel as u8])
+                    .collect();
+                let image = image::RgbImage::from_raw(480, 300, data).expect("capture pixels");
+                let file = folder.join(format!("{look}-{name}.png"));
+                image.save(&file).expect("write capture");
+                println!("{}", file.display());
+            }
+        };
+        for _ in 0..3 {
+            frame(Vec::new(), None);
+        }
+        ctx.memory_mut(|m| m.request_focus(field));
+        frame(Vec::new(), Some("mouse-field"));
+        frame(vec![key(Key::Tab, false)], Some("navigation"));
+        frame(vec![key(Key::Tab, true)], None);
+        frame(Vec::new(), Some("field"));
+        frame(vec![key(Key::Tab, false)], None);
+        frame(vec![key(Key::Tab, false)], Some("button"));
+        frame(vec![key(Key::Tab, false)], Some("switch"));
+        frame(vec![key(Key::Tab, false)], Some("switch-label"));
+        frame(vec![key(Key::Tab, false)], Some("link"));
+    }
 }

@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use egui::{Context, Event, Key, Painter, Stroke, StrokeKind, TouchPhase, Ui, ViewportId};
+use egui::{Context, Event, Key, Painter, Rect, Stroke, StrokeKind, TouchPhase, Ui, ViewportId, WidgetRect};
 
 use crate::theme::Palette;
 
@@ -81,7 +81,11 @@ impl egui::Plugin for KeyboardFocus {
         // Current pass only: read_response also finds last pass's widget,
         // which could belong to a window just closed. Neither inspecting
         // the widget nor drawing its outline may change keyboard focus.
-        let Some(widget) = ctx.viewport(|viewport| viewport.this_pass.widgets.get(id).copied()) else {
+        let Some((widget, parent)) = ctx.viewport(|viewport| {
+            let widgets = &viewport.this_pass.widgets;
+            let widget = *widgets.get(id)?;
+            Some((widget, widgets.get(widget.parent_id).copied()))
+        }) else {
             return;
         };
         if !widget.enabled
@@ -91,15 +95,34 @@ impl egui::Plugin for KeyboardFocus {
         {
             return;
         }
-        // Keep both the original layer (windows/popups still cover it)
-        // and its clip (a scrolled-out control cannot draw over its pane).
-        // Two theme colors keep the mark distinct on an accent or image as
-        // well as on a normal field, including the high-contrast palette.
-        let painter = Painter::new(ctx.clone(), widget.layer_id, widget.interact_rect);
+        // Outside the control: an inside stroke covers glyphs of tight
+        // labels, links and text fields. Keep the parent's visible bounds
+        // and every side already cut by the control's own clip. The layer
+        // still lets covering windows/popups obscure the outline.
+        let painter = Painter::new(ctx.clone(), widget.layer_id, outline_clip(widget, parent));
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        painter.rect_stroke(widget.rect, radius, Stroke::new(4.0, self.palette.bar), StrokeKind::Inside);
-        painter.rect_stroke(widget.rect, radius, Stroke::new(2.0, self.palette.ink), StrokeKind::Inside);
+        painter.rect_stroke(widget.rect, radius, Stroke::new(4.0, self.palette.bar), StrokeKind::Outside);
+        painter.rect_stroke(widget.rect, radius, Stroke::new(2.0, self.palette.ink), StrokeKind::Outside);
     }
+}
+
+fn outline_clip(widget: WidgetRect, parent: Option<WidgetRect>) -> Rect {
+    let mut clip = parent
+        .filter(|parent| parent.layer_id == widget.layer_id && parent.interact_rect.is_positive())
+        .map_or(widget.interact_rect, |parent| parent.interact_rect);
+    if widget.interact_rect.left() > widget.rect.left() {
+        clip.min.x = clip.min.x.max(widget.interact_rect.left());
+    }
+    if widget.interact_rect.top() > widget.rect.top() {
+        clip.min.y = clip.min.y.max(widget.interact_rect.top());
+    }
+    if widget.interact_rect.right() < widget.rect.right() {
+        clip.max.x = clip.max.x.min(widget.interact_rect.right());
+    }
+    if widget.interact_rect.bottom() < widget.rect.bottom() {
+        clip.max.y = clip.max.y.min(widget.interact_rect.bottom());
+    }
+    clip
 }
 
 #[cfg(test)]
