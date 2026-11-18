@@ -2548,6 +2548,36 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 mod tests {
     use super::*;
 
+    /// A profile asked for from a place that names its resident (a group's
+    /// founder, a conversation) opens under RLVa's `@shownames`; one asked
+    /// for from the world around us does not (issue #3547).
+    #[test]
+    fn a_profile_asked_from_a_place_that_names_the_resident_opens_under_shownames() {
+        let ctx = egui::Context::default();
+        let id = Uuid::from_u128(0x35475);
+        request_open_in(&ctx, NameScope::Roster, id);
+        assert_eq!(take_open_request_in(&ctx), Some((NameScope::Roster, id)));
+        request_open(&ctx, id);
+        assert_eq!(take_open_request_in(&ctx), Some((NameScope::World, id)));
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let mut ui = ProfileUi::default();
+        ui.open_in(&mut world, NameScope::World, id);
+        assert!(ui.windows.is_empty(), "the world's name is hidden");
+        ui.open_in(&mut world, NameScope::Roster, id);
+        assert_eq!(ui.windows.len(), 1, "a group's founder opens");
+    }
+
     /// Inventory released on another resident's profile gives it to them, in
     /// both styles, wherever on the window; never on our own, nor beside it
     /// (#991).
