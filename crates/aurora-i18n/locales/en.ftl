@@ -3830,6 +3830,10 @@ ui-options-camera-transition-duration = Transition duration
 ui-options-fade-duration-when-you-change-the-environment-yourself-selector = Fade duration when you change the environment yourself (selector, time of day); 0 = instant, as in the Legacy Viewer
 ui-land-access-duration-in-hours = Duration in hours:
 build-ui-features-dynamic = Dynamic
+build-ui-features-probe-update = Probe update
+build-ui-features-probe-static = Static
+build-ui-features-probe-mirror-environment = Mirror (Environment)
+build-ui-features-probe-mirror-everything = Mirror (Everything)
 world-appearance-tank-top = Tank top
 ui-perf-throughput = Throughput
 common-unblock = Unblock

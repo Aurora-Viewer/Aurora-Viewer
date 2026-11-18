@@ -330,13 +330,9 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 });
             });
             ui.add_space(8.0);
-            for line in n.message.lines() {
-                if line.trim().is_empty() {
-                    ui.add_space(6.0);
-                } else {
-                    crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
-                }
-            }
+            crate::ui::chat::select::document(ui, p, n.id, &n.message, |ui, line| {
+                crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
+            });
             if let Some((name, asset_type)) = &n.attachment {
                 ui.add_space(8.0);
                 egui::Frame::new()
