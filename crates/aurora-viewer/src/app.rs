@@ -20382,6 +20382,10 @@ impl App {
                 );
                 if land_view == GateView::Refused {
                     self.panels.about_land = false;
+                    // the parcel picked for a refused window (the ground menu's) must
+                    // not stay selected: the next request, from the button or on land
+                    // the agent owns, would be judged on it
+                    self.world.land.deselect();
                 }
                 // a hidden window keeps its request while the parcel arrives
                 let mut open = land_view == GateView::Shown;

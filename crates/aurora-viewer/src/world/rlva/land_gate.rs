@@ -82,7 +82,18 @@ impl World {
         } else {
             self.parcel.as_ref()
         };
-        parcel_verdict(self.agent_id, &self.groups.groups, parcel.map(|p| &**p), selected)
+        let verdict = parcel_verdict(self.agent_id, &self.groups.groups, parcel.map(|p| &**p), selected);
+        if let (Some(p), true) = (parcel, verdict != LandVerdict::Unknown) {
+            log::info!(
+                "@showloc About Land: {verdict:?} (parcel {}, {}, selection {selected}, squares self {} other {} public {})",
+                p.local_id,
+                if p.is_group_owned { "group-owned" } else { "owned by a resident" },
+                p.self_count,
+                p.other_count,
+                p.public_count,
+            );
+        }
+        verdict
     }
 
     pub fn rlva_region_verdict(&self) -> LandVerdict {
