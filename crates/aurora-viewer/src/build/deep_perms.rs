@@ -17,7 +17,12 @@
 //! removed only once a saved one of its name is listed; a simulator that
 //! replaces it in place leaves nothing to remove. A new object is changed or
 //! deleted only once its FromTaskID says it was rezzed from these contents,
-//! Stop included.
+//! Stop included. A coalesced item (several objects saved as one) rezzes as
+//! separate objects: they are all taken, changed and saved back together in
+//! one DeRezObject, as the Legacy Viewer's Save back to object contents
+//! sends the whole selection (derez_objects, llviewermenu.cpp). Scripts
+//! react to their own rez before any viewer can stop them: the window says
+//! so.
 //!
 //! Only objects the Legacy Viewer lets us rez from contents are opened
 //! (dad3dRezFromObjectOnLand, lltooldraganddrop.cpp: copy for the agent and
@@ -57,6 +62,8 @@ pub const REZ_HEIGHT: f32 = 2.0;
 pub const ARRIVAL_RADIUS: f32 = 2.0;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const ARRIVAL: Duration = Duration::from_secs(15);
+/// A coalesced item's parts are all taken once no new one came for this long.
+const GROUP_SETTLE: Duration = Duration::from_secs(2);
 /// The simulator may refuse a mask the object's base does not allow: the
 /// masks are sent, then the job goes on.
 const PERMS_WAIT: Duration = Duration::from_secs(10);
@@ -146,16 +153,32 @@ pub struct Seen {
 /// asked) and ours, near the rez point; the nearest if several.
 pub fn arrival(seen: impl IntoIterator<Item = Seen>, before: &HashSet<Uuid>, at: Vec3) -> Option<Uuid> {
     seen.into_iter()
-        .filter(|o| {
-            o.root
-                && !o.avatar
-                && o.flags & super::FLAGS_CREATE_SELECTED != 0
-                && o.flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
-                && !before.contains(&o.id)
-                && o.position.distance(at) <= ARRIVAL_RADIUS + o.scale.length() * 0.5
-        })
+        .filter(|o| new_of_ours(o, before) && o.position.distance(at) <= ARRIVAL_RADIUS + o.scale.length() * 0.5)
         .min_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)))
         .map(|o| o.id)
+}
+
+/// The parts of a rezzed coalesced item (several objects saved as one,
+/// II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS): every new root of ours created
+/// selected, wherever its offset put it; their FromTaskID is checked next.
+pub fn group_arrivals(seen: impl IntoIterator<Item = Seen>, before: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = seen.into_iter().filter(|o| new_of_ours(o, before)).map(|o| o.id).collect();
+    ids.sort();
+    ids
+}
+
+fn new_of_ours(o: &Seen, before: &HashSet<Uuid>) -> bool {
+    o.root
+        && !o.avatar
+        && o.flags & super::FLAGS_CREATE_SELECTED != 0
+        && o.flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+        && !before.contains(&o.id)
+}
+
+/// Several objects saved as one item: rezzed as separate objects, saved
+/// back together in one DeRezObject.
+pub fn is_group(item: &TaskItem) -> bool {
+    item.flags & crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS != 0
 }
 
 /// Words of a refusal, matched as whole words.
@@ -213,11 +236,23 @@ pub fn same_name(candidate: &str, name: &str) -> bool {
 /// The save back of the copy of `original`, named `saved_as` when it was
 /// sent, from the listings before and after it. Only evidence tied to that
 /// save counts: a single new object item of the same owner named as the
-/// original (or as the copy), or the original's own asset changed. Any
-/// other change of the listing (another item edited, added or numbered
-/// otherwise, two candidates) leaves it pending, and only a match by the
-/// original's name lets the original be removed.
-pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem, saved_as: &str) -> Saved {
+/// original (or as the copy), or the original updated in place. Second
+/// Life updates it in place, keeping its id, and hides object asset ids in
+/// contents listings: there the evidence is the listing's serial moved
+/// since the save was sent while every other item stayed exactly as it was
+/// (the original's own record may change: its group follows the copy's).
+/// Any other change of the listing (another item edited, added or removed,
+/// a name that only starts with the original's, two candidates) leaves it
+/// pending, and only a match by the original's name lets the original be
+/// removed.
+pub fn save_outcome(
+    before: &[TaskItem],
+    after: &[TaskItem],
+    original: &TaskItem,
+    saved_as: &str,
+    serial_moved: bool,
+    settling: &HashSet<Uuid>,
+) -> Saved {
     let known: HashSet<Uuid> = before.iter().map(|i| i.item_id).collect();
     let new: Vec<&TaskItem> = after
         .iter()
@@ -238,8 +273,37 @@ pub fn save_outcome(before: &[TaskItem], after: &[TaskItem], original: &TaskItem
         (None, Some(new), _) | (None, None, Some(new)) => Saved::Replaced(new),
         (Some(_), None, Some(new)) => Saved::Unnamed(new),
         (Some(now), None, None) if !original.asset_id.is_nil() && now.asset_id != original.asset_id => Saved::InPlace,
+        (Some(_), None, None) if serial_moved && others_unchanged(before, after, original.item_id, settling) => Saved::InPlace,
         _ => Saved::Pending,
     }
+}
+
+/// Every item but `original` listed after exactly as before, none added
+/// or removed. The items this job saved back here just before (`settling`)
+/// only have to stay listed: Second Life's save in place moves the serial
+/// twice, the second bringing the saved object's record (its group, its
+/// masks), which may land during the next save.
+pub fn others_unchanged(before: &[TaskItem], after: &[TaskItem], original: Uuid, settling: &HashSet<Uuid>) -> bool {
+    let others = |list: &[TaskItem]| {
+        let mut v: Vec<TaskItem> = list
+            .iter()
+            .filter(|i| i.item_id != original)
+            .cloned()
+            .map(|i| {
+                if settling.contains(&i.item_id) {
+                    TaskItem {
+                        item_id: i.item_id,
+                        ..Default::default()
+                    }
+                } else {
+                    i
+                }
+            })
+            .collect();
+        v.sort_by_key(|i| i.item_id);
+        v
+    };
+    others(before) == others(after)
 }
 
 /// Why processing an object stopped.
@@ -256,6 +320,9 @@ pub enum Failure {
     /// The new object's origin could not be checked (its properties never
     /// came): it is not deleted.
     Unverified,
+    /// A coalesced item came back as a single object: its parts are kept in
+    /// world, to be taken together again.
+    GroupSplit,
     /// A stage of a rezzed copy failed or timed out.
     Step(String),
     /// The save back was not seen and the original is gone: the copy is
@@ -278,7 +345,7 @@ pub fn recovery(failure: &Failure) -> Recovery {
             delete_copy: false,
             stop: true,
         },
-        Failure::NotOurs | Failure::Unverified => Recovery {
+        Failure::NotOurs | Failure::Unverified | Failure::GroupSplit => Recovery {
             delete_copy: false,
             stop: true,
         },
@@ -384,7 +451,9 @@ struct Frame {
     /// The parent's prim whose contents held that item: the rez came from
     /// it, and the save goes back into it.
     source: Option<(Uuid, ObjKey)>,
-    /// The root first, then a copy's child prims as they are seen.
+    /// The copy's roots: one, or the parts of a coalesced item.
+    roots: Vec<(Uuid, ObjKey)>,
+    /// The roots first, then a copy's child prims as they are seen.
     prims: Vec<Prim>,
     /// The prim being read, or whose objects are being opened.
     current: usize,
@@ -392,13 +461,20 @@ struct Frame {
 
 impl Frame {
     fn new(object: Uuid, key: ObjKey, depth: usize, copy: Option<TaskItem>, source: Option<(Uuid, ObjKey)>) -> Self {
+        Self::group(vec![(object, key)], depth, copy, source)
+    }
+
+    /// The parts of a coalesced item, or a single object (`roots` not empty).
+    fn group(roots: Vec<(Uuid, ObjKey)>, depth: usize, copy: Option<TaskItem>, source: Option<(Uuid, ObjKey)>) -> Self {
+        let (object, key) = roots[0];
         Self {
             object,
             key,
             depth,
             copy,
             source,
-            prims: vec![Prim::new(object, key)],
+            prims: roots.iter().map(|(id, key)| Prim::new(*id, *key)).collect(),
+            roots,
             current: 0,
         }
     }
@@ -409,11 +485,13 @@ impl Frame {
         if self.copy.is_none() {
             return;
         }
-        for &idx in world.objects.children_of(&self.key) {
-            if let Some(o) = world.objects.get(idx)
-                && !self.prims.iter().any(|p| p.id == o.full_id)
-            {
-                self.prims.push(Prim::new(o.full_id, o.key));
+        for (_, key) in self.roots.clone() {
+            for &idx in world.objects.children_of(&key) {
+                if let Some(o) = world.objects.get(idx)
+                    && !self.prims.iter().any(|p| p.id == o.full_id)
+                {
+                    self.prims.push(Prim::new(o.full_id, o.key));
+                }
             }
         }
     }
@@ -457,9 +535,14 @@ pub struct Job {
     arrived: Option<(TaskItem, HashSet<Uuid>, Vec3, u64)>,
     /// The RezObject of `rezzing` already sent: not sent again.
     rez_resumed: bool,
-    /// The source's listing before the save back, and the copy's name then.
-    snapshot: Option<(Vec<TaskItem>, String)>,
+    /// A coalesced item's parts seen so far, and when the last one came.
+    gathering: Option<(Vec<Uuid>, Instant)>,
+    /// The source's listing and serial before the save back, and the
+    /// copy's name then.
+    snapshot: Option<(Vec<TaskItem>, i16, String)>,
     saved: Option<TaskItem>,
+    /// Items this job saved back: their records may still settle.
+    saved_ids: HashSet<Uuid>,
     stopping: bool,
     /// Stop pressed, and taken into account.
     stop_requested: bool,
@@ -483,8 +566,10 @@ impl Job {
             rezzing: None,
             arrived: None,
             rez_resumed: false,
+            gathering: None,
             snapshot: None,
             saved: None,
+            saved_ids: HashSet::new(),
             stopping: false,
             stop_requested: false,
             user_stopped: false,
@@ -754,6 +839,7 @@ impl Job {
             Failure::RezTimeout => aurora_i18n::tr!("content-perms-nested-rez-timeout", name = name.as_str()),
             Failure::NotOurs => aurora_i18n::tr!("content-perms-nested-not-ours", name = name.as_str()),
             Failure::Unverified => aurora_i18n::tr!("content-perms-nested-unverified", name = name.as_str()),
+            Failure::GroupSplit => aurora_i18n::tr!("content-perms-nested-group-split", name = name.as_str()),
             Failure::Step(text) => aurora_i18n::tr!("content-perms-nested-failed", name = name.as_str(), reason = text.as_str()),
             Failure::OriginalGone => aurora_i18n::tr!("content-perms-nested-original-gone", name = name.as_str()),
         };
@@ -767,6 +853,7 @@ impl Job {
         self.rezzing = None;
         self.arrived = None;
         self.rez_resumed = false;
+        self.gathering = None;
         self.snapshot = None;
         self.saved = None;
         if rec.stop {
@@ -886,13 +973,18 @@ impl Job {
         let (object, key) = (frame.prim().id, frame.prim().key);
         let renames = frame.prim().renames.clone();
         let linkset: Vec<(Uuid, ObjKey)> = frame.prims.iter().map(|p| (p.id, p.key)).collect();
+        let roots = frame.roots.clone();
+        let group = copy.as_ref().is_some_and(is_group);
         let scripts: Vec<(Uuid, ObjKey, Uuid, Option<bool>)> = frame
             .prims
             .iter()
             .flat_map(|p| p.scripts.iter().map(move |s| (p.id, p.key, s.0, s.1)))
             .collect();
         // the copy must stay in world until it is deleted
-        if copy.is_some() && !matches!(self.stage, Stage::Delete | Stage::Recover) && world.objects.index_of_uuid(&root).is_none() {
+        if copy.is_some()
+            && !matches!(self.stage, Stage::Delete | Stage::Recover)
+            && roots.iter().any(|(id, _)| world.objects.index_of_uuid(id).is_none())
+        {
             return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
         }
         match self.stage {
@@ -1062,7 +1154,46 @@ impl Job {
                     position: o.position,
                     scale: o.scale,
                 });
-                if let Some(id) = arrival(seen, &before, at) {
+                if is_group(&item) {
+                    let parts = group_arrivals(seen, &before);
+                    if parts.is_empty() {
+                        // (an alert may still refuse it, below)
+                    } else if self.gathering.as_ref().is_none_or(|(seen, _)| *seen != parts) {
+                        self.gathering = Some((parts, now));
+                        return Ok(None);
+                    } else if self
+                        .gathering
+                        .as_ref()
+                        .is_some_and(|(_, at)| now.saturating_duration_since(*at) >= GROUP_SETTLE)
+                    {
+                        let Some((parts, _)) = self.gathering.take() else {
+                            return Ok(None);
+                        };
+                        let roots: Vec<(Uuid, ObjKey)> = parts
+                            .iter()
+                            .filter_map(|id| {
+                                world
+                                    .objects
+                                    .index_of_uuid(id)
+                                    .and_then(|i| world.objects.get(i))
+                                    .map(|o| (*id, o.key))
+                            })
+                            .collect();
+                        if roots.is_empty() {
+                            return Ok(None);
+                        }
+                        log::info!(
+                            "deep permissions: {} arrived as {} objects, checking where they come from",
+                            item.name,
+                            roots.len()
+                        );
+                        self.stack.push(Frame::group(roots, depth + 1, Some(item), Some((object, key))));
+                        self.arrived = self.rezzing.take();
+                        return Ok(Some(Stage::Props));
+                    } else {
+                        return Ok(None);
+                    }
+                } else if let Some(id) = arrival(seen, &before, at) {
                     let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
                         return Ok(None);
                     };
@@ -1083,43 +1214,71 @@ impl Job {
                 Ok(None)
             }
             Stage::Props => {
+                let local_ids: Vec<u32> = roots.iter().map(|(_, k)| k.local_id).collect();
                 if first || self.poll(now) {
                     if first {
-                        tool.props.remove(&root);
+                        for (id, _) in &roots {
+                            tool.props.remove(id);
+                        }
                     }
                     tool.send(BuildCmd::Select {
                         handle: root_key.region,
-                        local_ids: vec![root_key.local_id],
+                        local_ids,
                     });
                 }
-                let Some(props) = tool.props.get(&root).filter(|p| p.full) else {
+                let Some(all) = roots
+                    .iter()
+                    .map(|(id, _)| tool.props.get(id).filter(|p| p.full).cloned())
+                    .collect::<Option<Vec<_>>>()
+                else {
                     return Ok(None);
                 };
                 let from = source.map(|s| s.0).unwrap_or_default();
-                if props.from_task_id != from {
-                    // another object of ours that looked like the arrival:
+                let (ours, others): (Vec<_>, Vec<_>) = roots.iter().zip(&all).partition(|(_, p)| p.from_task_id == from);
+                if ours.is_empty() {
+                    // other objects of ours that looked like the arrival:
                     // left alone, and the one asked for still waited for
                     let Some(mut waiting) = self.arrived.take() else {
                         return Err(Failure::NotOurs);
                     };
-                    log::info!("deep permissions: {root} comes from {}, not {from}: left alone", props.from_task_id);
-                    waiting.1.insert(root);
+                    log::info!("deep permissions: {} objects not from {from}: left alone", others.len());
+                    waiting.1.extend(roots.iter().map(|(id, _)| *id));
                     self.stack.pop();
                     self.rezzing = Some(waiting);
                     self.rez_resumed = true;
                     return Ok(Some(Stage::Rez));
+                }
+                if !others.is_empty() {
+                    // a coalesced item's parts among other new objects: those stay out of it
+                    let keep: Vec<(Uuid, ObjKey)> = ours.iter().map(|(r, _)| **r).collect();
+                    log::info!("deep permissions: {} new objects not from {from}: left alone", others.len());
+                    if let Some(frame) = self.stack.last_mut() {
+                        let copy = frame.copy.take();
+                        *frame = Frame::group(keep, frame.depth, copy, frame.source);
+                    }
                 }
                 self.arrived = None;
                 if self.user_stopped {
                     // stopped while it was on its way: straight to the trash
                     return Ok(Some(Stage::Recover));
                 }
-                if props.owner_id != world.agent_id || props.owner_mask & perm::MODIFY == 0 {
-                    return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-skip-no-modify").into()));
+                for (_, props) in &ours {
+                    if props.owner_id != world.agent_id || props.owner_mask & perm::MODIFY == 0 {
+                        log::info!(
+                            "deep permissions: the rezzed object grants {:#x} (base {:#x}): no modify",
+                            props.owner_mask,
+                            props.base_mask
+                        );
+                        return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-skip-no-modify").into()));
+                    }
                 }
                 if let Some(frame) = self.stack.last_mut() {
                     frame.add_children(world);
-                    log::info!("deep permissions: {root} is ours, {} prims", frame.prims.len());
+                    log::info!(
+                        "deep permissions: {root} is ours, {} objects, {} prims",
+                        frame.roots.len(),
+                        frame.prims.len()
+                    );
                 }
                 Ok(Some(Stage::Read))
             }
@@ -1203,6 +1362,10 @@ impl Job {
                 let Some(original) = copy else {
                     return Ok(Some(Stage::Save));
                 };
+                // a coalesced item's name is none of its parts'
+                if group {
+                    return Ok(Some(Stage::Save));
+                }
                 if first {
                     // fresh properties: a script may rename the object at any time
                     tool.props.remove(&root);
@@ -1242,19 +1405,37 @@ impl Job {
                     return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
                 }
                 if first {
-                    let before = tool.contents.objects.get(&source).map(|inv| inv.items.clone()).unwrap_or_default();
+                    let (before, serial) = tool
+                        .contents
+                        .objects
+                        .get(&source)
+                        .map(|inv| (inv.items.iter().filter(|i| !i.is_folder).cloned().collect(), inv.serial))
+                        .unwrap_or_default();
                     // the name the saved item takes: the item's, unless a
                     // script renamed the copy again
-                    let saved_as = tool
-                        .props
-                        .get(&root)
-                        .filter(|p| p.full)
-                        .map_or_else(|| original.name.clone(), |p| p.name.clone());
-                    self.snapshot = Some((before, saved_as));
-                    log::info!("deep permissions: saving {} back into {source}", self.name());
+                    let saved_as = if group {
+                        original.name.clone()
+                    } else {
+                        tool.props
+                            .get(&root)
+                            .filter(|p| p.full)
+                            .map_or_else(|| original.name.clone(), |p| p.name.clone())
+                    };
+                    if roots.iter().any(|(_, k)| k.region != root_key.region) {
+                        return Err(Failure::Step(aurora_i18n::tr!("content-perms-nested-gone").into()));
+                    }
+                    self.snapshot = Some((before, serial, saved_as));
+                    log::info!(
+                        "deep permissions: saving {} back into {source} ({} objects)",
+                        self.name(),
+                        roots.len()
+                    );
+                    // a coalesced item's parts together, as the Legacy
+                    // Viewer's Save back to object contents sends the whole
+                    // selection (derez_objects, llviewermenu.cpp)
                     tool.send(BuildCmd::DeRez {
                         handle: root_key.region,
-                        local_ids: vec![root_key.local_id],
+                        local_ids: roots.iter().map(|(_, k)| k.local_id).collect(),
                         destination: derez::SAVE_INTO_TASK_INVENTORY,
                         destination_id: source,
                         group_id: world.groups.active,
@@ -1266,12 +1447,32 @@ impl Job {
                     Self::read(tool, world, source, false)?;
                     return Ok(None);
                 };
-                let Some((before, saved_as)) = self.snapshot.as_ref() else {
+                let Some((before, serial, saved_as)) = self.snapshot.as_ref() else {
                     return Ok(Some(Stage::Delete));
                 };
                 let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
-                let outcome = save_outcome(before, &items, &original, saved_as);
-                log::info!("deep permissions: save of {} -> {outcome:?}", original.name);
+                let mut outcome = save_outcome(before, &items, &original, saved_as, inv.serial != *serial, &self.saved_ids);
+                if group {
+                    // the saved item must still hold several objects; in
+                    // place, its record is read once it has changed (Second
+                    // Life sends it with the serial's second move)
+                    let saved = match &outcome {
+                        Saved::InPlace => items
+                            .iter()
+                            .find(|i| i.item_id == original.item_id)
+                            .filter(|now| before.iter().find(|b| b.item_id == original.item_id) != Some(*now)),
+                        Saved::Added(new) | Saved::Replaced(new) | Saved::Unnamed(new) => Some(new),
+                        Saved::Pending => None,
+                    };
+                    match saved {
+                        None if outcome != Saved::Pending => outcome = Saved::Pending,
+                        Some(item) if !is_group(item) => return Err(Failure::GroupSplit),
+                        _ => {}
+                    }
+                }
+                if outcome != Saved::Pending {
+                    log::info!("deep permissions: save of {} -> {outcome:?}", original.name);
+                }
                 match outcome {
                     Saved::Pending => {
                         if self.poll(now) {
@@ -1280,11 +1481,13 @@ impl Job {
                         Ok(None)
                     }
                     Saved::Added(new) => {
+                        self.saved_ids.insert(new.item_id);
                         self.report.objects += 1;
                         self.saved = Some(new);
                         Ok(Some(Stage::RemoveOriginal))
                     }
                     Saved::Replaced(new) => {
+                        self.saved_ids.insert(new.item_id);
                         self.report.objects += 1;
                         if new.name != original.name {
                             self.rename_in_parent(new.item_id, original.name.clone());
@@ -1292,10 +1495,12 @@ impl Job {
                         Ok(Some(Stage::Delete))
                     }
                     Saved::InPlace => {
+                        self.saved_ids.insert(original.item_id);
                         self.report.objects += 1;
                         Ok(Some(Stage::Delete))
                     }
                     Saved::Unnamed(new) => {
+                        self.saved_ids.insert(new.item_id);
                         log::warn!(
                             "deep permissions: {} saved as {:?}, the original is kept next to it",
                             original.name,
@@ -1339,12 +1544,17 @@ impl Job {
                 Ok(Some(Stage::Delete))
             }
             Stage::Delete | Stage::Recover => {
+                let left: Vec<(Uuid, ObjKey)> = roots
+                    .iter()
+                    .filter(|(id, _)| world.objects.index_of_uuid(id).is_some())
+                    .copied()
+                    .collect();
                 if first {
-                    if world.objects.index_of_uuid(&root).is_some() {
-                        log::info!("deep permissions: deleting the copy {root}");
+                    if !left.is_empty() {
+                        log::info!("deep permissions: deleting the copy {root} ({} objects)", left.len());
                         tool.send(BuildCmd::DeRez {
                             handle: root_key.region,
-                            local_ids: vec![root_key.local_id],
+                            local_ids: left.iter().map(|(_, k)| k.local_id).collect(),
                             destination: derez::TRASH,
                             destination_id: BuildTool::folder_of_type(world, TRASH_FOLDER),
                             group_id: world.groups.active,
@@ -1352,7 +1562,7 @@ impl Job {
                     }
                     return Ok(None);
                 }
-                if world.objects.index_of_uuid(&root).is_some() {
+                if !left.is_empty() {
                     return Ok(None);
                 }
                 self.stack.pop();

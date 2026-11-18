@@ -44,9 +44,16 @@ pub struct DemoSim {
     stored_copies: HashMap<Uuid, Uuid>,
     /// The child prims of such a copy.
     copy_children: HashMap<Uuid, Vec<Uuid>>,
+    /// The parts rezzed together from a coalesced item, by part.
+    copy_parts: HashMap<Uuid, Vec<Uuid>>,
+    /// What each part of a stored coalesced item holds (several objects
+    /// saved as one), in order.
+    stored_group: HashMap<Uuid, Vec<Vec<TaskItem>>>,
     /// `AURORA_DEMO_DEEP_PERMS=run-replace` / `run-refuse`, or set by a test.
     pub(crate) deep_in_place: bool,
     pub(crate) deep_refuse: bool,
+    /// A coalesced item saved back as a single object (its first part).
+    pub(crate) deep_split: bool,
 }
 
 /// An object's position, rotation and scale.
@@ -212,9 +219,10 @@ impl DemoSim {
 
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
         if id == super::deep_perms::demo::id(super::deep_perms::demo::CHEST) && !self.contents.contains_key(&id) {
-            let (items, stored, links) = super::deep_perms::demo::contents(id);
+            let (items, stored, links, groups) = super::deep_perms::demo::contents(id);
             self.stored.extend(stored);
             self.stored_links.extend(links);
+            self.stored_group.extend(groups);
             self.contents.insert(id, (1, items));
         }
         if id == super::replace::demo::id(super::replace::demo::SOURCE) {
@@ -366,10 +374,11 @@ impl DemoSim {
                 destination_id,
                 ..
             } if *destination == aurora_net::build::derez::SAVE_INTO_TASK_INVENTORY => {
-                let Some(id) = Self::uuids(world, *handle, local_ids).first().copied() else {
+                let ids = Self::uuids(world, *handle, local_ids);
+                let Some(id) = ids.first().copied() else {
                     return Vec::new();
                 };
-                if let Some(events) = self.save_stored(world, id, *destination_id) {
+                if let Some(events) = self.save_stored(world, &ids, *destination_id) {
                     return events;
                 }
                 let name = self.props_of(world, id).name.clone();
@@ -596,7 +605,11 @@ impl DemoSim {
                 }
                 events
             }
-            BuildCmd::RezInventory(rez) if !rez.from_task.is_nil() && self.stored.contains_key(&rez.item.id) => self.rez_stored(world, rez),
+            BuildCmd::RezInventory(rez)
+                if !rez.from_task.is_nil() && (self.stored.contains_key(&rez.item.id) || self.stored_group.contains_key(&rez.item.id)) =>
+            {
+                self.rez_stored(world, rez)
+            }
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
                 if rez.from_task.is_nil() {
@@ -908,6 +921,9 @@ impl DemoSim {
                 ),
             }];
         }
+        if let Some(parts) = self.stored_group.get(&rez.item.id).cloned() {
+            return self.rez_group(world, rez, parts);
+        }
         let object = crate::demo::inventory_rez(rez);
         let id = object.full_id;
         self.rezzed_from_task.insert(id, rez.from_task);
@@ -954,6 +970,40 @@ impl DemoSim {
         }]
     }
 
+    /// A coalesced item rezzed: one root per part, side by side, each with
+    /// its own contents and the item's masks.
+    fn rez_group(&mut self, world: &World, rez: &aurora_net::inventory::rez::RezInventory, parts: Vec<Vec<TaskItem>>) -> Vec<NetEvent> {
+        let mut objects = Vec::new();
+        let mut ids = Vec::new();
+        for (n, held) in parts.into_iter().enumerate() {
+            let mut object = crate::demo::inventory_rez(rez);
+            object.position.x += 1.5 * n as f32;
+            let id = object.full_id;
+            self.rezzed_from_task.insert(id, rez.from_task);
+            self.rezzed_groups.insert(id, rez.group);
+            self.stored_copies.insert(id, rez.item.id);
+            let items = self.adopt(held, id);
+            self.contents.insert(id, (1, items));
+            let item = &rez.item;
+            let p = self.props_of(world, id);
+            p.name.clone_from(&item.name);
+            p.base_mask = item.base_mask;
+            p.owner_mask = item.owner_mask;
+            p.group_mask = item.group_mask;
+            p.everyone_mask = item.everyone_mask;
+            p.next_owner_mask = item.next_owner_mask;
+            ids.push(id);
+            objects.push(object);
+        }
+        for id in &ids {
+            self.copy_parts.insert(*id, ids.clone());
+        }
+        vec![NetEvent::ObjectUpdates {
+            handle: rez.handle,
+            objects,
+        }]
+    }
+
     /// Items of a stored listing in a rezzed prim: new ids, what their
     /// object items hold following them.
     fn adopt(&mut self, held: Vec<TaskItem>, prim: Uuid) -> Vec<TaskItem> {
@@ -968,6 +1018,9 @@ impl DemoSim {
             if let Some(links) = self.stored_links.get(&old).cloned() {
                 self.stored_links.insert(it.item_id, links);
             }
+            if let Some(parts) = self.stored_group.get(&old).cloned() {
+                self.stored_group.insert(it.item_id, parts);
+            }
             items.push(it);
         }
         items
@@ -977,8 +1030,16 @@ impl DemoSim {
     /// holding the copy's contents, its child prims' and its masks, next
     /// to the original (as the demo always did), or in its place with
     /// `run-replace`.
-    fn save_stored(&mut self, world: &World, copy: Uuid, destination: Uuid) -> Option<Vec<NetEvent>> {
+    fn save_stored(&mut self, world: &World, ids: &[Uuid], destination: Uuid) -> Option<Vec<NetEvent>> {
+        let copy = *ids.first()?;
         let original = *self.stored_copies.get(&copy)?;
+        // several objects saved together: one coalesced item (only the
+        // first with `deep_split`, as a simulator that kept one)
+        let group: Option<Vec<Vec<TaskItem>>> = (ids.len() > 1 && !self.deep_split).then(|| {
+            ids.iter()
+                .map(|id| self.contents.get(id).map(|c| c.1.clone()).unwrap_or_default())
+                .collect()
+        });
         let held = self.contents.get(&copy).map(|c| c.1.clone()).unwrap_or_default();
         let links: Vec<Vec<TaskItem>> = self
             .copy_children
@@ -1005,7 +1066,16 @@ impl DemoSim {
             creation_date: 1_700_000_000,
             ..Default::default()
         });
-        item.name.clone_from(&p.name);
+        if group.is_some() {
+            // a coalesced item keeps its name (the parts each have theirs)
+            if existing.is_none() {
+                item.name.clone_from(&p.name);
+            }
+            item.flags |= crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        } else {
+            item.name.clone_from(&p.name);
+            item.flags &= !crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        }
         item.asset_id = Uuid::new_v4();
         item.base_mask = p.base_mask;
         item.owner_mask = p.owner_mask;
@@ -1020,7 +1090,13 @@ impl DemoSim {
             }
         }
         let (serial, items) = entry.clone();
-        self.stored.insert(item.item_id, held);
+        if let Some(parts) = group {
+            self.stored.remove(&item.item_id);
+            self.stored_group.insert(item.item_id, parts);
+        } else {
+            self.stored_group.remove(&item.item_id);
+            self.stored.insert(item.item_id, held);
+        }
         if !links.is_empty() {
             self.stored_links.insert(item.item_id, links);
         }
@@ -1035,6 +1111,12 @@ impl DemoSim {
     #[cfg(test)]
     pub(crate) fn stored(&self, item: Uuid) -> Option<&Vec<TaskItem>> {
         self.stored.get(&item)
+    }
+
+    /// What each part of a stored coalesced item holds (tests).
+    #[cfg(test)]
+    pub(crate) fn stored_group(&self, item: Uuid) -> Option<&Vec<Vec<TaskItem>>> {
+        self.stored_group.get(&item)
     }
 
     /// What the child prims of a stored object item hold (tests).

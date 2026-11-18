@@ -70,11 +70,22 @@ fn item(parent: Uuid, n: u128, name: &str, asset_type: i8, owner_mask: u32) -> T
 /// (by item id, at every level) and in its child prims: a notecard; "Outer
 /// box" with a script, a notecard and "Inner box", which holds a notecard
 /// and "Tiny box" with a script; "Linked box", two linked prims, a notecard
-/// in its root and a script and "Pebble box" (a notecard) in its child; a
-/// no-copy and a no-modify object, which stay closed.
-pub fn contents(chest: Uuid) -> (Vec<TaskItem>, HashMap<Uuid, Vec<TaskItem>>, HashMap<Uuid, Vec<Vec<TaskItem>>>) {
+/// in its root and a script and "Pebble box" (a notecard) in its child;
+/// "Crate stack", two objects saved as one item, a notecard in the first and
+/// a script in the second; a no-copy and a no-modify object, which stay
+/// closed.
+#[allow(clippy::type_complexity)]
+pub fn contents(
+    chest: Uuid,
+) -> (
+    Vec<TaskItem>,
+    HashMap<Uuid, Vec<TaskItem>>,
+    HashMap<Uuid, Vec<Vec<TaskItem>>>,
+    HashMap<Uuid, Vec<Vec<TaskItem>>>,
+) {
     let mut stored = HashMap::new();
     let mut links = HashMap::new();
+    let mut groups = HashMap::new();
     let outer = item(chest, 2, aurora_i18n::tr!("content-perms-demo-outer"), 6, PERM_ALL);
     let inner = item(outer.item_id, 5, aurora_i18n::tr!("content-perms-demo-inner"), 6, PERM_ALL);
     let tiny = item(inner.item_id, 7, aurora_i18n::tr!("content-perms-demo-tiny"), 6, PERM_ALL);
@@ -132,14 +143,24 @@ pub fn contents(chest: Uuid) -> (Vec<TaskItem>, HashMap<Uuid, Vec<TaskItem>>, Ha
             pebble,
         ]],
     );
+    let mut stack = item(chest, 16, aurora_i18n::tr!("content-perms-demo-stack"), 6, PERM_ALL);
+    stack.flags = crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+    groups.insert(
+        stack.item_id,
+        vec![
+            vec![item(Uuid::nil(), 17, aurora_i18n::tr!("content-perms-demo-readme"), 7, PERM_ALL)],
+            vec![item(Uuid::nil(), 18, aurora_i18n::tr!("content-perms-demo-spin"), 10, PERM_ALL)],
+        ],
+    );
     let items = vec![
         item(chest, 1, aurora_i18n::tr!("content-perms-demo-notes"), 7, PERM_ALL),
         outer,
         heirloom,
         sealed,
         linked,
+        stack,
     ];
-    (items, stored, links)
+    (items, stored, links, groups)
 }
 
 /// The chest, a wooden box in front of the avatar.

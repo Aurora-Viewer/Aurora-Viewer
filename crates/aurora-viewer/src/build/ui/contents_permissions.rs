@@ -285,6 +285,15 @@ pub(crate) fn controls(
         if b.nested && !running && !preview.is_empty() {
             small(ui, p, preview);
         }
+        // scripts react to their own rez on the simulator, before any viewer
+        // can stop them: RezObject has no way to rez with scripts off
+        if b.nested && !running {
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("content-perms-nested-scripts-warning"))
+                    .size(11.0)
+                    .color(p.warn),
+            );
+        }
         ui.add_space(4.0);
     }
     if !status.is_empty() {

@@ -140,31 +140,53 @@ fn save_back_is_confirmed_as_added_replaced_or_in_place() {
     };
     let before = vec![original.clone(), note.clone()];
     // nothing yet
-    assert_eq!(save_outcome(&before, &before, &original, "Box"), Saved::Pending);
+    assert_eq!(
+        save_outcome(&before, &before, &original, "Box", false, &HashSet::new()),
+        Saved::Pending
+    );
     // a new item next to the original: the original is then removed
     let added = listed(20, "Box", 200);
     let after = vec![original.clone(), note.clone(), added.clone()];
-    assert_eq!(save_outcome(&before, &after, &original, "Box"), Saved::Added(added));
+    assert_eq!(
+        save_outcome(&before, &after, &original, "Box", false, &HashSet::new()),
+        Saved::Added(added)
+    );
     // a numbered duplicate name
     let numbered = listed(21, "Box 1", 200);
     let after = vec![original.clone(), note.clone(), numbered.clone()];
-    assert_eq!(save_outcome(&before, &after, &original, "Box"), Saved::Added(numbered));
+    assert_eq!(
+        save_outcome(&before, &after, &original, "Box", false, &HashSet::new()),
+        Saved::Added(numbered)
+    );
     // the original's place taken by a new id: nothing to remove
     let new = listed(22, "Box", 200);
     assert_eq!(
-        save_outcome(&before, &[note.clone(), new.clone()], &original, "Box"),
+        save_outcome(&before, &[note.clone(), new.clone()], &original, "Box", false, &HashSet::new()),
         Saved::Replaced(new)
     );
     // the same id with a new asset: in place
     assert_eq!(
-        save_outcome(&before, &[listed(10, "Box", 300), note.clone()], &original, "Box"),
+        save_outcome(
+            &before,
+            &[listed(10, "Box", 300), note.clone()],
+            &original,
+            "Box",
+            false,
+            &HashSet::new()
+        ),
         Saved::InPlace
     );
     // the original gone and nothing new: not confirmed (the copy is kept)
-    assert_eq!(save_outcome(&before, std::slice::from_ref(&note), &original, "Box"), Saved::Pending);
+    assert_eq!(
+        save_outcome(&before, std::slice::from_ref(&note), &original, "Box", false, &HashSet::new()),
+        Saved::Pending
+    );
     // a new object of another name among others is not ours
     let others = vec![original.clone(), listed(30, "Lamp", 1), listed(31, "Chair", 2)];
-    assert_eq!(save_outcome(&before, &others, &original, "Box"), Saved::Pending);
+    assert_eq!(
+        save_outcome(&before, &others, &original, "Box", false, &HashSet::new()),
+        Saved::Pending
+    );
 }
 
 #[test]
@@ -184,14 +206,19 @@ fn only_evidence_of_the_save_itself_confirms_it() {
         asset_id: Uuid::from_u128(111),
         ..note.clone()
     };
-    assert_eq!(save_outcome(&before, &[original.clone(), edited], &original, "Box"), Saved::Pending);
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), edited], &original, "Box", false, &HashSet::new()),
+        Saved::Pending
+    );
     // a new object whose name only starts with the original's
     assert_eq!(
         save_outcome(
             &before,
             &[original.clone(), note.clone(), listed(20, "Boxcar", 200)],
             &original,
-            "Box"
+            "Box",
+            false,
+            &HashSet::new()
         ),
         Saved::Pending
     );
@@ -200,7 +227,9 @@ fn only_evidence_of_the_save_itself_confirms_it() {
             &before,
             &[original.clone(), note.clone(), listed(20, "Box copy", 200)],
             &original,
-            "Box"
+            "Box",
+            false,
+            &HashSet::new()
         ),
         Saved::Pending
     );
@@ -210,7 +239,9 @@ fn only_evidence_of_the_save_itself_confirms_it() {
             &before,
             &[original.clone(), note.clone(), listed(20, "Box", 200), listed(21, "Box 1", 201)],
             &original,
-            "Box"
+            "Box",
+            false,
+            &HashSet::new()
         ),
         Saved::Pending
     );
@@ -220,7 +251,14 @@ fn only_evidence_of_the_save_itself_confirms_it() {
         ..listed(20, "Box", 200)
     };
     assert_eq!(
-        save_outcome(&before, &[original.clone(), note.clone(), theirs], &original, "Box"),
+        save_outcome(
+            &before,
+            &[original.clone(), note.clone(), theirs],
+            &original,
+            "Box",
+            false,
+            &HashSet::new()
+        ),
         Saved::Pending
     );
     assert!(same_name("Box 12", "Box"));
@@ -292,33 +330,126 @@ fn a_refusal_speaks_of_rezzing_and_names_the_object_or_says_no() {
 }
 
 #[test]
+fn in_place_the_serial_counts_only_with_every_other_item_unchanged() {
+    // Second Life: the same item id, object asset ids hidden in listings
+    let original = listed(10, "Box", 0);
+    let note = TaskItem {
+        item_id: Uuid::from_u128(11),
+        asset_type: 7,
+        name: "Note".into(),
+        ..Default::default()
+    };
+    let before = vec![original.clone(), note.clone()];
+    let none = HashSet::new();
+    // the serial moved, nothing else changed (the original's group may follow the copy's)
+    let regrouped = TaskItem {
+        group_id: Uuid::from_u128(5),
+        ..original.clone()
+    };
+    assert_eq!(
+        save_outcome(&before, &[regrouped, note.clone()], &original, "Box", true, &none),
+        Saved::InPlace
+    );
+    // the serial alone, without a move: nothing yet
+    assert_eq!(save_outcome(&before, &before, &original, "Box", false, &none), Saved::Pending);
+    // another item changed, added or removed meanwhile
+    let renamed = TaskItem {
+        name: "Note 2".into(),
+        ..note.clone()
+    };
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), renamed], &original, "Box", true, &none),
+        Saved::Pending
+    );
+    let dropped = TaskItem {
+        item_id: Uuid::from_u128(12),
+        asset_type: 7,
+        name: "Dropped".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), note.clone(), dropped], &original, "Box", true, &none),
+        Saved::Pending
+    );
+    assert_eq!(
+        save_outcome(&before, std::slice::from_ref(&original), &original, "Box", true, &none),
+        Saved::Pending
+    );
+    // an item this job saved just before may still take its new record
+    let saved = listed(13, "Lamp", 0);
+    let before = vec![original.clone(), saved.clone()];
+    let settled = TaskItem {
+        next_owner_mask: perm::MOVE | perm::COPY,
+        group_id: Uuid::from_u128(5),
+        ..saved.clone()
+    };
+    let settling: HashSet<Uuid> = [saved.item_id].into();
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), settled.clone()], &original, "Box", true, &settling),
+        Saved::InPlace
+    );
+    assert_eq!(
+        save_outcome(&before, &[original.clone(), settled], &original, "Box", true, &none),
+        Saved::Pending
+    );
+}
+
+#[test]
 fn a_save_found_only_by_the_copys_name_never_removes_the_original() {
     let original = listed(10, "Box", 100);
     let before = vec![original.clone()];
     let renamed = listed(20, "Glowing thing", 200);
     // a script renamed the copy: found by that name, the original kept next to it
     assert_eq!(
-        save_outcome(&before, &[original.clone(), renamed.clone()], &original, "Glowing thing"),
+        save_outcome(
+            &before,
+            &[original.clone(), renamed.clone()],
+            &original,
+            "Glowing thing",
+            false,
+            &HashSet::new()
+        ),
         Saved::Unnamed(renamed.clone())
     );
     // the original gone: the simulator replaced it
     assert_eq!(
-        save_outcome(&before, std::slice::from_ref(&renamed), &original, "Glowing thing"),
+        save_outcome(
+            &before,
+            std::slice::from_ref(&renamed),
+            &original,
+            "Glowing thing",
+            false,
+            &HashSet::new()
+        ),
         Saved::Replaced(renamed.clone())
     );
     // a new object of any other name is not the save
     assert_eq!(
-        save_outcome(&before, &[original.clone(), renamed.clone()], &original, "Box"),
+        save_outcome(
+            &before,
+            &[original.clone(), renamed.clone()],
+            &original,
+            "Box",
+            false,
+            &HashSet::new()
+        ),
         Saved::Pending
     );
     assert_eq!(
-        save_outcome(&before, std::slice::from_ref(&renamed), &original, "Box"),
+        save_outcome(&before, std::slice::from_ref(&renamed), &original, "Box", false, &HashSet::new()),
         Saved::Pending
     );
     // a name match still removes it
     let named = listed(21, "Box", 200);
     assert_eq!(
-        save_outcome(&before, &[original.clone(), named.clone()], &original, "Glowing thing"),
+        save_outcome(
+            &before,
+            &[original.clone(), named.clone()],
+            &original,
+            "Glowing thing",
+            false,
+            &HashSet::new()
+        ),
         Saved::Added(named)
     );
 }
@@ -593,7 +724,7 @@ fn whole_job_opens_every_level_saves_back_and_deletes_the_copies() {
     let before = h.chest_items();
     let outer_before = named(&before, aurora_i18n::tr!("content-perms-demo-outer"))[0].clone();
     let report = h.run(shared());
-    assert!(report.contains(" 5 "), "{report}");
+    assert!(report.contains(" 6 "), "{report}");
     let items = h.chest_items();
     // one Outer box, a new item: the original was removed after the save
     let outer = named(&items, aurora_i18n::tr!("content-perms-demo-outer"));
@@ -625,23 +756,23 @@ fn whole_job_opens_every_level_saves_back_and_deletes_the_copies() {
     let tiny_held = h.sim.stored(tiny.item_id).expect("tiny contents");
     assert_eq!(tiny_held.len(), 1);
     assert_eq!(tiny_held[0].everyone_mask, perm::COPY);
-    // five rezzes (Outer, Inner, Tiny, Linked, Pebble), five saves, five
-    // copies deleted, nothing left in world
-    assert_eq!(h.count(|c| matches!(c, BuildCmd::RezInventory(_))), 5);
+    // six rezzes (Outer, Inner, Tiny, Linked, Pebble, Crate stack), six
+    // saves, six copies deleted, nothing left in world
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RezInventory(_))), 6);
     assert_eq!(
         h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. } if *destination == derez::SAVE_INTO_TASK_INVENTORY)),
-        5
+        6
     );
     assert_eq!(
         h.count(|c| matches!(c, BuildCmd::DeRez { destination, .. } if *destination == derez::TRASH)),
-        5
+        6
     );
     assert_eq!(h.rezzed_left(), 0);
     // every stopped script was started again before its save
     let stops = h.count(|c| matches!(c, BuildCmd::SetScriptRunning { running: false, .. }));
     let starts = h.count(|c| matches!(c, BuildCmd::SetScriptRunning { running: true, .. }));
-    assert_eq!(stops, 3);
-    assert_eq!(starts, 3);
+    assert_eq!(stops, 4);
+    assert_eq!(starts, 4);
     // rezzed from the chest's contents, created selected, never removed from there
     assert!(h.sent.iter().all(|c| match c {
         BuildCmd::RezInventory(r) => r.selected && !r.remove && r.target.is_nil(),
@@ -826,8 +957,11 @@ fn a_name_that_stays_different_keeps_the_original_next_to_the_save() {
     let outer_before = named(&before, aurora_i18n::tr!("content-perms-demo-outer"))[0].clone();
     let report = h.run(shared());
     assert!(report.contains("kept next"), "{report}");
-    assert_eq!(h.count(|c| matches!(c, BuildCmd::RemoveTaskInventory { .. })), 0);
+    // only the Crate stack's original is removed: a coalesced item keeps its
+    // own name, whatever its parts are called
+    assert_eq!(h.count(|c| matches!(c, BuildCmd::RemoveTaskInventory { .. })), 1);
     let items = h.chest_items();
+    assert_eq!(named(&items, aurora_i18n::tr!("content-perms-demo-stack")).len(), 1);
     // the originals and the saves side by side (Outer box, Linked box)
     assert!(items.iter().any(|i| i.item_id == outer_before.item_id));
     assert_eq!(named(&items, "Renamed by a script").len(), 2);
@@ -916,4 +1050,56 @@ fn an_arrival_whose_origin_never_comes_is_never_deleted() {
     assert_eq!(h.count(|c| matches!(c, BuildCmd::DeRez { .. })), 0);
     assert_eq!(h.rezzed_left(), 1);
     assert_eq!(h.chest_items(), before);
+}
+
+#[test]
+fn a_coalesced_item_is_opened_part_by_part_and_saved_back_together() {
+    let mut h = Harness::new();
+    let name = aurora_i18n::tr!("content-perms-demo-stack");
+    let before = h.chest_items();
+    let stack_before = named(&before, name)[0].clone();
+    h.run(shared());
+    let items = h.chest_items();
+    let stack = named(&items, name);
+    assert_eq!(stack.len(), 1, "one item, the original removed after the save");
+    assert_ne!(stack[0].item_id, stack_before.item_id);
+    assert!(is_group(stack[0]), "still several objects saved as one");
+    let parts = h.sim.stored_group(stack[0].item_id).expect("the parts").clone();
+    assert_eq!(parts.len(), 2);
+    for part in &parts {
+        assert_eq!(part.len(), 1);
+        assert_eq!(part[0].everyone_mask, perm::COPY, "{}", part[0].name);
+    }
+    // both parts saved in one DeRezObject, and deleted together
+    assert!(h.sent.iter().any(|c| matches!(c, BuildCmd::DeRez { destination, local_ids, .. }
+        if *destination == derez::SAVE_INTO_TASK_INVENTORY && local_ids.len() == 2)));
+    assert!(
+        h.sent
+            .iter()
+            .any(|c| matches!(c, BuildCmd::DeRez { destination, local_ids, .. } if *destination == derez::TRASH && local_ids.len() == 2))
+    );
+    assert_eq!(h.rezzed_left(), 0);
+}
+
+#[test]
+fn a_coalesced_item_saved_as_one_object_keeps_its_parts_in_world() {
+    let mut h = Harness::new();
+    h.sim.deep_split = true;
+    let report = h.run(shared());
+    assert!(report.contains("single object"), "{report}");
+    // the two parts left for the user to take together again
+    assert_eq!(h.rezzed_left(), 2);
+}
+
+#[test]
+fn every_part_of_a_coalesced_rez_is_taken_wherever_it_lands() {
+    let before: HashSet<Uuid> = [Uuid::from_u128(1)].into();
+    let flags = crate::build::FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+    let seen = [
+        seen(1, flags, Vec3::ZERO),
+        seen(2, flags, Vec3::new(40.0, 0.0, 0.0)),
+        seen(3, flags, Vec3::new(1.0, 0.0, 0.0)),
+        seen(4, crate::ui::context::flags::OBJECT_YOU_OWNER, Vec3::ZERO),
+    ];
+    assert_eq!(group_arrivals(seen, &before), vec![Uuid::from_u128(2), Uuid::from_u128(3)]);
 }
