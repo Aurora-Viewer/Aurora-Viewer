@@ -18180,6 +18180,13 @@ impl App {
                 );
             }
             Screen::World => {
+                // the look pointed at in a looks editor lasts one frame: the
+                // editor drawn below points at it again. Here and not only in
+                // the Photo window and the viewfinder, so that the Director's
+                // Filters tab (and any frame that draws no editor: the track
+                // playing, the reel's quick view) never keeps a look that was
+                // only pointed at on the live view and its film.
+                self.snapshots.ui.looks.hover = None;
                 // the Director's track plays: the world alone, and the
                 // countdown of its start delay
                 if self.director_playing() {
