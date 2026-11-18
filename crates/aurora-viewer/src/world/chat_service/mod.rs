@@ -20,12 +20,10 @@
 //! - `sync`: the conversation list request and one resident's pass;
 //! - `delete`: the transcript deletion and its recovery after a crash.
 
-// The World wiring is the next commit of this branch; until then only the
-// tests drive the manager.
-#![allow(dead_code)]
-
 mod delete;
 mod manager;
+pub mod stitch;
+pub mod storage;
 mod sync;
 
 #[cfg(test)]

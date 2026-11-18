@@ -291,6 +291,7 @@ pub struct Manager {
 }
 
 impl Manager {
+    #[cfg_attr(not(test), expect(dead_code, reason = "the World builds it with Default; the tests call it"))]
     pub fn new() -> Manager {
         Manager::default()
     }
@@ -590,6 +591,10 @@ impl Manager {
 
     /// The Delete Transcripts button's half of the check
     /// (localHistoryExists()).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the menus and buttons of the LL viewer that ask it are not ported yet")
+    )]
     pub fn local_history_exists(&self) -> bool {
         if self.rt.delete_active {
             return false;
@@ -602,6 +607,7 @@ impl Manager {
 
     /// The resident has archived rows to show (localHistoryExists(id)); a
     /// miss on an unprepared archive wakes the manager.
+    #[expect(dead_code, reason = "the menus and buttons of the LL viewer that ask it are not ported yet")]
     pub fn local_history_exists_for(&mut self, id: Uuid) -> bool {
         if !self.service_presentation_allowed() {
             return false;
@@ -634,23 +640,40 @@ impl Manager {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the World reads these through the snapshot; the tests ask them")
+    )]
     pub fn head_preview(&self, id: Uuid) -> &[HistoryRow] {
         self.rt.residents.get(&id).map_or(&[], |r| r.head_preview.as_slice())
     }
 
     /// The newest archived key, when the archive has rows.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the World reads these through the snapshot; the tests ask them")
+    )]
     pub fn archive_newest(&self, id: Uuid) -> Option<TimeUuidKey> {
         self.rt.residents.get(&id).and_then(|r| r.summary.oldest.and(r.summary.newest))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the World reads these through the snapshot; the tests ask them")
+    )]
     pub fn archive_serial(&self, id: Uuid) -> u32 {
         self.rt.residents.get(&id).map_or(0, |r| r.archive_serial)
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "the World reads it through the snapshot; the tests ask it"))]
     pub fn work_active(&self, id: Uuid) -> bool {
         self.rt.residents.get(&id).is_some_and(|r| r.work_active)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the World reads these through the snapshot; the tests ask them")
+    )]
     pub fn resolved_name(&self, id: Uuid) -> Option<&AvatarName> {
         self.rt.residents.get(&id).and_then(Resident::name)
     }

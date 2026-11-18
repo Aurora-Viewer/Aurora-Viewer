@@ -518,6 +518,7 @@ fn filter_history_duplicates(history: &[HistoryMessage], live: &[HistoryMessage]
 
 /// `history` (oldest-first) without the rows `live` already shows. Port of
 /// LLChatServiceHistoryCore::filterDirectHistoryDuplicates.
+#[cfg(test)]
 pub fn filter_direct_history_duplicates(history: &[HistoryMessage], live: &[HistoryMessage]) -> Messages {
     filter_history_duplicates(history, live, None)
 }

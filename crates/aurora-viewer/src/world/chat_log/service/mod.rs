@@ -11,11 +11,6 @@
 //! - `merge`: the seam merge, the duplicate filter against live rows, the
 //!   per-view composition and the session model update.
 
-// The network manager and the IM session wiring come in the next commit
-// of this branch; until then only the tests call this code, and not all
-// of it (the index header, the I/O failure state).
-#![allow(dead_code)]
-
 pub mod csv;
 pub mod merge;
 pub mod message;

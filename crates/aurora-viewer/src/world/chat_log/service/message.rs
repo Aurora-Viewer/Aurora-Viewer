@@ -33,6 +33,10 @@ pub enum TimeSource {
     Local,
     /// A caller that names no clock (an empty string): exact seconds, like
     /// `Sent`, but a later capture does not replace it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Aurora's callers always name a clock; the parity tests use it")
+    )]
     Unmarked,
 }
 
