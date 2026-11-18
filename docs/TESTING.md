@@ -1866,6 +1866,9 @@ when unfocused") is ignored during a screenshot.
   the same targets. For the human test of the selector, remove this
   variable: Preferences › Interface › Layout › Right-click menu; switch
   between List menu and Pie menu (radial), then restart to check the choice.
+  `AURORA_DEMO_OPTIONS=layout:pie-on-press` scrolls to that row with its
+  cog open, on Open on press (`pie_menu_on_press`): with it and the pie on,
+  a right press opens the pie, and letting go over a slice chooses it.
 - **`AURORA_DEMO_TEXT_MENU=1`**: the chat bar takes the focus at frame 700,
   gets a line typed and selected at frame 703, and the text fields'
   right-click menu opens over it at frame 706 (capture at frame 780 with
