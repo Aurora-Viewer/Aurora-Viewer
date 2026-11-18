@@ -4787,7 +4787,11 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
     if matches!(target, SenderLink::Resident(_)) && super::bars::demo::get().click_name {
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique("chat_toast_demo_name"), rect));
     }
-    egui::Area::new(egui::Id::unique(("chat_toast_sender", k)))
+    let id = egui::Id::unique(("chat_toast_sender", k));
+    // The toast's glass lets clicks through, but the name is a link of its
+    // own: keep its press from also reaching the world behind the toast.
+    super::widgets::solid_background(ctx, id);
+    egui::Area::new(id)
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
@@ -4875,7 +4879,11 @@ pub(crate) fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std:
 /// (LLFloaterIMNearbyChatToastPanel::handleMouseUp): same actions and
 /// right-click menus as in the conversation window.
 fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, link: &Link, col: Color32) {
-    egui::Area::new(egui::Id::unique(("chat_toast_link", k)))
+    let id = egui::Id::unique(("chat_toast_link", k));
+    // As the sender's name above: the link is its own click target, not a
+    // way for the same press to reach the world through the toast's glass.
+    super::widgets::solid_background(ctx, id);
+    egui::Area::new(id)
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {

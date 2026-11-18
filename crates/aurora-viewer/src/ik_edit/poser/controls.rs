@@ -141,7 +141,11 @@ impl Editor {
                 None => name.ends_with("Left") || name.ends_with("Right"),
             };
             if applies && let Some(&bone) = rig.names.get(name) {
-                pose.rotations[bone] = Quat::from_euler(EulerRot::ZYX, xyz[2], xyz[1], xyz[0]);
+                // X, then Y, then Z, like LLMatrix3(roll, pitch, yaw)
+                // (indra/llmath/m3math.cpp, setRot) in
+                // FSPoserAnimator::translateRotationToQuaternion: the curled
+                // presets (Fist, Point) were up to 105° off in Z-Y-X (#3602)
+                pose.rotations[bone] = Quat::from_euler(EulerRot::XYZ, xyz[0], xyz[1], xyz[2]);
                 pose.origin[bone] = rig.local_rot[bone];
                 pose.locks.remove(&bone);
             }

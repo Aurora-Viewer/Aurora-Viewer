@@ -159,6 +159,24 @@ the pack does not include.
 | LibVLC and its modules (Linden Lab's prebuilt package of VLC 3.0) | LGPL 2.1 or later; some modules GPL 2 or later |
 | Microsoft Visual C++ runtime (`msvcp140.dll`, `vcruntime140*.dll`) | Redistributable under the Visual Studio license terms |
 
+## FFmpeg pack
+
+The Director records its films with ffmpeg, a separate program. The project
+builds it from source with the "FFmpeg pack" workflow
+(`.github/workflows/ffmpeg-pack.yml`, `scripts/ffmpeg-pack.sh`) and publishes
+it as the GitHub releases `ffmpeg-<n>`; the viewer downloads it only when the
+user asks for it, and installs it in the user's data folder. Each archive
+holds the license texts (`LICENSES/`) and a `README.txt` naming the versions
+and commits; each release attaches the corresponding source (the four source
+trees and the build script). No nonfree code is built in.
+
+| Component | License |
+|---|---|
+| ffmpeg (FFmpeg/FFmpeg), built with `--enable-gpl --enable-version3` | GPL version 3 |
+| x264 (videolan/x264), linked statically | GPL version 2 or later |
+| libvpx (webmproject/libvpx), linked statically | BSD-3-Clause, with Google's patent grant (`PATENTS`) |
+| libopus (xiph/opus), linked statically | BSD-3-Clause |
+
 ## Rust dependencies
 
 The crates built into Aurora Viewer (see `Cargo.lock`) are under licenses
